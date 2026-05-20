@@ -1,93 +1,44 @@
 # Agents
 
-An `Agent` is a reusable composition of `{ prompt, model, provider, skills,
-temperature, max_tokens, inputs_policy, prompt_version }` stored in the
-workspace agent library. Agents are authored once and referenced by id from
-any number of strategies — the same `agent_id` can appear in multiple
-strategies simultaneously. Editing an agent propagates to every strategy that
-references it on its next run.
+An agent is a reusable saved bundle of a system prompt, a provider/model
+selection, a temperature, an output token budget, and an optional set of
+skills. Agents live in the workspace library and are referenced by id from
+strategies — the same agent can appear in multiple strategies simultaneously.
+Editing an agent propagates to every strategy that references it on its next
+run.
 
-This library-centric design is the wave-A "agent library" concept. The wave-C
-atomic-create flow separated agent authoring from strategy creation so agents
-are first-class reusable objects, not inline strategy slots.
-
-> **Rename in progress** — the `intern` role is being renamed to "default
+> **Rename in progress** — the "intern" role is being renamed to "default
 > agent" in the wizard, rail, and settings UI. Both terms remain valid during
-> the crossover period. The underlying field is a free-form string so
-> strategies written with either name continue to work.
+> the crossover period; strategies written with either name continue to work.
 
-## AgentSlot anatomy
+---
 
-Each `Agent` contains one or more `AgentSlot`s. A single-slot agent is the
-80% case; multi-slot agents model sequential or graph-shaped pipelines within
-one agent (distinct from multi-agent pipelines within a strategy).
+## Author an agent from the dashboard
 
-| Field | Type | Notes |
-|---|---|---|
-| `name` | `String` | Slot label within this agent, e.g. `"main"`, `"analyst"`, `"executor"`. |
-| `provider` | `String` | Provider id, e.g. `"openai"`, `"anthropic"`. Must match a configured provider. |
-| `model` | `String` | Model id forwarded to the provider, e.g. `"gpt-4o-mini"`, `"claude-sonnet-4-6"`. |
-| `system_prompt` | `String` | The system prompt template handed to the LLM at dispatch time. |
-| `skill_ids` | `Vec<String>` | ULIDs into the workspace skill registry (tool / prompt_fragment / evaluator). Picker is hidden in v1 until `/agents/skills` ships; field is persisted now so existing agents survive the registry landing without a migration. |
-| `max_tokens` | `Option<u32>` | Optional per-request token budget override. `null` means "auto from model"; the dispatcher resolves it via model metadata. `Some(n)` is honored and passed through verbatim. |
-| `temperature` | `Option<f64>` | Optional sampling temperature override. `null` lets the provider default apply. Set a low value (e.g. `0.2`) for reproducible eval baselines. |
-| `prompt_version` | `String` | Server-computed 16-hex-char SHA-256 prefix of `system_prompt`. Backfilled on next save for rows persisted before migration 019. Read-only — any value sent on write is overridden at persist time. |
-| `inputs_policy` | `InputsPolicy` | Controls how the eval executor sanitizes seed JSON before the LLM sees it. One of `"raw"` (default), `"causal"`, or `"oracle"`. See below. |
+Open `/agents/new`. The form has three sections:
 
-### inputs_policy values
+- **Identity** — name (slug-style, e.g. `btc-mean-rev-v1`), description,
+  and optional tags.
+- **Behavior (slots)** — one or more agent slots. Each slot exposes:
+  - **Provider** — picked from your enabled providers.
+  - **Model** — picked from the models available for that provider.
+  - **System prompt** — the prompt handed to the model at dispatch time.
+  - **Skills** — attached skills from the workspace skill registry (managed
+    at `/agents/skills`; shown only when skills are already linked).
+- **Template picker** — before reaching the form, the dashboard offers three
+  starter templates: *Single-prompt trader* (one slot), *Analyst → Executor*
+  (two slots, sequential), and *Risk-checked trader* (three slots,
+  trader / risk / executor). Templates seed the form; rename or extend freely
+  after creation. You can also skip to a blank agent.
 
-- **`raw`** — default. Seed JSON is passed through unchanged; `decision_index`
-  lives on the top-level seed and each `bar_history` entry carries `timestamp`.
-- **`causal`** — `decision_index` is stripped from the top-level seed; each
-  `bar_history` entry's `timestamp` is replaced with `bar_index` (0 = oldest
-  visible bar). Matches the v4 causal prompts.
-- **`oracle`** — tag-only; runtime behavior is identical to `raw`. Use to
-  explicitly mark a slot as deliberately full-visibility rather than
-  "left at default."
+**Chat rail path:** describe the agent you want in plain English and the rail
+composes one for you, then routes to the same form pre-filled.
 
-## Roles
+The CLI does not have a create verb today — authoring uses the dashboard form.
 
-By convention, slot names and strategy roles follow these labels:
+---
 
-| Role | Description |
-|---|---|
-| `intern` / default agent | General-purpose decision-making slot. `intern` is the legacy name; the UI is migrating to "default agent". |
-| `trader` | Proposes a trade decision. |
-| `risk_check` / `risk` | Vetoes or modifies the trader's proposal. |
-| `executor` | Commits the final decision after risk review. |
-| `analyst` | Produces a structured thesis consumed by a downstream slot. |
-
-Role is a plain string label on `AgentRef`, not an enforced enum. Strategies
-can freely rename or invent roles — the engine matches role strings to pipeline
-stages via case-insensitive trimmed comparison.
-
-## Authoring agents
-
-Agents are created through the dashboard at `/agents/new` or via the chat
-rail. There are three starter templates in the template picker:
-
-- **Single-prompt trader** (`single-trader`) — one slot, one model, one
-  prompt. Start here for the 80% case.
-- **Analyst → Executor** (`analyst-executor`) — two slots demonstrating
-  sequential composition. First slot produces a thesis; second turns it into
-  a decision.
-- **Risk-checked trader** (`risk-checked-trader`) — three slots showing
-  trader / risk_check / executor composition.
-
-Template slot names seed the form only. They are not enforced — rename or
-extend freely after creation.
-
-The CLI does not have a `create` verb today. That is intentional: authoring
-requires the form UI for slot composition and template selection. The CLI
-exposes a read-only path for automation scripts.
-
-## Reading agents from the CLI
-
-`xvn agent get` fetches a single agent by ULID. The JSON output is
-structurally identical to the `agents[]` array inside `EvalRunExport` — both
-use the same `Agent` Rust struct and the same `Serialize` impl, so scripts
-that consume eval exports can use the same parsing logic for direct agent
-lookups.
+## Read an agent from the CLI
 
 ```
 xvn agent get <agent-id>
@@ -95,17 +46,17 @@ xvn agent get <agent-id> --format json-compact
 ```
 
 `--format` accepts `json` (default, pretty-printed) or `json-compact`
-(single-line, suitable for piping to `jq`). `get` also accepts a `show`
-alias.
+(single-line, suitable for piping to `jq`). `show` is an accepted alias for
+`get`.
 
-Example output shape:
+Example output:
 
 ```json
 {
   "agent_id": "01HZAGENT000000000000001",
   "name": "momentum-trader-v2",
-  "description": "GPT-4o momentum strategy with causal inputs",
-  "tags": ["momentum", "causal"],
+  "description": "GPT-4o momentum strategy",
+  "tags": ["momentum"],
   "archived": false,
   "created_at": "2026-05-01T09:00:00Z",
   "updated_at": "2026-05-15T14:22:00Z",
@@ -114,65 +65,46 @@ Example output shape:
       "name": "main",
       "provider": "openai",
       "model": "gpt-4o-mini",
-      "system_prompt": "You are a discretionary trader...",
-      "skill_ids": [],
-      "max_tokens": 2048,
-      "temperature": 0.2,
-      "prompt_version": "a3f9c1e247b80d6f",
-      "inputs_policy": "causal"
+      "temperature": 0.2
     }
   ]
 }
 ```
 
-The `max_tokens: null` sentinel in storage serializes as `null` in JSON (not
-`0`); `Some(2048)` serializes as the integer `2048`.
+---
 
-## How strategies reference agents
+## Roles
 
-A strategy references agents via `AgentRef { agent_id, role }`:
+By dashboard convention, agents play named roles in a strategy. Roles are
+display labels set on the strategy's agent references via the Inspector — they
+live on the reference, not on the agent itself.
 
-```json
-{
-  "agents": [
-    { "agent_id": "01HZAGENT000000000000001", "role": "trader" },
-    { "agent_id": "01HZAGENT000000000000002", "role": "risk_check" }
-  ]
-}
-```
+| Role | Description |
+|---|---|
+| default agent / `intern` | General-purpose decision slot. "intern" is the legacy name; the UI is migrating to "default agent". |
+| `trader` | Proposes a trade decision. |
+| `risk` / `risk_check` | Vetoes or modifies the trader's proposal. |
+| `executor` | Commits the final decision after risk review. |
+| `analyst` | Produces a structured thesis consumed by a downstream slot. |
 
-The same `agent_id` can appear in multiple strategies. Role lives on the
-reference, not on the agent — the agent carries no knowledge of the roles
-assigned to it by strategies.
+Roles are plain strings — strategies can freely rename or invent them.
 
-## Migrating legacy inline-slot strategies
+---
 
-Strategies created before wave-A carried fixed `intern_slot`, `trader_slot`,
-and `regime_slot` fields instead of `AgentRef` pointers. The migration
-command promotes those inline slots to first-class agent records and rewrites
-the strategy to reference them:
+## CLI verbs at a glance
 
-```
-xvn strategy migrate-agents
-xvn strategy migrate-agents --dry-run
-```
+Today's agent CLI surface is read-only. See [CLI Reference](/docs?slug=cli-reference)
+for full flag documentation.
 
-`--dry-run` prints what would change without writing to disk. Run without
-`--dry-run` to apply. After migration each previously-inline slot becomes a
-named agent in the library, reusable by any strategy.
+| Verb | Effect |
+|---|---|
+| `xvn agent get <agent-id> [--format json\|json-compact]` | Fetch a single agent by id. Alias: `show`. |
 
-## Provider and model resolution
+---
 
-Each `AgentSlot` binds a provider id and model id. Resolution can drift
-silently when a provider is disabled or a model id is removed from the
-provider's model list. Run `xvn strategy validate <id>` to surface these
-warnings before a run.
+## Where agents live
 
-See [Providers](/docs?slug=providers) for configuring and enabling providers.
-
-## Archiving agents
-
-Agents can be archived from the dashboard agent detail page. Archived agents
-are hidden from the library list by default but are not deleted; strategies
-that reference an archived agent continue to resolve it. Pass
-`include_archived: true` on the list request to show archived agents.
+Agents are stored in the workspace database at `$XVN_HOME/xvn.db` (defaults to
+`$HOME/.xvn/xvn.db`; override with `--xvn-home` or the `XVN_HOME` env var).
+The database is created automatically on first use; no separate init step is
+required.

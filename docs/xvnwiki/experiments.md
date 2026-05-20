@@ -1,78 +1,60 @@
 # Experiments
 
-An **experiment** is a ledger row that persists one complete research cycle:
-a question, the strategies and scenarios under test, the batch run that answered
-it, the computed metrics summary, and the operator's conclusion and next step.
-It is the durable record of "we ran this hypothesis against these conditions
-and learned X."
+An **experiment** is a structured research record that pairs a question with
+the run that answered it. It captures: the hypothesis you pinned on the
+strategy, the comparator scenario set you chose, the decision budget you
+designed around, the result summary after the batch finished, and — crucially
+— the conclusion and next recommendation you write in afterwards. Later passes
+(human or agent) can read the record and replay the reasoning, not just the
+numbers.
 
-Experiments are additive — they do not replace or modify eval runs or batches.
-They wrap them. The same batch can be bound to at most one experiment.
+Experiments are additive — they wrap batches, they do not replace or modify
+eval runs. The same batch can be bound to at most one experiment.
 
-For the hypothesis manifest that lives on the strategy side, see
-[Strategies](/docs?slug=strategies).
+For the hypothesis manifest that lives on the strategy, see
+[Strategies](/docs?slug=strategies). For eval batches and individual runs, see
+[Eval Runs](/docs?slug=eval-runs).
+
+---
 
 ## The loop
 
-```
-hypothesis on Strategy
-  → xvn scenario ls / select (choose scenario ids)
-  → xvn experiment run (orchestrator)
-      ├─ creates ledger row
-      ├─ runs batch (same path as xvn eval batch run)
-      ├─ binds batch_id to row
-      └─ computes + persists result_json
-  → operator reads output / --compare table
-  → xvn experiment update --conclusion "..." --next-recommendation "..."
-  → repeat with next iteration
-```
+Five steps, repeatable indefinitely:
 
-`xvn experiment run` is the fast path. For finer control — run the batch
-first, then create the ledger row and bind manually:
+1. **Pin a hypothesis on the strategy** — write a question you want to answer
+   about one strategy's behaviour. See `xvn strategy create --hypothesis` in
+   [Strategies](/docs?slug=strategies).
+2. **Pick a comparator scenario set** — use `xvn scenario select` to filter
+   the library by asset, timeframe, regime, and decision count, or supply
+   explicit scenario ids. See [Scenarios](/docs?slug=scenarios).
+3. **`xvn experiment run`** — the one-shot orchestrator. It creates the
+   experiment record, runs the batch, binds the batch to the record, and writes
+   the result summary, all in a single CLI call.
+4. **Read the compare table and reviewer output** — inspect the metrics table
+   that `--compare` prints, or the reviewer's findings when `--review-with` is
+   set. Open the dashboard's eval-runs compare view alongside if you want to
+   drill into individual decisions.
+5. **Conclude the experiment** — write your interpretation into the record with
+   `xvn experiment update --conclusion "..." --next-recommendation "..."`. Now
+   the record is complete and the next pass has something to build on.
 
-```bash
-xvn eval batch run --strategy <id> --scenarios sc_01K...,sc_01K... --wait
-xvn experiment new --name "compression-q3" --strategy <id> \
-  --scenarios sc_01K...,sc_01K... --question "Does compression-breakout work in low-vol?"
-xvn experiment update <exp_id> --bind-batch <batch_id>
-```
+Repeat from step 1 with the next hypothesis.
 
-## Ledger schema
+---
 
-Migration `023_hypothesis_and_experiments.sql` creates the `experiments` table.
+## `xvn experiment run` — the one-shot orchestrator
 
-| Column | Type | Notes |
-|---|---|---|
-| `experiment_id` | TEXT PK | `exp_<ULID>` — immutable |
-| `name` | TEXT NOT NULL | Short slug, e.g. `compression-q3-btc` |
-| `question` | TEXT | 1–2 sentence research question; nullable |
-| `strategy_ids` | TEXT NOT NULL | JSON array of strategy ids |
-| `scenario_ids` | TEXT NOT NULL | JSON array of scenario ids |
-| `batch_id` | TEXT | FK → `eval_batches.batch_id`; nullable until run |
-| `decision_budget` | INTEGER | Operator intent cap; nullable |
-| `result_json` | TEXT | JSON result summary; populated when batch finishes |
-| `conclusion` | TEXT | Operator-written outcome summary; nullable |
-| `next_recommendation` | TEXT | Operator-written next step; nullable |
-| `created_at` | TEXT NOT NULL | ISO-8601 timestamp |
-| `updated_at` | TEXT NOT NULL | ISO-8601 timestamp |
+`xvn experiment run` bundles four steps into a single CLI call:
 
-`decision_budget` records operator intent (decisions per scenario this
-experiment was designed around) and is stored on the row for cross-experiment
-comparability. It does not cap actual eval execution today — that is a
-follow-on change to the eval pipeline.
+1. Creates the experiment record before the batch starts, so the experiment id
+   exists even if the batch partially fails.
+2. Runs the batch using the same production path as `xvn eval batch run` —
+   dispatch is resolved per strategy slot, identical to standalone batch runs.
+3. Binds the completed batch id to the experiment record.
+4. Computes the result summary from the batch output and writes it to the
+   experiment record.
 
-## The orchestrator: `xvn experiment run`
-
-`xvn experiment run` bundles four steps into one verb:
-
-1. **Create** — inserts the experiment ledger row before the batch starts,
-   so the `experiment_id` exists even if the batch partially fails.
-2. **Run batch** — delegates to the same production path as
-   `xvn eval batch run`. Dispatch is resolved per-strategy-slot, identical
-   to standalone batch runs.
-3. **Bind** — calls `update_experiment` to write the `batch_id` onto the row.
-4. **Compute result** — derives `result_json` from the `BatchResult` via
-   `ExperimentStore::set_result` and persists it.
+### Explicit scenario ids
 
 ```bash
 xvn experiment run \
@@ -86,7 +68,11 @@ xvn experiment run \
   --markdown
 ```
 
-Selector mode (delegates to `xvn scenario select` logic):
+### Selector mode
+
+When you don't have ids in hand, delegate scenario selection to the library
+filter. This is equivalent to calling `xvn scenario select` and feeding the
+result directly into the run:
 
 ```bash
 xvn experiment run \
@@ -99,6 +85,9 @@ xvn experiment run \
   --wait \
   --json
 ```
+
+Either `--scenarios` or `--assets` must be provided; they are mutually
+exclusive.
 
 ### Flags
 
@@ -115,23 +104,29 @@ xvn experiment run \
 | `--max-decisions <N>` | Upper bound when `--same-decisions` is set |
 | `--count <N>` | Number of scenarios to select in selector mode (default: 4) |
 | `--regimes <r1,r2,...>` | Regime labels for selector mode |
-| `--decision-budget <N>` | Operator intent cap recorded on the ledger row |
-| `--wait` | Block until all runs complete (required for `--compare` and `result_json`) |
+| `--decision-budget <N>` | Operator intent cap recorded on the experiment record |
+| `--wait` | Block until all runs complete (required for `--compare` and the result summary) |
 | `--review-with <profile>` | Agent profile id for post-run analytical reviews (requires `--wait`) |
 | `--compare` | Render a compare-style table after the run (requires `--wait`) |
 | `--markdown` | Emit compare output as GitHub-flavoured Markdown (requires `--compare`) |
 | `--output <path>` | Write `--compare --markdown` output to a file instead of stdout |
-| `--json` | Emit the final `ExperimentRunOutput` as JSON |
+| `--json` | Emit the final experiment output as JSON |
 
-Either `--scenarios` or `--assets` must be provided; they are mutually exclusive.
+---
 
-## Output shape
+## Reading an experiment
 
-`ExperimentRunOutput` — the JSON shape emitted by `--json`:
+```bash
+xvn experiment show <id>
+xvn experiment show <id> --json
+```
+
+The `--json` flag emits the full experiment record. Example output with
+user-visible fields:
 
 ```json
 {
-  "experiment_id": "exp_01K...",
+  "id": "exp_01K...",
   "name": "compression-btc-q3",
   "question": "Does compression-breakout hold in low-volatility BTC regimes?",
   "strategy_ids": ["strat_01K..."],
@@ -156,34 +151,52 @@ Either `--scenarios` or `--assets` must be provided; they are mutually exclusive
     ]
   },
   "conclusion": null,
-  "next_recommendation": null,
-  "compare_markdown": "..."
+  "next_recommendation": null
 }
 ```
 
-`compare_markdown` is omitted unless `--compare --markdown` is requested.
 `conclusion` and `next_recommendation` are `null` until the operator fills
 them in via `xvn experiment update`.
 
-## CLI parity
+---
+
+## Concluding an experiment
+
+```bash
+xvn experiment update <id> \
+  --conclusion "Compression-breakout holds in low-vol regimes with a mean return of +3.1%, but breaks down in high-vol ranging periods." \
+  --next-recommendation "Retest with a tighter entry filter (ATR < 0.8%) and add a vol-regime pre-check."
+```
+
+This is how the loop completes. Writing the conclusion and next recommendation
+into the record closes the current iteration and gives the next pass — whether
+a human operator or an agent reviewing past experiments — a concrete starting
+point rather than raw numbers.
+
+`--bind-batch <batch_id>` is also available on `update` for the manual flow
+where you ran the batch separately and want to attach it to an existing
+experiment record.
+
+---
+
+## CLI verbs at a glance
 
 See [CLI Reference](/docs?slug=cli-reference) for full flag documentation.
 
-- `xvn experiment new` (`create`) — create a ledger row manually.
-- `xvn experiment run` — orchestrator: create + batch + bind + result in one shot.
-- `xvn experiment ls` — list all experiments, most-recent first.
-- `xvn experiment show <id>` (`get`) — show a single experiment; use `--json`
-  to view `result_json`.
-- `xvn experiment update <id>` — apply partial mutations: `--conclusion`,
-  `--next-recommendation`, `--bind-batch <batch_id>`.
+| Verb | Effect |
+|---|---|
+| `xvn experiment new` (`create`) | Create an experiment record manually without running a batch. |
+| `xvn experiment run` | Orchestrator: create record → run batch → bind batch → write result summary. |
+| `xvn experiment ls` | List all experiments, most-recent first. |
+| `xvn experiment show <id>` (`get`) | Show a single experiment; add `--json` to see the full record including result summary. |
+| `xvn experiment update <id>` | Apply partial mutations: `--conclusion`, `--next-recommendation`, `--bind-batch <id>`. |
 
-## What it is not
+---
 
-The following are explicitly out of scope today:
+## What's out of scope today
 
-- **`--scenario-set <name>`** — named, saved scenario sets. Would require a
-  persisted `scenario_sets` table punted in wave B. The flag is reserved but
-  not wired.
-- **Auto-recommendation** — automatic generation of the next hypothesis from
-  the current result. `next_recommendation` is an operator-written text field;
-  no LLM step writes to it automatically today.
+- **Named scenario sets** — `--scenario-set <name>` is not implemented. Named,
+  saved scenario sets require additional persistence work that has been
+  deferred. The flag is reserved but not wired.
+- **Auto-recommended next hypothesis** — `next_recommendation` is an
+  operator-written field. No automated step generates or fills it today.
