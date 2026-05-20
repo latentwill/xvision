@@ -262,3 +262,32 @@ Verification target:
 
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-f276b9b4f5-53e4_89387de97b`
   after a broader fix.
+
+## B-10 - SlotForm provider-change generated fix fails validation
+
+- Finding: `fnd_sig-feat-ui-flow-0e07bcd326-2bbe_8ce24d101a`
+- Severity: medium
+- Category: bug
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` attempted to clear `slot.model` when the provider select changes
+to a provider that does not offer the current model, and added focused SlotForm
+coverage in `agents.test.tsx`. The generated patch failed clawpatch's
+validation after applying. The failed generated code and test hunks were removed
+so the autonomous loop could continue from a clean tree.
+
+Recommendation from clawpatch:
+
+- When the provider changes, clear `model` unless the current model is valid for
+  the newly selected provider, or route provider changes through the same
+  provider/model update path used by `ModelPicker`.
+
+Minimum fix scope from clawpatch:
+
+- Update `SlotForm` provider select handling and add a focused SlotForm
+  interaction test.
+
+Verification target:
+
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-0e07bcd326-2bbe_8ce24d101a`
+  after a broader fix.
