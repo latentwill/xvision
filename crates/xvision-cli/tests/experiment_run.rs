@@ -42,21 +42,47 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
 
     // Apply migrations in order (same subset as eval_batch_run.rs + 023).
     sqlx::query(include_str!("../../xvision-engine/migrations/001_api_audit.sql"))
-        .execute(&pool).await.unwrap();
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../../xvision-engine/migrations/002_eval.sql"))
-        .execute(&pool).await.unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/014_eval_agent_id.sql"))
-        .execute(&pool).await.unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"))
-        .execute(&pool).await.unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/021_eval_batches.sql"))
-        .execute(&pool).await.unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/023_hypothesis_and_experiments.sql"))
-        .execute(&pool).await.unwrap();
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/014_eval_agent_id.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/021_eval_batches.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/023_hypothesis_and_experiments.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
-    let ctx = ApiContext::new(pool, Actor::Cli { user: "operator".into() }, dir.path().to_path_buf());
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
+            user: "operator".into(),
+        },
+        dir.path().to_path_buf(),
+    );
     (ctx, dir)
 }
 
@@ -136,7 +162,9 @@ async fn experiment_run_creates_experiment_binds_batch_writes_result() {
         review_dispatch: None,
     };
 
-    let result = run_experiment(&ctx, req).await.expect("run_experiment must succeed");
+    let result = run_experiment(&ctx, req)
+        .await
+        .expect("run_experiment must succeed");
 
     // Experiment id is populated.
     assert!(
@@ -162,10 +190,7 @@ async fn experiment_run_creates_experiment_binds_batch_writes_result() {
         "result_json must be written after run_experiment"
     );
     let rj = result.experiment.result_json.as_ref().unwrap();
-    assert!(
-        rj["runs"].is_array(),
-        "result_json must contain 'runs' array"
-    );
+    assert!(rj["runs"].is_array(), "result_json must contain 'runs' array");
 
     // The batch result is embedded in the return value.
     assert_eq!(result.batch.runs.len(), 2);
@@ -201,11 +226,20 @@ async fn experiment_run_result_json_has_expected_shape() {
         review_dispatch: None,
     };
 
-    let result = run_experiment(&ctx, req).await.expect("run_experiment must succeed");
-    let rj = result.experiment.result_json.as_ref().expect("result_json must be present");
+    let result = run_experiment(&ctx, req)
+        .await
+        .expect("run_experiment must succeed");
+    let rj = result
+        .experiment
+        .result_json
+        .as_ref()
+        .expect("result_json must be present");
 
     // Required keys in the result JSON.
-    assert!(rj["profitable_count"].is_number(), "profitable_count must be a number");
+    assert!(
+        rj["profitable_count"].is_number(),
+        "profitable_count must be a number"
+    );
     assert!(rj["runs"].is_array(), "runs must be an array");
     // With a single scenario, best and worst refer to the same scenario.
     assert!(
@@ -256,12 +290,17 @@ async fn experiment_run_json_output_shape() {
         review_dispatch: None,
     };
 
-    let output = run_experiment(&ctx, req).await.expect("run_experiment must succeed");
+    let output = run_experiment(&ctx, req)
+        .await
+        .expect("run_experiment must succeed");
     let json_str = serde_json::to_string_pretty(&output).expect("must serialise");
     let json: serde_json::Value = serde_json::from_str(&json_str).expect("must parse back");
 
     // Top-level documented keys.
-    assert!(json["experiment_id"].is_string(), "experiment_id must be a string");
+    assert!(
+        json["experiment_id"].is_string(),
+        "experiment_id must be a string"
+    );
     assert!(json["name"].is_string(), "name must be a string");
     assert!(json["strategy_ids"].is_array(), "strategy_ids must be an array");
     assert!(json["scenario_ids"].is_array(), "scenario_ids must be an array");
@@ -274,7 +313,10 @@ async fn experiment_run_json_output_shape() {
     );
     // Stub fields present even though null (operator fills in later).
     assert!(json["conclusion"].is_null(), "conclusion must be null initially");
-    assert!(json["next_recommendation"].is_null(), "next_recommendation must be null initially");
+    assert!(
+        json["next_recommendation"].is_null(),
+        "next_recommendation must be null initially"
+    );
 }
 
 /// Experiment row in the DB has result_json set after run completes.
@@ -305,7 +347,9 @@ async fn experiment_run_db_row_has_result_json_populated() {
         review_dispatch: None,
     };
 
-    let output = run_experiment(&ctx, req).await.expect("run_experiment must succeed");
+    let output = run_experiment(&ctx, req)
+        .await
+        .expect("run_experiment must succeed");
     let exp_id = output.experiment.experiment_id.clone();
 
     // Re-read from DB to confirm persistence.
@@ -318,8 +362,7 @@ async fn experiment_run_db_row_has_result_json_populated() {
         "DB row must have result_json set after run_experiment"
     );
     assert_eq!(
-        detail.experiment.batch_id,
-        output.experiment.batch_id,
+        detail.experiment.batch_id, output.experiment.batch_id,
         "DB batch_id must match in-memory value"
     );
 }

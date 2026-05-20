@@ -200,7 +200,8 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
         name: "main".to_string(),
         provider: "anthropic".to_string(),
         model: "claude-sonnet-4-6".to_string(),
-        system_prompt: "Trade.".to_string(),
+        system_prompt: "Trade BTC/USD using the supplied market data, portfolio state, risk limits, and scenario context. Before each action, review trend, volatility, current exposure, and recent execution state. Return a structured decision with evidence, invalidation level, risk-aware sizing, and a concise justification."
+            .to_string(),
         skill_ids: vec![],
         max_tokens: Some(2048),
         temperature: None,

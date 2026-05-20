@@ -6,7 +6,9 @@ use chrono::{TimeZone, Utc};
 use ed25519_dalek::SigningKey;
 use sqlx::SqlitePool;
 use xvision_engine::eval::attestation::{sign, verify, EvalAttestation};
-use xvision_engine::eval::{canonical_scenarios, MetricsSummary, Run, RunMode, RunStore, Scenario};
+use xvision_engine::eval::{
+    canonical_scenarios, MetricsSummary, Run, RunMode, RunStatus, RunStore, Scenario,
+};
 
 async fn pool_with_migration() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -205,9 +207,13 @@ async fn run_store_record_attestation_and_get_round_trips() {
     // via finalize) — `finalize` post #325 refuses pre-Completed rows.
     let mut run = finalized_run();
     let id = run.id.clone();
+    let metrics = run.metrics.clone().unwrap();
+    run.status = RunStatus::Queued;
+    run.completed_at = None;
+    run.metrics = None;
     store.create(&run).await.unwrap();
     store.begin_running(&id).await.unwrap();
-    store.finalize(&id, run.metrics.as_ref().unwrap()).await.unwrap();
+    store.finalize(&id, &metrics).await.unwrap();
     run = store.get(&id).await.unwrap();
 
     let scenario = first_scenario();
@@ -236,12 +242,13 @@ async fn run_store_get_attestation_returns_none_when_missing() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool);
     let mut run = finalized_run();
+    let metrics = run.metrics.clone().unwrap();
+    run.status = RunStatus::Queued;
+    run.completed_at = None;
+    run.metrics = None;
     store.create(&run).await.unwrap();
     store.begin_running(&run.id).await.unwrap();
-    store
-        .finalize(&run.id, run.metrics.as_ref().unwrap())
-        .await
-        .unwrap();
+    store.finalize(&run.id, &metrics).await.unwrap();
     run = store.get(&run.id).await.unwrap();
     let read = store.get_attestation(&run.id).await.unwrap();
     assert!(read.is_none());

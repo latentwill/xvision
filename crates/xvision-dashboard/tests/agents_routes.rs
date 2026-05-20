@@ -15,6 +15,13 @@ async fn boot() -> (TestServer, TempDir) {
     (server, tmp)
 }
 
+fn sample_prompt() -> &'static str {
+    "You are a disciplined multi-asset trading agent. Review the latest market context, \
+     active risk limits, portfolio exposure, and scenario notes before producing a trading \
+     decision. Explain the setup, invalidation level, sizing rationale, and why the action \
+     is appropriate for the current conditions. Return structured JSON only."
+}
+
 fn sample_create_body(name: &str) -> Value {
     json!({
         "name": name,
@@ -24,7 +31,7 @@ fn sample_create_body(name: &str) -> Value {
             "name": "main",
             "provider": "anthropic",
             "model": "claude-sonnet-4-6",
-            "system_prompt": "You are a trader.",
+            "system_prompt": sample_prompt(),
             "skill_ids": [],
             "max_tokens": 4096,
         }]
@@ -166,7 +173,7 @@ async fn update_replaces_slots() {
                 "name": "trader",
                 "provider": "anthropic",
                 "model": "claude-sonnet-4-6",
-                "system_prompt": "Trade.",
+                "system_prompt": sample_prompt(),
                 "skill_ids": [],
                 "max_tokens": 4096,
             },
@@ -174,7 +181,10 @@ async fn update_replaces_slots() {
                 "name": "risk_check",
                 "provider": "anthropic",
                 "model": "claude-haiku-4-5",
-                "system_prompt": "Check risk.",
+                "system_prompt": "You are a risk-control reviewer. Check proposed trades against account exposure, \
+                                  concentration, stop distance, expected liquidity, and scenario constraints. \
+                                  Call out any breach before approval, require clear invalidation, and return a \
+                                  concise structured assessment that an execution component can consume.",
                 "skill_ids": [],
                 "max_tokens": 2048,
             }

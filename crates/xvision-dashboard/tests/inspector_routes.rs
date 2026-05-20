@@ -207,7 +207,7 @@ async fn strategy_agents_add_rename_remove_round_trip() {
                 "name": "main",
                 "provider": "anthropic",
                 "model": "claude-sonnet-4-6",
-                "system_prompt": "Test slot prompt body for validator.",
+                "system_prompt": "You are a quality-assurance trading agent used by the strategy inspector route tests. Review strategy context, scenario constraints, risk limits, and recent market evidence before returning a structured decision. Include the reasoning needed to validate role attachment without relying on placeholder text.",
                 "skill_ids": [],
                 "max_tokens": 512
             }]

@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 use xvision_engine::agent::llm::LlmDispatch;
 use xvision_engine::api::experiment::{CreateExperimentRequest, UpdateExperimentRequest};
 use xvision_engine::api::scenario::ListScenariosFilter;
-use xvision_engine::api::{ApiContext};
+use xvision_engine::api::ApiContext;
 use xvision_engine::eval::experiment_store::{Experiment, ExperimentStore};
 use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
@@ -174,10 +174,7 @@ pub struct RunSummary {
 ///
 /// This is the **testable** core. It does not go through the CLI arg layer.
 /// The CLI handler calls this after resolving scenarios and building dispatch.
-pub async fn run_experiment(
-    ctx: &ApiContext,
-    req: ExperimentRunRequest,
-) -> Result<ExperimentRunOutput> {
+pub async fn run_experiment(ctx: &ApiContext, req: ExperimentRunRequest) -> Result<ExperimentRunOutput> {
     anyhow::ensure!(!req.scenario_ids.is_empty(), "scenario_ids must be non-empty");
     anyhow::ensure!(!req.name.trim().is_empty(), "experiment name must not be blank");
 
@@ -226,8 +223,8 @@ pub async fn run_experiment(
 
     // Step 4: Build result_json and persist it to the experiment row.
     let summary = build_result_summary(&batch_result);
-    let result_json = serde_json::to_value(&summary)
-        .map_err(|e| anyhow::anyhow!("serialize result_json: {e}"))?;
+    let result_json =
+        serde_json::to_value(&summary).map_err(|e| anyhow::anyhow!("serialize result_json: {e}"))?;
 
     let store = ExperimentStore::new(ctx.db.clone());
     let final_exp = store
@@ -332,7 +329,6 @@ pub struct RunArgs {
     // TODO(scenario-set-persistence): --scenario-set <name> is NOT implemented.
     // Persisted named scenario sets were punted in wave B. Wire this up once
     // the `scenario_sets` table lands in a follow-up track.
-
     /// Asset filter for scenario selection (e.g. `BTC/USD,ETH/USD`).
     /// Only used when `--scenarios` is not provided.
     #[arg(long, value_delimiter = ',')]
@@ -365,7 +361,6 @@ pub struct RunArgs {
     pub regimes: Vec<String>,
 
     // ── Batch / run args ─────────────────────────────────────────────────────
-
     /// Decision-budget metadata recorded on the experiment ledger row.
     /// Does NOT cap eval execution — the underlying eval pipeline still runs
     /// every cadence-gated decision for each scenario. The field exists to
@@ -385,7 +380,6 @@ pub struct RunArgs {
     pub review_with: Option<String>,
 
     // ── Output args ──────────────────────────────────────────────────────────
-
     /// After the run, render a compare-style markdown table.
     /// Requires `--wait`.
     #[arg(long, requires = "wait")]
@@ -455,18 +449,14 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
     } else {
         return Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!(
-                "either --scenarios <ids> or --assets (with --timeframe) is required"
-            ),
+            source: anyhow::anyhow!("either --scenarios <ids> or --assets (with --timeframe) is required"),
         });
     };
 
     if scenario_ids.is_empty() {
         return Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!(
-                "no scenarios resolved; check --assets / --timeframe / --count"
-            ),
+            source: anyhow::anyhow!("no scenarios resolved; check --assets / --timeframe / --count"),
         });
     }
 
@@ -615,11 +605,7 @@ async fn resolve_scenarios_via_selector(
 // ── Compare markdown helper ───────────────────────────────────────────────────
 
 /// Render a compare-style Markdown table for the batch result.
-async fn build_compare_markdown(
-    ctx: &ApiContext,
-    batch: &BatchResult,
-    strategy_label: &str,
-) -> String {
+async fn build_compare_markdown(ctx: &ApiContext, batch: &BatchResult, strategy_label: &str) -> String {
     use crate::commands::eval::compare_format;
     use xvision_engine::api::eval;
 
@@ -647,12 +633,7 @@ async fn build_compare_markdown(
         return out;
     }
 
-    match eval::compare(
-        ctx,
-        xvision_engine::api::eval::CompareRunsRequest { run_ids },
-    )
-    .await
-    {
+    match eval::compare(ctx, xvision_engine::api::eval::CompareRunsRequest { run_ids }).await {
         Ok(report) => compare_format::render_markdown(&report, strategy_label),
         Err(e) => format!("<!-- compare failed: {e} -->\n"),
     }

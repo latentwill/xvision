@@ -250,7 +250,11 @@ fn baseline_simple_trend(bars: &[Ohlcv], initial_equity: f64, periods_per_year: 
 /// - else → flat
 ///
 /// Warmup (first 19 bars) is flat. Positions sized at 100% of current equity.
-fn baseline_simple_mean_reversion(bars: &[Ohlcv], initial_equity: f64, periods_per_year: f64) -> BaselineResult {
+fn baseline_simple_mean_reversion(
+    bars: &[Ohlcv],
+    initial_equity: f64,
+    periods_per_year: f64,
+) -> BaselineResult {
     if bars.len() < 2 {
         return zero_result();
     }
@@ -501,9 +505,7 @@ mod tests {
     fn simple_trend_downtrend_stays_flat_or_small_loss() {
         // Strictly falling prices → slope is negative → signal flat.
         // return should be ~ 0 (flat) or a tiny loss from the first entry attempt.
-        let bars: Vec<Ohlcv> = (0..40)
-            .map(|i| bar((200.0 - i as f64 * 2.0).max(1.0)))
-            .collect();
+        let bars: Vec<Ohlcv> = (0..40).map(|i| bar((200.0 - i as f64 * 2.0).max(1.0))).collect();
         let result = baseline_simple_trend(&bars, 10_000.0, 252.0);
         // In a strict downtrend the slope condition is negative so the baseline
         // stays flat for the entire run → return ≈ 0.
@@ -600,12 +602,18 @@ mod tests {
     #[test]
     fn annualization_60min_is_8760() {
         let ppy = annualization_periods_per_year(60);
-        assert!((ppy - 8760.0).abs() < 1.0, "expected ~8760 for 60-min cadence, got {ppy}");
+        assert!(
+            (ppy - 8760.0).abs() < 1.0,
+            "expected ~8760 for 60-min cadence, got {ppy}"
+        );
     }
 
     #[test]
     fn annualization_daily_is_365() {
         let ppy = annualization_periods_per_year(60 * 24);
-        assert!((ppy - 365.0).abs() < 0.5, "expected ~365 for daily cadence, got {ppy}");
+        assert!(
+            (ppy - 365.0).abs() < 0.5,
+            "expected ~365 for daily cadence, got {ppy}"
+        );
     }
 }

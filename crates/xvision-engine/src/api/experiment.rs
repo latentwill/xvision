@@ -14,8 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::eval::experiment_store::{
-    CreateExperimentRequest as StoreCreateRequest, Experiment, ExperimentMutations,
-    ExperimentStore,
+    CreateExperimentRequest as StoreCreateRequest, Experiment, ExperimentMutations, ExperimentStore,
 };
 
 // ── Request / response types ────────────────────────────────────────────────
@@ -70,10 +69,7 @@ pub struct ExperimentDetail {
 /// Validates that `strategy_ids` and `scenario_ids` are non-empty.
 /// Does NOT validate that the referenced strategy/scenario ids actually exist
 /// in their respective stores — that check belongs at batch-run time.
-pub async fn create_experiment(
-    ctx: &ApiContext,
-    req: CreateExperimentRequest,
-) -> ApiResult<Experiment> {
+pub async fn create_experiment(ctx: &ApiContext, req: CreateExperimentRequest) -> ApiResult<Experiment> {
     if req.strategy_ids.is_empty() {
         return Err(ApiError::Validation(
             "strategy_ids must contain at least one strategy id".to_string(),
@@ -85,9 +81,7 @@ pub async fn create_experiment(
         ));
     }
     if req.name.trim().is_empty() {
-        return Err(ApiError::Validation(
-            "name must not be blank".to_string(),
-        ));
+        return Err(ApiError::Validation("name must not be blank".to_string()));
     }
 
     let store = ExperimentStore::new(ctx.db.clone());
@@ -107,10 +101,7 @@ pub async fn create_experiment(
 
 /// Load a single experiment by id. Returns `ApiError::NotFound` when
 /// the id is not in the ledger.
-pub async fn get_experiment(
-    ctx: &ApiContext,
-    experiment_id: &str,
-) -> ApiResult<ExperimentDetail> {
+pub async fn get_experiment(ctx: &ApiContext, experiment_id: &str) -> ApiResult<ExperimentDetail> {
     let store = ExperimentStore::new(ctx.db.clone());
     let exp = store
         .get(experiment_id)
@@ -122,10 +113,7 @@ pub async fn get_experiment(
 }
 
 /// List all experiments, most-recent first.
-pub async fn list_experiments(
-    ctx: &ApiContext,
-    _req: ListExperimentsRequest,
-) -> ApiResult<Vec<Experiment>> {
+pub async fn list_experiments(ctx: &ApiContext, _req: ListExperimentsRequest) -> ApiResult<Vec<Experiment>> {
     let store = ExperimentStore::new(ctx.db.clone());
     store.list().await.map_err(ApiError::Other)
 }
@@ -271,10 +259,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(updated.conclusion.as_deref(), Some("Significant alpha found."));
-        assert_eq!(
-            updated.next_recommendation.as_deref(),
-            Some("Backtest ETH.")
-        );
+        assert_eq!(updated.next_recommendation.as_deref(), Some("Backtest ETH."));
     }
 
     #[tokio::test]

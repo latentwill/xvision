@@ -105,7 +105,14 @@ pub async fn update_regime_labels(
 }
 
 /// Row type for reading back scenario columns that can mutate after insert.
-type ScenarioRow = (String, Option<String>, Option<String>, Option<String>, Option<String>, bool);
+type ScenarioRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    bool,
+);
 
 /// Fetch a single scenario by id. Returns `None` when no row matches.
 pub async fn get_scenario(ctx: &ApiContext, id: &str) -> ApiResult<Option<Scenario>> {

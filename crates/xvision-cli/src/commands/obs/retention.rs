@@ -201,6 +201,9 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("observability.toml");
+        let mut initial = ObservabilityConfig::default();
+        initial.retention.mode = RetentionMode::HashOnly;
+        write_config(&path, &initial).unwrap();
 
         // Pre-populate the file with HashOnly so the env-vs-file
         // contrast is meaningful. If `set` ever folds env back in, the

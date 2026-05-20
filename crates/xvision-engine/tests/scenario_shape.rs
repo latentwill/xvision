@@ -1,6 +1,7 @@
-//! Task 1 — locks the new `Scenario` struct shape via a serde round-trip.
+//! Task 1 — locks the new `Scenario` struct JSON shape.
 
 use chrono::{TimeZone, Utc};
+use serde_json::json;
 use xvision_core::Capital;
 use xvision_engine::eval::scenario::*;
 
@@ -133,8 +134,77 @@ fn scenario_serde_roundtrip() {
         created_by: "edkenne@gmail.com".into(),
         archived_at: None,
     };
-    let json = serde_json::to_string(&s).unwrap();
-    let back: Scenario = serde_json::from_str(&json).unwrap();
+    let expected = json!({
+        "id": "sc_test",
+        "parent_scenario_id": null,
+        "source": "User",
+        "display_name": "ETH 2024",
+        "description": "",
+        "tags": ["regression", "eth"],
+        "notes": null,
+        "asset_class": "Crypto",
+        "asset": [
+            {
+                "class": "Crypto",
+                "symbol": "ETH",
+                "venue_symbol": "ETH/USD"
+            }
+        ],
+        "quote_currency": "Usd",
+        "time_window": {
+            "start": "2024-02-03T00:00:00Z",
+            "end": "2025-02-03T00:00:00Z"
+        },
+        "granularity": "1h",
+        "timezone": "UTC",
+        "calendar": "Continuous24x7",
+        "data_source": {
+            "type": "AlpacaHistorical",
+            "feed": null,
+            "adjustment": "Raw"
+        },
+        "venue": {
+            "venue": "Alpaca",
+            "fees": {
+                "maker_bps": 10,
+                "taker_bps": 25
+            },
+            "slippage": {
+                "model": "linear",
+                "bps": 5
+            },
+            "latency": {
+                "decision_to_fill_ms": 500
+            },
+            "fill_model": {
+                "market_order_fill": "FullAtClose",
+                "limit_order_fill": "NeverFills",
+                "partial_fills": false,
+                "volume_constraints": null
+            }
+        },
+        "replay_mode": {
+            "mode": "Continuous"
+        },
+        "capital": {
+            "initial": 100000.0,
+            "currency": "USD"
+        },
+        "bar_cache_policy": {
+            "cache_key": "abc",
+            "refresh_policy": {
+                "policy": "NeverRefresh"
+            },
+            "data_fetched_at": null
+        },
+        "warmup_bars": 200,
+        "created_at": "2026-05-11T00:00:00Z",
+        "created_by": "edkenne@gmail.com",
+        "archived_at": null
+    });
+
+    assert_eq!(serde_json::to_value(&s).unwrap(), expected);
+    let back: Scenario = serde_json::from_value(expected).unwrap();
     assert_eq!(s, back);
 }
 

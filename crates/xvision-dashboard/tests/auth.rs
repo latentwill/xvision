@@ -28,10 +28,36 @@ use xvision_dashboard::{
 /// parallel; without this lock they race on the same env var.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-fn restore_env(prev: Option<String>) {
-    match prev {
-        Some(v) => std::env::set_var(AUTH_TOKEN_ENV, v),
-        None => std::env::remove_var(AUTH_TOKEN_ENV),
+struct EnvGuard {
+    prev: Option<String>,
+}
+
+impl EnvGuard {
+    fn remove() -> Self {
+        let guard = Self::capture();
+        std::env::remove_var(AUTH_TOKEN_ENV);
+        guard
+    }
+
+    fn set(value: &str) -> Self {
+        let guard = Self::capture();
+        std::env::set_var(AUTH_TOKEN_ENV, value);
+        guard
+    }
+
+    fn capture() -> Self {
+        Self {
+            prev: std::env::var(AUTH_TOKEN_ENV).ok(),
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => std::env::set_var(AUTH_TOKEN_ENV, v),
+            None => std::env::remove_var(AUTH_TOKEN_ENV),
+        }
     }
 }
 
@@ -63,19 +89,16 @@ async fn request_status(
 #[test]
 fn from_env_loopback_no_token_required() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var(AUTH_TOKEN_ENV).ok();
-    std::env::remove_var(AUTH_TOKEN_ENV);
+    let _env = EnvGuard::remove();
     let addr: SocketAddr = "127.0.0.1:8788".parse().unwrap();
     let state = AuthState::from_env(&addr).expect("loopback bind needs no token");
     assert!(!state.is_gated());
-    restore_env(prev);
 }
 
 #[test]
 fn from_env_non_loopback_without_token_refuses() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var(AUTH_TOKEN_ENV).ok();
-    std::env::remove_var(AUTH_TOKEN_ENV);
+    let _env = EnvGuard::remove();
     let addr: SocketAddr = "203.0.113.5:8788".parse().unwrap();
     let err = AuthState::from_env(&addr).expect_err("non-loopback bind without token must refuse to start");
     let msg = err.to_string();
@@ -83,18 +106,15 @@ fn from_env_non_loopback_without_token_refuses() {
         msg.contains(AUTH_TOKEN_ENV) && msg.contains("non-loopback"),
         "startup error must mention {AUTH_TOKEN_ENV} + non-loopback, got: {msg}"
     );
-    restore_env(prev);
 }
 
 #[test]
 fn from_env_non_loopback_with_token_is_gated() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var(AUTH_TOKEN_ENV).ok();
-    std::env::set_var(AUTH_TOKEN_ENV, "hunter2");
+    let _env = EnvGuard::set("hunter2");
     let addr: SocketAddr = "203.0.113.5:8788".parse().unwrap();
     let state = AuthState::from_env(&addr).unwrap();
     assert!(state.is_gated());
-    restore_env(prev);
 }
 
 #[test]
@@ -103,11 +123,24 @@ fn unspecified_bind_treated_as_non_loopback() {
     // it must require a token rather than slipping through as
     // loopback-equivalent.
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var(AUTH_TOKEN_ENV).ok();
-    std::env::remove_var(AUTH_TOKEN_ENV);
+    let _env = EnvGuard::remove();
     let addr: SocketAddr = "0.0.0.0:8788".parse().unwrap();
     AuthState::from_env(&addr).expect_err("0.0.0.0 bind must require a configured token");
-    restore_env(prev);
+}
+
+#[test]
+fn env_guard_restores_token_after_panic() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvGuard::set("original");
+
+    let result = std::panic::catch_unwind(|| {
+        let _env = EnvGuard::set("temporary");
+        assert_eq!(std::env::var(AUTH_TOKEN_ENV).as_deref(), Ok("temporary"));
+        panic!("exercise env restoration during unwinding");
+    });
+
+    assert!(result.is_err());
+    assert_eq!(std::env::var(AUTH_TOKEN_ENV).as_deref(), Ok("original"));
 }
 
 #[tokio::test]

@@ -13,9 +13,9 @@ use xvision_engine::agents::{AgentSlot, AgentStore};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
+use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::templates::registry;
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
@@ -242,8 +242,18 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
                 hypothesis_file,
             };
             new(
-                from_file, template, name, creator, provider, model, json, prompt, role, asset,
-                timeframe, hypothesis_flags,
+                from_file,
+                template,
+                name,
+                creator,
+                provider,
+                model,
+                json,
+                prompt,
+                role,
+                asset,
+                timeframe,
+                hypothesis_flags,
             )
             .await
         }

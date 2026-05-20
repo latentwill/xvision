@@ -899,12 +899,7 @@ impl BacktestExecutor {
         // slice the strategy saw. `decision_bars` was populated by the loop
         // above — one push per cadence-gate pass, matching the strategy's
         // iteration exactly.
-        let baselines = build_baselines_report(
-            &decision_bars,
-            initial,
-            cadence_minutes,
-            strategy_return_pct,
-        );
+        let baselines = build_baselines_report(&decision_bars, initial, cadence_minutes, strategy_return_pct);
 
         let metrics = MetricsSummary {
             total_return_pct: strategy_return_pct,
@@ -1108,7 +1103,8 @@ fn build_baselines_report(
     cadence_minutes: u32,
     strategy_return_pct: f64,
 ) -> BaselinesReport {
-    let computed = bar_baselines::compute_baselines(bars, initial_equity, cadence_minutes, strategy_return_pct);
+    let computed =
+        bar_baselines::compute_baselines(bars, initial_equity, cadence_minutes, strategy_return_pct);
     BaselinesReport {
         buy_hold: BaselineMetrics {
             return_pct: computed.buy_hold.return_pct,

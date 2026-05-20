@@ -772,7 +772,11 @@ pub fn format_inspect_card(s: &Scenario, run_count: Option<usize>, best_return_p
     if s.regime_label.is_some() || s.volatility_label.is_some() || s.trend_direction.is_some() {
         out.push_str("regime:\n");
         if let Some(ref label) = s.regime_label {
-            let derived = if s.regime_derived { " (auto)" } else { " (operator)" };
+            let derived = if s.regime_derived {
+                " (auto)"
+            } else {
+                " (operator)"
+            };
             out.push_str(&format!("  label: {}{}\n", label, derived));
         }
         if let Some(ref vol) = s.volatility_label {
@@ -926,10 +930,9 @@ pub fn select_scenarios(
             if !regimes.is_empty() {
                 let matched = if let Some(ref col_label) = s.regime_label {
                     // Column is set → use ONLY the column (authoritative).
-                    regimes.iter().any(|want| {
-                        col_label.eq_ignore_ascii_case(want)
-                            || col_label.contains(want.as_str())
-                    })
+                    regimes
+                        .iter()
+                        .any(|want| col_label.eq_ignore_ascii_case(want) || col_label.contains(want.as_str()))
                 } else {
                     // Column is NULL → fall back to tag prefix match so
                     // wave-B scenarios (and any hand-tagged scenarios) keep
@@ -1301,9 +1304,8 @@ async fn run_classify(ctx: &ApiContext, a: ClassifyArgs) -> CliResult<()> {
     }
 
     // Single id mode.
-    let id = a.id.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!("specify a scenario id or --all"))
-    })?;
+    let id =
+        a.id.ok_or_else(|| CliError::usage(anyhow::anyhow!("specify a scenario id or --all")))?;
     classify_one(ctx, &id, a.force).await?;
     Ok(())
 }
@@ -1746,15 +1748,26 @@ pub mod select {
         let mut s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["bear"]);
         s.regime_label = Some("expansion".to_string());
 
-        let rows_expansion =
-            select_scenarios(&[s.clone()], &[], None, &["expansion".to_string()], Some(100), false, None, 4)
-                .unwrap();
+        let rows_expansion = select_scenarios(
+            &[s.clone()],
+            &[],
+            None,
+            &["expansion".to_string()],
+            Some(100),
+            false,
+            None,
+            4,
+        )
+        .unwrap();
         assert_eq!(rows_expansion.len(), 1, "column 'expansion' should match");
 
         // Bear tag should NOT match since column overrides.
         let rows_bear =
             select_scenarios(&[s], &[], None, &["bear".to_string()], Some(100), false, None, 4).unwrap();
-        assert!(rows_bear.is_empty(), "tag 'bear' should not match when column says 'expansion'");
+        assert!(
+            rows_bear.is_empty(),
+            "tag 'bear' should not match when column says 'expansion'"
+        );
     }
 
     #[test]
@@ -1765,16 +1778,28 @@ pub mod select {
 
         let rows =
             select_scenarios(&[s], &[], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
-        assert_eq!(rows.len(), 1, "tag fallback should match 'bull' substring in 'trending_bull'");
+        assert_eq!(
+            rows.len(),
+            1,
+            "tag fallback should match 'bull' substring in 'trending_bull'"
+        );
     }
 
     #[test]
     fn scenario_without_regime_excluded_when_regime_filter_set() {
         // No regime in column AND no regime tag → excluded when filter is active.
         let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
-        let rows =
-            select_scenarios(&[s], &[], None, &["expansion".to_string()], Some(100), false, None, 4)
-                .unwrap();
+        let rows = select_scenarios(
+            &[s],
+            &[],
+            None,
+            &["expansion".to_string()],
+            Some(100),
+            false,
+            None,
+            4,
+        )
+        .unwrap();
         assert!(rows.is_empty());
     }
 
@@ -1823,7 +1848,10 @@ pub mod select {
     #[test]
     fn valid_regime_labels_accepted() {
         for label in &["trend", "chop", "crash", "expansion", "recovery"] {
-            assert!(super::validate_regime_label(label).is_ok(), "expected '{label}' to be valid");
+            assert!(
+                super::validate_regime_label(label).is_ok(),
+                "expected '{label}' to be valid"
+            );
         }
     }
 

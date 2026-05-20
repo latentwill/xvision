@@ -560,7 +560,8 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 // substring — keeps the regression assertion that the
                 // dispatch path never names Anthropic actionable.
                 model: "deepseek/deepseek-v4-flash".into(),
-                system_prompt: "Decide.".into(),
+                system_prompt: "Review the BTC/USD strategy context, scenario constraints, recent market evidence, and risk limits before returning a structured trading decision. Explain the reason for the selected action, the invalidation level, and how the position sizing stays inside the configured risk envelope."
+                    .into(),
                 skill_ids: vec![],
                 max_tokens: Some(4096),
                 temperature: None,

@@ -42,7 +42,9 @@ fn seed_strategy_with_trader(
     let home = home.to_path_buf();
     let strategy_name = strategy_name.to_string();
     let role = role.to_string();
-    let system_prompt = system_prompt.to_string();
+    let system_prompt = format!(
+        "{system_prompt} Use the supplied OHLCV context, risk limits, and scenario metadata to produce a disciplined trading decision. Explain position sizing, invalidation, and risk controls before choosing an action. Avoid placeholders and keep the response grounded in active market data."
+    );
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

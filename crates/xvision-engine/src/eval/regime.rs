@@ -87,11 +87,7 @@ fn ols_normalised_slope(bars: &[MarketBar]) -> f64 {
     let sum_x: f64 = (0..bars.len()).map(|i| i as f64).sum();
     let sum_y: f64 = bars.iter().map(|b| b.close).sum();
     let sum_xx: f64 = (0..bars.len()).map(|i| (i as f64) * (i as f64)).sum();
-    let sum_xy: f64 = bars
-        .iter()
-        .enumerate()
-        .map(|(i, b)| (i as f64) * b.close)
-        .sum();
+    let sum_xy: f64 = bars.iter().enumerate().map(|(i, b)| (i as f64) * b.close).sum();
 
     let denom = n * sum_xx - sum_x * sum_x;
     if denom.abs() < f64::EPSILON {
@@ -220,16 +216,8 @@ fn looks_like_recovery(bars: &[MarketBar]) -> bool {
     let n = bars.len();
     let window = (n / 5).max(1);
 
-    let first_avg = bars[..window]
-        .iter()
-        .map(|b| b.close)
-        .sum::<f64>()
-        / window as f64;
-    let last_avg = bars[(n - window)..]
-        .iter()
-        .map(|b| b.close)
-        .sum::<f64>()
-        / window as f64;
+    let first_avg = bars[..window].iter().map(|b| b.close).sum::<f64>() / window as f64;
+    let last_avg = bars[(n - window)..].iter().map(|b| b.close).sum::<f64>() / window as f64;
 
     if first_avg <= 0.0 {
         return false;
@@ -242,10 +230,7 @@ fn looks_like_recovery(bars: &[MarketBar]) -> bool {
     // is at least 5% below the first bar's close (V-shape evidence).
     let first_close = bars[0].close;
     let half = (n / 2).max(1);
-    let first_half_min = bars[..half]
-        .iter()
-        .map(|b| b.close)
-        .fold(f64::INFINITY, f64::min);
+    let first_half_min = bars[..half].iter().map(|b| b.close).fold(f64::INFINITY, f64::min);
     let has_dip = first_close > 0.0 && (first_close - first_half_min) / first_close > 0.05;
 
     upward && has_dip
@@ -299,13 +284,27 @@ mod tests {
     #[test]
     fn empty_bars_produces_all_none() {
         let result = derive_regime_labels(&[]);
-        assert_eq!(result, RegimeLabels { regime_label: None, volatility_label: None, trend_direction: None });
+        assert_eq!(
+            result,
+            RegimeLabels {
+                regime_label: None,
+                volatility_label: None,
+                trend_direction: None
+            }
+        );
     }
 
     #[test]
     fn single_bar_produces_all_none() {
         let result = derive_regime_labels(&[bar(100.0)]);
-        assert_eq!(result, RegimeLabels { regime_label: None, volatility_label: None, trend_direction: None });
+        assert_eq!(
+            result,
+            RegimeLabels {
+                regime_label: None,
+                volatility_label: None,
+                trend_direction: None
+            }
+        );
     }
 
     // ── trend_direction ───────────────────────────────────────────────────
@@ -313,9 +312,7 @@ mod tests {
     #[test]
     fn strong_uptrend_produces_trend_up() {
         // 100 bars rising 1% per bar → strong up.
-        let bars: Vec<MarketBar> = (0..100)
-            .map(|i| bar(100.0 * 1.01_f64.powi(i)))
-            .collect();
+        let bars: Vec<MarketBar> = (0..100).map(|i| bar(100.0 * 1.01_f64.powi(i))).collect();
         let result = derive_regime_labels(&bars);
         assert_eq!(result.trend_direction.as_deref(), Some("up"));
     }
@@ -323,9 +320,7 @@ mod tests {
     #[test]
     fn strong_downtrend_produces_trend_down() {
         // 100 bars falling 1% per bar → down.
-        let bars: Vec<MarketBar> = (0..100)
-            .map(|i| bar(100.0 * 0.99_f64.powi(i)))
-            .collect();
+        let bars: Vec<MarketBar> = (0..100).map(|i| bar(100.0 * 0.99_f64.powi(i))).collect();
         let result = derive_regime_labels(&bars);
         assert_eq!(result.trend_direction.as_deref(), Some("down"));
     }
@@ -344,20 +339,20 @@ mod tests {
     fn very_low_vol_produces_low_label() {
         // Tiny random noise around 100.0 → "low".
         // stddev ≈ 0.001 → < LOW_MAX (0.005).
-        let prices: Vec<f64> = (0..200)
-            .map(|i| 100.0 + ((i % 3) as f64 - 1.0) * 0.1)
-            .collect();
+        let prices: Vec<f64> = (0..200).map(|i| 100.0 + ((i % 3) as f64 - 1.0) * 0.1).collect();
         let bars: Vec<MarketBar> = prices.into_iter().map(bar).collect();
         let result = derive_regime_labels(&bars);
-        assert_eq!(result.volatility_label.as_deref(), Some("low"), "expected low vol");
+        assert_eq!(
+            result.volatility_label.as_deref(),
+            Some("low"),
+            "expected low vol"
+        );
     }
 
     #[test]
     fn extreme_vol_produces_extreme_label() {
         // Alternating ×2 and ÷2 on every bar → ~70% per-bar moves → extreme.
-        let prices: Vec<f64> = (0..100)
-            .map(|i| if i % 2 == 0 { 100.0 } else { 200.0 })
-            .collect();
+        let prices: Vec<f64> = (0..100).map(|i| if i % 2 == 0 { 100.0 } else { 200.0 }).collect();
         let bars: Vec<MarketBar> = prices.into_iter().map(bar).collect();
         let result = derive_regime_labels(&bars);
         assert_eq!(result.volatility_label.as_deref(), Some("extreme"));
@@ -390,9 +385,7 @@ mod tests {
     #[test]
     fn bull_expansion_produces_expansion() {
         // 100 bars rising steadily, no crash, no recovery pattern.
-        let bars: Vec<MarketBar> = (0..100)
-            .map(|i| bar(100.0 + i as f64 * 0.5))
-            .collect();
+        let bars: Vec<MarketBar> = (0..100).map(|i| bar(100.0 + i as f64 * 0.5)).collect();
         let result = derive_regime_labels(&bars);
         assert_eq!(result.trend_direction.as_deref(), Some("up"));
         assert_eq!(result.regime_label.as_deref(), Some("expansion"));
@@ -401,9 +394,7 @@ mod tests {
     #[test]
     fn sideways_chop_produces_chop() {
         // Price oscillates but net is sideways → "chop".
-        let prices: Vec<f64> = (0..100)
-            .map(|i| 100.0 + ((i % 4) as f64 - 2.0) * 0.5)
-            .collect();
+        let prices: Vec<f64> = (0..100).map(|i| 100.0 + ((i % 4) as f64 - 2.0) * 0.5).collect();
         let bars: Vec<MarketBar> = prices.into_iter().map(bar).collect();
         let result = derive_regime_labels(&bars);
         assert_eq!(result.regime_label.as_deref(), Some("chop"));
@@ -412,9 +403,7 @@ mod tests {
     #[test]
     fn downtrend_without_crash_produces_trend() {
         // Gradual 15% decline (below 25% crash threshold) → "trend".
-        let bars: Vec<MarketBar> = (0..100)
-            .map(|i| bar(100.0 - i as f64 * 0.15))
-            .collect();
+        let bars: Vec<MarketBar> = (0..100).map(|i| bar(100.0 - i as f64 * 0.15)).collect();
         let result = derive_regime_labels(&bars);
         assert_eq!(result.trend_direction.as_deref(), Some("down"));
         assert_eq!(result.regime_label.as_deref(), Some("trend"));
@@ -435,14 +424,18 @@ mod tests {
         let mut prices: Vec<f64> = Vec::with_capacity(n);
         // Bars 0-49: decline from 100 to 82 (18% dip).
         prices.extend((0..50).map(|i| 100.0 - i as f64 * 0.36)); // 100 → 82.36
-        // Bars 50-99: recovery from 82 to 130.
+                                                                 // Bars 50-99: recovery from 82 to 130.
         prices.extend((0..50).map(|i| 82.0 + i as f64 * 0.96)); // 82 → 129.04
         let bars: Vec<MarketBar> = prices.into_iter().map(bar).collect();
         let result = derive_regime_labels(&bars);
         // OLS over 100 bars with first-half decline and steeper second-half rise
         // → net positive slope → trend_direction = "up".
         assert_eq!(result.trend_direction.as_deref(), Some("up"), "should be uptrend");
-        assert_eq!(result.regime_label.as_deref(), Some("recovery"), "should detect recovery");
+        assert_eq!(
+            result.regime_label.as_deref(),
+            Some("recovery"),
+            "should detect recovery"
+        );
     }
 
     // ── integration: all labels present for 2+ bars ───────────────────────

@@ -130,7 +130,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
     // 3 model.call spans + their ModelCallFinished rows.
     for i in 0..3 {
         let span_id = format!("span_model_{i}");
-        let ts = started_at + Duration::milliseconds(10 * (i as i64 + 1));
+        let ts = started_at + Duration::seconds(i as i64 + 1);
         bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
             span_id: span_id.clone(),
             run_id: run_id.clone(),
@@ -170,7 +170,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
     // 5 tool.call spans + their start/finish rows.
     for i in 0..5 {
         let span_id = format!("span_tool_{i}");
-        let ts = started_at + Duration::milliseconds(200 + 10 * (i as i64));
+        let ts = started_at + Duration::seconds(10 + i as i64);
         bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
             span_id: span_id.clone(),
             run_id: run_id.clone(),
@@ -222,7 +222,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
         parent_span_id: Some(run_span_id.clone()),
         kind: SpanKind::ToolCall,
         name: "tool.call.never_finished".to_string(),
-        started_at: started_at + Duration::milliseconds(500),
+        started_at: started_at + Duration::seconds(20),
         otel_trace_id: None,
         otel_span_id: None,
         attributes_json: None,
@@ -232,7 +232,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
     // Sidecar crash.
     bus.publish(RunEvent::RunInterrupted(RunInterruptedEvent {
         run_id: run_id.clone(),
-        finished_at: started_at + Duration::milliseconds(600),
+        finished_at: started_at + Duration::seconds(30),
         reason: "sidecar crashed mid-run".to_string(),
     }))
     .await;
@@ -243,6 +243,31 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
 
     // 10 spans total (1 run-level + 3 model + 5 tool + 1 dangling).
     wait_for_rows(&pool, "spans", 10).await;
+
+    let timeline: Vec<String> =
+        sqlx::query_as("SELECT name FROM spans WHERE run_id = ? AND kind IN ('model.call', 'tool.call') ORDER BY started_at, id")
+            .bind(&run_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(name,): (String,)| name)
+            .collect();
+    assert_eq!(
+        timeline,
+        vec![
+            "model.call.0",
+            "model.call.1",
+            "model.call.2",
+            "tool.call.0",
+            "tool.call.1",
+            "tool.call.2",
+            "tool.call.3",
+            "tool.call.4",
+            "tool.call.never_finished",
+        ],
+        "model/tool span timeline must preserve FIFO order by started_at"
+    );
 
     // The agent_runs row exists and is now `interrupted`.
     let (finished_at, error) = wait_for_run_status(&pool, &run_id, RunStatus::Interrupted).await;

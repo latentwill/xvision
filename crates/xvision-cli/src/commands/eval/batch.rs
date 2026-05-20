@@ -515,10 +515,7 @@ fn parse_poll_duration(s: &str) -> Result<Duration> {
 /// Returns the fully-finalized `BatchResult` (including persisted
 /// `batch_id`, per-run entries, and optional review summaries).
 /// Caller is responsible for printing / serializing.
-pub(crate) async fn run_batch_via_env(
-    ctx: &ApiContext,
-    args: &BatchRunArgs,
-) -> CliResult<BatchResult> {
+pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> CliResult<BatchResult> {
     let mode = xvision_engine::eval::run::RunMode::parse(&args.mode).ok_or_else(|| CliError {
         exit: XvnExit::Usage,
         source: anyhow::anyhow!("unknown mode {:?}; expected one of: paper | backtest", args.mode),

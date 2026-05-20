@@ -458,7 +458,10 @@ mod tests {
             mechanical_params: json!({}),
         };
         let s = serde_json::to_string(&strategy).unwrap();
-        assert!(!s.contains("\"hypothesis\""), "None hypothesis must be omitted: {s}");
+        assert!(
+            !s.contains("\"hypothesis\""),
+            "None hypothesis must be omitted: {s}"
+        );
     }
 
     #[test]
@@ -496,8 +499,14 @@ mod tests {
 
         // Round-trip: serialize back and the hypothesis field is present
         let s = serde_json::to_string(&strategy).unwrap();
-        assert!(s.contains("\"hypothesis\""), "populated hypothesis must be serialized: {s}");
-        assert!(s.contains("compression-breakout"), "family must appear in JSON: {s}");
+        assert!(
+            s.contains("\"hypothesis\""),
+            "populated hypothesis must be serialized: {s}"
+        );
+        assert!(
+            s.contains("compression-breakout"),
+            "family must appear in JSON: {s}"
+        );
     }
 
     #[test]
@@ -509,7 +518,10 @@ mod tests {
             "mechanical_params": {}
         });
         let strategy: Strategy = serde_json::from_value(raw).unwrap();
-        assert!(strategy.hypothesis.is_none(), "missing hypothesis field must deserialise to None");
+        assert!(
+            strategy.hypothesis.is_none(),
+            "missing hypothesis field must deserialise to None"
+        );
     }
 
     #[test]

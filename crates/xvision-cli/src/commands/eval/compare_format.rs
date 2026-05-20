@@ -21,9 +21,7 @@ pub fn render_markdown(report: &ComparisonReport, strategy_label: &str) -> Strin
     out.push_str(
         "| Scenario | Return | Baseline (buy_hold) | Sharpe | Max DD | Decisions | Trades | Flips | Avg hold (bars) | Flat rate | Reentries | Failure mode |\n",
     );
-    out.push_str(
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n",
-    );
+    out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
 
     for run in &report.runs {
         out.push_str(&markdown_row(run));

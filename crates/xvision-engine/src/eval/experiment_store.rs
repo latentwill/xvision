@@ -81,10 +81,8 @@ impl ExperimentStore {
     pub async fn create(&self, req: CreateExperimentRequest) -> Result<Experiment> {
         let experiment_id = format!("exp_{}", Ulid::new());
         let now = Utc::now();
-        let strategy_ids_json =
-            serde_json::to_string(&req.strategy_ids).context("serialize strategy_ids")?;
-        let scenario_ids_json =
-            serde_json::to_string(&req.scenario_ids).context("serialize scenario_ids")?;
+        let strategy_ids_json = serde_json::to_string(&req.strategy_ids).context("serialize strategy_ids")?;
+        let scenario_ids_json = serde_json::to_string(&req.scenario_ids).context("serialize scenario_ids")?;
 
         sqlx::query(
             "INSERT INTO experiments \
@@ -152,11 +150,7 @@ impl ExperimentStore {
 
     /// Apply a partial mutation to an existing experiment. Only `Some` fields
     /// are written; `None` fields are left unchanged.
-    pub async fn update(
-        &self,
-        experiment_id: &str,
-        mutations: ExperimentMutations,
-    ) -> Result<Experiment> {
+    pub async fn update(&self, experiment_id: &str, mutations: ExperimentMutations) -> Result<Experiment> {
         let now = Utc::now();
 
         // Build a dynamic UPDATE using only the provided mutations.
@@ -204,11 +198,7 @@ impl ExperimentStore {
 
     /// Store a result JSON blob for the experiment (called when the bound batch
     /// finishes).
-    pub async fn set_result(
-        &self,
-        experiment_id: &str,
-        result: serde_json::Value,
-    ) -> Result<Experiment> {
+    pub async fn set_result(&self, experiment_id: &str, result: serde_json::Value) -> Result<Experiment> {
         let now = Utc::now();
         let result_str = serde_json::to_string(&result).context("serialize result_json")?;
 
@@ -233,11 +223,7 @@ impl ExperimentStore {
     }
 
     /// Bind an `eval_batches.batch_id` to this experiment.
-    pub async fn bind_batch(
-        &self,
-        experiment_id: &str,
-        batch_id: &str,
-    ) -> Result<Experiment> {
+    pub async fn bind_batch(&self, experiment_id: &str, batch_id: &str) -> Result<Experiment> {
         self.update(
             experiment_id,
             ExperimentMutations {
@@ -322,7 +308,11 @@ mod tests {
         let store = ExperimentStore::new(ctx.db.clone());
 
         let exp = store.create(sample_request("Breakout Test")).await.unwrap();
-        assert!(exp.experiment_id.starts_with("exp_"), "id prefix: {}", exp.experiment_id);
+        assert!(
+            exp.experiment_id.starts_with("exp_"),
+            "id prefix: {}",
+            exp.experiment_id
+        );
         assert_eq!(exp.name, "Breakout Test");
         assert_eq!(
             exp.question.as_deref(),

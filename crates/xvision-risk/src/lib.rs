@@ -63,8 +63,9 @@ pub struct RiskLayer {
 impl RiskLayer {
     /// Build a `RiskLayer` from TOML config files.
     ///
-    /// Option A: the asset symbol is **not** on `TraderDecision`; callers pass
-    /// it explicitly to `evaluate`. This keeps `xvision-core` untouched.
+    /// The explicit `asset` passed to `evaluate` is authoritative. Accepted
+    /// decisions are returned with that asset populated, while an existing
+    /// different `TraderDecision.asset` is vetoed.
     ///
     /// Venue context defaults to `None`, which disables venue-keyed rules
     /// such as `MinNotional`. Use [`Self::from_config_for_venue`] when the
@@ -172,7 +173,18 @@ impl RiskLayer {
         asset: AssetSymbol,
     ) -> RiskDecision {
         let original = decision.clone();
+        if decision
+            .asset
+            .is_some_and(|decision_asset| decision_asset != asset)
+        {
+            return RiskDecision::Vetoed {
+                original,
+                reason: VetoReason::Custom("asset_mismatch".into()),
+            };
+        }
+
         let mut current = decision;
+        current.asset = Some(asset);
         let mut first_modify_reason: Option<VetoReason> = None;
 
         for rule in &self.rules {
@@ -186,6 +198,7 @@ impl RiskLayer {
                         first_modify_reason = Some(reason);
                     }
                     current = modified;
+                    current.asset = Some(asset);
                 }
                 RuleVerdict::Veto(reason) => {
                     debug!(rule = rule.name(), ?reason, "veto");
@@ -504,5 +517,51 @@ mod integration {
         let decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
         let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Btc);
         assert!(matches!(result, RiskDecision::Approved { .. }));
+    }
+
+    #[test]
+    fn approved_decision_is_populated_with_evaluated_asset() {
+        use tests_common::{default_risk_layer, flat_portfolio, make_decision};
+
+        let layer = default_risk_layer();
+        let decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
+        let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Btc);
+        match result {
+            RiskDecision::Approved { decision } => {
+                assert_eq!(decision.asset, Some(AssetSymbol::Btc));
+            }
+            other => panic!("expected Approved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn modified_decision_is_populated_with_evaluated_asset() {
+        use tests_common::{default_risk_layer, flat_portfolio, make_decision};
+
+        let layer = default_risk_layer();
+        let decision = make_decision(Action::Buy, Direction::Long, 1500, 15.0, 5.0);
+        let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Btc);
+        match result {
+            RiskDecision::Modified { modified, .. } => {
+                assert_eq!(modified.asset, Some(AssetSymbol::Btc));
+            }
+            other => panic!("expected Modified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mismatched_decision_asset_is_vetoed() {
+        use tests_common::{default_risk_layer, flat_portfolio, make_decision};
+
+        let layer = default_risk_layer();
+        let mut decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
+        decision.asset = Some(AssetSymbol::Eth);
+        let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Btc);
+        match result {
+            RiskDecision::Vetoed { reason, .. } => {
+                assert_eq!(reason, VetoReason::Custom("asset_mismatch".into()));
+            }
+            other => panic!("expected Vetoed(asset_mismatch), got {other:?}"),
+        }
     }
 }

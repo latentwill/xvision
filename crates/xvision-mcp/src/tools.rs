@@ -21,9 +21,9 @@ use ulid::Ulid;
 use std::collections::HashMap;
 
 use xvision_data as xvn;
+use xvision_engine::agents::AgentSlot;
 use xvision_engine::api::eval::{
-    self as api_eval, BatchDetail, CompareRunsRequest, CreateBatchRequest, EvalRunRequest,
-    ListRunsRequest,
+    self as api_eval, BatchDetail, CompareRunsRequest, CreateBatchRequest, EvalRunRequest, ListRunsRequest,
 };
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, Actor, ApiContext};
@@ -37,7 +37,6 @@ use xvision_engine::strategies::{
     risk::RiskConfig,
     store::{strategy_store_dir, FilesystemStore, StrategyStore},
 };
-use xvision_engine::agents::AgentSlot;
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -1117,9 +1116,7 @@ impl XvisionTools {
                     api_eval::attach_run_to_batch(&ctx, &run.id, &batch_id)
                         .await
                         .map_err(api_err_to_mcp)?;
-                    let actions = action_distribution_mcp(&ctx, &run.id)
-                        .await
-                        .unwrap_or_default();
+                    let actions = action_distribution_mcp(&ctx, &run.id).await.unwrap_or_default();
                     let (return_pct, sharpe, drawdown_pct, decisions) = if let Some(m) = &run.metrics {
                         (
                             Some(m.total_return_pct),
@@ -1168,11 +1165,9 @@ impl XvisionTools {
     /// Show the status of a persisted batch by its id. Required: `batch_id`.
     /// Returns `{ batch_id, strategy_id, status, created_at, completed_at?,
     /// review_with?, run_ids }`.
-    #[tool(
-        description = "Show the persisted status of an eval batch by id. \
+    #[tool(description = "Show the persisted status of an eval batch by id. \
         Required: batch_id. \
-        Returns { batch_id, strategy_id, status, created_at, completed_at, review_with, run_ids }."
-    )]
+        Returns { batch_id, strategy_id, status, created_at, completed_at, review_with, run_ids }.")]
     async fn xvn_eval_batch_status(
         &self,
         Parameters(req): Parameters<EvalBatchStatusReq>,
@@ -1206,9 +1201,7 @@ impl XvisionTools {
                 ));
             }
             let ctx = self.api_context().await?;
-            let detail = api_eval::get_batch(&ctx, bid)
-                .await
-                .map_err(api_err_to_mcp)?;
+            let detail = api_eval::get_batch(&ctx, bid).await.map_err(api_err_to_mcp)?;
             detail.run_ids
         } else {
             req.run_ids.clone()
@@ -1232,20 +1225,19 @@ impl XvisionTools {
     /// Either `target_decisions` (Mode A, ±10 %) or `same_decisions=true`
     /// + `max_decisions` (Mode B) must be set.
     /// Returns an array of `{ id, name, asset, timeframe, decision_count }`.
-    #[tool(
-        description = "Filter the scenario library and return a ranked subset. \
+    #[tool(description = "Filter the scenario library and return a ranked subset. \
         Optional: assets (list), timeframe (e.g. 4h), regimes (list), count (default 4). \
         Decision-count mode: target_decisions (Mode A, ±10%) or same_decisions=true + \
         max_decisions (Mode B, common count). \
-        Returns [{ id, name, asset, timeframe, decision_count }]."
-    )]
+        Returns [{ id, name, asset, timeframe, decision_count }].")]
     async fn xvn_scenarios_select(
         &self,
         Parameters(req): Parameters<ScenariosSelectReq>,
     ) -> Result<String, rmcp::ErrorData> {
         if req.target_decisions.is_none() && !req.same_decisions {
             return Err(rmcp::ErrorData::invalid_params(
-                "specify either target_decisions (Mode A) or same_decisions=true + max_decisions (Mode B)".to_string(),
+                "specify either target_decisions (Mode A) or same_decisions=true + max_decisions (Mode B)"
+                    .to_string(),
                 None,
             ));
         }
@@ -1256,11 +1248,7 @@ impl XvisionTools {
             ));
         }
 
-        let timeframe_minutes = req
-            .timeframe
-            .as_deref()
-            .map(parse_timeframe_mcp)
-            .transpose()?;
+        let timeframe_minutes = req.timeframe.as_deref().map(parse_timeframe_mcp).transpose()?;
 
         let ctx = self.api_context().await?;
         let all = api_scenario::list(
@@ -1549,10 +1537,7 @@ fn parse_timeframe_minutes_mcp(timeframe: &str) -> Result<u32, rmcp::ErrorData> 
 
 /// Count each action kind in the decisions table for a run.
 /// Returns a `serde_json::Value` map (`{ "long_open": N, ... }`).
-async fn action_distribution_mcp(
-    ctx: &ApiContext,
-    run_id: &str,
-) -> anyhow::Result<serde_json::Value> {
+async fn action_distribution_mcp(ctx: &ApiContext, run_id: &str) -> anyhow::Result<serde_json::Value> {
     use std::collections::BTreeMap;
     let store = RunStore::new(ctx.db.clone());
     let decisions = store.read_decisions(run_id).await?;
@@ -1650,8 +1635,7 @@ fn select_scenarios_mcp(
             .map(|s| scenario_decision_count_mcp(s))
             .filter(|&c| c <= max)
             .collect();
-        let mut count_freq: std::collections::HashMap<u64, usize> =
-            std::collections::HashMap::new();
+        let mut count_freq: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
         for c in &counts {
             *count_freq.entry(*c).or_insert(0) += 1;
         }
@@ -1746,8 +1730,14 @@ fn select_scenarios_mcp(
 fn format_comparison_markdown(report: &xvision_engine::eval::compare::ComparisonReport) -> String {
     use std::fmt::Write;
     let mut md = String::new();
-    let _ = writeln!(md, "| run_id | scenario_id | status | return_pct | sharpe | drawdown_pct |");
-    let _ = writeln!(md, "|--------|-------------|--------|------------|--------|--------------|");
+    let _ = writeln!(
+        md,
+        "| run_id | scenario_id | status | return_pct | sharpe | drawdown_pct |"
+    );
+    let _ = writeln!(
+        md,
+        "|--------|-------------|--------|------------|--------|--------------|"
+    );
     for r in &report.runs {
         let ret = r
             .metrics
@@ -1767,7 +1757,12 @@ fn format_comparison_markdown(report: &xvision_engine::eval::compare::Comparison
         let _ = writeln!(
             md,
             "| {} | {} | {} | {} | {} | {} |",
-            r.id, r.scenario_id, r.status.as_str(), ret, sharpe, dd
+            r.id,
+            r.scenario_id,
+            r.status.as_str(),
+            ret,
+            sharpe,
+            dd
         );
     }
     md
@@ -1999,7 +1994,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_draft_succeeds_for_fresh_template() {
+    async fn validate_draft_reports_fresh_template_not_eval_ready() {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
@@ -2016,8 +2011,8 @@ mod tests {
             .await
             .unwrap();
         let r = parsed(&v);
-        assert_eq!(r["ok"], true);
-        assert_eq!(r["errors"], serde_json::json!([]));
+        assert_eq!(r["ok"], false);
+        assert!(r["errors"].as_array().is_some_and(|errors| !errors.is_empty()));
     }
 
     // --- eval verbs (Phase 3.D Task 12) ----------------------------------
@@ -2616,13 +2611,13 @@ mod tests {
 
     // ── select_scenarios_mcp pure unit tests ─────────────────────────────────
 
+    use std::str::FromStr;
     use xvision_engine::eval::scenario::{
-        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef,
-        DataSource, Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency,
-        RefreshPolicy, ReplayMode, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
+        FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
+        ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
     use xvision_engine::Capital;
-    use std::str::FromStr;
 
     fn make_test_scenario(
         id: &str,
@@ -2659,9 +2654,14 @@ mod tests {
             },
             venue: VenueSettings {
                 venue: Venue::Alpaca,
-                fees: Fees { maker_bps: 10, taker_bps: 25 },
+                fees: Fees {
+                    maker_bps: 10,
+                    taker_bps: 25,
+                },
                 slippage: SlippageModel::None,
-                latency: LatencyModel { decision_to_fill_ms: 0 },
+                latency: LatencyModel {
+                    decision_to_fill_ms: 0,
+                },
                 fill_model: FillModel {
                     market_order_fill: MarketOrderFill::FullAtClose,
                     limit_order_fill: LimitOrderFill::NeverFills,
@@ -2691,17 +2691,7 @@ mod tests {
     fn select_scenarios_mcp_mode_a_returns_matching() {
         // 300 1h bars − 200 warmup = 100 decisions. target=100 → ±10% → matches.
         let s = make_test_scenario("sc1", "ETH", "1h", 300 * 3_600, 200);
-        let rows = select_scenarios_mcp(
-            &[s],
-            &[],
-            None,
-            &[],
-            Some(100),
-            false,
-            None,
-            4,
-        )
-        .unwrap();
+        let rows = select_scenarios_mcp(&[s], &[], None, &[], Some(100), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].decision_count, 100);
     }
@@ -2710,17 +2700,7 @@ mod tests {
     fn select_scenarios_mcp_mode_a_empty_when_no_match() {
         // 50 decisions; target=200 (±10%→180..220) → no match.
         let s = make_test_scenario("sc1", "ETH", "1h", 250 * 3_600, 200);
-        let rows = select_scenarios_mcp(
-            &[s],
-            &[],
-            None,
-            &[],
-            Some(200),
-            false,
-            None,
-            4,
-        )
-        .unwrap();
+        let rows = select_scenarios_mcp(&[s], &[], None, &[], Some(200), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -2729,8 +2709,7 @@ mod tests {
         let s1 = make_test_scenario("sc1", "ETH", "1h", 300 * 3_600, 200); // 100 decisions
         let s2 = make_test_scenario("sc2", "BTC", "1h", 300 * 3_600, 200); // 100 decisions
         let s3 = make_test_scenario("sc3", "SOL", "1h", 250 * 3_600, 200); // 50 decisions
-        let rows = select_scenarios_mcp(&[s1, s2, s3], &[], None, &[], None, true, Some(200), 2)
-            .unwrap();
+        let rows = select_scenarios_mcp(&[s1, s2, s3], &[], None, &[], None, true, Some(200), 2).unwrap();
         assert_eq!(rows.len(), 2);
         for r in &rows {
             assert_eq!(r.decision_count, 100);

@@ -238,10 +238,7 @@ async fn run_show(args: ShowArgs, xvn_home: Option<PathBuf>) -> CliResult<()> {
 
 async fn run_update(args: UpdateArgs, xvn_home: Option<PathBuf>) -> CliResult<()> {
     // Validate: at least one mutation must be provided.
-    if args.conclusion.is_none()
-        && args.next_recommendation.is_none()
-        && args.bind_batch.is_none()
-    {
+    if args.conclusion.is_none() && args.next_recommendation.is_none() && args.bind_batch.is_none() {
         return Err(CliError::usage(anyhow::anyhow!(
             "at least one of --conclusion, --next-recommendation, or --bind-batch is required"
         )));
@@ -280,8 +277,7 @@ async fn run_update(args: UpdateArgs, xvn_home: Option<PathBuf>) -> CliResult<()
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 async fn open_ctx(override_path: Option<PathBuf>) -> CliResult<ApiContext> {
-    let xvn_home = crate::commands::home::resolve_xvn_home(override_path)
-        .map_err(CliError::upstream)?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(override_path).map_err(CliError::upstream)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());

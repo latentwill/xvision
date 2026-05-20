@@ -10,7 +10,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use xvision_engine::api::eval::{self};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::attestation::verify;
-use xvision_engine::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+use xvision_engine::eval::run::{MetricsSummary, Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
 
@@ -48,8 +48,7 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
 }
 
 async fn seed_completed_run(store: &RunStore, scenario_id: &str) -> Run {
-    let mut run = Run::new_queued("h-strategy".into(), scenario_id.into(), RunMode::Backtest);
-    run.status = RunStatus::Completed;
+    let run = Run::new_queued("h-strategy".into(), scenario_id.into(), RunMode::Backtest);
     store.create(&run).await.unwrap();
 
     let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
