@@ -4,8 +4,13 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-21 — Docs / lists / metric polish wave
-> opened from `team/intake/2026-05-21-docs-lists-metric-polish.md`:
+> Last updated: 2026-05-21 — Clawpatch-blockers wave opened from
+> `team/intake/2026-05-19-clawpatch-blockers.md`: 3 bundled contracts
+> (`clawpatch-engine-test-helpers` covering B-1/B-2/B-3/B-4;
+> `clawpatch-cli-test-assert` covering B-5; `clawpatch-frontend-components`
+> covering B-6 through B-11, with B-11 explicitly escalation-gated on
+> the no-popups rule). Earlier 2026-05-21 work — Docs / lists / metric
+> polish wave opened from `team/intake/2026-05-21-docs-lists-metric-polish.md`:
 > 5 contracts (`docs-ui-prototype-alignment` P1,
 > `list-search-filter-completion-audit` P1 foundation,
 > `list-search-filter-missing-surfaces` P1 integration gated on
@@ -21,6 +26,17 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 `team/board-v2.md`.
 
 ## Active
+
+- **Clawpatch blockers — 2026-05-21** (3 bundled tracks, decomposed
+  from `team/intake/2026-05-19-clawpatch-blockers.md`; 11 B-findings
+  the autonomous loop couldn't close):
+  - [clawpatch-engine-test-helpers](contracts/clawpatch-engine-test-helpers.md) — leaf · ready · medium — covers B-1, B-2, B-3 (SQLite in-memory pool single-connection sweep — only `api_eval.rs` still has the naked `SqlitePool::connect(":memory:")` per 2026-05-21 recon) and B-4 (janitor `max_bytes_evicts_oldest_until_under_cap` staggered mtimes).
+  - [clawpatch-cli-test-assert](contracts/clawpatch-cli-test-assert.md) — leaf · ready · low — covers B-5 (add one `stdout.is_empty()` assertion in `crates/xvision-cli/tests/eval_export_cli.rs`). 15-minute job.
+  - [clawpatch-frontend-components](contracts/clawpatch-frontend-components.md) — leaf · ready · low/medium — covers B-6 (HealthPill test), B-7 (CacheStatusBadge test), B-8 (AgentForm.duplicateSlot `max_tokens: null`), B-9 (WizardPreviewChart `useMemo`), B-10 (SlotForm provider-change model clear), and B-11 (**MobileDrawer focus management — escalation-gated**: clawpatch's recommended `role="dialog"`/`aria-modal` fix conflicts with the CLAUDE.md no-popups rule; the contract requires the worker to either refactor MobileDrawer into a no-focus-trap inline drawer OR get an operator exemption before implementing the focus-trapping fix).
+
+  Sequencing: parallel. All three tracks are independent. The frontend
+  bundle could split per-component if a worker prefers; the contract
+  allows that via a contract-update PR.
 
 - **Docs / lists / metric polish — 2026-05-21** (5 tracks, decomposed
   from `team/intake/2026-05-21-docs-lists-metric-polish.md`):
