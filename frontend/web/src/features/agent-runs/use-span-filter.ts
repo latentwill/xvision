@@ -52,7 +52,11 @@ function parseQueryString(qs: string): SerializedState {
   for (const tok of tokens) {
     if (tok.startsWith("kind:")) {
       const v = tok.slice(5) as SpanCategory;
-      if (["agent", "model", "tool", "supervisor", "artifact"].includes(v)) out.k.push(v);
+      // F-7 (qa round 7): `broker` is now a first-class kind chip;
+      // `supervisor` is no longer surfaced in the filter row but is
+      // still accepted from URL/localStorage state for back-compat
+      // with already-shared deep links.
+      if (["agent", "model", "tool", "broker", "supervisor", "artifact"].includes(v)) out.k.push(v);
     } else if (tok.startsWith("status:")) {
       const v = tok.slice(7) as StatusFilter;
       if (["green", "blue", "amber", "red", "all"].includes(v)) out.s = v;
@@ -115,6 +119,13 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
       return { ...base, k: [...next] };
     });
 
+  // F-7 (qa round 7): the Trade quick-filter on the dock header sets
+  // multiple kind chips at once, so callers need an explicit setter
+  // instead of N sequential toggleKind() calls (each of which would
+  // race with the prior setState).
+  const setKinds = (next: Iterable<SpanCategory>) =>
+    setState((prev) => ({ ...stateForRun(prev, runId), k: [...new Set(next)] }));
+
   const setStatus = (s: StatusFilter) =>
     setState((prev) => ({ ...stateForRun(prev, runId), s }));
 
@@ -152,7 +163,7 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
 
   return {
     query: activeState.q, setQuery,
-    kinds, toggleKind,
+    kinds, toggleKind, setKinds,
     status: activeState.s, setStatus,
     decisionFilter: activeState.d, setDecisionFilter,
     filtered,
