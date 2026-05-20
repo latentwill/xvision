@@ -17,6 +17,21 @@
 `team/archive/2026-05-17-v2a/`. The remaining two leaves are independent —
 safe to claim in parallel.
 
+## Active — V2D (agent memory)
+
+Decomposed 2026-05-21 from `team/intake/2026-05-21-v2d-agent-memory.md`.
+Per-intake choice: a single contract carries the whole wave on one branch
+(`task/v2d-agent-memory`) with five internal phases per the plan. The
+5-phases-as-one-contract shape was chosen because Phases 1→2→3 are
+strictly sequential (compile dependencies) and Phases 4+5 share the
+event surface that Phase 3 introduces — splitting the wave into five
+contracts would add coordination overhead with no parallelism payoff.
+
+- [v2d-agent-memory](contracts/v2d-agent-memory.md) — foundation · claimed · single-contract wave · claims migration **026**
+
+Implementation plan:
+`docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`.
+
 ## Active — V2E (eval accuracy & trace surface)
 
 Decomposed 2026-05-20 from `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md`.
@@ -172,11 +187,11 @@ through `team/intake/<date>-<phase>.md` first.
 | 9 | Testnet marketplace list/buy/sell/delegate flow | marketplace spec |
 | 10 | Reputation + validation receipt write/readback | SLF4, SLF5 |
 
-### V2D — agent memory (new phase; enables V3 autoresearcher)
+### V2D — agent memory (decomposed 2026-05-21 — see "Active — V2D" above)
 
 | # | Item | Source |
 |---|---|---|
-| 15 | Rust cortex memory + per-agent memory toggle (off / global / agent-specific) | New — see "V2D notes" below |
+| 15 | Rust cortex memory + per-agent memory toggle (off / global / agent-specific) | Decomposed: contract `v2d-agent-memory`, plan `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md` |
 
 V2D is a prerequisite for the V3 autoresearcher: a mutator/judge loop without
 persistent memory keeps re-discovering the same lessons. Land before V3 unless
@@ -385,9 +400,10 @@ Intake doc when this opens: `team/intake/2026-05-19-eval-accuracy-and-trace-surf
 ## Wave intake
 
 - V2A intake: `team/intake/2026-05-16-eval-review-and-v2a.md` (V2A items 1–3 decomposed).
+- V2D intake: `team/intake/2026-05-21-v2d-agent-memory.md` (item 15 decomposed into a single-contract wave; plan at `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`).
 - V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (items 17–25 decomposed; 7 contracts in `team/contracts/eval-*` all `status: ready`).
 - V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (items 26–31, **not yet decomposed**).
-- V2B/V2C/V2D/V3/V4: no intake yet.
+- V2B/V2C/V3/V4: no intake yet.
 
 ## Closeout
 

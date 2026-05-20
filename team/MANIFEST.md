@@ -77,8 +77,9 @@ unambiguous.
 | 023 | eval-trace-surface-foundation (V2E)  | reserved 2026-05-20 |
 | 024 | eval-candle-integrity-and-manifest (V2E) | reserved 2026-05-20 |
 | 025 | eval-prompt-cache-and-rolling-window (F-8) | in flight |
+| 026 | agent-slot-memory-mode (V2D)         | in flight     |
 
-The next available number is **026**. The conductor must approve and
+The next available number is **027**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 
