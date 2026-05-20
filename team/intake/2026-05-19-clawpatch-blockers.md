@@ -207,3 +207,30 @@ Verification target:
 
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-7f1ddf7f4e-f0c9_fc3d85213c`
   after a broader fix.
+
+## B-8 - AgentForm duplicate-slot generated fix fails validation
+
+- Finding: `fnd_sig-feat-ui-flow-98a40b66c8-6d2a_48f373bf7f`
+- Severity: low
+- Category: api-contract
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` attempted to change `AgentForm.duplicateSlot` so copied slots
+set `max_tokens: null`, and added an `agents.test.tsx` regression assertion.
+The generated patch failed clawpatch's validation after applying. The failed
+generated code and test hunks were removed so the autonomous loop could continue
+from a clean tree.
+
+Recommendation from clawpatch:
+
+- When duplicating a slot, explicitly set `max_tokens: null` on the new slot
+  while copying the rest of the editable fields.
+
+Minimum fix scope from clawpatch:
+
+- `AgentForm.duplicateSlot` payload construction.
+
+Verification target:
+
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-98a40b66c8-6d2a_48f373bf7f`
+  after a broader fix.
