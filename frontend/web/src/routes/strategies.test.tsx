@@ -1,5 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -17,9 +23,9 @@ vi.mock("@/api/strategies", async () => {
   };
 });
 
-function renderRoute() {
+function renderRoute(initialEntry = "/strategies") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider
         client={
           new QueryClient({
@@ -33,12 +39,38 @@ function renderRoute() {
   );
 }
 
+// `<ResponsiveListCard>` reads `useViewportMode()` which calls
+// `window.matchMedia`. jsdom doesn't provide it; install a desktop-
+// breakpoint stub so the route mounts without the runtime throwing.
+// Tests that need the phone branch can override locally.
+function stubMatchMediaDesktop() {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query.includes("min-width: 1280px"),
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 describe("StrategiesRoute", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    stubMatchMediaDesktop();
+  });
+
   afterEach(() => {
     cleanup();
   });
 
-  it("renders strategy id, display name, model summary, tags, and humanized cadence", async () => {
+  it("renders strategy display name, model summary, tags, and humanized cadence", async () => {
     vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
       items: [
         {
@@ -60,12 +92,15 @@ describe("StrategiesRoute", () => {
 
     renderRoute();
 
-    expect((await screen.findAllByText("Name")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Trend 4H").length).toBeGreaterThan(0);
+    // Wait for the row content; "Name" header renders synchronously even
+    // before the query resolves, so we need a real row signal.
+    expect((await screen.findAllByText("Trend 4H")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("4h").length).toBeGreaterThan(0);
     expect(screen.getAllByText("claude-sonnet +1").length).toBeGreaterThan(0);
     expect(screen.getAllByText("BTC/USD").length).toBeGreaterThan(0);
     expect(screen.getAllByText("trending_bull").length).toBeGreaterThan(0);
+    // The raw ULID must not appear as a stand-alone text node in the
+    // table body — it's only acceptable as a Link href.
     expect(screen.queryByText("Backend ID")).not.toBeInTheDocument();
     expect(screen.queryByText("01TEST")).not.toBeInTheDocument();
     expect(
@@ -95,5 +130,93 @@ describe("StrategiesRoute", () => {
     expect((await screen.findAllByText("Open Strategy")).length).toBeGreaterThan(0);
     expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("renders the empty state with a 'New strategy' call to action when the engine returns zero rows", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+
+    renderRoute();
+
+    await waitFor(() =>
+      expect(screen.getByText(/No strategies match these filters\./)).toBeInTheDocument(),
+    );
+    // Two CTAs exist: one in the top action bar, one inside the empty
+    // state. Both should link to /strategies/new.
+    const ctas = screen.getAllByRole("link", { name: /New strategy/i });
+    expect(ctas.length).toBeGreaterThanOrEqual(1);
+    expect(ctas[0]).toHaveAttribute("href", "/strategies/new");
+  });
+
+  it("filters by pipeline shape via the toolbar select", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01SOLO",
+          display_name: "Solo Trader",
+          template: "trend_follower",
+          decision_cadence_minutes: 240,
+          provider_models: [{ provider: "openai", model: "gpt-4.1-mini" }],
+        },
+        {
+          agent_id: "01MULTI",
+          display_name: "Pipeline Crew",
+          template: "graph",
+          decision_cadence_minutes: 60,
+          provider_models: [
+            { provider: "openai", model: "gpt-4.1-mini" },
+            { provider: "anthropic", model: "claude-sonnet-4" },
+          ],
+        },
+      ],
+      total: 2,
+    });
+
+    renderRoute();
+
+    // Both rows visible by default.
+    await waitFor(() =>
+      expect(screen.getAllByText(/Solo Trader/).length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText(/Pipeline Crew/).length).toBeGreaterThan(0);
+
+    const shapeSelect = screen.getByLabelText(
+      /Pipeline shape/i,
+    ) as HTMLSelectElement;
+    fireEvent.change(shapeSelect, { target: { value: "multi" } });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Solo Trader/)).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByText(/Pipeline Crew/).length).toBeGreaterThan(0);
+  });
+
+  it("hydrates the search term from the ?q= URL parameter", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01ALPHA",
+          display_name: "Alpha Strategy",
+          template: "trend_follower",
+          decision_cadence_minutes: 60,
+        },
+        {
+          agent_id: "01BETA",
+          display_name: "Beta Strategy",
+          template: "trend_follower",
+          decision_cadence_minutes: 60,
+        },
+      ],
+      total: 2,
+    });
+
+    renderRoute("/strategies?q=alpha");
+
+    await waitFor(() =>
+      expect(screen.getAllByText(/Alpha Strategy/).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText(/Beta Strategy/)).not.toBeInTheDocument();
   });
 });
