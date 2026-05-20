@@ -145,6 +145,36 @@ priority order suggests this batching:
    Finalization-time persists ages of decisions cheaply; on-demand is
    simpler but adds latency to every inspector load.
 
+## Status reconciliation — 2026-05-21
+
+**All 14 tracks in this intake have shipped.** Verified via git log
++ source presence on `origin/main` 2026-05-21.
+
+| Track | Wave | Shipped via | File evidence |
+|---|---|---|---|
+| #1 `cli-strategy-create-atomic` | A | `2b77c11` | `crates/xvision-cli/src/commands/strategy.rs` |
+| #2 `cli-strategy-validate` | A | `6448934` | `strategy.rs` (`xvn strategy validate` verb) |
+| #3 `cli-eval-batch-run-wait` | A | `6c6d123` | `crates/xvision-cli/src/commands/eval/batch.rs` |
+| #4 `cli-eval-compare-report` | A | `9c91842` | `crates/xvision-cli/src/commands/eval/compare_format.rs` |
+| #5 `cli-scenario-set-balance` | B | `a786d0d`, `557d89c` | `xvn scenarios select`, `--same-decisions` in `scenario.rs:269-275` |
+| #6 `cli-scenario-inspect-card` | B | `d129469` | `format_inspect_card` at `scenario.rs:737` |
+| #7 `strategy-manifest-with-hypothesis` | C | `c09b120`, `a640542` | `Hypothesis` struct on `Strategy` |
+| #8 `experiment-ledger-foundation` | C | `458073d`, `a640542` | migration 022 `experiments` table |
+| #9 `cli-experiment-run-oneshot` | C | `ccfe376`, `78c0d7b`, `893337c` | `xvn experiment run` orchestrator |
+| #10 `eval-decision-behavior-summary` | C | `8ccd8bc`, `296efd1` | per-asset reentry tracking; on-demand from decisions |
+| #11 `eval-baseline-auto-comparison` | C | `4cc798c`, `dd4c054`, `64938b3` | baseline arms wired into `BacktestExecutor`; compare-markdown column |
+| #12 `scenario-regime-labels` | C | `26246a4`, `29fc9ec`, `1f3b5d4` | regime column + `xvn scenario classify`/`set-regime` |
+| #13 `mcp-surface-parity-for-new-verbs` | D/E | `fe55dde`, `d9e9bd8` | 6 MCP tool peers for the new CLI verbs |
+| #14 `cli-eval-batch-auto-review` | D | `0c74e3d` | `--review-with` orders reviews before `finalize_batch` |
+
+The intake's "Recommended first wave" (#1-4) plus wave B/C/D/E all
+shipped. No outstanding contracts from this intake.
+
+Operator follow-on intake covering token-burn safety + model bakeoffs:
+`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md` —
+addendum to this one, decomposed separately starting 2026-05-21 with
+`cli-operator-safety-p0` (bundled cancel + hard-limits + scope-guardrails).
+
 ## Out of scope for this intake
 
 - The QA22 inspector-polish wave (`2026-05-19-qa-operator-round-4.md`).
