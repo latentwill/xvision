@@ -741,9 +741,15 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
         });
     }
 
-    let report = eval::compare(&ctx, CompareRunsRequest { run_ids })
-        .await
-        .map_err(|e| api_to_cli("eval compare", e))?;
+    let report = eval::compare(
+        &ctx,
+        CompareRunsRequest {
+            run_ids,
+            allow_manifest_mismatch: false,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("eval compare", e))?;
 
     if args.json {
         let report = build_compare_report(&ctx, report, &args.sort).await;

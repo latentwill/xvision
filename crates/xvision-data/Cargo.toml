@@ -26,8 +26,18 @@ governor     = "0.6"
 nonzero_ext  = "0.3"
 thiserror    = { workspace = true }
 tracing      = { workspace = true }
+sha2         = "0.10"
+hex          = "0.4"
+bytes        = "1"
+ts-rs        = { version = "9", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
 wiremock = "0.6"
 tokio    = { workspace = true, features = ["rt", "macros", "test-util"] }
+
+[features]
+default   = []
+# Emit TypeScript types for data-layer types (DataDefect, DataManifest, etc.)
+# Activated via xvision-engine's `ts-export` feature.
+ts-export = ["dep:ts-rs"]

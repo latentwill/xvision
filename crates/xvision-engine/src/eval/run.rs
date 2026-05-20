@@ -109,6 +109,22 @@ pub struct Run {
     pub estimated_total_tokens: Option<u64>,
     pub actual_input_tokens: Option<u64>,
     pub actual_output_tokens: Option<u64>,
+
+    // ── Candle integrity + manifest (migration 027) ────────────────────────
+    /// SHA-256 hex digest of the raw Parquet bytes loaded for this run.
+    /// `None` for runs created before migration 027 or for paper-mode runs
+    /// where bars are not pinned to a Parquet snapshot.
+    #[serde(default)]
+    pub bars_content_hash: Option<String>,
+    /// SHA-256 hex digest of the JSON-canonical `DataManifest` for this run.
+    /// Used by `ComparisonReport::build` to refuse mismatched-manifest compares.
+    /// `None` for pre-migration rows; populated at run-start for new runs.
+    #[serde(default)]
+    pub manifest_canonical: Option<String>,
+    /// Full JSON-serialized `DataManifest` for this run.
+    /// `None` for pre-migration rows.
+    #[serde(default)]
+    pub bars_manifest: Option<serde_json::Value>,
 }
 
 impl Run {
@@ -129,6 +145,9 @@ impl Run {
             estimated_total_tokens: None,
             actual_input_tokens: None,
             actual_output_tokens: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
+            bars_manifest: None,
         }
     }
 }

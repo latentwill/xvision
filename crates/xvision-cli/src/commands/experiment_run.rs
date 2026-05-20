@@ -634,7 +634,15 @@ async fn build_compare_markdown(ctx: &ApiContext, batch: &BatchResult, strategy_
         return out;
     }
 
-    match eval::compare(ctx, xvision_engine::api::eval::CompareRunsRequest { run_ids }).await {
+    match eval::compare(
+        ctx,
+        xvision_engine::api::eval::CompareRunsRequest {
+            run_ids,
+            allow_manifest_mismatch: false,
+        },
+    )
+    .await
+    {
         Ok(report) => compare_format::render_markdown(&report, strategy_label),
         Err(e) => format!("<!-- compare failed: {e} -->\n"),
     }

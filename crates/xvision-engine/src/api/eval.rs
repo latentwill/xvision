@@ -36,7 +36,7 @@ use crate::api::scenario as api_scenario;
 use crate::api::settings::brokers as api_brokers;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{self, EvalAttestation};
-use crate::eval::compare::{compare_runs, ComparisonReport};
+use crate::eval::compare::{compare_runs, CompareOptions, ComparisonReport, ManifestMismatch};
 use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
 use crate::eval::run::{Run, RunMode, RunStatus};
 #[allow(deprecated)]
@@ -583,6 +583,12 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
 pub struct CompareRunsRequest {
     /// Two-or-more run ids to fold into a single `ComparisonReport`.
     pub run_ids: Vec<String>,
+    /// When `true`, skip the manifest-canonical consistency check and render
+    /// the comparison even when runs have different data manifests. Default
+    /// `false`. Pass `true` only when you explicitly want to compare runs
+    /// that used different feeds, adjustment modes, or session filters.
+    #[serde(default)]
+    pub allow_manifest_mismatch: bool,
 }
 
 /// Run-set comparison. Loads each run + equity curve + findings from the
@@ -634,7 +640,10 @@ async fn compare_inner(ctx: &ApiContext, req: &CompareRunsRequest) -> ApiResult<
         ));
     }
     let store = RunStore::new(ctx.db.clone());
-    compare_runs(&req.run_ids, &store).await.map_err(|e| {
+    let options = CompareOptions {
+        allow_manifest_mismatch: req.allow_manifest_mismatch,
+    };
+    compare_runs(&req.run_ids, &store, &options).await.map_err(|e| {
         // anyhow's alternate formatter walks the entire context chain so
         // the underlying "run not found: <id>" surfaces even though
         // `compare_runs` wraps it with `with_context`.
@@ -645,6 +654,8 @@ async fn compare_inner(ctx: &ApiContext, req: &CompareRunsRequest) -> ApiResult<
                 .map(|(_, tail)| tail.trim().trim_end_matches(['\'', '"']).to_string())
                 .unwrap_or_else(|| "<unknown>".into());
             ApiError::NotFound(format!("eval run '{missing}'"))
+        } else if e.downcast_ref::<ManifestMismatch>().is_some() {
+            ApiError::Validation(chain)
         } else {
             ApiError::Internal(chain)
         }
