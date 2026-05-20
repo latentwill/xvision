@@ -42,10 +42,18 @@ describe("AgentRunDetailRoute", () => {
     await waitFor(() => expect(screen.getByText(/Improve BTC/)).toBeInTheDocument());
     await screen.findByTestId("span-row-s1");
 
+    // Initially s1 is selected — the Simple-mode inspector summary
+    // (data-testid="span-inspector-fields-simple") starts with the
+    // span_id slice. After clicking MODEL, s1 is filtered out and
+    // selection falls back to the first remaining span: s3.
+    const inspectorBefore = await screen.findByTestId("span-inspector-fields-simple");
+    expect(inspectorBefore).toHaveTextContent(/s1 · agent\.run/);
+
     await userEvent.click(screen.getByRole("button", { name: /^MODEL$/i }));
 
-    expect(screen.queryByText("s1")).not.toBeInTheDocument();
-    expect(await screen.findByText("s3")).toBeInTheDocument();
+    const inspectorAfter = await screen.findByTestId("span-inspector-fields-simple");
+    expect(inspectorAfter).toHaveTextContent(/s3 · model\.call/);
+    expect(inspectorAfter).not.toHaveTextContent(/s1 · agent\.run/);
   });
 
   test("renders the retention badge with the run's retention_mode", async () => {
