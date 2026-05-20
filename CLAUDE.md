@@ -191,6 +191,11 @@ Exceptions:
 - Toasts (transient, non-focus-stealing feedback). Allowed.
 - Native browser primitives we cannot reasonably replace (file picker,
   print dialog). Avoid where possible; do not invent new ones.
+- `<MListSheet>` (mobile list filters only) — bottom sheet rendered
+  under `<MListCard>` on the phone breakpoint. Operator-approved
+  2026-05-20 in `docs/superpowers/specs/2026-05-20-standard-list-component.md`
+  Decision 3. Scoped to this single component; the rule continues to
+  apply everywhere else.
 
 Why: popups destroy the spatial mental model of the app, are hostile to
 keyboard navigation, deep-linking, and screen-sharing, and are a sign of
