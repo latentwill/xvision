@@ -10,6 +10,7 @@ const PRIMARY: Item[] = [
   { to: "/agents", label: "Agents", icon: "user" },
   { to: "/scenarios", label: "Scenarios", icon: "list" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
+  { to: "/docs", label: "Docs", icon: "book" },
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
