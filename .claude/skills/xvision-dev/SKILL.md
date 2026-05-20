@@ -88,14 +88,22 @@ Process spec: `docs/superpowers/specs/2026-05-16-execution-board-process-overhau
 
 ## Migrations
 
-Migration numbers are reserved in `team/MANIFEST.md`'s Migration registry.
-The conductor must register the next number before any track edits
-`crates/xvision-engine/migrations/`. Latest landed: **018**
-(`agent_run_observability`). Coordinate via the board, not by grabbing the
-next free integer.
+Migration numbers are reserved in `team/MANIFEST.md`'s Migration
+registry. The conductor must register the next number before any
+track edits `crates/xvision-engine/migrations/`. Latest landed: **024**
+(`scenario_regime_labels`). Coordinate via the board, not by grabbing
+the next free integer — the 021/022/023/024 renumber dance happened
+twice in the last two weeks because parallel tracks collided.
 
 Every migration ships its `_down.sql` counterpart. Schema changes go
 through the engine's migration system, not raw `psql`.
+
+There are two migration dirs:
+`crates/xvision-engine/migrations/` (engine-owned: cycles, briefings,
+decisions, eval runs, scenario regime labels, experiments, …) and
+`crates/xvision-core/migrations/` (core-owned: `0001_init`,
+`0002_rename_setup_to_cycle`). Add a file to **one**, not both — the
+runner reads each crate's dir for its own scope.
 
 ## Terminology (locked 2026-05-10, Option B rename)
 
@@ -113,7 +121,9 @@ Diverging from these names requires a written rationale. See
 
 Pipeline-role names (intern → trader → risk → executor) are
 *conventions*, not hardcoded fields. After the 2026-05-12 strategies
-refactor, slot names per `AgentRef` are free text.
+refactor, slot names per `AgentRef` are free text. `AgentSlot` carries
+an optional `temperature` field that is threaded through every call
+site (commit `ad9b1f7`); any new agent-slot consumer must honor it.
 
 ## Deploy paths (two; local-build is preferred)
 
@@ -129,6 +139,36 @@ scripts/deploy-image.sh --push root@host         # build + transfer + docker loa
 scripts/deploy-image.sh --with-identity          # include xvision-identity (Mantle)
 scripts/deploy-image.sh --platform linux/arm64   # ARM hosts
 ```
+
+`--push` runs a remote-disk preflight before transferring the image
+and a post-load cleanup after. Driven by the 2026-05-20 incident where
+deploy succeeded at image-load but `xvn-app` entered a restart loop
+because `/` was at 100% and SQLite couldn't write the migration
+journal (PR #377, commit `8fd7d48`).
+
+- **Preflight**: `ssh <host> df -P /` and refuse at ≥95% used (warn
+  at ≥85%). Refusal prints the common reclaim targets:
+  `journalctl --vacuum-size=200M`, `docker image prune -f`,
+  inspecting `docker images xvision`, deleting stale
+  `/root/deploy/xvision/.worktrees/*/target/` trees.
+- **Cleanup**: post-load, the script drops the prior
+  `:deploy-latest`'s sha tag iff (a) it points at a different image
+  than what was just loaded **and** (b) no container still
+  references it. Other `xvision:*` tags (including whatever
+  `xvnej-app` is pinned to and `ghcr.io/*` mirrors) are untouched.
+
+Env overrides:
+
+```
+XVN_DEPLOY_DISK_REFUSE_PCT=95      # default
+XVN_DEPLOY_DISK_WARN_PCT=85        # default
+XVN_DEPLOY_SKIP_DISK_CHECK=1       # bypass preflight
+XVN_DEPLOY_SKIP_CLEANUP=1          # keep prior :deploy-latest tag
+```
+
+The same Hetzner host backs `xvn` (dev) and `xvnej` (prod); see
+`project_xvn_xvnej_environments.md` + `project_xvn_host_disk_pressure.md`
+(user memory).
 
 ### Fallback — GHCR via GitHub Actions
 
@@ -164,3 +204,10 @@ Full deploy mechanics + pitfalls in [`references/deploy.md`](references/deploy.m
 - [`references/architecture.md`](references/architecture.md) — crate layout, pipeline stages, storage layout, dashboard data flow.
 - [`references/deploy.md`](references/deploy.md) — local-image and GHCR mechanics, the xvn / xvnej tailscale stacks, every pitfall that has actually bitten.
 - [`references/team-workflow.md`](references/team-workflow.md) — contract / status / queue lifecycle and the daily conductor checklist.
+
+---
+
+*Skills owner: any track that changes the build/test/deploy story or
+adds a load-bearing invariant is responsible for updating this file in
+the same PR. Last refresh: 2026-05-20 (intake
+`team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`).*
