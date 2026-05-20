@@ -5,9 +5,9 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import {
-  ListPagination,
+  ServerPagerStrip,
   useServerPagination,
-} from "@/components/primitives/ListPagination";
+} from "@/components/primitives/useServerPagination";
 import {
   ResponsiveListCard,
   useListState,
@@ -224,7 +224,7 @@ export function StrategiesRoute() {
         )}
       />
 
-      <ListPagination
+      <ServerPagerStrip
         total={total}
         page={pager.page}
         pageSize={pager.pageSize}

@@ -11,9 +11,9 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import {
-  ListPagination,
+  ServerPagerStrip,
   useServerPagination,
-} from "@/components/primitives/ListPagination";
+} from "@/components/primitives/useServerPagination";
 import {
   ResponsiveListCard,
   useListState,
@@ -434,7 +434,7 @@ export function EvalRunsRoute() {
         )}
       />
 
-      <ListPagination
+      <ServerPagerStrip
         total={list.totalRows}
         page={pager.page}
         pageSize={pager.pageSize}
