@@ -4,29 +4,39 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-21 — QA Round 4 decomposition: opened
-> `paper-eval-inspector-parity` (P1 integration) and two carve-out
-> followups (`strategy-require-at-least-one-agent-fixture-migration`
-> P2 leaf; `scenario-clone-form-structural-fields` P2 integration).
-> Marked `mcp-eval-run-job-bridge` shipped (commit `11959db`) and
-> `trace-capsule-multi-eval-behavior` shipped via implementation
-> (#339, the design-spike step was bypassed). Lists v1 phase 2a
-> (`list-migrate-eval-runs`) merged via #399 on 2026-05-20; active
-> Lists work is now 2b → 2c. Previous sweep: 2026-05-20 conductor
-> sweep — Lists v1 phase 1 + QA Round 7 cleanup.
+> Last updated: 2026-05-21 — Docs / lists / metric polish wave
+> opened from `team/intake/2026-05-21-docs-lists-metric-polish.md`:
+> 5 contracts (`docs-ui-prototype-alignment` P1,
+> `list-search-filter-completion-audit` P1 foundation,
+> `list-search-filter-missing-surfaces` P1 integration gated on
+> audit, `max-drawdown-danger-tone` P1 leaf,
+> `docs-search-list-component-adoption` P2 deferred follow-up).
+> Earlier 2026-05-21 work: QA Round 4 decomposition (`paper-eval-inspector-parity`
+> + 2 followups) via #402. Lists v1 phase 2 fully complete — 2a (#399),
+> 2b (#400), and 2c (#403) all merged 2026-05-20/21; the `<ListPagination>`
+> JSX primitive is gone. Previous sweep: 2026-05-20 conductor sweep —
+> Lists v1 phase 1 + QA Round 7 cleanup.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 `team/board-v2.md`.
 
 ## Active
 
-- **Lists v1 — phase 2** (serial migration tracks; spec Decision 5,
-  `docs/superpowers/specs/2026-05-20-standard-list-component.md`):
-  - [list-migrate-strategies](contracts/list-migrate-strategies.md) — integration · ready · 2b — migrates `/strategies` to `<ResponsiveListCard>` + `useListState` + `useListUrlState`. Pattern lifts forward from 2a (#399).
-  - [list-migrate-decisions-and-tail](contracts/list-migrate-decisions-and-tail.md) — integration · ready · 2c — `/scenarios` + `/agents`, plus final deletion of the transitional `<ListPagination>` JSX primitive. Depends on 2b.
+- **Docs / lists / metric polish — 2026-05-21** (5 tracks, decomposed
+  from `team/intake/2026-05-21-docs-lists-metric-polish.md`):
+  - [docs-ui-prototype-alignment](contracts/docs-ui-prototype-alignment.md) — leaf · ready · P1 — restyle `/docs` to the folio-dark prototype visual language. Behavior preserved (deep links, sidebar filtering, loading/empty/error states); presentation only. Forbidden from touching docs content (owned by `2026-05-20-docs-user-and-agent-wiki.md`).
+  - [list-search-filter-completion-audit](contracts/list-search-filter-completion-audit.md) — foundation · ready · P1 — single-deliverable audit doc at `docs/superpowers/audits/2026-05-21-list-surfaces-audit.md` inventorying every list-like surface in the SPA with its current search/filter/sort state. Blocks `list-search-filter-missing-surfaces`.
+  - [list-search-filter-missing-surfaces](contracts/list-search-filter-missing-surfaces.md) — integration · blocked (on audit) · P1 — migrates every list surface the audit flags as missing search/filter/sort to the phase-1 list component stack.
+  - [max-drawdown-danger-tone](contracts/max-drawdown-danger-tone.md) — leaf · ready · P1 — rewrite `drawdownToneClass` so any non-zero magnitude max DD renders red/danger across eval-runs list, run detail (desktop + mobile), compare table, and home (if applicable). Extract to a shared module and add tests.
+  - [docs-search-list-component-adoption](contracts/docs-search-list-component-adoption.md) — leaf · deferred · P2 — optional follow-up to adopt the standard list component search/chip idiom for the docs sidebar. Stays deferred until `docs-ui-prototype-alignment` lands AND the audit confirms docs nav qualifies.
 
-  Sequencing: serial 2b → 2c per spec Decision 5. Phase 3
-  (`list-component-density-toggle`) remains deferred.
+  Sequencing: `list-search-filter-completion-audit` first (foundation; ~1 day).
+  `docs-ui-prototype-alignment` and `max-drawdown-danger-tone` are
+  parallel-safe with each other and with the audit. The migration
+  track (`list-search-filter-missing-surfaces`) flips to `ready` when
+  the audit lands. The docs-list-adoption follow-up activates only on
+  conductor flip after the prototype alignment merges and the audit
+  recommendation supports it.
 
 - **QA Round 4 — outstanding tail** (decomposed from
   `team/intake/2026-05-19-qa-operator-round-4.md`; 8 of 11 original
@@ -47,7 +57,11 @@ the V2 board for V2A leaves and V2E contracts already laid down.)_
 
 ## Recently Closed
 
-Merged 2026-05-20 (not yet archived):
+Merged 2026-05-20 / 2026-05-21 (not yet archived):
+
+- **Lists v1 phase 2** — full wave complete. `list-migrate-eval-runs` (#399, 2a), `list-migrate-strategies` (#400, 2b), `list-migrate-decisions-and-tail` (#403, 2c — also deleted the transitional `<ListPagination>` JSX primitive). Phase 3 (`list-component-density-toggle`) remains deferred. Ready to archive on the next conductor sweep.
+
+Earlier — also not yet archived:
 
 - **Lists v1 phase 2a** — `list-migrate-eval-runs` (#399). Migrated
   `/eval-runs` to `<ResponsiveListCard>` + `useListState` +

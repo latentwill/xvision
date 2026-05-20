@@ -174,6 +174,23 @@ violation unless the contract is updated first.
 | `frontend/web/src/routes/scenarios-detail.test.tsx` | `scenario-clone-form-structural-fields` | qa-2026-05-19 |
 | `frontend/web/src/components/scenario/ScenarioForm.tsx` | `scenario-clone-form-structural-fields` (only if a controlled-form prop must be added) | qa-2026-05-19 |
 | `frontend/web/src/components/scenario/ScenarioForm.test.tsx` | `scenario-clone-form-structural-fields` | qa-2026-05-19 |
+| `frontend/web/src/lib/metric-tone.ts` | `max-drawdown-danger-tone` (NEW) | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/lib/metric-tone.test.ts` | `max-drawdown-danger-tone` (NEW) | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/eval-runs.tsx` | `max-drawdown-danger-tone` (drawdownToneClass extraction); the pre-existing `list-migrate-eval-runs` row above is merged via #399 and the file is no longer claimed by that track | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/eval-runs.test.tsx` | `max-drawdown-danger-tone` (DD tone test); the pre-existing `list-migrate-eval-runs` row above is merged via #399 and the file is no longer claimed by that track | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/eval-runs-detail-mobile.tsx` | `max-drawdown-danger-tone` (mobile DD tone fix); also claimed by `paper-eval-inspector-parity` above (qa-2026-05-19) — coordinate via team/queue/ if both active | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/eval-compare.tsx` | `max-drawdown-danger-tone` (compare DD tone); pre-existing `eval-net-of-inference-cost-metric` (V2E) row above is also active — disjoint regions | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/eval-compare.test.tsx` | `max-drawdown-danger-tone` | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/home.tsx` | `max-drawdown-danger-tone` (only if home renders max DD); `list-search-filter-missing-surfaces` (if audit flags home mini-lists) | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/home.test.tsx` | `max-drawdown-danger-tone` (conditional); `list-search-filter-missing-surfaces` (conditional) | docs-lists-metric-polish-2026-05-21 |
+| `docs/superpowers/audits/2026-05-21-list-surfaces-audit.md` | `list-search-filter-completion-audit` (NEW deliverable); `list-search-filter-missing-surfaces` may amend row-status entries as it lands surfaces | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/features/agent-runs/**` | `list-search-filter-missing-surfaces` (only if audit flags agent-runs / trace lists as needing migration) | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/components/chat/cards/**` | `list-search-filter-missing-surfaces` (only if audit flags chat-rail run/strategy/scenario lists) | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/settings/**` | `list-search-filter-missing-surfaces` (conditional) | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/providers.tsx` | `list-search-filter-missing-surfaces` (conditional) | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/brokers.tsx` | `list-search-filter-missing-surfaces` (conditional) | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/routes/docs/index.tsx` | `docs-ui-prototype-alignment`; `docs-search-list-component-adoption` (deferred); the pre-existing `v2a-in-app-docs` row above is merged and the file is no longer claimed by that track | docs-lists-metric-polish-2026-05-21 |
+| `frontend/web/src/features/docs/**` | `docs-ui-prototype-alignment`; `docs-search-list-component-adoption` (deferred sub-set: `DocsSidebar.tsx` only); the pre-existing `v2a-in-app-docs` row above is merged and the file is no longer claimed by that track | docs-lists-metric-polish-2026-05-21 |
 
 ## Multi-owner Exemptions
 
@@ -197,6 +214,12 @@ violation unless the contract is updated first.
 | `crates/xvision-engine/Cargo.toml` | `eval-trace-surface-foundation` (parquet dep if needed), `eval-broker-rule-findings` (if a glob dep is added) | Disjoint additions. If both lands a dep, second rebases. |
 | `crates/xvision-engine/src/eval/cost.rs` | `model-call-cost-usd-population` (per-call cost emit), `eval-net-of-inference-cost-metric` (per-decision cost lookup + per-run aggregation) | Disjoint regions. Sequential: model-call-cost-usd-population lands first (per-call cost_usd populated), then net-of-inference-cost reads those values and aggregates. |
 | `team/MANIFEST.md` | `eval-trace-surface-foundation` (claim 023), `eval-candle-integrity-and-manifest` (claim 024), plus any earlier eval-* contracts with migration claims still active | Migration registry. Disjoint rows; first to merge holds; second confirms on rebase. |
+| `frontend/web/src/routes/eval-runs-detail-mobile.tsx` | `max-drawdown-danger-tone` (mobile KPI tile DD tone) + `paper-eval-inspector-parity` (mobile inspector mode fork — qa-2026-05-19) | Disjoint regions: max-drawdown touches the Max DD tile only; paper-eval covers the mode-conditional rendering. Coordinate via team/queue/ if both active simultaneously. |
+| `frontend/web/src/routes/eval-compare.tsx` | `max-drawdown-danger-tone` (Max DD MetricCell tone) + `eval-net-of-inference-cost-metric` (net_return_pct per-arm column — V2E) | Disjoint regions. Max-drawdown touches one cell tone; net-of-inference-cost adds new column logic. |
+| `frontend/web/src/routes/home.tsx` | `max-drawdown-danger-tone` (only if home renders max DD) + `list-search-filter-missing-surfaces` (only if audit flags home mini-lists) | Both contracts gate themselves on findings — neither writes unconditionally. If both activate, max-drawdown is a one-class change; list-migration touches structure. Disjoint by design. |
+| `frontend/web/src/routes/docs/index.tsx` | `docs-ui-prototype-alignment` (presentation) + `docs-search-list-component-adoption` (deferred — sidebar list adoption) | Sequential by depends_on. The deferred contract only flips to ready after the prototype-alignment lands. |
+| `frontend/web/src/features/docs/**` | `docs-ui-prototype-alignment` (sidebar + reader styling) + `docs-search-list-component-adoption` (deferred — `DocsSidebar.tsx` subset only) | Same sequential pattern: adoption only opens after alignment merges. The adoption contract's `allowed_paths` is a strict subset of alignment's. |
+| `frontend/web/src/features/docs/DocsSidebar.tsx` | `docs-ui-prototype-alignment` (sidebar layout/styling) + `docs-search-list-component-adoption` (deferred — list-component idiom adoption) | Specific-file shadow of the `frontend/web/src/features/docs/**` row above. Sequential by depends_on: adoption is deferred and only flips ready after alignment merges. |
 | `frontend/web/src/api/types.gen/**` | regenerated by any V2E track that edits a ts-export Rust type (per the existing "regenerated by any track" convention earlier in this file) | generated |
 
 ## Out of Scope
