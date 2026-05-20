@@ -16,6 +16,7 @@ xvision-core          = { path = "../xvision-core" }
 xvision-data          = { path = "../xvision-data" }
 xvision-eval          = { path = "../xvision-eval" }
 xvision-execution     = { path = "../xvision-execution" }
+xvision-memory        = { path = "../xvision-memory" }
 xvision-observability = { path = "../xvision-observability" }
 xvision-risk          = { path = "../xvision-risk" }
 
