@@ -10,6 +10,21 @@ use xvision_engine::api::search as api_search;
 use xvision_engine::api::strategy::create_strategy;
 use xvision_engine::authoring::CreateStrategyReq;
 
+fn assert_hit_contract(hit: &serde_json::Value) {
+    assert!(hit["artifact_id"].as_str().is_some(), "artifact_id is a string");
+    assert!(hit["kind"].as_str().is_some(), "kind is a string");
+    assert!(hit["title"].as_str().is_some(), "title is a string");
+    assert!(hit["summary"].as_str().is_some(), "summary is a string");
+    assert!(hit["tags"].as_array().is_some(), "tags is an array");
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(hit["updated_at"].as_str().expect("updated_at is a string"))
+            .is_ok(),
+        "updated_at is RFC3339"
+    );
+    assert!(hit["href"].as_str().is_some(), "href is a string");
+    assert!(hit["bm25_score"].as_f64().is_some(), "bm25_score is a number");
+}
+
 async fn boot() -> (TestServer, TempDir, AppState) {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
@@ -30,12 +45,25 @@ async fn search_returns_seeded_actions_on_empty_query() {
     let hits = body["hits"].as_array().expect("hits is an array");
     assert!(!hits.is_empty(), "empty query returns at least the actions");
     assert!(hits.iter().all(|h| h["kind"] == "action"));
+    for hit in hits {
+        assert_hit_contract(hit);
+    }
+
+    let new_strategy = hits
+        .iter()
+        .find(|h| h["artifact_id"] == "new-strategy")
+        .expect("new-strategy action is returned");
+    assert_eq!(new_strategy["title"], "New strategy from template…");
+    assert_eq!(new_strategy["summary"], "Open the wizard with a template picker");
+    assert_eq!(new_strategy["href"], "/setup");
+    assert_eq!(new_strategy["tags"].as_array().unwrap().len(), 0);
+    assert_eq!(new_strategy["bm25_score"], 0.0);
 }
 
 #[tokio::test]
 async fn search_finds_strategy_after_create() {
     let (server, _tmp, state) = boot().await;
-    create_strategy(
+    let created = create_strategy(
         &state.api_context(),
         CreateStrategyReq {
             template: "trend_follower".into(),
@@ -52,7 +80,17 @@ async fn search_finds_strategy_after_create() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     let hits = body["hits"].as_array().expect("hits is an array");
-    assert!(hits.iter().any(|h| h["kind"] == "strategy"));
+    let strategy = hits
+        .iter()
+        .find(|h| h["kind"] == "strategy" && h["artifact_id"] == created.id)
+        .expect("created strategy is returned");
+    assert_hit_contract(strategy);
+    assert_eq!(strategy["title"], "btc-momentum-search-test");
+    assert!(strategy["summary"]
+        .as_str()
+        .expect("summary is a string")
+        .contains("trend_follower"));
+    assert_eq!(strategy["href"], format!("/authoring/{}", created.id));
 }
 
 #[tokio::test]
