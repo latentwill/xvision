@@ -121,3 +121,30 @@ Verification target:
 
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-test-suite-a7b7e8d445-6_387eaf6db5`
   after a broader fix.
+
+## B-5 - CLI eval export stdout assertion patch fails validation
+
+- Finding: `fnd_sig-feat-test-suite-bb1a90129a-9_8b36947666`
+- Severity: low
+- Category: test-gap
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` attempted to add a `cli_out.stdout.is_empty()` assertion to
+`crates/xvision-cli/tests/eval_export_cli.rs`, but the generated patch failed
+clawpatch's validation after applying. The failed generated hunk was removed so
+the autonomous loop could continue from a clean tree.
+
+Recommendation from clawpatch:
+
+- Add an assertion such as
+  `assert!(cli_out.stdout.is_empty(), "stdout: {}", String::from_utf8_lossy(&cli_out.stdout));`
+  before validating stderr.
+
+Minimum fix scope from clawpatch:
+
+- Add one assertion in `crates/xvision-cli/tests/eval_export_cli.rs`.
+
+Verification target:
+
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-test-suite-bb1a90129a-9_8b36947666`
+  after a broader fix.
