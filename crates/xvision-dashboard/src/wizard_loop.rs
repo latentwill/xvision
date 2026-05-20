@@ -40,6 +40,7 @@ use xvision_engine::authoring;
 use xvision_engine::chat_session::{action_confirmation_card, ChatSessionStore, ContextScope, InlineAction};
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::eval::scenario::Scenario;
+use xvision_engine::strategies_folder;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 
@@ -1065,6 +1066,24 @@ impl WizardLoop {
                     "stdout_truncated": output.stdout_truncated,
                     "stderr_truncated": output.stderr_truncated
                 }))
+            }
+            "list_strategies_folder" => {
+                // V2F read-only surface: enumerate entries under
+                // `$XVN_HOME/strategies/`. Missing folder → empty list.
+                let subfolder = input
+                    .get("subfolder")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
+                let entries = strategies_folder::list(&self.api_context, subfolder).await?;
+                Ok(serde_json::to_value(entries)?)
+            }
+            "read_strategies_file" => {
+                let rel_path = input
+                    .get("rel_path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("read_strategies_file: missing `rel_path`"))?;
+                let body = strategies_folder::read(&self.api_context, rel_path).await?;
+                Ok(serde_json::to_value(body)?)
             }
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
@@ -2248,6 +2267,47 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "required": ["id"]
             }),
         },
+        ToolDefinition {
+            name: "list_strategies_folder".into(),
+            description: "Reads from the user's strategies folder (read-only); \
+                          enumerates entries under `$XVN_HOME/strategies/`. \
+                          Use to consult their notes, library, or imported \
+                          reference material when authoring strategies. \
+                          Pass `subfolder` (one of `notes`, `docs`, \
+                          `strategy-files`, `evals`, `library`) to scope the \
+                          listing, or omit it for a full scan. Returns an \
+                          empty list when the folder has not been \
+                          initialised yet (no `xvn strategies init`).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "subfolder": {
+                        "type": "string",
+                        "enum": ["notes", "docs", "strategy-files", "evals", "library"],
+                        "description": "Optional. Restrict the enumeration to one allowlisted subfolder."
+                    }
+                },
+                "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "read_strategies_file".into(),
+            description: "Read one file's contents from the user's strategies \
+                          folder. `rel_path` is the path relative to \
+                          `$XVN_HOME/strategies/` as returned by \
+                          `list_strategies_folder`. Bodies are truncated at \
+                          256 KB; check `truncated` on the response.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "rel_path": {
+                        "type": "string",
+                        "description": "Path relative to the strategies folder, e.g. `notes/idea.md`."
+                    }
+                },
+                "required": ["rel_path"]
+            }),
+        },
     ]
 }
 
@@ -2392,6 +2452,86 @@ mod tests {
         }
         assert!(matches!(&events[2], WizardEvent::Token { text } if text.contains("template")));
         assert!(matches!(&events[3], WizardEvent::Done { .. }));
+    }
+
+    /// V2F foundation: wizard exposes `list_strategies_folder` and
+    /// `read_strategies_file` against `$XVN_HOME/strategies/`. This test
+    /// drops a markdown note under `notes/`, drives the wizard through a
+    /// `tool_use` for `list_strategies_folder`, and asserts the wizard
+    /// dispatched the tool and the result lists the dropped note.
+    #[tokio::test]
+    async fn wizard_lists_strategies_folder_notes() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_lsf",
+                "list_strategies_folder",
+                serde_json::json!({"subfolder": "notes"}),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Found your notes.".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, _pool, td, _sid) =
+            loop_with_session(mock, "what notes do I have", ContextScope::Workspace).await;
+
+        // Drop a markdown note into the per-user strategies folder
+        // BEFORE draining the wizard loop so the dispatcher sees it on
+        // its `list_strategies_folder` call.
+        let notes_dir = td.path().join("strategies").join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        std::fs::write(
+            notes_dir.join("ideas.md"),
+            b"# my ideas\n\n- mean reversion\n",
+        )
+        .unwrap();
+
+        let events = drain(&mut wl).await;
+        assert!(
+            matches!(&events[0], WizardEvent::ToolCall { tool, .. } if tool == "list_strategies_folder"),
+            "first event: {:?}", events.first()
+        );
+        match &events[1] {
+            WizardEvent::ToolResult { tool, result } => {
+                assert_eq!(tool, "list_strategies_folder");
+                let arr = result.as_array().expect("entries[]");
+                assert!(
+                    arr.iter().any(|e| e.get("rel_path").and_then(|v| v.as_str())
+                        == Some("notes/ideas.md")),
+                    "expected ideas.md in {result}"
+                );
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    /// V2F foundation: `read_strategies_file` returns the file body
+    /// through the wizard dispatcher.
+    #[tokio::test]
+    async fn wizard_reads_strategies_file() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, td, _sid) =
+            loop_with_session(mock, "open my note", ContextScope::Workspace).await;
+
+        let notes_dir = td.path().join("strategies").join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        std::fs::write(notes_dir.join("idea.md"), b"# idea\n\nlong body\n").unwrap();
+
+        let out = wl
+            .run_tool(
+                "read_strategies_file",
+                serde_json::json!({"rel_path": "notes/idea.md"}),
+            )
+            .await
+            .expect("read_strategies_file");
+        assert_eq!(out["rel_path"].as_str(), Some("notes/idea.md"));
+        assert_eq!(out["kind"].as_str(), Some("markdown"));
+        assert_eq!(out["truncated"].as_bool(), Some(false));
+        assert!(out["content"].as_str().unwrap().contains("# idea"));
     }
 
     #[tokio::test]
