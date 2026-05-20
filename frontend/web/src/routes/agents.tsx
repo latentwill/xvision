@@ -6,35 +6,78 @@
 // Standalone-create lives at /agents/new (Task 5).
 
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 
 import { Topbar } from "@/components/shell/Topbar";
-import { Card } from "@/components/primitives/Card";
 import { Icon } from "@/components/primitives/Icon";
-import { AgentList } from "@/components/agent/AgentList";
-import { agentKeys, listAgentsPaged } from "@/api/agents";
+import { Pill } from "@/components/primitives/Pill";
+import { agentKeys, listAgentsPaged, type Agent, type AgentStatus } from "@/api/agents";
 import { ApiError } from "@/api/client";
 import {
-  ListPagination,
+  ServerPagerStrip,
   useServerPagination,
-} from "@/components/primitives/ListPagination";
+} from "@/components/primitives/useServerPagination";
+import {
+  ResponsiveListCard,
+  useListState,
+  useListUrlState,
+  type FilterDef,
+  type SortOption,
+} from "@/components/lists";
+import { MListRow } from "@/components/lists/MListRow";
+
+// Toolbar filter on agent shape — single-slot agents vs. multi-slot
+// (the role label per AgentRef is free text inside Strategy, so we
+// can't filter by role from the agents list alone). "Archived" sits
+// alongside as a second filter so the URL stays declarative.
+const SHAPE_FILTER: FilterDef = {
+  id: "shape",
+  label: "Shape",
+  options: [
+    { value: "all", label: "All shapes" },
+    { value: "single", label: "Single-slot" },
+    { value: "multi", label: "Multi-slot" },
+  ],
+};
+
+const ARCHIVED_FILTER: FilterDef = {
+  id: "archived",
+  label: "Archived",
+  options: [
+    { value: "exclude", label: "Hide archived" },
+    { value: "include", label: "Include archived" },
+  ],
+};
+
+const SORT_OPTIONS: SortOption[] = [
+  // Backend `list_paged` returns rows DESC by `updated_at`; the recency
+  // default mirrors that ordering. Other options sort client-side over
+  // the currently-paged slice.
+  { value: "updated", label: "Recently updated" },
+  { value: "name", label: "Name A → Z" },
+  { value: "name-desc", label: "Name Z → A" },
+];
 
 export function AgentsRoute() {
-  const [includeArchived, setIncludeArchived] = useState(false);
-  const [search, setSearch] = useState("");
+  const [archivedToken, setArchivedToken] = useState<string>("exclude");
 
   // QA-round-7 backend-pagination follow-up (#386 gap): page-size +
   // page-nav drive `limit`/`offset` in the query key so page changes
   // refetch instead of slicing one big response.
   const [totalFromServer, setTotalFromServer] = useState(0);
   const pager = useServerPagination(totalFromServer);
-  const params = {
-    include_archived: includeArchived,
-    q: search || undefined,
-    limit: pager.limit,
-    offset: pager.offset,
-  };
+
+  // Server query — pure server-side params. The `q`/sort/shape filters
+  // run client-side over the current page (see `useListState` below).
+  const params = useMemo(
+    () => ({
+      include_archived: archivedToken === "include",
+      limit: pager.limit,
+      offset: pager.offset,
+    }),
+    [archivedToken, pager.limit, pager.offset],
+  );
   const q = useQuery({
     queryKey: agentKeys.list(params),
     queryFn: () => listAgentsPaged(params),
@@ -49,30 +92,129 @@ export function AgentsRoute() {
   const items = q.data?.items ?? [];
   const total = q.data?.total ?? 0;
 
+  const list = useListState<Agent>({
+    rows: items,
+    filters: [SHAPE_FILTER, ARCHIVED_FILTER],
+    sortOptions: SORT_OPTIONS,
+    filterFn: (row, query, values) => {
+      const shape = values.shape ?? "all";
+      if (shape === "single" && row.slots.length !== 1) return false;
+      if (shape === "multi" && row.slots.length <= 1) return false;
+      const qq = query.trim().toLowerCase();
+      if (qq.length === 0) return true;
+      if (row.name.toLowerCase().includes(qq)) return true;
+      if (row.description.toLowerCase().includes(qq)) return true;
+      if (row.tags.some((t) => t.toLowerCase().includes(qq))) return true;
+      return false;
+    },
+    sortFn: (rows, key) => {
+      switch (key) {
+        case "name":
+          return rows.sort((a, b) => a.name.localeCompare(b.name));
+        case "name-desc":
+          return rows.sort((a, b) => b.name.localeCompare(a.name));
+        case "updated":
+        default:
+          // Backend already DESC by updated_at; preserve order.
+          return rows;
+      }
+    },
+  });
+  useListUrlState("agents", list);
+
+  // Bridge URL-driven archived filter back to local state so the
+  // backend query refetches.
+  const archivedValue =
+    list.filters.find((f) => f.def.id === "archived")?.value ?? "exclude";
+  useEffect(() => {
+    if (archivedValue !== archivedToken) setArchivedToken(archivedValue);
+  }, [archivedValue, archivedToken]);
+
+  const navigate = useNavigate();
+  function go(id: string) {
+    navigate(`/agents/${encodeURIComponent(id)}`);
+  }
+
+  const desktopColumns = [
+    { key: "name", label: "Name" },
+    { key: "status", label: "Status" },
+    { key: "slots", label: "Slots" },
+    { key: "skills", label: "Skills" },
+    { key: "updated", label: "Updated" },
+  ];
+
   return (
     <>
-      <Topbar title="Agents" sub={subtitleFor(q, total)} />
+      <Topbar title="Agents" sub={subtitleFor(q, total, list.rows.length)} />
 
-      <FilterBar
-        search={search}
-        onSearch={setSearch}
-        includeArchived={includeArchived}
-        onToggleArchived={setIncludeArchived}
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+        <Link
+          to="/agents/skills"
+          className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-[13px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text"
+        >
+          Skills
+        </Link>
+        <Link
+          to="/agents/new"
+          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
+        >
+          <Icon name="plus" size={13} /> New agent
+        </Link>
+      </div>
+
+      <ResponsiveListCard<Agent>
+        listId="agents"
+        title="Agents"
+        count={total}
+        toolbar={{
+          search: { ...list.search, placeholder: "Search agents by name…" },
+          filters: list.filters,
+          sort: list.sort,
+          clearAll: list.clearAll,
+        }}
+        columns={desktopColumns}
+        rows={list.rows}
+        loading={q.isPending}
+        error={
+          q.isError
+            ? {
+                message: errorDetail(q.error),
+                retry: () => q.refetch(),
+              }
+            : null
+        }
+        empty={
+          total === 0
+            ? "No agents yet. Start with a single-slot agent — name it, give it a system prompt, pick a model."
+            : "No agents match these filters."
+        }
+        emptyAction={
+          total === 0 ? (
+            <Link
+              to="/agents/new"
+              className="inline-flex items-center gap-1.5 rounded border border-gold px-3 py-1.5 text-[12px] font-medium text-gold hover:bg-gold/10"
+            >
+              <Icon name="plus" size={11} /> New agent
+            </Link>
+          ) : null
+        }
+        renderRow={(row) => (
+          <DesktopRow key={row.agent_id} row={row} onGo={go} />
+        )}
+        renderMobileRow={(row) => (
+          <MListRow
+            key={row.agent_id}
+            onClick={() => go(row.agent_id)}
+            title={row.name}
+            badge={defaultStatus(row)}
+            badgeColor={badgeColorFor(defaultStatus(row))}
+            subtitle={row.description || undefined}
+            meta={`${row.slots.length} ${row.slots.length === 1 ? "slot" : "slots"} · ${formatRelative(row.updated_at)}`}
+          />
+        )}
       />
 
-      <Card>
-        {q.isPending ? (
-          <LoadingSkeleton />
-        ) : q.isError ? (
-          <ErrorState err={q.error} onRetry={() => q.refetch()} />
-        ) : total === 0 ? (
-          <EmptyState />
-        ) : (
-          <AgentList items={items} />
-        )}
-      </Card>
-
-      <ListPagination
+      <ServerPagerStrip
         total={total}
         page={pager.page}
         pageSize={pager.pageSize}
@@ -87,120 +229,123 @@ export function AgentsRoute() {
 function subtitleFor(
   q: { isPending: boolean; isError: boolean },
   total: number,
-) {
+  visibleRows: number,
+): string {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load agents";
-  return `${total} ${total === 1 ? "agent" : "agents"}`;
+  if (total === 0) return "0 agents";
+  if (visibleRows === total) {
+    return `${total} ${total === 1 ? "agent" : "agents"}`;
+  }
+  return `${visibleRows} of ${total} agents`;
 }
 
-function FilterBar({
-  search,
-  onSearch,
-  includeArchived,
-  onToggleArchived,
+function DesktopRow({
+  row,
+  onGo,
 }: {
-  search: string;
-  onSearch: (s: string) => void;
-  includeArchived: boolean;
-  onToggleArchived: (v: boolean) => void;
+  row: Agent;
+  onGo: (id: string) => void;
 }) {
+  const status = defaultStatus(row);
+  const skillsCount = row.slots.reduce(
+    (acc, s) => acc + s.skill_ids.length,
+    0,
+  );
   return (
-    <div className="flex items-center gap-3 mb-4">
-      <div className="flex-1 relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3">
-          <Icon name="search" size={14} />
-        </span>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder="Search agents by name…"
-          className="w-full pl-9 pr-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text placeholder:text-text-3 focus:outline-none focus:border-gold/40"
-        />
-      </div>
-
-      <label className="flex items-center gap-2 text-[13px] text-text-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={includeArchived}
-          onChange={(e) => onToggleArchived(e.target.checked)}
-          className="accent-gold"
-        />
-        Show archived
-      </label>
-
-      <Link
-        to="/agents/skills"
-        className="inline-flex items-center gap-1.5 px-3 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-border-strong transition-colors"
-      >
-        Skills
-      </Link>
-
-      <Link
-        to="/agents/new"
-        className="inline-flex items-center gap-1.5 px-3 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
-      >
-        <Icon name="plus" size={14} />
-        New agent
-      </Link>
-    </div>
+    <tr
+      role="link"
+      tabIndex={0}
+      onClick={() => onGo(row.agent_id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onGo(row.agent_id);
+        }
+      }}
+      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+    >
+      <td className="px-5 py-3">
+        <div className="font-medium text-text">{row.name}</div>
+        {row.description ? (
+          <div className="text-text-3 text-[12px] mt-0.5 line-clamp-1">
+            {row.description}
+          </div>
+        ) : null}
+      </td>
+      <td className="px-5 py-3">
+        <StatusPill status={status} />
+      </td>
+      <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
+        {row.slots.length === 1
+          ? `1 (${row.slots[0]?.name ?? "main"})`
+          : `${row.slots.length}`}
+      </td>
+      <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
+        {skillsCount}
+      </td>
+      <td className="px-5 py-3 text-text-3 text-[12px]">
+        {formatRelative(row.updated_at)}
+      </td>
+    </tr>
   );
 }
 
-function LoadingSkeleton() {
-  return (
-    <div className="p-8 text-center text-text-3 text-[13px]">Loading…</div>
-  );
+function StatusPill({ status }: { status: AgentStatus }) {
+  switch (status) {
+    case "Draft":
+      return <Pill tone="default">Draft</Pill>;
+    case "Validated":
+      return <Pill tone="gold">Validated</Pill>;
+    case "In use":
+      return <Pill tone="info">In use</Pill>;
+    case "Archived":
+      return <Pill tone="default">Archived</Pill>;
+  }
 }
 
-function ErrorState({
-  err,
-  onRetry,
-}: {
-  err: unknown;
-  onRetry: () => void;
-}) {
-  const msg =
-    err instanceof ApiError
-      ? `${err.code}: ${err.message}`
-      : err instanceof Error
-        ? err.message
-        : String(err);
-  return (
-    <div className="p-8 text-center">
-      <div className="text-danger text-[13px] mb-3">{msg}</div>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="px-3 py-1.5 rounded border border-border text-[13px] text-text-2 hover:text-text hover:border-border-strong transition-colors"
-      >
-        Retry
-      </button>
-    </div>
-  );
+function badgeColorFor(
+  status: AgentStatus,
+): "gold" | "warn" | "danger" | "info" | "muted" {
+  switch (status) {
+    case "Validated":
+      return "gold";
+    case "In use":
+      return "info";
+    case "Archived":
+    case "Draft":
+    default:
+      return "muted";
+  }
 }
 
-function EmptyState() {
-  return (
-    <div className="p-12 text-center">
-      <div className="mb-3 inline-flex items-center justify-center w-12 h-12 rounded-full bg-gold/10 text-gold">
-        <Icon name="user" size={22} />
-      </div>
-      <h3 className="m-0 mb-1 text-[16px] font-medium text-text">
-        No agents yet
-      </h3>
-      <p className="m-0 mb-5 text-text-3 text-[13px] max-w-md mx-auto leading-snug">
-        Agents are reusable templates that compose into strategies. Start
-        with a single-slot agent — name it, give it a system prompt, pick a
-        model.
-      </p>
-      <Link
-        to="/agents/new"
-        className="inline-flex items-center gap-1.5 px-4 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
-      >
-        <Icon name="plus" size={14} />
-        New agent
-      </Link>
-    </div>
-  );
+// Default status when no separately-computed status is provided. In v1
+// the list endpoint doesn't run validators per row (would be N+1), so
+// we treat every non-archived agent as Draft until the detail view
+// validates.
+function defaultStatus(agent: Agent): AgentStatus {
+  if (agent.archived) return "Archived";
+  return "Draft";
+}
+
+function formatRelative(iso: string): string {
+  try {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const seconds = Math.max(0, Math.round((now - then) / 1000));
+    if (seconds < 60) return `${seconds}s ago`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+    const days = Math.round(seconds / 86400);
+    if (days < 30) return `${days}d ago`;
+    return new Date(iso).toLocaleDateString();
+  } catch {
+    return iso;
+  }
+}
+
+function errorDetail(err: unknown): string {
+  if (err instanceof ApiError) return `${err.code}: ${err.message}`;
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
