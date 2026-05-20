@@ -8008,6 +8008,8 @@ name = "xvision-engine"
 version = "0.21.0"
 dependencies = [
  "anyhow",
+ "arrow-array",
+ "arrow-schema",
  "async-trait",
  "blake3",
  "chrono",
@@ -8015,6 +8017,7 @@ dependencies = [
  "flate2",
  "hex",
  "include_dir",
+ "parquet",
  "rand_core 0.6.4",
  "reqwest",
  "serde",

@@ -13,6 +13,8 @@ pub mod behavior;
 pub mod compare;
 pub mod concurrency;
 pub mod cost;
+pub mod cycle_features;
+pub mod determinism;
 pub mod early_stop;
 pub mod executor;
 pub mod experiment_store;

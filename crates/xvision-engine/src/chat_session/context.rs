@@ -7,10 +7,11 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum ContextScope {
     /// "Whole workspace" — the default for routes without specific context.
+    #[default]
     Workspace,
     /// Auto-set from the URL when no more-specific scope is selected.
     Route { route: String },
@@ -28,12 +29,6 @@ pub enum ContextScope {
     Selection { items: Vec<String> },
     /// `/setup?seed=<seed_id>` — cross-cycle entry point.
     Seed { seed_id: String },
-}
-
-impl Default for ContextScope {
-    fn default() -> Self {
-        ContextScope::Workspace
-    }
 }
 
 impl ContextScope {

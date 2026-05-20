@@ -6,6 +6,7 @@
 //! strategies refactor: strategies now carry `Vec<AgentRef>` so we can
 //! enumerate referencing strategies and their eval-run history.
 
+use std::cmp::Reverse;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -439,7 +440,7 @@ pub async fn recent_runs(ctx: &ApiContext, agent_id: &str, limit: u32) -> ApiRes
     }
 
     // Sort newest-first and take the requested limit.
-    all_runs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    all_runs.sort_by_key(|r| Reverse(r.started_at));
     all_runs.truncate(limit as usize);
 
     let refs = all_runs

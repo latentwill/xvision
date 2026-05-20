@@ -279,6 +279,7 @@ impl Executor for BacktestExecutor {
 }
 
 impl BacktestExecutor {
+    #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
         run: &mut Run,
@@ -981,6 +982,7 @@ struct FillOutcome {
 /// - `long_open`: hold long, reverse short → long, or open long from flat.
 /// - `short_open`: hold short, reverse long → short, or open short from flat.
 /// - `flat` (or any unknown action): close any open position; otherwise no-op.
+///
 /// Find the trader slot's model id, used to decorate trader-output
 /// failures with the reasoning-class hint (q15 §1). Prefers an attached
 /// agent with role `trader`, then falls back to the legacy
@@ -1087,6 +1089,7 @@ fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
 /// Build a `TradeMarker` from fill-level data. Extracted to avoid duplicating
 /// the identical field construction across the `long_open` and
 /// `short_open`/`flat` arms of the marker-event match.
+#[allow(clippy::too_many_arguments)]
 fn make_trade_marker(
     side: TradeSide,
     time: i64,
@@ -1116,9 +1119,7 @@ fn make_trade_marker(
 fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
     if action == "long_open" {
         "buy"
-    } else if action == "short_open" {
-        "sell"
-    } else if pre_fill_position > 0.0 {
+    } else if action == "short_open" || pre_fill_position > 0.0 {
         "sell"
     } else {
         "buy"

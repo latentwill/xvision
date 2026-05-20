@@ -146,7 +146,7 @@ pub struct LlmRequest {
     /// In practice the request is built without `cache_control` and
     /// the dispatcher evaluates the F-8 trigger
     /// (`XVN_PROMPT_CACHE=1` + non-empty system prompt + bar_history
-    /// > 1 entry) before wire-time. Callers that want to force the
+    /// \> 1 entry) before wire-time. Callers that want to force the
     /// hint set this directly. See
     /// `team/contracts/eval-prompt-cache-and-rolling-window.md`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -296,7 +296,7 @@ fn parse_rate_limit_reset(reset_header: Option<&str>, retry_after_header: Option
         .unwrap_or(0);
     // Jitter: 0..=250ms derived from the low bits of `now_ms`. Cheap and
     // doesn't drag in `rand` as a dependency.
-    let jitter = Duration::from_millis((now_ms & 0xFF) as u64);
+    let jitter = Duration::from_millis(now_ms & 0xFF);
 
     if let Some(reset_str) = reset_header {
         if let Ok(reset_ms) = reset_str.trim().parse::<u64>() {
@@ -1006,8 +1006,7 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
 /// retry, bubble up the typed error, or surface the response.
 enum OpenAiAttempt {
     Ok(LlmResponse),
-    /// 429. The dispatcher should honour `reset_at_ms`/`retry_after` when
-    /// scheduling the next attempt.
+    /// Rate-limited (429). The dispatcher should honour `reset_at_ms`/`retry_after` when scheduling the next attempt.
     RateLimited {
         status: u16,
         url: String,

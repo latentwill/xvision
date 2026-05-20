@@ -13,4 +13,24 @@ kind: string, severity: Severity, summary: string,
  * LLM-extracted evidence blob — open-ended JSON. Typed as `unknown` on
  * the wire so consumers narrow with a runtime guard if they need fields.
  */
-evidence: unknown, extracted_at: string, schema_version: string, };
+evidence: unknown, extracted_at: string, schema_version: string, 
+/**
+ * ULIDs of the `cycles` rows whose data motivated this finding.
+ * Empty for legacy findings or findings produced without cycle-level
+ * evidence (e.g. aggregated metrics checks). `None` serialises as absent;
+ * consumers should treat absent and empty-array the same.
+ */
+evidence_cycle_ids?: Array<string>, 
+/**
+ * Identifier of the check that produced this finding (e.g.
+ * `"lookahead_prober"`, `"broker_rule_engine"`, `"candle_integrity"`).
+ * Legacy rows (schema_version="1") carry `"legacy"`. Absent on wire
+ * means legacy; consumers should treat `None` as `"legacy"`.
+ */
+produced_by_check?: string, eval_review_id?: string, 
+/**
+ * Review finding category: `performance | risk | regime | behavior |
+ * execution | data_quality | anomaly | opportunity` (open enum). The
+ * engine track maps this to legacy `kind` for compatibility.
+ */
+review_type?: string, confidence?: number, title?: string, description?: string, recommendation?: string, created_at?: string | null, };

@@ -66,10 +66,7 @@ pub struct RunsListResponse {
 /// Normalize a caller-supplied `(limit, offset)` pair into the values
 /// the store layer should receive. Validates that neither field is
 /// negative and applies the `DEFAULT_LIMIT` / `MAX_LIMIT` policy.
-fn normalize_pagination(
-    limit: Option<i64>,
-    offset: Option<i64>,
-) -> Result<(i64, i64), DashboardError> {
+fn normalize_pagination(limit: Option<i64>, offset: Option<i64>) -> Result<(i64, i64), DashboardError> {
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
     if limit < 0 {
         return Err(DashboardError::Validation {

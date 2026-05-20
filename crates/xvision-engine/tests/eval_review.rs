@@ -27,6 +27,8 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/016_eval_reviews.sql"),
         include_str!("../migrations/017_eval_findings_review_columns.sql"),
         include_str!("../migrations/022_eval_runs_agents_agent_id.sql"),
+        // V2E trace-surface: evidence_cycle_ids_json + produced_by_check columns.
+        include_str!("../migrations/026_trace_surface_foundation.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -294,6 +296,8 @@ async fn legacy_finding_round_trips_unchanged() {
         evidence: serde_json::json!({"metric_name": "n_decisions", "value": 30}),
         extracted_at: Utc::now(),
         schema_version: "1".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: None,
         eval_review_id: None,
         review_type: None,
         confidence: None,
@@ -340,6 +344,8 @@ async fn review_finding_round_trips_with_v2_columns_populated() {
         }),
         extracted_at: created_at,
         schema_version: "2".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: Some("review_engine".into()),
         eval_review_id: Some(review.id.clone()),
         review_type: Some("performance".into()),
         confidence: Some(0.74),
@@ -383,6 +389,8 @@ async fn read_findings_for_review_excludes_legacy_extractor_rows() {
         evidence: serde_json::json!({"sigma": 4.2}),
         extracted_at: Utc::now(),
         schema_version: "1".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: None,
         eval_review_id: None,
         review_type: None,
         confidence: None,
@@ -404,6 +412,8 @@ async fn read_findings_for_review_excludes_legacy_extractor_rows() {
         evidence: serde_json::json!({"kind": "trade", "reference": "decision_4"}),
         extracted_at: Utc::now(),
         schema_version: "2".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: Some("review_engine".into()),
         eval_review_id: Some(review.id.clone()),
         review_type: Some("risk".into()),
         confidence: Some(0.91),

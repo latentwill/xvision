@@ -194,6 +194,7 @@ impl RunEventBus {
     /// when an async context is available because the sync path can
     /// only make best-effort drop accounting (it cannot await the
     /// async drops-map lock).
+    #[allow(clippy::result_large_err)] // RunEvent is intentionally large; boxing changes the caller API
     pub fn try_publish(&self, event: RunEvent) -> Result<(), RunEvent> {
         if self.inner.closed.load(Ordering::Acquire) {
             return Err(event);

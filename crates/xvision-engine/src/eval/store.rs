@@ -75,13 +75,13 @@ impl RunStore {
         let params_override_json = run
             .params_override
             .as_ref()
-            .map(|v| serde_json::to_string(v))
+            .map(serde_json::to_string)
             .transpose()
             .context("serialize params_override")?;
         let metrics_json = run
             .metrics
             .as_ref()
-            .map(|m| serde_json::to_string(m))
+            .map(serde_json::to_string)
             .transpose()
             .context("serialize metrics")?;
 
@@ -838,13 +838,22 @@ impl RunStore {
     /// `title`, `description`, `recommendation`, `created_at`) are written
     /// when present on the in-memory `Finding`. Legacy extractor callers
     /// leave them `None`, so their rows look the same as before.
+    ///
+    /// V2E trace-surface columns (`evidence_cycle_ids_json`,
+    /// `produced_by_check`) are written from the in-memory `Finding`. Pre-026
+    /// DBs that lack these columns will produce an error; the migration must
+    /// run before record_finding is called on a V2E build.
     pub async fn record_finding(&self, finding: &Finding) -> Result<()> {
         let evidence_json = serde_json::to_string(&finding.evidence).context("serialize finding evidence")?;
+        let evidence_cycle_ids_json =
+            serde_json::to_string(finding.evidence_cycle_ids.as_deref().unwrap_or(&[]))
+                .context("serialize finding evidence_cycle_ids")?;
         sqlx::query(
             "INSERT INTO eval_findings \
              (id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version, \
-              eval_review_id, type, confidence, title, description, recommendation, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              eval_review_id, type, confidence, title, description, recommendation, created_at, \
+              evidence_cycle_ids_json, produced_by_check) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&finding.id)
         .bind(&finding.run_id)
@@ -861,6 +870,8 @@ impl RunStore {
         .bind(&finding.description)
         .bind(&finding.recommendation)
         .bind(finding.created_at.map(|t| t.to_rfc3339()))
+        .bind(evidence_cycle_ids_json)
+        .bind(finding.produced_by_check.as_deref().unwrap_or("legacy"))
         .execute(&self.pool)
         .await
         .with_context(|| format!("insert eval_findings run_id={} id={}", finding.run_id, finding.id))?;
@@ -872,7 +883,8 @@ impl RunStore {
     pub async fn read_findings(&self, run_id: &str) -> Result<Vec<Finding>> {
         let rows = sqlx::query(
             "SELECT id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version, \
-                    eval_review_id, type, confidence, title, description, recommendation, created_at \
+                    eval_review_id, type, confidence, title, description, recommendation, created_at, \
+                    evidence_cycle_ids_json, produced_by_check \
              FROM eval_findings WHERE run_id = ? ORDER BY extracted_at ASC, id ASC",
         )
         .bind(run_id)
@@ -889,7 +901,8 @@ impl RunStore {
     pub async fn read_findings_for_review(&self, eval_review_id: &str) -> Result<Vec<Finding>> {
         let rows = sqlx::query(
             "SELECT id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version, \
-                    eval_review_id, type, confidence, title, description, recommendation, created_at \
+                    eval_review_id, type, confidence, title, description, recommendation, created_at, \
+                    evidence_cycle_ids_json, produced_by_check \
              FROM eval_findings WHERE eval_review_id = ? ORDER BY extracted_at ASC, id ASC",
         )
         .bind(eval_review_id)
@@ -1181,6 +1194,28 @@ fn row_to_finding(row: &sqlx::sqlite::SqliteRow) -> Result<Finding> {
                 .map(|t| t.with_timezone(&Utc))
         })
         .transpose()?;
+    // V2E trace-surface fields (migration 026). Rows written before 026
+    // carry the column defaults ('[]' and 'legacy'); rows from schema_version
+    // "1" still load fine via these defaults.
+    let evidence_cycle_ids_json: String = row
+        .try_get("evidence_cycle_ids_json")
+        .context("read finding evidence_cycle_ids_json")?;
+    let evidence_cycle_ids_raw: Vec<String> =
+        serde_json::from_str(&evidence_cycle_ids_json).unwrap_or_default(); // graceful: malformed JSON → empty vec
+    let evidence_cycle_ids = if evidence_cycle_ids_raw.is_empty() {
+        None
+    } else {
+        Some(evidence_cycle_ids_raw)
+    };
+    let produced_by_check_raw: String = row
+        .try_get("produced_by_check")
+        .context("read finding produced_by_check")?;
+    let produced_by_check = if produced_by_check_raw == "legacy" {
+        None
+    } else {
+        Some(produced_by_check_raw)
+    };
+
     Ok(Finding {
         id,
         run_id,
@@ -1190,6 +1225,8 @@ fn row_to_finding(row: &sqlx::sqlite::SqliteRow) -> Result<Finding> {
         evidence,
         extracted_at,
         schema_version,
+        evidence_cycle_ids,
+        produced_by_check,
         eval_review_id,
         review_type,
         confidence,

@@ -199,10 +199,7 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
 /// rows plus the total count. The dashboard's `/api/eval/runs` route
 /// drives this so the SPA's pager has both halves of the contract in a
 /// single round-trip.
-pub async fn list_summaries_paged(
-    ctx: &ApiContext,
-    req: ListRunsRequest,
-) -> ApiResult<PagedRunSummaries> {
+pub async fn list_summaries_paged(ctx: &ApiContext, req: ListRunsRequest) -> ApiResult<PagedRunSummaries> {
     let started = Instant::now();
     let result = list_summaries_paged_inner(ctx, &req).await;
 
@@ -224,10 +221,7 @@ pub async fn list_summaries_paged(
     result
 }
 
-async fn list_summaries_paged_inner(
-    ctx: &ApiContext,
-    req: &ListRunsRequest,
-) -> ApiResult<PagedRunSummaries> {
+async fn list_summaries_paged_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<PagedRunSummaries> {
     let store = RunStore::new(ctx.db.clone());
     let filter = ListFilter {
         agent_id: req.agent_id.clone(),
@@ -832,9 +826,9 @@ async fn build_alpaca_paper_broker(ctx: &ApiContext) -> ApiResult<Arc<dyn Broker
             // Missing env vars is operator-actionable; bubble the
             // "where to set" hint into the validation message.
             if msg.contains("APCA_API_KEY_ID") || msg.contains("APCA_API_SECRET_KEY") {
-                Err(ApiError::Validation(format!(
-                    "Alpaca paper credentials not configured. Set them in Settings → Brokers, or export APCA_API_KEY_ID + APCA_API_SECRET_KEY before running."
-                )))
+                Err(ApiError::Validation(
+                    "Alpaca paper credentials not configured. Set them in Settings → Brokers, or export APCA_API_KEY_ID + APCA_API_SECRET_KEY before running.".into()
+                ))
             } else {
                 Err(ApiError::Internal(format!("alpaca paper from env: {e}")))
             }
@@ -1878,6 +1872,7 @@ fn resolve_launch_gate_key(
 /// Detached — failures here can't propagate to the spawning request, so
 /// every error path writes to the run row's `error` field and logs at
 /// the `xvision::eval` target.
+#[allow(clippy::too_many_arguments)]
 async fn execute_in_background(
     ctx: ApiContext,
     mut run: Run,
@@ -2455,6 +2450,7 @@ mod tests {
         manifest::PublicManifest, risk::RiskPreset, slot::LLMSlot, AgentRef, PipelineDef, Strategy,
     };
 
+    #[allow(dead_code)]
     fn provider(enabled_models: Vec<&str>) -> ProviderEntry {
         ProviderEntry {
             name: "openrouter".into(),
@@ -2465,6 +2461,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn slot(provider: Option<&str>, model: Option<&str>, model_requirement: &str) -> LLMSlot {
         LLMSlot {
             role: "trader".into(),
@@ -2476,6 +2473,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn strategy_with_legacy_slot(legacy_slot: LLMSlot) -> Strategy {
         Strategy {
             manifest: PublicManifest {
