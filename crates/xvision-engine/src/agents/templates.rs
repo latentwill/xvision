@@ -584,11 +584,7 @@ mod tests {
             );
             assert!(!tpl.slots.is_empty(), "{}: must have at least one slot", tpl.id);
             for slot in &tpl.slots {
-                assert!(
-                    !slot.name.is_empty(),
-                    "{}: slot name must be non-empty",
-                    tpl.id
-                );
+                assert!(!slot.name.is_empty(), "{}: slot name must be non-empty", tpl.id);
                 assert!(
                     !slot.system_prompt.trim().is_empty(),
                     "{}/{}: starter system_prompt must be non-empty",

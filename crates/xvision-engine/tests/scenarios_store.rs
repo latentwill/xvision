@@ -69,6 +69,7 @@ fn make_test_scenario(id: &str) -> Scenario {
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         capital: Capital::default(),
         replay_mode: ReplayMode::Continuous,

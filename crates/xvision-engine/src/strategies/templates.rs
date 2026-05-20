@@ -317,6 +317,7 @@ fn build_example_scenario(
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         replay_mode: ReplayMode::Continuous,
         capital: Capital::default(),

@@ -34,6 +34,8 @@ function fmtDate(iso: string): string {
 
 function fmtSlippage(model: SlippageModel): string {
   if (model.model === "none") return "none";
+  if (model.model === "volume_share")
+    return `volume share (impact=${model.price_impact}, limit=${model.volume_limit})`;
   return `linear ${model.bps} bps`;
 }
 

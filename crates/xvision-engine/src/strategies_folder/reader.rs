@@ -84,10 +84,7 @@ pub async fn list(ctx: &ApiContext, subfolder: Option<&str>) -> ApiResult<Vec<Fo
 pub async fn read(ctx: &ApiContext, rel_path: &str) -> ApiResult<FileContent> {
     let root = folder_root(&ctx.xvn_home);
     let canonical_root = tokio::fs::canonicalize(&root).await.map_err(|_| {
-        ApiError::NotFound(format!(
-            "strategies folder not initialized at {}",
-            root.display()
-        ))
+        ApiError::NotFound(format!("strategies folder not initialized at {}", root.display()))
     })?;
 
     let target = resolve_under_root(&canonical_root, &root, rel_path).await?;
@@ -129,11 +126,7 @@ pub async fn read(ctx: &ApiContext, rel_path: &str) -> ApiResult<FileContent> {
 /// Resolve `rel_path` to a real path under `canonical_root`. Rejects
 /// absolute paths, parent traversal, and symlinks that point outside
 /// the root.
-async fn resolve_under_root(
-    canonical_root: &Path,
-    root: &Path,
-    rel_path: &str,
-) -> ApiResult<PathBuf> {
+async fn resolve_under_root(canonical_root: &Path, root: &Path, rel_path: &str) -> ApiResult<PathBuf> {
     if rel_path.is_empty() {
         return Err(ApiError::Validation("rel_path is empty".into()));
     }
@@ -196,16 +189,15 @@ async fn walk_dir(dir: &Path, canonical_root: &Path, out: &mut Vec<FolderEntry>)
             Ok(rd) => rd,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
-                return Err(ApiError::Internal(format!(
-                    "read_dir {}: {e}",
-                    current.display()
-                )));
+                return Err(ApiError::Internal(format!("read_dir {}: {e}", current.display())));
             }
         };
 
-        while let Some(entry) = read_dir.next_entry().await.map_err(|e| {
-            ApiError::Internal(format!("read_dir next {}: {e}", current.display()))
-        })? {
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|e| ApiError::Internal(format!("read_dir next {}: {e}", current.display())))?
+        {
             let path = entry.path();
             // Resolve symlinks at the entry level so an attacker can't
             // smuggle a path outside the folder. We canonicalize here;
@@ -249,9 +241,7 @@ async fn walk_dir(dir: &Path, canonical_root: &Path, out: &mut Vec<FolderEntry>)
             let modified_at = metadata
                 .modified()
                 .ok()
-                .map(|t| {
-                    DateTime::<Utc>::from(t).to_rfc3339_opts(SecondsFormat::Secs, true)
-                })
+                .map(|t| DateTime::<Utc>::from(t).to_rfc3339_opts(SecondsFormat::Secs, true))
                 .unwrap_or_default();
 
             out.push(FolderEntry {
