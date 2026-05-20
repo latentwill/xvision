@@ -30,6 +30,18 @@ pub struct ListAgentsRequest {
     pub include_archived: bool,
     pub q: Option<String>,
     pub limit: Option<i64>,
+    /// Optional row offset for paged listings. The dashboard's list
+    /// route always sets `(limit, offset)`; CLI/MCP callers that want
+    /// the full library leave both unset.
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+/// Paged-list envelope used by the dashboard's `/api/agents` route.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagedAgents {
+    pub items: Vec<Agent>,
+    pub total: u64,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -112,9 +124,48 @@ async fn list_inner(ctx: &ApiContext, req: ListAgentsRequest) -> ApiResult<Vec<A
             include_archived: req.include_archived,
             name_contains: req.q,
             limit: req.limit,
+            offset: req.offset,
         })
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+/// Paged variant of `list` — returns one page of `Agent` rows plus the
+/// total count, sharing the audit + outcome wrapper with `list`.
+pub async fn list_paged(ctx: &ApiContext, req: ListAgentsRequest) -> ApiResult<PagedAgents> {
+    let started = Instant::now();
+    let result = list_paged_inner(ctx, req).await;
+    let outcome = outcome_of(&result);
+    let _ = audit::record(
+        ctx,
+        "agents",
+        "list_paged",
+        None,
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn list_paged_inner(ctx: &ApiContext, req: ListAgentsRequest) -> ApiResult<PagedAgents> {
+    let store = AgentStore::new(ctx.db.clone());
+    let filter = ListFilter {
+        include_archived: req.include_archived,
+        name_contains: req.q,
+        limit: req.limit,
+        offset: req.offset,
+    };
+    let total = store
+        .count(&filter)
+        .await
+        .map_err(|e| ApiError::Internal(format!("count agents: {e}")))?;
+    let items = store
+        .list(filter)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(PagedAgents { items, total })
 }
 
 pub async fn create(ctx: &ApiContext, req: CreateAgentRequest) -> ApiResult<Agent> {
@@ -380,6 +431,7 @@ pub async fn recent_runs(ctx: &ApiContext, agent_id: &str, limit: u32) -> ApiRes
                 agent_id: Some(strategy_id),
                 scenario_id: None,
                 status: None,
+                ..Default::default()
             })
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;

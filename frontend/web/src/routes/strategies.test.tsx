@@ -13,6 +13,7 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     listStrategies: vi.fn(),
+    listStrategiesPaged: vi.fn(),
   };
 });
 
@@ -38,21 +39,24 @@ describe("StrategiesRoute", () => {
   });
 
   it("renders strategy id, display name, model summary, tags, and humanized cadence", async () => {
-    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
-      {
-        agent_id: "01TEST",
-        display_name: "Trend 4H",
-        template: "trend_follower",
-        decision_cadence_minutes: 240,
-        model: "claude-sonnet +1",
-        tags: [
-          "trend_follower",
-          "BTC/USD",
-          "trending_bull",
-          "very_long_strategy_tag_that_should_not_make_rows_tall",
-        ],
-      },
-    ]);
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01TEST",
+          display_name: "Trend 4H",
+          template: "trend_follower",
+          decision_cadence_minutes: 240,
+          model: "claude-sonnet +1",
+          tags: [
+            "trend_follower",
+            "BTC/USD",
+            "trending_bull",
+            "very_long_strategy_tag_that_should_not_make_rows_tall",
+          ],
+        },
+      ],
+      total: 1,
+    });
 
     renderRoute();
 
@@ -73,15 +77,18 @@ describe("StrategiesRoute", () => {
   });
 
   it("does not render NaN for invalid cadence values", async () => {
-    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
-      {
-        agent_id: "01TEST",
-        display_name: "Open Strategy",
-        template: "custom",
-        decision_cadence_minutes: Number.NaN,
-        model: undefined,
-      },
-    ]);
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01TEST",
+          display_name: "Open Strategy",
+          template: "custom",
+          decision_cadence_minutes: Number.NaN,
+          model: undefined,
+        },
+      ],
+      total: 1,
+    });
 
     renderRoute();
 

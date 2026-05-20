@@ -26,6 +26,11 @@ use xvision_engine::eval::scenario::{Scenario, ScenarioSource};
 use crate::error::DashboardError;
 use crate::state::AppState;
 
+/// Default page size when the caller omits `limit`.
+const DEFAULT_LIMIT: i64 = 50;
+/// Hard cap on `limit`.
+const MAX_LIMIT: i64 = 200;
+
 /// Query params for `GET /api/scenarios`. Mirrors `ListScenariosFilter` but
 /// uses a flat, query-string-friendly shape. `tags` is repeated: `?tags=a&tags=b`.
 /// `#[serde(default)]` ensures missing fields use their defaults rather than 400ing.
@@ -37,25 +42,49 @@ pub struct ListParams {
     #[serde(default)]
     pub include_archived: bool,
     pub parent_scenario_id: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 #[derive(Serialize)]
 pub struct ScenariosListResponse {
     pub items: Vec<Scenario>,
+    /// Total row count matching the filter, BEFORE LIMIT/OFFSET.
+    pub total: u64,
 }
 
 pub async fn list(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<ScenariosListResponse>, DashboardError> {
+    let limit_raw = params.limit.unwrap_or(DEFAULT_LIMIT);
+    if limit_raw < 0 {
+        return Err(DashboardError::Validation {
+            field: "limit".into(),
+            msg: "must be non-negative".into(),
+        });
+    }
+    let limit = limit_raw.min(MAX_LIMIT);
+    let offset = params.offset.unwrap_or(0);
+    if offset < 0 {
+        return Err(DashboardError::Validation {
+            field: "offset".into(),
+            msg: "must be non-negative".into(),
+        });
+    }
     let filter = ListScenariosFilter {
         source: params.source,
         tags: params.tags,
         include_archived: params.include_archived,
         parent_scenario_id: params.parent_scenario_id,
+        limit: Some(limit),
+        offset: Some(offset),
     };
-    let items = api_scenario::list(&state.api_context(), filter).await?;
-    Ok(Json(ScenariosListResponse { items }))
+    let page = api_scenario::list_paged(&state.api_context(), filter).await?;
+    Ok(Json(ScenariosListResponse {
+        items: page.items,
+        total: page.total,
+    }))
 }
 
 pub async fn get(

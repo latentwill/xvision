@@ -15,6 +15,18 @@ import type {
 
 type RunsListResponse = {
   items: RunSummary[];
+  /// Total row count matching the filter, BEFORE LIMIT/OFFSET. Added
+  /// by the backend pagination follow-up to PR #386's list wave; the
+  /// SPA uses this for "page X of N" without a second round-trip.
+  total: number;
+};
+
+/// Paged response envelope returned by `listRunsPaged`. `listRuns`
+/// drops `total` and returns just the items because most call sites
+/// (chart preview, retry idempotency) only need the rows.
+export type RunsPage = {
+  items: RunSummary[];
+  total: number;
 };
 
 // Hand-rolled — `EvalRunRequest` doesn't have ts-rs derives yet.
@@ -30,10 +42,17 @@ export type ListRunsParams = {
   agent_id?: string;
   scenario_id?: string;
   status?: string;
+  /// Page size. Server defaults to 50, caps at 200.
+  limit?: number;
+  /// Row offset. Server treats `undefined` as 0.
+  offset?: number;
 };
 
 export const evalKeys = {
   all: ["eval"] as const,
+  /// Cache key includes `limit`/`offset` so page changes refetch
+  /// instead of slicing a single full-list result. Required by the
+  /// backend-pagination follow-up to #386.
   runs: (params?: ListRunsParams) =>
     [
       ...evalKeys.all,
@@ -41,13 +60,15 @@ export const evalKeys = {
       params?.agent_id ?? "",
       params?.scenario_id ?? "",
       params?.status ?? "",
+      params?.limit ?? null,
+      params?.offset ?? null,
     ] as const,
   run: (id: string) => [...evalKeys.all, "run", id] as const,
   compare: (ids: string[]) =>
     [...evalKeys.all, "compare", ids.join(",")] as const,
 };
 
-export function listRuns(params?: ListRunsParams): Promise<RunSummary[]> {
+function buildRunsListUrl(params?: ListRunsParams): string {
   const qs = new URLSearchParams();
   if (params?.agent_id) {
     qs.set("agent_id", params.agent_id);
@@ -58,10 +79,30 @@ export function listRuns(params?: ListRunsParams): Promise<RunSummary[]> {
   if (params?.status) {
     qs.set("status", params.status);
   }
+  if (params?.limit !== undefined) {
+    qs.set("limit", String(params.limit));
+  }
+  if (params?.offset !== undefined) {
+    qs.set("offset", String(params.offset));
+  }
   const suffix = qs.size > 0 ? `?${qs.toString()}` : "";
-  return apiFetch<RunsListResponse>(`/api/eval/runs${suffix}`).then(
+  return `/api/eval/runs${suffix}`;
+}
+
+export function listRuns(params?: ListRunsParams): Promise<RunSummary[]> {
+  return apiFetch<RunsListResponse>(buildRunsListUrl(params)).then(
     (r) => r.items,
   );
+}
+
+/// Paged variant — preserves the `total` field so the dashboard's
+/// `ListPagination` primitive can render "page X of N" without a
+/// second round-trip.
+export function listRunsPaged(params?: ListRunsParams): Promise<RunsPage> {
+  return apiFetch<RunsListResponse>(buildRunsListUrl(params)).then((r) => ({
+    items: r.items,
+    total: r.total,
+  }));
 }
 
 export function getRun(id: string): Promise<RunDetail> {

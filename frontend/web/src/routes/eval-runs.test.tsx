@@ -28,6 +28,7 @@ vi.mock("@/api/eval", async () => {
   return {
     ...actual,
     listRuns: vi.fn(),
+    listRunsPaged: vi.fn(),
     startRun: vi.fn(),
     cancelRun: vi.fn(),
   };
@@ -171,7 +172,6 @@ function mockReady({
   alpaca?: BrokerEntry;
   strategyProviderModels?: { provider: string; model: string }[];
 } = {}) {
-  vi.mocked(evalApi.listRuns).mockResolvedValue([]);
   vi.mocked(scenariosApi.listScenarios).mockResolvedValue([scenario()]);
   vi.mocked(settingsApi.listProviders).mockResolvedValue({
     providers,
@@ -212,6 +212,16 @@ describe("EvalRunsRoute", () => {
     // override via mockReady() when they need rows back.
     vi.mocked(strategyApi.listStrategies).mockResolvedValue([]);
     vi.mocked(scenariosApi.listScenarios).mockResolvedValue([]);
+    // The route reads `listRunsPaged`; many legacy tests below still mock
+    // `listRuns` directly. Bridge here so a `vi.mocked(evalApi.listRuns)
+    // .mockResolvedValue([...])` set in any test automatically flows
+    // through the paged envelope. Tests that need a specific `total`
+    // (offset slice simulation) can override `listRunsPaged` directly.
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    vi.mocked(evalApi.listRunsPaged).mockImplementation(async (params) => {
+      const items = await vi.mocked(evalApi.listRuns)(params);
+      return { items, total: items.length };
+    });
   });
 
   afterEach(() => {
@@ -223,9 +233,9 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
     await waitFor(() =>
-      expect(vi.mocked(evalApi.listRuns)).toHaveBeenCalledWith({
-        agent_id: "01TEST",
-      }),
+      expect(vi.mocked(evalApi.listRunsPaged)).toHaveBeenCalledWith(
+        expect.objectContaining({ agent_id: "01TEST" }),
+      ),
     );
 
     const strategy = (await screen.findByLabelText("Strategy")) as HTMLSelectElement;

@@ -164,8 +164,76 @@ pub async fn list(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
 }
 
 async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
+    // Unpaged path: hydrate every id. Internal callers (CLI, MCP,
+    // search index refresh) need the full set; the dashboard's list
+    // route goes through `list_paged` instead.
+    let (ids, _) = collect_strategy_ids(ctx, None, None).await?;
+    hydrate_strategy_summaries(ctx, &ids).await
+}
+
+/// Paged-list envelope used by `/api/strategies`. `total` reflects the
+/// number of strategy files on disk (before the LIMIT/OFFSET slice).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PagedStrategySummaries {
+    pub items: Vec<StrategySummary>,
+    pub total: u64,
+}
+
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ListStrategiesRequest {
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+/// Paged variant of `list`. Reads the strategy directory once for the
+/// id set, returns the recency-sorted slice plus the unsliced total.
+/// Hydration cost is bounded to the page size so a 10k-strategy library
+/// no longer drags every JSON file off disk on every list request.
+pub async fn list_paged(
+    ctx: &ApiContext,
+    req: ListStrategiesRequest,
+) -> ApiResult<PagedStrategySummaries> {
+    let started = Instant::now();
+    let result = list_paged_inner(ctx, req).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "list_paged",
+        None,
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn list_paged_inner(
+    ctx: &ApiContext,
+    req: ListStrategiesRequest,
+) -> ApiResult<PagedStrategySummaries> {
+    let (page_ids, total) = collect_strategy_ids(ctx, req.limit, req.offset).await?;
+    let items = hydrate_strategy_summaries(ctx, &page_ids).await?;
+    Ok(PagedStrategySummaries { items, total })
+}
+
+/// Read every strategy id from the filesystem store, sort recency-first
+/// (ULID DESC), and return both the unsliced total and the LIMIT/OFFSET
+/// page slice. When `limit`/`offset` are both `None`, the returned slice
+/// is the full id list.
+async fn collect_strategy_ids(
+    ctx: &ApiContext,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> ApiResult<(Vec<String>, u64)> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let agent_store = AgentStore::new(ctx.db.clone());
     let mut ids = store
         .list()
         .await
@@ -176,10 +244,30 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
     // the filesystem-backed store. Required by the QA-round-7 list-wave
     // contract (F-3): every list page in the dashboard defaults to recency.
     ids.sort_by(|a, b| b.cmp(a));
+    let total = ids.len() as u64;
+    let offset_usize = offset.unwrap_or(0).max(0) as usize;
+    let page: Vec<String> = match limit {
+        Some(limit) if limit > 0 => ids.into_iter().skip(offset_usize).take(limit as usize).collect(),
+        Some(_) => Vec::new(),
+        None => ids.into_iter().skip(offset_usize).collect(),
+    };
+    Ok((page, total))
+}
+
+/// Load each strategy file in `ids` and build the wire summary for it.
+/// Failures on individual files surface as `Internal` so a bad JSON
+/// blob takes down the whole list (consistent with the previous
+/// behaviour of `list_inner`).
+async fn hydrate_strategy_summaries(
+    ctx: &ApiContext,
+    ids: &[String],
+) -> ApiResult<Vec<StrategySummary>> {
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let agent_store = AgentStore::new(ctx.db.clone());
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         let strategy = store
-            .load(&id)
+            .load(id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
         let inventory = provider_model_inventory(ctx, &agent_store, &strategy).await?;

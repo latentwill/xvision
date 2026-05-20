@@ -421,6 +421,7 @@ async fn failed_entry_from_error(
             agent_id: Some(agent_id.to_owned()),
             scenario_id: Some(scenario_id.to_owned()),
             status: Some(RunStatus::Failed),
+            ..Default::default()
         })
         .await
         .ok()

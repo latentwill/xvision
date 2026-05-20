@@ -745,6 +745,7 @@ impl XvisionTools {
                 agent_id: req.agent_id,
                 scenario_id: req.scenario_id,
                 status,
+                ..Default::default()
             },
         )
         .await
@@ -1258,6 +1259,7 @@ impl XvisionTools {
                 tags: vec![],
                 include_archived: false,
                 parent_scenario_id: None,
+                ..Default::default()
             },
         )
         .await
@@ -1385,6 +1387,7 @@ impl XvisionTools {
                 scenario_id: Some(req.id.clone()),
                 agent_id: None,
                 status: None,
+                ..Default::default()
             },
         )
         .await;

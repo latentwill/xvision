@@ -17,9 +17,17 @@ use xvision_engine::api::agents::{
 use crate::error::DashboardError;
 use crate::state::AppState;
 
+/// Default page size when the caller omits `limit`. Mirrors the
+/// frontend's `DEFAULT_PAGE_SIZE`.
+const DEFAULT_LIMIT: i64 = 50;
+/// Hard cap on `limit`.
+const MAX_LIMIT: i64 = 200;
+
 #[derive(Serialize)]
 pub struct AgentsListResponse {
     pub items: Vec<Agent>,
+    /// Total row count matching the filter, BEFORE LIMIT/OFFSET.
+    pub total: u64,
 }
 
 #[derive(Serialize)]
@@ -48,6 +56,7 @@ pub struct ListQuery {
     pub include_archived: bool,
     pub q: Option<String>,
     pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -59,16 +68,41 @@ pub async fn list(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<AgentsListResponse>, DashboardError> {
-    let items = agents::list(
+    // Resolve `(limit, offset)` with the same defaults/caps the
+    // eval-runs route uses. Negative values surface as 400 instead of
+    // panicking in the store. Callers can also pass an explicit
+    // `limit` larger than `MAX_LIMIT` — clamped silently because the
+    // dashboard's page-size picker only offers 25/50/100; CLI / curl
+    // callers shouldn't be 500'd for a benign "give me 500" request.
+    let limit_raw = q.limit.unwrap_or(DEFAULT_LIMIT);
+    if limit_raw < 0 {
+        return Err(DashboardError::Validation {
+            field: "limit".into(),
+            msg: "must be non-negative".into(),
+        });
+    }
+    let limit = limit_raw.min(MAX_LIMIT);
+    let offset = q.offset.unwrap_or(0);
+    if offset < 0 {
+        return Err(DashboardError::Validation {
+            field: "offset".into(),
+            msg: "must be non-negative".into(),
+        });
+    }
+    let page = agents::list_paged(
         &state.api_context(),
         ListAgentsRequest {
             include_archived: q.include_archived,
             q: q.q,
-            limit: q.limit,
+            limit: Some(limit),
+            offset: Some(offset),
         },
     )
     .await?;
-    Ok(Json(AgentsListResponse { items }))
+    Ok(Json(AgentsListResponse {
+        items: page.items,
+        total: page.total,
+    }))
 }
 
 pub async fn create(

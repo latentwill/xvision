@@ -1131,6 +1131,8 @@ impl WizardLoop {
                 tags: vec![],
                 include_archived: false,
                 parent_scenario_id: None,
+                limit: None,
+                offset: None,
             },
         )
         .await?;

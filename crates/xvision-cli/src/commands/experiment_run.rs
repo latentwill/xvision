@@ -579,6 +579,7 @@ async fn resolve_scenarios_via_selector(
             tags: vec![],
             include_archived: false,
             parent_scenario_id: None,
+            ..Default::default()
         },
     )
     .await

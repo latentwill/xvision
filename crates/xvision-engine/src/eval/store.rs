@@ -29,6 +29,13 @@ pub struct ListFilter {
     pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
     pub status: Option<RunStatus>,
+    /// Optional page size. `None` returns every matching row. Caps are
+    /// enforced at the API layer, not here, so internal callers that need
+    /// "everything that matches" (e.g. retry-idempotency lookup) still
+    /// work without hitting an arbitrary 200-row ceiling.
+    pub limit: Option<i64>,
+    /// Optional row offset. `None` is treated as 0.
+    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -490,6 +497,16 @@ impl RunStore {
         // started_at — ULIDs are lexicographically time-ordered, so id
         // DESC tracks creation order within the same instant.
         sql.push_str(" ORDER BY started_at DESC, id DESC");
+        // Pagination tail: LIMIT/OFFSET bound last so the result set is
+        // sliced after sort. `limit = None` skips both clauses; `offset`
+        // without `limit` is meaningless in SQLite, so we only emit
+        // OFFSET when LIMIT is also present.
+        if filter.limit.is_some() {
+            sql.push_str(" LIMIT ?");
+            if filter.offset.is_some() {
+                sql.push_str(" OFFSET ?");
+            }
+        }
 
         let mut q = sqlx::query(&sql);
         if let Some(ref h) = filter.agent_id {
@@ -501,8 +518,49 @@ impl RunStore {
         if let Some(s) = filter.status {
             q = q.bind(s.as_str());
         }
+        if let Some(limit) = filter.limit {
+            q = q.bind(limit);
+            if let Some(offset) = filter.offset {
+                q = q.bind(offset);
+            }
+        }
         let rows = q.fetch_all(&self.pool).await.context("list eval_runs")?;
         rows.iter().map(row_to_run).collect()
+    }
+
+    /// Count rows matching `filter` (ignoring `limit`/`offset`). Used by
+    /// the dashboard's paginated list endpoint to render "page X of N"
+    /// without a second round-trip per page. Mirrors `list`'s WHERE
+    /// clauses exactly so the count is honest about what `list` would
+    /// return at `offset = 0, limit = ∞`.
+    pub async fn count(&self, filter: &ListFilter) -> Result<u64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM eval_runs");
+        let mut conditions: Vec<&'static str> = Vec::new();
+        if filter.agent_id.is_some() {
+            conditions.push("agent_id = ?");
+        }
+        if filter.scenario_id.is_some() {
+            conditions.push("scenario_id = ?");
+        }
+        if filter.status.is_some() {
+            conditions.push("status = ?");
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        let mut q = sqlx::query_scalar::<_, i64>(&sql);
+        if let Some(ref h) = filter.agent_id {
+            q = q.bind(h.clone());
+        }
+        if let Some(ref s) = filter.scenario_id {
+            q = q.bind(s.clone());
+        }
+        if let Some(s) = filter.status {
+            q = q.bind(s.as_str().to_string());
+        }
+        let n: i64 = q.fetch_one(&self.pool).await.context("count eval_runs")?;
+        Ok(n as u64)
     }
 
     pub async fn record_decision(&self, row: &DecisionRow) -> Result<()> {

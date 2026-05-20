@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
@@ -6,36 +7,50 @@ import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import {
   ListPagination,
-  useListPagination,
+  useServerPagination,
 } from "@/components/primitives/ListPagination";
 import { ApiError } from "@/api/client";
 import {
-  listStrategies,
+  listStrategiesPaged,
   strategyKeys,
+  type StrategiesPage,
   type StrategyListItem,
 } from "@/api/strategies";
 import { formatCadence } from "@/lib/format";
 
 export function StrategiesRoute() {
+  // QA-round-7 backend-pagination follow-up (#386 gap): page-size +
+  // page-nav drive `limit`/`offset` in the TanStack query key so page
+  // changes refetch the next slice instead of slicing one big
+  // client-side response. Recency-first ULID DESC sort is enforced
+  // upstream in `engine::api::strategy::list_paged`.
+  //
+  // The pager state is seeded with `total = 0`; once the first
+  // response lands, `useServerPagination` clamps the page if needed
+  // (the hook reads `total` from props on every render). Passing a
+  // stable initial value here lets the very first request go out at
+  // `(limit=50, offset=0)` without flicker.
+  const [totalFromServer, setTotalFromServer] = useState(0);
+  const pager = useServerPagination(totalFromServer);
+  const params = { limit: pager.limit, offset: pager.offset };
   const q = useQuery({
-    queryKey: strategyKeys.list(),
-    queryFn: listStrategies,
+    queryKey: strategyKeys.list(params),
+    queryFn: () => listStrategiesPaged(params),
+    placeholderData: (prev) => prev,
   });
+  // Keep the pager's notion of `total` in sync with the server.
+  useEffect(() => {
+    if (q.data?.total !== undefined && q.data.total !== totalFromServer) {
+      setTotalFromServer(q.data.total);
+    }
+  }, [q.data?.total, totalFromServer]);
 
-  // QA-round-7 list wave (F-4): the engine returns strategies newest-first
-  // (api/strategy.rs sorts ids DESC; strategy ids are time-ordered ULIDs),
-  // so a client-side slice gives the user a 25/50/100 page-size picker
-  // without backend pagination churn. Recency-first default is locked in
-  // upstream so the visible window is "newest N strategies".
-  const items = q.data ?? [];
-  const pagination = useListPagination(items);
+  const items = q.data?.items ?? [];
+  const total = q.data?.total ?? 0;
 
   return (
     <>
-      <Topbar
-        title="Strategies"
-        sub={subtitleFor(q)}
-      />
+      <Topbar title="Strategies" sub={subtitleFor(q, total)} />
 
       <FilterBar />
 
@@ -44,32 +59,32 @@ export function StrategiesRoute() {
           <LoadingSkeleton />
         ) : q.isError ? (
           <ErrorState err={q.error} onRetry={() => q.refetch()} />
-        ) : q.data && q.data.length === 0 ? (
+        ) : total === 0 ? (
           <EmptyState />
         ) : (
-          <StrategiesTable items={pagination.visible} />
+          <StrategiesTable items={items} />
         )}
       </Card>
 
       <ListPagination
-        total={pagination.total}
-        page={pagination.page}
-        pageSize={pagination.pageSize}
-        onPageChange={pagination.setPage}
-        onPageSizeChange={pagination.setPageSize}
+        total={total}
+        page={pager.page}
+        pageSize={pager.pageSize}
+        onPageChange={pager.setPage}
+        onPageSizeChange={pager.setPageSize}
         itemLabel="strategies"
       />
     </>
   );
 }
 
-function subtitleFor(q: ReturnType<typeof useQuery>) {
+function subtitleFor(
+  q: { isPending: boolean; isError: boolean; data?: StrategiesPage },
+  total: number,
+) {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load strategies";
-  const data = q.data as { length: number } | undefined;
-  if (!data) return "";
-  const n = data.length;
-  return `${n} ${n === 1 ? "strategy" : "strategies"}`;
+  return `${total} ${total === 1 ? "strategy" : "strategies"}`;
 }
 
 function FilterBar() {
