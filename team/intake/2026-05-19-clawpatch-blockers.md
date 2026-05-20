@@ -291,3 +291,39 @@ Verification target:
 
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-0e07bcd326-2bbe_8ce24d101a`
   after a broader fix.
+
+## B-11 - MobileDrawer focus-management generated fix fails validation
+
+- Finding: `fnd_sig-feat-ui-flow-52cb829747-f86d_e103c65b17`
+- Severity: medium
+- Category: bug
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` attempted to add modal dialog semantics, focus capture/trapping,
+Escape close behavior, and `MobileDrawer.test.tsx`, but the generated patch
+failed clawpatch's validation after applying. The failed generated code and
+test file were removed so this branch can be turned into a PR with the
+validated fixes already completed.
+
+Observed generated-patch mismatch:
+
+- The generated test expected initial focus on the drawer's close button.
+- The generated component implementation focused the drawer `<aside>` itself
+  via `tabIndex={-1}` before tab trapping.
+
+Recommendation from clawpatch:
+
+- Give the drawer modal semantics such as `role="dialog"` and
+  `aria-modal="true"`, focus the first meaningful drawer control when it opens,
+  trap Tab/Shift+Tab within the drawer while open, restore focus to the opener
+  on close, and close on Escape.
+
+Minimum fix scope from clawpatch:
+
+- `MobileDrawer.tsx` plus a focused component test for drawer modal keyboard
+  behavior.
+
+Verification target:
+
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-52cb829747-f86d_e103c65b17`
+  after a broader fix.
