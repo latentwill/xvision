@@ -4,7 +4,16 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-21 — CLI agent research workbench intake
+> Last updated: 2026-05-21 — final intake-queue reconciliation. Q15
+> intake (`2026-05-16-q15.md`) and QA validate-draft cadence intake
+> (`2026-05-19-qa-validate-draft-cadence-false-positive.md`) flagged
+> as fully shipped via 2026-05-19 sweep archive notes. Reserved
+> section now enumerates the 3 spec-first intakes (compare-ab,
+> strategies-folder, canonical-template), the V2E contracts laid
+> down, and the CLI safety P1/P2 items waiting on P0. **Every
+> intake in `team/intake/` is now either shipped, contracted, or
+> Reserved with a stated reason.** No intake is in limbo.
+> Earlier 2026-05-21 work — CLI agent research workbench intake
 > fully reconciled (`team/intake/2026-05-19-cli-agent-research-workbench.md`):
 > all 14 tracks shipped across waves A–E. Operator follow-on intake
 > (`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`)
@@ -100,8 +109,39 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ## Reserved
 
-_(empty — next decomposition wave should come through intake; see
-the V2 board for V2A leaves and V2E contracts already laid down.)_
+Intakes that exist in `team/intake/` but **need spec authoring first**
+before contracts can open. Conductor will not freelance these into
+contracts without an operator-approved spec:
+
+- **`team/intake/2026-05-19-compare-ab-evaluations.md`** — 10 open-
+  ended product asks for the AB-compare surface (live compare for
+  in-flight runs, promote/demote arms, per-agent metrics, side-by-side
+  traces, statistical confidence, templates, capsule→compare bridge,
+  mobile view, shareable charts, strategy-name labels). Needs a
+  product-design spec under `docs/superpowers/specs/` before
+  decomposition.
+- **`team/intake/2026-05-20-strategies-folder-and-template-refactor.md`**
+  — V2F phase seed: user-curated `strategies/` folder, pre-seeded
+  agent-pipeline templates, template-optional refactor follow-on.
+  Needs operator decision on V2F adoption + spec.
+- **`team/intake/2026-05-20-canonical-template-needs-trader.md`** —
+  P2, explicitly gated on the V2 capability-first agent-model spec
+  per the intake itself; resolves as part of that refactor.
+
+Intakes with **contracts already laid down** in `team/contracts/`
+that haven't yet entered the Active block:
+
+- **`team/intake/2026-05-19-eval-accuracy-and-trace-surface.md`** (V2E)
+  — 9 contracts under `team/contracts/eval-*` covering trace-surface
+  foundation, candle integrity + manifest, per-bar cost arrays,
+  volume-share slippage, intra-bar fill ordering, look-ahead prober,
+  broker-rule findings, net-of-inference-cost metric, and trace-surface
+  prober. See `team/board-v2.md` for V2E sequencing.
+
+P1 (#4–#12) and P2 (#13–#15) tracks from
+`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md` are
+also Reserved until P0 (the bundled `cli-operator-safety-p0` contract
+above) lands.
 
 ## Recently Closed
 
