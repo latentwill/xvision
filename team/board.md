@@ -4,53 +4,40 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-21 — final intake-queue reconciliation. Q15
-> intake (`2026-05-16-q15.md`) and QA validate-draft cadence intake
-> (`2026-05-19-qa-validate-draft-cadence-false-positive.md`) flagged
-> as fully shipped via 2026-05-19 sweep archive notes. Reserved
-> section now enumerates the 3 spec-first intakes (compare-ab,
-> strategies-folder, canonical-template), the V2E contracts laid
-> down, and the CLI safety P1/P2 items waiting on P0. **Every
-> intake in `team/intake/` is now either shipped, contracted, or
-> Reserved with a stated reason.** No intake is in limbo.
-> Earlier 2026-05-21 work — CLI agent research workbench intake
-> fully reconciled (`team/intake/2026-05-19-cli-agent-research-workbench.md`):
-> all 14 tracks shipped across waves A–E. Operator follow-on intake
+> Last updated: 2026-05-21 — V2F decomposition (#406): six tracks
+> authored under a new V2F phase (strategies folder + template
+> refactor); see V2F active block below. Plus the prior 2026-05-21
+> work: final intake-queue reconciliation (every intake now shipped,
+> contracted, or Reserved with a stated reason); CLI agent research
+> workbench fully shipped (waves A–E); operator follow-on intake
 > (`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`)
-> opened with one P0 bundled contract: `cli-operator-safety-p0`
-> covering #1 cancel + #2 hard-limits + #3 scope-guardrails. P1
-> (#4–#12) and P2 (#13–#15) items Reserved pending P0 land.
-> Earlier 2026-05-21 work — Docs user+agent wiki intake reconciled
-> (`team/intake/2026-05-20-docs-user-and-agent-wiki.md`): 14 of 16
-> tracks already shipped (wiki plumbing at
-> `crates/xvision-dashboard/wiki/` with build.rs + index.toml; all 13
-> baked pages; sectioned sidebar; `?slug=` deep-linking; clipboard
-> copy). Two contracts opened today for the remaining gaps:
-> `docs-agentd-surface-page` (P1 leaf — write the agentd surface wiki
-> page) and `docs-freshness-staleness-guard` (P3 leaf — CI lint
-> enforcing `last_reviewed` window + cli-reference sync on new verbs).
-> Earlier 2026-05-21 work — Clawpatch-blockers wave opened from
-> `team/intake/2026-05-19-clawpatch-blockers.md`: 3 bundled contracts
-> (`clawpatch-engine-test-helpers` covering B-1/B-2/B-3/B-4;
-> `clawpatch-cli-test-assert` covering B-5; `clawpatch-frontend-components`
-> covering B-6 through B-11, with B-11 explicitly escalation-gated on
-> the no-popups rule). Earlier 2026-05-21 work — Docs / lists / metric
-> polish wave opened from `team/intake/2026-05-21-docs-lists-metric-polish.md`:
-> 5 contracts (`docs-ui-prototype-alignment` P1,
-> `list-search-filter-completion-audit` P1 foundation,
-> `list-search-filter-missing-surfaces` P1 integration gated on
-> audit, `max-drawdown-danger-tone` P1 leaf,
-> `docs-search-list-component-adoption` P2 deferred follow-up).
-> Earlier 2026-05-21 work: QA Round 4 decomposition (`paper-eval-inspector-parity`
-> + 2 followups) via #402. Lists v1 phase 2 fully complete — 2a (#399),
-> 2b (#400), and 2c (#403) all merged 2026-05-20/21; the `<ListPagination>`
-> JSX primitive is gone. Previous sweep: 2026-05-20 conductor sweep —
-> Lists v1 phase 1 + QA Round 7 cleanup.
+> opened with the `cli-operator-safety-p0` bundled contract; Docs
+> wiki intake (`team/intake/2026-05-20-docs-user-and-agent-wiki.md`)
+> reconciled with two new contracts (`docs-agentd-surface-page` P1,
+> `docs-freshness-staleness-guard` P3); Clawpatch-blockers wave
+> opened (3 bundled contracts covering B-1 through B-11);
+> Docs / lists / metric polish wave opened (5 contracts from the
+> 2026-05-21 intake); QA Round 4 decomposition followups still open.
+> Lists v1 phase 2 fully complete — 2a (#399), 2b (#400), 2c (#403)
+> all merged; the `<ListPagination>` JSX primitive is gone and
+> #401 cleared the 5 carry-over test failures (suite at 638/638).
+> Previous sweep: 2026-05-20 conductor sweep — Lists v1 phase 1 +
+> QA Round 7 cleanup.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 `team/board-v2.md`.
 
 ## Active
+
+- **V2F — strategy authoring & user knowledge** (six tracks; spec at
+  `docs/superpowers/plans/2026-05-21-v2f-strategies-folder-and-template-refactor.md`).
+  Detailed entries live on `team/board-v2.md`. Wave 1 (independent —
+  parallel-safe; all in PR):
+  - [strategies-folder-surface](contracts/strategies-folder-surface.md) — foundation · pr-open #414 · gates wave 2 + 3
+  - [agent-pipeline-template-library-expansion](contracts/agent-pipeline-template-library-expansion.md) — leaf · pr-open #409
+  - [wizard-prompt-strategy-folder-and-templates](contracts/wizard-prompt-strategy-folder-and-templates.md) — leaf · pr-open #408
+  Wave 2 (after foundation): `strategies-folder-prepopulation` + `strategies-folder-import` (parallel).
+  Wave 3: `strategy-ideas-tool-surface` (after prepopulation).
 
 - **CLI operator safety — 2026-05-20** (P0 bundle, decomposed from
   `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`):
@@ -145,16 +132,20 @@ above) lands.
 
 ## Recently Closed
 
-Merged 2026-05-20 / 2026-05-21 (not yet archived):
+Merged 2026-05-20 → 2026-05-21 (not yet archived):
 
-- **Lists v1 phase 2** — full wave complete. `list-migrate-eval-runs` (#399, 2a), `list-migrate-strategies` (#400, 2b), `list-migrate-decisions-and-tail` (#403, 2c — also deleted the transitional `<ListPagination>` JSX primitive). Phase 3 (`list-component-density-toggle`) remains deferred. Ready to archive on the next conductor sweep.
-
-Earlier — also not yet archived:
-
-- **Lists v1 phase 2a** — `list-migrate-eval-runs` (#399). Migrated
-  `/eval-runs` to `<ResponsiveListCard>` + `useListState` +
-  `useListUrlState`; landed F-2 (search/filter) from QA Round 7.
-  Pattern is the reference for 2b/2c.
+- **Lists v1 phase 2** — fully landed. `list-migrate-eval-runs`
+  (#399, 2a), `list-migrate-strategies` (#400, 2b),
+  `list-migrate-decisions-and-tail` (#403, 2c). The transitional
+  `<ListPagination>` JSX primitive was deleted in 2c;
+  `useServerPagination` hook lifted to its own file. Phase 3
+  (`list-component-density-toggle`) remains deferred. Ready to
+  archive on the next conductor sweep.
+- **Pre-existing test failures cleanup** — `chore: fix 5 pre-existing
+  test failures carried across #386/#387/#397/#399` (#401). Three
+  were stale test assertions; the other two found a real production
+  duplicate-`data-testid` bug on `strategies-detail.tsx` from commit
+  `7c7c55a`. Full frontend suite now 638/638.
 
 QA Round 4 status reconciled 2026-05-21 (intake table updated, no archive yet — three tracks still open as `paper-eval-inspector-parity` / `strategy-require-at-least-one-agent-fixture-migration` / `scenario-clone-form-structural-fields`):
 
