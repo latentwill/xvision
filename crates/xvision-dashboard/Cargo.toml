@@ -37,3 +37,4 @@ tempfile  = "3"
 chrono    = { workspace = true }
 reqwest   = { workspace = true, features = ["stream"] }
 futures-util = "0.3"
+tower = { version = "0.5", features = ["util"] }

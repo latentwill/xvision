@@ -20,6 +20,10 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -123,6 +127,42 @@ fn verify_fails_on_tampered_metrics() {
     );
 }
 
+fn assert_verify_rejects(att: &EvalAttestation, field: &str) {
+    assert!(verify(att).is_err(), "{field} tampering must fail verify");
+}
+
+#[test]
+fn verify_fails_on_tampered_signed_metadata() {
+    let run = finalized_run();
+    let scenario = first_scenario();
+    let key = fresh_signing_key();
+    let att = sign(&run, &scenario, &key).unwrap();
+
+    let mut tampered = att.clone();
+    tampered.agent_id = "tampered-agent".into();
+    assert_verify_rejects(&tampered, "agent_id");
+
+    let mut tampered = att.clone();
+    tampered.scenario_id = "tampered-scenario".into();
+    assert_verify_rejects(&tampered, "scenario_id");
+
+    let mut tampered = att.clone();
+    tampered.tokens_used.input += 1;
+    assert_verify_rejects(&tampered, "tokens_used.input");
+
+    let mut tampered = att.clone();
+    tampered.tokens_used.output += 1;
+    assert_verify_rejects(&tampered, "tokens_used.output");
+
+    let mut tampered = att.clone();
+    tampered.tokens_used.total += 1;
+    assert_verify_rejects(&tampered, "tokens_used.total");
+
+    let mut tampered = att.clone();
+    tampered.ran_at = Utc.with_ymd_and_hms(2025, 4, 1, 12, 0, 1).unwrap();
+    assert_verify_rejects(&tampered, "ran_at");
+}
+
 #[test]
 fn verify_fails_on_tampered_pubkey() {
     let run = finalized_run();
@@ -137,12 +177,9 @@ fn verify_fails_on_tampered_pubkey() {
 }
 
 #[test]
-fn signed_metadata_canonical_json_is_key_order_stable() {
-    // Two attestations of the same run/scenario, with different field-insertion
-    // orders in the underlying serde Value, must produce IDENTICAL signatures
-    // when signed by the same key. The canonicalize_json helper sorts keys, so
-    // the signing input bytes are deterministic regardless of how the JSON was
-    // assembled.
+fn signing_same_payload_is_deterministic() {
+    // Two attestations of the same run/scenario must produce identical
+    // signatures when signed by the same key.
     let run = finalized_run();
     let scenario = first_scenario();
     let key = fresh_signing_key();

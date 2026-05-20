@@ -30,8 +30,7 @@
 use std::sync::Mutex;
 
 use xvision_engine::agent::llm::{
-    anthropic_request_body, openai_compat_request_body, CacheControlMode, ContentBlock,
-    LlmRequest, Message,
+    anthropic_request_body, openai_compat_request_body, CacheControlMode, ContentBlock, LlmRequest, Message,
 };
 
 /// Serialises tests that mutate `XVN_PROMPT_CACHE`. Env vars are
@@ -106,7 +105,10 @@ fn eval_shaped_request(n_bars: usize, cache_control: Option<CacheControlMode>) -
         messages: vec![Message {
             role: "user".into(),
             content: vec![ContentBlock::Text {
-                text: format!("Inputs:\n{}\n\nDecide.", serde_json::to_string_pretty(&seed).unwrap()),
+                text: format!(
+                    "Inputs:\n{}\n\nDecide.",
+                    serde_json::to_string_pretty(&seed).unwrap()
+                ),
             }],
         }],
         max_tokens: Some(1024),

@@ -14,7 +14,7 @@ use xvision_engine::eval::{DecisionRow, Run, RunStore};
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect(":memory:")
+        .connect("sqlite::memory:")
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
@@ -26,6 +26,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
         .execute(&pool)
         .await
         .unwrap();

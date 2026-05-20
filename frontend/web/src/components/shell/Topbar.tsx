@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import { HealthPill } from "./HealthPill";
 import { useUi } from "@/stores/ui";
 import { modKeyLabel } from "@/lib/platform";
@@ -5,16 +7,35 @@ import { modKeyLabel } from "@/lib/platform";
 export function Topbar({
   title,
   sub,
+  back,
   cmdkPlaceholder = "Jump to anything…",
 }: {
   title: string;
   sub?: React.ReactNode;
+  /**
+   * Optional back-link affordance shown above the title. Use on
+   * inspector / detail routes so operators can return to the list
+   * route without relying on browser history (browser back is
+   * unreliable when the operator deep-linked in). See QA22 /
+   * `inspector-back-to-list-buttons`.
+   */
+  back?: { to: string; label: string };
   cmdkPlaceholder?: string;
 }) {
   const setCmdkOpen = useUi((s) => s.setCmdkOpen);
   return (
     <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3 xl:gap-8 mb-5 xl:mb-7">
       <div className="min-w-0">
+        {back ? (
+          <Link
+            to={back.to}
+            data-testid="topbar-back"
+            className="inline-flex items-center gap-1 mb-1 text-[12px] text-text-3 hover:text-text transition-colors"
+          >
+            <span aria-hidden>←</span>
+            <span>{back.label}</span>
+          </Link>
+        ) : null}
         <h1 className="m-0 mb-1 font-serif font-medium text-[30px] xl:text-[38px] tracking-tight leading-none">
           {title}
         </h1>

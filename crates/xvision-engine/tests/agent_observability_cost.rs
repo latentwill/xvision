@@ -31,7 +31,7 @@ use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::eval::cost::compute_token_cost_usd_from_catalog;
 use xvision_observability::{
     AgentRunRecorder, ModelCallFinishedEvent, NoopRecorder, RunEvent, RunEventBus, RunStartedEvent,
-    SqliteRecorder, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
+    SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus, SqliteRecorder,
 };
 
 /// OpenRouter-shaped Claude Opus 4.7 entry. Matches the fixture in
@@ -128,9 +128,8 @@ async fn priced_model_resolves_cost_via_wired_catalog() {
     assert_eq!(finished.len(), 1, "exactly one ModelCallFinished expected");
     let m = finished[0];
 
-    let expected =
-        compute_token_cost_usd_from_catalog(10_000, 2_000, "anthropic/claude-opus-4.7", &cat)
-            .expect("priced model resolves via canonical helper");
+    let expected = compute_token_cost_usd_from_catalog(10_000, 2_000, "anthropic/claude-opus-4.7", &cat)
+        .expect("priced model resolves via canonical helper");
     let actual = m.cost_usd.expect("priced model produces Some(cost_usd)");
     assert!(
         (actual - expected).abs() < 1e-12,
@@ -420,8 +419,7 @@ async fn with_payloads_companion_uses_same_resolution_rule() {
     let mut catalogs = HashMap::new();
     catalogs.insert("openrouter".to_string(), cat.clone());
 
-    let emitter =
-        ObsEmitter::new(bus.clone(), "run-with-payloads-cost").with_catalogs(catalogs);
+    let emitter = ObsEmitter::new(bus.clone(), "run-with-payloads-cost").with_catalogs(catalogs);
 
     emitter
         .emit_model_call_finished_with_payloads(
@@ -441,8 +439,7 @@ async fn with_payloads_companion_uses_same_resolution_rule() {
     let events = collect_events(&bus, &recorder).await;
     let m = finished_events(&events).into_iter().next().unwrap();
     let expected =
-        compute_token_cost_usd_from_catalog(10_000, 2_000, "anthropic/claude-opus-4.7", &cat)
-            .unwrap();
+        compute_token_cost_usd_from_catalog(10_000, 2_000, "anthropic/claude-opus-4.7", &cat).unwrap();
     let actual = m.cost_usd.unwrap();
     assert!((actual - expected).abs() < 1e-12);
 }

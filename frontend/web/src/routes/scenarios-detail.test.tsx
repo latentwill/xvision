@@ -163,7 +163,13 @@ describe("ScenariosDetailRoute bars cache actions", () => {
 
     renderRoute();
 
+    // QA22 / `strategy-clone-editable-frontend`: "Clone to edit" now
+    // opens an inline form (no popup per the workspace UI rule) where
+    // the operator can amend display_name/description/notes/tags
+    // before submitting. The submit button calls cloneScenario with
+    // the mutations.
     fireEvent.click(await screen.findByRole("button", { name: "Clone to edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create clone" }));
 
     await waitFor(() => {
       expect(scenarioApi.cloneScenario).toHaveBeenCalledWith(

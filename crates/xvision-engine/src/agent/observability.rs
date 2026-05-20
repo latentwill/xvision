@@ -287,7 +287,13 @@ impl ObsEmitter {
     /// provider strings (`input.slot.provider`) are operator-typed and
     /// don't always match `ProviderEntry.name`; falling back keeps the
     /// cost path resilient without forcing a per-call provider rename.
-    fn compute_cost_usd(&self, provider: &str, model: &str, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+    fn compute_cost_usd(
+        &self,
+        provider: &str,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Option<f64> {
         if self.catalogs.is_empty() {
             // No catalogs wired — legacy behaviour, no log spam.
             return None;

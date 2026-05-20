@@ -542,8 +542,7 @@ impl AnthropicDispatch {
 /// share the counter — the executor reads the delta over its window so
 /// per-run accounting is still correct under the launch-concurrency
 /// gate. F-8.
-pub static CACHE_HINT_EMITTED_CALLS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+pub static CACHE_HINT_EMITTED_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Returns true when `XVN_PROMPT_CACHE=1` is set in the process
 /// environment. F-8 trigger — when this is false the dispatchers never
@@ -688,11 +687,10 @@ pub fn anthropic_request_body(req: &LlmRequest) -> serde_json::Value {
                 "cache_control": {"type": "ephemeral"}
             }
         ]);
-        let mut messages_json: Vec<serde_json::Value> =
-            serde_json::to_value(&req.messages)
-                .ok()
-                .and_then(|v| v.as_array().cloned())
-                .unwrap_or_default();
+        let mut messages_json: Vec<serde_json::Value> = serde_json::to_value(&req.messages)
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
         // Tag the second-to-last user-role block so the prefix up
         // through it (which includes the prior conversation + the
         // bulk of the seed) becomes the cache key. When fewer than
@@ -713,10 +711,7 @@ pub fn anthropic_request_body(req: &LlmRequest) -> serde_json::Value {
             if let Some(content) = target.get_mut("content").and_then(|c| c.as_array_mut()) {
                 if let Some(last_block) = content.last_mut() {
                     if let Some(obj) = last_block.as_object_mut() {
-                        obj.insert(
-                            "cache_control".into(),
-                            serde_json::json!({"type": "ephemeral"}),
-                        );
+                        obj.insert("cache_control".into(), serde_json::json!({"type": "ephemeral"}));
                     }
                 }
             }

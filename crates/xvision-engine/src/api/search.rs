@@ -451,6 +451,7 @@ mod tests {
         let run = Run {
             id: "01KS09WVDZH1F01TW8527RXYED".into(),
             agent_id: "agent_x".into(),
+            agents_agent_id: None,
             scenario_id: "btc-momentum".into(),
             params_override: None,
             mode: RunMode::Backtest,

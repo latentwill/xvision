@@ -5,15 +5,29 @@ use xvision_engine::api::scenario::{archive, create, validate_request, CreateSce
 use xvision_engine::api::{ApiContext, ApiError};
 use xvision_engine::eval::scenario::*;
 
-async fn test_ctx() -> ApiContext {
+struct TestCtx {
+    ctx: ApiContext,
+    _dir: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestCtx {
+    type Target = ApiContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx
+    }
+}
+
+async fn test_ctx() -> TestCtx {
     use tempfile::tempdir;
-    let dir = Box::leak(Box::new(tempdir().unwrap()));
-    ApiContext::open(
+    let dir = tempdir().unwrap();
+    let ctx = ApiContext::open(
         dir.path(),
         xvision_engine::api::Actor::Cli { user: "test".into() },
     )
     .await
-    .unwrap()
+    .unwrap();
+    TestCtx { ctx, _dir: dir }
 }
 
 fn valid_request() -> CreateScenarioRequest {
@@ -63,6 +77,17 @@ fn valid_request() -> CreateScenarioRequest {
         source: ScenarioSource::User,
         warmup_bars: None,
     }
+}
+
+#[tokio::test]
+async fn test_ctx_removes_temp_dir_on_drop() {
+    let dir_path;
+    {
+        let ctx = test_ctx().await;
+        dir_path = ctx._dir.path().to_path_buf();
+        assert!(dir_path.exists());
+    }
+    assert!(!dir_path.exists());
 }
 
 #[tokio::test]

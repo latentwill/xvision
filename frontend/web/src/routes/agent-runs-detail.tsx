@@ -80,7 +80,11 @@ export function AgentRunDetailRoute() {
   if (q.isPending) {
     return (
       <>
-        <Topbar title="Agent run" sub={runId || "Loading…"} />
+        <Topbar
+          title="Agent run"
+          sub={runId || "Loading…"}
+          back={{ to: "/eval-runs", label: "Back to runs" }}
+        />
         <Card className="p-6 animate-pulse">
           <div className="h-5 w-72 bg-surface-elev rounded mb-3" />
         </Card>
@@ -95,7 +99,11 @@ export function AgentRunDetailRoute() {
         : String(q.error);
     return (
       <>
-        <Topbar title="Agent run" sub={runId} />
+        <Topbar
+          title="Agent run"
+          sub={runId}
+          back={{ to: "/eval-runs", label: "Back to runs" }}
+        />
         <Card className="p-6 text-text-2">{message}</Card>
       </>
     );
@@ -107,8 +115,24 @@ export function AgentRunDetailRoute() {
   return (
     <>
       <Topbar
-        title={`Run ${detail.summary.run_id}`}
-        sub={detail.summary.objective}
+        title="Agent run"
+        back={{ to: "/eval-runs", label: "Back to runs" }}
+        sub={
+          <>
+            <span
+              className="font-mono text-[12px] text-text-3 break-all select-all"
+              aria-label={`Agent run id ${detail.summary.run_id}`}
+            >
+              {detail.summary.run_id}
+            </span>
+            {detail.summary.objective ? (
+              <>
+                <span className="mx-1.5 text-text-3">·</span>
+                <span>{detail.summary.objective}</span>
+              </>
+            ) : null}
+          </>
+        }
       />
       <Link
         to="/agent-runs"
@@ -117,7 +141,12 @@ export function AgentRunDetailRoute() {
         ← Back to agent runs
       </Link>
       <Card className="p-5 mb-4 flex flex-wrap items-center gap-4">
-        <div className="font-mono text-[12px] text-text-3">{detail.summary.run_id}</div>
+        <div
+          className="font-mono text-[12px] text-text-3 break-all select-all"
+          aria-label={`Agent run id ${detail.summary.run_id}`}
+        >
+          {detail.summary.run_id}
+        </div>
         <Pill tone={detail.summary.error_count > 0 ? "danger" : "default"}>{detail.summary.status}</Pill>
         <Pill
           tone={detail.summary.retention_mode === "full_debug" ? "warn" : "info"}

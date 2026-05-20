@@ -41,7 +41,6 @@ import {
   displayScenarioName,
   displayStrategyName,
   evalRunDisambiguator,
-  shortId,
 } from "@/lib/run-display";
 import type {
   BrokersReport,
@@ -180,7 +179,12 @@ export function EvalRunsRoute() {
           <span>
             Filtering runs for strategy{" "}
             <span className="text-text">{strategyFilterLabel}</span>
-            <code className="ml-2 font-mono text-text-3">{shortId(strategyFilter)}</code>
+            <code
+              className="ml-2 font-mono text-text-3 break-all"
+              title={strategyFilter}
+            >
+              {strategyFilter}
+            </code>
           </span>
           <button
             type="button"
@@ -382,9 +386,13 @@ function RunsTable({
                   {evalRunDisambiguator(row, items)}
                 </span>
                 <span className="mx-1.5 text-text-4">·</span>
-                <span title={row.id}>run {shortId(row.id)}</span>
-                <span className="mx-1.5 text-text-4">·</span>
                 <span>{row.mode}</span>
+              </div>
+              <div
+                className="mt-1 font-mono text-[11px] text-text-3 break-all select-all"
+                aria-label={`Run id ${row.id}`}
+              >
+                {row.id}
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] min-[420px]:grid-cols-5">
                 <div className="text-text-2">
@@ -508,10 +516,10 @@ function RunsTable({
                       {evalRunDisambiguator(row, items)}
                     </div>
                     <div
-                      className="mt-0.5 font-mono text-[11px] text-text-3"
-                      title={row.id}
+                      className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all"
+                      aria-label={`Run id ${row.id}`}
                     >
-                      run {shortId(row.id)}
+                      {row.id}
                     </div>
                   </td>
                   <td className="px-3 py-3 text-text-2">{scenarioName(row.scenario_id)}</td>

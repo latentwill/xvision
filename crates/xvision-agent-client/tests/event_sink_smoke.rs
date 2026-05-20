@@ -66,6 +66,27 @@ async fn wait_for_rows(pool: &SqlitePool, table: &str, expected: i64) {
     }
 }
 
+async fn assert_observability_tables_empty(pool: &SqlitePool) {
+    for table in [
+        "agent_runs",
+        "spans",
+        "checkpoints",
+        "model_calls",
+        "tool_calls",
+        "approvals",
+        "sandbox_results",
+        "supervisor_notes",
+        "artifacts",
+        "events",
+    ] {
+        assert_eq!(
+            count_rows(pool, table).await,
+            0,
+            "table `{table}` changed after an unknown notification"
+        );
+    }
+}
+
 /// Push a JSON-RPC 2.0 notification (no `id`) over an open UnixStream.
 async fn push(conn: &mut UnixStream, method: &str, params: serde_json::Value) {
     let msg = serde_json::json!({
@@ -254,6 +275,10 @@ async fn unknown_notification_method_is_silently_ignored() {
         serde_json::json!({"any": "thing"}),
     )
     .await;
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_observability_tables_empty(&pool).await;
+
     // Followed by a legitimate event so we can assert that processing
     // continued after the unknown one was dropped.
     push(
@@ -270,6 +295,29 @@ async fn unknown_notification_method_is_silently_ignored() {
     .await;
 
     wait_for_rows(&pool, "agent_runs", 1).await;
+    let run_row: (String,) = sqlx::query_as("SELECT id FROM agent_runs LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(run_row.0, "r-forward-compat");
+    assert_eq!(count_rows(&pool, "agent_runs").await, 1);
+    for table in [
+        "spans",
+        "checkpoints",
+        "model_calls",
+        "tool_calls",
+        "approvals",
+        "sandbox_results",
+        "supervisor_notes",
+        "artifacts",
+        "events",
+    ] {
+        assert_eq!(
+            count_rows(&pool, table).await,
+            0,
+            "table `{table}` changed after an unknown notification"
+        );
+    }
     drop(conn);
     handle.shutdown().await;
 }

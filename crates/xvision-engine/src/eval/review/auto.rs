@@ -208,11 +208,7 @@ pub async fn fire_auto_review(store: &RunStore, run_id: &str) {
             );
         }
         Ok(AutoReviewOutcome::AlreadyExists { review_id }) => {
-            tracing::debug!(
-                run_id,
-                review_id,
-                "auto-review skipped (pre-existing row)"
-            );
+            tracing::debug!(run_id, review_id, "auto-review skipped (pre-existing row)");
         }
         Err(e) => {
             tracing::warn!(
@@ -350,11 +346,7 @@ fn truncate_to(s: &str, max: usize) -> String {
     out
 }
 
-fn serialize_findings_snapshot(
-    findings: &[Finding],
-    verdict: ReviewVerdict,
-    score: i32,
-) -> String {
+fn serialize_findings_snapshot(findings: &[Finding], verdict: ReviewVerdict, score: i32) -> String {
     // Wrap the findings array in an envelope describing this is an
     // auto-runner artifact, not an LLM reply. The shape stays
     // forward-compatible: downstream readers that expect a JSON object

@@ -20,6 +20,18 @@ pub struct ResolvedAgentSlot {
     /// per-model auto value because the API requires the field. Explicit
     /// values pass through verbatim — no clamping.
     pub max_tokens: Option<u32>,
+    /// Operator's per-request sampling temperature. `None` lets the
+    /// provider apply its own default. `Some(t)` is passed through to
+    /// the outbound request body verbatim — Anthropic's
+    /// `anthropic_request_body` and the OpenAI-compat
+    /// `openai_compat_request_body` both omit `temperature` when the
+    /// `LlmRequest` field is `None`, so callers that don't set it
+    /// stay on legacy behaviour.
+    ///
+    /// Wired from `AgentSlot.temperature` at strategy-resolution time
+    /// via `resolve_agent_slot`; see `crates/xvision-engine/src/eval/
+    /// executor/{paper,backtest}.rs` for the dispatch call sites.
+    pub temperature: Option<f64>,
     /// Per-slot seed-sanitization policy (F-6). The eval executor reads
     /// this off the trader-role slot before constructing the seed JSON
     /// — `Causal` strips `timestamp` from `bar_history` (replacing it
@@ -77,6 +89,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             tools: input.tools.clone(),
             response_schema: None,
             max_tokens,
+            temperature: None,
             obs: input.obs.clone(),
         })
         .await?;
@@ -97,6 +110,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             tools: input.tools.clone(),
             response_schema: None,
             max_tokens,
+            temperature: None,
             obs: input.obs.clone(),
         })
         .await?;
@@ -117,6 +131,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             tools: input.tools.clone(),
             response_schema: Some(ResponseSchema::trader_output()),
             max_tokens,
+            temperature: None,
             obs: input.obs.clone(),
         })
         .await?;
@@ -168,6 +183,7 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
                 None
             },
             max_tokens: resolved.max_tokens,
+            temperature: resolved.temperature,
             obs: input.obs.clone(),
         })
         .await?;
@@ -224,6 +240,7 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot) -> ResolvedAgentSlot {
         role: role.to_string(),
         slot: agent_slot_to_llm_slot(role, slot),
         max_tokens: slot.resolve_max_tokens(),
+        temperature: slot.temperature,
         inputs_policy: slot.inputs_policy,
         bar_history_limit: slot.bar_history_limit,
     }

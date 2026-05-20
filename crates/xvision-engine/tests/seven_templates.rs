@@ -30,8 +30,9 @@ fn each_template_produces_a_valid_draft() {
         let tpl = registry::get(name).unwrap_or_else(|| panic!("template {name} missing from registry"));
         // ULID-shaped 26-char id (validate_strategy doesn't enforce format,
         // just shape; this matches the assertion in the plan).
-        let id: String = format!("01H8N7Z{name}").chars().take(26).collect();
-        let draft = tpl.new_draft(id, format!("test-{name}"), "@test".into());
+        let id = "01H8N7Z0000000000000000000";
+        assert_eq!(id.len(), 26);
+        let draft = tpl.new_draft(id.to_string(), format!("test-{name}"), "@test".into());
         validate_strategy(&draft).unwrap_or_else(|e| panic!("{name}: {e}"));
     }
 }

@@ -206,32 +206,40 @@ fn inspect_is_idempotent_on_finished_runs() {
         .unwrap();
     rt.block_on(seed_run(&db_path, run_id));
 
-    for _ in 0..2 {
-        let out = xvn(
-            &[
-                "run",
-                "inspect",
-                run_id,
-                "--db",
-                db_path.to_str().unwrap(),
-                "--out",
-                out_dir.path().to_str().unwrap(),
-            ],
-            home.path(),
-        );
-        assert!(
-            out.status.success(),
-            "stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
+    let inspect_args = [
+        "run",
+        "inspect",
+        run_id,
+        "--db",
+        db_path.to_str().unwrap(),
+        "--out",
+        out_dir.path().to_str().unwrap(),
+    ];
+    let out = xvn(&inspect_args, home.path());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
-    // Second invocation produced identical bytes — that's the
+    let json_path = out_dir.path().join("xvn_run.json");
+    let md_path = out_dir.path().join("xvn_report.md");
+    let first_json = std::fs::read(&json_path).unwrap();
+    let first_md = std::fs::read(&md_path).unwrap();
+
+    let out = xvn(&inspect_args, home.path());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Second invocation produced identical bytes: that's the
     // idempotency contract from acceptance criteria.
-    let json = std::fs::read(out_dir.path().join("xvn_run.json")).unwrap();
-    let md = std::fs::read(out_dir.path().join("xvn_report.md")).unwrap();
-    assert!(!json.is_empty());
-    assert!(!md.is_empty());
+    let second_json = std::fs::read(&json_path).unwrap();
+    let second_md = std::fs::read(&md_path).unwrap();
+    assert_eq!(first_json, second_json);
+    assert_eq!(first_md, second_md);
 }
 
 #[test]

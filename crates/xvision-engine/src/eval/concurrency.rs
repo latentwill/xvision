@@ -101,10 +101,7 @@ impl LaunchConcurrencyGate {
     /// Keys in `overrides` win over the global default. Future TOML wiring
     /// will populate this map from engine config; today it's seeded empty
     /// from `ApiContext::open`.
-    pub fn with_overrides(
-        default_permits: usize,
-        overrides: HashMap<(String, String), usize>,
-    ) -> Self {
+    pub fn with_overrides(default_permits: usize, overrides: HashMap<(String, String), usize>) -> Self {
         // A 0-permit cap would deadlock every acquire forever. Clamp to 1
         // and warn rather than letting the misconfig kill the engine.
         let default_permits = if default_permits == 0 {
@@ -228,11 +225,8 @@ mod tests {
 
         // Third acquire must block.
         let gate_clone = gate.clone();
-        let blocked = tokio::spawn(async move {
-            gate_clone
-                .acquire("openrouter", "gemini-3.1-flash-lite")
-                .await
-        });
+        let blocked =
+            tokio::spawn(async move { gate_clone.acquire("openrouter", "gemini-3.1-flash-lite").await });
 
         // Give the spawned task a chance to actually try to acquire.
         sleep(Duration::from_millis(50)).await;

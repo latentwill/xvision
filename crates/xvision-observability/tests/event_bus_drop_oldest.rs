@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tokio::sync::Notify;
@@ -22,7 +22,11 @@ const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cl
 const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();

@@ -561,8 +561,8 @@ impl PaperExecutor {
         let bar_history_limit = resolve_bar_history_limit(agent_slots);
         // F-8 stats: snapshot the global cache-hint counter before the
         // bar loop so we can log the per-run delta at finalize.
-        let cache_hint_start = crate::agent::llm::CACHE_HINT_EMITTED_CALLS
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let cache_hint_start =
+            crate::agent::llm::CACHE_HINT_EMITTED_CALLS.load(std::sync::atomic::Ordering::Relaxed);
 
         let initial_balance = self.broker.balance().await?;
         let mut equity_samples: Vec<f64> = Vec::new();
@@ -1508,8 +1508,8 @@ impl PaperExecutor {
         // per-run signal because Acquire/Release isn't needed for a
         // monotonic counter and the launch-concurrency gate isolates
         // the scope.
-        let cache_hint_end = crate::agent::llm::CACHE_HINT_EMITTED_CALLS
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let cache_hint_end =
+            crate::agent::llm::CACHE_HINT_EMITTED_CALLS.load(std::sync::atomic::Ordering::Relaxed);
         let cache_hint_emitted_calls = cache_hint_end.saturating_sub(cache_hint_start);
         tracing::info!(
             target: "xvision::eval",
@@ -1570,6 +1570,7 @@ mod role_tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
         }
@@ -1670,6 +1671,7 @@ mod role_tests {
                     model: Some("m".into()),
                 },
                 max_tokens: None,
+                temperature: None,
                 inputs_policy: InputsPolicy::Oracle,
                 bar_history_limit: None,
             },
@@ -1684,6 +1686,7 @@ mod role_tests {
                     model: Some("m".into()),
                 },
                 max_tokens: None,
+                temperature: None,
                 inputs_policy: InputsPolicy::Causal,
                 bar_history_limit: None,
             },

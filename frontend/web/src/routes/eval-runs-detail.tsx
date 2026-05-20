@@ -18,6 +18,7 @@ import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
+import { useAdaptivePoll } from "@/features/eval-runs/useAdaptivePoll";
 import { useTraceDock } from "@/stores/trace-dock";
 import { isInflightRunStatus } from "@/lib/run-status";
 import {
@@ -56,15 +57,20 @@ export function EvalRunDetailRoute() {
   const { runId } = useParams<{ runId: string }>();
   const id = runId ?? "";
   const qc = useQueryClient();
+  // Status-aware adaptive cadence — see `useAdaptivePoll` for the
+  // schedule (running=2s, queued=5s, terminal=stop, 5min idle→30s).
+  // The hook returns a `(status) => interval` callable that owns the
+  // "ms since last status change" state via refs, so the 5-min stale
+  // backoff fires correctly even when nothing in the React tree
+  // re-renders. We pull the latest status off the cache rather than
+  // routing it through hook deps so we don't have to call the hook
+  // *after* useQuery and run into TDZ ordering.
+  const pollFor = useAdaptivePoll(id);
   const q = useQuery({
     queryKey: evalKeys.run(id),
     queryFn: () => getRun(id),
     enabled: id.length > 0,
-    refetchInterval: (query) => {
-      const detail = query.state.data;
-      const status = detail?.summary.status;
-      return status && isInflightRunStatus(status) ? 2000 : false;
-    },
+    refetchInterval: (query) => pollFor(query.state.data?.summary.status),
   });
   const chart = useQuery({
     queryKey: chartKeys.run(id),
@@ -201,6 +207,7 @@ export function EvalRunDetailRoute() {
 
       <SummaryCard
         summary={detail.summary}
+        equityCurve={detail.equity_curve}
         labels={labels}
         disambiguator={disambiguator}
         onCancel={() => cancel.mutate(detail.summary.id)}
@@ -353,6 +360,7 @@ function isTerminalStatus(status: string): boolean {
 
 function SummaryCard({
   summary,
+  equityCurve,
   labels,
   disambiguator,
   onCancel,
@@ -364,6 +372,7 @@ function SummaryCard({
   deleting,
 }: {
   summary: RunSummary;
+  equityCurve: ReadonlyArray<{ equity_usd: number }>;
   labels: EvalRunLabels;
   disambiguator: string;
   onCancel: () => void;
@@ -424,6 +433,13 @@ function SummaryCard({
         <div className="min-w-0">
           <div className="font-serif text-[30px] leading-none text-text truncate">
             {labels.strategyName}
+          </div>
+          <div
+            data-testid="eval-run-id"
+            className="mt-1 font-mono text-[12px] text-text-3 break-all select-all"
+            aria-label={`Eval run id ${summary.id}`}
+          >
+            {summary.id}
           </div>
           <div className="mt-1 text-[14px] text-text-2 truncate">
             {labels.scenarioName}
@@ -535,6 +551,11 @@ function SummaryCard({
         <Metric label="Sharpe" value={fmtNumber(summary.sharpe)} />
         <Metric label="Max DD" value={fmtPct(summary.max_drawdown_pct)} />
         <Metric label="Total return" value={fmtPct(summary.total_return_pct)} />
+        <Metric
+          label="Total PnL"
+          value={fmtPnlUsd(totalPnlUsd(equityCurve))}
+          tone={pnlTone(totalPnlUsd(equityCurve))}
+        />
         <Metric label="Mode" value={summary.mode} />
         <Metric label="Started" value={fmtTime(summary.started_at)} />
         <Metric
@@ -549,15 +570,54 @@ function SummaryCard({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "pos" | "neg" | "neutral";
+}) {
+  const valueClass =
+    tone === "pos" ? "text-gold" : tone === "neg" ? "text-danger" : "text-text";
   return (
     <div>
       <div className="text-text-3 text-[11px] uppercase tracking-wide mb-1">
         {label}
       </div>
-      <div className="font-mono text-text">{value}</div>
+      <div className={`font-mono ${valueClass}`}>{value}</div>
     </div>
   );
+}
+
+function totalPnlUsd(
+  equityCurve: ReadonlyArray<{ equity_usd: number }>,
+): number | null {
+  if (equityCurve.length < 2) return null;
+  const start = equityCurve[0]?.equity_usd;
+  const end = equityCurve[equityCurve.length - 1]?.equity_usd;
+  if (start == null || end == null) return null;
+  return end - start;
+}
+
+function fmtPnlUsd(pnl: number | null): string {
+  if (pnl == null) return "—";
+  const abs = Math.abs(pnl);
+  const formatted = abs.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  if (pnl > 0) return `+$${formatted}`;
+  if (pnl < 0) return `−$${formatted}`;
+  return `$${formatted}`;
+}
+
+function pnlTone(pnl: number | null): "pos" | "neg" | "neutral" {
+  if (pnl == null) return "neutral";
+  if (pnl > 0) return "pos";
+  if (pnl < 0) return "neg";
+  return "neutral";
 }
 
 type DecisionFilter = "all" | "buy" | "short" | "sell" | "cover" | "hold";

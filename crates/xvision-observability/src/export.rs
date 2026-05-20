@@ -780,7 +780,7 @@ fn sort_children(node: &mut SpanNode) {
 #[cfg(test)]
 mod blob_owner_tests {
     use super::*;
-    use sqlx::SqlitePool;
+    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
     const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
     const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
@@ -788,7 +788,11 @@ mod blob_owner_tests {
         include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
     async fn migrated_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
         sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
         sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();

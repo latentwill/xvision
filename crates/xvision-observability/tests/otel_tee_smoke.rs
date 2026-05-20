@@ -20,7 +20,7 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::Value;
 use opentelemetry_sdk::testing::trace::InMemorySpanExporter;
 use opentelemetry_sdk::trace::TracerProvider;
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tracing_subscriber::prelude::*;
@@ -38,7 +38,11 @@ const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cl
 const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -221,8 +225,8 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
     bus.publish(RunEvent::SpanFinished(SpanFinishedEvent {
         span_id: tool_span,
         ended_at: tts + Duration::milliseconds(3),
-        status: SpanStatus::Ok,
-        error_json: None,
+        status: SpanStatus::Error,
+        error_json: Some(r#"{"input":"TOOL_INPUT_LEAK","output":"TOOL_OUTPUT_LEAK"}"#.to_string()),
     }))
     .await;
 

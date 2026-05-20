@@ -357,8 +357,8 @@ impl BacktestExecutor {
         let bar_history_limit = resolve_bar_history_limit(agent_slots);
         // F-8 stats: snapshot the global counter so we can log the
         // per-run cache-hint delta at finalize.
-        let cache_hint_start = crate::agent::llm::CACHE_HINT_EMITTED_CALLS
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let cache_hint_start =
+            crate::agent::llm::CACHE_HINT_EMITTED_CALLS.load(std::sync::atomic::Ordering::Relaxed);
 
         let initial = scenario.capital.initial;
         let slip_bps = match &scenario.venue.slippage {
@@ -911,8 +911,8 @@ impl BacktestExecutor {
         // F-8 stats: log the per-run cache-hint emit count. Counter
         // is process-wide; per-run delta is the right signal because
         // the launch-concurrency gate isolates the scope.
-        let cache_hint_end = crate::agent::llm::CACHE_HINT_EMITTED_CALLS
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let cache_hint_end =
+            crate::agent::llm::CACHE_HINT_EMITTED_CALLS.load(std::sync::atomic::Ordering::Relaxed);
         let cache_hint_emitted_calls = cache_hint_end.saturating_sub(cache_hint_start);
         tracing::info!(
             target: "xvision::eval",
@@ -1285,6 +1285,7 @@ mod tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
         }

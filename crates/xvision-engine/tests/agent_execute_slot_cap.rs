@@ -114,6 +114,7 @@ async fn execute_slot_caps_runaway_tool_use_loop() {
         tools,
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: None,
     })
     .await

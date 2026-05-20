@@ -12,6 +12,7 @@ use sqlx::SqlitePool;
 use crate::cli_jobs::runner::CliJobRunner;
 use crate::cli_jobs::store::CliJobStore;
 use xvision_engine::api::chart::RunEventBus;
+use xvision_engine::api::eval::RunDetail;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_observability::{
@@ -20,10 +21,29 @@ use xvision_observability::{
 
 const MODELS_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
+/// Eval `get_run` response cache TTL. Tight cap on purpose: the goal is to
+/// collapse the UI's burst polling (one tab firing per-tick refetches when an
+/// operator is watching a long backtest) into a single DB hit per ~500ms
+/// window without ever serving meaningfully stale data — the dashboard's
+/// in-flight tick is 2s, so a 500ms TTL still produces a per-tick refresh on
+/// the wire but absorbs duplicate concurrent reads from multiple tabs / the
+/// detail view + the list view's sibling lookup.
+///
+/// Terminal-status responses bypass this cache entirely (see
+/// `routes::eval_runs::get`) since they never change — caching a `completed`
+/// run is the engine's job, not ours.
+const EVAL_RUN_CACHE_TTL: Duration = Duration::from_millis(500);
+
 #[derive(Clone)]
 struct CachedModels {
     fetched_at: Instant,
     report: ProviderModelsReport,
+}
+
+#[derive(Clone)]
+struct CachedRunDetail {
+    fetched_at: Instant,
+    detail: RunDetail,
 }
 
 #[derive(Clone)]
@@ -53,6 +73,11 @@ pub struct AppState {
     /// publishes dozens of model rotations per day; longer than that
     /// and the operator sees stale options).
     models_cache: Arc<Mutex<HashMap<String, CachedModels>>>,
+    /// Per-run cache for the `GET /api/eval/runs/:id` route. Keyed by run id;
+    /// a 500ms TTL absorbs burst polling. Terminal runs are not inserted (the
+    /// route bypasses the cache for them) — see
+    /// `EVAL_RUN_CACHE_TTL` and `routes::eval_runs::get`.
+    eval_run_cache: Arc<Mutex<HashMap<String, CachedRunDetail>>>,
     cli_command: PathBuf,
     cli_runner: Arc<CliJobRunner>,
 }
@@ -131,6 +156,7 @@ impl AppState {
             obs_broadcast,
             obs_config,
             models_cache: Arc::new(Mutex::new(HashMap::new())),
+            eval_run_cache: Arc::new(Mutex::new(HashMap::new())),
             cli_command,
             cli_runner,
         })
@@ -186,6 +212,43 @@ impl AppState {
     pub fn models_cache_invalidate(&self, provider: &str) {
         if let Ok(mut cache) = self.models_cache.lock() {
             cache.remove(provider);
+        }
+    }
+
+    /// Read a cached `RunDetail` for `run_id` if it's within the
+    /// `EVAL_RUN_CACHE_TTL` window. Returns `None` on miss or stale entry.
+    /// The route handler is responsible for not inserting terminal runs into
+    /// the cache in the first place; this getter does not re-check status.
+    pub fn eval_run_cache_get(&self, run_id: &str) -> Option<RunDetail> {
+        let cache = self.eval_run_cache.lock().ok()?;
+        let entry = cache.get(run_id)?;
+        if entry.fetched_at.elapsed() > EVAL_RUN_CACHE_TTL {
+            None
+        } else {
+            Some(entry.detail.clone())
+        }
+    }
+
+    /// Insert a freshly-fetched `RunDetail` into the cache. Callers should
+    /// only call this for non-terminal runs.
+    pub fn eval_run_cache_put(&self, run_id: String, detail: RunDetail) {
+        if let Ok(mut cache) = self.eval_run_cache.lock() {
+            cache.insert(
+                run_id,
+                CachedRunDetail {
+                    fetched_at: Instant::now(),
+                    detail,
+                },
+            );
+        }
+    }
+
+    /// Drop the cache entry for `run_id`. Called when an operation that
+    /// can mutate run state (cancel, retry, delete) lands so a subsequent
+    /// poll re-fetches fresh.
+    pub fn eval_run_cache_invalidate(&self, run_id: &str) {
+        if let Ok(mut cache) = self.eval_run_cache.lock() {
+            cache.remove(run_id);
         }
     }
 
