@@ -261,11 +261,14 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
 
 #[tokio::test]
 async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
+    use chrono::{TimeZone, Utc};
     use std::sync::Arc;
+    use xvision_data::alpaca::AlpacaBarsFetcher;
     use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
     use xvision_engine::api::eval::{self, EvalRunRequest};
     use xvision_engine::api::ApiError;
     use xvision_engine::eval::run::RunMode;
+    use xvision_engine::eval::scenario::TimeWindow;
     use xvision_engine::strategies::manifest::PublicManifest;
     use xvision_engine::strategies::risk::RiskPreset;
     use xvision_engine::strategies::slot::LLMSlot;
@@ -276,7 +279,28 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
         .await
-        .unwrap();
+        .unwrap()
+        .with_alpaca_fetcher(Arc::new(AlpacaBarsFetcher::new(
+            "http://127.0.0.1:9".into(),
+            "test-key".into(),
+            "test-secret".into(),
+        )));
+
+    let missing = api_scenario::clone(
+        &ctx,
+        "crypto-rangebound-q2-2025",
+        api_scenario::ScenarioMutations {
+            display_name: Some("rangebound missing cache clone".into()),
+            time_window: Some(TimeWindow {
+                start: Utc.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap(),
+                end: Utc.with_ymd_and_hms(2026, 5, 3, 0, 0, 0).unwrap(),
+            }),
+            warmup_bars: Some(0),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
 
     let agent_id = "01TESTBUNDLEMISSINGFIXTURE";
     let bundle = Strategy {
@@ -323,7 +347,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
         &ctx,
         EvalRunRequest {
             agent_id: agent_id.into(),
-            scenario_id: "crypto-rangebound-q2-2025".into(),
+            scenario_id: missing.id.clone(),
             mode: RunMode::Backtest,
             params_override: None,
         },
@@ -339,7 +363,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
         ApiError::Validation(msg) => {
             assert!(msg.contains("missing bars cache"));
             assert!(msg.contains("Fetch bars"));
-            assert!(msg.contains("crypto-rangebound-q2-2025"));
+            assert!(msg.contains(&missing.id));
         }
         other => panic!("expected Validation, got {other:?}"),
     }
@@ -348,6 +372,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
 #[tokio::test]
 async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() {
     use std::sync::Arc;
+    use xvision_data::alpaca::AlpacaBarsFetcher;
     use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
     use xvision_engine::api::eval::{self, EvalRunRequest};
     use xvision_engine::api::ApiError;
@@ -362,7 +387,12 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
     let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
         .await
-        .unwrap();
+        .unwrap()
+        .with_alpaca_fetcher(Arc::new(AlpacaBarsFetcher::new(
+            "http://127.0.0.1:9".into(),
+            "test-key".into(),
+            "test-secret".into(),
+        )));
 
     let agent_id = "01TESTWARMUPNOFALLBACKFIX";
     let bundle = Strategy {

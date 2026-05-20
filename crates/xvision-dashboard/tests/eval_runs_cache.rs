@@ -30,6 +30,8 @@ use xvision_engine::eval::{
     store::RunStore,
 };
 
+const SCENARIO_ID: &str = "crypto-bull-q1-2025";
+
 async fn boot() -> (TestServer, AppState, TempDir) {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
@@ -46,7 +48,7 @@ async fn get_run_caches_within_ttl_for_queued_runs() {
     let (server, state, _tmp) = boot().await;
     let store = RunStore::new(state.pool.clone());
 
-    let mut run = Run::new_queued("agent-x".into(), "scenario-y".into(), RunMode::Backtest);
+    let mut run = Run::new_queued("agent-x".into(), SCENARIO_ID.into(), RunMode::Backtest);
     run.status = RunStatus::Queued;
     store.create(&run).await.unwrap();
 
@@ -85,7 +87,7 @@ async fn get_run_does_not_cache_terminal_status() {
     let (server, state, _tmp) = boot().await;
     let store = RunStore::new(state.pool.clone());
 
-    let mut run = Run::new_queued("agent-x".into(), "scenario-y".into(), RunMode::Backtest);
+    let mut run = Run::new_queued("agent-x".into(), SCENARIO_ID.into(), RunMode::Backtest);
     run.status = RunStatus::Queued;
     store.create(&run).await.unwrap();
     store
@@ -107,7 +109,7 @@ async fn get_run_does_not_cache_terminal_status() {
 
     // Sanity: a fresh non-terminal run on the same state populates the
     // cache after one GET — proving the assertion above is meaningful.
-    let mut live = Run::new_queued("agent-x".into(), "scenario-y".into(), RunMode::Backtest);
+    let mut live = Run::new_queued("agent-x".into(), SCENARIO_ID.into(), RunMode::Backtest);
     live.status = RunStatus::Queued;
     store.create(&live).await.unwrap();
     let _ = server.get(&format!("/api/eval/runs/{}", live.id)).await;
@@ -124,7 +126,7 @@ async fn cancel_invalidates_get_run_cache() {
     let (server, state, _tmp) = boot().await;
     let store = RunStore::new(state.pool.clone());
 
-    let mut run = Run::new_queued("agent-x".into(), "scenario-y".into(), RunMode::Backtest);
+    let mut run = Run::new_queued("agent-x".into(), SCENARIO_ID.into(), RunMode::Backtest);
     run.status = RunStatus::Running;
     store.create(&run).await.unwrap();
     store

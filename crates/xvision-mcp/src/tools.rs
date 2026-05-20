@@ -897,7 +897,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_draft_succeeds_for_fresh_template() {
+    async fn validate_draft_reports_fresh_template_not_eval_ready() {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
@@ -914,14 +914,14 @@ mod tests {
             .await
             .unwrap();
         let r = parsed(&v);
-        assert_eq!(r["ok"], true);
-        assert_eq!(r["errors"], serde_json::json!([]));
+        assert_eq!(r["ok"], false);
+        assert!(r["errors"].as_array().is_some_and(|errors| !errors.is_empty()));
     }
 
     // --- eval verbs (Phase 3.D Task 12) ----------------------------------
 
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};
-    use xvision_engine::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+    use xvision_engine::eval::run::{MetricsSummary, Run, RunMode};
     use xvision_engine::eval::store::DecisionRow;
 
     /// Seed a completed run with metrics + a few equity samples + a decision.
@@ -934,8 +934,7 @@ mod tests {
     ) -> String {
         let ctx = tools.api_context().await.unwrap();
         let store = RunStore::new(ctx.db.clone());
-        let mut run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
-        run.status = RunStatus::Completed;
+        let run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
         store.create(&run).await.unwrap();
 
         let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
