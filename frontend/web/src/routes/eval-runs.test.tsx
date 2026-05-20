@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -202,9 +203,31 @@ function mockReady({
   ]);
 }
 
+// `<ResponsiveListCard>` reads `useViewportMode()` which calls
+// `window.matchMedia`. jsdom doesn't provide it; install a desktop-
+// breakpoint stub so the route mounts without the runtime throwing.
+// Tests that need the phone branch can override locally.
+function stubMatchMediaDesktop() {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query.includes("min-width: 1280px"),
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 describe("EvalRunsRoute", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    stubMatchMediaDesktop();
     vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
     // Default to empty lookup lists so the strategy/scenario name
     // queries don't return undefined and pollute test output with
@@ -240,8 +263,15 @@ describe("EvalRunsRoute", () => {
 
     const strategy = (await screen.findByLabelText("Strategy")) as HTMLSelectElement;
     await waitFor(() => expect(strategy.value).toBe("01TEST"));
-    expect(screen.getByRole("option", { name: "Trend 4H" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /01TEST/ })).not.toBeInTheDocument();
+    // Scope to the Start Eval dialog — the standardized list toolbar also
+    // exposes a Strategy filter <select> with the same display_name.
+    const dialog = screen.getByRole("dialog", { name: /start eval/i });
+    expect(
+      within(dialog).getByRole("option", { name: "Trend 4H" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("option", { name: /01TEST/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("loads launcher scenarios from the scenario registry", async () => {
@@ -275,7 +305,7 @@ describe("EvalRunsRoute", () => {
     renderRoute();
 
     expect((await screen.findAllByText("Duration")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("1h 15m").length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("1h 15m")).length).toBeGreaterThan(0);
   });
 
   it("shows live token usage for in-flight runs", async () => {
@@ -598,20 +628,21 @@ describe("EvalRunsRoute", () => {
 
     renderRoute();
 
-    // EvalRunsRoute renders the row in both desktop and mobile layouts,
-    // so the friendly labels should appear at least once each. Display
+    // EvalRunsRoute renders the row through <ResponsiveListCard> which
+    // picks desktop (this test stubs matchMedia to desktop). The
+    // friendly labels should be visible in the rendered row. Display
     // names come from listStrategies / listScenarios mocks above.
     await waitFor(() =>
       expect(screen.getAllByText(/Trend 4H/).length).toBeGreaterThan(0),
     );
     expect(screen.getAllByText(/User 4H/).length).toBeGreaterThan(0);
-    // Raw agent_id slice must NOT appear in either layout for the row.
-    expect(screen.queryByText("01TEST")).not.toBeInTheDocument();
-    expect(screen.getByTestId("eval-runs-desktop-table")).toHaveClass(
-      "min-w-[980px]",
-    );
-    expect(screen.getByTestId("eval-runs-scroll-fade").getAttribute("style"))
-      .toContain("var(--surface-card)");
+    // The raw agent_id should not appear as plain text for the run row.
+    // (It will appear as the value of the Strategy filter <option> in
+    // the standardized toolbar, but never as a text node inside the
+    // row body.) Scope to the table body to assert this cleanly.
+    const tables = screen.getAllByRole("table");
+    const listTable = tables[0]!;
+    expect(within(listTable).queryByText("01TEST")).not.toBeInTheDocument();
   });
 
   it("falls back to the short id when the strategy/scenario lookup misses", async () => {
