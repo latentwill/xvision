@@ -9,6 +9,7 @@
 
 pub mod batch;
 pub mod compare_format;
+pub mod probe_lookahead;
 pub mod review;
 
 use std::path::PathBuf;
@@ -90,6 +91,14 @@ pub enum Op {
     /// status. The verb hits the same `eval::cancel` engine API as
     /// `POST /api/eval/runs/:id/cancel`.
     Cancel(CancelArgs),
+    /// Run the two-pass lookahead-bias prober on a completed run.
+    ///
+    /// Detects indicator-based lookahead bias by running each baseline twice:
+    /// once with full bars, and once with bar `t` withheld. Any signal that
+    /// survives bar removal is flagged as `lookahead_suspected`.
+    ///
+    /// Performance: 2× the cost of a normal baseline run. Opt-in only.
+    ProbeLookahead(probe_lookahead::ProbeLookaheadArgs),
 }
 
 #[derive(Args, Debug)]
@@ -319,6 +328,7 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Review(args) => review::run_review_cmd(args).await,
         Op::Batch(args) => run_batch_cmd(args).await,
         Op::Cancel(args) => run_cancel(args).await,
+        Op::ProbeLookahead(args) => probe_lookahead::run_probe_lookahead(args).await,
     }
 }
 
@@ -1155,5 +1165,71 @@ mod tests {
         };
         assert_eq!(args.run_ids.len(), 2);
         assert!(args.runs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // probe-lookahead CLI parser tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn probe_lookahead_parses_run_flag() {
+        let parsed = TestEval::try_parse_from(["x", "probe-lookahead", "--run", "01JABCDEF0000000000000"])
+            .expect("probe-lookahead --run must parse");
+        let Op::ProbeLookahead(args) = parsed.op else {
+            panic!("expected ProbeLookahead op");
+        };
+        assert_eq!(args.run, "01JABCDEF0000000000000");
+        assert_eq!(args.baseline, "all");
+        assert!(!args.skip_always_signal);
+        assert!(!args.json);
+    }
+
+    #[test]
+    fn probe_lookahead_baseline_flag_accepted() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "probe-lookahead",
+            "--run",
+            "01JABCDEF0000000000000",
+            "--baseline",
+            "ma_crossover",
+        ])
+        .expect("probe-lookahead --baseline must parse");
+        let Op::ProbeLookahead(args) = parsed.op else {
+            panic!("expected ProbeLookahead op");
+        };
+        assert_eq!(args.baseline, "ma_crossover");
+    }
+
+    #[test]
+    fn probe_lookahead_skip_always_signal_flag() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "probe-lookahead",
+            "--run",
+            "01JABCDEF0000000000000",
+            "--skip-always-signal",
+        ])
+        .expect("probe-lookahead --skip-always-signal must parse");
+        let Op::ProbeLookahead(args) = parsed.op else {
+            panic!("expected ProbeLookahead op");
+        };
+        assert!(args.skip_always_signal);
+    }
+
+    #[test]
+    fn probe_lookahead_json_flag_accepted() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "probe-lookahead",
+            "--run",
+            "01JABCDEF0000000000000",
+            "--json",
+        ])
+        .expect("probe-lookahead --json must parse");
+        let Op::ProbeLookahead(args) = parsed.op else {
+            panic!("expected ProbeLookahead op");
+        };
+        assert!(args.json);
     }
 }

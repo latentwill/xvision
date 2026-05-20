@@ -29,6 +29,19 @@
 //! `order_qty / bar_volume > volume_limit` in the `VolumeShare` slippage
 //! model. Payload: `{ requested_qty, bar_volume, cap_binding_qty,
 //! fill_share }`. `produced_by_check = "sim:volume_cap"`.
+//!
+//! ## Kind registry (open enum — string on the wire)
+//!
+//! | Kind | Produced by | Severity |
+//! |------|-------------|----------|
+//! | `regime_fit_mismatch` | LLM extractor | warning |
+//! | `drawdown_concentration` | LLM extractor | warning |
+//! | `overtrading` | LLM extractor | warning |
+//! | `underperformance` | LLM extractor | warning |
+//! | `risk_violation` | LLM extractor | critical |
+//! | `win_rate_anomaly` | LLM extractor | info |
+//! | `tail_risk` | LLM extractor | warning |
+//! | `lookahead_suspected` | `prober:lookahead` (eval-lookahead-bias-prober) | critical |
 
 pub mod extractor;
 
@@ -49,6 +62,13 @@ use xvision_data::validate::{defect_to_finding_evidence, DataDefect, DefectSever
 ///          `produced_by_check = "legacy"`.
 pub const FINDING_SCHEMA_VERSION: &str = "2";
 
+/// The `kind` string for a lookahead-bias finding produced by the two-pass
+/// prober (`eval-lookahead-bias-prober` track).
+pub const KIND_LOOKAHEAD_SUSPECTED: &str = "lookahead_suspected";
+
+/// `produced_by_check` value for lookahead-bias findings.
+pub const PRODUCED_BY_LOOKAHEAD_PROBER: &str = "prober:lookahead";
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -60,8 +80,10 @@ pub struct Finding {
     pub run_id: String,
     /// Open enum: `regime_fit_mismatch`, `drawdown_concentration`,
     /// `overtrading`, `underperformance`, `risk_violation`, `win_rate_anomaly`,
-    /// `tail_risk`, or any LLM-proposed new kind. Validation belongs to
-    /// downstream consumers.
+    /// `tail_risk`, `lookahead_suspected`, or any LLM-proposed new kind.
+    /// Validation belongs to downstream consumers.
+    ///
+    /// See the module-level kind registry for the full list.
     pub kind: String,
     pub severity: Severity,
     pub summary: String,
@@ -115,6 +137,75 @@ pub struct Finding {
     #[cfg_attr(feature = "ts-export", ts(type = "string | null", optional))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<DateTime<Utc>>,
+}
+
+impl Finding {
+    /// Construct a `lookahead_suspected` finding for a given run.
+    ///
+    /// The `evidence` JSON includes:
+    /// - `cycle_id`: the UUID of the signal-firing cycle.
+    /// - `indicator_name`: the suspected indicator (or algorithm name), if known.
+    /// - `pass_1_action`: action emitted in Pass 1 (full bars).
+    /// - `pass_2_action`: action (or null) from Pass 2 (bars[..=t-1]).
+    /// - `snapshot_index`: zero-based index of the signal-firing bar.
+    /// - `produced_by_check`: always `"prober:lookahead"`.
+    /// - `evidence_cycle_ids`: `[cycle_id]` — forward-compat stub for the
+    ///   `eval-trace-surface-foundation` `evidence_cycle_ids` field.
+    ///
+    /// **Rebase note:** when `eval-trace-surface-foundation` merges, callers
+    /// should move `evidence_cycle_ids` and `produced_by_check` to top-level
+    /// `Finding` fields rather than embedding them in `evidence`.
+    pub fn lookahead_suspected(
+        run_id: &str,
+        cycle_id: &str,
+        indicator_name: Option<&str>,
+        pass_1_action: &str,
+        pass_2_action: Option<&str>,
+        snapshot_index: usize,
+    ) -> Self {
+        let now = Utc::now();
+        Finding {
+            id: Ulid::new().to_string(),
+            run_id: run_id.to_string(),
+            kind: KIND_LOOKAHEAD_SUSPECTED.to_string(),
+            severity: Severity::Critical,
+            summary: format!(
+                "Lookahead bias suspected at cycle {} (snapshot {}): action '{}' was identical \
+                 when bar t was withheld — the algorithm may read future bar data.",
+                cycle_id, snapshot_index, pass_1_action,
+            ),
+            evidence: serde_json::json!({
+                "cycle_id": cycle_id,
+                "indicator_name": indicator_name,
+                "pass_1_action": pass_1_action,
+                "pass_2_action": pass_2_action,
+                "snapshot_index": snapshot_index,
+            }),
+            extracted_at: now,
+            schema_version: FINDING_SCHEMA_VERSION.to_string(),
+            evidence_cycle_ids: Some(vec![cycle_id.to_string()]),
+            produced_by_check: Some(PRODUCED_BY_LOOKAHEAD_PROBER.to_string()),
+            eval_review_id: None,
+            review_type: None,
+            confidence: None,
+            title: Some("Lookahead bias suspected".to_string()),
+            description: Some(format!(
+                "Two-pass prober detected that the algorithm produced action '{}' at \
+                 snapshot {} even when bar t was withheld (bars[..=t-1] only). \
+                 This indicates the decision did not depend on bar t, suggesting \
+                 the algorithm may be using future bar data (bars[t+1..]) or \
+                 pre-computed indicators that incorporate future information.",
+                pass_1_action, snapshot_index,
+            )),
+            recommendation: Some(
+                "Audit the algorithm's indicator computation to ensure no bar beyond \
+                 the current bar is accessed. Run `xvn eval probe-lookahead --run <run_id>` \
+                 for a full post-hoc analysis."
+                    .to_string(),
+            ),
+            created_at: Some(now),
+        }
+    }
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
