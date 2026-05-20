@@ -8,6 +8,7 @@ fn doctor_json_reports_effective_paths_and_templates() {
     let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
         .args(["doctor", "--json"])
         .env("XVN_HOME", dir.path())
+        .env_remove("XVN_REMOTE_URL")
         .output()
         .expect("xvn doctor --json");
 
