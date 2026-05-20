@@ -1,11 +1,26 @@
 // frontend/web/src/features/agent-runs/EvalCapsule.test.tsx
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router-dom";
 import {
   EvalCapsule,
   type EvalCapsuleFocused,
   type EvalCapsuleRow,
 } from "./EvalCapsule";
+
+// The capsule renders `<Link>` for F-6 (clickable short-tag → eval inspector).
+// Wrap renders in a MemoryRouter so the router context is present in jsdom.
+function renderCapsule(node: ReactElement) {
+  return render(<MemoryRouter>{node}</MemoryRouter>);
+}
+
+function rerenderCapsule(
+  api: ReturnType<typeof render>,
+  node: ReactElement,
+) {
+  return api.rerender(<MemoryRouter>{node}</MemoryRouter>);
+}
 
 function focused(overrides: Partial<EvalCapsuleFocused> = {}): EvalCapsuleFocused {
   return {
@@ -36,7 +51,7 @@ afterEach(() => cleanup());
 
 describe("EvalCapsule", () => {
   test("renders a single focused row with no toggle when siblings empty", () => {
-    render(<EvalCapsule focused={focused()} siblings={[]} />);
+    renderCapsule(<EvalCapsule focused={focused()} siblings={[]} />);
 
     const cap = screen.getByTestId("run-status-strip");
     expect(within(cap).queryByText(/OTHER/)).toBeNull();
@@ -44,7 +59,7 @@ describe("EvalCapsule", () => {
   });
 
   test("shows the +N · OTHERS toggle and reveals siblings when expanded", () => {
-    render(
+    renderCapsule(
       <EvalCapsule
         focused={focused()}
         siblings={[
@@ -70,7 +85,7 @@ describe("EvalCapsule", () => {
   });
 
   test("auto-opens the capsule when a sibling error appears", () => {
-    const { rerender } = render(
+    const api = renderCapsule(
       <EvalCapsule
         focused={focused()}
         siblings={[sibling({ id: "s1", short: "mom·opex" })]}
@@ -78,7 +93,8 @@ describe("EvalCapsule", () => {
     );
     expect(screen.queryByText("mom·opex")).toBeNull();
 
-    rerender(
+    rerenderCapsule(
+      api,
       <EvalCapsule
         focused={focused()}
         siblings={[
@@ -93,29 +109,66 @@ describe("EvalCapsule", () => {
     expect(screen.getByText("mom·opex")).toBeInTheDocument();
     // ERR badge surfaces when collapsed; once expanded it stays inside the
     // stack rather than on the toggle, so we only assert the row order:
-    const rows = screen.getAllByRole("button").map((b) => b.textContent ?? "");
+    const rows = screen
+      .getAllByRole("link", { name: /open eval run/i })
+      .map((a) => a.textContent ?? "");
     const errIdx = rows.findIndex((t) => t.includes("liq·fed"));
     const momIdx = rows.findIndex((t) => t.includes("mom·opex"));
     expect(errIdx).toBeLessThan(momIdx);
   });
 
-  test("clicking a sibling row invokes onSwitchFocus with that run", () => {
+  test("clicking a sibling row's surrounding button invokes onSwitchFocus", () => {
+    // F-6 (qa-round-7): the short `strategy·scenario` tag is now a Link
+    // that routes to the run inspector — clicking THAT no longer fires
+    // onSwitchFocus (it stopPropagations to navigate cleanly). The rest
+    // of the row (status pill, span/elapsed/cost text) still triggers
+    // focus-switch via the wrapping button, which is the preserved
+    // secondary affordance.
     const onSwitchFocus = vi.fn();
-    render(
+    renderCapsule(
       <EvalCapsule
         focused={focused()}
-        siblings={[sibling({ id: "s1", short: "mom·opex" })]}
+        siblings={[sibling({ id: "s1", short: "mom·opex", spans: 12 })]}
         onSwitchFocus={onSwitchFocus}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /show 1 other eval/i }));
-    fireEvent.click(screen.getByText("mom·opex"));
+    fireEvent.click(
+      screen.getByRole("button", { name: /switch focus to eval run mom·opex/i }),
+    );
     expect(onSwitchFocus).toHaveBeenCalledTimes(1);
     expect(onSwitchFocus.mock.calls[0]![0]!.id).toBe("s1");
   });
 
+  test("short tag is a Link that routes to /eval-runs/<id>", () => {
+    // F-6 (qa-round-7): assert the Link target so the click-through to the
+    // inspector is wired regardless of focused-vs-sibling state.
+    const onSwitchFocus = vi.fn();
+    renderCapsule(
+      <EvalCapsule
+        focused={focused({ id: "run_focused", short: "mr·flash" })}
+        siblings={[sibling({ id: "run_sibling", short: "mom·opex" })]}
+        onSwitchFocus={onSwitchFocus}
+      />,
+    );
+    // Focused short tag — always visible.
+    const focusedLink = screen.getByRole("link", { name: /open eval run mr·flash/i });
+    expect(focusedLink).toHaveAttribute("href", "/eval-runs/run_focused");
+    expect(focusedLink.closest("button")).toBeNull();
+
+    // Expand, then check the sibling tag too.
+    fireEvent.click(screen.getByRole("button", { name: /show 1 other eval/i }));
+    const siblingLink = screen.getByRole("link", { name: /open eval run mom·opex/i });
+    expect(siblingLink).toHaveAttribute("href", "/eval-runs/run_sibling");
+    expect(siblingLink.closest("button")).toBeNull();
+
+    // Clicking the link should NOT trigger focus-switch (stopPropagation).
+    fireEvent.click(siblingLink);
+    expect(onSwitchFocus).not.toHaveBeenCalled();
+  });
+
   test("renders an N ERR chip on the collapsed toggle when siblings have errors", () => {
-    render(
+    renderCapsule(
       <EvalCapsule
         focused={focused()}
         siblings={[
@@ -132,7 +185,7 @@ describe("EvalCapsule", () => {
   });
 
   test("renders the focused row's currentSpan chip", () => {
-    render(
+    renderCapsule(
       <EvalCapsule
         focused={focused({
           currentSpan: {
