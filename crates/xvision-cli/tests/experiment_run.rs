@@ -28,7 +28,8 @@ use xvision_cli::commands::experiment_run::{run_experiment, ExperimentRunRequest
 
 /// Build an in-memory ApiContext with the migrations required for experiment run:
 /// - 001 (api_audit), 002 (eval), 014 (eval_agent_id), 015 (eval_decisions),
-///   021 (eval_batches), 023 (hypothesis_and_experiments).
+///   021 (eval_batches), 022 (eval_runs agents_agent_id),
+///   023 (hypothesis_and_experiments).
 ///
 /// Migration 012 (runs→scenarios FK) is intentionally skipped — same as in
 /// `eval_batch_run.rs` — so the fixture scenario id "flash-crash-2024-08" can
@@ -63,6 +64,12 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     .unwrap();
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/021_eval_batches.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"
     ))
     .execute(&pool)
     .await
@@ -195,7 +202,7 @@ async fn experiment_run_creates_experiment_binds_batch_writes_result() {
     // The batch result is embedded in the return value.
     assert_eq!(result.batch.runs.len(), 2);
     for run in &result.batch.runs {
-        assert_eq!(run.status, "completed");
+        assert_eq!(run.status, "completed", "run failed: {:?}", run.error);
     }
 }
 

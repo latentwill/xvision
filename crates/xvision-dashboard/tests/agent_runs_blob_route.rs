@@ -65,6 +65,31 @@ async fn seed_model_call_with_prompt_ref(state: &AppState, span_id: &str, prompt
     .expect("seed model_call");
 }
 
+async fn seed_model_call_with_response_ref(state: &AppState, span_id: &str, response_ref: &str) {
+    sqlx::query(
+        "INSERT INTO model_calls (span_id, provider, model, prompt_hash, response_hash, response_payload_ref) \
+         VALUES (?1, 'anthropic', 'claude', 'sha256:abc', 'sha256:def', ?2)",
+    )
+    .bind(span_id)
+    .bind(response_ref)
+    .execute(&state.pool)
+    .await
+    .expect("seed model_call response ref");
+}
+
+async fn seed_tool_call_with_output_ref(state: &AppState, span_id: &str, output_ref: &str) {
+    sqlx::query(
+        "INSERT INTO tool_calls \
+         (span_id, tool_name, input_hash, output_hash, output_payload_ref, side_effect_level, risk_level) \
+         VALUES (?1, 'xvision_health_ping', 'sha256:abc', 'sha256:def', ?2, 'pure', 'safe_read')",
+    )
+    .bind(span_id)
+    .bind(output_ref)
+    .execute(&state.pool)
+    .await
+    .expect("seed tool_call output ref");
+}
+
 /// Write a payload through the production `BlobStore` so the test
 /// hits the same hash algorithm + on-disk layout the dashboard reads.
 fn write_blob(state: &AppState, payload: &[u8]) -> String {
@@ -101,6 +126,40 @@ async fn returns_200_with_blob_bytes_when_owned_by_run_and_retention_allows() {
     );
     let body = resp.bytes().await.unwrap();
     assert_eq!(body.as_ref(), payload);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn returns_200_when_owned_by_model_response_ref() {
+    let (base_url, _tmp, state) = boot_server().await;
+    let run_id = "run_blob_model_response";
+    let payload = b"hello world response body";
+
+    seed_run(&state, run_id, "full_debug").await;
+    seed_span(&state, "span_model_response", run_id).await;
+    let blob_hex = write_blob(&state, payload);
+    seed_model_call_with_response_ref(&state, "span_model_response", &blob_hex).await;
+
+    let url = format!("{base_url}/api/agent-runs/{run_id}/blobs/{blob_hex}");
+    let resp = reqwest::get(&url).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.bytes().await.unwrap().as_ref(), payload);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn returns_200_when_owned_by_tool_output_ref() {
+    let (base_url, _tmp, state) = boot_server().await;
+    let run_id = "run_blob_tool_output";
+    let payload = b"hello world tool output";
+
+    seed_run(&state, run_id, "full_debug").await;
+    seed_span(&state, "span_tool_output", run_id).await;
+    let blob_hex = write_blob(&state, payload);
+    seed_tool_call_with_output_ref(&state, "span_tool_output", &blob_hex).await;
+
+    let url = format!("{base_url}/api/agent-runs/{run_id}/blobs/{blob_hex}");
+    let resp = reqwest::get(&url).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.bytes().await.unwrap().as_ref(), payload);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

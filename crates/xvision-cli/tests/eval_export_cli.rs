@@ -119,6 +119,11 @@ fn eval_export_output_flag_writes_byte_identical_file() {
 
     // Stdout in --output mode is empty; the byte total of the file
     // matches the report on stderr ("eval export → … (N bytes)").
+    assert!(
+        cli_out.stdout.is_empty(),
+        "stdout: {}",
+        String::from_utf8_lossy(&cli_out.stdout)
+    );
     let stderr = String::from_utf8_lossy(&cli_out.stderr);
     assert!(stderr.contains("eval export"), "stderr: {stderr}");
     let bytes_marker = format!("{} bytes", file_bytes.len());

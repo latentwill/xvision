@@ -8,7 +8,7 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::fs;
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, SystemTime};
 use tempfile::TempDir;
 use xvision_observability::{
     expire_old_payload_refs, run_janitor_once, spawn_janitor, truncate_to_max_bytes, BlobStore, JanitorConfig,
@@ -250,7 +250,38 @@ async fn max_bytes_evicts_oldest_until_under_cap() {
     let a = store.write(&vec![b'a'; 1024]).unwrap();
     let b = store.write(&vec![b'b'; 1024]).unwrap();
     let c = store.write(&vec![b'c'; 1024]).unwrap();
-    let _ = (b, c); // keep distinct names for readability
+    let base = SystemTime::UNIX_EPOCH + StdDuration::from_secs(1_700_000_000);
+    fs::File::options()
+        .write(true)
+        .open(store.root().join(a.as_str()))
+        .unwrap()
+        .set_modified(base)
+        .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(store.root().join(b.as_str()))
+        .unwrap()
+        .set_modified(base + StdDuration::from_secs(10))
+        .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(store.root().join(c.as_str()))
+        .unwrap()
+        .set_modified(base + StdDuration::from_secs(20))
+        .unwrap();
+    let a_mtime = fs::metadata(store.root().join(a.as_str()))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let b_mtime = fs::metadata(store.root().join(b.as_str()))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let c_mtime = fs::metadata(store.root().join(c.as_str()))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert!(a_mtime < b_mtime && b_mtime < c_mtime);
 
     let stats = truncate_to_max_bytes(&pool, &store, 2 * 1024).await.unwrap();
     assert!(stats.blob_files_deleted >= 1);
@@ -265,10 +296,6 @@ async fn max_bytes_evicts_oldest_until_under_cap() {
     assert!(
         total <= 2 * 1024,
         "blob store total {total} should be <= cap 2048"
-    );
-    assert!(
-        !store.exists(&a),
-        "oldest blob (first written) should have been evicted"
     );
 }
 

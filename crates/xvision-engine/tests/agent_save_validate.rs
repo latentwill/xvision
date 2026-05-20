@@ -43,6 +43,10 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/025_agent_slot_cache_and_window.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = TempDir::new().unwrap();
     (AgentStore::new(pool), dir)
 }
@@ -80,6 +84,7 @@ fn rich_slot(asset: &str) -> AgentSlot {
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
     }
 }
 
@@ -173,6 +178,7 @@ async fn reject_short_prompt() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         })
         .await;
@@ -210,6 +216,7 @@ async fn reject_default_placeholder_prompt() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         })
         .await;
@@ -259,6 +266,7 @@ async fn wrong_id_namespace_strategy_get_with_agent_id() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         })
         .await

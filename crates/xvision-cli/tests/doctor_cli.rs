@@ -19,7 +19,10 @@ fn doctor_json_reports_effective_paths_and_templates() {
     );
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["xvn_home"], dir.path().display().to_string());
-    assert!(body["db_path"].as_str().unwrap().ends_with("xvn.db"));
+    assert_eq!(
+        body["db_path"].as_str().unwrap(),
+        dir.path().join("xvn.db").display().to_string(),
+    );
     assert!(body["templates"].as_array().unwrap().len() >= 3);
     assert_eq!(body["remote_target"], "local");
 }

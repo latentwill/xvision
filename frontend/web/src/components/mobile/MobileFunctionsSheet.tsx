@@ -69,7 +69,7 @@ export function MobileFunctionsSheet() {
             <Icon name="search" size={16} />
           </button>
         </div>
-        <div className="overflow-y-auto px-3 pb-5 flex flex-col gap-4">
+        <div className="overflow-y-auto px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] flex flex-col gap-4">
           <ActionGrid label="Create" actions={CREATE} onAction={runAction} />
           <ActionList label="Inspect" actions={INSPECT} onAction={runAction} />
           <ActionList label="Live" actions={LIVE} onAction={runAction} />

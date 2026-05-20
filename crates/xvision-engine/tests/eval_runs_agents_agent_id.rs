@@ -207,6 +207,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
     };
     let agent_ulid = agent_store
         .create(NewAgent {
