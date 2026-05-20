@@ -196,3 +196,20 @@ post-mortem-able from logs alone.
 
 F-1 + F-2 together are the operator-actionable fix; everything else
 is hardening.
+
+## Status reconciliation — 2026-05-21
+
+**All five tracks shipped.** Per `team/board.md` archive notes
+(2026-05-19 sweep):
+
+- F-1, F-2, F-3, F-5 bundled in PR #316 (`qa-round-5: validate_draft
+  false positive + silent retry loop fixes`, merged 2026-05-19). The
+  cadence parser is unit-token-strict; chat-rail surfaces
+  `validate_draft` errors inline with no popup; wizard loop force-ends
+  after 2 same-error retries with a stuck card; `findings_model_for_provider`
+  routes the right Haiku id per provider kind.
+- F-4 `risk-preset-balanced-min-order-sanity` resolved 2026-05-19 in
+  the same sweep — the 44+ `broker_min_order_size` warnings on the
+  ETH paper run were closed out; no follow-up contract needed.
+
+No outstanding contracts from this intake.
