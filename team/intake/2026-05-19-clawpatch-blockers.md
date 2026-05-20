@@ -91,3 +91,33 @@ Minimum fix scope from clawpatch:
 Verification target:
 
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-test-suite-972b03ea5d-3_f709e3cc62` after the broader fix.
+
+## B-4 - Janitor oldest-blob test still fails validation after generated mtime fix
+
+- Finding: `fnd_sig-feat-test-suite-a7b7e8d445-6_387eaf6db5`
+- Severity: low
+- Category: build-release
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` attempted to make `max_bytes_evicts_oldest_until_under_cap`
+assign deterministic mtimes in `crates/xvision-observability/tests/janitor.rs`,
+but the generated patch failed clawpatch's validation after applying. The failed
+generated hunk was removed so the autonomous loop could continue from a clean
+tree.
+
+Recommendation from clawpatch:
+
+- Set deterministic mtimes before calling `truncate_to_max_bytes`, with `a`
+  older than `b` and `c`, or relax this test to only assert the cap and deletion
+  count while leaving tie-break specifics to
+  `max_bytes_tie_break_uses_sha_hex_when_mtimes_equal`.
+
+Minimum fix scope from clawpatch:
+
+- Make `max_bytes_evicts_oldest_until_under_cap` explicitly assign staggered
+  mtimes to its three blobs.
+
+Verification target:
+
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-test-suite-a7b7e8d445-6_387eaf6db5`
+  after a broader fix.
