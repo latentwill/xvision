@@ -209,6 +209,10 @@ violation unless the contract is updated first.
 | `frontend/web/src/components/chart/WizardPreviewChart.test.tsx` | `clawpatch-frontend-components` (NEW — B-9) | clawpatch-blockers-2026-05-21 |
 | `frontend/web/src/components/mobile/MobileDrawer.tsx` | `clawpatch-frontend-components` (B-11 — escalation gated on no-popups rule; see contract Notes) | clawpatch-blockers-2026-05-21 |
 | `frontend/web/src/components/mobile/MobileDrawer.test.tsx` | `clawpatch-frontend-components` (NEW — B-11, only if no-popups rework allows) | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-dashboard/wiki/agentd.md` | `docs-agentd-surface-page` (NEW) | docs-user-and-agent-wiki-2026-05-20 |
+| `crates/xvision-dashboard/wiki/index.toml` | `docs-agentd-surface-page` (add page entry); `docs-freshness-staleness-guard` (header comment edit only) | docs-user-and-agent-wiki-2026-05-20 |
+| `scripts/docs-freshness-lint.sh` | `docs-freshness-staleness-guard` (NEW) | docs-user-and-agent-wiki-2026-05-20 |
+| `.github/workflows/docs-freshness.yml` | `docs-freshness-staleness-guard` (NEW) | docs-user-and-agent-wiki-2026-05-20 |
 
 ## Multi-owner Exemptions
 
