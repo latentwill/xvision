@@ -17,3 +17,15 @@ fn namespace_for_mode_uses_agent_id() {
     assert_eq!(Namespace::for_mode(MemoryMode::Global, "01HZTEST").as_str(), "global");
     assert_eq!(Namespace::for_mode(MemoryMode::AgentScoped, "01HZTEST").as_str(), "agent:01HZTEST");
 }
+
+use xvision_memory::store::MemoryStore;
+
+#[tokio::test]
+async fn open_lazy_creates_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let store = MemoryStore::open(&path).await.unwrap();
+    // Reopening must be idempotent.
+    let _store2 = MemoryStore::open(&path).await.unwrap();
+    drop(store);
+}
