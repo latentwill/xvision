@@ -1180,6 +1180,9 @@ impl BacktestExecutor {
             n_trades,
             n_decisions: decision_idx,
             baselines: Some(baselines),
+            // inference_cost_quote_total + net_return_pct populated
+            // post-finalize by api::eval::enrich_with_inference_cost.
+            ..Default::default()
         };
 
         run.actual_input_tokens = Some(total_input_tokens);

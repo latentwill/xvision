@@ -46,7 +46,9 @@ pub use compare::{
     compare_runs, compare_runs_default, CompareOptions, ComparisonEquityCurve, ComparisonEquitySample,
     ComparisonReport, ComparisonRunSummary, ManifestMismatch,
 };
-pub use cost::{compute_token_cost_usd, compute_token_cost_usd_from_catalog};
+pub use cost::{
+    aggregate_eval_run_inference_cost, compute_token_cost_usd, compute_token_cost_usd_from_catalog,
+};
 pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};

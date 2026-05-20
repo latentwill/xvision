@@ -119,6 +119,7 @@ async fn cancelled_run_cannot_be_revived_or_finalized() {
         n_trades: 17,
         n_decisions: 42,
         baselines: None,
+        ..Default::default()
     };
     let err = store.finalize(&id, &metrics).await.unwrap_err();
     assert!(
@@ -184,6 +185,7 @@ async fn finalize_sets_metrics_status_and_completed_at() {
         n_trades: 17,
         n_decisions: 42,
         baselines: None,
+        ..Default::default()
     };
     store.finalize(&id, &metrics).await.unwrap();
     let back = store.get(&id).await.unwrap();

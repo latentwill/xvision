@@ -3,4 +3,4 @@ import type { MetricsSummary } from "./MetricsSummary";
 import type { RunMode } from "./RunMode";
 import type { RunStatus } from "./RunStatus";
 
-export type ComparisonRunSummary = { id: string, agent_id: string, scenario_id: string, mode: RunMode, status: RunStatus, started_at: string, completed_at: string | null, metrics: MetricsSummary | null, error: string | null, };
+export type ComparisonRunSummary = { id: string, agent_id: string, scenario_id: string, mode: RunMode, status: RunStatus, started_at: string, completed_at: string | null, metrics: MetricsSummary | null, error: string | null, net_return_pct?: number | null, };

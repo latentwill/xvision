@@ -165,7 +165,9 @@ function MetricsTable({
             <th className="font-normal py-2.5 px-5">Run</th>
             <th className="font-normal py-2.5 px-3">Status</th>
             <th className="font-normal py-2.5 px-3">Scenario</th>
-            <th className="font-normal py-2.5 px-3 text-right">Total return</th>
+            <th className="font-normal py-2.5 px-3 text-right">Gross %</th>
+            <th className="font-normal py-2.5 px-3 text-right">Infer cost</th>
+            <th className="font-normal py-2.5 px-3 text-right">Net %</th>
             <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
             <th className="font-normal py-2.5 px-3 text-right">Max DD</th>
             <th className="font-normal py-2.5 px-3 text-right">Win rate</th>
@@ -209,6 +211,11 @@ function MetricsTable({
                 <MetricCell
                   value={fmtPct(r.metrics?.total_return_pct)}
                   sign={signOf(r.metrics?.total_return_pct)}
+                />
+                <MetricCell value={fmtCostUsd(r.metrics?.inference_cost_quote_total)} />
+                <MetricCell
+                  value={fmtPct(r.net_return_pct ?? r.metrics?.net_return_pct)}
+                  sign={signOf(r.net_return_pct ?? r.metrics?.net_return_pct)}
                 />
                 <MetricCell value={fmtNumber(r.metrics?.sharpe, 3)} />
                 <MetricCell
@@ -469,4 +476,10 @@ function signOf(n: number | null | undefined): 1 | -1 | 0 | undefined {
   if (n > 0) return 1;
   if (n < 0) return -1;
   return 0;
+}
+
+/** Format inference cost in USD — compact form with 4 decimal places. */
+function fmtCostUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `$${n.toFixed(4)}`;
 }

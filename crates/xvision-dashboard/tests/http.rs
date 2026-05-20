@@ -590,6 +590,7 @@ async fn eval_compare_returns_report_for_seeded_runs() {
         n_trades: 4,
         n_decisions: 8,
         baselines: None,
+        ..Default::default()
     };
     store.finalize(&run_a.id, &metrics).await.unwrap();
     store.finalize(&run_b.id, &metrics).await.unwrap();

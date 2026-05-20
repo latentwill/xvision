@@ -8,6 +8,14 @@
 //! Bootstrap CI helpers + per-decision-driven win-rate computation come
 //! later (Phase 3.C compare + Phase 3.D); they need a real PnL-realized
 //! pipeline that PaperExecutor does not yet emit.
+//!
+//! ## Net-of-inference-cost (V2E item 25)
+//!
+//! `compute_net_return_pct` computes `net_return_pct` from `gross_return_pct`,
+//! `inference_cost_quote_total`, and `capital_initial`. Returns `None` when
+//! `inference_cost_quote_total` is unknown. The math:
+//!
+//!   `net_return_pct = gross_return_pct − (inference_cost_quote_total / capital_initial × 100)`
 
 use statrs::statistics::Statistics;
 
@@ -91,4 +99,48 @@ pub fn annualization_periods_per_year(cadence_minutes: u32) -> f64 {
     }
     let minutes_per_year = 60.0 * 24.0 * 365.0;
     minutes_per_year / cadence_minutes as f64
+}
+
+/// Compute net return after deducting LLM inference cost.
+///
+/// `net_return_pct = gross_return_pct − (inference_cost_quote_total / capital_initial × 100)`
+///
+/// Returns `None` when `inference_cost_quote_total` is `None` (model not in
+/// pricing catalog) or when `capital_initial ≤ 0` (undefined ratio).
+///
+/// The gross value is the trading P&L only; the deduction converts an absolute
+/// USD cost into the same "% of starting capital" units so both sides of the
+/// subtraction are comparable.
+pub fn compute_net_return_pct(
+    gross_return_pct: f64,
+    inference_cost_quote_total: Option<f64>,
+    capital_initial: f64,
+) -> Option<f64> {
+    let cost = inference_cost_quote_total?;
+    if capital_initial <= 0.0 {
+        return None;
+    }
+    Some(gross_return_pct - (cost / capital_initial * 100.0))
+}
+
+/// Default dominance threshold k: finding fires when
+/// `|inference_cost_quote_total| > k × |gross_return_quote|`.
+pub const INFERENCE_COST_DOMINANCE_THRESHOLD: f64 = 0.5;
+
+/// Check whether inference cost dominates gross trading return.
+///
+/// Returns `true` when `|inference_cost_quote_total| > k × |gross_return_quote|`.
+/// `k` defaults to [`INFERENCE_COST_DOMINANCE_THRESHOLD`].
+/// When `gross_return_quote` is zero, any positive inference cost dominates
+/// (ratio is infinite).
+pub fn inference_cost_dominates(
+    gross_return_quote: f64,
+    inference_cost_quote_total: f64,
+    threshold_k: f64,
+) -> bool {
+    let cost_abs = inference_cost_quote_total.abs();
+    if gross_return_quote.abs() < f64::EPSILON {
+        return cost_abs > f64::EPSILON;
+    }
+    cost_abs > threshold_k * gross_return_quote.abs()
 }

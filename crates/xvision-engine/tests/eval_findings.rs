@@ -64,6 +64,7 @@ fn finalized_run() -> Run {
         n_trades: 12,
         n_decisions: 30,
         baselines: None,
+        ..Default::default()
     });
     r
 }

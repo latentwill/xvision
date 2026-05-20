@@ -42,6 +42,15 @@
 //! | `win_rate_anomaly` | LLM extractor | info |
 //! | `tail_risk` | LLM extractor | warning |
 //! | `lookahead_suspected` | `prober:lookahead` (eval-lookahead-bias-prober) | critical |
+//! | `inference_cost_dominates_return` | `metrics:cost_dominance` (eval-net-of-inference-cost-metric) | warning |
+//!
+//! ## V2E item 25: `inference_cost_dominates_return`
+//!
+//! Emitted at run finalize when
+//! `|inference_cost_quote_total| > k × |gross_return_quote|` (default k=0.5).
+//! Annotate-only — does NOT gate or abort the run. The `produced_by_check`
+//! field is set to `"metrics:cost_dominance"`. Evidence cycle ids are empty
+//! because this is a per-run aggregate finding, not per-cycle.
 
 pub mod extractor;
 
@@ -141,20 +150,6 @@ pub struct Finding {
 
 impl Finding {
     /// Construct a `lookahead_suspected` finding for a given run.
-    ///
-    /// The `evidence` JSON includes:
-    /// - `cycle_id`: the UUID of the signal-firing cycle.
-    /// - `indicator_name`: the suspected indicator (or algorithm name), if known.
-    /// - `pass_1_action`: action emitted in Pass 1 (full bars).
-    /// - `pass_2_action`: action (or null) from Pass 2 (bars[..=t-1]).
-    /// - `snapshot_index`: zero-based index of the signal-firing bar.
-    /// - `produced_by_check`: always `"prober:lookahead"`.
-    /// - `evidence_cycle_ids`: `[cycle_id]` — forward-compat stub for the
-    ///   `eval-trace-surface-foundation` `evidence_cycle_ids` field.
-    ///
-    /// **Rebase note:** when `eval-trace-surface-foundation` merges, callers
-    /// should move `evidence_cycle_ids` and `produced_by_check` to top-level
-    /// `Finding` fields rather than embedding them in `evidence`.
     pub fn lookahead_suspected(
         run_id: &str,
         cycle_id: &str,
@@ -206,6 +201,29 @@ impl Finding {
             created_at: Some(now),
         }
     }
+}
+
+/// Evidence payload for the `inference_cost_dominates_return` finding kind
+/// (V2E item 25). Persisted as the `evidence` JSON blob on the `Finding`.
+///
+/// `produced_by_check = "metrics:cost_dominance"`.
+/// `evidence_cycle_ids` is empty — this is a per-run aggregate.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InferenceCostDominatesReturnPayload {
+    /// `|inference_cost_quote_total| / |gross_return_quote|`. Values > threshold
+    /// triggered the finding.
+    pub ratio: f64,
+    /// The configured threshold k (default 0.5).
+    pub threshold: f64,
+    /// Gross trading return in USD (capital × gross_return_pct / 100).
+    pub gross_return_quote: f64,
+    /// Total LLM inference cost for this run in USD.
+    pub inference_cost_quote_total: f64,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]

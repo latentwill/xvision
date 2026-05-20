@@ -76,6 +76,7 @@ fn metrics_summary_round_trips() {
         n_trades: 17,
         n_decisions: 42,
         baselines: None,
+        ..Default::default()
     };
     let s = serde_json::to_string(&m).unwrap();
     let back: MetricsSummary = serde_json::from_str(&s).unwrap();
