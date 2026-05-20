@@ -397,15 +397,21 @@ function RunsTable({
               <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] min-[420px]:grid-cols-5">
                 <div className="text-text-2">
                   <div className="text-[11px] text-text-3">Sharpe</div>
-                  <div className="font-mono text-text">{fmtNumber(row.sharpe)}</div>
+                  <div className={`font-mono ${signedToneClass(row.sharpe)}`}>
+                    {fmtNumber(row.sharpe)}
+                  </div>
                 </div>
                 <div className="text-text-2">
                   <div className="text-[11px] text-text-3">Max DD</div>
-                  <div className="font-mono text-text">{fmtPct(row.max_drawdown_pct)}</div>
+                  <div className={`font-mono ${drawdownToneClass(row.max_drawdown_pct)}`}>
+                    {fmtPct(row.max_drawdown_pct)}
+                  </div>
                 </div>
                 <div className="text-text-2">
                   <div className="text-[11px] text-text-3">Return</div>
-                  <div className="font-mono text-text">{fmtPct(row.total_return_pct)}</div>
+                  <div className={`font-mono ${signedToneClass(row.total_return_pct)}`}>
+                    {fmtPct(row.total_return_pct)}
+                  </div>
                 </div>
                 <div className="text-text-2">
                   <div className="text-[11px] text-text-3">Duration</div>
@@ -527,13 +533,13 @@ function RunsTable({
                   <td className="px-3 py-3">
                     <StatusPill status={row.status} />
                   </td>
-                  <td className="px-3 py-3 text-right font-mono">
+                  <td className={`px-3 py-3 text-right font-mono ${signedToneClass(row.sharpe)}`}>
                     {fmtNumber(row.sharpe)}
                   </td>
-                  <td className="px-3 py-3 text-right font-mono">
+                  <td className={`px-3 py-3 text-right font-mono ${drawdownToneClass(row.max_drawdown_pct)}`}>
                     {fmtPct(row.max_drawdown_pct)}
                   </td>
-                  <td className="px-3 py-3 text-right font-mono">
+                  <td className={`px-3 py-3 text-right font-mono ${signedToneClass(row.total_return_pct)}`}>
                     {fmtPct(row.total_return_pct)}
                   </td>
                   <td className="px-3 py-3 text-right font-mono">
@@ -981,6 +987,18 @@ function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(2)}%`;
+}
+
+function signedToneClass(n: number | null | undefined): string {
+  if (n == null || n === 0) return "text-text";
+  return n > 0 ? "text-gold" : "text-danger";
+}
+
+function drawdownToneClass(n: number | null | undefined): string {
+  if (n == null || n === 0) return "text-text";
+  const magnitude = Math.abs(n);
+  if (magnitude >= 10) return "text-danger";
+  return "text-warn";
 }
 
 function isInflight(row: RunSummary): boolean {
