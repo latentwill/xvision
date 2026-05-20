@@ -154,6 +154,38 @@ Tracks #12 + #13 (agentd / MCP surface pages) are most likely to need
 a spec round-trip before contracts open — flag them for spec authoring
 even if conductor batches the rest.
 
+## Status reconciliation — 2026-05-21
+
+Most of this intake **already shipped** in commits between
+2026-05-20 and 2026-05-21. Wiki source lives at
+`crates/xvision-dashboard/wiki/` (not the proposed `docs/xvnwiki/` —
+the in-crate location was chosen during implementation), loaded at
+build time via `crates/xvision-dashboard/build.rs` + `wiki/index.toml`.
+All 13 currently-baked pages carry `last_reviewed = 2026-05-20`.
+
+| Track | Status | Note |
+|---|---|---|
+| #1 `docs-cli-reference-refresh` | ✅ shipped | `wiki/cli-reference.md` documents all wave A–D verbs |
+| #2 `docs-strategies-refresh` | ✅ shipped | `wiki/strategies.md` (169 lines) covers hypothesis manifest |
+| #3 `docs-eval-runs-refresh` | ✅ shipped | `wiki/eval-runs.md` (257 lines) covers batch + baseline + behavior summary |
+| #4 `docs-scenarios-refresh` | ✅ shipped | `wiki/scenarios.md` (250 lines) covers regime labels + workflow |
+| #5 `docs-experiments-page-new` | ✅ shipped | `wiki/experiments.md` (202 lines) |
+| #6 `docs-agents-page-new` | ✅ shipped | `wiki/agents.md` (110 lines), intern→default agent rename noted |
+| #7 `docs-providers-and-brokers-page-new` | ✅ shipped | `wiki/providers.md` (111 lines) |
+| #8 `docs-wiki-filesystem-source` | ✅ shipped | `build.rs` + `index.toml` + `wiki/*.md`; no runtime FS read |
+| #9 `docs-wiki-content-migration` | ✅ shipped | `wiki/operator-manual.md` (272), `wiki/runbook.md` (229), `wiki/cli-non-surfaced.md` (107) |
+| #10 `docs-wiki-section-headers` | ✅ shipped | `section` field in `index.toml`; Quickstart/Concepts/CLI/Operator/Agent groupings |
+| #11 `docs-agent-driving-guide` | ✅ shipped | `wiki/driving-xvn-as-an-agent.md` (271 lines) |
+| #12 `docs-agentd-surface-page` | 🆕 ready | Contract opened 2026-05-21 (`team/contracts/docs-agentd-surface-page.md`) — `wiki/agentd.md` not yet written |
+| #13 `docs-mcp-surface-page` | ✅ shipped | `wiki/mcp.md` (160 lines) |
+| #14 `docs-route-deep-link` | ✅ shipped | `?slug=` supported in `frontend/web/src/routes/docs/index.tsx` |
+| #15 `docs-freshness-staleness-guard` | 🆕 ready (partial) | `last_reviewed` field on every page, but no CI check yet. Contract opened 2026-05-21 (`team/contracts/docs-freshness-staleness-guard.md`) |
+| #16 `docs-render-codeblock-copy` | ✅ shipped | `navigator.clipboard` already used in `DocsMarkdown.tsx` (copy button present) |
+
+Two tracks remain genuinely open with contracts opened 2026-05-21:
+`docs-agentd-surface-page` and `docs-freshness-staleness-guard`.
+Everything else from this intake has shipped.
+
 ## Out of scope
 
 - Versioned docs (per-release snapshots). The dashboard ships from one

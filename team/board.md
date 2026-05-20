@@ -4,7 +4,16 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-21 — Clawpatch-blockers wave opened from
+> Last updated: 2026-05-21 — Docs user+agent wiki intake reconciled
+> (`team/intake/2026-05-20-docs-user-and-agent-wiki.md`): 14 of 16
+> tracks already shipped (wiki plumbing at
+> `crates/xvision-dashboard/wiki/` with build.rs + index.toml; all 13
+> baked pages; sectioned sidebar; `?slug=` deep-linking; clipboard
+> copy). Two contracts opened today for the remaining gaps:
+> `docs-agentd-surface-page` (P1 leaf — write the agentd surface wiki
+> page) and `docs-freshness-staleness-guard` (P3 leaf — CI lint
+> enforcing `last_reviewed` window + cli-reference sync on new verbs).
+> Earlier 2026-05-21 work — Clawpatch-blockers wave opened from
 > `team/intake/2026-05-19-clawpatch-blockers.md`: 3 bundled contracts
 > (`clawpatch-engine-test-helpers` covering B-1/B-2/B-3/B-4;
 > `clawpatch-cli-test-assert` covering B-5; `clawpatch-frontend-components`
@@ -26,6 +35,15 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 `team/board-v2.md`.
 
 ## Active
+
+- **Docs user+agent wiki — outstanding gaps** (2 tracks; 14 of 16
+  intake tracks already shipped — see
+  `team/intake/2026-05-20-docs-user-and-agent-wiki.md` §"Status
+  reconciliation — 2026-05-21"):
+  - [docs-agentd-surface-page](contracts/docs-agentd-surface-page.md) — leaf · ready · P1 — write `crates/xvision-dashboard/wiki/agentd.md` covering the TypeScript UDS daemon's externally-observable surface (NDJSON event schema, tool-shim registry, session lifecycle). Daemon itself is forbidden — docs-only. May need a spec round-trip if the surface isn't stable.
+  - [docs-freshness-staleness-guard](contracts/docs-freshness-staleness-guard.md) — leaf · ready · P3 — CI lint at `scripts/docs-freshness-lint.sh` + workflow that fails when any wiki page exceeds 90 days since `last_reviewed`, or when a new top-level `xvn` verb lands without a same-PR `cli-reference.md` edit.
+
+  Sequencing: parallel. Independent surfaces.
 
 - **Clawpatch blockers — 2026-05-21** (3 bundled tracks, decomposed
   from `team/intake/2026-05-19-clawpatch-blockers.md`; 11 B-findings
