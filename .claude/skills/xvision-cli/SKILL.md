@@ -29,22 +29,55 @@ switch to `xvision-dev`.
 
 `xvn --help` is the source of truth, but the high-traffic verbs:
 
-- `ab-compare` — N-arm backtest, emits `BacktestResult` JSON. The headline run.
+- `strategy` — author / validate / list / inspect saved `Strategy` artifacts (`$XVN_HOME/strategies/<id>.json`). Atomic mode (`strategy new --prompt`) creates a Strategy + Agent + provider/model binding in one call. `--family / --hypothesis / --target-regime / --avoid-regime` attach a `Hypothesis` to the strategy.
+- `scenario` — author scenarios. Includes `select` (read-only comparable set query), `inspect --card` (plain-text card), `classify` (auto-derive regime labels from bars), `set-regime` (operator-authored labels).
+- `eval` — `run`, `list`, `show`, `results`, `watch`, `compare` (with `--markdown` table), `batch` (multi-scenario), `attest`, `export` (canonical `EvalRunExport` JSON, q15 §3), `review`, `validate`.
+- `experiment` — ledger that groups a research question + strategy + scenarios. `experiment run` orchestrates pick → batch → bind → `result_json` in one shot; pair with `--wait --compare --markdown` for a publishable summary.
+- `ab-compare` — N-arm backtest harness; emits `BacktestResult` JSON. Cycles come from `--cycles <json>`; bars come from `--bars <json>` or the SQLite cache via `--from / --to / --granularity`.
 - `metrics` / `gate` — pre-committed metrics + anti-overfit verdict (treatment vs baseline).
-- `strategy` — author / validate / list saved `Strategy` artifacts (`$XVN_HOME/strategies/<id>.json`).
 - `dashboard serve` — axum server with the SPA baked in via `rust-embed`. Default bind `0.0.0.0:8788`.
-- `provider` — manage registered LLM providers in `$XVN_HOME/config/default.toml`.
+- `provider` — manage registered LLM providers in `$XVN_HOME/config/default.toml`. `refresh-models` hits `/v1/models`; `models` reads the cached catalog (no network).
+- `agent get <id>` — fetch one agent record from the workspace agent library (shape matches the `agents[]` slot in `EvalRunExport`).
+- `obs retention` / `obs janitor` — agent-run retention policy + TTL/max-bytes sweep.
+- `run inspect <run_id>` — materialize `xvn_run.json` + `xvn_report.md` for a finished agent run from the SQLite ledger.
 - `intern` / `trader` / `risk` — preview prompts or run one pipeline stage in isolation.
 - `store` — SQLite flight-recorder (`xvn.db`) migrate / stats.
 - `eod` — end-of-day operator report (markdown to stdout).
+- `doctor` — print effective `$XVN_HOME` / config / db / provider / template targets.
+- `bars` — SQLite-cached historical bars: fetch / ls / rm / gc.
+- `migrate` — apply pending migrations + seed (or `--dry-run` to report state).
+- `example` — seed curated example strategies, scenarios, and tutorial artifacts.
 
 ## High-value examples
 
-- `xvn strategy ls`
-- `xvn strategy show <id>`
-- `xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest`
-- `xvn provider ls`
-- `xvn dashboard serve --bind 127.0.0.1:8788`
+```bash
+xvn strategy ls
+xvn strategy show <id>
+xvn strategy new --prompt prompts/trader.md \
+  --name funding-fader --provider openrouter --model kimi-k2 \
+  --role trader --asset ETH/USD --timeframe 1h \
+  --family compression-breakout \
+  --hypothesis "Post-compression range breakouts persist for 4–8 bars" \
+  --target-regime "post-compression trend" --avoid-regime chop --json
+
+xvn scenario classify --all                              # auto-label regimes
+xvn scenario set-regime <id> --regime expansion --volatility high --direction up
+xvn scenario select --asset ETH/USD --timeframe 60 --count 4
+
+xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval compare <run_id_a> <run_id_b> --markdown --sort sharpe
+xvn eval batch --strategy <id> --scenarios sc_a,sc_b,sc_c --wait
+
+xvn experiment run \
+  --name reg-breakout-eth-q1 \
+  --question "Does the breakout edge survive across 1h ETH regimes?" \
+  --strategy <id> --assets ETH/USD --timeframe 60 --count 4 \
+  --wait --compare --markdown --output reports/exp-2026-05-20.md
+
+xvn provider list
+xvn provider refresh-models --name openrouter
+xvn dashboard serve --bind 127.0.0.1:8788
+```
 
 ## Pipeline vocabulary (locked 2026-05-10, terminology rename Option B)
 
@@ -63,6 +96,42 @@ switch to `xvision-dev`.
 conventions, not hardcoded slot names. The current shipped CLI initializes
 state with `xvn migrate`; interactive setup/onboarding is handled through the
 dashboard wizard and operator runbooks.
+
+## Experiment vs strategy vs eval (mental model)
+
+- **Strategy** — the immutable pipeline configuration (one `Strategy.json`,
+  one or more `AgentRef`s). Authored via `xvn strategy new`.
+- **Eval run** — one execution of a strategy against one scenario.
+  Launched via `xvn eval run` (or `eval batch` for N scenarios in one call).
+- **Experiment** — a ledger row that groups a research question + a strategy
+  + the set of scenarios that question demands. `xvn experiment run`
+  orchestrates the whole loop: it picks scenarios (`--scenarios` explicit,
+  or `--assets / --timeframe / --regimes / --target-decisions / --same-decisions`
+  selector mode), launches an eval batch, binds the run ids back to the
+  experiment row, and (with `--wait --compare --markdown`) emits a
+  publishable comparison table. `--decision-budget` is metadata only — it
+  records operator intent, it does not cap eval execution.
+
+Use `experiment` when the operator's question is the unit of work
+("does this strategy survive across these regimes?"); use a bare `eval batch`
+when you just need N runs and don't need the ledger row.
+
+## MCP tool peers for new CLI verbs
+
+The CLI workbench wave landed six new MCP tools that mirror the new verbs,
+so the chat-rail / MCP-driving agent doesn't shell out to `xvn`:
+
+| MCP tool | CLI equivalent |
+|---|---|
+| `xvn_strategy_create_atomic` | `xvn strategy new --prompt …` (atomic mode) |
+| `xvn_strategy_validate_preflight` | `xvn strategy validate <id>` (returns `eval_ready` + warnings/errors) |
+| `xvn_eval_batch_run` | `xvn eval batch --strategy <id> --scenarios …` |
+| `xvn_eval_compare_report` | `xvn eval compare …` decorated with behavior summary per row |
+| `xvn_scenario_inspect_card` | `xvn scenario inspect <id> --card` |
+| `xvn_eval_behavior` | on-demand `BehaviorSummary` for a finished run |
+
+These wrap the same engine APIs the CLI calls — no `xvn`-binary shell-out.
+Prefer them over `POST /api/cli/jobs` when an MCP client is already attached.
 
 ## Live nodes (operator surface)
 
@@ -102,3 +171,9 @@ For command-style live-node work, prefer the typed remote CLI job API instead of
 
 Engineering-side deployment + crate-level architecture moved to the
 `xvision-dev` skill.
+
+---
+
+*Skills owner: whichever track ships a new `xvn` verb is responsible
+for updating this file in the same PR. Last refresh: 2026-05-20
+(intake `team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`).*
