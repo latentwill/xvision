@@ -1085,6 +1085,31 @@ impl WizardLoop {
                 let body = strategies_folder::read(&self.api_context, rel_path).await?;
                 Ok(serde_json::to_value(body)?)
             }
+            "list_strategy_ideas" => {
+                // V2F closer: query the prepopulated strategy idea
+                // library at `$XVN_HOME/strategies/library/templates/`.
+                // Missing library returns an empty array; bad JSON
+                // entries log a warning and are skipped.
+                let filter = strategies_folder::ideas::IdeaFilter {
+                    category: input
+                        .get("category")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string()),
+                    indicator: input
+                        .get("indicator")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string()),
+                    limit: input
+                        .get("limit")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n.min(u32::MAX as u64) as u32),
+                };
+                let ideas =
+                    strategies_folder::ideas::list_ideas(&self.api_context, filter).await?;
+                Ok(serde_json::to_value(ideas)?)
+            }
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
     }
@@ -2308,6 +2333,44 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "required": ["rel_path"]
             }),
         },
+        ToolDefinition {
+            name: "list_strategy_ideas".into(),
+            description: "queries the user's pre-populated strategy idea \
+                          library; use when the user asks for examples or \
+                          ideas. Returns idea summaries with category, \
+                          indicators, short description, and the \
+                          `source_rel_path` of the underlying template \
+                          (pass that to `read_strategies_file` to fetch \
+                          the full body). Empty array when \
+                          `$XVN_HOME/strategies/library/templates/` \
+                          hasn't been initialised yet (suggest \
+                          `xvn strategies init`).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Optional category filter. Case-insensitive. \
+                                        Known values: `ema`, `bollinger`, \
+                                        `fibonacci`, `nansen`, `random`, \
+                                        `rsi-volume`."
+                    },
+                    "indicator": {
+                        "type": "string",
+                        "description": "Optional indicator filter (case-insensitive \
+                                        substring match against the derived indicators \
+                                        list, e.g. `rsi`, `ema_200`, `funding_rate_8h`)."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "Optional cap on results. Default 20, capped at 100."
+                    }
+                },
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -2504,6 +2567,90 @@ mod tests {
                         == Some("notes/ideas.md")),
                     "expected ideas.md in {result}"
                 );
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    /// V2F closer: the wizard's `list_strategy_ideas` tool queries the
+    /// curated library populated by `xvn strategies init` and surfaces
+    /// EMA template summaries. This is the end-to-end V2F integration
+    /// — `prepop::init` writes `library/templates/EMA/*.json`, and the
+    /// wizard tool reads back from the same path.
+    #[tokio::test]
+    async fn wizard_lists_strategy_ideas_for_ema_category() {
+        use xvision_engine::strategies_folder::prepop::{self, InitOptions};
+
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_ideas",
+                "list_strategy_ideas",
+                serde_json::json!({"category": "ema", "limit": 3}),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Here are three EMA ideas.".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, _pool, td, _sid) = loop_with_session(
+            mock,
+            "give me three EMA strategy ideas",
+            ContextScope::Workspace,
+        )
+        .await;
+
+        // Populate the library the same way `xvn strategies init` does
+        // in production. This proves the V2F closer integrates with the
+        // V2F foundation (#414, #419) — same files, same path.
+        prepop::init(td.path(), InitOptions::default())
+            .await
+            .expect("prepop init");
+
+        let events = drain(&mut wl).await;
+        assert!(
+            matches!(&events[0], WizardEvent::ToolCall { tool, args } if tool == "list_strategy_ideas"
+                && args.get("category").and_then(|v| v.as_str()) == Some("ema")),
+            "expected list_strategy_ideas with category=ema, got {:?}",
+            events.first()
+        );
+        match &events[1] {
+            WizardEvent::ToolResult { tool, result } => {
+                assert_eq!(tool, "list_strategy_ideas");
+                let arr = result.as_array().expect("ideas[]");
+                assert!(
+                    arr.len() >= 3,
+                    "expected at least three EMA ideas, got {} in {result}",
+                    arr.len()
+                );
+                // Every returned row must be in the EMA category and
+                // carry a non-empty name + source_rel_path that points
+                // back at the library template tree.
+                for row in arr {
+                    assert_eq!(
+                        row.get("category").and_then(|v| v.as_str()),
+                        Some("ema"),
+                        "non-ema row leaked into category=ema filter: {row}"
+                    );
+                    let rel = row
+                        .get("source_rel_path")
+                        .and_then(|v| v.as_str())
+                        .expect("source_rel_path");
+                    assert!(
+                        rel.starts_with("library/templates/"),
+                        "source_rel_path must be under library/templates/: {rel}"
+                    );
+                    assert!(
+                        row.get("name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false),
+                        "name must be non-empty: {row}"
+                    );
+                }
             }
             other => panic!("expected ToolResult, got {other:?}"),
         }
