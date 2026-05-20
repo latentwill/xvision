@@ -4,27 +4,41 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-20 conductor sweep — Lists v1 phase 1 (1a/1b/1c)
-> merged (PRs #390, #395, #396) plus backend-pagination follow-up #397.
-> QA Round 7 all 9 findings shipped via #385/#386/#387/#391/#397. QA
-> Round 6 all 3 tracks shipped via #360. Skills refresh shipped via
-> #379 (cycle-migration explicitly punted by operator). **Only Standard
-> list component phase 2+ remains Reserved.** Previous sweep:
-> 2026-05-19 (see `team/archive/2026-05-19-sweep/`).
+> Last updated: 2026-05-21 — QA Round 4 decomposition: opened
+> `paper-eval-inspector-parity` (P1 integration) and two carve-out
+> followups (`strategy-require-at-least-one-agent-fixture-migration`
+> P2 leaf; `scenario-clone-form-structural-fields` P2 integration).
+> Marked `mcp-eval-run-job-bridge` shipped (commit `11959db`) and
+> `trace-capsule-multi-eval-behavior` shipped via implementation
+> (#339, the design-spike step was bypassed). Lists v1 phase 2a
+> (`list-migrate-eval-runs`) merged via #399 on 2026-05-20; active
+> Lists work is now 2b → 2c. Previous sweep: 2026-05-20 conductor
+> sweep — Lists v1 phase 1 + QA Round 7 cleanup.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 `team/board-v2.md`.
 
 ## Active
 
-- **Lists v1 — phase 2** (3 serial migration tracks; spec Decision 5,
+- **Lists v1 — phase 2** (serial migration tracks; spec Decision 5,
   `docs/superpowers/specs/2026-05-20-standard-list-component.md`):
-  - [list-migrate-eval-runs](contracts/list-migrate-eval-runs.md) — integration · ready · 2a — migrates `/eval-runs` to `<ResponsiveListCard>` + `useListState` + `useListUrlState`. Lands F-2 (search/filter) from QA Round 7. Blocks 2b.
-  - [list-migrate-strategies](contracts/list-migrate-strategies.md) — integration · ready · 2b — same migration for `/strategies`. Depends on 2a.
+  - [list-migrate-strategies](contracts/list-migrate-strategies.md) — integration · ready · 2b — migrates `/strategies` to `<ResponsiveListCard>` + `useListState` + `useListUrlState`. Pattern lifts forward from 2a (#399).
   - [list-migrate-decisions-and-tail](contracts/list-migrate-decisions-and-tail.md) — integration · ready · 2c — `/scenarios` + `/agents`, plus final deletion of the transitional `<ListPagination>` JSX primitive. Depends on 2b.
 
-  Sequencing: serial 2a → 2b → 2c per spec Decision 5; pattern lifts
-  forward. Phase 3 (`list-component-density-toggle`) remains deferred.
+  Sequencing: serial 2b → 2c per spec Decision 5. Phase 3
+  (`list-component-density-toggle`) remains deferred.
+
+- **QA Round 4 — outstanding tail** (decomposed from
+  `team/intake/2026-05-19-qa-operator-round-4.md`; 8 of 11 original
+  tracks shipped via #341, 2 more via #339 and commit `11959db`):
+  - [paper-eval-inspector-parity](contracts/paper-eval-inspector-parity.md) — integration · ready · P1 — paper eval inspector lacks PnL summary + buy/sell order rendering; backtest parity is the target. Root-cause first (engine persistence vs frontend loader fork), then fix.
+  - [strategy-require-at-least-one-agent-fixture-migration](contracts/strategy-require-at-least-one-agent-fixture-migration.md) — leaf · ready · P2 — followup to #341 commit `3849680`. Migrate ~13 engine fixtures off the legacy `trader_slot` fallback, then delete the fallback branch in `validate_eval_trader_source`.
+  - [scenario-clone-form-structural-fields](contracts/scenario-clone-form-structural-fields.md) — integration · ready · P2 — followup to #341 commit `53f3e3f`. Mount the already-lifted `<ScenarioForm>` inside the inline clone accordion on `/scenarios/:id` so operators can override `time_window` / `asset` / `granularity` / `venue` / `warmup_bars` without leaving the page.
+
+  Sequencing: parallel. `strategy-require-at-least-one-agent-fixture-migration`
+  and `paper-eval-inspector-parity` share `crates/xvision-engine/src/api/eval.rs`
+  in disjoint regions; fixture-migration is smaller and should land first
+  to keep `cargo test --workspace` green for the parity track's CI.
 
 ## Reserved
 
@@ -32,6 +46,18 @@ _(empty — next decomposition wave should come through intake; see
 the V2 board for V2A leaves and V2E contracts already laid down.)_
 
 ## Recently Closed
+
+Merged 2026-05-20 (not yet archived):
+
+- **Lists v1 phase 2a** — `list-migrate-eval-runs` (#399). Migrated
+  `/eval-runs` to `<ResponsiveListCard>` + `useListState` +
+  `useListUrlState`; landed F-2 (search/filter) from QA Round 7.
+  Pattern is the reference for 2b/2c.
+
+QA Round 4 status reconciled 2026-05-21 (intake table updated, no archive yet — three tracks still open as `paper-eval-inspector-parity` / `strategy-require-at-least-one-agent-fixture-migration` / `scenario-clone-form-structural-fields`):
+
+- **`mcp-eval-run-job-bridge`** — shipped via commit `11959db`. Synthetic `eval_run_<ULID>` bridge in `crates/xvision-dashboard/src/cli_jobs/eval_run_bridge.rs` resolves to the `eval_runs` registry without dual-writes; `get_cli_job` / `get_cli_job_output` accept the prefix.
+- **`trace-capsule-multi-eval-behavior`** — shipped via implementation (#339); the design-spike step was bypassed and the multi-eval capsule was built directly from the operator's HTML mock at `docs/design/Capsule · Multi-Eval.html`.
 
 Archived 2026-05-20 (conductor sweep — see `team/archive/2026-05-20-lists-v1-phase-1/`):
 

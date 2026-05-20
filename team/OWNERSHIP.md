@@ -148,6 +148,32 @@ violation unless the contract is updated first.
 | `frontend/web/src/routes/agents.tsx` | `list-migrate-decisions-and-tail` | lists-v1 phase 2 |
 | `frontend/web/src/components/primitives/ListPagination.tsx` | `list-migrate-decisions-and-tail` (final deletion of standalone JSX; `useServerPagination` hook stays) | lists-v1 phase 2 |
 | `frontend/web/src/components/primitives/ListPagination.test.tsx` | `list-migrate-decisions-and-tail` | lists-v1 phase 2 |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | `paper-eval-inspector-parity` (if persist gap is the root cause); pre-existing `alpaca-paper-crypto-submit` row applies if revived | qa-2026-05-19 |
+| `crates/xvision-engine/src/api/eval.rs` | `paper-eval-inspector-parity` (read-site diagnosis) + `strategy-require-at-least-one-agent-fixture-migration` (drop legacy `trader_slot` branch) | qa-2026-05-19 |
+| `crates/xvision-engine/src/api/eval/runs.rs` | `paper-eval-inspector-parity` (if detail-response shape forks per mode); pre-existing `eval-net-of-inference-cost-metric` (V2E) row applies on rebase | qa-2026-05-19 |
+| `crates/xvision-engine/tests/eval_executor_paper.rs` | `paper-eval-inspector-parity` (parity test) + `strategy-require-at-least-one-agent-fixture-migration` (fixture migration) | qa-2026-05-19 |
+| `crates/xvision-engine/tests/api_eval_run.rs` | `paper-eval-inspector-parity` (paper-detail response shape test) + `strategy-require-at-least-one-agent-fixture-migration` (fixture migration) | qa-2026-05-19 |
+| `crates/xvision-engine/tests/risk_min_notional.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/pipeline_inline.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/eval_progress.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/decisions_count.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/strategy_store.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/api_eval_min_notional.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/strategy_roundtrip.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/eval_executor_warmup.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/eval_broker_circuit_breaker.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/eval_progress_backtest.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/eval_run_scenario.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/eval_early_stop.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/eval_guardrails.rs` | `strategy-require-at-least-one-agent-fixture-migration` | qa-2026-05-19 |
+| `crates/xvision-engine/tests/strategy_id_path_safety.rs` | `strategy-require-at-least-one-agent-fixture-migration` (re-verify only) | qa-2026-05-19 |
+| `crates/xvision-engine/tests/mechanical_params.rs` | `strategy-require-at-least-one-agent-fixture-migration` (re-verify only) | qa-2026-05-19 |
+| `frontend/web/src/routes/eval-runs-detail.tsx` | `paper-eval-inspector-parity` | qa-2026-05-19 |
+| `frontend/web/src/routes/eval-runs-detail-mobile.tsx` | `paper-eval-inspector-parity` | qa-2026-05-19 |
+| `frontend/web/src/routes/scenarios-detail.tsx` | `scenario-clone-form-structural-fields` | qa-2026-05-19 |
+| `frontend/web/src/routes/scenarios-detail.test.tsx` | `scenario-clone-form-structural-fields` | qa-2026-05-19 |
+| `frontend/web/src/components/scenario/ScenarioForm.tsx` | `scenario-clone-form-structural-fields` (only if a controlled-form prop must be added) | qa-2026-05-19 |
+| `frontend/web/src/components/scenario/ScenarioForm.test.tsx` | `scenario-clone-form-structural-fields` | qa-2026-05-19 |
 
 ## Multi-owner Exemptions
 
@@ -163,7 +189,8 @@ violation unless the contract is updated first.
 | `crates/xvision-engine/src/agent/observability.rs` | `harness-prompt-hash-real-digest`, `agent-error-feedback-self-healing` | Same disjoint-regions rule as the execute.rs row. |
 | `frontend/web/src/features/agent-runs/SpanInspector.tsx` | `qa-trace-broker-spans`, `qa-retention-prompt-storage-bug` | qa-trace-broker-spans owns the broker_call rendering. qa-retention-prompt-storage-bug owns the prompt-asymmetry fix. Disjoint. |
 | `crates/xvision-engine/src/eval/executor/backtest.rs` | `eval-trace-surface-foundation`, `eval-cost-model-per-bar-and-volume-share`, `eval-intra-bar-fill-ordering`, `eval-broker-rule-findings` | Four V2E tracks own disjoint regions of the simulator: trace-foundation owns decisions/fills emit schema; cost-model owns fill-price math; intra-bar owns fill-trigger ordering + maker/taker; broker-rule owns the order-emission validation hook. Coordinate disjoint hunks via team/queue/; rebase smaller diff onto larger. Intra-bar strictly depends on cost-model (sequential within wave). |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | `eval-trace-surface-foundation` (V2E), plus the pre-existing `qa-trace-broker-spans`/`agent-error-feedback-self-healing` row above | V2E foundation adds decisions+fills emit-site changes; coordinate disjoint hunks with the qa-2026-05-18 tracks if they're still active. |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | `eval-trace-surface-foundation` (V2E), `paper-eval-inspector-parity` (only if persist gap is the root cause), plus the pre-existing `qa-trace-broker-spans`/`agent-error-feedback-self-healing` row above | V2E foundation adds decisions+fills emit-site changes; paper-parity may add a missing persist call in the paper executor; coordinate disjoint hunks via team/queue/. |
+| `crates/xvision-engine/src/api/eval.rs` | `paper-eval-inspector-parity` (read-site mode-dispatch diagnosis hooks), `strategy-require-at-least-one-agent-fixture-migration` (drop legacy `trader_slot` fallback branch in `validate_eval_trader_source`) | Disjoint regions: parity reads mode-dispatch around `:803-1292`; fixture-migration deletes a single branch around `:1830-1855` and one acceptance test. Sequential preferred — fixture-migration is smaller, lands first. |
 | `crates/xvision-engine/src/eval/scenario.rs` | `eval-cost-model-per-bar-and-volume-share`, `eval-candle-integrity-and-manifest` | Cost-model adds `VenueOverride` + per-bar array fields to `VenueSettings`; candle-integrity adds `data_source` + manifest fields on `Scenario`. Disjoint regions. |
 | `crates/xvision-engine/src/eval/findings.rs` | `eval-trace-surface-foundation`, `eval-candle-integrity-and-manifest`, `eval-cost-model-per-bar-and-volume-share`, `eval-lookahead-bias-prober`, `eval-broker-rule-findings`, `eval-net-of-inference-cost-metric` | All V2E tracks add new finding-kind variants. Foundation also bumps the schema (adds `evidence_cycle_ids`, `produced_by_check`). Foundation lands first; the other five rebase onto its schema bump and each adds an enum variant in a separate region. |
 | `crates/xvision-engine/src/eval/compare.rs` | `eval-candle-integrity-and-manifest`, `eval-net-of-inference-cost-metric` | Candle-integrity adds manifest-mismatch refusal; net-of-inference-cost adds `net_return_pct` per-arm column. Disjoint regions. |

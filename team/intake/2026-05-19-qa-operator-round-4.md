@@ -292,11 +292,15 @@ one commit per track for easy cherry-pick. Status:
 | `eval-inspector-total-pnl-summary` | ✅ landed | `df5d185` | PnL derived from `equity_curve`; mobile flips PNL tile primary to $ |
 | `strategy-require-at-least-one-agent` | 🟡 partial | `3849680` | See **Followups** below |
 | `strategy-clone-editable-frontend` | 🟡 partial | `53f3e3f` | Scope: simple text fields only. See **Followups** below |
-| `mcp-eval-run-job-bridge` | ⏸ not started | — | Needs cli_jobs store ↔ eval_runs registry investigation |
-| `paper-eval-inspector-parity` | ⏸ not started | — | Mode-dispatch dig in `api/eval.rs` first |
-| `trace-capsule-multi-eval-behavior` | ⏸ not started | — | Design spike — needs the one-page note before code |
+| `mcp-eval-run-job-bridge` | ✅ landed | `11959db` | Synthetic `eval_run_<ULID>` bridge in `crates/xvision-dashboard/src/cli_jobs/eval_run_bridge.rs` resolves to the `eval_runs` registry without dual-writes; `get_cli_job` / `get_cli_job_output` accept the prefix |
+| `paper-eval-inspector-parity` | 🆕 ready | — | Contract opened 2026-05-21 (`team/contracts/paper-eval-inspector-parity.md`). Mode-dispatch dig in `api/eval.rs` is the first deliverable |
+| `trace-capsule-multi-eval-behavior` | ✅ landed (via implementation) | #339 | The design spike was bypassed — multi-eval capsule shipped directly from the operator's `docs/design/Capsule · Multi-Eval.html` mock. No one-page spec was written; the implementation answered the design question by adopting the per-run capsule + stack pattern. If the design rationale is needed later, file a retrospective note |
 
 ## Followups (carved out of in-flight tracks)
+
+Contracts opened 2026-05-21:
+`team/contracts/strategy-require-at-least-one-agent-fixture-migration.md`
+and `team/contracts/scenario-clone-form-structural-fields.md`.
 
 ### `strategy-require-at-least-one-agent-fixture-migration` (P2, leaf)
 
