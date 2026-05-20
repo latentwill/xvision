@@ -23,6 +23,15 @@ afterEach(() => {
 });
 
 describe("Sidebar theme toggle", () => {
+  it("uses Dashboard for the root navigation label", () => {
+    renderSidebar();
+
+    expect(screen.getByRole("link", { name: /Dashboard/ })).toHaveAttribute(
+      "href",
+      "/",
+    );
+  });
+
   it("switches to light with the sun button", () => {
     renderSidebar();
 

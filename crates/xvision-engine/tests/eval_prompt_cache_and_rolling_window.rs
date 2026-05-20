@@ -277,7 +277,7 @@ fn five_decision_synthetic_backtest_with_limit_10_produces_10_bar_history_per_ca
     // `combined[combined_idx - history_window..combined_idx]`,
     // capped to the most-recent 10 entries.
     let combined: Vec<u32> = (0..105u32).collect();
-    let warmup_count = 100;
+    let warmup_count: usize = 100;
     let history_window: usize = 50; // wider than the cap so the cap is the binding constraint
     let bar_history_limit: Option<u32> = Some(10);
 

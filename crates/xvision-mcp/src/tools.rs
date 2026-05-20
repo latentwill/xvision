@@ -881,6 +881,7 @@ impl XvisionTools {
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 }],
             },
         )
@@ -2312,7 +2313,10 @@ mod tests {
             .await
             .unwrap_err();
         let msg = err.to_string().to_lowercase();
-        assert!(msg.contains("not found"), "expected not found, got: {msg}");
+        assert!(
+            msg.contains("no such file") && msg.contains("strategies"),
+            "expected missing strategy file diagnostic, got: {msg}"
+        );
     }
 
     // ── eval_batch_status ─────────────────────────────────────────────────────

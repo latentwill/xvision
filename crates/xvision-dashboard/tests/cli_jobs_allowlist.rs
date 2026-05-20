@@ -151,6 +151,17 @@ async fn dashboard_subcommand_is_rejected_even_in_devmode() {
 }
 
 #[tokio::test]
+async fn devmode_allows_non_allowlisted_non_denied_argv() {
+    let _guard = devmode_on();
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/cli/jobs")
+        .json(&serde_json::json!({ "argv": ["eval", "run", "--strategy", "x"] }))
+        .await;
+    resp.assert_status_ok();
+}
+
+#[tokio::test]
 async fn fire_trade_is_rejected_in_default_mode() {
     let _guard = devmode_off();
     let (server, _tmp) = boot().await;
@@ -185,4 +196,17 @@ async fn mutating_nested_subcommands_are_rejected() {
             "validation error must mention remote cli policy, got: {body}"
         );
     }
+}
+
+#[tokio::test]
+async fn fire_trade_is_rejected_even_in_devmode() {
+    let _guard = devmode_on();
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/cli/jobs")
+        .json(&serde_json::json!({ "argv": ["fire-trade", "--whatever"] }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body = resp.text();
+    assert!(body.contains("not allowed over remote cli") || body.contains("fire-trade"));
 }

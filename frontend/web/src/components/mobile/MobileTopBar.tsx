@@ -10,7 +10,7 @@ export function MobileTopBar({
   onMenu: () => void;
 }) {
   return (
-    <header className="h-[calc(52px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] pl-[max(0px,env(safe-area-inset-left))] pr-[max(0px,env(safe-area-inset-right))] flex items-center gap-2 px-3 border-b border-border-soft bg-bg flex-shrink-0">
+    <header className="h-[calc(52px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] flex items-center gap-2 border-b border-border-soft bg-bg flex-shrink-0">
       <button
         type="button"
         onClick={onMenu}

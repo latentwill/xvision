@@ -41,6 +41,7 @@ fn simple_request() -> LlmRequest {
         tools: vec![],
         temperature: None,
         response_schema: None,
+        cache_control: None,
     }
 }
 

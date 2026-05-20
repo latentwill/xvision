@@ -1,6 +1,6 @@
 // frontend/web/src/features/agent-runs/TraceDock.test.tsx
 import { beforeEach, describe, expect, test } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -102,6 +102,13 @@ describe("TraceDock", () => {
     const inspectorAfter = await screen.findByTestId("span-inspector-fields-simple");
     expect(inspectorAfter).toHaveTextContent(/s3 · model\.call/);
     expect(inspectorAfter).not.toHaveTextContent(/s1 · agent\.run/);
+    expect(screen.queryByTestId("flame-bar-s1")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("span-inspector")).toHaveAttribute(
+        "data-span-id",
+        "s3",
+      ),
+    );
   });
 
   test("Trade button (F-7) renders disabled when no broker.call spans are present", async () => {
