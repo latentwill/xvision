@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   useMutation,
   useQuery,
@@ -14,6 +14,14 @@ import {
   ListPagination,
   useServerPagination,
 } from "@/components/primitives/ListPagination";
+import {
+  ResponsiveListCard,
+  useListState,
+  useListUrlState,
+  type FilterDef,
+  type SortOption,
+} from "@/components/lists";
+import { MListRow } from "@/components/lists/MListRow";
 import { ApiError } from "@/api/client";
 import { chartKeys, getRunChart } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
@@ -63,15 +71,45 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
   cancelled: "warn",
 };
 
+const SORT_OPTIONS: SortOption[] = [
+  { value: "started", label: "Recently started" },
+  { value: "completed", label: "Recently completed" },
+  { value: "strategy", label: "Strategy A → Z" },
+  { value: "status", label: "Status" },
+];
+
+const MODE_FILTER: FilterDef = {
+  id: "mode",
+  label: "Mode",
+  options: [
+    { value: "all", label: "All modes" },
+    { value: "paper", label: "Paper" },
+    { value: "backtest", label: "Backtest" },
+  ],
+};
+
+const STATUS_FILTER: FilterDef = {
+  id: "status",
+  label: "Status",
+  options: [
+    { value: "all", label: "All statuses" },
+    { value: "completed", label: "Completed" },
+    { value: "running", label: "Running" },
+    { value: "queued", label: "Queued" },
+    { value: "failed", label: "Failed" },
+    { value: "cancelled", label: "Cancelled" },
+  ],
+};
+
 export function EvalRunsRoute() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const strategyFilter = searchParams.get("strategy")?.trim() ?? "";
+  const strategyFilterUrl = searchParams.get("strategy")?.trim() ?? "";
   // QA-round-7 backend-pagination follow-up (#386 gap): `limit`/`offset`
   // drive the query key so each page change is a fresh request.
   const [totalFromServer, setTotalFromServer] = useState(0);
   const pager = useServerPagination(totalFromServer);
   const listParams = {
-    agent_id: strategyFilter || undefined,
+    agent_id: strategyFilterUrl || undefined,
     limit: pager.limit,
     offset: pager.offset,
   };
@@ -97,14 +135,13 @@ export function EvalRunsRoute() {
     }
   }, [q.data?.total, totalFromServer]);
   const navigate = useNavigate();
-  const preselectedStrategy = strategyFilter;
+  const preselectedStrategy = strategyFilterUrl;
   const startRequested = searchParams.get("start") === "1";
   // Selection state for the Compare flow. Lifted here so the Topbar can
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [startOpen, setStartOpen] = useState(startRequested);
   const runs = q.data?.items ?? [];
-  const total = q.data?.total ?? 0;
   const hasInflight = runs.some((r) => isInflightRunStatus(r.status));
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -142,9 +179,110 @@ export function EvalRunsRoute() {
     queryKey: scenarioKeys.list(),
     queryFn: () => listScenarios(),
   });
-  const strategyFilterLabel = strategyFilter
-    ? displayStrategyName(strategyFilter, strategiesQ.data ?? [])
-    : "";
+  const strategies = strategiesQ.data ?? [];
+  const scenarios = scenariosQ.data ?? [];
+
+  // Strategy filter options are derived from the loaded strategies plus
+  // any agent_id observed on the current page that isn't already in the
+  // strategy library (defensive against stale strategy lists).
+  const strategyFilter: FilterDef = useMemo(() => {
+    const known = new Set<string>();
+    const options: { value: string; label: string }[] = [
+      { value: "all", label: "All strategies" },
+    ];
+    strategies.forEach((s) => {
+      if (s.agent_id && !known.has(s.agent_id)) {
+        known.add(s.agent_id);
+        options.push({
+          value: s.agent_id,
+          label: s.display_name || s.agent_id,
+        });
+      }
+    });
+    runs.forEach((r) => {
+      if (r.agent_id && !known.has(r.agent_id)) {
+        known.add(r.agent_id);
+        options.push({
+          value: r.agent_id,
+          label: displayStrategyName(r.agent_id, strategies),
+        });
+      }
+    });
+    return { id: "strategy", label: "Strategy", options };
+  }, [strategies, runs]);
+
+  const list = useListState<RunSummary>({
+    rows: runs,
+    filters: [strategyFilter, MODE_FILTER, STATUS_FILTER],
+    sortOptions: SORT_OPTIONS,
+    filterFn: (row, query, values) => {
+      const strategyVal = values.strategy ?? "all";
+      if (strategyVal !== "all" && row.agent_id !== strategyVal) return false;
+      const modeVal = values.mode ?? "all";
+      if (modeVal !== "all" && row.mode !== modeVal) return false;
+      const statusVal = values.status ?? "all";
+      if (statusVal !== "all" && row.status !== statusVal) return false;
+      const q = query.trim().toLowerCase();
+      if (q.length === 0) return true;
+      const name = displayStrategyName(row.agent_id, strategies).toLowerCase();
+      const scenarioName = displayScenarioName(
+        row.scenario_id,
+        scenarios,
+      ).toLowerCase();
+      const shortId = row.id.slice(0, 8).toLowerCase();
+      return name.includes(q) || scenarioName.includes(q) || shortId.includes(q);
+    },
+    sortFn: (rows, key) => {
+      switch (key) {
+        case "completed":
+          return rows.sort((a, b) =>
+            compareIsoDesc(a.completed_at, b.completed_at),
+          );
+        case "strategy":
+          return rows.sort((a, b) =>
+            displayStrategyName(a.agent_id, strategies).localeCompare(
+              displayStrategyName(b.agent_id, strategies),
+            ),
+          );
+        case "status":
+          return rows.sort((a, b) => a.status.localeCompare(b.status));
+        case "started":
+        default:
+          return rows.sort((a, b) => compareIsoDesc(a.started_at, b.started_at));
+      }
+    },
+  });
+  useListUrlState("eval-runs", list);
+
+  // Bridge the strategy filter ↔ ?strategy= URL param so the existing
+  // backend `agent_id` query keeps working. The unified `useListUrlState`
+  // hook owns the URL writes; this effect only enforces the back-edge
+  // (when the strategy filter changes, mirror it onto ?strategy=).
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    const val = list.filters.find((f) => f.def.id === "strategy")?.value;
+    if (val && val !== "all") {
+      if (next.get("strategy") !== val) next.set("strategy", val);
+    } else {
+      if (next.has("strategy")) next.delete("strategy");
+    }
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [list.filters, searchParams, setSearchParams]);
+
+  // Also hydrate from ?strategy= on first mount in case the URL had it
+  // before useListUrlState saw it (?q= takes precedence already).
+  useEffect(() => {
+    if (!strategyFilterUrl) return;
+    const f = list.filters.find((ff) => ff.def.id === "strategy");
+    if (!f) return;
+    if (f.value !== strategyFilterUrl) {
+      f.setValue(strategyFilterUrl);
+    }
+    // run-once on initial mount + when strategyFilterUrl changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategyFilterUrl]);
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -165,9 +303,44 @@ export function EvalRunsRoute() {
     navigate(`/eval-runs/compare?ids=${ids}`);
   }
 
+  const qc = useQueryClient();
+  const remove = useMutation({
+    mutationFn: deleteRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+    },
+  });
+  const cancel = useMutation({
+    mutationFn: cancelRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+    },
+  });
+
+  function go(id: string) {
+    navigate(`/eval-runs/${id}`);
+  }
+
+  const subtitle = subtitleFor(q, list.totalRows, list.rows.length);
+
+  const desktopColumns = [
+    { key: "select", label: "", width: 32 },
+    { key: "run", label: "Run" },
+    { key: "scenario", label: "Scenario" },
+    { key: "mode", label: "Mode" },
+    { key: "status", label: "Status" },
+    { key: "sharpe", label: "Sharpe", align: "right" as const },
+    { key: "drawdown", label: "Max DD", align: "right" as const },
+    { key: "return", label: "Return", align: "right" as const },
+    { key: "tokens", label: "Tokens", align: "right" as const },
+    { key: "duration", label: "Duration", align: "right" as const },
+    { key: "started", label: "Started" },
+    { key: "actions", label: "" },
+  ];
+
   return (
     <>
-      <Topbar title="Eval" sub={subtitleFor(q, strategyFilterLabel)} />
+      <Topbar title="Eval" sub={subtitle} />
 
       <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         {selected.size > 0 ? (
@@ -197,54 +370,72 @@ export function EvalRunsRoute() {
         />
       ) : null}
 
-      {strategyFilter ? (
-        <div className="mb-3 px-3 py-2 rounded border border-border-soft bg-surface-elev text-[12px] text-text-2 flex items-center justify-between gap-2">
-          <span>
-            Filtering runs for strategy{" "}
-            <span className="text-text">{strategyFilterLabel}</span>
-            <code
-              className="ml-2 font-mono text-text-3 break-all"
-              title={strategyFilter}
-            >
-              {strategyFilter}
-            </code>
-          </span>
+      <ResponsiveListCard<RunSummary>
+        listId="eval-runs"
+        title="Runs"
+        count={list.totalRows}
+        toolbar={{
+          search: { ...list.search, placeholder: "Search runs…" },
+          filters: list.filters,
+          sort: list.sort,
+          clearAll: list.clearAll,
+        }}
+        columns={desktopColumns}
+        rows={list.rows}
+        loading={q.isPending}
+        error={
+          q.isError
+            ? {
+                message: errorDetail(q.error),
+                retry: () => q.refetch(),
+              }
+            : null
+        }
+        empty="No runs match these filters."
+        emptyAction={
           <button
             type="button"
-            onClick={() => {
-              const next = new URLSearchParams(searchParams);
-              next.delete("strategy");
-              setSearchParams(next);
-            }}
-            className="text-text-3 hover:text-text underline-offset-2 hover:underline"
+            onClick={() => setStartOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded border border-gold px-3 py-1.5 text-[12px] font-medium text-gold hover:bg-gold/10"
           >
-            Clear filter
+            <Icon name="plus" size={11} /> Start eval
           </button>
-        </div>
-      ) : null}
-
-      <Card>
-        {q.isPending ? (
-          <LoadingSkeleton />
-        ) : q.isError ? (
-          <ErrorState err={q.error} onRetry={() => q.refetch()} />
-        ) : total === 0 ? (
-          <EmptyState />
-        ) : (
-          <RunsTable
-            items={runs}
-            allItems={runs}
-            selected={selected}
+        }
+        renderRow={(row) => (
+          <DesktopRow
+            key={row.id}
+            row={row}
+            allRows={runs}
+            isChecked={selected.has(row.id)}
             onToggle={toggleSelected}
+            onGo={go}
+            onDelete={(id) => remove.mutate(id)}
+            onCancel={(id) => cancel.mutate(id)}
+            deletePending={remove.variables === row.id && remove.isPending}
+            cancelPending={cancel.variables === row.id && cancel.isPending}
             nowMs={nowMs}
-            strategies={strategiesQ.data ?? []}
-            scenarios={scenariosQ.data ?? []}
+            strategies={strategies}
+            scenarios={scenarios}
           />
         )}
-      </Card>
+        renderMobileRow={(row) => (
+          <MListRow
+            key={row.id}
+            onClick={() => go(row.id)}
+            title={displayStrategyName(row.agent_id, strategies)}
+            badge={row.status}
+            badgeColor={badgeColorFor(row.status)}
+            subtitle={displayScenarioName(row.scenario_id, scenarios)}
+            meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}`}
+            rightTop={fmtPct(row.total_return_pct)}
+            rightSub={fmtDuration(row.started_at, row.completed_at, nowMs)}
+            rightTone={signedTone(row.total_return_pct)}
+          />
+        )}
+      />
 
       <ListPagination
-        total={total}
+        total={list.totalRows}
         page={pager.page}
         pageSize={pager.pageSize}
         onPageChange={pager.setPage}
@@ -284,13 +475,16 @@ export function EvalRunsRoute() {
 
 function subtitleFor(
   q: { isPending: boolean; isError: boolean; data?: { total?: number } },
-  strategyFilterLabel: string,
-) {
+  totalRows: number,
+  visibleRows: number,
+): string {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load runs";
-  const n = q.data?.total ?? 0;
-  const base = `${n} ${n === 1 ? "run" : "runs"}`;
-  return strategyFilterLabel ? `${base} for ${strategyFilterLabel}` : base;
+  if (totalRows === 0) return "0 runs";
+  if (visibleRows === totalRows) {
+    return `${totalRows} ${totalRows === 1 ? "run" : "runs"}`;
+  }
+  return `${visibleRows} of ${totalRows} runs`;
 }
 
 function CompareToolbar({
@@ -332,318 +526,133 @@ function CompareToolbar({
   );
 }
 
-function RunsTable({
-  items,
-  allItems,
-  selected,
+function DesktopRow({
+  row,
+  allRows,
+  isChecked,
   onToggle,
+  onGo,
+  onDelete,
+  onCancel,
+  deletePending,
+  cancelPending,
   nowMs,
   strategies,
   scenarios,
 }: {
-  items: RunSummary[];
-  /** Full unpaginated set — used as the sibling pool for the
-   *  evalRunDisambiguator ordinal so "Run #3/7" stays stable across
-   *  pages instead of resetting per-page. */
-  allItems: RunSummary[];
-  selected: Set<string>;
+  row: RunSummary;
+  allRows: RunSummary[];
+  isChecked: boolean;
   onToggle: (id: string) => void;
+  onGo: (id: string) => void;
+  onDelete: (id: string) => void;
+  onCancel: (id: string) => void;
+  deletePending: boolean;
+  cancelPending: boolean;
   nowMs: number;
   strategies: StrategyListItem[];
   scenarios: Scenario[];
 }) {
-  const strategyName = (id: string) => displayStrategyName(id, strategies);
-  const scenarioName = (id: string) => displayScenarioName(id, scenarios);
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const remove = useMutation({
-    mutationFn: deleteRun,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: evalKeys.all });
-    },
-  });
-  const cancel = useMutation({
-    mutationFn: cancelRun,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: evalKeys.all });
-    },
-  });
-
-  function go(id: string) {
-    navigate(`/eval-runs/${id}`);
-  }
-
   return (
-    <>
-      <div className="divide-y divide-border-soft md:hidden">
-        {items.map((row) => {
-          const isChecked = selected.has(row.id);
-          return (
-            <article
-              key={row.id}
-              className="px-4 py-3"
-              role="link"
-              tabIndex={0}
-              onClick={() => go(row.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  go(row.id);
-                }
-              }}
-            >
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <label
-                  className="inline-flex items-center gap-2 text-[12px] text-text-2"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <input
-                    type="checkbox"
-                    aria-label={`Select run ${row.id.slice(0, 8)}`}
-                    checked={isChecked}
-                    onChange={(e) => {
-                      e.stopPropagation();
-                      onToggle(row.id);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
-                    className="cursor-pointer accent-gold"
-                  />
-                  Select
-                </label>
-                <StatusPill status={row.status} />
-              </div>
-
-              <div className="text-[14px] text-text font-medium truncate">
-                {strategyName(row.agent_id)}
-              </div>
-              <div className="mt-1 text-[12px] text-text-2 truncate">
-                {scenarioName(row.scenario_id)}
-              </div>
-              <div className="mt-1 font-mono text-[11px] text-text-3">
-                <span className="text-text-2">
-                  {evalRunDisambiguator(row, allItems)}
-                </span>
-                <span className="mx-1.5 text-text-4">·</span>
-                <span>{row.mode}</span>
-              </div>
-              <div
-                className="mt-1 font-mono text-[11px] text-text-3 break-all select-all"
-                aria-label={`Run id ${row.id}`}
-              >
-                {row.id}
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] min-[420px]:grid-cols-5">
-                <div className="text-text-2">
-                  <div className="text-[11px] text-text-3">Sharpe</div>
-                  <div className={`font-mono ${signedToneClass(row.sharpe)}`}>
-                    {fmtNumber(row.sharpe)}
-                  </div>
-                </div>
-                <div className="text-text-2">
-                  <div className="text-[11px] text-text-3">Max DD</div>
-                  <div className={`font-mono ${drawdownToneClass(row.max_drawdown_pct)}`}>
-                    {fmtPct(row.max_drawdown_pct)}
-                  </div>
-                </div>
-                <div className="text-text-2">
-                  <div className="text-[11px] text-text-3">Return</div>
-                  <div className={`font-mono ${signedToneClass(row.total_return_pct)}`}>
-                    {fmtPct(row.total_return_pct)}
-                  </div>
-                </div>
-                <div className="text-text-2">
-                  <div className="text-[11px] text-text-3">Duration</div>
-                  <div className="font-mono text-text">
-                    {fmtDuration(row.started_at, row.completed_at, nowMs)}
-                  </div>
-                </div>
-                <div className="text-text-2">
-                  <div className="text-[11px] text-text-3">Tokens</div>
-                  <div className="font-mono text-text">{fmtTokens(row)}</div>
-                </div>
-              </div>
-
-              <div
-                className="mt-2 flex justify-end gap-3"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {isInflight(row) ? (
-                  <button
-                    type="button"
-                    aria-label={`Cancel run ${row.id}`}
-                    onClick={() => cancel.mutate(row.id)}
-                    disabled={cancel.variables === row.id && cancel.isPending}
-                    className="text-[12px] text-warn hover:text-text disabled:opacity-50"
-                  >
-                    {cancel.variables === row.id && cancel.isPending
-                      ? "Cancelling..."
-                      : "Cancel"}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => remove.mutate(row.id)}
-                  disabled={remove.variables === row.id && remove.isPending}
-                  className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
-                >
-                  {remove.variables === row.id && remove.isPending
-                    ? "Deleting…"
-                    : "Delete"}
-                </button>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-
-      <div className="relative hidden md:block">
-        <div className="overflow-x-auto">
-        <table
-          data-testid="eval-runs-desktop-table"
-          className="min-w-[980px] w-full"
-        >
-          <thead>
-            <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
-              <th className="w-8 py-2.5 pl-5 pr-2 font-normal"></th>
-              <th className="px-3 py-2.5 font-normal">Run</th>
-              <th className="px-3 py-2.5 font-normal">Scenario</th>
-              <th className="px-3 py-2.5 font-normal">Mode</th>
-              <th className="px-3 py-2.5 font-normal">Status</th>
-              <th className="px-3 py-2.5 text-right font-normal">Sharpe</th>
-              <th className="px-3 py-2.5 text-right font-normal">Max DD</th>
-              <th className="px-3 py-2.5 text-right font-normal">Return</th>
-              <th className="px-3 py-2.5 text-right font-normal">Tokens</th>
-              <th className="px-3 py-2.5 text-right font-normal">Duration</th>
-              <th className="px-5 py-2.5 font-normal">Started</th>
-              <th className="px-5 py-2.5 text-right font-normal"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((row) => {
-              const isChecked = selected.has(row.id);
-              return (
-                <tr
-                  key={row.id}
-                  role="link"
-                  tabIndex={0}
-                  onClick={() => go(row.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      go(row.id);
-                    }
-                  }}
-                  className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
-                >
-                  <td
-                    className="w-8 py-3 pl-5 pr-2"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="checkbox"
-                      aria-label={`Select run ${row.id.slice(0, 8)}`}
-                      checked={isChecked}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        onToggle(row.id);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      className="cursor-pointer accent-gold"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="text-[13px] text-text font-medium">
-                      {strategyName(row.agent_id)}
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-text-2">
-                      {evalRunDisambiguator(row, allItems)}
-                    </div>
-                    <div
-                      className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all"
-                      aria-label={`Run id ${row.id}`}
-                    >
-                      {row.id}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 text-text-2">{scenarioName(row.scenario_id)}</td>
-                  <td className="px-3 py-3 text-text-2">{row.mode}</td>
-                  <td className="px-3 py-3">
-                    <StatusPill status={row.status} />
-                  </td>
-                  <td className={`px-3 py-3 text-right font-mono ${signedToneClass(row.sharpe)}`}>
-                    {fmtNumber(row.sharpe)}
-                  </td>
-                  <td className={`px-3 py-3 text-right font-mono ${drawdownToneClass(row.max_drawdown_pct)}`}>
-                    {fmtPct(row.max_drawdown_pct)}
-                  </td>
-                  <td className={`px-3 py-3 text-right font-mono ${signedToneClass(row.total_return_pct)}`}>
-                    {fmtPct(row.total_return_pct)}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono">
-                    {fmtTokens(row)}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono">
-                    {fmtDuration(row.started_at, row.completed_at, nowMs)}
-                  </td>
-                  <td className="px-5 py-3 text-[12px] text-text-3">
-                    {fmtTime(row.started_at)}
-                  </td>
-                  <td
-                    className="px-5 py-3 text-right"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="flex justify-end gap-3">
-                      {isInflight(row) ? (
-                        <button
-                          type="button"
-                          aria-label={`Cancel run ${row.id}`}
-                          onClick={() => cancel.mutate(row.id)}
-                          disabled={cancel.variables === row.id && cancel.isPending}
-                          className="text-[12px] text-warn hover:text-text disabled:opacity-50"
-                        >
-                          {cancel.variables === row.id && cancel.isPending
-                            ? "Cancelling..."
-                            : "Cancel"}
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => remove.mutate(row.id)}
-                        disabled={remove.variables === row.id && remove.isPending}
-                        className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
-                      >
-                        {remove.variables === row.id && remove.isPending
-                          ? "Deleting…"
-                          : "Delete"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        </div>
-        {/*
-          Edge fade gradient hints at horizontal overflow without
-          painting over the rightmost column when there's no overflow.
-          The gradient color uses the card surface so it blends in both
-          light and dark themes (per the dark-mode borders rule in
-          CLAUDE.md — no hard whites here).
-        */}
-        <div
-          aria-hidden
-          data-testid="eval-runs-scroll-fade"
-          className="pointer-events-none absolute inset-y-0 right-0 w-8"
-          style={{
-            background:
-              "linear-gradient(to right, transparent, var(--surface-card))",
+    <tr
+      role="link"
+      tabIndex={0}
+      onClick={() => onGo(row.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onGo(row.id);
+        }
+      }}
+      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+    >
+      <td
+        className="w-8 py-3 pl-5 pr-2"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          aria-label={`Select run ${row.id.slice(0, 8)}`}
+          checked={isChecked}
+          onChange={(e) => {
+            e.stopPropagation();
+            onToggle(row.id);
           }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          className="cursor-pointer accent-gold"
         />
-      </div>
-    </>
+      </td>
+      <td className="px-3 py-3">
+        <div className="text-[13px] text-text font-medium">
+          {displayStrategyName(row.agent_id, strategies)}
+        </div>
+        <div className="mt-0.5 text-[11px] text-text-2">
+          {evalRunDisambiguator(row, allRows)}
+        </div>
+        <div
+          className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all"
+          aria-label={`Run id ${row.id}`}
+        >
+          {row.id}
+        </div>
+      </td>
+      <td className="px-3 py-3 text-text-2">
+        {displayScenarioName(row.scenario_id, scenarios)}
+      </td>
+      <td className="px-3 py-3 text-text-2">{row.mode}</td>
+      <td className="px-3 py-3">
+        <StatusPill status={row.status} />
+      </td>
+      <td
+        className={`px-3 py-3 text-right font-mono ${signedToneClass(row.sharpe)}`}
+      >
+        {fmtNumber(row.sharpe)}
+      </td>
+      <td
+        className={`px-3 py-3 text-right font-mono ${drawdownToneClass(row.max_drawdown_pct)}`}
+      >
+        {fmtPct(row.max_drawdown_pct)}
+      </td>
+      <td
+        className={`px-3 py-3 text-right font-mono ${signedToneClass(row.total_return_pct)}`}
+      >
+        {fmtPct(row.total_return_pct)}
+      </td>
+      <td className="px-3 py-3 text-right font-mono">{fmtTokens(row)}</td>
+      <td className="px-3 py-3 text-right font-mono">
+        {fmtDuration(row.started_at, row.completed_at, nowMs)}
+      </td>
+      <td className="px-5 py-3 text-[12px] text-text-3">
+        {fmtTime(row.started_at)}
+      </td>
+      <td
+        className="px-5 py-3 text-right"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-end gap-3">
+          {isInflight(row) ? (
+            <button
+              type="button"
+              aria-label={`Cancel run ${row.id}`}
+              onClick={() => onCancel(row.id)}
+              disabled={cancelPending}
+              className="text-[12px] text-warn hover:text-text disabled:opacity-50"
+            >
+              {cancelPending ? "Cancelling..." : "Cancel"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onDelete(row.id)}
+            disabled={deletePending}
+            className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
+          >
+            {deletePending ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -1017,6 +1026,30 @@ function dotColor(tone: "gold" | "warn" | "danger" | "default" | "info") {
   }[tone];
 }
 
+function badgeColorFor(
+  status: string,
+): "gold" | "warn" | "danger" | "info" | "muted" {
+  switch (STATUS_TONE[status] ?? "default") {
+    case "gold":
+      return "gold";
+    case "warn":
+      return "warn";
+    case "danger":
+      return "danger";
+    case "info":
+      return "info";
+    default:
+      return "muted";
+  }
+}
+
+function signedTone(
+  n: number | null | undefined,
+): "default" | "gold" | "danger" {
+  if (n == null || n === 0) return "default";
+  return n > 0 ? "gold" : "danger";
+}
+
 function fmtNumber(n: number | null | undefined): string {
   if (n == null) return "—";
   return n.toFixed(2);
@@ -1079,56 +1112,15 @@ function fmtDuration(
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
 
-function LoadingSkeleton() {
-  return (
-    <div className="px-5 py-4 space-y-3" aria-busy>
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="flex items-center gap-4 py-2">
-          <div className="h-4 w-32 rounded bg-surface-elev animate-pulse" />
-          <div className="h-4 w-24 rounded bg-surface-elev animate-pulse" />
-          <div className="h-4 w-20 rounded bg-surface-elev animate-pulse" />
-          <div className="h-4 w-16 rounded bg-surface-elev animate-pulse" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="px-6 py-16 text-center text-text-2">
-      <div className="font-serif italic text-[28px] text-text-3 mb-3">
-        no runs yet
-      </div>
-      <p className="m-0 max-w-md mx-auto leading-snug">
-        Use the launcher above to start a run, or trigger one via{" "}
-        <code className="text-text font-mono">xvn ab-compare</code>.
-      </p>
-    </div>
-  );
-}
-
-function ErrorState({ err, onRetry }: { err: unknown; onRetry: () => void }) {
-  const detail =
-    err instanceof ApiError
-      ? `${err.code}: ${err.message}`
-      : err instanceof Error
-        ? err.message
-        : String(err);
-  return (
-    <div className="px-6 py-12 text-center">
-      <div className="font-serif italic text-[24px] text-danger mb-3">
-        couldn't load runs
-      </div>
-      <p className="m-0 mb-5 max-w-md mx-auto text-text-2 leading-snug">
-        <code className="text-danger font-mono text-[12px]">{detail}</code>
-      </p>
-      <button
-        onClick={onRetry}
-        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
-      >
-        Retry
-      </button>
-    </div>
-  );
+function compareIsoDesc(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): number {
+  // Treat null as "earliest" so completed runs sort above in-flight.
+  const av = a ? Date.parse(a) : -Infinity;
+  const bv = b ? Date.parse(b) : -Infinity;
+  if (Number.isNaN(av) && Number.isNaN(bv)) return 0;
+  if (Number.isNaN(av)) return 1;
+  if (Number.isNaN(bv)) return -1;
+  return bv - av;
 }
