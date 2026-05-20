@@ -11,6 +11,12 @@ import { apiFetch } from "./client";
 export type DocPageMeta = {
   slug: string;
   title: string;
+  /**
+   * Sidebar group label (e.g. `Concepts`, `CLI`, `Agent`, `Operator`).
+   * Backend guarantees pages with the same `section` are contiguous in
+   * the array so the SPA can render headers without re-sorting.
+   */
+  section: string;
 };
 
 /** Fetch the ordered list of in-app docs pages. */
