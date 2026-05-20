@@ -186,11 +186,9 @@ fn validate_create_body(body: &CreateCliJobReq) -> Result<(), DashboardError> {
         });
     }
 
-    // Allowlist check (qa-dashboard-auth-hardening, 2026-05-17). Replaces
-    // the previous denylist on a small set of obviously dangerous
-    // subcommands — now anything not on the allowlist is rejected by
-    // default. `XVN_DASHBOARD_CLI_DEVMODE=1` opts back into permissive
-    // behavior for local development.
+    // Remote CLI policy: typed argv only, an explicit supported-command list,
+    // and a small hard denylist for server/live-trading commands. Normal
+    // operator/eval commands must not require a dev-mode bypass on live nodes.
     if let AllowlistDecision::Reject(msg) = check_argv(&body.argv) {
         return Err(DashboardError::Validation {
             field: "argv".into(),

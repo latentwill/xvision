@@ -1,7 +1,7 @@
-//! End-to-end tests for `qa-dashboard-auth-hardening` allowlist behavior
-//! over `POST /api/cli/jobs`. Default mode (no devmode env) must reject
-//! anything outside the allowlisted templates. Devmode must allow the
-//! permissive path.
+//! End-to-end tests for remote CLI policy over `POST /api/cli/jobs`.
+//! The remote surface should support normal operator/eval commands without
+//! requiring a dev-mode bypass, while still rejecting categorically dangerous
+//! subcommands.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -87,19 +87,16 @@ async fn bars_fetch_allowed_argv_creates_job() {
 }
 
 #[tokio::test]
-async fn unknown_subcommand_is_rejected_with_400() {
+async fn eval_run_is_allowed_without_devmode() {
     let _guard = devmode_off();
     let (server, _tmp) = boot().await;
     let resp = server
         .post("/api/cli/jobs")
-        .json(&serde_json::json!({ "argv": ["eval", "run", "--strategy", "x"] }))
+        .json(&serde_json::json!({
+            "argv": ["eval", "run", "--strategy", "x", "--scenario", "s", "--mode", "backtest"]
+        }))
         .await;
-    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
-    let body = resp.text();
-    assert!(
-        body.contains("allowlisted"),
-        "validation error must mention the allowlist, got: {body}"
-    );
+    resp.assert_status_ok();
 }
 
 #[tokio::test]
@@ -111,6 +108,33 @@ async fn bars_fetch_with_unknown_flag_is_rejected() {
         .json(&serde_json::json!({
             "argv": ["bars", "fetch", "--asset", "BTC/USD", "--force", "true"],
         }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn unknown_subcommand_is_rejected_with_400() {
+    let _guard = devmode_off();
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/cli/jobs")
+        .json(&serde_json::json!({ "argv": ["not-a-command"] }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body = resp.text();
+    assert!(
+        body.contains("not a supported remote cli subcommand"),
+        "validation error must mention unsupported command, got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn devmode_env_does_not_bypass_policy() {
+    let _guard = devmode_on();
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/cli/jobs")
+        .json(&serde_json::json!({ "argv": ["not-a-command"] }))
         .await;
     resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
 }
@@ -137,4 +161,28 @@ async fn fire_trade_is_rejected_in_default_mode() {
     resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
     let body = resp.text();
     assert!(body.contains("not allowed over remote cli") || body.contains("fire-trade"));
+}
+
+#[tokio::test]
+async fn mutating_nested_subcommands_are_rejected() {
+    let _guard = devmode_off();
+    let (server, _tmp) = boot().await;
+
+    for argv in [
+        serde_json::json!(["scenario", "rm", "sc_1"]),
+        serde_json::json!(["strategy", "remove-agent", "st_1", "--role", "trader"]),
+        serde_json::json!(["obs", "retention", "set", "--mode", "full-debug"]),
+        serde_json::json!(["store", "migrate"]),
+    ] {
+        let resp = server
+            .post("/api/cli/jobs")
+            .json(&serde_json::json!({ "argv": argv }))
+            .await;
+        resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+        let body = resp.text();
+        assert!(
+            body.contains("not allowed over remote cli"),
+            "validation error must mention remote cli policy, got: {body}"
+        );
+    }
 }

@@ -68,25 +68,36 @@ Failed authentication returns HTTP 401 with a JSON body:
 { "code": "unauthorized", "message": "missing or invalid dashboard auth token" }
 ```
 
-## CLI jobs allowlist
+## CLI jobs policy
 
 `POST /api/cli/jobs` runs `xvn` subcommands on the dashboard host. The
-new allowlist defaults to a small set of safe templates — today just
-`bars fetch` (the per-scenario "fetch missing bars" panel).
+remote surface accepts typed argv only — no shell text, no caller-controlled
+cwd, and no caller-controlled env.
 
-To opt back into the legacy permissive behavior for local development:
+Normal operator/eval/research commands are supported without a dev-mode
+bypass, including `eval`, `strategy`, `scenario`, `experiment`, `doctor`,
+`report`, `run`, and read-oriented provider/bars commands. Some subcommands
+remain categorically rejected because they start servers or can directly
+mutate live broker state:
 
-```bash
-export XVN_DASHBOARD_CLI_DEVMODE=1
-```
+- `dashboard`
+- `mcp`
+- `fire-trade`
+- `close-position`
 
-A few subcommands (`dashboard`, `mcp`, `fire-trade`) remain rejected
-**even in devmode** — they have no business running over an HTTP
-surface regardless of configuration.
+Some nested commands under otherwise-supported heads are also rejected where
+they are destructive, mutate host configuration, or perform authoring/admin
+writes that belong in typed dashboard/API flows. That includes `bars rm`,
+`bars gc`, `provider add`, `provider remove`, `provider refresh-models`,
+scenario authoring/deletion (`scenario create`, `clone`, `archive`, `rm`,
+`classify`, `set-regime`), strategy authoring mutations (`strategy new`,
+`add-agent`, `remove-agent`, `set-pipeline`, `migrate-agents`), experiment
+ledger edits (`experiment new`, `create`, `update`), `example seed`, `store migrate`,
+and observability admin writes (`obs retention set`, `obs retention clear`,
+`obs janitor run`). Top-level `migrate` is also rejected.
 
-The devmode flag is **not** a substitute for the auth gate above.
-Non-loopback binds still require `XVN_DASHBOARD_TOKEN` regardless of
-CLI devmode.
+This policy is not a substitute for the auth gate above. Non-loopback binds
+still require `XVN_DASHBOARD_TOKEN`.
 
 ## Danger-op typed phrases
 

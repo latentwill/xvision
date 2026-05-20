@@ -8,18 +8,7 @@ use xvision_dashboard::cli_jobs::store::CliJobStore;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 
-// qa-dashboard-auth-hardening (2026-05-17): these existing tests rely on
-// generic `help` / `slow` fake-cli commands which are NOT on the
-// production allowlist. Flip devmode on for the duration of this test
-// binary so the route's allowlist check falls back to the permissive
-// (legacy-equivalent) behavior; the dedicated `cli_jobs_allowlist.rs`
-// suite covers the strict allowlist path.
-fn arm_devmode() {
-    std::env::set_var("XVN_DASHBOARD_CLI_DEVMODE", "1");
-}
-
 async fn boot() -> (TestServer, TempDir) {
-    arm_devmode();
     let tmp = TempDir::new().unwrap();
     let cli = write_fake_cli(tmp.path());
     let state = AppState::new(tmp.path().to_path_buf())
@@ -31,7 +20,6 @@ async fn boot() -> (TestServer, TempDir) {
 }
 
 async fn boot_http() -> (String, TempDir, tokio::task::JoinHandle<()>) {
-    arm_devmode();
     let tmp = TempDir::new().unwrap();
     let cli = write_fake_cli(tmp.path());
     let state = AppState::new(tmp.path().to_path_buf())
@@ -56,7 +44,6 @@ impl Drop for AbortOnDrop {
 }
 
 async fn boot_existing_home(root: &std::path::Path) -> TestServer {
-    arm_devmode();
     let cli = write_fake_cli(root);
     let state = AppState::new(root.to_path_buf())
         .await
@@ -76,10 +63,18 @@ case \"$1\" in
     echo 'Usage: xvn <COMMAND>'
     exit 0
     ;;
-  slow)
-    sleep 2
-    echo 'slow done'
-    exit 0
+  eval)
+    case \"$2\" in
+      watch)
+        sleep 2
+        echo 'slow done'
+        exit 0
+        ;;
+      *)
+        echo 'eval ok'
+        exit 0
+        ;;
+    esac
     ;;
   fail)
     echo 'failure from fake xvn' >&2
@@ -201,7 +196,7 @@ async fn job_timeout_marks_timed_out_status() {
     let create = server
         .post("/api/cli/jobs")
         .json(&serde_json::json!({
-            "argv": ["slow"],
+            "argv": ["eval", "watch", "slow-run"],
             "timeout_secs": 1
         }))
         .await;
@@ -220,7 +215,7 @@ async fn cancel_job_marks_cancelled_status() {
     let create = server
         .post("/api/cli/jobs")
         .json(&serde_json::json!({
-            "argv": ["slow"],
+            "argv": ["eval", "watch", "slow-run"],
             "timeout_secs": 30
         }))
         .await;
@@ -309,7 +304,7 @@ async fn startup_fails_running_jobs_as_orphans() {
         .expect("init dashboard state");
     let store = CliJobStore::new(state.pool.clone());
     let job = store
-        .create_queued(vec!["slow".into()], 30)
+        .create_queued(vec!["eval".into(), "watch".into(), "slow-run".into()], 30)
         .await
         .expect("create queued job");
     store.mark_running(&job.job_id).await.expect("mark running");
