@@ -12,6 +12,7 @@ async fn mock_dispatch_returns_text_block() {
             tools: vec![],
             temperature: None,
             response_schema: None,
+            cache_control: None,
         })
         .await
         .unwrap();
@@ -48,6 +49,7 @@ async fn mock_dispatch_sequence_drives_tool_use_loop() {
         tools: vec![],
         temperature: None,
         response_schema: None,
+        cache_control: None,
     };
 
     let r1 = mock.complete(req.clone()).await.unwrap();
@@ -107,6 +109,7 @@ mod openai_retry {
             tools: vec![],
             temperature: None,
             response_schema: None,
+            cache_control: None,
         }
     }
 
@@ -283,6 +286,7 @@ async fn anthropic_dispatch_returns_real_text() {
             tools: vec![],
             temperature: None,
             response_schema: None,
+            cache_control: None,
         })
         .await
         .unwrap();

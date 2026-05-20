@@ -379,6 +379,7 @@ mod tests {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: crate::agents::InputsPolicy::Raw,
+                bar_history_limit: None,
             },
             AgentSlot {
                 name: "TRADER".into(), // case-insensitive duplicate
@@ -390,6 +391,7 @@ mod tests {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: crate::agents::InputsPolicy::Raw,
+                bar_history_limit: None,
             },
         ];
         let diags = validate_agent(&a);

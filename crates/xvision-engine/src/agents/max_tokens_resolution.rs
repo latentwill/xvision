@@ -30,6 +30,7 @@ fn slot_with(provider: &str, model: &str, max_tokens: Option<u32>) -> AgentSlot 
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
     }
 }
 

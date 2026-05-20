@@ -485,6 +485,7 @@ impl WizardLoop {
                 temperature: None,
                 tools: agent_tool_defs(self.profile),
                 response_schema: None,
+                cache_control: None,
             };
             let resp: LlmResponse = self.dispatch.complete(req).await?;
 
@@ -1243,6 +1244,7 @@ impl WizardLoop {
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
                 }],
             },
         )

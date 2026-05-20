@@ -319,6 +319,7 @@ mod tests {
             temperature: None,
             prompt_version: String::new(),
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }
     }
 

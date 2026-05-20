@@ -82,6 +82,7 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         },
     )

@@ -69,6 +69,7 @@ fn user_prompt() -> LlmRequest {
         tools: Vec::new(),
         temperature: None,
         response_schema: None,
+        cache_control: None,
     }
 }
 

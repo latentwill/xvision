@@ -488,6 +488,7 @@ mod tests {
             tools: vec![],
             temperature: None,
             response_schema: None,
+            cache_control: None,
         };
         let resp = dispatch.complete(req).await.expect("dispatch");
         assert!(resp.text().contains("local-candle stub"));

@@ -23,6 +23,7 @@ fn base_request() -> LlmRequest {
         }],
         temperature: Some(0.0),
         response_schema: None,
+        cache_control: None,
     }
 }
 

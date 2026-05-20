@@ -567,6 +567,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         })
         .await

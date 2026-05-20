@@ -56,6 +56,7 @@ fn sample_slot(policy: InputsPolicy) -> AgentSlot {
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: policy,
+        bar_history_limit: None,
     }
 }
 

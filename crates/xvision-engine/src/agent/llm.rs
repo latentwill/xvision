@@ -1,7 +1,9 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ---- shared message + tool-use shape --------------------------------------
@@ -54,6 +56,29 @@ pub enum StopReason {
     EndTurn,
     ToolUse,
     MaxTokens,
+}
+
+/// Provider prompt-cache hint mode. F-8
+/// (`team/contracts/eval-prompt-cache-and-rolling-window.md`).
+///
+/// Only one variant for v1 — Anthropic's `cache_control: {"type":"ephemeral"}`
+/// 5-minute prompt cache — but the enum is the seam for future modes
+/// (e.g. persistent caches once providers expose them) without churning
+/// the `LlmRequest` shape.
+///
+/// The OpenAI-compat dispatcher does not emit cache_control on the wire
+/// (the OpenAI Chat Completions API has no equivalent knob); it logs a
+/// one-shot `tracing::debug` per `(provider, model)` pair noting the
+/// hint was skipped, then sends the request body byte-identical to a
+/// non-cached call.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheControlMode {
+    /// Anthropic's `cache_control: {"type":"ephemeral"}` hint — the
+    /// provider caches the prefix up through the tagged block for ~5
+    /// minutes. Hits reduce input-token cost on subsequent calls
+    /// sharing the same prefix.
+    Ephemeral,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +137,20 @@ pub struct LlmRequest {
     /// Messages does not expose the same response_format knob.
     #[serde(default)]
     pub response_schema: Option<ResponseSchema>,
+    /// Provider prompt-cache hint. `None` is byte-identical to today's
+    /// behavior — no cache_control on the wire. `Some(Ephemeral)` is
+    /// the F-8 opt-in; the Anthropic dispatcher emits the hint on the
+    /// system block and the second-to-last user message block, while
+    /// the OpenAI-compat dispatcher logs once and skips emission.
+    ///
+    /// In practice the request is built without `cache_control` and
+    /// the dispatcher evaluates the F-8 trigger
+    /// (`XVN_PROMPT_CACHE=1` + non-empty system prompt + bar_history
+    /// > 1 entry) before wire-time. Callers that want to force the
+    /// hint set this directly. See
+    /// `team/contracts/eval-prompt-cache-and-rolling-window.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControlMode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -497,6 +536,112 @@ impl AnthropicDispatch {
     }
 }
 
+/// Process-wide counter of outbound LLM calls that emitted a
+/// provider prompt-cache hint on the wire. Read by the eval executor's
+/// `run_inner` to log the per-run total at finalize. Concurrent runs
+/// share the counter — the executor reads the delta over its window so
+/// per-run accounting is still correct under the launch-concurrency
+/// gate. F-8.
+pub static CACHE_HINT_EMITTED_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Returns true when `XVN_PROMPT_CACHE=1` is set in the process
+/// environment. F-8 trigger — when this is false the dispatchers never
+/// touch `cache_control` and the wire body is byte-identical to today.
+fn prompt_cache_env_enabled() -> bool {
+    std::env::var("XVN_PROMPT_CACHE")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false)
+}
+
+/// Heuristic stable-prefix probe for the F-8 trigger. The contract
+/// requires `system_prompt` to be non-empty AND `bar_history` to carry
+/// more than one entry before we emit the cache hint — anything less is
+/// not worth caching. The bar-history count is read out of the first
+/// user text block by parsing the JSON the executor dumps in
+/// `execute_slot`.
+///
+/// Returns true when both conditions hold. False otherwise — including
+/// any case where the prompt isn't a JSON-with-`bar_history` shape
+/// (e.g. wizard / review callers), since the cache hint is only
+/// meaningful for eval-style rolling-window callers anyway.
+fn has_stable_prefix(req: &LlmRequest) -> bool {
+    if req.system_prompt.trim().is_empty() {
+        return false;
+    }
+    // The eval executor's `execute_slot` builds the first user text
+    // block as `format!("Inputs:\n{}\n\n...", json_dump)`. Find a
+    // `"bar_history": [...]` array and count its elements — anything
+    // > 1 satisfies the "static prefix portion" contract. We scan
+    // text by parsing the leading JSON dump out of the user message;
+    // failure modes (non-eval callers, JSON parse error, missing
+    // `bar_history`) all return false so the cache hint stays opt-in
+    // for callers shaped like the eval pipeline.
+    for msg in &req.messages {
+        if msg.role != "user" {
+            continue;
+        }
+        for c in &msg.content {
+            if let ContentBlock::Text { text } = c {
+                if let Some(start) = text.find('{') {
+                    // Walk balanced braces from `start` to find the
+                    // end of the JSON object. Cheap and avoids
+                    // false-positives from unmatched literal `}`
+                    // inside string contents (we don't string-aware
+                    // parse — falling back to serde_json on the
+                    // candidate substring is what does the actual
+                    // validation).
+                    let mut depth = 0i32;
+                    let mut end = None;
+                    for (i, b) in text[start..].bytes().enumerate() {
+                        match b {
+                            b'{' => depth += 1,
+                            b'}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    end = Some(start + i + 1);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(end_idx) = end {
+                        let candidate = &text[start..end_idx];
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
+                            if let Some(arr) = v
+                                .pointer("/market_data/bar_history")
+                                .and_then(|x| x.as_array())
+                                .or_else(|| v.pointer("/bar_history").and_then(|x| x.as_array()))
+                            {
+                                return arr.len() > 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Only inspect the first user message — the eval executor
+        // emits the seed JSON there. Subsequent user messages are
+        // tool_results, which don't carry a fresh seed.
+        break;
+    }
+    false
+}
+
+/// Compute the effective F-8 cache hint for a dispatch. The
+/// `req.cache_control` field acts as an explicit override (callers
+/// that already decided to emit the hint set it directly); when None,
+/// the dispatcher evaluates the contract's env + stable-prefix trigger.
+fn resolve_cache_control(req: &LlmRequest) -> Option<CacheControlMode> {
+    if let Some(mode) = req.cache_control {
+        return Some(mode);
+    }
+    if prompt_cache_env_enabled() && has_stable_prefix(req) {
+        return Some(CacheControlMode::Ephemeral);
+    }
+    None
+}
+
 /// Build the Anthropic `/v1/messages` request body from an `LlmRequest`.
 /// Pure function — extracted so the body shape (especially the
 /// `max_tokens` fallback) is unit-testable without an HTTP round-trip.
@@ -506,6 +651,16 @@ impl AnthropicDispatch {
 /// metadata table. Explicit operator values pass through verbatim — no
 /// clamping. See `crates/xvision-core/src/providers/model_metadata.rs`
 /// for the per-model defaults.
+///
+/// F-8: when the request resolves a cache hint (either explicit
+/// `req.cache_control` or the env+heuristic trigger), the body emits
+/// `cache_control: {"type":"ephemeral"}` on the system block and on
+/// the second-to-last user message block, per Anthropic's prompt-
+/// caching API. The function also bumps `CACHE_HINT_EMITTED_CALLS`
+/// once per emit so the executor can log the per-run total. When the
+/// hint is absent the body is byte-identical to today's wire shape —
+/// `system` stays a plain string, `messages` is the unmodified
+/// `req.messages` array.
 pub fn anthropic_request_body(req: &LlmRequest) -> serde_json::Value {
     let system_prompt = if let Some(schema) = &req.response_schema {
         format!("{}{}", req.system_prompt, schema.prompt_contract())
@@ -515,17 +670,74 @@ pub fn anthropic_request_body(req: &LlmRequest) -> serde_json::Value {
     let max_tokens = req
         .max_tokens
         .unwrap_or_else(|| xvision_core::providers::lookup_model(&req.model).auto_max_tokens());
+
+    let cache_hint = resolve_cache_control(req);
+
+    // When a cache hint resolves, Anthropic requires the system + the
+    // cached message block to use the array form of the `content`
+    // field — `cache_control` is a per-block attribute, not a
+    // top-level toggle. Both forms produce identical model behaviour;
+    // the array form just exists so individual blocks can carry
+    // additional metadata.
+    let (system_json, messages_json) = if cache_hint.is_some() {
+        let system_arr = serde_json::json!([
+            {
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"}
+            }
+        ]);
+        let mut messages_json: Vec<serde_json::Value> = serde_json::to_value(&req.messages)
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
+        // Tag the second-to-last user-role block so the prefix up
+        // through it (which includes the prior conversation + the
+        // bulk of the seed) becomes the cache key. When fewer than
+        // two user blocks are present, fall back to the last one —
+        // still a non-empty stable prefix per the contract trigger.
+        let user_indices: Vec<usize> = messages_json
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+            .map(|(i, _)| i)
+            .collect();
+        let target_idx = if user_indices.len() >= 2 {
+            user_indices[user_indices.len() - 2]
+        } else {
+            user_indices.last().copied().unwrap_or(0)
+        };
+        if let Some(target) = messages_json.get_mut(target_idx) {
+            if let Some(content) = target.get_mut("content").and_then(|c| c.as_array_mut()) {
+                if let Some(last_block) = content.last_mut() {
+                    if let Some(obj) = last_block.as_object_mut() {
+                        obj.insert("cache_control".into(), serde_json::json!({"type": "ephemeral"}));
+                    }
+                }
+            }
+        }
+        (system_arr, serde_json::Value::Array(messages_json))
+    } else {
+        (
+            serde_json::Value::String(system_prompt),
+            serde_json::to_value(&req.messages).unwrap_or(serde_json::Value::Null),
+        )
+    };
+
     let mut body = serde_json::json!({
         "model": req.model,
         "max_tokens": max_tokens,
-        "system": system_prompt,
-        "messages": req.messages,
+        "system": system_json,
+        "messages": messages_json,
     });
     if !req.tools.is_empty() {
         body["tools"] = serde_json::to_value(&req.tools).unwrap_or(serde_json::Value::Null);
     }
     if let Some(t) = req.temperature {
         body["temperature"] = serde_json::json!(t);
+    }
+    if cache_hint.is_some() {
+        CACHE_HINT_EMITTED_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     body
 }
@@ -648,6 +860,29 @@ impl OpenaiCompatDispatch {
     }
 }
 
+/// Dedup set for the F-8 OpenAI-compat cache-skip debug log. The
+/// inner `(provider, model)` key fires the log once per pair per
+/// process. `provider` is the heuristic label we expose in tracing
+/// (e.g. "openai-compat") — not the per-base-url path — so multi-host
+/// fleets all share the same key. Operators reading the trace dock
+/// only need to see the message once per model to know the cache
+/// hint was a no-op.
+static OPENAI_CACHE_SKIP_LOG_DEDUP: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
+
+fn maybe_log_openai_cache_skipped(provider: &str, model: &str) {
+    let lock = OPENAI_CACHE_SKIP_LOG_DEDUP.get_or_init(|| Mutex::new(HashSet::new()));
+    let key = (provider.to_string(), model.to_string());
+    let mut set = lock.lock().expect("OPENAI_CACHE_SKIP_LOG_DEDUP not poisoned");
+    if set.insert(key) {
+        tracing::debug!(
+            target: "xvision::llm",
+            provider = %provider,
+            model = %model,
+            "prompt cache hint requested but OpenAI-compat has no provider-side equivalent; skipping"
+        );
+    }
+}
+
 /// Build the OpenAI-compat `/chat/completions` request body. Pure
 /// function — see `anthropic_request_body` for the symmetric Anthropic
 /// path and the reason this is split out.
@@ -655,6 +890,13 @@ impl OpenaiCompatDispatch {
 /// `max_tokens` is omitted entirely when the request has `None`, so the
 /// provider applies its own (usually much larger) default. Explicit
 /// operator values pass through verbatim — no clamping.
+///
+/// F-8: when the request resolves a cache hint, this function logs a
+/// once-per-(provider, model) `tracing::debug` noting that the hint
+/// was skipped — OpenAI's Chat Completions API has no provider-side
+/// `cache_control` equivalent. The wire body never includes a
+/// `cache_control` key (no `null`, no field) so non-cached and
+/// would-have-cached requests are byte-identical at the wire.
 pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = Vec::with_capacity(req.messages.len() + 1);
     if !req.system_prompt.is_empty() {
@@ -746,6 +988,15 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
     }
     if let Some(t) = req.temperature {
         body["temperature"] = serde_json::json!(t);
+    }
+    // F-8: if a cache hint resolves on this request, the OpenAI-compat
+    // wire still doesn't carry `cache_control` (no provider-side
+    // equivalent), but we emit one debug log per `(provider, model)`
+    // pair so operators have a paper trail. Provider is hard-coded
+    // here as the canonical label — the per-base-url path lives in
+    // the dispatcher's `tracing` lines.
+    if resolve_cache_control(req).is_some() {
+        maybe_log_openai_cache_skipped("openai-compat", &req.model);
     }
     body
 }
@@ -1049,6 +1300,7 @@ mod max_tokens_body_tests {
             tools: vec![],
             temperature: None,
             response_schema: None,
+            cache_control: None,
         }
     }
 

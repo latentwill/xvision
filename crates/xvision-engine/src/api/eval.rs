@@ -1014,6 +1014,7 @@ async fn resolve_agent_slots(
             max_tokens: slot.resolve_max_tokens(),
             temperature: slot.temperature,
             inputs_policy: slot.inputs_policy,
+            bar_history_limit: slot.bar_history_limit,
         });
     }
     Ok(out)
@@ -2472,6 +2473,7 @@ mod tests {
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -2513,6 +2515,7 @@ mod tests {
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -2546,6 +2549,7 @@ mod tests {
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();

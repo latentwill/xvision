@@ -205,6 +205,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         },
         ResolvedAgentSlot {
             role: "trader".into(),
@@ -219,6 +220,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         },
     ];
 
@@ -261,6 +263,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         },
         ResolvedAgentSlot {
             role: "final_decider".into(),
@@ -275,6 +278,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         },
     ];
 

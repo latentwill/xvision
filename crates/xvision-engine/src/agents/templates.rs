@@ -54,6 +54,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         },
         AgentTemplate {
@@ -77,6 +78,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -92,6 +94,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
             ],
         },
@@ -116,6 +119,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
                 AgentSlot {
                     name: "risk_check".into(),
@@ -130,6 +134,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -145,6 +150,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
             ],
         },
