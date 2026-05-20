@@ -30,6 +30,7 @@ export function ChartContainer({
         {(['1d', '1w', '1m', '3m', 'All'] as RangePreset[]).map((r) => (
           <button
             key={r}
+            type="button"
             onClick={() => onRange(r)}
             className={`px-2 py-0.5 text-[12px] rounded ${
               range === r ? 'bg-surface-elev text-text' : 'text-text-3 hover:text-text-2'
@@ -40,6 +41,7 @@ export function ChartContainer({
         ))}
         <div className="ml-auto flex items-center gap-2">
           <button
+            type="button"
             onClick={() => setLayersOpen((v) => !v)}
             className="text-[12px] text-text-3 hover:text-text-2"
           >
@@ -63,6 +65,7 @@ export function ChartContainer({
           <div className="absolute right-2 top-2 z-10 w-64 max-h-[80vh] overflow-auto border border-border bg-surface-card rounded-card shadow-lg p-3 text-[12px]">
             {layersPanel}
             <button
+              type="button"
               onClick={() => setLayersOpen(false)}
               className="mt-3 text-text-3 hover:text-text-2"
             >

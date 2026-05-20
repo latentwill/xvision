@@ -1,6 +1,6 @@
 // frontend/web/src/features/agent-runs/TraceDock.test.tsx
 import { beforeEach, describe, expect, test } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -88,7 +88,12 @@ describe("TraceDock", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /^MODEL$/i }));
 
-    expect(screen.queryByText("s1")).not.toBeInTheDocument();
-    expect(await screen.findByText("s3")).toBeInTheDocument();
+    expect(screen.queryByTestId("flame-bar-s1")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("span-inspector")).toHaveAttribute(
+        "data-span-id",
+        "s3",
+      ),
+    );
   });
 });

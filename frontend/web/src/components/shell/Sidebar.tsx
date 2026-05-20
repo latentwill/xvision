@@ -5,7 +5,7 @@ import { useTheme } from "@/theme/useTheme";
 type Item = { to: string; label: string; icon: IconName };
 
 const PRIMARY: Item[] = [
-  { to: "/", label: "Home", icon: "home" },
+  { to: "/", label: "Dashboard", icon: "home" },
   { to: "/strategies", label: "Strategies", icon: "chart" },
   { to: "/agents", label: "Agents", icon: "user" },
   { to: "/scenarios", label: "Scenarios", icon: "list" },

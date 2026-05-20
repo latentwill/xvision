@@ -99,6 +99,15 @@ async fn migration_seeds_four_canonical_agent_profiles() {
 async fn agent_profile_seed_is_idempotent() {
     // Re-running the migration must not duplicate or overwrite seed rows.
     let pool = pool_with_migrations().await;
+    sqlx::query(
+        "UPDATE agent_profiles \
+         SET system_prompt = 'custom operator prompt', provider = 'custom-provider', enabled = 0 \
+         WHERE id = 'fast-trader-agent'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
     sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
         .execute(&pool)
         .await
@@ -111,6 +120,22 @@ async fn agent_profile_seed_is_idempotent() {
         .try_get("c")
         .unwrap();
     assert_eq!(count, 4, "seed rows duplicated on re-apply");
+
+    let row = sqlx::query(
+        "SELECT system_prompt, provider, enabled FROM agent_profiles WHERE id = 'fast-trader-agent'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let system_prompt: String = row.try_get("system_prompt").unwrap();
+    let provider: String = row.try_get("provider").unwrap();
+    let enabled: bool = row.try_get("enabled").unwrap();
+    assert_eq!(system_prompt, "custom operator prompt");
+    assert_eq!(provider, "custom-provider");
+    assert!(
+        !enabled,
+        "seed re-apply must not overwrite customized enabled flag"
+    );
 }
 
 #[tokio::test]

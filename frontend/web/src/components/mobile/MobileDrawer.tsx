@@ -1,3 +1,4 @@
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 
 import { Icon, type IconName } from "@/components/primitives/Icon";
@@ -12,7 +13,7 @@ type NavItem = {
 };
 
 const NAV: NavItem[] = [
-  { to: "/", label: "Home", icon: "home" },
+  { to: "/", label: "Dashboard", icon: "home" },
   { to: "/strategies", label: "Strategies", icon: "chart" },
   { to: "/agents", label: "Agents", icon: "user" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
@@ -25,6 +26,41 @@ export function MobileDrawer() {
   const open = useUi((s) => s.mobileDrawerOpen);
   const setOpen = useUi((s) => s.setMobileDrawerOpen);
   const navigate = useNavigate();
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    const first = focusableElements(drawerRef.current)[0];
+    first?.focus();
+
+    return () => {
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
+  }, [open]);
+
+  function onDrawerKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const focusable = focusableElements(drawerRef.current);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   if (!open) return null;
 
@@ -36,7 +72,14 @@ export function MobileDrawer() {
         aria-label="Close navigation"
         onClick={() => setOpen(false)}
       />
-      <aside className="absolute top-0 bottom-0 left-0 w-[84vw] max-w-[340px] bg-surface-sidebar border-r border-border-soft flex flex-col py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(0px,env(safe-area-inset-bottom))] pl-[max(0px,env(safe-area-inset-left))]">
+      <aside
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation"
+        onKeyDown={onDrawerKeyDown}
+        className="absolute top-0 bottom-0 left-0 w-[84vw] max-w-[340px] bg-surface-sidebar border-r border-border-soft flex flex-col py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(0px,env(safe-area-inset-bottom))] pl-[max(0px,env(safe-area-inset-left))]"
+      >
         <div className="px-5 pb-5 flex items-center justify-between">
           <span className="font-serif italic font-medium text-[34px] tracking-tight text-text">
             xvn
@@ -123,4 +166,13 @@ export function MobileDrawer() {
       </aside>
     </div>
   );
+}
+
+function focusableElements(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => !el.hasAttribute("aria-disabled"));
 }

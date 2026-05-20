@@ -44,8 +44,13 @@ describe("AgentRunDetailRoute", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /^MODEL$/i }));
 
-    expect(screen.queryByText("s1")).not.toBeInTheDocument();
-    expect(await screen.findByText("s3")).toBeInTheDocument();
+    expect(screen.queryByTestId("span-row-s1")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("span-inspector")).toHaveAttribute(
+        "data-span-id",
+        "s3",
+      ),
+    );
   });
 
   test("renders the retention badge with the run's retention_mode", async () => {

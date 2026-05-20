@@ -31,7 +31,9 @@ export function CardHeader({
       <h2 className="m-0 font-serif font-medium text-[22px] tracking-tight">
         {title}
       </h2>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions != null ? (
+        <div className="flex items-center gap-2">{actions}</div>
+      ) : null}
     </div>
   );
 }

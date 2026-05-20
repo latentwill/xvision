@@ -20,8 +20,8 @@ describe("MarkdownView", () => {
       />,
     );
 
-    const link = screen.getByRole("link", { name: "bad" });
-    expect(link.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
+    expect(screen.queryByRole("link", { name: "bad" })).toBeNull();
+    expect(screen.getByText("bad")).toBeInTheDocument();
     expect(container.querySelector("script")).not.toBeInTheDocument();
   });
 

@@ -150,9 +150,6 @@ function StrategyDetailView({ id }: { id: string }) {
         >
           ← Back to strategies
         </Link>
-        <span data-testid="strategy-detail-id" className="font-mono text-text-3">
-          {m.id}
-        </span>
         <h1>
           <InlineEditField
             id="display-name"

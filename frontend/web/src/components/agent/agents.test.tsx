@@ -16,6 +16,7 @@ import {
   lookupModel,
 } from "./modelMetadata";
 import { AgentForm } from "./AgentForm";
+import { AgentList } from "./AgentList";
 import * as agentsApi from "@/api/agents";
 import * as settingsApi from "@/api/settings";
 
@@ -62,6 +63,19 @@ const baseAgent = {
   updated_at: "2026-05-13T14:52:21Z",
 } satisfies agentsApi.Agent;
 
+function providerRow(name: string, enabledModels: string[]) {
+  return {
+    name,
+    kind: "anthropic",
+    base_url: "",
+    api_key_env: `${name.toUpperCase()}_KEY`,
+    api_key_set: true,
+    synthetic: false,
+    is_default: false,
+    enabled_models: enabledModels,
+  };
+}
+
 function renderAgentForm(agentId = "agent-1") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -80,6 +94,9 @@ beforeEach(() => {
   vi.mocked(agentsApi.getAgent).mockResolvedValue(baseAgent);
   vi.mocked(agentsApi.deployedInStrategies).mockResolvedValue([]);
   vi.mocked(agentsApi.recentRuns).mockResolvedValue([]);
+  vi.mocked(agentsApi.createAgent).mockResolvedValue(baseAgent);
+  vi.mocked(agentsApi.updateAgent).mockResolvedValue(baseAgent);
+  vi.mocked(agentsApi.validateAgent).mockResolvedValue([]);
   vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
 });
 
@@ -163,6 +180,67 @@ describe("AgentForm edit hydration", () => {
     await waitFor(() => {
       expect(screen.getByLabelText(/^Name$/)).toHaveValue("Unsaved draft");
     });
+  });
+});
+
+describe("AgentForm slot editing", () => {
+  it("clears hidden max_tokens when duplicating a legacy slot", async () => {
+    const user = userEvent.setup();
+    vi.mocked(agentsApi.getAgent).mockResolvedValue({
+      ...baseAgent,
+      slots: [{ ...baseAgent.slots[0], max_tokens: 4096 }],
+    });
+
+    renderAgentForm();
+
+    await screen.findByLabelText(/^Name$/);
+    await user.click(screen.getByTitle("Duplicate slot"));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      const call = vi.mocked(agentsApi.updateAgent).mock.calls[0];
+      expect(call?.[1].slots[1]?.max_tokens).toBeNull();
+    });
+  });
+
+  it("clears a stale model when the provider changes", async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        providerRow("openrouter", ["claude-sonnet-4-6"]),
+        providerRow("anthropic", ["claude-haiku-4-5"]),
+      ],
+    });
+
+    renderAgentForm();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Provider").tagName).toBe("SELECT");
+    });
+    const provider = screen.getByLabelText("Provider");
+    await user.selectOptions(provider, "anthropic");
+
+    expect(screen.getByLabelText("Model")).toHaveValue("");
+  });
+});
+
+describe("AgentList", () => {
+  it("falls back to the raw timestamp for malformed updated_at values", () => {
+    render(
+      <MemoryRouter>
+        <AgentList
+          items={[
+            {
+              ...baseAgent,
+              updated_at: "not-a-date",
+            },
+          ]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("not-a-date")).toBeInTheDocument();
+    expect(screen.queryByText("Invalid Date")).not.toBeInTheDocument();
   });
 });
 

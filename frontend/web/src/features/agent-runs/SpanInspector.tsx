@@ -287,7 +287,11 @@ export function SpanInspector({
       (span.streaming === true && !span.response_partial));
 
   return (
-    <div className="w-full min-w-0 flex flex-col h-full">
+    <div
+      className="w-full min-w-0 flex flex-col h-full"
+      data-testid="span-inspector"
+      data-span-id={span.span_id}
+    >
       {/* Header strip */}
       <div className="px-3 py-2 border-b border-border flex items-center gap-2 min-w-0">
         <span

@@ -56,6 +56,9 @@ fn run_status_round_trips_for_every_variant() {
 
 #[test]
 fn run_mode_round_trips() {
+    assert_eq!(serde_json::to_string(&RunMode::Backtest).unwrap(), "\"backtest\"");
+    assert_eq!(serde_json::to_string(&RunMode::Paper).unwrap(), "\"paper\"");
+
     for mode in [RunMode::Backtest, RunMode::Paper] {
         let s = serde_json::to_string(&mode).unwrap();
         let back: RunMode = serde_json::from_str(&s).unwrap();

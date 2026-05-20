@@ -188,7 +188,7 @@ export function AgentForm({
         ...d,
         slots: [
           ...d.slots.slice(0, idx + 1),
-          { ...src, name: `${src.name}_copy` },
+          { ...src, name: `${src.name}_copy`, max_tokens: null },
           ...d.slots.slice(idx + 1),
         ],
       };
