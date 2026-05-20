@@ -172,25 +172,31 @@ errors. Do not infer success from string matching — read the exit code.
 
 ## `--wait` vs polling
 
-Long-running verbs (`xvn eval run`, `xvn eval batch run`, `xvn experiment run`)
-have two postures:
+Long-running verbs split into two shapes.
 
-**`--wait` (recommended for agents):** blocks until the run or batch reaches a
-terminal state, then emits a single JSON object on exit. No polling code
-required. All three blocking verbs emit a clean object on `--json`:
+**`xvn eval run` always blocks** until the run reaches a terminal state and
+then prints the final `Run` object. Pair with `--json` to get a single
+machine-readable object on exit — no polling required:
 
 ```
-xvn eval run --strategy <id> --scenario <id> --wait --json
+xvn eval run --strategy <id> --scenario <id> --json
+```
+
+**`xvn eval batch run` and `xvn experiment run` take `--wait`** to switch
+into the same blocking shape (otherwise they return a batch/experiment id
+and complete asynchronously). With `--wait --json` they emit a clean
+terminal-state object on exit:
+
+```
 xvn eval batch run --strategy <id> --scenarios <ids> --wait --json
 xvn experiment run --name <slug> --strategy <id> --scenarios <ids> --wait --json
 ```
 
-**Without `--wait`:** the verb returns immediately with a run id. Poll state
-with:
+**Without `--wait`** (batch / experiment only): the verb returns immediately
+with an id. Poll state with:
 
 ```
-xvn eval show <run_id> --json           # single run
-xvn eval batch status <batch_id> --json # batch
+xvn eval batch status <batch_id> --json
 ```
 
 `xvn eval watch <run_id>` prints a status line on each poll interval. It is
@@ -245,7 +251,7 @@ stability promise that CLI `--json` shapes carry.
 indicator server (`xvn-mcp`) is no longer part of the recommended agent surface
 as of 2026-05-10. The MCP crate remains in the workspace for external MCP
 clients but is not on the hot path. See
-[CLI non-surfaced](docs/cli-non-surfaced.md) for the full footgun inventory.
+[CLI non-surfaced](/docs?slug=cli-non-surfaced) for the full footgun inventory.
 
 **Do not mint on-chain or place real orders without an explicit op-mode flag.**
 `xvision-identity` (register, post_reputation) and live order submission via
