@@ -27,7 +27,10 @@ import {
   type EvalRunLabels,
 } from "@/lib/run-display";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
-import { listStrategies, strategyKeys } from "@/api/strategies";
+import { getStrategy, listStrategies, strategyKeys } from "@/api/strategies";
+import { agentKeys, listAgents, type Agent } from "@/api/agents";
+import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
+import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import type {
   DecisionRowDto,
   RunDetail,
@@ -85,6 +88,24 @@ export function EvalRunDetailRoute() {
     queryKey: scenarioKeys.list(),
     queryFn: () => listScenarios(),
   });
+  // F-1 (qa-round-7): the inspector top bar needs the strategy's attached
+  // agents so each can route to its detail page. `listStrategies()` only
+  // returns slim `StrategyListItem` rows — fetch the full strategy to get
+  // `agents: AgentRef[]`. Gated on the run's strategy id (`summary.agent_id`
+  // is the pre-mint strategy id, NOT to be confused with `Agent` records;
+  // see CLAUDE.md terminology lock).
+  const strategyIdForRun = q.data?.summary.agent_id ?? "";
+  const strategyDetail = useQuery({
+    queryKey: strategyKeys.detail(strategyIdForRun),
+    queryFn: () => getStrategy(strategyIdForRun),
+    enabled: strategyIdForRun.length > 0,
+  });
+  // Pull every agent so we can map agent_id → display name in the top-bar
+  // chips. Cheap and cached; agents page hits the same query.
+  const agentsAll = useQuery({
+    queryKey: agentKeys.list(),
+    queryFn: () => listAgents(),
+  });
   // Sibling runs for the same strategy power the "Run #N/M" disambiguator.
   // The list-runs API already filters by agent_id; we narrow to the same
   // scenario client-side.
@@ -93,6 +114,23 @@ export function EvalRunDetailRoute() {
     queryKey: evalKeys.runs({ agent_id: agentId || undefined }),
     queryFn: () => listRuns({ agent_id: agentId || undefined }),
     enabled: agentId.length > 0,
+  });
+  // F-8 (qa-round-7): linked agent run carries the per-call cost rows.
+  // We display its pre-rolled `total_cost_usd` so the summary matches the
+  // capsule's number exactly — both ultimately come from the same SQL
+  // aggregation over `model_call_cost_usd`, so there's no double-counting
+  // worry. Falls back to the eval-run id when an explicit
+  // `agent_run_id` isn't on the summary (older runs / mocks).
+  const agentRunIdForCost = q.data ? traceRunId(q.data.summary) : "";
+  const linkedAgentRun = useQuery({
+    queryKey: agentRunKeys.run(agentRunIdForCost),
+    queryFn: () => getAgentRun(agentRunIdForCost),
+    enabled: agentRunIdForCost.length > 0,
+    // Cost is a terminal-state stat; don't burn requests while the run is
+    // still inflight (the eval-run query is already polling on adaptive
+    // cadence, and agent-run cost only finalizes once the agent completes).
+    refetchInterval: false,
+    retry: false,
   });
   const navigate = useNavigate();
   const cancel = useMutation({
@@ -205,11 +243,21 @@ export function EvalRunDetailRoute() {
         sub={`${labels.subtitle} · ${disambiguator}`}
       />
 
+      <InspectorContextStrip
+        strategyId={detail.summary.agent_id}
+        strategyName={labels.strategyName}
+        scenarioId={detail.summary.scenario_id}
+        scenarioName={labels.scenarioName}
+        agents={strategyDetail.data?.agents ?? []}
+        agentsAll={agentsAll.data ?? []}
+      />
+
       <SummaryCard
         summary={detail.summary}
         equityCurve={detail.equity_curve}
         labels={labels}
         disambiguator={disambiguator}
+        totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
@@ -363,6 +411,7 @@ function SummaryCard({
   equityCurve,
   labels,
   disambiguator,
+  totalCostUsd,
   onCancel,
   cancelling,
   onRetry,
@@ -375,6 +424,7 @@ function SummaryCard({
   equityCurve: ReadonlyArray<{ equity_usd: number }>;
   labels: EvalRunLabels;
   disambiguator: string;
+  totalCostUsd: number | null;
   onCancel: () => void;
   cancelling: boolean;
   onRetry: () => void;
@@ -563,6 +613,24 @@ function SummaryCard({
           value={summary.completed_at ? fmtTime(summary.completed_at) : "—"}
         />
         <Metric label="Tokens" value={fmtTokens(summary)} />
+        {/*
+          F-8 (qa-round-7): total inference cost stat lives next to Tokens.
+          Both ultimately sum over the per-call `model_call_cost_usd` rows
+          recorded by xvision-observability — agent-runs API rolls them up
+          server-side as `total_cost_usd` so we don't double-aggregate
+          here. Falls back to em-dash when the linked agent run hasn't
+          loaded (or is missing for older runs); the `title` attribute
+          surfaces full precision on hover, matching the trace surfaces.
+        */}
+        <Metric
+          label="Total cost (USD)"
+          value={formatCostUsd(totalCostUsd)}
+          titleValue={
+            totalCostUsd != null && Number.isFinite(totalCostUsd)
+              ? formatCostUsdPrecise(totalCostUsd)
+              : undefined
+          }
+        />
       </div>
 
       <RunSummaryPanel error={summary.error} />
@@ -574,10 +642,13 @@ function Metric({
   label,
   value,
   tone = "neutral",
+  titleValue,
 }: {
   label: string;
   value: string;
   tone?: "pos" | "neg" | "neutral";
+  /** Tooltip text — typically a full-precision form of `value`. */
+  titleValue?: string;
 }) {
   const valueClass =
     tone === "pos" ? "text-gold" : tone === "neg" ? "text-danger" : "text-text";
@@ -586,7 +657,9 @@ function Metric({
       <div className="text-text-3 text-[11px] uppercase tracking-wide mb-1">
         {label}
       </div>
-      <div className={`font-mono ${valueClass}`}>{value}</div>
+      <div className={`font-mono ${valueClass}`} title={titleValue}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -932,6 +1005,113 @@ function ErrorState({
         Retry
       </button>
     </Card>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * F-1 (qa-round-7): inline context strip on the eval inspector.
+ *
+ * Surfaces the three things an operator wants to one-click into when
+ * triaging a run — the Strategy that produced it, the Scenario it was
+ * evaluated against, and the Agent objects attached to the strategy.
+ * Each pill is a `<Link>` to the corresponding detail route. No popups,
+ * no hover-cards — per the CLAUDE.md "no popups" rule, the strip is a
+ * flat row that lives directly under the topbar and above the summary
+ * card.
+ *
+ * Strategy / scenario chips render even before their detail / list
+ * queries resolve (we always have the id and the label-derived display
+ * name). Agent chips depend on the strategy detail query (`agents[]`
+ * lives on the full `Strategy` shape, not on the slim
+ * `StrategyListItem`) and fall back to the raw agent id if the global
+ * `listAgents()` lookup hasn't completed.
+ */
+function InspectorContextStrip({
+  strategyId,
+  strategyName,
+  scenarioId,
+  scenarioName,
+  agents,
+  agentsAll,
+}: {
+  strategyId: string;
+  strategyName: string;
+  scenarioId: string;
+  scenarioName: string;
+  agents: { agent_id: string; role: string }[];
+  agentsAll: Agent[];
+}) {
+  const agentNameById = new Map(agentsAll.map((a) => [a.agent_id, a.name]));
+  return (
+    <div
+      data-testid="eval-inspector-context-strip"
+      className="mb-3 flex flex-wrap items-center gap-2 rounded-sm border border-border-soft bg-surface-elev/40 px-3 py-2 text-[11px]"
+    >
+      <ContextPill
+        kind="Strategy"
+        to={`/strategies/${encodeURIComponent(strategyId)}`}
+        label={strategyName}
+        idForAria={strategyId}
+      />
+      <span className="text-text-4">·</span>
+      <ContextPill
+        kind="Scenario"
+        to={`/scenarios/${encodeURIComponent(scenarioId)}`}
+        label={scenarioName}
+        idForAria={scenarioId}
+      />
+      {agents.length > 0 ? (
+        <>
+          <span className="text-text-4">·</span>
+          <span className="text-[10px] font-mono tracking-[0.18em] text-text-3 uppercase">
+            Agents
+          </span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {agents.map((ref) => (
+              <ContextPill
+                key={`${ref.agent_id}:${ref.role}`}
+                kind={ref.role}
+                to={`/agents/${encodeURIComponent(ref.agent_id)}`}
+                label={agentNameById.get(ref.agent_id) ?? ref.agent_id}
+                idForAria={ref.agent_id}
+                compact
+              />
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function ContextPill({
+  kind,
+  to,
+  label,
+  idForAria,
+  compact = false,
+}: {
+  kind: string;
+  to: string;
+  label: string;
+  idForAria: string;
+  compact?: boolean;
+}) {
+  return (
+    <Link
+      to={to}
+      aria-label={`Open ${kind} ${label} (${idForAria})`}
+      className={`inline-flex items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-text-2 hover:border-gold/50 hover:text-text dark:hover:border-gold/40 ${
+        compact ? "text-[11px]" : "text-[11px]"
+      }`}
+    >
+      <span className="text-[9px] font-mono tracking-[0.18em] text-text-3 uppercase">
+        {kind}
+      </span>
+      <span className="font-mono truncate max-w-[28ch]">{label}</span>
+    </Link>
   );
 }
 

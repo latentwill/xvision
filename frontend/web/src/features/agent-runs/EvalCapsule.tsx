@@ -9,6 +9,7 @@
 // capsule open.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 export type EvalCapsuleStatus = "eval" | "pass" | "warn" | "error" | "queued";
 
@@ -109,7 +110,24 @@ function EvalLine({
 
       <span className="flex items-center gap-2 shrink-0">
         <span className="text-[10px] font-mono tracking-[0.18em] text-text-3">EVAL</span>
-        <span className="text-[11px] font-mono" style={{ color: tok.tint }}>{run.short}</span>
+        {/*
+          F-6 (qa-round-7): the short `strategy·scenario` tag routes to the
+          dedicated eval-inspector for this run. We render a `<Link>` rather
+          than relying on the wrapping `<button>`'s onClick so the click-
+          through works for the focused row too (where the button is
+          disabled) and so middle-click / cmd-click open in a new tab.
+          stopPropagation prevents the parent button's focus-switch onClick
+          from firing in addition to navigation when this row is a sibling.
+        */}
+        <Link
+          to={`/eval-runs/${encodeURIComponent(run.id)}`}
+          onClick={(e) => e.stopPropagation()}
+          className="text-[11px] font-mono hover:underline"
+          style={{ color: tok.tint }}
+          aria-label={`Open eval run ${run.short}`}
+        >
+          {run.short}
+        </Link>
         <span className="text-[10px] font-mono tracking-[0.18em] text-text-3">· {tok.label}</span>
       </span>
 
