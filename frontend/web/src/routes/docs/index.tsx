@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
@@ -14,6 +15,12 @@ import { docsKeys, getDocsIndex, getDocsPage } from "@/api/docs";
  * substring without leaving the route (acceptance: "Search across docs
  * index works (client-side fuzzy match acceptable).").
  *
+ * Supports `?slug=<slug>` query param for deep-linking: the rail, wizard,
+ * inspector, or any other component can navigate to a specific docs page
+ * by appending `?slug=<slug>` to `/docs`. Clicking a sidebar item updates
+ * the URL so the page is reload-safe and shareable. Browser back/forward
+ * navigates between pages.
+ *
  * No network fetch beyond the dashboard's own `/api/docs/*` routes;
  * the content is baked into the deployed image.
  */
@@ -24,7 +31,7 @@ export function DocsRoute() {
     staleTime: 60_000,
   });
 
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filter, setFilter] = useState("");
 
   const pages = index.data ?? [];
@@ -39,7 +46,14 @@ export function DocsRoute() {
     );
   }, [pages, filter]);
 
-  const activeSlug = selectedSlug ?? pages[0]?.slug ?? null;
+  // Derive the active slug from the URL param. If the param names a slug
+  // that isn't in the loaded index (unknown or index not yet loaded), fall
+  // back to the first entry so the main pane always shows something useful.
+  const urlSlug = searchParams.get("slug");
+  const slugInIndex = urlSlug != null && pages.some((p) => p.slug === urlSlug);
+  const activeSlug = slugInIndex
+    ? urlSlug
+    : (pages[0]?.slug ?? null);
 
   const page = useQuery({
     queryKey: activeSlug ? docsKeys.page(activeSlug) : docsKeys.all,
@@ -83,7 +97,7 @@ export function DocsRoute() {
                   <button
                     key={p.slug}
                     type="button"
-                    onClick={() => setSelectedSlug(p.slug)}
+                    onClick={() => setSearchParams({ slug: p.slug })}
                     aria-current={isActive ? "page" : undefined}
                     data-testid={`docs-index-item-${p.slug}`}
                     className={`text-left text-[13px] rounded px-2 py-1.5 border transition-colors ${

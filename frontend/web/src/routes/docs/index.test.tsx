@@ -18,13 +18,13 @@ vi.mock("@/api/docs", async () => {
 const docsApi = await import("@/api/docs");
 const { DocsRoute } = await import("./index");
 
-function renderRoute() {
+function renderRoute(initialEntry = "/docs") {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={["/docs"]}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <DocsRoute />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -110,5 +110,47 @@ describe("DocsRoute", () => {
       await screen.findByTestId("docs-index-error"),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/could not load docs index/i);
+  });
+
+  test("?slug= deep-link opens the named page instead of the first entry", async () => {
+    renderRoute("/docs?slug=cli-reference");
+    await waitFor(() =>
+      expect(docsApi.getDocsPage).toHaveBeenCalledWith("cli-reference"),
+    );
+    // Quickstart is the first index entry — it must NOT have been loaded.
+    expect(docsApi.getDocsPage).not.toHaveBeenCalledWith("quickstart");
+    const body = await screen.findByTestId("docs-page-body");
+    expect(body).toHaveTextContent(/CLI Reference/);
+  });
+
+  test("clicking a sidebar item updates the URL slug", async () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    // Use a real router history so we can inspect location changes.
+    // MemoryRouter exposes its current location via the router instance;
+    // instead we use a simpler approach: after clicking, the active button
+    // should carry aria-current="page" and the page for that slug should load.
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/docs"]}>
+          <DocsRoute />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Wait for the index to load.
+    const item = await screen.findByTestId("docs-index-item-scenarios");
+    fireEvent.click(item);
+
+    // After the click the scenarios page should be fetched (URL was updated to ?slug=scenarios).
+    await waitFor(() =>
+      expect(docsApi.getDocsPage).toHaveBeenCalledWith("scenarios"),
+    );
+    // The clicked button should now carry aria-current="page".
+    expect(screen.getByTestId("docs-index-item-scenarios")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 });
