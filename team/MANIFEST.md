@@ -74,8 +74,10 @@ unambiguous.
 | 020 | eval-causal-input-sanitization (F-6) | merged        |
 | 021 | eval-batch-persistence               | merged        |
 | 022 | eval-bundle-agent-id-map (F-11)      | in flight     |
+| 023 | eval-trace-surface-foundation (V2E)  | reserved 2026-05-20 |
+| 024 | eval-candle-integrity-and-manifest (V2E) | reserved 2026-05-20 |
 
-The next available number is **023**. The conductor must approve and
+The next available number is **025**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 

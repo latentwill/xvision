@@ -6,7 +6,7 @@
 > Same rules as the main board (`team/board.md`): one line per active track,
 > each linking to a `team/contracts/<slug>.md`. Conductor-owned.
 >
-> Last updated: 2026-05-19.
+> Last updated: 2026-05-20.
 
 ## Active — V2A (onboarding & docs)
 
@@ -16,6 +16,56 @@
 `v2a-example-artifacts` merged via #205 on 2026-05-17; archived under
 `team/archive/2026-05-17-v2a/`. The remaining two leaves are independent —
 safe to claim in parallel.
+
+## Active — V2E (eval accuracy & trace surface)
+
+Decomposed 2026-05-20 from `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md`.
+**All seven contracts are `status: ready` — no worker has claimed any of
+them yet, no worktrees exist.** This is intentional: the conductor is
+holding V2E in the dock until the V2A leaves merge so capacity isn't
+split between waves.
+
+The intake's optional 9→7 re-pairing is applied:
+`eval-cost-model-per-bar-and-volume-share` merges items 19+20 from the
+research doc; `eval-candle-integrity-and-manifest` merges items 18+21.
+See the V2E notes section below for why and the dependency graph.
+
+- [eval-trace-surface-foundation](contracts/eval-trace-surface-foundation.md) — foundation · ready · **lands first, blocks 3 downstream**
+- [eval-candle-integrity-and-manifest](contracts/eval-candle-integrity-and-manifest.md) — foundation · ready · independent (claims migration 024)
+- [eval-cost-model-per-bar-and-volume-share](contracts/eval-cost-model-per-bar-and-volume-share.md) — foundation · ready · blocks intra-bar (no migration; per-bar arrays live in bars Parquet)
+- [eval-intra-bar-fill-ordering](contracts/eval-intra-bar-fill-ordering.md) — leaf · ready · depends on cost-model + foundation
+- [eval-lookahead-bias-prober](contracts/eval-lookahead-bias-prober.md) — leaf · ready · depends on foundation
+- [eval-broker-rule-findings](contracts/eval-broker-rule-findings.md) — leaf · ready · independent
+- [eval-net-of-inference-cost-metric](contracts/eval-net-of-inference-cost-metric.md) — leaf · ready · depends on foundation + `model-call-cost-usd-population`
+
+Recommended sequencing (per the intake's dependency graph):
+
+1. `eval-trace-surface-foundation` lands first as a solo step — every
+   downstream track emits into the trace shape it lands. Resist letting
+   item-1 leaves ship in parallel against the foundation; the per-finding
+   retrofit cost is higher than the wait.
+2. After foundation merges, fan out the remaining six. Three sequenced
+   pairs:
+   - `eval-cost-model-per-bar-and-volume-share` →
+     `eval-intra-bar-fill-ordering` (intra-bar strictly consumes the
+     fill-price machinery).
+   - `eval-candle-integrity-and-manifest` →
+     (no downstream within V2E, but trust-receipt renderer follow-up
+     depends on it).
+   - `eval-broker-rule-findings`,
+     `eval-lookahead-bias-prober`, and
+     `eval-net-of-inference-cost-metric` are independent leaves —
+     parallel safe.
+
+Migration coordination: foundation claims **023**, candle-integrity
+claims **024**; both reserved in `team/MANIFEST.md` 2026-05-20.
+`eval-net-of-inference-cost-metric` may claim **025** if it needs a
+small `run_metrics_summary.net_return_pct` column — decide at the
+contract author's first checkpoint.
+
+`crates/xvision-engine/src/eval/executor/backtest.rs` is now a four-track
+multi-owner zone (foundation + cost-model + intra-bar + broker-rule);
+see `team/OWNERSHIP.md` for the disjoint-region rule.
 
 ## Follow-ups / research needed
 
@@ -133,6 +183,31 @@ research) are punted to a separate equities-readiness follow-up; not in V2E.
 
 See "V2E notes" below for the wave's dependency graph and the review-derived
 accept/defer table.
+
+### V2F — strategy authoring & user knowledge (new phase; small, runs parallel with V2E)
+
+| # | Item | Source |
+|---|---|---|
+| 26 | Strategies folder (read-only): per-workspace `<workspace>/.xvn/strategies/` tree with `notes/`, `docs/`, `strategy-files/`, `evals/`, `library/`; agent tool pair `list_strategies_folder` / `read_strategies_file` | `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` track 1 |
+| 27 | Strategies folder pre-population from `docs/strategies/` + `xvn strategies init` CLI | Intake track 2 |
+| 28 | Expanded agent-pipeline template library (4–8 new templates beyond the current 3 in `crates/xvision-engine/src/agents/templates.rs`) | Intake track 3 |
+| 29 | Strategy ideas tool surface for the wizard (`list_strategy_ideas`) | Intake track 4 |
+| 30 | Wizard prompt refresh for strategies folder + expanded templates; closes the loop on the template-optional relaxation from #275 | Intake track 5 |
+| 31 | User import flow (`xvn strategies import` + dashboard drop-zone; minimal PDF/CSV → `.summary.md` parse) | Intake track 6 |
+
+V2F is a small, mostly-independent phase. It builds on the already-
+merged `wizard-strategy-template-optional` (#275) by giving agents
+*more references to consult* (expanded templates + a user-curated
+knowledge folder) without re-imposing the requirement that was just
+removed.
+
+Conductor's call on phase label: V2F as a standalone phase, or folded
+into V2D as an additional "agent-facing knowledge surface" item.
+
+Pre-existing alternative placement: this could ride alongside V2D
+(memory) since both are agent-facing knowledge surfaces. The
+distinction is user-curated (V2F) vs agent-learned (V2D). They don't
+share files; safe to run in parallel either way.
 
 ### V3 — autoresearcher
 
@@ -280,7 +355,8 @@ Intake doc when this opens: `team/intake/2026-05-19-eval-accuracy-and-trace-surf
 ## Wave intake
 
 - V2A intake: `team/intake/2026-05-16-eval-review-and-v2a.md` (V2A items 1–3 decomposed).
-- V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (items 17–23 decomposed).
+- V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (items 17–25 decomposed; 7 contracts in `team/contracts/eval-*` all `status: ready`).
+- V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (items 26–31, **not yet decomposed**).
 - V2B/V2C/V2D/V3/V4: no intake yet.
 
 ## Closeout

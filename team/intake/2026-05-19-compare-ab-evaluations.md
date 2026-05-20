@@ -69,6 +69,32 @@ this intake is the raw operator hopper.
    `/eval-runs/compare` today; the desktop pane is wide and
    table-heavy. Decide whether to ship a mobile variant or leave it
    desktop-only.
+9. **Beautiful shareable comparison charts.** Render the AB compare
+   result as a polished, branded image (xvision wordmark + logo,
+   strategy/scenario labels, equity curves, headline deltas, optional
+   per-agent breakdown) suitable for posting to X / Discord /
+   investor updates. Two delivery surfaces:
+   - `xvn ab-compare … --export png|svg|pdf --out <path>` — CLI emits
+     the same image the dashboard would render, no headless browser
+     required from the operator. Reuse the engine `ComparisonReport`
+     payload; rasterize server-side (likely `resvg` or `plotters`).
+   - Dashboard "Download share image" / "Copy share link" action on
+     `/eval-runs/compare`, producing the same artifact plus an
+     optional 1200×630 OG-card variant for link unfurls.
+   Constraints: deterministic output (same ids → same bytes for
+   caching), embeddable xvision branding, no operator PII (cycle ids
+   ok, broker account numbers / api keys never), readable at
+   thumbnail size. Should be the kind of chart an operator
+   instinctively screenshots — make screenshotting unnecessary.
+10. **Use strategy names, not ids, in compare chart labels.** Today
+    arms in the compare view (and any chart legend / findings copy)
+    are keyed by run id / strategy id, which are ULIDs unreadable at
+    a glance. Resolve `Strategy.name` (and fall back to a short
+    `agent_id` prefix only if unnamed) for every label surface:
+    chart legend, equity curve tooltips, findings list, share image,
+    CLI table headers. Disambiguate collisions (two runs of the same
+    named strategy) with a suffix like `· v2` or
+    `· 2026-05-19 14:32`, not by reverting to the id.
 
 ## Non-goals / out of scope
 

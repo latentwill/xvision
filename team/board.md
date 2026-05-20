@@ -24,6 +24,13 @@ doc.
 
 ## Reserved
 
+- **Skills refresh for new xvn verbs** — planning intake at
+  `team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`. Refresh
+  `.claude/skills/xvision-cli`, `xvision-cli-qa`, `xvision-dev`, and
+  `cycle-migration` to cover the experiment orchestrator, hypothesis
+  flags, scenario regime labels, baseline compare column, 6 new MCP
+  peers, and deploy-image preflight + cleanup. Immediate-board work,
+  not V2.
 - **QA operator round 6** — 3 tracks in `team/intake/2026-05-19-qa-operator-round-6.md`:
   `scenario-form-calendar-whitespace` (P2), `scenario-runs-tab-show-eval-name` (P2),
   `agent-usage-panel-wire-deployed-and-runs` (P1).
