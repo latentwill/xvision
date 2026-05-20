@@ -12,7 +12,8 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
     health::health,
-    scenarios, search as search_route, settings, skills, static_files, strategies, wizard,
+    scenarios, search as search_route, settings, skills, static_files, strategies,
+    strategies_folder as strategies_folder_route, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -71,6 +72,17 @@ pub fn build_router(state: AppState) -> Router {
             post(strategies::post_validate),
         )
         .route("/api/strategies/:id/chart", get(strategies::chart))
+        // V2F: per-user strategies folder importer. POST multipart/form-data.
+        // See `crates/xvision-dashboard/src/routes/strategies_folder.rs` and
+        // the `strategies-folder-import` track contract.
+        .route(
+            "/api/strategies-folder/list",
+            get(strategies_folder_route::get_list),
+        )
+        .route(
+            "/api/strategies-folder/import",
+            post(strategies_folder_route::post_import),
+        )
         // NOTE: /api/scenarios/preview MUST be before /api/scenarios/:id —
         // axum's router matches in registration order for overlapping patterns.
         .route("/api/scenarios", get(scenarios::list).post(scenarios::create))
