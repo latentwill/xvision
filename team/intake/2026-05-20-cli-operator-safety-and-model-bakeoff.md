@@ -140,3 +140,16 @@ Recommended first wave:
 Then build `cli-model-bakeoff` on top of those primitives.
 
 No migration should be required for the first wave unless persisted token-limit metadata/result status needs new fields. If new cancellation reason/status is added, coordinate with eval trace/status consumers and dashboard filters.
+
+## Status — 2026-05-21
+
+P0 bundle contract opened: `team/contracts/cli-operator-safety-p0.md`
+covers #1 (`cli-eval-cancel`), #2 (`eval-run-hard-limits`), and #3
+(`experiment-run-scope-guardrails`) — the three token-burn-prevention
+items the intake flags as highest priority.
+
+P1 items (#4–#12) and P2 items (#13–#15) are **Reserved** — they
+build on the P0 surface and should decompose only after P0 lands.
+The conductor's recommended next-wave order from the intake (provider
+parity → CLI machine contract → results enrichment → bakeoff verb)
+holds; expect 4–5 separate contracts on that wave.
