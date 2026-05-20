@@ -43,8 +43,11 @@ models
 notebooks
 probes/m0-orderly/target
 
-# Existing docs we don't need inside the image
-docs
+# Existing docs we don't need inside the image, except the embedded xvnwiki
+# docs consumed by the dashboard build script.
+docs/*
+!docs/xvnwiki/
+!docs/xvnwiki/**
 
 # Local env files
 .env
