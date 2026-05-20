@@ -16,6 +16,8 @@ import * as evalApi from "@/api/eval";
 import * as evalReviewApi from "@/api/eval-review";
 import * as scenariosApi from "@/api/scenarios";
 import * as strategyApi from "@/api/strategies";
+import * as agentsApi from "@/api/agents";
+import * as agentRunsApi from "@/api/agent-runs";
 import type { DecisionRowDto, RunDetail } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {
@@ -69,6 +71,27 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     listStrategies: vi.fn(),
+    getStrategy: vi.fn(),
+  };
+});
+
+vi.mock("@/api/agents", async () => {
+  const actual = await vi.importActual<typeof import("@/api/agents")>(
+    "@/api/agents",
+  );
+  return {
+    ...actual,
+    listAgents: vi.fn(),
+  };
+});
+
+vi.mock("@/api/agent-runs", async () => {
+  const actual = await vi.importActual<typeof import("@/api/agent-runs")>(
+    "@/api/agent-runs",
+  );
+  return {
+    ...actual,
+    getAgentRun: vi.fn(),
   };
 });
 
@@ -161,6 +184,23 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
         decision_cadence_minutes: 240,
       },
     ]);
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      agents: [{ agent_id: "agent-trader-1", role: "trader" }],
+    } as any);
+    vi.mocked(agentsApi.listAgents).mockResolvedValue([
+      {
+        agent_id: "agent-trader-1",
+        name: "Trader Agent",
+      } as any,
+    ]);
+    vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue({
+      summary: {
+        total_cost_usd: 0.000567,
+      },
+      spans: [],
+      model_calls: [],
+      tool_calls: [],
+    } as any);
     vi.mocked(scenariosApi.listScenarios).mockResolvedValue([
       {
         id: "flash-crash-2024-08",
@@ -215,6 +255,31 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     expect(screen.getByText("WIN RATE")).toBeInTheDocument();
     expect(screen.getByText("META")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Equity curve" })).toBeInTheDocument();
+  });
+
+  it("renders mobile context links and total inference cost", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+
+    renderRoute();
+
+    const strip = await screen.findByTestId("mobile-eval-inspector-context-strip");
+    expect(
+      within(strip).getByRole("link", {
+        name: /open strategy mean reversion v3/i,
+      }),
+    ).toHaveAttribute("href", "/strategies/mean-reversion-v3");
+    expect(
+      within(strip).getByRole("link", {
+        name: /open scenario flash crash 2024/i,
+      }),
+    ).toHaveAttribute("href", "/scenarios/flash-crash-2024-08");
+    expect(
+      await within(strip).findByRole("link", {
+        name: /open trader trader agent/i,
+      }),
+    ).toHaveAttribute("href", "/agents/agent-trader-1");
+    expect(await screen.findByText("$0.000567")).toBeInTheDocument();
+    expect(agentRunsApi.getAgentRun).toHaveBeenCalledWith("01LIVE");
   });
 
   it("switches to DECISIONS tab and renders decision cards with action pill + conviction", async () => {

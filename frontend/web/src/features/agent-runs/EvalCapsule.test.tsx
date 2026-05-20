@@ -109,7 +109,9 @@ describe("EvalCapsule", () => {
     expect(screen.getByText("mom·opex")).toBeInTheDocument();
     // ERR badge surfaces when collapsed; once expanded it stays inside the
     // stack rather than on the toggle, so we only assert the row order:
-    const rows = screen.getAllByRole("button").map((b) => b.textContent ?? "");
+    const rows = screen
+      .getAllByRole("link", { name: /open eval run/i })
+      .map((a) => a.textContent ?? "");
     const errIdx = rows.findIndex((t) => t.includes("liq·fed"));
     const momIdx = rows.findIndex((t) => t.includes("mom·opex"));
     expect(errIdx).toBeLessThan(momIdx);
@@ -131,8 +133,9 @@ describe("EvalCapsule", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /show 1 other eval/i }));
-    // Click the "spans 12" portion of the sibling row — outside the Link.
-    fireEvent.click(screen.getByText("12"));
+    fireEvent.click(
+      screen.getByRole("button", { name: /switch focus to eval run mom·opex/i }),
+    );
     expect(onSwitchFocus).toHaveBeenCalledTimes(1);
     expect(onSwitchFocus.mock.calls[0]![0]!.id).toBe("s1");
   });
@@ -151,11 +154,13 @@ describe("EvalCapsule", () => {
     // Focused short tag — always visible.
     const focusedLink = screen.getByRole("link", { name: /open eval run mr·flash/i });
     expect(focusedLink).toHaveAttribute("href", "/eval-runs/run_focused");
+    expect(focusedLink.closest("button")).toBeNull();
 
     // Expand, then check the sibling tag too.
     fireEvent.click(screen.getByRole("button", { name: /show 1 other eval/i }));
     const siblingLink = screen.getByRole("link", { name: /open eval run mom·opex/i });
     expect(siblingLink).toHaveAttribute("href", "/eval-runs/run_sibling");
+    expect(siblingLink.closest("button")).toBeNull();
 
     // Clicking the link should NOT trigger focus-switch (stopPropagation).
     fireEvent.click(siblingLink);

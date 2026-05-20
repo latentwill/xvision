@@ -227,6 +227,9 @@ export function EvalRunDetailRoute() {
         detail={detail}
         labels={labels}
         disambiguator={disambiguator}
+        agents={strategyDetail.data?.agents ?? []}
+        agentsAll={agentsAll.data ?? []}
+        totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
