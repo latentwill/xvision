@@ -191,6 +191,24 @@ violation unless the contract is updated first.
 | `frontend/web/src/routes/brokers.tsx` | `list-search-filter-missing-surfaces` (conditional) | docs-lists-metric-polish-2026-05-21 |
 | `frontend/web/src/routes/docs/index.tsx` | `docs-ui-prototype-alignment`; `docs-search-list-component-adoption` (deferred); the pre-existing `v2a-in-app-docs` row above is merged and the file is no longer claimed by that track | docs-lists-metric-polish-2026-05-21 |
 | `frontend/web/src/features/docs/**` | `docs-ui-prototype-alignment`; `docs-search-list-component-adoption` (deferred sub-set: `DocsSidebar.tsx` only); the pre-existing `v2a-in-app-docs` row above is merged and the file is no longer claimed by that track | docs-lists-metric-polish-2026-05-21 |
+| `crates/xvision-engine/tests/api_eval.rs` | `clawpatch-engine-test-helpers` (B-1/B-2 — last naked SqlitePool::connect remaining) | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-engine/tests/api_eval_attest.rs` | `clawpatch-engine-test-helpers` (re-verify only) | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-engine/tests/api_eval_compare.rs` | `clawpatch-engine-test-helpers` (re-verify only) | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-engine/tests/eval_retry_from_completed.rs` | `clawpatch-engine-test-helpers` (re-verify only) | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-engine/tests/eval_retry_idempotency.rs` | `clawpatch-engine-test-helpers` (re-verify only) | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-engine/src/eval/export.rs` | `clawpatch-engine-test-helpers` (re-verify only) | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-engine/src/eval/store.rs` | `clawpatch-engine-test-helpers` (B-3 — pool_with_migration helper if it lives here); pre-existing `eval-bundle-agent-id-map` + `eval-finalize-write-serializer` rows apply on rebase | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-observability/tests/janitor.rs` | `clawpatch-engine-test-helpers` (B-4 — mtime determinism) | clawpatch-blockers-2026-05-21 |
+| `crates/xvision-cli/tests/eval_export_cli.rs` | `clawpatch-cli-test-assert` (B-5 — one assertion) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/components/shell/HealthPill.test.tsx` | `clawpatch-frontend-components` (NEW — B-6) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/components/scenario/CacheStatusBadge.test.tsx` | `clawpatch-frontend-components` (NEW — B-7) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/components/agent/AgentForm.tsx` | `clawpatch-frontend-components` (B-8 — duplicateSlot max_tokens null) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/components/agent/SlotForm.tsx` | `clawpatch-frontend-components` (B-10 — provider-change model clear) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/routes/agents.test.tsx` | `clawpatch-frontend-components` (B-8 + B-10 regression tests) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/components/chart/WizardPreviewChart.tsx` | `clawpatch-frontend-components` (B-9 — useMemo for ScenarioChartPayload) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/components/chart/WizardPreviewChart.test.tsx` | `clawpatch-frontend-components` (NEW — B-9) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/components/mobile/MobileDrawer.tsx` | `clawpatch-frontend-components` (B-11 — escalation gated on no-popups rule; see contract Notes) | clawpatch-blockers-2026-05-21 |
+| `frontend/web/src/components/mobile/MobileDrawer.test.tsx` | `clawpatch-frontend-components` (NEW — B-11, only if no-popups rework allows) | clawpatch-blockers-2026-05-21 |
 
 ## Multi-owner Exemptions
 
