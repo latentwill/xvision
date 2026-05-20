@@ -34,12 +34,19 @@ pub struct DocPageMeta {
 const PAGES: &[(&str, &str, &str)] = &[
     ("quickstart", "Quickstart", include_str!("content/quickstart.md")),
     ("strategies", "Strategies", include_str!("content/strategies.md")),
+    ("agents", "Agents", include_str!("content/agents.md")),
     ("scenarios", "Scenarios", include_str!("content/scenarios.md")),
     ("eval-runs", "Eval Runs", include_str!("content/eval-runs.md")),
+    ("experiments", "Experiments", include_str!("content/experiments.md")),
     (
         "cli-reference",
         "CLI Reference",
         include_str!("content/cli-reference.md"),
+    ),
+    (
+        "driving-xvn-as-an-agent",
+        "Driving xvn as an agent",
+        include_str!("content/driving-xvn-as-an-agent.md"),
     ),
 ];
 
@@ -78,9 +85,12 @@ mod tests {
             vec![
                 "quickstart",
                 "strategies",
+                "agents",
                 "scenarios",
                 "eval-runs",
-                "cli-reference"
+                "experiments",
+                "cli-reference",
+                "driving-xvn-as-an-agent",
             ],
             "index must enumerate all baked pages",
         );
