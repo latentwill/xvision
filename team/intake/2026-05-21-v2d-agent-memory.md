@@ -60,7 +60,7 @@ Pulled directly from the tree at intake time:
 - **Migrations.** Engine migration directory at
   `crates/xvision-engine/migrations/` reaches 025 (cache & window).
   Per `team/MANIFEST.md` the next available number is **030**; V2D
-  reserves 027 (see "Migration coordination" below).
+  reserves 029 (see "Migration coordination" below).
 
 ## Raw items → tracks
 
@@ -149,11 +149,6 @@ re-derive them:
   review wave to consume the new `memory_recall` events and correlate
   them to decision text. Open as a follow-up after `v2d-eval-review-
   memory-surface` lands.
-- **mem0 / Honcho / mempalace integrations.** The user's stated
-  preference is a Rust-native crate (board V2D notes "rust cortex
-  memory"). The store layer's public API is intentionally narrow
-  (open / upsert / query / forget) so a future adapter can wrap any
-  of these without changing the dispatcher seam. Not v1 work.
 - **TTL / time decay / LRU eviction.** Decision 7. Operator-driven
   forget is enough until V3 autoresearcher gates a real eviction
   story.
