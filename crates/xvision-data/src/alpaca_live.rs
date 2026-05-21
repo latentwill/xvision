@@ -57,17 +57,28 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use rand::Rng;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::alpaca::{BarGranularity, MarketBar};
 
+const APCA_API_BASE_URL_DEFAULT: &str = "https://paper-api.alpaca.markets/";
+const APCA_CRYPTO_STREAM_URL: &str = "wss://stream.data.alpaca.markets/v1beta3/crypto/us";
 const RECONNECT_BUDGET_DEFAULT: u32 = 5;
 const RECONNECT_BACKOFF_BASE_MS: u64 = 500;
 const RECONNECT_BACKOFF_CAP_MS: u64 = 30_000;
 const CHANNEL_BUFFER: usize = 64;
+
+#[derive(Default)]
+struct AlpacaCryptoUsStream;
+
+impl std::fmt::Display for AlpacaCryptoUsStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(APCA_CRYPTO_STREAM_URL)
+    }
+}
 
 /// Items consumed by the internal subscription task.
 ///
@@ -167,31 +178,28 @@ impl AlpacaLiveClient {
     /// [`BarSubscription`] whose internal task owns the connection
     /// + reconnect lifecycle.
     ///
-    /// **NOTE:** the production websocket connect path is not wired
-    /// into a runnable Executor in this PR (sub-track 3 of the
-    /// 2026-05-21 Alpaca-Live executor refactor). Sub-track 4
-    /// (`executor-live-shell`) will replace the inner stream
-    /// construction with a real apca-backed feed. Today the
-    /// production path returns `AlpacaLiveError::Connect` with a
-    /// clear "not yet wired" message; the gap-detection +
-    /// reconnect-budget logic that this PR delivers is exercised
-    /// via [`AlpacaLiveClient::subscription_from_stream`] in unit
-    /// tests.
     pub async fn subscribe_bars(
         &self,
-        _asset: &str,
-        _granularity: BarGranularity,
+        asset: &str,
+        granularity: BarGranularity,
     ) -> Result<BarSubscription, AlpacaLiveError> {
-        // Production wire-up deferred to executor-live-shell. The
-        // credentials + reconnect budget plumbed here are validated
-        // (not empty) so misconfigurations surface eagerly even
-        // before the real connect lands.
         if self.creds.key_id.trim().is_empty() || self.creds.secret_key.trim().is_empty() {
             return Err(AlpacaLiveError::Auth("empty credentials".into()));
         }
-        Err(AlpacaLiveError::Connect(
-            "production websocket connect not yet wired (see executor-live-shell, sub-track 4)".into(),
-        ))
+
+        let (tx, rx) = mpsc::channel(CHANNEL_BUFFER);
+        let creds = self.creds.clone();
+        let asset = asset.to_string();
+        let budget = self.reconnect_budget;
+        let granularity_secs = granularity.seconds().max(1) as i64;
+        tokio::spawn(run_apca_subscription_task(
+            creds,
+            asset,
+            tx,
+            budget,
+            granularity_secs,
+        ));
+        Ok(BarSubscription { rx })
     }
 
     /// Test-only: build a subscription from an in-memory stream of
@@ -255,6 +263,140 @@ impl Stream for BarSubscription {
     }
 }
 
+async fn run_apca_subscription_task(
+    creds: AlpacaLiveCredentials,
+    asset: String,
+    tx: mpsc::Sender<BarStreamEvent>,
+    budget: u32,
+    granularity_secs: i64,
+) {
+    use apca::data::v2::stream::{drive, CustomUrl, Data, MarketData, RealtimeData};
+
+    let mut last_ts: Option<DateTime<Utc>> = None;
+    let mut consecutive_disconnects: u32 = 0;
+    let mut last_disconnect_reason = String::new();
+    let mut suppress_next_gap_check = true;
+
+    loop {
+        let api_info =
+            match apca::ApiInfo::from_parts(APCA_API_BASE_URL_DEFAULT, &creds.key_id, &creds.secret_key) {
+                Ok(api_info) => api_info,
+                Err(e) => {
+                    last_disconnect_reason = format!("alpaca api info: {e}");
+                    if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
+                        .await
+                    {
+                        return;
+                    }
+                    suppress_next_gap_check = true;
+                    continue;
+                }
+            };
+
+        let client = apca::Client::new(api_info);
+        let (mut stream, mut subscription) = match client
+            .subscribe::<RealtimeData<CustomUrl<AlpacaCryptoUsStream>>>()
+            .await
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                last_disconnect_reason = format!("alpaca live connect: {e}");
+                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
+                    .await
+                {
+                    return;
+                }
+                suppress_next_gap_check = true;
+                continue;
+            }
+        };
+
+        let mut market_data = MarketData::default();
+        market_data.set_bars(vec![asset.clone()]);
+        let subscribe = subscription.subscribe(&market_data).boxed();
+        match drive(subscribe, &mut stream).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => {
+                last_disconnect_reason = format!("alpaca live subscribe rejected: {e}");
+                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
+                    .await
+                {
+                    return;
+                }
+                suppress_next_gap_check = true;
+                continue;
+            }
+            Ok(Err(e)) => {
+                last_disconnect_reason = format!("alpaca live subscribe transport: {e}");
+                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
+                    .await
+                {
+                    return;
+                }
+                suppress_next_gap_check = true;
+                continue;
+            }
+            Err(e) => {
+                last_disconnect_reason = format!("alpaca live subscribe stream: {e:?}");
+                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
+                    .await
+                {
+                    return;
+                }
+                suppress_next_gap_check = true;
+                continue;
+            }
+        }
+
+        while let Some(message) = stream.next().await {
+            match message {
+                Ok(Ok(Data::Bar(bar))) => {
+                    let bar = match apca_bar_to_market_bar(bar) {
+                        Ok(bar) => bar,
+                        Err(e) => {
+                            last_disconnect_reason = format!("alpaca live protocol: {e}");
+                            break;
+                        }
+                    };
+                    if !asset_matches(&asset, &bar) {
+                        continue;
+                    }
+                    consecutive_disconnects = 0;
+                    last_disconnect_reason.clear();
+                    if !send_bar_with_gap_detection(
+                        &tx,
+                        bar,
+                        &mut last_ts,
+                        &mut suppress_next_gap_check,
+                        granularity_secs,
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                }
+                Ok(Ok(Data::Quote(_))) | Ok(Ok(Data::Trade(_))) | Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    last_disconnect_reason = format!("alpaca live json: {e}");
+                    break;
+                }
+                Err(e) => {
+                    last_disconnect_reason = format!("alpaca live websocket: {e}");
+                    break;
+                }
+            }
+        }
+
+        if last_disconnect_reason.is_empty() {
+            last_disconnect_reason = "alpaca live stream closed".to_string();
+        }
+        if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget).await {
+            return;
+        }
+        suppress_next_gap_check = true;
+    }
+}
+
 async fn run_subscription_task<S>(
     mut stream: std::pin::Pin<Box<S>>,
     tx: mpsc::Sender<BarStreamEvent>,
@@ -272,62 +414,23 @@ async fn run_subscription_task<S>(
     while let Some(item) = stream.next().await {
         match item {
             LiveBarItem::Bar(bar) => {
-                // Successful receipt — reset the disconnect counter.
                 consecutive_disconnects = 0;
                 last_disconnect_reason.clear();
-
-                // Gap detection. We compare the new bar's timestamp
-                // against the previous-delivered bar's timestamp + one
-                // granularity tick. A delta strictly greater than one
-                // tick is a gap.
-                if !suppress_next_gap_check {
-                    if let Some(prev) = last_ts {
-                        let expected_next = prev + chrono::Duration::seconds(granularity_secs);
-                        if bar.timestamp > expected_next {
-                            tracing::warn!(
-                                target: "xvision_data::alpaca_live",
-                                expected_next = %expected_next,
-                                observed = %bar.timestamp,
-                                "gap detected"
-                            );
-                            if tx
-                                .send(BarStreamEvent::GapDetected {
-                                    expected_next,
-                                    observed: bar.timestamp,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                    }
-                }
-
-                last_ts = Some(bar.timestamp);
-                suppress_next_gap_check = false;
-
-                if tx.send(BarStreamEvent::Bar(bar)).await.is_err() {
+                if !send_bar_with_gap_detection(
+                    &tx,
+                    bar,
+                    &mut last_ts,
+                    &mut suppress_next_gap_check,
+                    granularity_secs,
+                )
+                .await
+                {
                     return;
                 }
             }
             LiveBarItem::Disconnect { reason } => {
-                consecutive_disconnects = consecutive_disconnects.saturating_add(1);
-                last_disconnect_reason = reason;
-                tracing::warn!(
-                    target: "xvision_data::alpaca_live",
-                    attempt = consecutive_disconnects,
-                    budget,
-                    reason = %last_disconnect_reason,
-                    "live bar stream disconnected; attempting reconnect"
-                );
-                if consecutive_disconnects > budget {
-                    let _ = tx
-                        .send(BarStreamEvent::BudgetExhausted {
-                            attempts: consecutive_disconnects,
-                            last_error: last_disconnect_reason.clone(),
-                        })
-                        .await;
+                last_disconnect_reason = reason.clone();
+                if !handle_disconnect(&tx, &mut consecutive_disconnects, &reason, budget).await {
                     return;
                 }
                 if backoff_enabled {
@@ -341,6 +444,103 @@ async fn run_subscription_task<S>(
             }
         }
     }
+}
+
+async fn send_bar_with_gap_detection(
+    tx: &mpsc::Sender<BarStreamEvent>,
+    bar: MarketBar,
+    last_ts: &mut Option<DateTime<Utc>>,
+    suppress_next_gap_check: &mut bool,
+    granularity_secs: i64,
+) -> bool {
+    if !*suppress_next_gap_check {
+        if let Some(prev) = *last_ts {
+            let expected_next = prev + chrono::Duration::seconds(granularity_secs);
+            if bar.timestamp > expected_next {
+                tracing::warn!(
+                    target: "xvision_data::alpaca_live",
+                    expected_next = %expected_next,
+                    observed = %bar.timestamp,
+                    "gap detected"
+                );
+                if tx
+                    .send(BarStreamEvent::GapDetected {
+                        expected_next,
+                        observed: bar.timestamp,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    *last_ts = Some(bar.timestamp);
+    *suppress_next_gap_check = false;
+    tx.send(BarStreamEvent::Bar(bar)).await.is_ok()
+}
+
+async fn handle_disconnect(
+    tx: &mpsc::Sender<BarStreamEvent>,
+    consecutive_disconnects: &mut u32,
+    reason: &str,
+    budget: u32,
+) -> bool {
+    *consecutive_disconnects = consecutive_disconnects.saturating_add(1);
+    tracing::warn!(
+        target: "xvision_data::alpaca_live",
+        attempt = *consecutive_disconnects,
+        budget,
+        reason = %reason,
+        "live bar stream disconnected; attempting reconnect"
+    );
+    if *consecutive_disconnects > budget {
+        let _ = tx
+            .send(BarStreamEvent::BudgetExhausted {
+                attempts: *consecutive_disconnects,
+                last_error: reason.to_string(),
+            })
+            .await;
+        return false;
+    }
+    true
+}
+
+fn apca_bar_to_market_bar(bar: apca::data::v2::stream::Bar) -> Result<MarketBar, String> {
+    Ok(MarketBar {
+        timestamp: bar.timestamp,
+        open: bar
+            .open_price
+            .to_f64()
+            .ok_or_else(|| format!("invalid open price for {}", bar.symbol))?,
+        high: bar
+            .high_price
+            .to_f64()
+            .ok_or_else(|| format!("invalid high price for {}", bar.symbol))?,
+        low: bar
+            .low_price
+            .to_f64()
+            .ok_or_else(|| format!("invalid low price for {}", bar.symbol))?,
+        close: bar
+            .close_price
+            .to_f64()
+            .ok_or_else(|| format!("invalid close price for {}", bar.symbol))?,
+        volume: bar
+            .volume
+            .to_f64()
+            .ok_or_else(|| format!("invalid volume for {}", bar.symbol))?,
+    })
+}
+
+fn asset_matches(requested: &str, bar: &MarketBar) -> bool {
+    // The apca stream subscription already filters by symbol. Keep
+    // this helper for readability and future demuxing; today there is
+    // no symbol field on our internal MarketBar to compare against.
+    let _ = requested;
+    let _ = bar;
+    true
 }
 
 fn compute_backoff(attempt: u32) -> Duration {
