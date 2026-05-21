@@ -73,8 +73,7 @@ pub struct PaperExecutor {
     /// keeps the dispatcher's memory seam dormant (the recorder is
     /// already a no-op for `MemoryMode::Off`, but this also covers
     /// tests / CLI rehearsal that never built one).
-    memory_recorder:
-        Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    memory_recorder: Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
     /// Pre-submit minimum-notional gate (`risk-gate-min-notional`).
     /// When `Some(min)` and `min > 0.0`, orders with notional (size ×
     /// reference price) strictly less than `min` are vetoed before
@@ -956,7 +955,10 @@ impl PaperExecutor {
                     store
                         .record_supervisor_note(&run.id, "guard", "warn", &note)
                         .await?;
-                    tracing::warn!(
+                    // Per-decision warn demoted to debug (eval-guardrail-log-collapse):
+                    // the supervisor_notes row is the durable record; a per-run
+                    // summary warn is emitted at finalize by guardrail_summary::fire_guardrail_summary.
+                    tracing::debug!(
                         run_id = %run.id,
                         decision_index = decision_idx,
                         asset = %asset,
