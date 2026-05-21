@@ -13,6 +13,7 @@ pub mod fire_trade;
 pub mod home;
 pub mod indicator;
 pub mod intern;
+pub mod memory;
 pub mod metrics;
 pub mod migrate;
 pub mod obs;
