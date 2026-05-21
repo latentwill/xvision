@@ -388,6 +388,31 @@ Out of scope: in-place mutation of scenarios (would need an
 `update_scenario` API + the engine's invariants around cache keys).
 Clone-with-mutations stays the canonical authoring path.
 
+## Final status — 2026-05-21 conductor re-triage
+
+All 11 items closed. The intake was archived to `team/intake/archive/`
+on this date with no remaining open work. Disposition of the three
+followups the previous status section listed as in-flight:
+
+- `strategy-require-at-least-one-agent-fixture-migration` — landed and
+  archived under `team/archive/2026-05-21-conductor-sweep/contracts/`
+  + `…/status/`.
+- `paper-eval-inspector-parity` — contract recon closed as
+  `status: merged` (no engine-side gap visible from source; the operator
+  finding requires a live-repro to re-scope and was not reproducible
+  during recon). Contract + status archived under
+  `team/archive/2026-05-21-conductor-sweep/`. If the operator
+  re-encounters the missing-PnL / missing-orders symptom on a paper
+  run, file a fresh intake with the run id and a screenshot of the
+  inspector; do not re-open this archived contract.
+- `scenario-clone-form-structural-fields` — contract closed as
+  `status: merged`; archived under the same conductor-sweep
+  directory.
+
+No open board tracks reference this intake. Round-7
+(`team/intake/2026-05-20-qa-operator-round-7.md`) carries the live
+operator wave; later rounds supersede any unfinished framing here.
+
 ## Verbatim findings
 
 > QA22

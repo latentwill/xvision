@@ -18,6 +18,24 @@ start referencing agents." That refactor has landed (see
 `docs/superpowers/plans/2026-05-12-strategies-refactor-agent-composition.md`),
 so the stubs are now ship-ready to replace with the real query.
 
+## Triage status — 2026-05-21 conductor re-triage
+
+All three tracks still open and valid; none superseded by 2026-05-20 /
+2026-05-21 waves. The intake was briefly moved to
+`team/intake/archive/` during the 2026-05-21 conductor sweep — that was
+premature; restored to active intake on 2026-05-21 by the conductor
+re-triage of QA rounds 4/6/7. Ready to decompose into board contracts
+the next time the conductor opens a wave:
+
+- `agent-usage-panel-wire-deployed-and-runs` (P1, integration) — the
+  backend stubs at `crates/xvision-engine/src/api/agents.rs:313` and
+  `:325` still return `Ok(Vec::new())` with a TODO citing the
+  strategies refactor; that refactor has landed, so the stubs are
+  ship-ready to replace. Concrete and self-contained.
+- `scenario-form-calendar-whitespace` (P2, frontend CSS leaf).
+- `scenario-runs-tab-show-eval-name` (P2, frontend display leaf with a
+  small backend hop).
+
 ## Already in flight / queue notes
 
 - The list-component design package (`docs/design/FilterSearchLists.zip`)

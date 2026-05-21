@@ -10,6 +10,25 @@ Operator session, 2026-05-20 morning. Followed the QA Round 5/6 cadence;
 queues alongside the round-6 items (`team/intake/2026-05-19-qa-operator-round-6.md`)
 not yet claimed.
 
+## Triage status — 2026-05-21 conductor re-triage
+
+All nine findings are still open and valid. F-2 / F-3 / F-4 (search +
+filter, default sort, page size) fold into the list-component spec
+work — they duplicate the asks in
+`team/intake/2026-05-19-list-component-design-intake.md` (the
+`list-component-spec` Reserved entry on `team/board.md`). When that
+spec lands and contracts open, F-2 / F-3 / F-4 are subsumed; do NOT
+freelance a per-page quick-fix unless the operator explicitly OKs that
+path on top of the unified-component decomposition.
+
+The remaining six (F-1, F-5, F-6, F-7, F-8, F-9) are the actionable
+round-7 surface area. They cluster as the spec suggests in
+*Decomposition guidance* below:
+
+- **Eval inspector wave** — F-1, F-6, F-8, F-9.
+- **Trace wave** — F-5, F-7 (F-7 needs the trade-events investigation
+  step before the button add).
+
 ## Findings
 
 ### F-1 — Eval inspector top bar: link to strategy + scenario + agents
