@@ -192,6 +192,40 @@ async fn short_open_from_long_submits_close_plus_new_short_quantity() {
     assert_eq!(record.order_state, Some(OrderState::Filled));
 }
 
+#[tokio::test]
+async fn flat_from_long_submits_market_sell_for_abs_position() {
+    let mock = RecordingBroker::new(51_000.0);
+    let mut sink = RealBrokerFills::new(mock.clone());
+
+    let record = sink.submit(req("flat", 0.04, 100_000.0, 0.02, 50_000.0)).await;
+
+    let submitted = mock.submitted();
+    assert_eq!(submitted.len(), 1, "flat close must submit exactly one order");
+    assert!(matches!(submitted[0].side, Side::Sell));
+    assert!((submitted[0].size - 0.04).abs() < 1e-9);
+    assert_eq!(record.new_pos, 0.0);
+    assert_eq!(record.new_entry, 0.0);
+    assert_eq!(record.fill_size, Some(0.04));
+    assert_eq!(record.order_state, Some(OrderState::Filled));
+}
+
+#[tokio::test]
+async fn flat_from_short_submits_market_buy_for_abs_position() {
+    let mock = RecordingBroker::new(49_000.0);
+    let mut sink = RealBrokerFills::new(mock.clone());
+
+    let record = sink.submit(req("flat", -0.03, 100_000.0, 0.02, 50_000.0)).await;
+
+    let submitted = mock.submitted();
+    assert_eq!(submitted.len(), 1, "flat close must submit exactly one order");
+    assert!(matches!(submitted[0].side, Side::Buy));
+    assert!((submitted[0].size - 0.03).abs() < 1e-9);
+    assert_eq!(record.new_pos, 0.0);
+    assert_eq!(record.new_entry, 0.0);
+    assert_eq!(record.fill_size, Some(0.03));
+    assert_eq!(record.order_state, Some(OrderState::Filled));
+}
+
 /// Scripted broker that returns a configured error message verbatim
 /// on `submit_order`. Used to pin the classifier wiring.
 struct ErrorBroker {

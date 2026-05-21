@@ -42,6 +42,14 @@ impl ScriptedFetcher {
             calls: Mutex::new(0),
         })
     }
+
+    fn calls(&self) -> u32 {
+        *self.calls.lock().unwrap()
+    }
+
+    fn remaining_responses(&self) -> usize {
+        self.responses.lock().unwrap().len()
+    }
 }
 
 #[async_trait]
@@ -54,7 +62,12 @@ impl LivePollFetcher for ScriptedFetcher {
         _end: DateTime<Utc>,
     ) -> Result<Vec<MarketBar>, AlpacaPollError> {
         *self.calls.lock().unwrap() += 1;
-        let next = self.responses.lock().unwrap().pop_front().unwrap_or_default();
+        let next = self
+            .responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("ScriptedFetcher exhausted; add an explicit empty response if the test expects one");
         Ok(next)
     }
 }
@@ -76,15 +89,17 @@ async fn dedup_drops_repeated_bar_timestamps() {
         .await
         .expect("second bar (must be the strictly-newer one)");
     assert_eq!(b2.timestamp, ts(120));
+    assert_eq!(fetcher.calls(), 2);
+    assert_eq!(fetcher.remaining_responses(), 0);
 }
 
 #[tokio::test]
 async fn skips_bars_at_or_before_last_delivered() {
     // Fetch returns three bars: [t=60, t=120, t=120 again].
     // Caller already saw t=120 via `set_last_delivered`; only newer
-    // bars must be yielded — the loop should then return Empty because
-    // we exhaust the scripted responses with no newer entries.
-    let fetcher = ScriptedFetcher::new(vec![vec![bar_at(60), bar_at(120), bar_at(120)], vec![]]);
+    // bars must be yielded. With a zero poll interval the loop returns
+    // Empty immediately after that fetch produces no queued fresh bars.
+    let fetcher = ScriptedFetcher::new(vec![vec![bar_at(60), bar_at(120), bar_at(120)]]);
     let mut poll = AlpacaLivePoll::new(fetcher.clone(), "BTC/USD".into(), BarGranularity::Minute1)
         .with_poll_interval(std::time::Duration::ZERO);
     poll.set_last_delivered(ts(120));
@@ -93,6 +108,8 @@ async fn skips_bars_at_or_before_last_delivered() {
         Err(AlpacaPollError::Empty) => {}
         other => panic!("expected Empty error after stale bars, got {other:?}"),
     }
+    assert_eq!(fetcher.calls(), 1);
+    assert_eq!(fetcher.remaining_responses(), 0);
 }
 
 #[tokio::test]
@@ -108,4 +125,6 @@ async fn surfaces_strictly_newer_bar_after_stale_history() {
     assert_eq!(b1.timestamp, ts(120));
     let b2 = poll.next_bar().await.expect("second new bar");
     assert_eq!(b2.timestamp, ts(180));
+    assert_eq!(fetcher.calls(), 1);
+    assert_eq!(fetcher.remaining_responses(), 0);
 }

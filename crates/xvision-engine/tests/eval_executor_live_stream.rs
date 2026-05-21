@@ -57,13 +57,19 @@ fn client() -> AlpacaLiveClient {
 
 struct ScriptedFetcher {
     responses: Mutex<std::collections::VecDeque<Vec<MarketBar>>>,
+    calls: Mutex<u32>,
 }
 
 impl ScriptedFetcher {
     fn new(responses: Vec<Vec<MarketBar>>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(responses.into()),
+            calls: Mutex::new(0),
         })
+    }
+
+    fn calls(&self) -> u32 {
+        *self.calls.lock().unwrap()
     }
 }
 
@@ -76,6 +82,7 @@ impl LivePollFetcher for ScriptedFetcher {
         _start: DateTime<Utc>,
         _end: DateTime<Utc>,
     ) -> Result<Vec<MarketBar>, AlpacaPollError> {
+        *self.calls.lock().unwrap() += 1;
         Ok(self.responses.lock().unwrap().pop_front().unwrap_or_default())
     }
 }
@@ -106,40 +113,57 @@ async fn warmup_buffer_drains_before_live_bars() {
 
 #[tokio::test]
 async fn websocket_budget_exhaustion_transitions_to_polling_fallback() {
-    // Two ws bars, then three disconnects with budget=2 → budget exhausted.
-    // Polling fallback returns one fresh bar then nothing (Empty → Closed).
+    // Recoverable disconnects are followed by websocket bars, proving
+    // polling does not start until the final consecutive disconnects
+    // exceed budget=2. Polling then returns one fresh bar and closes.
     let ws_items = vec![
         LiveBarItem::Bar(market_bar_at(60)),
-        LiveBarItem::Bar(market_bar_at(120)),
         LiveBarItem::Disconnect { reason: "a".into() },
+        LiveBarItem::Bar(market_bar_at(120)),
         LiveBarItem::Disconnect { reason: "b".into() },
+        LiveBarItem::Bar(market_bar_at(180)),
         LiveBarItem::Disconnect { reason: "c".into() },
-        LiveBarItem::Bar(market_bar_at(999)),
+        LiveBarItem::Disconnect { reason: "d".into() },
+        LiveBarItem::Disconnect { reason: "e".into() },
     ];
     let ws_sub = client()
         .with_reconnect_budget(2)
         .subscription_from_stream(BarGranularity::Minute1, stream::iter(ws_items));
 
-    // Poll returns one fresh bar at t=180, then empty.
-    let poll = AlpacaLivePoll::new(
-        ScriptedFetcher::new(vec![vec![market_bar_at(180)], vec![]]),
-        "BTC/USD".into(),
-        BarGranularity::Minute1,
-    )
-    .with_poll_interval(Duration::ZERO);
+    let fetcher = ScriptedFetcher::new(vec![vec![market_bar_at(240)], vec![]]);
+    let poll = AlpacaLivePoll::new(fetcher.clone(), "BTC/USD".into(), BarGranularity::Minute1)
+        .with_poll_interval(Duration::ZERO);
 
     let mut live = LiveStream::new_for_test(Vec::new(), ws_sub, poll);
 
     let b1 = live.next_bar().await.expect("ws bar 1");
     assert_eq!(b1.timestamp, ts(60));
+    assert_eq!(fetcher.calls(), 0, "poll must not run before budget exhaustion");
     let b2 = live.next_bar().await.expect("ws bar 2");
     assert_eq!(b2.timestamp, ts(120));
-    // After budget exhausted, poll fallback yields its bar.
-    let b3 = live.next_bar().await.expect("poll fallback bar");
+    assert_eq!(
+        fetcher.calls(),
+        0,
+        "recoverable disconnects must stay on websocket"
+    );
+    let b3 = live
+        .next_bar()
+        .await
+        .expect("ws bar 3 after recoverable disconnect");
     assert_eq!(b3.timestamp, ts(180));
+    assert_eq!(
+        fetcher.calls(),
+        0,
+        "poll must wait for consecutive budget exhaustion"
+    );
+    // After budget exhausted, poll fallback yields its bar.
+    let b4 = live.next_bar().await.expect("poll fallback bar");
+    assert_eq!(b4.timestamp, ts(240));
+    assert_eq!(fetcher.calls(), 1);
     // Stream eventually closes.
     assert!(
         live.next_bar().await.is_none(),
         "stream must close after poll exhaustion"
     );
+    assert_eq!(fetcher.calls(), 2);
 }
