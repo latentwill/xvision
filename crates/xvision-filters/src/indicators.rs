@@ -132,9 +132,7 @@ impl IndicatorEngine {
                 Instance::Sma(s) => s.push(bar.close),
                 Instance::Ema(s) => s.push(bar.close),
                 Instance::Rsi(s) => s.push(bar.close),
-                Instance::Atr(s) | Instance::AtrPct(s) => {
-                    s.push(bar.high, bar.low, bar.close, prev_close)
-                }
+                Instance::Atr(s) | Instance::AtrPct(s) => s.push(bar.high, bar.low, bar.close, prev_close),
             }
         }
         self.last_close = Some(bar.close);
@@ -155,9 +153,7 @@ impl IndicatorEngine {
             Instance::Rsi(s) => s.value(),
             Instance::Atr(s) => s.value(),
             Instance::AtrPct(s) => match (s.value(), self.last_close) {
-                (Some(atr), Some(close)) if close.abs() > f64::EPSILON => {
-                    Some(100.0 * atr / close)
-                }
+                (Some(atr), Some(close)) if close.abs() > f64::EPSILON => Some(100.0 * atr / close),
                 _ => None,
             },
         }
@@ -407,10 +403,7 @@ mod tests {
     fn close_seq(closes: &[f64]) -> Vec<Bar> {
         // Synthesize OHLC where high = close + 0.5, low = close - 0.5 so
         // true range is well defined.
-        closes
-            .iter()
-            .map(|&c| bar(c, c + 0.5, c - 0.5, c))
-            .collect()
+        closes.iter().map(|&c| bar(c, c + 0.5, c - 0.5, c)).collect()
     }
 
     #[test]
@@ -451,8 +444,8 @@ mod tests {
         // Hand-computed expected ≈ 62.48 (sum_gains=2.93, sum_losses=1.76,
         // RS=1.6648, RSI=100 - 100/2.6648).
         let closes = [
-            46.13, 46.26, 46.50, 46.38, 46.25, 46.65, 46.42, 46.92, 46.30, 46.07, 46.03, 46.83,
-            47.69, 47.54, 47.30,
+            46.13, 46.26, 46.50, 46.38, 46.25, 46.65, 46.42, 46.92, 46.30, 46.07, 46.03, 46.83, 47.69, 47.54,
+            47.30,
         ];
         let r = IndicatorRef::periodic(IndicatorName::Rsi, 14);
         let mut e = IndicatorEngine::new([&r]);

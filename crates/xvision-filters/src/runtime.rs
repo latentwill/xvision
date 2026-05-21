@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::ValidationError;
 use crate::indicators::Bar;
 use crate::state::FilterState;
-use crate::types::{
-    Condition, ConditionTree, Filter, IndicatorRef, Operand, Operator, WakeInPosition,
-};
+use crate::types::{Condition, ConditionTree, Filter, IndicatorRef, Operand, Operator, WakeInPosition};
 use crate::validate::validate;
 
 /// Decision the runtime returns for a bar.
@@ -174,12 +172,7 @@ impl<'f> RuntimeFilter<'f> {
     ///    - If daily cap reached → return `CappedForDay`.
     ///    - Else: determine transition (Trip vs Hold), arm cooldown
     ///      on Trip, return `Active`.
-    pub fn evaluate(
-        &self,
-        state: &mut FilterState,
-        bar: &Bar,
-        ctx: EvalContext,
-    ) -> FilterEvalOutcome {
+    pub fn evaluate(&self, state: &mut FilterState, bar: &Bar, ctx: EvalContext) -> FilterEvalOutcome {
         state.indicators.push(bar);
 
         if !state.is_warm() {
@@ -223,11 +216,11 @@ impl<'f> RuntimeFilter<'f> {
 
         // Tree is true; figure out which suppression (if any) applies.
         let suppressed_in_pos = matches!(
+            (ctx.in_position, self.filter.wake_when_in_position,),
             (
-                ctx.in_position,
-                self.filter.wake_when_in_position,
-            ),
-            (true, WakeInPosition::Never | WakeInPosition::OnInvalidationOrTargetOnly)
+                true,
+                WakeInPosition::Never | WakeInPosition::OnInvalidationOrTargetOnly
+            )
         );
 
         if suppressed_in_pos {
@@ -270,9 +263,7 @@ impl<'f> RuntimeFilter<'f> {
                 if today >= cap {
                     // Don't record the wakeup; report capped.
                     return FilterEvalOutcome {
-                        decision: ActivationDecision::CappedForDay {
-                            wakeups_today: today,
-                        },
+                        decision: ActivationDecision::CappedForDay { wakeups_today: today },
                         conditions_passed: results,
                         tree_true: true,
                     };
@@ -309,18 +300,10 @@ fn eval_condition(
     engine: &crate::indicators::IndicatorEngine,
 ) -> bool {
     match cond.op {
-        Operator::Gt => numeric_pair(cond, engine)
-            .map(|(a, b)| a > b)
-            .unwrap_or(false),
-        Operator::Lt => numeric_pair(cond, engine)
-            .map(|(a, b)| a < b)
-            .unwrap_or(false),
-        Operator::Gte => numeric_pair(cond, engine)
-            .map(|(a, b)| a >= b)
-            .unwrap_or(false),
-        Operator::Lte => numeric_pair(cond, engine)
-            .map(|(a, b)| a <= b)
-            .unwrap_or(false),
+        Operator::Gt => numeric_pair(cond, engine).map(|(a, b)| a > b).unwrap_or(false),
+        Operator::Lt => numeric_pair(cond, engine).map(|(a, b)| a < b).unwrap_or(false),
+        Operator::Gte => numeric_pair(cond, engine).map(|(a, b)| a >= b).unwrap_or(false),
+        Operator::Lte => numeric_pair(cond, engine).map(|(a, b)| a <= b).unwrap_or(false),
         Operator::Eq => numeric_pair(cond, engine)
             .map(|(a, b)| (a - b).abs() < f64::EPSILON)
             .unwrap_or(false),
@@ -336,15 +319,11 @@ fn eval_condition(
             // result on this bar combined with prev_leaf_result == false
             // implies the cross. If prev_leaf_result is None we cannot
             // detect — return false.
-            let now = numeric_pair(cond, engine)
-                .map(|(a, b)| a > b)
-                .unwrap_or(false);
+            let now = numeric_pair(cond, engine).map(|(a, b)| a > b).unwrap_or(false);
             matches!((prev_leaf_result, now), (Some(false), true))
         }
         Operator::CrossesBelow => {
-            let now = numeric_pair(cond, engine)
-                .map(|(a, b)| a < b)
-                .unwrap_or(false);
+            let now = numeric_pair(cond, engine).map(|(a, b)| a < b).unwrap_or(false);
             matches!((prev_leaf_result, now), (Some(false), true))
         }
     }
@@ -352,10 +331,7 @@ fn eval_condition(
 
 /// Resolve both sides of a condition to numerics. Returns `None` if any
 /// referenced indicator is still warming up.
-fn numeric_pair(
-    cond: &Condition,
-    engine: &crate::indicators::IndicatorEngine,
-) -> Option<(f64, f64)> {
+fn numeric_pair(cond: &Condition, engine: &crate::indicators::IndicatorEngine) -> Option<(f64, f64)> {
     let a = resolve_numeric(&cond.lhs, engine)?;
     let b = resolve_numeric(&cond.rhs, engine)?;
     Some((a, b))
@@ -380,8 +356,8 @@ pub fn referenced_indicators(filter: &Filter) -> Vec<IndicatorRef> {
 mod tests {
     use super::*;
     use crate::types::{
-        AgentContextTemplateId, FilterId, FilterStatus, IndicatorName, ScanCadence, StrategyId,
-        Symbol, Timeframe,
+        AgentContextTemplateId, FilterId, FilterStatus, IndicatorName, ScanCadence, StrategyId, Symbol,
+        Timeframe,
     };
     use chrono::TimeZone;
 
@@ -475,10 +451,7 @@ mod tests {
         assert!(o.decision.is_trip());
         // Cooldown armed = 2; next true bar reports Cooldown.
         let o = rt.evaluate(&mut state, &bar(60.0), ctx);
-        assert!(matches!(
-            o.decision,
-            ActivationDecision::Cooldown { .. }
-        ));
+        assert!(matches!(o.decision, ActivationDecision::Cooldown { .. }));
     }
 
     #[test]
@@ -502,10 +475,7 @@ mod tests {
         rt.evaluate(&mut state, &bar(60.0), ctx); // Trip, wakeup=1
         rt.evaluate(&mut state, &bar(40.0), ctx); // Inactive (resets prev_tree)
         let o = rt.evaluate(&mut state, &bar(60.0), ctx);
-        assert!(matches!(
-            o.decision,
-            ActivationDecision::CappedForDay { .. }
-        ));
+        assert!(matches!(o.decision, ActivationDecision::CappedForDay { .. }));
     }
 
     #[test]
