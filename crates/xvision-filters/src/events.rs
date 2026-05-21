@@ -33,11 +33,11 @@ use crate::types::FilterId;
 pub enum SuppressedReason {
     /// `wake_when_in_position` blocked the trip while a position was open.
     InPosition,
+    /// Within the cooldown window after the most recent trip.
+    Cooldown,
     /// Filter's `max_wakeups_per_day` ceiling had been reached for the
     /// bar's UTC day.
     DailyCap,
-    /// Within the cooldown window after the most recent trip.
-    Cooldown,
 }
 
 /// One per-bar emission for a filter evaluated in FilterGated mode.
@@ -126,8 +126,8 @@ pub struct FilterSummary {
     pub bars_scanned: u32,
     pub wakeups: u32,
     pub suppressed_in_position: u32,
-    pub suppressed_daily_cap: u32,
     pub suppressed_cooldown: u32,
+    pub suppressed_daily_cap: u32,
     /// `bars_scanned - wakeups`. In FilterGated mode every non-wakeup
     /// bar is an LLM call that EveryBar would have paid for; this
     /// counts the savings.
@@ -145,8 +145,8 @@ impl FilterSummary {
             bars_scanned: 0,
             wakeups: 0,
             suppressed_in_position: 0,
-            suppressed_daily_cap: 0,
             suppressed_cooldown: 0,
+            suppressed_daily_cap: 0,
             llm_calls_saved: 0,
             estimated_tokens_saved: 0,
         }
@@ -169,11 +169,11 @@ impl FilterSummary {
                 Some(SuppressedReason::InPosition) => {
                     s.suppressed_in_position = s.suppressed_in_position.saturating_add(1);
                 }
-                Some(SuppressedReason::DailyCap) => {
-                    s.suppressed_daily_cap = s.suppressed_daily_cap.saturating_add(1);
-                }
                 Some(SuppressedReason::Cooldown) => {
                     s.suppressed_cooldown = s.suppressed_cooldown.saturating_add(1);
+                }
+                Some(SuppressedReason::DailyCap) => {
+                    s.suppressed_daily_cap = s.suppressed_daily_cap.saturating_add(1);
                 }
                 None => {}
             }
@@ -261,16 +261,16 @@ mod tests {
             (false, None)
         );
         assert_eq!(
+            classify(&ActivationDecision::SuppressedInPosition),
+            (false, Some(SuppressedReason::InPosition))
+        );
+        assert_eq!(
             classify(&ActivationDecision::Cooldown { bars_left: 2 }),
             (false, Some(SuppressedReason::Cooldown))
         );
         assert_eq!(
             classify(&ActivationDecision::CappedForDay { wakeups_today: 3 }),
             (false, Some(SuppressedReason::DailyCap))
-        );
-        assert_eq!(
-            classify(&ActivationDecision::SuppressedInPosition),
-            (false, Some(SuppressedReason::InPosition))
         );
     }
 
@@ -279,10 +279,10 @@ mod tests {
         let events = vec![
             event(0, true, None),                                  // wakeup
             event(60, false, None),                                // inactive/hold/warming
-            event(120, false, Some(SuppressedReason::Cooldown)),   // cooldown
+            event(120, false, Some(SuppressedReason::InPosition)), // in position
             event(180, false, Some(SuppressedReason::Cooldown)),   // cooldown
-            event(240, false, Some(SuppressedReason::DailyCap)),   // daily cap
-            event(300, false, Some(SuppressedReason::InPosition)), // in position
+            event(240, false, Some(SuppressedReason::Cooldown)),   // cooldown
+            event(300, false, Some(SuppressedReason::DailyCap)),   // daily cap
             event(360, true, None),                                // wakeup
         ];
 
@@ -290,9 +290,9 @@ mod tests {
 
         assert_eq!(s.bars_scanned, 7);
         assert_eq!(s.wakeups, 2);
+        assert_eq!(s.suppressed_in_position, 1);
         assert_eq!(s.suppressed_cooldown, 2);
         assert_eq!(s.suppressed_daily_cap, 1);
-        assert_eq!(s.suppressed_in_position, 1);
     }
 
     #[test]
@@ -310,9 +310,9 @@ mod tests {
         let s = FilterSummary::from_events(fid(), &events);
         let other = s.bars_scanned
             - s.wakeups
+            - s.suppressed_in_position
             - s.suppressed_cooldown
-            - s.suppressed_daily_cap
-            - s.suppressed_in_position;
+            - s.suppressed_daily_cap;
         assert_eq!(other, 1, "exactly one inactive/warming/hold bar");
     }
 
@@ -337,9 +337,9 @@ mod tests {
         assert_eq!(s.wakeups, 0);
         assert_eq!(s.llm_calls_saved, 0);
         assert_eq!(s.estimated_tokens_saved, 0);
+        assert_eq!(s.suppressed_in_position, 0);
         assert_eq!(s.suppressed_cooldown, 0);
         assert_eq!(s.suppressed_daily_cap, 0);
-        assert_eq!(s.suppressed_in_position, 0);
     }
 
     #[test]

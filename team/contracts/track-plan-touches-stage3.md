@@ -9,7 +9,6 @@ status: in-progress
 depends_on:
   - track-plan-touches
 blocks:
-  - track-plan-touches-engine
   - filter-v1-frontend-types-and-panels
   - filter-v1-regression-fixtures
 stacking: stacked-on:track-plan-touches
@@ -53,17 +52,17 @@ acceptance:
   - "**Runtime → event bridge.** `FilterEventV1::from_outcome(filter_id, bar_timestamp, outcome, indicator_snapshot)` maps an `ActivationDecision` to `(triggered, suppressed_reason)`. Active::Trip → triggered=true, no suppression. Active::Hold / Inactive / Warming → triggered=false, no suppression. Cooldown / CappedForDay / SuppressedInPosition → triggered=false, matching `SuppressedReason` variant."
   - "**Indicator snapshot shape.** `indicator_snapshot: BTreeMap<String, f64>` keyed on `IndicatorRef.to_string()` (e.g. `\"ema_20\"`, `\"close\"`). Sparse — only references actually evaluated this bar appear. Constructed engine-side and passed in; the runtime crate does not materialise it."
   - "**Condition leaf indices.** `conditions_passed` and `conditions_failed` carry `u32` indices into `ConditionTree::conditions()` (the flat list the runtime already returns). This keeps the wire shape compact and the indexing identical to what `FilterEvalOutcome.conditions_passed` uses."
-  - "**FilterSummary aggregator.** `FilterSummary::from_events(filter_id, events)` walks a per-filter slice and computes `bars_scanned`, `wakeups`, `suppressed_in_position`, `suppressed_daily_cap`, `suppressed_cooldown`, `llm_calls_saved = bars_scanned - wakeups`, `estimated_tokens_saved = llm_calls_saved * AVG_BRIEFING_TOKEN_COST`. Caller groups events by `filter_id` externally."
+  - "**FilterSummary aggregator.** `FilterSummary::from_events(filter_id, events)` walks a per-filter slice and computes `bars_scanned`, `wakeups`, `suppressed_in_position`, `suppressed_cooldown`, `suppressed_daily_cap`, `llm_calls_saved = bars_scanned - wakeups`, `estimated_tokens_saved = llm_calls_saved * AVG_BRIEFING_TOKEN_COST`. Caller groups events by `filter_id` externally. Suppression buckets are ordered to match runtime precedence: in-position, cooldown, daily cap."
   - "**Token-cost constant.** `crate::AVG_BRIEFING_TOKEN_COST: u64 = 50_000` lives in `lib.rs` matching the MANUAL.md §scaling-assumption block. A v1.5 follow-up replaces this with a per-strategy measurement."
-  - "**Count reconciliation.** A unit test asserts `bars_scanned - wakeups - suppressed_in_position - suppressed_daily_cap - suppressed_cooldown` is the residual `inactive + warming + hold` count — i.e., every event lands in exactly one bucket."
+  - "**Count reconciliation.** A unit test asserts `bars_scanned - wakeups - suppressed_in_position - suppressed_cooldown - suppressed_daily_cap` is the residual `inactive + warming + hold` count — i.e., every event lands in exactly one bucket."
   - "**Serde stability.** `SuppressedReason` serialises with `#[serde(tag = \"kind\", rename_all = \"snake_case\")]` so the wire shape is `{\"kind\":\"cooldown\"}` etc. (matches the v1 spec's discriminated-union form). `suppressed_reason: None` is omitted from output via `skip_serializing_if`."
   - "**Engine independence guard.** `rg --hidden -n 'use xvision_engine' crates/xvision-filters/` → no hits. The new module imports only from the local `runtime` + `types` modules."
-  - "**Stage 3 Part 1 scope.** Engine-side emission (the `ProgressEvent::FilterEvaluated` variant), `RunSummary::filter_summaries`, and the export-shape extension are deferred to `track-plan-touches-engine` because they require the per-bar hook Stage 2 Part 2 introduces. This contract delivers the engine-independent type layer Stage 3 needs."
+  - "**Stage 3 Part 1 scope.** Engine-side emission (the `ProgressEvent::FilterEvaluated` variant), `RunSummary::filter_summaries`, and the export-shape extension are deferred until after `track-plan-touches-engine` because they require the per-bar hook Stage 2 Part 2 introduces. This contract delivers the engine-independent type layer Stage 3 needs; it does not block the hook-only engine PR."
   - "**Pre-existing carry-ins fixed.** The Stage 2 Part 1 branch shipped with four issues that blocked `cargo test -p xvision-filters`, `cargo clippy -p xvision-filters --all-targets -- -D warnings`, and `cargo fmt -p xvision-filters --check`: `IndicatorName` missing `Ord` (needed by `IndicatorKey`'s `Ord` derive), `Symbol::new(\"BTC/USD\".into())` ambiguous type inference in `state.rs` tests (2 sites), `UtcDay`'s visibility leak through `FilterState::wakeup_day`, and non-fmt-compliant line breaks in `runtime.rs` + `indicators.rs`. Fixed in this PR (minimal mechanical touches) so the verification gates pass."
   - "**Tests required.**"
   - "  - `events::tests::classify_maps_all_activation_decision_variants` — every `ActivationDecision` variant has a (triggered, suppressed) mapping."
   - "  - `events::tests::summary_from_events_counts_each_bucket_once` — each suppression reason is counted exactly once."
-  - "  - `events::tests::summary_reconciles_counts` — bars_scanned = wakeups + suppressed_in_position + suppressed_daily_cap + suppressed_cooldown + residual."
+  - "  - `events::tests::summary_reconciles_counts` — bars_scanned = wakeups + suppressed_in_position + suppressed_cooldown + suppressed_daily_cap + residual."
   - "  - `events::tests::summary_llm_calls_saved_equals_bars_minus_wakeups` — 5 wakeups out of 100 bars → llm_calls_saved = 95; estimated_tokens_saved = 95 × AVG_BRIEFING_TOKEN_COST."
   - "  - `events::tests::summary_empty_events_zero_everything` — empty input → all-zero summary."
   - "  - `events::tests::event_serde_roundtrip_preserves_shape` — JSON round-trip is identity."
@@ -96,8 +95,8 @@ After this contract:
   render.
 - The crate still has zero engine dependencies. The engine-side
   emission, the `ProgressEvent::FilterEvaluated` variant, and the
-  `RunSummary::filter_summaries` extension live in the follow-up
-  contract `track-plan-touches-engine`.
+  `RunSummary::filter_summaries` extension live in a follow-up after
+  `track-plan-touches-engine` provides the per-bar hook.
 
 # Out of scope (this PR — Stage 3 Part 1)
 
@@ -110,6 +109,13 @@ After this contract:
 - Frontend types + panels — Stage 4.
 - Regression fixtures — Stage 5.
 - Live mode integration.
+
+# Merge ordering
+
+This PR is stacked only on `track-plan-touches` and can land without
+waiting for `track-plan-touches-engine`. The engine hook PR is allowed
+to land independently; the later engine event/export follow-up consumes
+both the hook and these type definitions.
 
 # Sync-before-work ritual
 
