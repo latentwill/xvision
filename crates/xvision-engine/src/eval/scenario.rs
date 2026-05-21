@@ -415,6 +415,13 @@ pub enum ScenarioSource {
     User,
     Clone,
     Generated,
+    /// Materialised by the "Save as historical scenario" action from a
+    /// completed Live run (Phase 3 of the 2026-05-21 Alpaca-Live plan,
+    /// §Phase E). Carries the same v1 walls as `Canonical` / `User`
+    /// scenarios: past `time_window.end`, Alpaca crypto whitelist,
+    /// `Continuous` replay mode. The runtime distinguishes `Frozen`
+    /// from `Canonical` only for provenance / display purposes.
+    Frozen,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]

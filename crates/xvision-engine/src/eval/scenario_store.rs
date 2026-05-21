@@ -17,6 +17,7 @@ fn source_tag(s: ScenarioSource) -> &'static str {
         ScenarioSource::User => "user",
         ScenarioSource::Clone => "clone",
         ScenarioSource::Generated => "generated",
+        ScenarioSource::Frozen => "frozen",
     }
 }
 

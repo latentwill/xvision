@@ -29,6 +29,12 @@ const SOURCE_TONE: Record<ScenarioSource, "default" | "gold" | "info" | "warn"> 
   User: "info",
   Clone: "default",
   Generated: "warn",
+  // Frozen scenarios are materialised from a completed Live run via the
+  // "Save as historical scenario" action (Alpaca-Live plan §Phase E).
+  // Visually distinguish from `User` (manually authored) — use the info
+  // tone for parity with `User` for now; a dedicated tone can land when
+  // the Frozen surface picks up its own iconography.
+  Frozen: "info",
 };
 
 // The source filter lives in URL state via `useListUrlState`, so we
@@ -42,6 +48,7 @@ const SOURCE_FILTER: FilterDef = {
     { value: "user", label: "User" },
     { value: "clone", label: "Clone" },
     { value: "generated", label: "Generated" },
+    { value: "frozen", label: "Frozen" },
   ],
 };
 
@@ -74,6 +81,8 @@ function sourceTokenToFilter(token: string): ScenarioSource | null {
       return "Clone";
     case "generated":
       return "Generated";
+    case "frozen":
+      return "Frozen";
     default:
       return null;
   }
