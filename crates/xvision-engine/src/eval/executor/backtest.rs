@@ -757,7 +757,10 @@ impl BacktestExecutor {
                     store
                         .record_supervisor_note(&run.id, "guard", "warn", &note)
                         .await?;
-                    tracing::warn!(
+                    // Per-decision warn demoted to debug (eval-guardrail-log-collapse):
+                    // the supervisor_notes row is the durable record; a per-run
+                    // summary warn is emitted at finalize by guardrail_summary::fire_guardrail_summary.
+                    tracing::debug!(
                         run_id = %run.id,
                         decision_index = decision_idx,
                         asset = %asset,

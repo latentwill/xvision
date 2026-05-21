@@ -1438,6 +1438,12 @@ async fn run_inner(
     let store_for_auto = RunStore::new(ctx.db.clone());
     crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
 
+    // Guardrail rewrite summary (eval-guardrail-log-collapse). Reads
+    // guard-role supervisor_notes, emits one tracing::warn! and one
+    // eval_findings row summarising the rewrite rate. Best-effort.
+    let store_for_guard = RunStore::new(ctx.db.clone());
+    crate::eval::guardrail_summary::fire_guardrail_summary(&store_for_guard, &finalized.id).await;
+
     Ok(finalized)
 }
 
@@ -2187,6 +2193,10 @@ async fn execute_in_background(
     // findings we just persisted and writes a single eval_reviews row.
     let store_for_auto = RunStore::new(ctx.db.clone());
     crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
+
+    // Guardrail rewrite summary (eval-guardrail-log-collapse). Best-effort.
+    let store_for_guard = RunStore::new(ctx.db.clone());
+    crate::eval::guardrail_summary::fire_guardrail_summary(&store_for_guard, &finalized.id).await;
 }
 
 /// Route a single `mark_failed` write through `ApiContext::finalize_writer`
