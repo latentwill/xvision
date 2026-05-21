@@ -17,6 +17,7 @@ import {
   safeId,
   safePath,
 } from "@/lib/logger";
+import { getSessionToken } from "@/stores/auth";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -37,9 +38,12 @@ export class ApiError extends Error {
 }
 
 type ApiErrorShape = {
-  code: string;
-  message: string;
+  code?: string;
+  message?: string;
   field?: string;
+  // The session-auth middleware uses `{"error": "unauthenticated"}` (key "error")
+  // rather than the DashboardError shape (key "code"). We accept both.
+  error?: string;
 };
 
 export async function apiFetch<T>(
@@ -56,10 +60,27 @@ export async function apiFetch<T>(
   const started = performance.now();
   trace.debug("api.request.start");
 
+  // Attach the session token on mutating requests (POST/PUT/PATCH/DELETE).
+  // GET requests are exempted — read-only routes are open to all clients.
+  // The loopback-exemption in the server middleware means this header is a
+  // no-op for local deployments; it only matters on remote/non-loopback setups.
+  const MUTATING_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
+  const authHeaders: Record<string, string> = {};
+  if (MUTATING_METHODS.includes(method.toUpperCase())) {
+    const token = getSessionToken();
+    if (token) {
+      authHeaders["authorization"] = `Bearer ${token}`;
+    }
+  }
+
   let res: Response;
   try {
     res = await fetch(path, {
-      headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+      headers: {
+        "content-type": "application/json",
+        ...authHeaders,
+        ...(init?.headers ?? {}),
+      },
       ...init,
     });
   } catch (err) {
@@ -87,9 +108,20 @@ export async function apiFetch<T>(
       error_message: body?.message,
       duration_ms: durationSince(started),
     });
+
+    // On 401 with "unauthenticated" (session gate), redirect to /login so the
+    // user can create a session. Pass `next` so they land back on this page.
+    // Loopback clients never hit this because the middleware passes them through.
+    if (res.status === 401 && body?.error === "unauthenticated") {
+      const next = encodeURIComponent(
+        window.location.pathname + window.location.search,
+      );
+      window.location.href = `/login?next=${next}`;
+    }
+
     throw new ApiError(
       res.status,
-      body?.code ?? "http_error",
+      body?.code ?? body?.error ?? "http_error",
       body?.message ?? res.statusText ?? `HTTP ${res.status}`,
       body?.field,
     );

@@ -289,4 +289,77 @@ impl AppState {
         self.cli_command = cli_command;
         self
     }
+
+    /// Bootstrap the dashboard-owned tables (dashboard_sessions, auth_audit).
+    ///
+    /// Uses direct `CREATE TABLE IF NOT EXISTS` DDL rather than sqlx's
+    /// versioned migration system. The engine already populates
+    /// `_sqlx_migrations` with its own versions; running a second independent
+    /// sqlx Migrator over the same pool causes UNIQUE constraint violations
+    /// on that table. Plain DDL avoids the conflict and is idempotent.
+    ///
+    /// Called from `server::serve` at startup and from integration-test
+    /// helpers that need the session/audit tables present.
+    pub async fn run_dashboard_migrations(&self) -> anyhow::Result<()> {
+        // dashboard_sessions: live session tokens.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS dashboard_sessions (
+                session_id   TEXT NOT NULL PRIMARY KEY,
+                token_hash   TEXT NOT NULL UNIQUE,
+                created_at   TEXT NOT NULL,
+                expires_at   TEXT NOT NULL,
+                source_ip    TEXT,
+                label        TEXT
+            )"#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("create dashboard_sessions table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_dashboard_sessions_token_hash ON dashboard_sessions (token_hash)",
+        )
+        .execute(&self.pool)
+        .await
+        .context("create dashboard_sessions token_hash index")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_dashboard_sessions_expires_at ON dashboard_sessions (expires_at)",
+        )
+        .execute(&self.pool)
+        .await
+        .context("create dashboard_sessions expires_at index")?;
+
+        // auth_audit: append-only log of every mutating route call.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS auth_audit (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp           TEXT NOT NULL,
+                route               TEXT NOT NULL,
+                method              TEXT NOT NULL,
+                session_token_hash  TEXT NOT NULL,
+                source_ip           TEXT NOT NULL,
+                response_status     INTEGER NOT NULL
+            )"#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("create auth_audit table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_auth_audit_timestamp ON auth_audit (timestamp)",
+        )
+        .execute(&self.pool)
+        .await
+        .context("create auth_audit timestamp index")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_auth_audit_session_token_hash ON auth_audit (session_token_hash)",
+        )
+        .execute(&self.pool)
+        .await
+        .context("create auth_audit session_token_hash index")?;
+
+        Ok(())
+    }
 }

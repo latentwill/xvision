@@ -1,14 +1,142 @@
+// =============================================================================
+// MUTATING ROUTE INVENTORY (v2b-dashboard-auth-boundary audit)
+//
+// Every mutating route (POST, PUT, PATCH, DELETE) must appear in the
+// `mutating_router` below so it receives the `require_auth` middleware layer.
+// Read-only GET routes live in `readonly_router` and remain open on
+// loopback binds.
+//
+// MUTATING routes (24 handler registrations across 15 logical groups):
+//
+//  1. POST   /api/agents                              agents::create
+//  2. PUT    /api/agents/:id                          agents::update
+//  3. DELETE /api/agents/:id                          agents::archive
+//  4. POST   /api/agents/:id/validate                 agents::validate
+//  5. POST   /api/skills                              skills::create
+//  6. PUT    /api/skills/:id                          skills::update
+//  7. DELETE /api/skills/:id                          skills::archive
+//  8. POST   /api/strategies                          strategies::post_create
+//  9. DELETE /api/strategy/:id                        strategies::delete
+// 10. PATCH  /api/strategy/:id                        strategies::patch_metadata
+// 11. POST   /api/strategy/:id/clone                  strategies::clone
+// 12. PUT    /api/strategy/:id/slot/:role             strategies::put_slot
+// 13. POST   /api/strategy/:id/agents                 strategies::post_add_agent
+// 14. DELETE /api/strategy/:id/agents/:role           strategies::delete_agent
+// 15. PATCH  /api/strategy/:id/agents/:role           strategies::patch_agent_role
+// 16. PUT    /api/strategy/:id/pipeline               strategies::put_pipeline
+// 17. PUT    /api/strategy/:id/risk                   strategies::put_risk
+// 18. POST   /api/strategy/:id/validate               strategies::post_validate
+// 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
+// 20. POST   /api/scenarios                           scenarios::create
+// 21. DELETE /api/scenarios/:id                       scenarios::delete
+// 22. POST   /api/scenarios/:id/clone                 scenarios::clone
+// 23. POST   /api/scenarios/:id/archive               scenarios::archive
+// 24. POST   /api/eval/runs                           eval_runs::post_start
+// 25. DELETE /api/eval/runs/:id                       eval_runs::delete_run
+// 26. POST   /api/eval/runs/:id/cancel                eval_runs::cancel_run
+// 27. POST   /api/eval/runs/:id/retry                 eval_runs::retry_run
+// 28. POST   /api/eval/runs/:id/review                eval_review::generate
+// 29. PATCH  /api/eval/agent-profiles/:id             eval_agent_profiles::patch
+// 30. POST   /api/cli/jobs                            cli::create
+// 31. DELETE /api/cli/jobs/:id                        cli::delete
+// 32. POST   /api/cli/jobs/:id/cancel                 cli::cancel
+// 33. POST   /api/settings/brokers/alpaca             settings::brokers::set_alpaca
+// 34. DELETE /api/settings/brokers/alpaca             settings::brokers::delete_alpaca
+// 35. POST   /api/settings/brokers/alpaca/test-conn   settings::brokers::test_alpaca
+// 36. PUT    /api/settings/observability              settings::observability::put
+// 37. POST   /api/settings/providers                  settings::providers::add
+// 38. PUT    /api/settings/providers/:name            settings::providers::update
+// 39. DELETE /api/settings/providers/:name            settings::providers::remove
+// 40. POST   /api/settings/providers/:name/set-default settings::providers::set_default
+// 41. PUT    /api/settings/providers/:name/enabled-models settings::providers::put_enabled_models
+// 42. POST   /api/settings/providers/:name/test-conn  settings::providers::test_connection
+// 43. POST   /api/settings/providers/:name/catalog/refresh settings::providers::refresh_catalog
+// 44. POST   /api/settings/providers/catalog/refresh-all settings::providers::refresh_all_catalogs
+// 45. POST   /api/settings/danger/reset-workspace     settings::danger::reset_workspace
+// 46. POST   /api/settings/danger/regen-identity      settings::danger::regen_identity
+// 47. POST   /api/settings/danger/factory-reset       settings::danger::factory_reset
+// 48. POST   /api/wizard/chat                         wizard::chat
+// 49. POST   /api/chat-rail/sessions/resolve          chat_rail::resolve_session
+// 50. POST   /api/chat-rail/sessions                  chat_rail::create_session
+// 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
+// 52. POST   /api/chat-rail/chat                      chat_rail::chat
+//
+// READ-ONLY routes (GET, GET SSE) — no require_auth layer:
+//
+//  R1.  GET  /api/health
+//  R2.  GET  /api/docs/index
+//  R3.  GET  /api/docs/page/:slug
+//  R4.  GET  /api/agents
+//  R5.  GET  /api/agents/templates
+//  R6.  GET  /api/agents/:id
+//  R7.  GET  /api/agents/:id/strategies
+//  R8.  GET  /api/agents/:id/runs
+//  R9.  GET  /api/skills
+//  R10. GET  /api/skills/:id
+//  R11. GET  /api/strategies
+//  R12. GET  /api/templates
+//  R13. GET  /api/strategy/:id
+//  R14. GET  /api/strategies/:id/chart
+//  R15. GET  /api/strategies-folder/list
+//  R16. GET  /api/scenarios
+//  R17. GET  /api/scenarios/preview
+//  R18. GET  /api/scenarios/:id
+//  R19. GET  /api/scenarios/:id/chart
+//  R20. GET  /api/eval/runs
+//  R21. GET  /api/eval/runs/compare/chart
+//  R22. GET  /api/eval/runs/:id
+//  R23. GET  /api/eval/runs/:id/export
+//  R24. GET  /api/eval/runs/:id/chart
+//  R25. GET  /api/eval/runs/:id/stream   (SSE — read-only stream)
+//  R26. GET  /api/eval/compare
+//  R27. GET  /api/eval/scenarios
+//  R28. GET  /api/agent-runs/:id
+//  R29. GET  /api/agent-runs/:id/export.json
+//  R30. GET  /api/agent-runs/:id/export.md
+//  R31. GET  /api/agent-runs/:id/stream  (SSE — read-only stream)
+//  R32. GET  /api/agent-runs/:id/blobs/:ref
+//  R33. GET  /api/eval/runs/:id/reviews
+//  R34. GET  /api/eval/reviews/:id
+//  R35. GET  /api/eval/agent-profiles
+//  R36. GET  /api/eval/agent-profiles/:id
+//  R37. GET  /api/bars/:cache_key
+//  R38. GET  /api/cli/jobs/:id
+//  R39. GET  /api/cli/jobs/:id/output
+//  R40. GET  /api/cli/jobs/:id/events
+//  R41. GET  /api/search
+//  R42. GET  /api/settings/brokers
+//  R43. GET  /api/settings/daemon
+//  R44. GET  /api/settings/identity
+//  R45. GET  /api/settings/observability
+//  R46. GET  /api/settings/providers
+//  R47. GET  /api/settings/providers/:name
+//  R48. GET  /api/settings/providers/:name/models
+//  R49. GET  /api/settings/providers/:name/catalog
+//  R50. GET  /api/chat-rail/sessions/:id/history
+//  R51. GET  /api/chat-rail/sessions
+//  R52. GET  /api/auth/session/current   (auth endpoint — own handler)
+//
+// AUTH endpoints (open — handle their own auth logic):
+//  A1.  POST   /api/auth/session
+//  A2.  DELETE /api/auth/session
+//  A3.  GET    /api/auth/session/current
+//
+// Total: 52 mutating handlers audited.
+// =============================================================================
+
 use std::net::SocketAddr;
 
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use xvision_engine::strategies_folder::MAX_IMPORT_BYTES;
 
 use crate::auth::{auth_middleware, AuthState};
+use crate::auth::require_auth::require_auth_middleware;
+use crate::auth::session;
 use crate::routes::{
     agent_runs, agents, bars, chat_rail, cli, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
@@ -21,49 +149,97 @@ use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::search as api_search;
 
-pub fn build_router(state: AppState) -> Router {
-    let import_body_limit = (MAX_IMPORT_BYTES + 1024 * 1024) as usize;
-
+/// Build the read-only router.
+///
+/// These routes are accessible without a session token. They remain open on
+/// loopback binds (local dev). The outer `auth_middleware` gate still applies
+/// on non-loopback binds (XVN_DASHBOARD_TOKEN required).
+fn readonly_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/docs/index", get(docs::index))
         .route("/api/docs/page/:slug", get(docs::page))
-        .route(
-            "/api/agents",
-            get(agents::list).post(agents::create),
-        )
+        .route("/api/agents", get(agents::list))
         .route("/api/agents/templates", get(agents::templates))
-        .route(
-            "/api/agents/:id",
-            get(agents::get).put(agents::update).delete(agents::archive),
-        )
-        .route("/api/agents/:id/validate", post(agents::validate))
+        .route("/api/agents/:id", get(agents::get))
         .route("/api/agents/:id/strategies", get(agents::deployed_in))
         .route("/api/agents/:id/runs", get(agents::recent_runs))
+        .route("/api/skills", get(skills::list))
+        .route("/api/skills/:id", get(skills::get))
+        .route("/api/strategies", get(strategies::list))
+        .route("/api/templates", get(strategies::list_templates))
+        .route("/api/strategy/:id", get(strategies::get))
+        .route("/api/strategies/:id/chart", get(strategies::chart))
+        .route("/api/strategies-folder/list", get(strategies_folder_route::get_list))
+        .route("/api/scenarios", get(scenarios::list))
+        .route("/api/scenarios/preview", get(scenarios::preview))
+        .route("/api/scenarios/:id", get(scenarios::get))
+        .route("/api/scenarios/:id/chart", get(scenarios::chart))
+        .route("/api/eval/runs", get(eval_runs::list))
+        .route("/api/eval/runs/compare/chart", get(eval_runs::compare_chart))
+        .route("/api/eval/runs/:id", get(eval_runs::get))
+        .route("/api/eval/runs/:id/export", get(eval_runs::export))
+        .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
+        .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
+        .route("/api/eval/compare", get(eval_runs::compare))
+        .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
+        .route("/api/agent-runs/:id", get(agent_runs::get))
+        .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))
+        .route("/api/agent-runs/:id/export.md", get(agent_runs::export_md))
+        .route("/api/agent-runs/:id/stream", get(agent_runs::stream))
+        .route("/api/agent-runs/:id/blobs/:ref", get(agent_runs::get_blob))
+        .route("/api/eval/runs/:id/reviews", get(eval_review::list_for_run))
+        .route("/api/eval/reviews/:id", get(eval_review::get))
+        .route("/api/eval/agent-profiles", get(eval_agent_profiles::list))
+        .route("/api/eval/agent-profiles/:id", get(eval_agent_profiles::get))
+        .route("/api/bars/:cache_key", get(bars::cache_row))
+        .route("/api/cli/jobs/:id", get(cli::get))
+        .route("/api/cli/jobs/:id/output", get(cli::output))
+        .route("/api/cli/jobs/:id/events", get(cli::events))
+        .route("/api/search", get(search_route::handler))
+        .route("/api/settings/brokers", get(settings::brokers::get))
+        .route("/api/settings/daemon", get(settings::daemon::get))
+        .route("/api/settings/identity", get(settings::identity::get))
+        .route("/api/settings/observability", get(settings::observability::get))
+        .route("/api/settings/providers", get(settings::providers::list))
+        .route("/api/settings/providers/:name", get(settings::providers::show))
+        .route("/api/settings/providers/:name/models", get(settings::providers::list_models))
+        .route("/api/settings/providers/:name/catalog", get(settings::providers::get_catalog))
+        .route("/api/chat-rail/sessions/:id/history", get(chat_rail::history))
+        .route("/api/chat-rail/sessions", get(chat_rail::list_sessions))
+        .with_state(state)
+}
+
+/// Build the mutating router.
+///
+/// Every route here carries the `require_auth_middleware` layer. Unauthenticated
+/// requests (non-loopback without a valid session token) receive 401.
+fn mutating_router(state: AppState) -> Router {
+    let pool = state.pool.clone();
+    let import_body_limit = (MAX_IMPORT_BYTES + 1024 * 1024) as usize;
+
+    Router::new()
+        // ── Agents ────────────────────────────────────────────────────────
+        .route("/api/agents", post(agents::create))
         .route(
-            "/api/skills",
-            get(skills::list).post(skills::create),
+            "/api/agents/:id",
+            put(agents::update).delete(agents::archive),
         )
+        .route("/api/agents/:id/validate", post(agents::validate))
+        // ── Skills ────────────────────────────────────────────────────────
+        .route("/api/skills", post(skills::create))
         .route(
             "/api/skills/:id",
-            get(skills::get).put(skills::update).delete(skills::archive),
+            put(skills::update).delete(skills::archive),
         )
-        .route(
-            "/api/strategies",
-            get(strategies::list).post(strategies::post_create),
-        )
-        .route("/api/templates", get(strategies::list_templates))
+        // ── Strategies ────────────────────────────────────────────────────
+        .route("/api/strategies", post(strategies::post_create))
         .route(
             "/api/strategy/:id",
-            get(strategies::get)
-                .delete(strategies::delete)
-                .patch(strategies::patch_metadata),
+            delete(strategies::delete).patch(strategies::patch_metadata),
         )
         .route("/api/strategy/:id/clone", post(strategies::clone))
-        .route(
-            "/api/strategy/:id/slot/:role",
-            put(strategies::put_slot),
-        )
+        .route("/api/strategy/:id/slot/:role", put(strategies::put_slot))
         .route("/api/strategy/:id/agents", post(strategies::post_add_agent))
         .route(
             "/api/strategy/:id/agents/:role",
@@ -71,85 +247,31 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
-        .route(
-            "/api/strategy/:id/validate",
-            post(strategies::post_validate),
-        )
-        .route("/api/strategies/:id/chart", get(strategies::chart))
-        // V2F: per-user strategies folder importer. POST multipart/form-data.
-        // See `crates/xvision-dashboard/src/routes/strategies_folder.rs` and
-        // the `strategies-folder-import` track contract.
-        .route(
-            "/api/strategies-folder/list",
-            get(strategies_folder_route::get_list),
-        )
+        .route("/api/strategy/:id/validate", post(strategies::post_validate))
+        // ── Strategies folder ─────────────────────────────────────────────
         .route(
             "/api/strategies-folder/import",
             post(strategies_folder_route::post_import)
                 .route_layer(DefaultBodyLimit::max(import_body_limit)),
         )
-        // NOTE: /api/scenarios/preview MUST be before /api/scenarios/:id —
-        // axum's router matches in registration order for overlapping patterns.
-        .route("/api/scenarios", get(scenarios::list).post(scenarios::create))
-        .route("/api/scenarios/preview", get(scenarios::preview))
-        .route("/api/scenarios/:id", get(scenarios::get).delete(scenarios::delete))
-        .route("/api/scenarios/:id/chart", get(scenarios::chart))
+        // ── Scenarios ─────────────────────────────────────────────────────
+        .route("/api/scenarios", post(scenarios::create))
+        .route("/api/scenarios/:id", delete(scenarios::delete))
         .route("/api/scenarios/:id/clone", post(scenarios::clone))
         .route("/api/scenarios/:id/archive", post(scenarios::archive))
-        .route(
-            "/api/eval/runs",
-            get(eval_runs::list).post(eval_runs::post_start),
-        )
-        .route("/api/eval/runs/compare/chart", get(eval_runs::compare_chart))
-        .route("/api/eval/runs/:id", get(eval_runs::get).delete(eval_runs::delete_run))
-        .route("/api/eval/runs/:id/export", get(eval_runs::export))
+        // ── Eval runs ─────────────────────────────────────────────────────
+        .route("/api/eval/runs", post(eval_runs::post_start))
+        .route("/api/eval/runs/:id", delete(eval_runs::delete_run))
         .route("/api/eval/runs/:id/cancel", post(eval_runs::cancel_run))
         .route("/api/eval/runs/:id/retry", post(eval_runs::retry_run))
-        .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
-        .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
-        .route("/api/eval/compare", get(eval_runs::compare))
-        .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
-        // Agent-run observability read-side routes
-        // (`agent-run-observability-export-cli` leaf).
-        .route("/api/agent-runs/:id", get(agent_runs::get))
-        .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))
-        .route("/api/agent-runs/:id/export.md", get(agent_runs::export_md))
-        // Live SSE feed (`agent-run-observability-sse-stream` leaf).
-        .route("/api/agent-runs/:id/stream", get(agent_runs::stream))
-        // Per-run blob fetch
-        // (`agent-run-observability-blob-fetch-route` leaf).
-        .route("/api/agent-runs/:id/blobs/:ref", get(agent_runs::get_blob))
-        // Eval-review routes (see routes/eval_review.rs).
-        .route(
-            "/api/eval/runs/:id/review",
-            post(eval_review::generate),
-        )
-        .route(
-            "/api/eval/runs/:id/reviews",
-            get(eval_review::list_for_run),
-        )
-        .route("/api/eval/reviews/:id", get(eval_review::get))
-        // Review-agent profile config: list + per-profile patch so
-        // operators can reseat seeded profiles against whatever
-        // provider they have configured (see file docstring for why).
-        .route("/api/eval/agent-profiles", get(eval_agent_profiles::list))
-        .route(
-            "/api/eval/agent-profiles/:id",
-            get(eval_agent_profiles::get).patch(eval_agent_profiles::patch),
-        )
-        .route("/api/bars/:cache_key", get(bars::cache_row))
+        // ── Eval review ───────────────────────────────────────────────────
+        .route("/api/eval/runs/:id/review", post(eval_review::generate))
+        .route("/api/eval/agent-profiles/:id", patch(eval_agent_profiles::patch))
+        // ── CLI jobs ──────────────────────────────────────────────────────
         .route("/api/cli/jobs", post(cli::create))
-        // DELETE /api/cli/jobs/:id — send SIGTERM → SIGKILL (5s grace) to the
-        // backing process. Closes the gap between `xvn eval cancel` (which
-        // marks the run row via POST /api/eval/runs/:id/cancel) and actually
-        // killing the dashboard child process. Idempotent on terminal jobs.
-        .route("/api/cli/jobs/:id", get(cli::get).delete(cli::delete))
-        .route("/api/cli/jobs/:id/output", get(cli::output))
-        .route("/api/cli/jobs/:id/events", get(cli::events))
-        // POST /api/cli/jobs/:id/cancel — kept for backwards compatibility.
+        .route("/api/cli/jobs/:id", delete(cli::delete))
         .route("/api/cli/jobs/:id/cancel", post(cli::cancel))
-        .route("/api/search", get(search_route::handler))
-        .route("/api/settings/brokers", get(settings::brokers::get))
+        // ── Settings: brokers ─────────────────────────────────────────────
         .route(
             "/api/settings/brokers/alpaca",
             post(settings::brokers::set_alpaca).delete(settings::brokers::delete_alpaca),
@@ -158,41 +280,25 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/brokers/alpaca/test-connection",
             post(settings::brokers::test_alpaca),
         )
-        .route("/api/settings/daemon", get(settings::daemon::get))
-        .route("/api/settings/identity", get(settings::identity::get))
-        .route(
-            "/api/settings/observability",
-            get(settings::observability::get).put(settings::observability::put),
-        )
-        .route(
-            "/api/settings/providers",
-            get(settings::providers::list).post(settings::providers::add),
-        )
+        // ── Settings: observability ───────────────────────────────────────
+        .route("/api/settings/observability", put(settings::observability::put))
+        // ── Settings: providers ───────────────────────────────────────────
+        .route("/api/settings/providers", post(settings::providers::add))
         .route(
             "/api/settings/providers/:name",
-            get(settings::providers::show)
-                .put(settings::providers::update)
-                .delete(settings::providers::remove),
+            put(settings::providers::update).delete(settings::providers::remove),
         )
         .route(
             "/api/settings/providers/:name/set-default",
             post(settings::providers::set_default),
         )
         .route(
-            "/api/settings/providers/:name/models",
-            get(settings::providers::list_models),
-        )
-        .route(
             "/api/settings/providers/:name/enabled-models",
-            axum::routing::put(settings::providers::put_enabled_models),
+            put(settings::providers::put_enabled_models),
         )
         .route(
             "/api/settings/providers/:name/test-connection",
             post(settings::providers::test_connection),
-        )
-        .route(
-            "/api/settings/providers/:name/catalog",
-            get(settings::providers::get_catalog),
         )
         .route(
             "/api/settings/providers/:name/catalog/refresh",
@@ -202,6 +308,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/providers/catalog/refresh-all",
             post(settings::providers::refresh_all_catalogs),
         )
+        // ── Settings: danger ──────────────────────────────────────────────
         .route(
             "/api/settings/danger/reset-workspace",
             post(settings::danger::reset_workspace),
@@ -214,30 +321,52 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/danger/factory-reset",
             post(settings::danger::factory_reset),
         )
+        // ── Wizard ────────────────────────────────────────────────────────
         .route("/api/wizard/chat", post(wizard::chat))
+        // ── Chat rail ─────────────────────────────────────────────────────
         .route(
             "/api/chat-rail/sessions/resolve",
             post(chat_rail::resolve_session),
         )
-        .route(
-            "/api/chat-rail/sessions/:id/history",
-            get(chat_rail::history),
-        )
-        .route(
-            "/api/chat-rail/sessions",
-            get(chat_rail::list_sessions).post(chat_rail::create_session),
-        )
+        .route("/api/chat-rail/sessions", post(chat_rail::create_session))
         .route(
             "/api/chat-rail/sessions/:id",
             delete(chat_rail::delete_session),
         )
         .route("/api/chat-rail/chat", post(chat_rail::chat))
+        // ── Apply require_auth middleware to ALL mutating routes ───────────
+        .route_layer(axum::middleware::from_fn_with_state(
+            pool,
+            require_auth_middleware,
+        ))
+        .with_state(state)
+}
+
+/// Build the auth session router (no require_auth — manages its own auth).
+fn auth_router(state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/api/auth/session",
+            post(session::create_session).delete(session::delete_session),
+        )
+        .route("/api/auth/session/current", get(session::current_session))
+        .with_state(state)
+}
+
+pub fn build_router(state: AppState) -> Router {
+    // NOTE: /api/scenarios/preview MUST be before /api/scenarios/:id —
+    // axum's router matches in registration order for overlapping patterns.
+    // The split into readonly/mutating routers preserves this ordering because
+    // both sub-routers are merged before final assembly.
+    Router::new()
+        .merge(readonly_router(state.clone()))
+        .merge(mutating_router(state.clone()))
+        .merge(auth_router(state.clone()))
         .route("/", get(static_files::serve_index))
         .route("/assets/*path", get(static_files::serve_static))
         .fallback(static_files::fallback)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
 }
 
 /// Wrap an already-built router with the auth middleware. Separate
@@ -249,6 +378,9 @@ pub fn wrap_with_auth(router: Router, auth: AuthState) -> Router {
 }
 
 pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
+    // Run dashboard-owned migrations (dashboard_sessions, auth_audit).
+    state.run_dashboard_migrations().await?;
+
     // Cold-start the ⌘K index: walk the strategy store + run table, re-seed
     // the static action set + canonical scenarios. Idempotent — every
     // subsequent indexer hook just refreshes the row in place.
@@ -287,9 +419,17 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
     let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
 
+    // Non-loopback bind: print a loud warning to stderr so operators
+    // are aware they're exposing the dashboard. Terminal only — no UI popup.
+    if !addr.ip().is_loopback() {
+        eprintln!(
+            "WARNING: dashboard bound to {addr}; ensure firewall/Tailscale ACL restricts access"
+        );
+    }
+
     // Resolve auth posture from bind address + env. Refuses to start
     // on a non-loopback bind without a configured shared secret. See
-    // `crates/xvision-dashboard/src/auth.rs` and the runbook.
+    // `crates/xvision-dashboard/src/auth/gate.rs` and the runbook.
     let auth = AuthState::from_env(&addr)?;
     if auth.is_gated() {
         tracing::info!(

@@ -4,6 +4,8 @@ import { Layout } from "@/components/shell/Layout";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { noteSuccessfulPageLoad } from "@/lib/chunk-reload";
 
+const LoginRoute = lazy(() => import("./routes/login").then((m) => ({ default: m.LoginRoute })));
+
 const HomeRoute = lazy(() => import("./routes/home").then((m) => ({ default: m.HomeRoute })));
 const StrategiesRoute = lazy(() => import("./routes/strategies").then((m) => ({ default: m.StrategiesRoute })));
 const ScenariosRoute = lazy(() => import("./routes/scenarios").then((m) => ({ default: m.ScenariosRoute })));
@@ -60,6 +62,12 @@ function page(element: ReactNode) {
 }
 
 export const router = createBrowserRouter([
+  // Full-screen auth gate — lives outside the Layout shell so it occupies
+  // the whole viewport without sidebar/topbar chrome.
+  {
+    path: "/login",
+    element: page(<LoginRoute />),
+  },
   {
     path: "/",
     element: <Layout />,

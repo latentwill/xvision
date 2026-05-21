@@ -9,6 +9,7 @@ pub mod cli_jobs;
 pub mod embed;
 pub mod error;
 pub mod llm_dispatch;
+pub mod redact;
 pub mod routes;
 pub mod server;
 pub mod sse;
