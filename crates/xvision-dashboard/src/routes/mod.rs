@@ -7,6 +7,7 @@ pub mod docs;
 pub mod eval;
 pub mod eval_runs;
 pub mod health;
+pub mod memory;
 pub mod safety;
 pub mod scenarios;
 pub mod search;

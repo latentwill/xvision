@@ -142,8 +142,8 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
     health::health,
-    safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, wizard,
+    memory as memory_route, safety as safety_route, scenarios, search as search_route, settings, skills, static_files,
+    strategies, strategies_folder as strategies_folder_route, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -192,6 +192,8 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/eval/reviews/:id", get(eval_review::get))
         .route("/api/eval/agent-profiles", get(eval_agent_profiles::list))
         .route("/api/eval/agent-profiles/:id", get(eval_agent_profiles::get))
+        .route("/api/memory", get(memory_route::list))
+        .route("/api/memory/:id", get(memory_route::get))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
         .route("/api/cli/jobs/:id/output", get(cli::output))
@@ -267,6 +269,10 @@ fn mutating_router(state: AppState) -> Router {
         // ── Eval review ───────────────────────────────────────────────────
         .route("/api/eval/runs/:id/review", post(eval_review::generate))
         .route("/api/eval/agent-profiles/:id", patch(eval_agent_profiles::patch))
+        // ── Memory ────────────────────────────────────────────────────────
+        .route("/api/memory", delete(memory_route::forget))
+        .route("/api/memory/patterns", post(memory_route::create_pattern))
+        .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── CLI jobs ──────────────────────────────────────────────────────
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", delete(cli::delete))
