@@ -13,14 +13,18 @@
 //!   verbose struct shape. See `parse_indicator_dsl` and the matching
 //!   `fmt` `Display` impl.
 //!
-//! * `Operand` is an `#[serde(untagged)]` enum. The DSL discriminates by
-//!   JSON/TOML type:
-//!     - string → `Indicator(IndicatorRef)` (parsed via the DSL helper)
-//!     - number → `Numeric(f64)`
-//!     - 2-element numeric array → `Range(f64, f64)`
-//!
-//!   `untagged` does the discrimination automatically because the three
-//!   `Serialize` shapes are disjoint.
+//! * `Operand` serialises through `#[serde(untagged)]` (the three shapes —
+//!   string, number, two-element array — are disjoint, so authors write
+//!   `rhs = "ema_50"` / `rhs = 0.6` / `rhs = [50.0, 70.0]` directly).
+//!   Deserialisation is **hand-rolled** via `OperandVisitor` rather than
+//!   the derive: an untagged-derive failure surfaces as the unhelpful
+//!   message "data did not match any variant of untagged enum Operand",
+//!   which hides whether the input was a bad indicator DSL token, a
+//!   non-numeric range element, or an entirely wrong shape. The visitor
+//!   inspects the input type and produces a pointed error per shape
+//!   (e.g. "invalid indicator DSL token 'foo_99'") so `parse.rs` can
+//!   classify it into `ParseError::IndicatorDsl` deterministically and
+//!   the eventual frontend (Stage 4) can render targeted help.
 //!
 //! * `bar_offset` on `IndicatorRef`: v1 has no DSL syntax for indexing a
 //!   future bar (no `ema_20+1` token). The field is `#[serde(default,
@@ -371,14 +375,17 @@ impl Operator {
 // Operand
 // ---------------------------------------------------------------------------
 
-/// One side of a `Condition`. Untagged so the DSL discriminates by JSON/
-/// TOML type — see module docs.
+/// One side of a `Condition`. Discriminates by JSON/TOML type — see
+/// module docs. `Serialize` is derived as `#[serde(untagged)]`;
+/// `Deserialize` is hand-rolled via `OperandVisitor` so failures surface
+/// per-shape (string vs number vs sequence) instead of the opaque
+/// untagged-derive message.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum Operand {
     /// String DSL form: `"ema_20"`, `"close"`, etc.
@@ -398,6 +405,70 @@ impl Operand {
             Operand::Numeric(_) => "numeric",
             Operand::Range(_, _) => "range",
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Operand {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_any(OperandVisitor)
+    }
+}
+
+struct OperandVisitor;
+
+impl<'de> serde::de::Visitor<'de> for OperandVisitor {
+    type Value = Operand;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            "an indicator DSL string (e.g. \"ema_20\", \"close\"), \
+             a numeric literal, \
+             or a two-element numeric range array (e.g. [50.0, 70.0])",
+        )
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+        Ok(Operand::Numeric(v as f64))
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+        Ok(Operand::Numeric(v as f64))
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
+        Ok(Operand::Numeric(v))
+    }
+
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+        match IndicatorRef::parse_dsl(v) {
+            Ok(ind) => Ok(Operand::Indicator(ind)),
+            Err(ParseError::IndicatorDsl { token, .. }) => {
+                Err(E::custom(format!("invalid indicator DSL token '{}'", token)))
+            }
+            Err(other) => Err(E::custom(other.to_string())),
+        }
+    }
+
+    fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+        self.visit_str(&v)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let lo: f64 = seq
+            .next_element()?
+            .ok_or_else(|| serde::de::Error::custom("range operand: expected 2 numeric elements, got 0"))?;
+        let hi: f64 = seq
+            .next_element()?
+            .ok_or_else(|| serde::de::Error::custom("range operand: expected 2 numeric elements, got 1"))?;
+        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+            return Err(serde::de::Error::custom(
+                "range operand: expected 2 numeric elements, got more",
+            ));
+        }
+        Ok(Operand::Range(lo, hi))
     }
 }
 

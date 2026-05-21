@@ -18,15 +18,7 @@
 //! — both endpoints must lie in `[0, 100]`).
 
 use crate::errors::ValidationError;
-use crate::types::{
-    ActivationMode, Condition, ConditionTree, Filter, IndicatorName, IndicatorRef, Operand, Operator,
-};
-
-// Re-export so consumers can `use xvision_filters::ActivationMode` even
-// though the only mention in this file is the helper below. (Lints in
-// strict builds otherwise flag the unused import.)
-#[allow(dead_code)]
-fn _activation_mode_referenced(_: ActivationMode) {}
+use crate::types::{Condition, ConditionTree, Filter, IndicatorName, IndicatorRef, Operand, Operator};
 
 /// Validate a `Filter`. Returns on the **first** rule violation; rules
 /// are checked in spec-table order so the most semantically-meaningful

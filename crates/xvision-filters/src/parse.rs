@@ -19,15 +19,21 @@
 //! ### Error classification
 //!
 //! `parse_*` walks the serde error message after a failure to detect
-//! the two cases the contract calls out explicitly:
+//! the cases the contract calls out explicitly:
 //!
 //! * `cooldown_bars` set to a negative integer → `NegativeUnsigned`
 //!   (the spec's `E_FILTER_COOLDOWN_NEG` rule is enforced at the type
 //!   level by `u32`; this is the parse-layer counterpart).
 //! * `op` set to a string outside the v1 catalog → `UnknownOperator`.
+//! * Any `Operand` string that doesn't parse as a v1 indicator DSL
+//!   token → `IndicatorDsl`. The `OperandVisitor` in `types.rs` emits
+//!   a stable `"invalid indicator DSL token '<tok>'"` message that this
+//!   classifier matches verbatim, so the parse layer surfaces the same
+//!   variant regardless of whether the error originated from a bad
+//!   `lhs`, `rhs`, or a nested condition position.
 //!
-//! Both fall back to the generic `Toml` / `Json` variants when the
-//! message shape doesn't match.
+//! Anything outside those patterns falls back to the generic `Toml` /
+//! `Json` variants.
 
 use serde::Deserialize;
 
@@ -88,6 +94,16 @@ fn classify_json_error(err: serde_json::Error) -> ParseError {
 /// `Toml` / `Json` variants when the message doesn't match.
 fn classify_message(path: &str, message: &str) -> Option<ParseError> {
     let lower = message.to_ascii_lowercase();
+
+    // OperandVisitor → bad indicator DSL string. The visitor's message
+    // shape is stable: "invalid indicator DSL token '<token>'".
+    if lower.contains("invalid indicator dsl token") {
+        let token = extract_quoted_token(message).unwrap_or_else(|| "<unknown>".to_string());
+        return Some(ParseError::IndicatorDsl {
+            path: path.to_string(),
+            token,
+        });
+    }
 
     // Negative integer for `cooldown_bars` (u32 type rejects this).
     // serde's message is typically: "invalid value: integer `-1`, expected u32"

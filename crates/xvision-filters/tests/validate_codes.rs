@@ -72,28 +72,14 @@ fn unknown_indicator_bad_name_at_parse() {
                     op  = \">\"\n\
                     rhs = \"foo_99\"\n";
     let err = parse_toml(toml_doc).expect_err("unknown indicator must reject at parse");
-    // The Operand enum is untagged, so an unparseable indicator string
-    // surfaces as either an IndicatorDsl variant (when the deserializer
-    // attempts the Indicator arm first) or a generic Toml/Json variant
-    // ("data did not match any variant of untagged enum Operand"). The
-    // wire-level requirement is that the parser refuses the input —
-    // both shapes meet that.
+    // OperandVisitor produces a deterministic "invalid indicator DSL
+    // token '<token>'" message that `classify_message` lifts into
+    // `ParseError::IndicatorDsl`. No fallback shapes accepted.
     match err {
         ParseError::IndicatorDsl { token, .. } => {
             assert!(token.contains("foo"), "unexpected indicator token: {}", token);
         }
-        ParseError::Toml { message, .. } | ParseError::Json { message, .. } => {
-            let lower = message.to_ascii_lowercase();
-            assert!(
-                lower.contains("foo")
-                    || lower.contains("indicator")
-                    || lower.contains("operand")
-                    || lower.contains("untagged"),
-                "unexpected error message: {}",
-                message
-            );
-        }
-        other => panic!("unexpected parse error variant: {:?}", other),
+        other => panic!("expected ParseError::IndicatorDsl, got {:?}", other),
     }
 }
 
@@ -523,6 +509,96 @@ fn empty_all_tree() {
 fn empty_any_tree() {
     let filter = base_filter(ConditionTree::Any(vec![]));
     assert_err(validate(&filter), "E_FILTER_EMPTY_TREE", "/conditions/any");
+}
+
+// ---------------------------------------------------------------------------
+// OperandVisitor — improved per-shape parse errors.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn operand_visitor_single_element_range_rejected() {
+    // A one-element array can't be a Range; the visitor surfaces a
+    // pointed message rather than the opaque untagged-derive error.
+    let toml_doc = "[filter]\n\
+                    id = \"f_01\"\n\
+                    strategy_id = \"s_01\"\n\
+                    display_name = \"t\"\n\
+                    asset_scope = [\"BTC/USD\"]\n\
+                    timeframe = \"1h\"\n\
+                    \n\
+                    [[filter.conditions.all]]\n\
+                    lhs = \"rsi_14\"\n\
+                    op  = \"between\"\n\
+                    rhs = [50.0]\n";
+    let err = parse_toml(toml_doc).expect_err("single-element range must reject");
+    match err {
+        ParseError::Toml { message, .. } => {
+            let lower = message.to_ascii_lowercase();
+            assert!(
+                lower.contains("range operand") && lower.contains("got 1"),
+                "expected pointed range-arity error, got: {}",
+                message
+            );
+        }
+        other => panic!(
+            "expected ParseError::Toml with range-arity detail, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn operand_visitor_three_element_range_rejected() {
+    let toml_doc = "[filter]\n\
+                    id = \"f_01\"\n\
+                    strategy_id = \"s_01\"\n\
+                    display_name = \"t\"\n\
+                    asset_scope = [\"BTC/USD\"]\n\
+                    timeframe = \"1h\"\n\
+                    \n\
+                    [[filter.conditions.all]]\n\
+                    lhs = \"rsi_14\"\n\
+                    op  = \"between\"\n\
+                    rhs = [50.0, 70.0, 90.0]\n";
+    let err = parse_toml(toml_doc).expect_err("3-element range must reject");
+    match err {
+        ParseError::Toml { message, .. } => {
+            let lower = message.to_ascii_lowercase();
+            assert!(
+                lower.contains("range operand") && lower.contains("got more"),
+                "expected pointed range-arity error, got: {}",
+                message
+            );
+        }
+        other => panic!(
+            "expected ParseError::Toml with range-arity detail, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn operand_visitor_indicator_dsl_error_propagates_through_lhs() {
+    // Bad indicator DSL on `lhs` (rather than rhs) — same classification
+    // should land. Confirms the visitor's path is field-agnostic.
+    let toml_doc = "[filter]\n\
+                    id = \"f_01\"\n\
+                    strategy_id = \"s_01\"\n\
+                    display_name = \"t\"\n\
+                    asset_scope = [\"BTC/USD\"]\n\
+                    timeframe = \"1h\"\n\
+                    \n\
+                    [[filter.conditions.all]]\n\
+                    lhs = \"bogus_42\"\n\
+                    op  = \">\"\n\
+                    rhs = 0.5\n";
+    let err = parse_toml(toml_doc).expect_err("bogus lhs must reject");
+    match err {
+        ParseError::IndicatorDsl { token, .. } => {
+            assert!(token.contains("bogus"), "unexpected token: {}", token);
+        }
+        other => panic!("expected ParseError::IndicatorDsl, got {:?}", other),
+    }
 }
 
 // ---------------------------------------------------------------------------
