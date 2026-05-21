@@ -16,7 +16,7 @@ Filter v1 plan — see `docs/superpowers/plans/2026-05-21-filter-v1.md`).
 ## What "deterministic" means here
 
 - `scenario_btc_1h_300bars.json` is reproducible from a fixed seed
-  (`0xF11_7E12_5EED`) by the canonical generator embedded in
+  (`0x0F11_7E12_5EED_0001`) by the canonical generator embedded in
   `tests/golden_determinism.rs::generate_canonical_scenario`. The
   committed JSON is the gate; the test
   `scenario_fixture_matches_canonical_generator` will fail if the file
