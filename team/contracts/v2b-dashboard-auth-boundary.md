@@ -5,7 +5,7 @@ wave: v2b
 worktree: .worktrees/v2b-dashboard-auth-boundary
 branch: task/v2b-dashboard-auth-boundary
 base: origin/main
-status: ready
+status: review
 depends_on: []
 blocks:
   - v2b-remote-cli-job-safety
