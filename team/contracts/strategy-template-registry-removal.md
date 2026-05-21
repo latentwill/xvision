@@ -4,12 +4,12 @@ lane: foundation
 wave: qa-chat-rail-2026-05-21
 worktree: .worktrees/strategy-template-registry-removal
 branch: task/strategy-template-registry-removal
-base: origin/main
-status: deferred
+base: origin/task/templates-elimination
+status: claimed
 depends_on:
   - templates-elimination
 blocks: []
-stacking: none
+stacking: declared:templates-elimination
 allowed_paths:
   - crates/xvision-engine/src/templates/**
   - crates/xvision-engine/src/strategies/manifest.rs

@@ -4,12 +4,12 @@ lane: leaf
 wave: qa-chat-rail-2026-05-21
 worktree: .worktrees/wizard-folder-recall-honesty
 branch: task/wizard-folder-recall-honesty
-base: origin/main
-status: deferred
+base: origin/task/templates-elimination
+status: claimed
 depends_on:
   - templates-elimination
 blocks: []
-stacking: none
+stacking: declared:templates-elimination
 allowed_paths:
   - crates/xvision-dashboard/prompts/wizard.md
   - crates/xvision-dashboard/src/wizard_loop.rs
