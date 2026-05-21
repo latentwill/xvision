@@ -5,11 +5,11 @@ wave: harness-observability-tail-2026-05-21
 worktree: .worktrees/harness-recovery-malformed-json
 branch: task/harness-recovery-malformed-json
 base: origin/main
-status: deferred
-depends_on:
-  - harness-recovery-state-machine
-blocks: []
-stacking: declared:harness-recovery-state-machine
+status: ready
+depends_on: []  # harness-recovery-state-machine merged via PR #499 on 2026-05-21
+blocks:
+  - harness-recovery-schema-missing-field
+stacking: none
 allowed_paths:
   - crates/xvision-engine/src/agent/recovery.rs
   - crates/xvision-engine/src/eval/executor/paper.rs

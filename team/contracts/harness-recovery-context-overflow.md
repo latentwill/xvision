@@ -5,11 +5,10 @@ wave: harness-observability-tail-2026-05-21
 worktree: .worktrees/harness-recovery-context-overflow
 branch: task/harness-recovery-context-overflow
 base: origin/main
-status: deferred
-depends_on:
-  - harness-recovery-state-machine
+status: ready
+depends_on: []  # harness-recovery-state-machine merged via PR #499 on 2026-05-21
 blocks: []
-stacking: declared:harness-recovery-state-machine
+stacking: none
 allowed_paths:
   - crates/xvision-engine/src/agent/recovery.rs
   - crates/xvision-engine/src/agent/execute.rs

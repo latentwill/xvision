@@ -16,29 +16,12 @@ Conductor: see `team/CONDUCTOR.md`.
 | `team/CONFLICT_ZONES.md` | conductor | process | Always conductor-only |
 | `crates/xvision-engine/migrations/**` | (none) | - | A new migration number is reserved in the contract |
 | `Cargo.toml` (workspace) | (none) | - | Crate add/remove proposed via a foundation contract |
-| `frontend/web/package.json` | (none) | - | Released 2026-05-21 — `v2a-driver-tour` merged earlier |
-| `frontend/web/src/routes/index.tsx` | (none) | - | Released 2026-05-21 — `v2a-driver-tour` merged earlier |
-| `crates/xvision-dashboard/src/server.rs` | (none) | - | Released 2026-05-21 — observability-blob-fetch-route + q15 both closed |
-| `crates/xvision-dashboard/src/state.rs` | (none) | - | Released 2026-05-21 |
-| `crates/xvision-observability/src/lib.rs` | (none) | - | Released 2026-05-21 |
-| `crates/xvision-dashboard/src/routes/agent_runs.rs` | (none) | - | Released 2026-05-21 |
-| `frontend/web/src/features/agent-runs/SpanInspector.tsx` | (none) | - | Released 2026-05-21 |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | (none) | - | Released 2026-05-21 — `alpaca-paper-crypto-submit` closed |
-| `crates/xvision-dashboard/src/wizard_loop.rs` | `templates-elimination` | qa-chat-rail-2026-05-21 | Released when `templates-elimination` merges; `wizard-folder-recall-honesty` then claims it (sequential, NOT stacked). |
-| `crates/xvision-dashboard/prompts/wizard.md` | `templates-elimination` | qa-chat-rail-2026-05-21 | Same as above — sequential handoff. |
-| `crates/xvision-engine/src/authoring.rs` | `templates-elimination` (wizard-only); then `strategy-template-registry-removal` (engine refactor; deferred) | qa-chat-rail-2026-05-21 | Sequential — narrow scope first, full refactor after. |
-| `crates/xvision-engine/src/api/strategy.rs` | `strategy-template-registry-removal` (deferred) | qa-chat-rail-2026-05-21 | Engine follow-up after `templates-elimination` merges. |
-| `crates/xvision-engine/src/strategies/manifest.rs` | `strategy-template-registry-removal` (deferred) | qa-chat-rail-2026-05-21 | Engine follow-up. |
-| `crates/xvision-engine/src/strategies/mechanical.rs` | `strategy-template-registry-removal` (deferred) | qa-chat-rail-2026-05-21 | `MechanicalParams::from_value` typed-dispatch refactor. |
-| `crates/xvision-engine/src/templates/**` | `strategy-template-registry-removal` (deletion; deferred) | qa-chat-rail-2026-05-21 | Directory deleted by follow-up contract. |
-| `crates/xvision-engine/src/agents/templates.rs` | **NOT touched** — AgentTemplate (agent-picker), distinct from strategy templates | qa-chat-rail-2026-05-21 | Stays in both contracts. |
-| `frontend/web/src/routes.tsx` | shared: `strategies-folder-into-view-toggle` + `memory-into-agents-section` | qa-chat-rail-2026-05-21 | Disjoint blocks (strategies/folder rows vs. memory row). Coordinate via `team/queue/`; later claimant rebases. Released when both contracts merge. |
-| `crates/xvision-engine/src/agent/recovery.rs` | `harness-recovery-state-machine` (pr-open #499); then `harness-recovery-malformed-json` → `harness-recovery-schema-missing-field` → `harness-recovery-context-overflow` (sequential, NOT stacked) | harness-observability-tail-2026-05-21 | Sequential handoff. Each phase-2 contract claims `recovery.rs` after the prior merges. The `depends_on` chain in each contract enforces ordering. |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | `harness-recovery-malformed-json` (deferred); then `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Re-claimed for phase-2 trader-output recovery wiring. Sequential. |
-| `crates/xvision-engine/src/eval/executor/backtest.rs` | `harness-recovery-malformed-json` (deferred); then `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Same dual-executor pattern — repair logic must apply uniformly to paper and backtest. |
-| `crates/xvision-engine/src/eval/executor/trader_output.rs` | `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Adds `TraderOutputError::problem_fields()` helper for the targeted-patch flow. |
-| `crates/xvision-engine/src/agent/execute.rs` | `harness-recovery-state-machine` (pr-open #499); then `harness-recovery-context-overflow` (deferred) | harness-observability-tail-2026-05-21 | Phase-2c adds the summarize-retry loop into the dispatcher-error path. Sequential after #499 merges. |
-| `crates/xvision-engine/src/agent/llm.rs` | `harness-recovery-context-overflow` (deferred) | harness-observability-tail-2026-05-21 | Phase-2c may add a typed `ContextOverflow` variant to `OpenAiCompatError`. |
+| `crates/xvision-engine/src/agent/recovery.rs` | `harness-recovery-malformed-json` (ready) + `harness-recovery-context-overflow` (ready) — disjoint match arms; `harness-recovery-schema-missing-field` (deferred) stacks behind malformed-json | harness-observability-tail-2026-05-21 | Released when all three phase-2 contracts merge. |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | `harness-recovery-malformed-json` (ready); then `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Sequential — each phase-2 trader-output recovery wires through paper + backtest uniformly. |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | `harness-recovery-malformed-json` (ready); then `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Same dual-executor pattern — repair logic applies uniformly. |
+| `crates/xvision-engine/src/eval/executor/trader_output.rs` | `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Adds `TraderOutputError::problem_fields()` helper for targeted-patch flow. |
+| `crates/xvision-engine/src/agent/execute.rs` | `harness-recovery-context-overflow` (ready) | harness-observability-tail-2026-05-21 | Phase-2c adds the summarize-retry loop into the dispatcher-error path. |
+| `crates/xvision-engine/src/agent/llm.rs` | `harness-recovery-context-overflow` (ready) | harness-observability-tail-2026-05-21 | May add a typed `ContextOverflow` variant to `OpenAiCompatError`. |
 
 ## Rules
 

@@ -4,64 +4,35 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-21 — `qa-chat-rail-2026-05-21` wave
-> decomposed from
-> `team/intake/2026-05-21-qa-chat-rail-strategy-create-broken.md`.
-> Five tracks: one P0 foundation (`templates-elimination`), one
-> parallel P1 engine leaf (`chat-messages-insert-failing`), one
-> blocked P2 leaf (`wizard-folder-recall-honesty`), two parallel
-> P2 frontend leaves (`strategies-folder-into-view-toggle`,
-> `memory-into-agents-section`).
-> Also 2026-05-21 — `harness-observability-tail-2026-05-21` filed:
-> F-5 recovery state machine, the last open finding from the
-> 2026-05-18 harness observability audit (F-1/2/6 merged on the
-> boards; F-3/4/7 landed silently and are now noted). Phase 1
-> (typed dispatcher + repeated-tool block) shipped as PR #499; three
-> phase-2 contracts decompose the audit's per-class recovery policies
-> (MalformedJson, SchemaMissingField, ContextOverflow) and are queued
-> blocked on the phase-1 merge.
-> Earlier 2026-05-21 sweep: 28 merged contracts archived under
-> `team/archive/2026-05-21-conductor-sweep/`.
+> Last updated: 2026-05-22 — conductor pass. The 2026-05-21
+> `qa-chat-rail-2026-05-21` wave fully merged (all six tracks landed;
+> see archive below). The harness observability tail wave's phase 1
+> (`harness-recovery-state-machine`, PR #499) also merged, unblocking
+> the two parallel phase-2 contracts (`harness-recovery-malformed-json`,
+> `harness-recovery-context-overflow`); `harness-recovery-schema-missing-field`
+> remains sequentially blocked behind `malformed-json`. The
+> alpaca-live-eval and filter-v1 waves also fully merged. 13 contracts
+> + 17 stale status files archived under
+> `team/archive/2026-05-22-conductor-pass/`.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
 
 ## Active
 
-### qa-chat-rail-2026-05-21 — chat-rail "make me a strategy" path broken; templates eliminated
+### harness-observability-tail-2026-05-21 — F-5 recovery state machine, phase 2
 
-Decomposed 2026-05-21 from
-`team/intake/2026-05-21-qa-chat-rail-strategy-create-broken.md`.
-The wave's spine is `templates-elimination`: the operator's
-"whatever is in my strategies folder is the context" stance
-retires the parallel `template_registry`, dissolves the
-placeholder-deadlock on `create_strategy`, and migrates the
-existing template starter library into folder seed entries.
+Phase 1 (`harness-recovery-state-machine`, typed dispatcher + repeated-tool
+block list) merged 2026-05-21 as PR #499. The three phase-2 contracts
+implement the audit's per-class recovery policies on top of that scaffold.
+Both unblocked phase-2 tracks (`malformed-json`, `context-overflow`) can
+proceed in parallel; `schema-missing-field` is sequentially blocked behind
+`malformed-json` because both edit `eval/executor/{paper,backtest}.rs` and
+`trader_output.rs`.
 
-- [templates-elimination](contracts/templates-elimination.md) — **P0 foundation** · pr-open #481 · wizard-side only (descoped 2026-05-21)
-- [strategy-template-registry-removal](contracts/strategy-template-registry-removal.md) — engine-side follow-up · merged #486
-- [chat-messages-insert-failing](contracts/chat-messages-insert-failing.md) — P1 engine leaf · pr-open #480
-- [wizard-folder-recall-honesty](contracts/wizard-folder-recall-honesty.md) — P2 leaf · merged #488
-- [strategies-folder-into-view-toggle](contracts/strategies-folder-into-view-toggle.md) — P2 frontend leaf · pr-open #479
-- [memory-into-agents-section](contracts/memory-into-agents-section.md) — P2 frontend leaf · pr-open #478
-
-### harness-observability-tail-2026-05-21 — F-5 recovery state machine (audit tail)
-
-Filed 2026-05-21 from the archived intake
-`team/intake/archive/2026-05-18-harness-observability-audit.md`. Six of
-the seven audit findings are closed: F-1 (#277), F-2 (#294), F-6 (#302)
-on the boards; F-3 (migration 019), F-4 (SpanKind variants), and F-7
-(trace-dock Simple/Advanced toggle) landed silently across other waves
-without board entries — confirmed via code grep
-(`crates/xvision-engine/migrations/019_agent_slot_prompt_version.sql`,
-`crates/xvision-observability/src/types.rs:104-131`,
-`frontend/web/src/stores/trace-dock.ts:65-186`). F-5 is the only
-remaining open finding.
-
-- [harness-recovery-state-machine](contracts/harness-recovery-state-machine.md) — **P1 integration** · pr-open #499 · phase 1: typed FailureClass + repeated-tool block list. Per-class recovery policies split into the three phase-2 contracts below
-- [harness-recovery-malformed-json](contracts/harness-recovery-malformed-json.md) — **P2 integration** · deferred (depends on #499) · phase 2a: repair-prompt retry on TraderInvalidJson / TraderTruncated (paper + backtest seam)
+- [harness-recovery-malformed-json](contracts/harness-recovery-malformed-json.md) — **P2 integration** · ready · phase 2a: repair-prompt retry on TraderInvalidJson / TraderTruncated (paper + backtest seam)
+- [harness-recovery-context-overflow](contracts/harness-recovery-context-overflow.md) — **P2 integration** · ready · phase 2c: cheap-model history summarize + retry; adds `FailureClass::ContextOverflow` variant and `agent/summarize.rs` module
 - [harness-recovery-schema-missing-field](contracts/harness-recovery-schema-missing-field.md) — **P2 integration** · deferred (depends on `harness-recovery-malformed-json`) · phase 2b: targeted-patch retry on TraderMissingField / TraderInvalidField, with merge-and-reparse
-- [harness-recovery-context-overflow](contracts/harness-recovery-context-overflow.md) — **P2 integration** · deferred (depends on #499) · phase 2c: cheap-model history summarize + retry; adds `FailureClass::ContextOverflow` variant and `agent/summarize.rs` module
 
 ## Reserved
 
@@ -80,12 +51,42 @@ contracts without an operator-approved spec:
   P2, explicitly gated on the V2 capability-first agent-model spec
   per the intake itself; resolves as part of that refactor.
 - **`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`** —
-  P0 bundle shipped via #425, #428, #429 (see Recently Closed below).
-  P1 (#4–#11) and P2 (#13–#15) tracks Reserved pending operator
-  confirmation. P1 #12 (`remote-cli-safe-eval-allowlist`) folded into
-  the now-merged `v2b-remote-cli-job-safety` (#447).
+  P0 bundle shipped via #425, #428, #429. P1 (#4–#11) and P2 (#13–#15)
+  tracks Reserved pending operator confirmation. P1 #12
+  (`remote-cli-safe-eval-allowlist`) folded into the now-merged
+  `v2b-remote-cli-job-safety` (#447).
+- **`docs-search-list-component-adoption`** — P2 optional follow-up
+  contract (`team/contracts/docs-search-list-component-adoption.md`)
+  remains `deferred`; only opens if a docs-sidebar audit confirms it
+  qualifies as a "list" worth the component migration.
 
 ## Recently Closed
+
+### Merged 2026-05-22 conductor pass — archived under `team/archive/2026-05-22-conductor-pass/`
+
+13 merged or superseded contracts archived (+ 17 orphan status files
+cleaned up):
+
+- **qa-chat-rail-2026-05-21 wave (6 contracts, fully merged)** —
+  `templates-elimination` (#481), `strategy-template-registry-removal`
+  (#486), `chat-messages-insert-failing` (#480),
+  `wizard-folder-recall-honesty` (#488),
+  `strategies-folder-into-view-toggle` (#479),
+  `memory-into-agents-section` (#478).
+- **harness-observability-tail phase 1** —
+  `harness-recovery-state-machine` (#499).
+- **alpaca-live-eval-2026-05-21 wave** — `executor-trait-extraction`
+  (#487), `live-bar-source-alpaca` (#489),
+  `live-eval-launch-and-freeze` (#497); `executor-refactor`
+  superseded contract archived.
+- **filter-v1 wave** — `filter-v1` umbrella + all five stages
+  (#485, #491, #495, #496, #492, #493).
+- **v2d-followup tail** — `v2d-memory-cli-and-api` (#460).
+- **Loose ends** — `container-config-path-papercut` (#464),
+  `seed-scaffolding-cleanup` (#463).
+- **Orphan status files** — 17 stale status files from earlier waves
+  (2026-05-18/19 QA tail + `clawpatch-v2e-deslop-followup` from
+  #445) archived without contract counterparts.
 
 ### Merged 2026-05-21 sweep — archived under `team/archive/2026-05-21-conductor-sweep/`
 
@@ -135,22 +136,9 @@ Implementation sweep (28 contracts archived this pass):
 
 ### Archived earlier (still on disk)
 
-- **2026-05-20 sweep** — Lists v1 phase 1 (`list-component-port-desktop`
-  #390, `list-component-port-mobile` #395,
-  `list-component-tokens-reconcile` #396), backend pagination follow-up
-  (#397), QA operator round 7 (intake-direct PRs #385/#386/#387/#391),
-  QA Round 6 (#360), skills refresh (#379). See
+- **2026-05-20 sweep** — Lists v1 phase 1, backend pagination follow-up
+  (#397), QA operator round 7, QA Round 6, skills refresh. See
   `team/archive/2026-05-20-lists-v1-phase-1/`.
-
-- **2026-05-19 sweep** — Harness observability audit F-2/F-6 (#294,
-  #302), QA Round 5 F-1/F-2/F-3/F-5 (#316), QA Round 5 F-4 closed,
-  `q15-tailscale-serve-api-reachability` parked, Agent CI/CD Phase-1
-  parked to a handoff doc. See `team/archive/2026-05-19-sweep/`.
-
-- **2026-05-18 sweep #2** — QA Round 2/3 tail (#275, #282, #283, #284,
-  #286, #280), V2A onboarding closed (`v2a-in-app-docs` #281), Harness
-  observability F-1 (`harness-prompt-hash-real-digest` #277). See
-  `team/archive/2026-05-18-sweep-2/`.
 
 ## Stale-info hygiene
 

@@ -7,8 +7,7 @@ branch: task/harness-recovery-schema-missing-field
 base: origin/main
 status: deferred
 depends_on:
-  - harness-recovery-state-machine
-  - harness-recovery-malformed-json
+  - harness-recovery-malformed-json  # harness-recovery-state-machine merged via PR #499 on 2026-05-21
 blocks: []
 stacking: declared:harness-recovery-malformed-json
 allowed_paths:
