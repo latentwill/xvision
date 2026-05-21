@@ -45,6 +45,11 @@ probes/m0-orderly/target
 
 # Existing docs we don't need inside the image
 docs
+# Exception: docs/strategies is embedded into the xvision-engine binary at
+# compile time via include_dir!(".../docs/strategies"). Must stay in build
+# context or the proc macro panics.
+!docs/strategies
+!docs/strategies/**
 
 # Local env files
 .env
