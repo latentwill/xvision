@@ -53,6 +53,7 @@ use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
+use xvision_filters::{FilterEventV1, FilterSummary};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -111,7 +112,9 @@ pub struct RunSummary {
     pub max_drawdown_pct: Option<f64>,
     pub total_return_pct: Option<f64>,
     pub error: Option<String>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
     pub actual_input_tokens: Option<u64>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
     pub actual_output_tokens: Option<u64>,
     /// LLM inference cost aggregated over all model calls for this run (in USD / quote currency).
     /// `None` for old runs without pricing data or when the model isn't in the pricing catalog.
@@ -121,6 +124,8 @@ pub struct RunSummary {
     /// `None` for old runs without pricing data or when the model isn't in the pricing catalog.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net_return_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filter_summaries: Vec<FilterSummary>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -135,6 +140,10 @@ pub struct RunDetail {
     pub summary: RunSummary,
     pub decisions: Vec<DecisionRowDto>,
     pub equity_curve: Vec<EquityPoint>,
+    #[serde(default)]
+    pub filter_events: Vec<FilterEventV1>,
+    #[serde(default)]
+    pub filter_summaries: Vec<FilterSummary>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -745,10 +754,23 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
         })
         .collect();
 
+    let filter_events = store
+        .read_filter_events(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let filter_summaries = store
+        .read_filter_summaries(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut summary = summarise(run);
+    summary.filter_summaries = filter_summaries.clone();
+
     Ok(RunDetail {
-        summary: summarise(run),
+        summary,
         decisions,
         equity_curve,
+        filter_events,
+        filter_summaries,
     })
 }
 
@@ -2593,6 +2615,7 @@ fn summarise(run: Run) -> RunSummary {
         actual_output_tokens: run.actual_output_tokens,
         inference_cost_quote_total: inference_cost,
         net_return_pct: net_return,
+        filter_summaries: Vec::new(),
     }
 }
 

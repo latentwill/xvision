@@ -67,5 +67,6 @@ ts-export = [
     "dep:ts-rs",
     "xvision-core/ts-export",
     "xvision-data/ts-export",
+    "xvision-filters/ts-export",
     "xvision-memory/ts-export",
 ]

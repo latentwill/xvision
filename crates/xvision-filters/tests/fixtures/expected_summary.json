@@ -1,0 +1,10 @@
+{
+  "filter_id": "f_01JX0000000000000000000000",
+  "bars_scanned": 300,
+  "wakeups": 8,
+  "suppressed_in_position": 0,
+  "suppressed_cooldown": 7,
+  "suppressed_daily_cap": 10,
+  "llm_calls_saved": 292,
+  "estimated_tokens_saved": 14600000
+}

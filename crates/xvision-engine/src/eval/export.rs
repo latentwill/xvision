@@ -59,6 +59,7 @@ use crate::eval::scenario::Scenario;
 use crate::eval::scenario_store;
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::Strategy;
+use xvision_filters::{FilterEventV1, FilterSummary};
 
 /// Pinned export schema version. Bump only on breaking shape changes;
 /// additive fields stay on `"1"`.
@@ -80,8 +81,13 @@ pub struct EvalRunExport {
     pub metrics: Option<MetricsSummary>,
     pub decisions: Vec<DecisionExportRow>,
     pub equity_samples: Vec<EquitySample>,
-    /// Reserved for the future eval-events log. Currently always `[]`.
+    /// Event-log compatible rows for this run. Filter v1 emits
+    /// `FilterEventV1` objects here as JSON values.
     pub events: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub filter_events: Vec<FilterEventV1>,
+    #[serde(default)]
+    pub filter_summaries: Vec<FilterSummary>,
     /// Run-level error log. Today wraps `run.error` as a single entry
     /// (or empty when the run completed cleanly). Per-decision errors
     /// live alongside their decision row in `decisions[]`.
@@ -266,6 +272,20 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
         .map(|(ts, equity_usd)| EquitySample { ts, equity_usd })
         .collect();
 
+    let filter_events = store
+        .read_filter_events(&run.id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("read_filter_events: {e:#}")))?;
+    let filter_summaries = store
+        .read_filter_summaries(&run.id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("read_filter_summaries: {e:#}")))?;
+    let events = filter_events
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ApiError::Internal(format!("serialize filter_events: {e:#}")))?;
+
     let reviews: Vec<ReviewExportRow> = match store.list_reviews_for_run(&run.id).await {
         Ok(rs) => {
             let mut out = Vec::with_capacity(rs.len());
@@ -312,7 +332,9 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
         metrics,
         decisions,
         equity_samples,
-        events: Vec::new(),
+        events,
+        filter_events,
+        filter_summaries,
         errors,
         reviews,
         provider_diagnostics,

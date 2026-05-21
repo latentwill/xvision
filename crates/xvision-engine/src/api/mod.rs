@@ -808,15 +808,16 @@ async fn migrate_eval_runs_venue_label(pool: &SqlitePool) -> ApiResult<()> {
 
 async fn migrate_filters_and_evaluations(pool: &SqlitePool) -> ApiResult<()> {
     if !table_exists(pool, "filters").await? || !table_exists(pool, "eval_filter_evaluations").await? {
-        // The .sql file is idempotent (`CREATE TABLE IF NOT EXISTS`) so
-        // running it on a partial-migration is safe.
-        for stmt in MIGRATION_032_FILTERS_AND_EVALUATIONS.split(';') {
-            let trimmed = stmt.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            sqlx::query(trimmed).execute(pool).await?;
-        }
+        sqlx::query(MIGRATION_032_FILTERS_AND_EVALUATIONS)
+            .execute(pool)
+            .await?;
+        return Ok(());
+    }
+
+    if !table_has_column(pool, "eval_filter_evaluations", "filter_event_json").await? {
+        sqlx::query("ALTER TABLE eval_filter_evaluations ADD COLUMN filter_event_json TEXT")
+            .execute(pool)
+            .await?;
     }
     Ok(())
 }

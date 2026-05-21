@@ -738,6 +738,8 @@ mod tests {
                     equity_usd: 1120.0,
                 },
             ],
+            filter_events: vec![],
+            filter_summaries: vec![],
         };
 
         let block = inline_equity_chart_from_run_detail(&detail).expect("equity card");
@@ -891,6 +893,7 @@ mod tests {
             actual_output_tokens: Some(20),
             inference_cost_quote_total: None,
             net_return_pct: None,
+            filter_summaries: vec![],
         }
     }
 

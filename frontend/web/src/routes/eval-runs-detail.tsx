@@ -20,8 +20,6 @@ import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
 import { FilterSummaryPanel } from "@/features/eval-runs/FilterSummaryPanel";
 import { FilterEventTimeline } from "@/features/eval-runs/FilterEventTimeline";
-import type { FilterEventV1 } from "@/api/types.gen/FilterEventV1";
-import type { FilterSummary } from "@/api/types.gen/FilterSummary";
 import { useAdaptivePoll } from "@/features/eval-runs/useAdaptivePoll";
 import { useTraceDock } from "@/stores/trace-dock";
 import { isInflightRunStatus } from "@/lib/run-status";
@@ -281,18 +279,8 @@ export function EvalRunDetailRoute() {
         deleting={remove.variables === detail.summary.id && remove.isPending}
       />
 
-      {/*
-        Filter v1 read-only panels. Both components return `null` when their
-        input is empty, so EveryBar runs (and runs that pre-date Stage 3's
-        export) render nothing. `filter_summaries` / `filter_events` are
-        read defensively from `RunDetail` here — they land on the wire shape
-        when Stage 3 wires them into `crates/xvision-engine/src/eval/`.
-      */}
-      <FilterSummaryPanel summaries={runFilterSummaries(detail)} />
-      <FilterEventTimeline
-        events={runFilterEvents(detail)}
-        title="Filter timeline"
-      />
+      <FilterSummaryPanel summaries={detail.filter_summaries ?? []} />
+      <FilterEventTimeline events={detail.filter_events ?? []} title="Filter timeline" />
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Decisions <span className="text-text-3 text-[14px]">({detail.decisions.length})</span>
@@ -727,26 +715,6 @@ function Metric({
       </div>
     </div>
   );
-}
-
-// Filter v1 export fields land on `RunDetail` once Stage 3 wires the engine
-// aggregator. The ts-rs `RunDetail` shape here predates that, so we read
-// the optional fields through a narrow shim rather than mutating the
-// generated type. Stage 3's regeneration adds the fields and this shim
-// collapses to a no-op.
-type RunDetailWithFilters = RunDetail & {
-  filter_summaries?: FilterSummary[] | null;
-  filter_events?: FilterEventV1[] | null;
-};
-
-function runFilterSummaries(detail: RunDetail): FilterSummary[] {
-  const widened = detail as RunDetailWithFilters;
-  return Array.isArray(widened.filter_summaries) ? widened.filter_summaries : [];
-}
-
-function runFilterEvents(detail: RunDetail): FilterEventV1[] {
-  const widened = detail as RunDetailWithFilters;
-  return Array.isArray(widened.filter_events) ? widened.filter_events : [];
 }
 
 function totalPnlUsd(

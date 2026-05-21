@@ -870,8 +870,8 @@ mod tests {
                 direction: Direction::Long,
                 stop_loss_pct: 2.5,
                 take_profit_pct: 5.0,
-                trader_summary:
-                    "Long ETH on confirmed range break with 2:1 R:R; default_asset is BTC.".into(),
+                trader_summary: "Long ETH on confirmed range break with 2:1 R:R; default_asset is BTC."
+                    .into(),
                 asset: Some(AssetSymbol::Eth),
             },
         };

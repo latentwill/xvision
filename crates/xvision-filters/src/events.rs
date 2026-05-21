@@ -29,7 +29,7 @@ use crate::types::FilterId;
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum SuppressedReason {
     /// `wake_when_in_position` blocked the trip while a position was open.
     InPosition,
@@ -56,6 +56,7 @@ pub struct FilterEventV1 {
     /// Schema version. Always `1` for v1; bumped when the shape
     /// changes incompatibly.
     pub schema_version: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub bar_timestamp: DateTime<Utc>,
     pub filter_id: FilterId,
     /// True iff the runtime returned `Active { transition: Trip }` — the
@@ -65,7 +66,7 @@ pub struct FilterEventV1 {
     /// Set when a would-have-triggered bar was suppressed by a runtime
     /// gate. `None` means no suppression was active — either a real
     /// trip or a no-op bar.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suppressed_reason: Option<SuppressedReason>,
     /// Indices (into `ConditionTree::conditions()`) of leaves that
     /// evaluated `true` on this bar. Empty during warmup.
@@ -135,6 +136,7 @@ pub struct FilterSummary {
     /// `llm_calls_saved * AVG_BRIEFING_TOKEN_COST`. v1 uses the global
     /// constant from `crate::AVG_BRIEFING_TOKEN_COST`; v1.5 will make
     /// this per-strategy-measured.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub estimated_tokens_saved: u64,
 }
 
@@ -365,22 +367,17 @@ mod tests {
     }
 
     #[test]
-    fn event_suppressed_reason_omitted_when_none() {
+    fn event_suppressed_reason_is_null_when_none() {
         let e = event(0, true, None);
-        let json = serde_json::to_string(&e).unwrap();
-        assert!(
-            !json.contains("suppressed_reason"),
-            "None should be omitted via skip_serializing_if, got: {json}"
-        );
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["suppressed_reason"], serde_json::Value::Null);
     }
 
     #[test]
-    fn event_suppressed_reason_serialises_with_kind_tag() {
-        // Stable wire form: `{"kind":"cooldown"}` etc. The frontend
-        // type discriminates on `kind`.
+    fn event_suppressed_reason_serialises_as_snake_case_string() {
         let e = event(0, false, Some(SuppressedReason::Cooldown));
         let json = serde_json::to_value(&e).unwrap();
-        assert_eq!(json["suppressed_reason"], serde_json::json!({"kind": "cooldown"}));
+        assert_eq!(json["suppressed_reason"], serde_json::json!("cooldown"));
     }
 
     #[test]

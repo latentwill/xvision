@@ -20,7 +20,7 @@ use sqlx::SqlitePool;
 use xvision_core::market::Ohlcv;
 use xvision_filters::{
     runtime::{ActivationDecision, EvalContext, FilterEvalOutcome, RuntimeFilter},
-    Bar, Filter, FilterState,
+    Bar, Filter, FilterEventV1, FilterState,
 };
 
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
@@ -40,6 +40,14 @@ pub struct FilterHook {
     /// read `filter.display_name` through the borrow.
     display_name: String,
     bar_index: u64,
+}
+
+/// One per-bar evaluation result plus the public event shape persisted
+/// for export/API consumers.
+#[derive(Debug, Clone)]
+pub struct FilterEvaluationRecord {
+    pub outcome: FilterEvalOutcome,
+    pub event: FilterEventV1,
 }
 
 impl FilterHook {
@@ -79,7 +87,7 @@ impl FilterHook {
 
     /// Evaluate one bar. Returns the outcome so the executor can decide
     /// whether to skip the agent pipeline.
-    pub fn evaluate(&mut self, bar: &Ohlcv, in_position: bool) -> FilterEvalOutcome {
+    pub fn evaluate(&mut self, bar: &Ohlcv, in_position: bool) -> FilterEvaluationRecord {
         let runtime = RuntimeFilter::from_validated(&self.filter);
         let local_bar = Bar::new(bar.open, bar.high, bar.low, bar.close);
         let ctx = EvalContext {
@@ -87,8 +95,14 @@ impl FilterHook {
             in_position,
         };
         let outcome = runtime.evaluate(&mut self.state, &local_bar, ctx);
+        let event = FilterEventV1::from_outcome(
+            self.filter.id.clone(),
+            bar.timestamp,
+            &outcome,
+            self.state.indicator_snapshot(&self.filter),
+        );
         self.bar_index += 1;
-        outcome
+        FilterEvaluationRecord { outcome, event }
     }
 
     /// Persist a row to `eval_filter_evaluations` and emit the matching
@@ -100,9 +114,11 @@ impl FilterHook {
         progress_tx: Option<&ProgressTx>,
         run_id: &str,
         ts: DateTime<Utc>,
-        outcome: &FilterEvalOutcome,
+        evaluation: &FilterEvaluationRecord,
     ) -> anyhow::Result<()> {
+        let outcome = &evaluation.outcome;
         let decision_json = serde_json::to_string(&outcome.decision)?;
+        let event_json = serde_json::to_string(&evaluation.event)?;
         let conditions_json = serde_json::to_string(
             &outcome
                 .conditions_passed
@@ -122,8 +138,8 @@ impl FilterHook {
             "INSERT INTO eval_filter_evaluations \
              (run_id, bar_index, ts, filter_id, filter_display_name, \
               decision_tag, decision_json, conditions_passed, tree_true, \
-              in_warmup, in_cooldown, wakeups_today) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              in_warmup, in_cooldown, wakeups_today, filter_event_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(run_id)
         .bind(bar_index_i)
@@ -137,6 +153,7 @@ impl FilterHook {
         .bind(in_warmup)
         .bind(in_cooldown)
         .bind(wakeups_today)
+        .bind(&event_json)
         .execute(pool)
         .await?;
 
