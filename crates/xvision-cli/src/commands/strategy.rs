@@ -630,6 +630,7 @@ async fn new_atomic(
                 prompt_version: String::new(),
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 bar_history_limit: None,
+                memory_mode: Default::default(),
             }],
         },
     )
@@ -1207,6 +1208,7 @@ fn slot_to_agent_slot(
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,
+        memory_mode: Default::default(),
     }
 }
 
@@ -1336,6 +1338,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             dispatch: dispatch.clone(),
             tools: tools.clone(),
             obs: None,
+            memory_recorder: None,
         })
         .await
         .exit_with(XvnExit::Upstream)?;
@@ -1381,6 +1384,8 @@ async fn resolve_agent_slots_for_cli(
             temperature: slot.temperature,
             inputs_policy: slot.inputs_policy,
             bar_history_limit: slot.bar_history_limit,
+            memory_mode: slot.memory_mode,
+            agent_id: agent.agent_id.clone(),
         });
     }
     Ok(out)

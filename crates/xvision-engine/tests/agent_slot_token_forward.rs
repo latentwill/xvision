@@ -53,7 +53,7 @@ fn req_from(resolved_max: Option<u32>, resolved_temp: Option<f64>) -> LlmRequest
 #[test]
 fn slot_max_tokens_and_temperature_round_trip_through_resolve_agent_slot() {
     let slot = slot_with(Some(64), Some(0.2));
-    let resolved = resolve_agent_slot("trader", &slot);
+    let resolved = resolve_agent_slot("trader", &slot, "");
 
     assert_eq!(
         resolved.max_tokens,
@@ -139,6 +139,6 @@ fn sentinel_zero_max_tokens_resolves_to_none() {
     // collapses it to `None` so a legacy row with the sentinel value
     // doesn't accidentally crater the operator's request to 0 tokens.
     let slot = slot_with(Some(0), None);
-    let resolved = resolve_agent_slot("trader", &slot);
+    let resolved = resolve_agent_slot("trader", &slot, "");
     assert_eq!(resolved.max_tokens, None);
 }

@@ -87,6 +87,12 @@ pub struct BacktestExecutor {
     /// `/api/agent-runs/<run_id>` and the trace dock. `None` keeps
     /// existing unit-test paths silent.
     obs_emitter: Option<ObsEmitter>,
+    /// V2D cortex-memory recorder. Built once at server start
+    /// (`ApiContext.memory_recorder`) and threaded through
+    /// `with_memory_recorder` here so every `run_pipeline` invocation
+    /// can pass it down into `execute_slot` for recall/write. `None`
+    /// keeps the dispatcher's memory seam dormant.
+    memory_recorder: Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
 }
 
 impl BacktestExecutor {
@@ -108,6 +114,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
         }
     }
 
@@ -125,6 +132,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
         }
     }
 
@@ -136,6 +144,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
         }
     }
 
@@ -152,6 +161,18 @@ impl BacktestExecutor {
     /// `execute_slot` invocation via `PipelineInputs.obs`.
     pub fn with_observability(mut self, emitter: ObsEmitter) -> Self {
         self.obs_emitter = Some(emitter);
+        self
+    }
+
+    /// Attach the V2D cortex-memory recorder. When present, every
+    /// `run_pipeline` invocation threads it into `SlotInput.memory` so
+    /// slots whose `memory_mode != Off` actually consult / write the
+    /// memory store. `None` (the default) leaves the seam dormant.
+    pub fn with_memory_recorder(
+        mut self,
+        recorder: std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>,
+    ) -> Self {
+        self.memory_recorder = Some(recorder);
         self
     }
 
@@ -631,6 +652,7 @@ impl BacktestExecutor {
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),
                 obs: self.obs_emitter.clone(),
+                memory_recorder: self.memory_recorder.clone(),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
@@ -1354,6 +1376,8 @@ mod tests {
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         }
     }
 

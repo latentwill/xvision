@@ -73,6 +73,8 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
         temperature: None,
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
     }
 }
 
@@ -101,6 +103,7 @@ async fn pipeline_output_assigned_for_role_variants() {
             dispatch,
             tools,
             obs: None,
+            memory_recorder: None,
         })
         .await
         .expect("pipeline runs");
