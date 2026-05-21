@@ -10,28 +10,13 @@
 //!   - the finding carries `kind="uniform_justification"` and
 //!     `produced_by_check="smell:uniformity"`
 
+mod support;
+
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
-use ulid::Ulid;
+use support::eval_review_pool_with_migrations as pool_with_migrations;
 use xvision_engine::eval::review::{run_auto_review, AutoReviewOptions, AutoReviewOutcome, ReviewVerdict};
 use xvision_engine::eval::{MetricsSummary, Run, RunMode, RunStatus, RunStore};
-
-async fn pool_with_migrations() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
-    for sql in [
-        include_str!("../migrations/002_eval.sql"),
-        include_str!("../migrations/014_eval_agent_id.sql"),
-        include_str!("../migrations/015_eval_decisions_reasoning.sql"),
-        include_str!("../migrations/016_eval_reviews.sql"),
-        include_str!("../migrations/017_eval_findings_review_columns.sql"),
-        include_str!("../migrations/022_eval_runs_agents_agent_id.sql"),
-        include_str!("../migrations/027_run_bars_manifest.sql"),
-        include_str!("../migrations/026_trace_surface_foundation.sql"),
-    ] {
-        sqlx::query(sql).execute(&pool).await.unwrap();
-    }
-    pool
-}
 
 async fn finalized_run(store: &RunStore) -> Run {
     let mut r = Run::new_queued("agent-stub".into(), "scenario-stub".into(), RunMode::Backtest);
@@ -53,12 +38,12 @@ async fn finalized_run(store: &RunStore) -> Run {
     r
 }
 
-/// Seed `n` identical decisions directly into `eval_decisions`.
-/// We insert them via raw SQL because `RunStore` doesn't expose a
-/// bulk-insert API — the executor writes decisions one-by-one via
-/// `record_decision`, but for the test we bypass that to keep it fast.
-async fn seed_identical_decisions(pool: &SqlitePool, run_id: &str, n: usize) {
-    for i in 0..n {
+async fn seed_decisions(
+    pool: &SqlitePool,
+    run_id: &str,
+    rows: impl IntoIterator<Item = (usize, &'static str, f64, String)>,
+) {
+    for (i, action, conviction, justification) in rows {
         let ts = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO eval_decisions \
@@ -69,9 +54,9 @@ async fn seed_identical_decisions(pool: &SqlitePool, run_id: &str, n: usize) {
         .bind(i as i64)
         .bind(&ts)
         .bind("BTC/USDT")
-        .bind("long_open")
-        .bind(0.42_f64)
-        .bind("stub Gemini Flash 3.1 response")
+        .bind(action)
+        .bind(conviction)
+        .bind(justification)
         .execute(pool)
         .await
         .unwrap();
@@ -86,7 +71,12 @@ async fn auto_review_detects_uniform_justification_in_50_row_run() {
 
     // Seed 50 decisions all with the same justification — mirrors the
     // QA rerun `01KS4D0MZBD5VGEQ9ACJDRBFBG` (217 decisions, same text).
-    seed_identical_decisions(&pool, &run.id, 50).await;
+    seed_decisions(
+        &pool,
+        &run.id,
+        (0..50).map(|i| (i, "long_open", 0.42, "stub Gemini Flash 3.1 response".to_string())),
+    )
+    .await;
 
     let outcome = run_auto_review(&store, &run.id, AutoReviewOptions::default())
         .await
@@ -140,7 +130,10 @@ async fn auto_review_detects_uniform_justification_in_50_row_run() {
     let summary: String = row.try_get("summary").unwrap();
 
     assert_eq!(severity, "critical", "uniformity finding must be critical");
-    assert_eq!(check, "smell:uniformity", "produced_by_check must be smell:uniformity");
+    assert_eq!(
+        check, "smell:uniformity",
+        "produced_by_check must be smell:uniformity"
+    );
     assert!(
         summary.contains("50"),
         "summary should mention decision count (50): {summary}"
@@ -154,25 +147,24 @@ async fn auto_review_clean_run_no_uniformity_finding() {
     let store = RunStore::new(pool.clone());
     let run = finalized_run(&store).await;
 
-    for i in 0..15_usize {
-        let action = if i % 3 == 0 { "long_open" } else if i % 3 == 1 { "flat" } else { "short_open" };
-        let ts = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO eval_decisions \
-             (run_id, decision_index, timestamp, asset, action, conviction, justification) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&run.id)
-        .bind(i as i64)
-        .bind(&ts)
-        .bind("BTC/USDT")
-        .bind(action)
-        .bind(0.3 + i as f64 * 0.01)
-        .bind(format!("unique analysis for bar {i}"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
+    seed_decisions(
+        &pool,
+        &run.id,
+        (0..15_usize).map(|i| {
+            let action = match i % 3 {
+                0 => "long_open",
+                1 => "flat",
+                _ => "short_open",
+            };
+            (
+                i,
+                action,
+                0.3 + i as f64 * 0.01,
+                format!("unique analysis for bar {i}"),
+            )
+        }),
+    )
+    .await;
 
     run_auto_review(&store, &run.id, AutoReviewOptions::default())
         .await

@@ -6,7 +6,10 @@
 //! for the same run.
 
 use chrono::Utc;
-use sqlx::{Row, SqlitePool};
+mod support;
+
+use sqlx::Row;
+use support::eval_review_pool_with_migrations as pool_with_migrations;
 use ulid::Ulid;
 use xvision_engine::eval::findings::{Finding, Severity};
 use xvision_engine::eval::review::{
@@ -14,27 +17,6 @@ use xvision_engine::eval::review::{
     AUTO_AGENT_PROFILE_ID,
 };
 use xvision_engine::eval::{MetricsSummary, Run, RunMode, RunStatus, RunStore};
-
-/// Apply every migration that touches eval state. Mirrors the prefix
-/// `ApiContext::open` walks at startup so the FK from `eval_reviews`
-/// into `agent_profiles` resolves cleanly.
-async fn pool_with_migrations() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
-    for sql in [
-        include_str!("../migrations/002_eval.sql"),
-        include_str!("../migrations/014_eval_agent_id.sql"),
-        include_str!("../migrations/015_eval_decisions_reasoning.sql"),
-        include_str!("../migrations/016_eval_reviews.sql"),
-        include_str!("../migrations/017_eval_findings_review_columns.sql"),
-        include_str!("../migrations/022_eval_runs_agents_agent_id.sql"),
-        include_str!("../migrations/027_run_bars_manifest.sql"),
-        // V2E trace-surface: evidence_cycle_ids_json + produced_by_check columns.
-        include_str!("../migrations/026_trace_surface_foundation.sql"),
-    ] {
-        sqlx::query(sql).execute(&pool).await.unwrap();
-    }
-    pool
-}
 
 async fn finalized_run(store: &RunStore) -> Run {
     let mut r = Run::new_queued("agent-h".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
