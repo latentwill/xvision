@@ -488,3 +488,31 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
   in the dashboard today is derived from a fixture response; tier-0 items
   (stub detection, provider attestation, preflight) must land before
   publishing any further eval numbers as evidence.
+
+### F42 [Shared]. Memory safety + observability (post-V2D follow-ups)
+
+- **Trigger:** V2D agent-memory intake landed (`team/intake/2026-05-21-v2d-agent-memory.md`).
+  Operator triage on 2026-05-21 promoted three items from V2D's "Out of
+  this intake" deferred list into named tracks; the rest of V2D's
+  deferred list was resolved as either V3 candidates or *will-not-build*
+  per `team/decisions.md` D5.
+- **Scope:** execute the tracks in
+  [`team/intake/2026-05-21-memory-safety-and-observability.md`](intake/2026-05-21-memory-safety-and-observability.md).
+  Three tracks: (a) `memory-forget-undo-snapshot` — soft-delete + grace
+  period so `xvn memory forget` is recoverable; (b)
+  `memory-provenance-in-decisions-trace` — bind `memory_recall` events
+  to `decision_id` so the trace can answer "which memories drove this
+  decision"; (c) `memory-aware-eval-findings` — surface findings that
+  name the memory items most likely to have influenced an outcome.
+  Lands on top of V2D's foundation tracks; no overlap with V2D's
+  in-flight work.
+- **Explicitly out of scope:** the kill bucket from `team/decisions.md`
+  D5 (cross-namespace blending, embedder config UI, memory diff CLI,
+  mem0/Honcho/mempalace adapters, cortex-http sidecar, cross-host
+  sharing, embedding swap CLI) and the V3-candidate slips (tool-driven
+  memory, TTL/LRU eviction). Do not re-introduce these as tracks
+  without a new D-row.
+- **Blocking:** non-blocking; safety net + observability layer over V2D.
+  `memory-forget-undo-snapshot` should land close to V2D so operators
+  can experiment with `forget` without fear; the other two stack and
+  can land any time after V2D's dispatcher + eval-review surface tracks.
