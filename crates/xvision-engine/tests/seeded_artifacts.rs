@@ -65,22 +65,35 @@ fn agent_templates_do_not_contain_scaffold_names() {
 
 #[test]
 fn example_strategy_ids_do_not_contain_scaffold_ulids() {
-    /// ULIDs of the three specific artifacts identified in the QA report.
-    const BANNED_IDS: &[&str] = &[
-        "01KS204HPAWFXP72TXVXNCTYPX",
-        "01KS1VD3V3PNYN4E8B1BCJ4N11",
-        "01KS1VDHFKZGJJ59S7XQPCA45C",
-    ];
+    const BANNED_STRATEGY_IDS: &[&str] = &["01KS204HPAWFXP72TXVXNCTYPX"];
 
     let strategies = example_strategies();
     for strategy in &strategies {
-        for banned_id in BANNED_IDS {
+        for banned_id in BANNED_STRATEGY_IDS {
             assert_ne!(
                 strategy.manifest.id.as_str(),
                 *banned_id,
                 "example strategy id '{}' matches banned scaffold ULID.\n\
                  See team/intake/2026-05-21-eval-honesty-and-agent-graph.md.",
                 strategy.manifest.id,
+            );
+        }
+    }
+}
+
+#[test]
+fn agent_template_ids_do_not_contain_scaffold_ulids() {
+    const BANNED_AGENT_IDS: &[&str] = &["01KS1VD3V3PNYN4E8B1BCJ4N11", "01KS1VDHFKZGJJ59S7XQPCA45C"];
+
+    let templates = builtin_templates();
+    for tpl in &templates {
+        for banned_id in BANNED_AGENT_IDS {
+            assert_ne!(
+                tpl.id.as_str(),
+                *banned_id,
+                "agent template id '{}' matches banned scaffold ULID.\n\
+                 See team/intake/2026-05-21-eval-honesty-and-agent-graph.md.",
+                tpl.id,
             );
         }
     }
