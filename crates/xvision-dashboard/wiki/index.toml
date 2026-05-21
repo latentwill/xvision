@@ -77,6 +77,13 @@ last_reviewed = "2026-05-20"
 path = "driving-xvn-as-an-agent.md"
 
 [[page]]
+slug = "agentd"
+title = "Agent daemon"
+section = "Agent"
+last_reviewed = "2026-05-21"
+path = "agentd.md"
+
+[[page]]
 slug = "mcp"
 title = "MCP surface"
 section = "Agent"
