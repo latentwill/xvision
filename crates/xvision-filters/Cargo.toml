@@ -1,0 +1,33 @@
+[package]
+name        = "xvision-filters"
+description = "Filter v1 — deterministic per-bar gate data model, DSL parser, and validator"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xvision_filters"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Mirrors the workspace ts-rs gate (see `xvision-engine`'s `ts-export`
+# feature). When enabled, `cargo test --features ts-export --tests`
+# regenerates the frontend type definitions under
+# `frontend/web/src/api/types.gen/`.
+ts-export = ["dep:ts-rs"]
+
+[dependencies]
+serde      = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml       = { workspace = true }
+thiserror  = { workspace = true }
+chrono     = { workspace = true, features = ["serde"] }
+# `ulid` isn't a workspace dep — declared locally per Stage 1 contract.
+ulid       = "1"
+ts-rs      = { version = "9", optional = true }
+
+[dev-dependencies]
+pretty_assertions = "1"
