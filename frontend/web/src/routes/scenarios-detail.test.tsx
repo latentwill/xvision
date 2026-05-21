@@ -299,6 +299,20 @@ describe("ScenariosDetailRoute bars cache actions", () => {
       started_at: "2026-05-12T00:00:00Z",
       finished_at: "2026-05-12T00:00:01Z",
       error_message: null,
+      // v2b-remote-cli-job-safety audit fields
+      pid: null,
+      job_user: null,
+      job_source: null,
+      command_class: "bars",
+      cancelled_at: null,
+      cancel_signal: null,
+      recovered_at: null,
+      recovery_reason: null,
+      max_runtime_seconds: 3600,
+      max_output_bytes: 10485760,
+      output_cap_exceeded: false,
+      runtime_cap_exceeded: false,
+      output_bytes: 0,
     });
     vi.mocked(cliApi.getCliJobOutput).mockResolvedValue({
       job_id: "job-1",

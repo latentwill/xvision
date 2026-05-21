@@ -5,6 +5,26 @@
 //! but the route still needs an application-level policy so server-style or
 //! live-trading commands cannot be triggered from the dashboard job API.
 //!
+//! ## Safe-to-surface principle
+//!
+//! A command is safe to surface remotely when it meets ONE of these criteria:
+//!   (a) **Read-only**: it cannot mutate persistent state (e.g. `eval list`,
+//!       `strategy show`, `scenario show`).
+//!   (b) **Explicitly scoped + hard-limited + cancellable**: it accepts a
+//!       mandatory scope argument (e.g. a strategy or scenario ID), the engine
+//!       enforces hard caps on decisions/tokens/wall-clock (PR #428), and the
+//!       dashboard can cancel it via `DELETE /api/cli/jobs/:id` (this track).
+//!       Examples: `eval run`, `eval compare`, `eval watch`, bounded variants
+//!       of `experiment run` / `model bakeoff`.
+//!
+//! Verbs that haven't met that bar (mutating state without a scope, spawning
+//! server processes, firing live trades) stay off the allowlist regardless of
+//! how convenient they would be to surface.
+//!
+//! This allowlist was expanded in `v2b-remote-cli-job-safety` to fold in the
+//! operator-safety P1 #12 safe-eval verbs from
+//! `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`.
+//!
 //! The policy is intentionally an operator command allowlist, not a dev-mode
 //! bypass. Normal read/eval/research commands work on live nodes without setting
 //! `XVN_DASHBOARD_CLI_DEVMODE`; categorically dangerous heads stay denied.
@@ -31,10 +51,63 @@ struct DeniedNested {
     path: &'static [&'static str],
 }
 
-const STRICT_TEMPLATES: &[Template] = &[Template {
-    head: &["bars", "fetch"],
-    permitted_flags: &["--asset", "--granularity", "--from", "--to"],
-}];
+/// Strict templates for commands that are safe remotely only when called with
+/// a constrained flag set. Each template specifies the exact subcommand prefix
+/// that must appear (e.g. `["bars", "fetch"]`) and the exhaustive list of flags
+/// that are permitted after that prefix.
+///
+/// Read-only commands (like `eval list` or `strategy show`) do not need a
+/// strict template — they are covered by the SUPPORTED_SUBCOMMANDS allowlist
+/// plus the DENIED_NESTED_SUBCOMMANDS denylist. Strict templates are only used
+/// for commands that are safe when scoped but dangerous without constraints.
+const STRICT_TEMPLATES: &[Template] = &[
+    // Data fetch — safe remotely, constrained flag set.
+    Template {
+        head: &["bars", "fetch"],
+        permitted_flags: &["--asset", "--granularity", "--from", "--to"],
+    },
+    // Bounded experiment run — safe when a specific experiment ID is provided
+    // and the engine enforces hard caps (PR #428: --max-decisions,
+    // --max-input-tokens, --max-output-tokens, --max-wall-clock).
+    // The dashboard supervisor adds the runtime-cap and output-cap layer
+    // on top of the engine's per-run budgets.
+    Template {
+        head: &["experiment", "run"],
+        permitted_flags: &[
+            "--id",
+            "--strategy",
+            "--scenario",
+            "--mode",
+            "--max-decisions",
+            "--max-input-tokens",
+            "--max-output-tokens",
+            "--max-wall-clock",
+            "--cancel-on-token-limit",
+            "--arm",
+            "--cycles",
+            "--tag",
+        ],
+    },
+    // Bounded model bakeoff — safe when scoped to a specific strategy +
+    // scenario set. Same cap story as experiment run.
+    Template {
+        head: &["model", "bakeoff"],
+        permitted_flags: &[
+            "--strategy",
+            "--scenario",
+            "--mode",
+            "--max-decisions",
+            "--max-input-tokens",
+            "--max-output-tokens",
+            "--max-wall-clock",
+            "--cancel-on-token-limit",
+            "--arm",
+            "--cycles",
+            "--tag",
+            "--compare-with",
+        ],
+    },
+];
 
 /// Top-level commands that should never be reachable through the remote CLI
 /// job API, even though they may be legitimate local `xvn` commands.
@@ -48,6 +121,9 @@ const DENYLIST_SUBCOMMANDS: &[&str] = &[
 
 /// Top-level commands that are supported through the remote CLI job API.
 /// Command-specific validation can still reject a supported head below.
+///
+/// Safe-to-surface principle (see module doc): a verb is listed here when it
+/// is read-only OR when it is explicitly scoped + hard-limited + cancellable.
 const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "--help",
     "-h",
@@ -59,14 +135,16 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "bars",
     "doctor",
     "eod",
-    "eval",
+    "eval", // eval list, eval show, eval results, eval watch,
+    // eval compare, eval cancel — all read-only or cancellable
     "example",
-    "experiment",
+    "experiment", // bounded via STRICT_TEMPLATES (experiment run only)
     "gate",
     "indicator",
     "intern",
     "metrics",
-    "migrate",
+    // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
+    "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
     "portfolio",
     "provider",
@@ -74,12 +152,12 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "risk",
     "run",
     "run-setup",
-    "scenario",
+    "scenario", // scenario show, scenario select — read-only paths allowed
     "show-briefing",
     "show-decision",
     "show-metrics",
     "store",
-    "strategy",
+    "strategy", // strategy show, strategy validate — read-only paths allowed
     "trader",
 ];
 
@@ -196,11 +274,11 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
     }
 
     let head = argv[0].as_str();
-    if DENYLIST_SUBCOMMANDS.iter().any(|d| *d == head) {
+    if DENYLIST_SUBCOMMANDS.contains(&head) {
         return AllowlistDecision::Reject(format!("subcommand `{head}` is not allowed over remote cli"));
     }
 
-    if !SUPPORTED_SUBCOMMANDS.iter().any(|cmd| *cmd == head) {
+    if !SUPPORTED_SUBCOMMANDS.contains(&head) {
         return AllowlistDecision::Reject(format!(
             "subcommand `{head}` is not a supported remote cli subcommand"
         ));
@@ -274,7 +352,7 @@ fn argv_matches(argv: &[String], tmpl: &Template) -> bool {
         if !flag.starts_with("--") {
             return false;
         }
-        if !tmpl.permitted_flags.iter().any(|f| *f == flag) {
+        if !tmpl.permitted_flags.contains(&flag) {
             return false;
         }
         // Flag must have a value — refuse a trailing flag with no
