@@ -810,9 +810,15 @@ impl XvisionTools {
         Parameters(req): Parameters<EvalCompareReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
-        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids: req.run_ids })
-            .await
-            .map_err(api_err_to_mcp)?;
+        let report = api_eval::compare(
+            &ctx,
+            CompareRunsRequest {
+                run_ids: req.run_ids,
+                allow_manifest_mismatch: false,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
         json_or_err(&report)
     }
 
@@ -1211,9 +1217,15 @@ impl XvisionTools {
         };
 
         let ctx = self.api_context().await?;
-        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids })
-            .await
-            .map_err(api_err_to_mcp)?;
+        let report = api_eval::compare(
+            &ctx,
+            CompareRunsRequest {
+                run_ids,
+                allow_manifest_mismatch: false,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
 
         if req.markdown {
             let md = format_comparison_markdown(&report);
@@ -1298,9 +1310,15 @@ impl XvisionTools {
         let ctx = self.api_context().await?;
         let sort_key = req.sort.as_deref().unwrap_or("return");
 
-        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids: req.run_ids })
-            .await
-            .map_err(api_err_to_mcp)?;
+        let report = api_eval::compare(
+            &ctx,
+            CompareRunsRequest {
+                run_ids: req.run_ids,
+                allow_manifest_mismatch: false,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
 
         let store = RunStore::new(ctx.db.clone());
         let mut rows: Vec<CompareRunRow> = Vec::with_capacity(report.runs.len());
@@ -2076,6 +2094,8 @@ mod tests {
             win_rate: 0.5,
             n_trades: 1,
             n_decisions: 1,
+            inference_cost_quote_total: None,
+            net_return_pct: None,
             baselines: None,
         };
         store.finalize(&run.id, &metrics).await.unwrap();
@@ -2314,7 +2334,10 @@ mod tests {
             .await
             .unwrap_err();
         let msg = err.to_string().to_lowercase();
-        assert!(msg.contains("not found"), "expected not found, got: {msg}");
+        assert!(
+            msg.contains("no such file") && msg.contains("strategies"),
+            "expected missing strategy file diagnostic, got: {msg}"
+        );
     }
 
     // ── eval_batch_status ─────────────────────────────────────────────────────
@@ -2673,6 +2696,7 @@ mod tests {
                     partial_fills: false,
                     volume_constraints: None,
                 },
+                overrides: Vec::new(),
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),

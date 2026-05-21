@@ -485,9 +485,12 @@ mod roundtrip {
     use xvision_core::providers::{Catalog, ModelEntry};
 
     async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("eval_export.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(":memory:")
+            .connect(&db_url)
             .await
             .unwrap();
         // Migrations the export touches transitively: 001 (api_audit),
@@ -501,10 +504,13 @@ mod roundtrip {
             include_str!("../../migrations/014_eval_agent_id.sql"),
             include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
             include_str!("../../migrations/022_eval_runs_agents_agent_id.sql"),
+            // 027 added bars_content_hash + manifest_canonical + bars_manifest
+            // columns that RunStore::create references. Pre-existing scaffold
+            // gap from PR #415 — fixed alongside cli-operator-safety-p0 slice 2/3.
+            include_str!("../../migrations/027_run_bars_manifest.sql"),
         ] {
             sqlx::query(migration).execute(&pool).await.unwrap();
         }
-        let dir = tempfile::tempdir().unwrap();
         let ctx = ApiContext::new(
             pool,
             Actor::Cli {
@@ -806,6 +812,7 @@ mod roundtrip {
                 n_trades: 0,
                 n_decisions: 0,
                 baselines: None,
+                ..Default::default()
             },
             tokens_used: attested_tokens.clone(),
             ran_at: run.started_at,

@@ -1,0 +1,137 @@
+// Smoke tests for the Skills settings route after the migration to
+// `<ResponsiveListCard>` + `useListState` + `useListUrlState`
+// (cli-operator-safety wave / docs-lists-metric-polish track
+// `list-search-filter-missing-surfaces`).
+//
+// Coverage focus:
+//  - empty state renders the "No skills yet" message
+//  - populated state lists every skill row
+//  - search box filters the visible rows
+//  - kind filter chip narrows to one kind
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+
+import { ThemeProvider } from "@/theme/ThemeProvider";
+import { SettingsSkillsRoute } from "./skills";
+import type { Skill } from "@/api/skills";
+
+vi.mock("@/api/skills", async () => {
+  const actual = await vi.importActual<typeof import("@/api/skills")>(
+    "@/api/skills",
+  );
+  return {
+    ...actual,
+    listSkills: vi.fn(),
+  };
+});
+
+const skillsApi = await import("@/api/skills");
+
+function mkSkill(overrides: Partial<Skill>): Skill {
+  return {
+    skill_id: "sk_default",
+    name: "default-skill",
+    description: "default description",
+    kind: "tool",
+    config: {},
+    archived: false,
+    created_at: "2026-05-20T10:00:00Z",
+    updated_at: "2026-05-20T10:00:00Z",
+    ...overrides,
+  };
+}
+
+// `<ResponsiveListCard>` reads `useViewportMode()` which calls
+// `window.matchMedia`. jsdom doesn't provide it; install a desktop
+// stub so the route mounts.
+function stubMatchMediaDesktop() {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query.includes("min-width: 1280px"),
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
+function renderRoute() {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <ThemeProvider>
+          <SettingsSkillsRoute />
+        </ThemeProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("SettingsSkillsRoute", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stubMatchMediaDesktop();
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders the empty state when listSkills returns []", async () => {
+    vi.mocked(skillsApi.listSkills).mockResolvedValue([]);
+    renderRoute();
+    expect(
+      await screen.findByText(/No skills yet/i),
+    ).toBeInTheDocument();
+  });
+
+  it("lists every returned skill by name", async () => {
+    vi.mocked(skillsApi.listSkills).mockResolvedValue([
+      mkSkill({ skill_id: "sk_one", name: "rsi-tool", kind: "tool" }),
+      mkSkill({
+        skill_id: "sk_two",
+        name: "macd-fragment",
+        kind: "prompt_fragment",
+      }),
+      mkSkill({
+        skill_id: "sk_three",
+        name: "risk-evaluator",
+        kind: "evaluator",
+      }),
+    ]);
+    renderRoute();
+    expect(await screen.findByText("rsi-tool")).toBeInTheDocument();
+    expect(screen.getByText("macd-fragment")).toBeInTheDocument();
+    expect(screen.getByText("risk-evaluator")).toBeInTheDocument();
+  });
+
+  it("filters the visible list via the search box", async () => {
+    vi.mocked(skillsApi.listSkills).mockResolvedValue([
+      mkSkill({ skill_id: "sk_one", name: "rsi-tool", kind: "tool" }),
+      mkSkill({
+        skill_id: "sk_two",
+        name: "macd-fragment",
+        kind: "prompt_fragment",
+      }),
+    ]);
+    renderRoute();
+    await screen.findByText("rsi-tool");
+
+    const search = screen.getByPlaceholderText(/Search name or description/i);
+    fireEvent.change(search, { target: { value: "macd" } });
+
+    expect(screen.queryByText("rsi-tool")).not.toBeInTheDocument();
+    expect(screen.getByText("macd-fragment")).toBeInTheDocument();
+  });
+});

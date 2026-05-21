@@ -278,7 +278,7 @@ fn normalize_asset(asset: &str) -> String {
 }
 
 fn cadence_label(minutes: u32) -> String {
-    if minutes % 60 == 0 {
+    if minutes.is_multiple_of(60) {
         format!("{}h", minutes / 60)
     } else {
         format!("{minutes}m")
@@ -411,6 +411,7 @@ mod preflight_tests {
                     partial_fills: false,
                     volume_constraints: None,
                 },
+                overrides: Vec::new(),
             },
             replay_mode: ReplayMode::Continuous,
             capital: xvision_core::Capital::default(),

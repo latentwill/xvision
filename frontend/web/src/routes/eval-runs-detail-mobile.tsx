@@ -12,6 +12,7 @@ import {
 import { isInflightRunStatus } from "@/lib/run-status";
 import type { EvalRunLabels } from "@/lib/run-display";
 import { formatCostUsd } from "@/lib/format";
+import { drawdownMetricTone } from "@/lib/metric-tone";
 import type { Agent } from "@/api/agents";
 import type {
   DecisionRowDto,
@@ -351,7 +352,7 @@ function SummaryTab({
           label="MAX DD"
           value={fmtPct(summary.max_drawdown_pct)}
           sub={fmtTokensSub(summary)}
-          tone={summary.max_drawdown_pct != null && summary.max_drawdown_pct < 0 ? "neg" : undefined}
+          tone={drawdownMetricTone(summary.max_drawdown_pct)}
         />
         <Stat
           label="SHARPE"

@@ -282,6 +282,29 @@ async fn list_ideas_skips_malformed_json_but_returns_valid_entries() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn list_ideas_skips_symlinked_json_templates() {
+    use std::os::unix::fs::symlink;
+
+    let (ctx, td) = fresh_ctx().await;
+    let outside = td.path().join("outside-template.json");
+    tokio::fs::write(&outside, ema_pullback_template()).await.unwrap();
+
+    let templates_dir = folder_root(td.path())
+        .join("library")
+        .join("templates")
+        .join("EMA");
+    tokio::fs::create_dir_all(&templates_dir).await.unwrap();
+    symlink(&outside, templates_dir.join("leaked.json")).unwrap();
+
+    let ideas = list_ideas(&ctx, IdeaFilter::default()).await.unwrap();
+    assert!(
+        ideas.is_empty(),
+        "symlinked templates must be skipped, got {ideas:?}"
+    );
+}
+
 #[tokio::test]
 async fn list_ideas_clamps_limit_to_max() {
     let (ctx, td) = fresh_ctx().await;

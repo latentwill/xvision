@@ -52,9 +52,7 @@ async fn happy_path_init_creates_all_subfolders_and_manifest() {
     expected.sort();
     assert_eq!(created, expected);
 
-    // Manifest exists and has at least the curated EMA templates +
-    // the freqtrade playlist. We don't pin the exact count so adding
-    // a template upstream doesn't break this test.
+    // Manifest exactly matches the eligible docs/strategies source set.
     let manifest = read_manifest_from_disk(td.path());
     assert_eq!(manifest.version, prepop::MANIFEST_VERSION);
     assert!(!manifest.entries.is_empty(), "manifest must not be empty");

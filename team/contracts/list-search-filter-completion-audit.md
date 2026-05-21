@@ -5,7 +5,7 @@ wave: docs-lists-metric-polish-2026-05-21
 worktree: .worktrees/list-search-filter-completion-audit
 branch: task/list-search-filter-completion-audit
 base: origin/main
-status: ready
+status: merged
 depends_on: []
 blocks:
   - list-search-filter-missing-surfaces                         # the migration track consumes this audit's output

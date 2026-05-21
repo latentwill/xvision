@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ulid::Ulid;
 
+/// Row tuple returned by `eval_batches` SELECT queries.
+type BatchRow = (String, String, Option<String>, String, Option<String>, String);
+
 /// Row shape mirroring `eval_batches`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Batch {
@@ -67,7 +70,7 @@ impl BatchStore {
 
     /// Load a single batch row. Returns `None` when the batch_id is not found.
     pub async fn get(&self, batch_id: &str) -> Result<Option<Batch>> {
-        let row: Option<(String, String, Option<String>, String, Option<String>, String)> = sqlx::query_as(
+        let row: Option<BatchRow> = sqlx::query_as(
             "SELECT batch_id, strategy_id, review_with, created_at, completed_at, status \
                  FROM eval_batches WHERE batch_id = ?",
         )
@@ -94,7 +97,7 @@ impl BatchStore {
 
     /// List batches, most-recent first. Optionally filter by strategy_id.
     pub async fn list(&self, strategy_id: Option<&str>) -> Result<Vec<Batch>> {
-        let rows: Vec<(String, String, Option<String>, String, Option<String>, String)> = match strategy_id {
+        let rows: Vec<BatchRow> = match strategy_id {
             Some(sid) => sqlx::query_as(
                 "SELECT batch_id, strategy_id, review_with, created_at, completed_at, status \
                      FROM eval_batches WHERE strategy_id = ? \
@@ -417,6 +420,7 @@ mod tests {
             n_trades: 10,
             n_decisions: 20,
             baselines: None,
+            ..Default::default()
         };
         run_store.finalize(&run1.id, &metrics).await.unwrap();
         run_store.finalize(&run2.id, &metrics).await.unwrap();

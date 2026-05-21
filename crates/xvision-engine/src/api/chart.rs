@@ -974,7 +974,7 @@ impl From<&DecisionRow> for LiveDecisionRow {
     fn from(row: &DecisionRow) -> Self {
         Self {
             decision_index: row.decision_index,
-            timestamp: row.timestamp.clone(),
+            timestamp: row.timestamp,
             asset: row.asset.clone(),
             action: row.action.clone(),
             conviction: row.conviction,

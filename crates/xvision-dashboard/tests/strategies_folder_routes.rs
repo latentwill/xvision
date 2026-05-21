@@ -51,6 +51,22 @@ async fn import_markdown_lands_in_notes() {
 }
 
 #[tokio::test]
+async fn import_accepts_upload_above_default_multipart_limit() {
+    let (server, _tmp) = boot().await;
+    let body = vec![b'a'; 3 * 1024 * 1024];
+    let part = Part::bytes(body)
+        .file_name("large-note.md")
+        .mime_type("text/markdown");
+    let form = MultipartForm::new().add_part("file", part);
+
+    let res = server.post("/api/strategies-folder/import").multipart(form).await;
+
+    res.assert_status_ok();
+    let body: Value = res.json();
+    assert_eq!(body["entry"]["rel_path"], "notes/large-note.md");
+}
+
+#[tokio::test]
 async fn import_rejects_disallowed_type() {
     let (server, _tmp) = boot().await;
     let part = Part::bytes(b"MZ\x90\x00".to_vec())

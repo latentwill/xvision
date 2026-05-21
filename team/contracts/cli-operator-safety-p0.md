@@ -5,7 +5,7 @@ wave: cli-operator-safety-2026-05-20
 worktree: .worktrees/cli-operator-safety-p0
 branch: task/cli-operator-safety-p0
 base: origin/main
-status: ready
+status: merged
 depends_on: []
 blocks:
   - cli-model-bakeoff                                              # P1 model-bakeoff cluster depends on hard limits + scope guardrails landing first

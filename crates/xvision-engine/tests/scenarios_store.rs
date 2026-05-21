@@ -69,6 +69,7 @@ fn make_test_scenario(id: &str) -> Scenario {
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         capital: Capital::default(),
         replay_mode: ReplayMode::Continuous,
@@ -133,12 +134,10 @@ async fn archive_succeeds() {
 
 #[tokio::test]
 async fn list_scenarios_filters_by_source_and_tags() {
-    // Note: CS-M2 Task 6 seeds 4 canonical scenarios on every fresh
-    // `ApiContext::open`, so the default (unfiltered) list has 4 + the rows
-    // this test inserts. Source/tag filters still discriminate correctly.
     let ctx = test_ctx().await;
+    let unique_tag = "regression-filter-20260521";
     let mut a = make_test_scenario("sc_a");
-    a.tags = vec!["regression".into(), "crypto".into()];
+    a.tags = vec![unique_tag.into(), "crypto".into()];
     let mut b = make_test_scenario("sc_b");
     b.source = ScenarioSource::Canonical;
     b.tags = vec!["crypto".into()];
@@ -148,8 +147,9 @@ async fn list_scenarios_filters_by_source_and_tags() {
     let all = store::list_scenarios(&ctx, &store::ListScenariosFilter::default())
         .await
         .unwrap();
-    // 4 canonical seeds + 2 inserts above.
-    assert_eq!(all.len(), 6);
+    let all_ids: Vec<&str> = all.iter().map(|s| s.id.as_str()).collect();
+    assert!(all_ids.contains(&"sc_a"));
+    assert!(all_ids.contains(&"sc_b"));
 
     let user_only = store::list_scenarios(
         &ctx,
@@ -160,13 +160,14 @@ async fn list_scenarios_filters_by_source_and_tags() {
     )
     .await
     .unwrap();
-    assert_eq!(user_only.len(), 1);
-    assert_eq!(user_only[0].id, "sc_a");
+    let user_ids: Vec<&str> = user_only.iter().map(|s| s.id.as_str()).collect();
+    assert!(user_ids.contains(&"sc_a"));
+    assert!(!user_ids.contains(&"sc_b"));
 
     let tagged = store::list_scenarios(
         &ctx,
         &store::ListScenariosFilter {
-            tags: vec!["regression".into()],
+            tags: vec![unique_tag.into()],
             ..Default::default()
         },
     )

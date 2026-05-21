@@ -9,6 +9,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+/// Row tuple returned by `search_index` FTS5 SELECT queries.
+type SearchRow = (String, String, String, String, String, String, String, f64);
+
 /// Kinds of artifacts indexed by ⌘K. New variants land alongside their
 /// indexer hooks. Always serializes to a stable lowercase string —
 /// matches FTS5 storage and downstream UI grouping.
@@ -231,7 +234,7 @@ impl SearchIndex {
         let escaped = trimmed.replace('"', "\"\"");
         let match_arg = format!("\"{escaped}\"");
 
-        let rows: Vec<(String, String, String, String, String, String, String, f64)> = match opts.kind {
+        let rows: Vec<SearchRow> = match opts.kind {
             Some(kind) => sqlx::query_as(
                 "SELECT artifact_id, kind, title, summary, tags, updated_at, href, bm25(search_index) \
                  FROM search_index \

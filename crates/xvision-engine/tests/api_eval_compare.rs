@@ -33,6 +33,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -42,6 +46,11 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/017_eval_findings_review_columns.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    // V2E trace-surface: evidence_cycle_ids_json + produced_by_check columns.
+    sqlx::query(include_str!("../migrations/026_trace_surface_foundation.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -109,6 +118,8 @@ async fn seed_finding(store: &RunStore, run_id: &str, summary: &str) -> Finding 
         evidence: serde_json::json!({"foo": "bar"}),
         extracted_at: Utc::now(),
         schema_version: "v1".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: None,
         eval_review_id: None,
         review_type: None,
         confidence: None,
@@ -130,6 +141,7 @@ fn metrics(total_return_pct: f64, sharpe: f64) -> MetricsSummary {
         n_trades: 10,
         n_decisions: 12,
         baselines: None,
+        ..Default::default()
     }
 }
 
@@ -147,6 +159,7 @@ async fn compare_returns_two_runs_with_curves_and_findings() {
         &ctx,
         CompareRunsRequest {
             run_ids: vec![run_a.id.clone(), run_b.id.clone()],
+            allow_manifest_mismatch: false,
         },
     )
     .await
@@ -189,6 +202,7 @@ async fn compare_returns_not_found_for_unknown_run() {
         &ctx,
         CompareRunsRequest {
             run_ids: vec![real.id, "does-not-exist".into()],
+            allow_manifest_mismatch: false,
         },
     )
     .await
@@ -206,9 +220,15 @@ async fn compare_returns_not_found_for_unknown_run() {
 #[tokio::test]
 async fn compare_rejects_empty_run_ids() {
     let (ctx, _d) = ctx_with_eval_tables().await;
-    let err = eval::compare(&ctx, CompareRunsRequest { run_ids: vec![] })
-        .await
-        .unwrap_err();
+    let err = eval::compare(
+        &ctx,
+        CompareRunsRequest {
+            run_ids: vec![],
+            allow_manifest_mismatch: false,
+        },
+    )
+    .await
+    .unwrap_err();
     match err {
         ApiError::Validation(msg) => assert!(
             msg.to_lowercase().contains("at least one"),
@@ -228,6 +248,7 @@ async fn compare_rejects_single_run_id() {
         &ctx,
         CompareRunsRequest {
             run_ids: vec![real.id],
+            allow_manifest_mismatch: false,
         },
     )
     .await
@@ -255,6 +276,7 @@ async fn compare_handles_run_with_no_findings() {
         &ctx,
         CompareRunsRequest {
             run_ids: vec![run_a.id.clone(), run_b.id.clone()],
+            allow_manifest_mismatch: false,
         },
     )
     .await
@@ -275,6 +297,7 @@ async fn compare_writes_audit_row() {
         &ctx,
         CompareRunsRequest {
             run_ids: vec![run_a.id.clone(), run_b.id.clone()],
+            allow_manifest_mismatch: false,
         },
     )
     .await

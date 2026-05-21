@@ -50,6 +50,7 @@
 //! existing parse tests catch it and this test catches downstream
 //! arithmetic drift.
 
+use sqlx::SqlitePool;
 use xvision_core::providers::{Catalog, ModelEntry};
 
 /// Compute LLM token cost in USD for a single (input, output) token pair
@@ -85,6 +86,38 @@ pub fn compute_token_cost_usd_from_catalog(
 ) -> Option<f64> {
     let entry = catalog.find(model_id)?;
     compute_token_cost_usd(input_tokens, output_tokens, entry)
+}
+
+/// Aggregate per-call `model_calls.cost_usd` for all model calls produced
+/// during a specific eval run. Returns the sum, or `None` when the
+/// `agent_runs` / `spans` / `model_calls` tables are unavailable (e.g. a
+/// test context without migration 018) or when every call has `cost_usd = NULL`
+/// (model not in pricing catalog).
+///
+/// Query path:
+///   `eval_runs.id → agent_runs.eval_run_id → spans.run_id → model_calls.span_id`
+///
+/// The JOIN chain intentionally reads from the observability tables. If the
+/// observability bus was not wired for this run (e.g. backtest via old CLI
+/// path), the JOIN returns zero rows and `sum` is `NULL` → `None`.
+pub async fn aggregate_eval_run_inference_cost(pool: &SqlitePool, eval_run_id: &str) -> Option<f64> {
+    let result: Option<f64> = sqlx::query_scalar(
+        "SELECT SUM(mc.cost_usd) \
+         FROM model_calls mc \
+         JOIN spans s ON s.id = mc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.eval_run_id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_one(pool)
+    .await
+    .ok()
+    .flatten();
+    // Return None when sum is zero or negative — a genuine zero spend means
+    // all calls had known $0.00 pricing, which the positive_price guard
+    // already filtered to None. Protect against negative values from DB
+    // corruption.
+    result.filter(|&v| v > 0.0 && v.is_finite())
 }
 
 fn positive_price(p: Option<f64>) -> Option<f64> {

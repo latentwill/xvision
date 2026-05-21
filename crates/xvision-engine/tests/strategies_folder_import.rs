@@ -246,6 +246,33 @@ async fn import_default_overwrites_existing() {
     assert_eq!(landed_body, "# second pass");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn import_rejects_existing_destination_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let (ctx, td) = build_ctx().await;
+    let outside = td.path().join("outside.csv");
+    touch(&outside, b"keep,me\n");
+
+    let docs = strategies_folder::folder_root(&ctx.xvn_home).join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    symlink(&outside, docs.join("foo.csv")).unwrap();
+
+    let err = strategies_folder::import_bytes(&ctx, "foo.csv", b"new,content\n", ImportOptions::default())
+        .await
+        .unwrap_err();
+
+    match err {
+        ApiError::Validation(msg) => assert!(
+            msg.contains("symlink_target_not_allowed"),
+            "expected symlink_target_not_allowed, got: {msg}"
+        ),
+        other => panic!("expected Validation, got {other:?}"),
+    }
+    assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep,me\n");
+}
+
 #[tokio::test]
 async fn import_pdf_emits_finding_when_pdftotext_missing() {
     let _guard = ENV_LOCK.lock().await;

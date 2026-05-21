@@ -516,7 +516,7 @@ function isValidWindow(from: string, to: string) {
 //   - Rust constant form, e.g. "Minute5", "Hour4", "Day1", "Week1", "Month3"
 //   - Alpaca string form, e.g. "1Min", "1Hour", "1Day", "1Week", "12Month"
 // Returns `undefined` if the input is not a recognized granularity string.
-function normalizeGranularity(granularity: string | undefined) {
+export function normalizeGranularity(granularity: string | undefined) {
   if (!granularity) return undefined;
   const trimmed = granularity.trim();
   if (!trimmed) return undefined;

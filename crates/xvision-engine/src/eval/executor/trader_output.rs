@@ -94,7 +94,7 @@ impl TraderOutputError {
         detail: String,
     ) -> Self {
         let raw_excerpt = match raw_text {
-            Some(text) if text.is_empty() => "<empty>".to_string(),
+            Some("") => "<empty>".to_string(),
             Some(text) => {
                 let mut excerpt: String = text.chars().take(Self::RAW_EXCERPT_LIMIT).collect();
                 if text.chars().count() > Self::RAW_EXCERPT_LIMIT {

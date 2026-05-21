@@ -4,6 +4,7 @@
 //! persists the result, and that the immediate next call for the same
 //! `cache_key` reads from `bars_cache` without re-hitting the upstream.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
@@ -17,7 +18,7 @@ use xvision_engine::eval::bars::{compute_cache_key, load_bars, BarCacheArgs};
 
 struct TestCtx {
     ctx: ApiContext,
-    _dir: tempfile::TempDir,
+    temp_dir: tempfile::TempDir,
 }
 
 impl std::ops::Deref for TestCtx {
@@ -25,6 +26,12 @@ impl std::ops::Deref for TestCtx {
 
     fn deref(&self) -> &Self::Target {
         &self.ctx
+    }
+}
+
+impl TestCtx {
+    fn xvn_home(&self) -> PathBuf {
+        self.temp_dir.path().to_path_buf()
     }
 }
 
@@ -88,7 +95,7 @@ async fn test_ctx_with_mock_alpaca() -> (TestCtx, MockServer) {
         dir.path().to_path_buf(),
     )
     .with_alpaca_fetcher(fetcher);
-    (TestCtx { ctx, _dir: dir }, server)
+    (TestCtx { ctx, temp_dir: dir }, server)
 }
 
 #[tokio::test]
@@ -126,6 +133,21 @@ async fn bars_cache_schema_has_expected_columns_and_index() {
     assert!(
         indexes.iter().any(|(name,)| name == "bars_cache_by_asset_window"),
         "bars_cache missing asset/window index; got {indexes:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_context_tempdir_is_removed_on_drop() {
+    let (ctx, server) = test_ctx_with_mock_alpaca().await;
+    let xvn_home = ctx.xvn_home();
+    assert!(xvn_home.exists());
+
+    drop(ctx);
+    drop(server);
+
+    assert!(
+        !xvn_home.exists(),
+        "test context must own and drop its temporary XVN_HOME"
     );
 }
 

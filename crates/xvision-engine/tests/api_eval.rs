@@ -1,13 +1,20 @@
 //! Phase 3.D read-only api::eval surface tests — list, get, scenarios.
 //! The `run` dispatch is deferred to a follow-up PR.
 
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_engine::api::eval::{self, ListRunsRequest, ScenarioSummary};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("api_eval.sqlite");
+    let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_url)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
@@ -24,11 +31,14 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
         .unwrap();
-    let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {

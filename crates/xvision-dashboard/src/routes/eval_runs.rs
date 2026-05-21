@@ -237,7 +237,14 @@ pub async fn compare(
         .map(str::to_owned)
         .collect();
 
-    let report = eval::compare(&state.api_context(), CompareRunsRequest { run_ids }).await?;
+    let report = eval::compare(
+        &state.api_context(),
+        CompareRunsRequest {
+            run_ids,
+            allow_manifest_mismatch: false,
+        },
+    )
+    .await?;
     Ok(Json(report))
 }
 

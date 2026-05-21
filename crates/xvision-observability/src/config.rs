@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use tracing::warn;
 
 pub const CONFIG_FILE_NAME: &str = "observability.toml";
 

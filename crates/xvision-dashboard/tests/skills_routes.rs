@@ -111,3 +111,32 @@ async fn update_changes_kind_and_config() {
     assert_eq!(updated["kind"], "prompt_fragment");
     assert_eq!(updated["config"]["text"], "You are a careful trader.");
 }
+
+#[tokio::test]
+async fn missing_skill_item_routes_return_404() {
+    let (server, _tmp) = boot().await;
+    let missing_id = "sk_missing_0123456789";
+
+    assert_eq!(
+        server
+            .get(&format!("/api/skills/{missing_id}"))
+            .await
+            .status_code(),
+        404,
+    );
+    assert_eq!(
+        server
+            .put(&format!("/api/skills/{missing_id}"))
+            .json(&json!({ "description": "still missing" }))
+            .await
+            .status_code(),
+        404,
+    );
+    assert_eq!(
+        server
+            .delete(&format!("/api/skills/{missing_id}"))
+            .await
+            .status_code(),
+        404,
+    );
+}

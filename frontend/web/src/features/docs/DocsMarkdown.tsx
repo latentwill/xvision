@@ -48,43 +48,51 @@ function CodeCopyButton({ text }: { text: string }) {
 }
 
 /**
- * Renders an in-app docs page body with the same styling treatment
- * as the rest of the dashboard — muted palette, monospace for code,
- * tabular nums for tables. No external network fetch: react-markdown
- * runs on the baked string from `/api/docs/page/:slug`.
+ * Renders an in-app docs page body matching the folio-dark prototype's
+ * editorial-document treatment (see `docs/design/xvnwiki/docs/docs.css`):
+ *  - serif H1 at 28-30px, H2 at 18-20px, H3 at 13-15px
+ *  - body at 13.5-14.5px with relaxed line-height (~1.55-1.65)
+ *  - body copy in `--text-2`; emphasis in `--text`
+ *  - inline `<code>` on a tinted accent background; block code on
+ *    `--surface-code` with a hairline border
+ *  - tables, key-value lists, and tabular nums all picked up via the
+ *    existing dashboard tokens; no new tokens introduced here.
+ *
+ * No external network fetch — `react-markdown` runs on the baked string
+ * from `/api/docs/page/:slug`.
  */
 export function DocsMarkdown({ body }: { body: string }) {
   return (
-    <div className="docs-markdown text-text text-[14px] leading-relaxed">
+    <div className="docs-markdown text-text text-[14px] leading-[1.65]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           h1: (p) => (
             <h1
               {...p}
-              className="font-serif font-medium text-[28px] tracking-tight mb-3"
+              className="font-serif font-medium text-[28px] tracking-tight mb-4 mt-0"
             />
           ),
           h2: (p) => (
             <h2
               {...p}
-              className="font-serif font-medium text-[20px] tracking-tight mt-6 mb-2"
+              className="font-serif font-medium text-[20px] tracking-tight mt-8 mb-2"
             />
           ),
           h3: (p) => (
             <h3
               {...p}
-              className="font-medium text-[15px] tracking-tight mt-4 mb-1.5 text-text"
+              className="font-medium text-[15px] tracking-tight mt-5 mb-1.5 text-text"
             />
           ),
-          p: (p) => <p {...p} className="mb-3 text-text-2" />,
+          p: (p) => <p {...p} className="mb-4 text-text-2" />,
           ul: (p) => (
-            <ul {...p} className="list-disc pl-5 mb-3 space-y-1 text-text-2" />
+            <ul {...p} className="list-disc pl-5 mb-4 space-y-1.5 text-text-2" />
           ),
           ol: (p) => (
             <ol
               {...p}
-              className="list-decimal pl-5 mb-3 space-y-1 text-text-2"
+              className="list-decimal pl-5 mb-4 space-y-1.5 text-text-2"
             />
           ),
           code: ({ className, children, ...rest }) => {
@@ -92,9 +100,12 @@ export function DocsMarkdown({ body }: { body: string }) {
             // Inline code: no className or no language- prefix
             const inline = !lang;
             return inline ? (
+              // Inline code: tinted accent background (subtle), thin
+              // border, monospace at 12.5px. Matches prototype's
+              // `--inline-code-bg` token treatment.
               <code
                 {...rest}
-                className="font-mono text-[12px] px-1 py-0.5 rounded bg-surface-elev border border-border-soft text-text"
+                className="font-mono text-[12.5px] px-1.5 py-0.5 rounded-sm bg-gold/[0.06] border border-border-soft text-text whitespace-nowrap"
               >
                 {children}
               </code>
@@ -147,24 +158,35 @@ export function DocsMarkdown({ body }: { body: string }) {
               </div>
             );
           },
+          // Tables match the prototype's editorial treatment: muted
+          // uppercase header row, hairline separators, hover surface
+          // wash. No outer rounded border — the table sits in body flow.
           table: (p) => (
             <table
               {...p}
-              className="w-full text-[13px] mb-3 border-collapse text-text-2"
+              className="w-full text-[12.5px] mb-4 border-collapse text-text-2"
             />
           ),
           th: (p) => (
             <th
               {...p}
-              className="text-left border-b border-border px-2 py-1 font-medium text-text"
+              className="text-left border-b border-border px-3 py-1.5 font-semibold text-text-2 text-[11.5px] uppercase tracking-wider bg-surface-elev/40"
             />
           ),
           td: (p) => (
             <td
               {...p}
-              className="border-b border-border-soft px-2 py-1 align-top"
+              className="border-b border-border-soft px-3 py-2 align-top"
             />
           ),
+          blockquote: (p) => (
+            <blockquote
+              {...p}
+              className="border-l-2 border-gold/40 pl-4 my-4 text-text-2 italic"
+            />
+          ),
+          hr: (p) => <hr {...p} className="my-7 border-border-soft" />,
+          strong: (p) => <strong {...p} className="text-text font-semibold" />,
           a: (p) => (
             <a
               {...p}

@@ -252,6 +252,7 @@ mod tests {
             n_trades: 12,
             n_decisions: 30,
             baselines: None,
+            ..Default::default()
         };
         (run, metrics)
     }

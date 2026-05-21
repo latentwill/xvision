@@ -17,6 +17,7 @@
 use std::path::{Component, Path};
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use tokio::io::AsyncWriteExt;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
 
@@ -144,8 +145,6 @@ pub async fn import_bytes(
     tokio::fs::create_dir_all(&target_dir)
         .await
         .map_err(|e| ApiError::Internal(format!("create {}: {e}", target_dir.display())))?;
-    let target_path = target_dir.join(&safe_name);
-
     // Path-safety: make sure target stays inside the canonical folder
     // root. Canonicalize the *parent* (which we just created) — the file
     // itself may not exist yet.
@@ -158,20 +157,27 @@ pub async fn import_bytes(
     if !canonical_target_dir.starts_with(&canonical_root) {
         return Err(ApiError::Validation(format!(
             "path_escape: target {} resolves outside the strategies folder",
-            target_path.display()
+            target_dir.join(&safe_name).display()
         )));
     }
 
-    if !opts.clobber && tokio::fs::try_exists(&target_path).await.unwrap_or(false) {
-        return Err(ApiError::Conflict(format!(
-            "no_clobber: {} already exists",
-            relative_to_root(&canonical_root, &target_path)
-        )));
+    let target_path = canonical_target_dir.join(&safe_name);
+    if let Some(existing) = existing_target_metadata(&target_path).await? {
+        if existing.file_type().is_symlink() {
+            return Err(ApiError::Validation(format!(
+                "symlink_target_not_allowed: {} is a symlink",
+                relative_to_root(&canonical_root, &target_path)
+            )));
+        }
+        if !opts.clobber {
+            return Err(ApiError::Conflict(format!(
+                "no_clobber: {} already exists",
+                relative_to_root(&canonical_root, &target_path)
+            )));
+        }
     }
 
-    tokio::fs::write(&target_path, bytes)
-        .await
-        .map_err(|e| ApiError::Internal(format!("write {}: {e}", target_path.display())))?;
+    write_via_temp_file(&canonical_target_dir, &target_path, &safe_name, bytes).await?;
 
     let kind = FileKind::from_extension(Some(ext.as_str()));
     let entry = build_entry(&canonical_root, &target_path, kind).await?;
@@ -269,6 +275,56 @@ fn relative_to_root(canonical_root: &Path, path: &Path) -> String {
             .join("/"),
         Err(_) => path.display().to_string(),
     }
+}
+
+async fn existing_target_metadata(target_path: &Path) -> ApiResult<Option<std::fs::Metadata>> {
+    match tokio::fs::symlink_metadata(target_path).await {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ApiError::Internal(format!("stat {}: {e}", target_path.display()))),
+    }
+}
+
+async fn write_via_temp_file(
+    canonical_target_dir: &Path,
+    target_path: &Path,
+    safe_name: &str,
+    bytes: &[u8],
+) -> ApiResult<()> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let tmp_path = canonical_target_dir.join(format!(
+        ".{safe_name}.xvision-import-{}-{nonce}.tmp",
+        std::process::id()
+    ));
+
+    let mut tmp = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("create {}: {e}", tmp_path.display())))?;
+    if let Err(e) = tmp.write_all(bytes).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(ApiError::Internal(format!("write {}: {e}", tmp_path.display())));
+    }
+    if let Err(e) = tmp.sync_all().await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(ApiError::Internal(format!("sync {}: {e}", tmp_path.display())));
+    }
+    drop(tmp);
+
+    if let Err(e) = tokio::fs::rename(&tmp_path, target_path).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(ApiError::Internal(format!(
+            "rename {} to {}: {e}",
+            tmp_path.display(),
+            target_path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn extension(name: &str) -> Option<String> {

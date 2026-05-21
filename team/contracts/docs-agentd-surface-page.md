@@ -5,7 +5,7 @@ wave: docs-user-and-agent-wiki-2026-05-20
 worktree: .worktrees/docs-agentd-surface-page
 branch: task/docs-agentd-surface-page
 base: origin/main
-status: ready                                                     # may need a spec round-trip first per intake §"Agent-facing documentation"
+status: merged
 depends_on: []
 blocks: []
 stacking: none

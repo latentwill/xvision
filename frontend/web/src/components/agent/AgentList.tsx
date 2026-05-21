@@ -106,6 +106,7 @@ function defaultStatus(agent: Agent): AgentStatus {
 function formatRelative(iso: string): string {
   try {
     const then = new Date(iso).getTime();
+    if (!Number.isFinite(then)) return iso;
     const now = Date.now();
     const seconds = Math.max(0, Math.round((now - then) / 1000));
     if (seconds < 60) return `${seconds}s ago`;

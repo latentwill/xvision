@@ -848,7 +848,7 @@ fn update_slot_pair(req: &UpdateSlotReq) -> ApiResult<Option<ProviderModelPair>>
 }
 
 fn append_runtime_errors(out: &mut ValidateDraftOut, mut errors: Vec<String>) {
-    out.errors.extend(errors.drain(..));
+    out.errors.append(&mut errors);
     out.ok = out.errors.is_empty();
 }
 

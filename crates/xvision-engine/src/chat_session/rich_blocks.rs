@@ -889,6 +889,8 @@ mod tests {
             error: None,
             actual_input_tokens: Some(10),
             actual_output_tokens: Some(20),
+            inference_cost_quote_total: None,
+            net_return_pct: None,
         }
     }
 
@@ -909,9 +911,13 @@ mod tests {
                 n_trades: 2,
                 n_decisions: 4,
                 baselines: None,
+                ..Default::default()
             }),
             error: None,
             behavior: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
+            net_return_pct: None,
         }
     }
 }

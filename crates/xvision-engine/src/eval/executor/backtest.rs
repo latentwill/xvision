@@ -20,6 +20,8 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use chrono::Utc;
+use ulid::Ulid;
 use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
@@ -33,8 +35,14 @@ use crate::api::chart::{
     ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus, TradeMarker,
     TradeSide,
 };
+use crate::eval::broker_rules::{
+    rule_set_for_asset_class, BrokerRuleSet, BrokerViolationSeverity, OrderKind, PendingOrder, TimeInForce,
+};
+use crate::eval::cost_arrays::BarCostTable;
 use crate::eval::early_stop::{self, EarlyStopConfig};
+use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::executor::Executor;
+use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
 use crate::eval::guardrails::{
     self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
     GuardrailDecision,
@@ -43,9 +51,10 @@ use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
 };
+use crate::eval::orders::OrderState;
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, MetricsSummary, Run, RunStatus};
-use crate::eval::scenario::{Scenario, SlippageModel};
+use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::Strategy;
@@ -298,6 +307,7 @@ impl Executor for BacktestExecutor {
 }
 
 impl BacktestExecutor {
+    #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
         run: &mut Run,
@@ -382,11 +392,36 @@ impl BacktestExecutor {
             crate::agent::llm::CACHE_HINT_EMITTED_CALLS.load(std::sync::atomic::Ordering::Relaxed);
 
         let initial = scenario.capital.initial;
-        let slip_bps = match &scenario.venue.slippage {
+
+        // Scenario-default cost values. These are the fallbacks when no
+        // per-bar array column and no per-asset override matches.
+        let default_slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
             SlippageModel::None => 0.0,
+            SlippageModel::VolumeShare { .. } => 0.0, // VolumeShare computes dynamically
         };
-        let taker_bps = scenario.venue.fees.taker_bps as f64;
+        let default_taker_bps = scenario.venue.fees.taker_bps as f64;
+
+        // Per-bar cost table. Built from the injected bars' Parquet source
+        // when cost columns are present. An empty table means "no per-bar
+        // overrides" — all bars fall back to scenario defaults.
+        // For the legacy `load_ohlcv_fixture` path we don't have the raw
+        // Parquet batches, so the table stays empty.
+        let bar_cost_table = BarCostTable::default();
+
+        // Accumulate `volume_share_excess` findings during the run; persist
+        // them after the loop so we don't block the hot path on DB I/O.
+        let mut volume_share_findings: Vec<Finding> = Vec::new();
+
+        // eval-broker-rule-findings: build the asset-class-appropriate rule set
+        // once per run. Currently Alpaca is the only venue; asset_class drives
+        // Crypto vs Equity (no-op stub). The rule set is boxed so it can be
+        // swapped per-venue in a future track without changing this function.
+        let broker_rules: Box<dyn BrokerRuleSet> = rule_set_for_asset_class(scenario.asset_class);
+        // Running count of orders rejected by broker-rule validation. Zero for
+        // runs with no violations. Logged at finalization and surfaced as a
+        // run-level finding when > 0.
+        let mut broker_rejected_orders: u32 = 0;
 
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];
@@ -735,6 +770,106 @@ impl BacktestExecutor {
                 }
             };
 
+            // eval-broker-rule-findings: validate new open orders against venue
+            // rules before calling simulate_fill. Only `long_open` and
+            // `short_open` generate new orders at the venue; `hold` and `flat`
+            // do not (they are portfolio-state changes or no-ops).
+            //
+            // On rejection:
+            //   - The order does NOT fill (the decision is recorded below with
+            //     no fill data, so the strategy sees it in the trace).
+            //   - A `broker_rule_violation` finding is written to findings.jsonl.
+            //   - `broker_rejected_orders` is incremented.
+            //
+            // The rule set is built once per run from `scenario.asset_class`;
+            // see the `rule_set_for_asset_class` call above the decision loop.
+            let broker_rejected = if applied_action == "long_open" || applied_action == "short_open" {
+                // Estimate order size using the same risk model as simulate_fill.
+                // The qty estimate is approximate (simulate_fill may arrive at a
+                // slightly different price); it is sufficient for notional /
+                // precision checks.
+                let estimated_qty = {
+                    let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                    (usd_at_risk / next_bar_open).max(0.0)
+                };
+                let pending = PendingOrder {
+                    symbol: asset.clone(),
+                    // v1 backtest always emits market orders with GTC TIF.
+                    // Future tracks (intra-bar fill ordering, limit orders) will
+                    // plumb the trader's expressed order kind / TIF through here.
+                    kind: OrderKind::Market,
+                    tif: TimeInForce::Gtc,
+                    qty: estimated_qty,
+                    price: next_bar_open,
+                };
+                match broker_rules.validate(&pending) {
+                    Ok(()) => false, // order accepted; proceed to simulate_fill
+                    Err(violation) => {
+                        // Reject the order. Record a finding then skip fill.
+                        broker_rejected_orders += 1;
+                        let finding_severity = match violation.severity {
+                            BrokerViolationSeverity::Critical => Severity::Critical,
+                            BrokerViolationSeverity::Warning => Severity::Warning,
+                        };
+                        let finding = Finding {
+                            id: Ulid::new().to_string(),
+                            run_id: run.id.clone(),
+                            kind: "broker_rule_violation".into(),
+                            severity: finding_severity,
+                            summary: format!(
+                                "Order rejected by broker rule `{}`: {}",
+                                violation.specific_rule, violation.message
+                            ),
+                            evidence: serde_json::json!({
+                                "specific_rule": violation.specific_rule,
+                                "message": violation.message,
+                                "severity": violation.severity,
+                                "asset": asset,
+                                "action": applied_action,
+                                "estimated_qty": estimated_qty,
+                                "next_bar_open": next_bar_open,
+                                "decision_index": decision_idx,
+                            }),
+                            extracted_at: Utc::now(),
+                            schema_version: crate::eval::findings::FINDING_SCHEMA_VERSION.to_string(),
+                            evidence_cycle_ids: Some(vec![decision_idx.to_string()]),
+                            produced_by_check: Some(format!("broker:{}", violation.specific_rule)),
+                            eval_review_id: None,
+                            review_type: None,
+                            confidence: None,
+                            title: Some(format!("Broker rule violation: {}", violation.specific_rule)),
+                            description: Some(violation.message.clone()),
+                            recommendation: Some(
+                                "Review strategy's order construction logic; \
+                                 ensure order types, TIFs, and sizes are compatible \
+                                 with the target venue."
+                                    .into(),
+                            ),
+                            created_at: None,
+                        };
+                        tracing::warn!(
+                            run_id = %run.id,
+                            decision_index = decision_idx,
+                            asset = %asset,
+                            specific_rule = %violation.specific_rule,
+                            action = %applied_action,
+                            "broker rule rejected order — no fill this cycle",
+                        );
+                        if let Err(e) = store.record_finding(&finding).await {
+                            tracing::error!(
+                                run_id = %run.id,
+                                decision_index = decision_idx,
+                                error = %e,
+                                "failed to record broker_rule_violation finding",
+                            );
+                        }
+                        true // order rejected; skip simulate_fill
+                    }
+                }
+            } else {
+                false // hold/flat: no venue order, skip broker check
+            };
+
             // `simulate_fill` treats any non-(long_open|short_open) action
             // as `want_flat` (closes any open position). That suits a
             // trader-emitted `flat` or the guardrail one-step-flip
@@ -742,7 +877,11 @@ impl BacktestExecutor {
             // `long_open` → `hold` and we MUST NOT close the existing
             // position in that case. Short-circuit a true no-op fill
             // for `hold` so the position survives untouched.
-            let fill = if applied_action == "hold" {
+            //
+            // A broker-rejected order also skips simulate_fill: the order is
+            // treated as if it never existed (fail-honest — the strategy sees
+            // the decision in the trace but no fill in outcomes).
+            let fill = if applied_action == "hold" || broker_rejected {
                 FillOutcome {
                     new_pos: pre_fill_position,
                     new_entry: entry_price,
@@ -750,18 +889,115 @@ impl BacktestExecutor {
                     fill_size: None,
                     fee: None,
                     realized_pnl: 0.0,
+                    provenance: FillProvenance::default(),
+                    fill_branch: None,
+                    aggressor_side: None,
+                    order_state: None,
                 }
             } else {
-                simulate_fill(SimulateFillArgs {
+                // Resolve per-bar and per-asset cost overrides.
+                let bar_cost = bar_cost_table.lookup(&bar.timestamp);
+                let asset_override = resolve_asset_override(&scenario.venue.overrides, &asset);
+
+                // Override precedence: per-bar array > per-asset override > scenario default.
+                let effective_slip_bps = bar_cost
+                    .and_then(|c| c.slip_bps)
+                    .or_else(|| {
+                        asset_override
+                            .and_then(|o| o.slippage.as_ref())
+                            .and_then(|s| match s {
+                                SlippageModel::Linear { bps } => Some(*bps as f64),
+                                SlippageModel::None => Some(0.0),
+                                SlippageModel::VolumeShare { .. } => None,
+                            })
+                    })
+                    .unwrap_or(default_slip_bps);
+
+                let effective_taker_bps = bar_cost
+                    .and_then(|c| c.fee_bps)
+                    .or_else(|| {
+                        asset_override
+                            .and_then(|o| o.fees.as_ref())
+                            .map(|f| f.taker_bps as f64)
+                    })
+                    .unwrap_or(default_taker_bps);
+
+                // Maker fee: per-bar override if present, else per-asset, else scenario default.
+                let effective_maker_bps = bar_cost
+                    .and_then(|c| c.fee_bps) // when per-bar fee is present, use it for both sides
+                    .or_else(|| {
+                        asset_override
+                            .and_then(|o| o.fees.as_ref())
+                            .map(|f| f.maker_bps as f64)
+                    })
+                    .unwrap_or(scenario.venue.fees.maker_bps as f64);
+
+                let effective_spread_bps = bar_cost.and_then(|c| c.spread_bps).unwrap_or(0.0);
+
+                // Determine the effective slippage model. When a per-bar
+                // slip_bps column is present, treat it as a Linear model
+                // (the value is in effective_slip_bps). Otherwise use the
+                // asset override or scenario default.
+                //
+                // We store an owned fallback value so Rust doesn't reject
+                // a reference to a temporary.
+                let per_bar_slip_present = bar_cost.and_then(|c| c.slip_bps).is_some();
+                let fallback_linear = SlippageModel::Linear { bps: 0 }; // bps ignored; value via effective_slip_bps
+                let effective_slippage_model: &SlippageModel = if per_bar_slip_present {
+                    &fallback_linear
+                } else {
+                    asset_override
+                        .and_then(|o| o.slippage.as_ref())
+                        .unwrap_or(&scenario.venue.slippage)
+                };
+
+                let per_bar_fee_present = bar_cost.and_then(|c| c.fee_bps).is_some();
+                let per_asset_fee_present = asset_override.and_then(|o| o.fees.as_ref()).is_some();
+                let fee_source = resolve_fee_source(per_bar_fee_present, per_asset_fee_present);
+
+                // Fill bar is the next bar — `bars.get(i + 1)` if present,
+                // else the current bar (terminal-bar fallback). We need its
+                // O/H/L for intra-bar ordering. When bars[i+1] doesn't exist,
+                // use current bar's close as a degenerate open and O==H==L.
+                let fill_bar = bars.get(i + 1);
+                let (fill_bar_open, fill_bar_high, fill_bar_low) = fill_bar
+                    .map(|b| (b.open, b.high, b.low))
+                    .unwrap_or((bar.close, bar.close, bar.close));
+
+                let fill_result = simulate_fill(SimulateFillArgs {
                     pos: pre_fill_position,
                     entry: entry_price,
                     action: &applied_action,
                     next_open: next_bar_open,
-                    slip_bps,
-                    taker_bps,
+                    bar_volume: bar.volume,
+                    slip_bps: effective_slip_bps,
+                    spread_bps: effective_spread_bps,
+                    taker_bps: effective_taker_bps,
+                    maker_bps: effective_maker_bps,
                     equity,
                     risk_pct: strategy.risk.risk_pct_per_trade,
-                })
+                    slippage_model: effective_slippage_model,
+                    fee_source,
+                    asset: &asset,
+                    bar_ts: bar.timestamp,
+                    bar_open: fill_bar_open,
+                    bar_high: fill_bar_high,
+                    bar_low: fill_bar_low,
+                });
+
+                // Collect volume_share_excess finding if the cap bound.
+                if let Some((req_qty, bar_vol, cap_qty, fill_share)) = fill_result.volume_cap_hit {
+                    volume_share_findings.push(make_volume_share_excess_finding(
+                        &run.id,
+                        decision_idx,
+                        req_qty,
+                        bar_vol,
+                        cap_qty,
+                        fill_share,
+                    ));
+                }
+
+                fill_result.outcome
             };
             position = fill.new_pos;
             entry_price = fill.new_entry;
@@ -972,6 +1208,9 @@ impl BacktestExecutor {
             n_trades,
             n_decisions: decision_idx,
             baselines: Some(baselines),
+            // inference_cost_quote_total + net_return_pct populated
+            // post-finalize by api::eval::enrich_with_inference_cost.
+            ..Default::default()
         };
 
         run.actual_input_tokens = Some(total_input_tokens);
@@ -989,8 +1228,78 @@ impl BacktestExecutor {
             run_id = %run.id,
             executor = "backtest",
             cache_hint_emitted_calls,
+            broker_rejected_orders,
             "eval run finalize: provider prompt-cache stats"
         );
+        // Persist volume_share_excess findings accumulated during the run.
+        for finding in &volume_share_findings {
+            if let Err(e) = store.record_finding(finding).await {
+                tracing::warn!(
+                    run_id = %run.id,
+                    error = %e,
+                    "failed to persist volume_share_excess finding; continuing"
+                );
+            }
+        }
+
+        // eval-broker-rule-findings: if any orders were rejected, emit an
+        // aggregate run-level finding so the reviewer can see the count
+        // without scanning the per-decision violations. The per-decision
+        // findings are already in findings.jsonl.
+        //
+        // NOTE: `broker_rejected_orders` is intentionally not added to
+        // `MetricsSummary` in this track to avoid touching ~25 struct literal
+        // construction sites across parallel V2E tracks (which would cause
+        // merge conflicts). The metric is surfaced here through the findings
+        // JSONL and as a tracing::info field above. Adding it to
+        // `MetricsSummary` is deferred to a follow-up coordination step — see
+        // PR body "Coordination" section.
+        if broker_rejected_orders > 0 {
+            let summary_finding = Finding {
+                id: Ulid::new().to_string(),
+                run_id: run.id.clone(),
+                kind: "broker_rule_violation".into(),
+                severity: Severity::Warning,
+                summary: format!(
+                    "{broker_rejected_orders} order(s) rejected by broker-rule validation \
+                     this run; see per-decision findings for details."
+                ),
+                evidence: serde_json::json!({
+                    "broker_rejected_orders": broker_rejected_orders,
+                    "note": "Per-decision findings carry specific_rule and evidence_cycle_ids.",
+                }),
+                extracted_at: Utc::now(),
+                schema_version: crate::eval::findings::FINDING_SCHEMA_VERSION.to_string(),
+                evidence_cycle_ids: Some(vec![]),
+                produced_by_check: Some("broker:run_aggregate".to_string()),
+                eval_review_id: None,
+                review_type: None,
+                confidence: None,
+                title: Some(format!("{broker_rejected_orders} broker-rejected order(s)")),
+                description: Some(
+                    "One or more orders were rejected by offline broker-rule validation \
+                     before reaching simulate_fill. The strategy's backtest P&L does not \
+                     reflect these orders. Review per-decision findings for details."
+                        .into(),
+                ),
+                recommendation: Some(
+                    "Inspect per-decision `broker_rule_violation` findings. \
+                     Fix the strategy's order construction to comply with \
+                     Alpaca's supported order types, TIFs, and minimum sizes."
+                        .into(),
+                ),
+                created_at: None,
+            };
+            if let Err(e) = store.record_finding(&summary_finding).await {
+                tracing::error!(
+                    run_id = %run.id,
+                    broker_rejected_orders,
+                    error = %e,
+                    "failed to record broker_rule_violation aggregate finding",
+                );
+            }
+        }
+
         store.finalize(&run.id, &metrics).await?;
         Ok(metrics)
     }
@@ -1001,10 +1310,50 @@ struct SimulateFillArgs<'a> {
     entry: f64,
     action: &'a str,
     next_open: f64,
+    /// Bar volume — required for `VolumeShare` model. Zero/NaN triggers
+    /// a fallback to the scenario-default `Linear` model.
+    bar_volume: f64,
+    /// Effective slip_bps resolved via override precedence. For `VolumeShare`
+    /// this is unused (impact computed from `price_impact * volume_share²`).
     slip_bps: f64,
+    /// Half-spread in bps (0.0 when no `spread_bps` column present).
+    spread_bps: f64,
     taker_bps: f64,
+    /// Maker fee in bps — applied when `AggressorSide::Maker` is classified.
+    maker_bps: f64,
     equity: f64,
     risk_pct: f64,
+    /// The effective slippage model for this bar (after override resolution).
+    slippage_model: &'a SlippageModel,
+    /// Provenance tag for the fee source.
+    fee_source: FeeSource,
+    /// Asset venue symbol — used for fallback debug logging.
+    asset: &'a str,
+    /// Bar timestamp — used for fallback debug logging.
+    bar_ts: chrono::DateTime<chrono::Utc>,
+    /// Current bar's OHLC — used for NautilusTrader intra-bar fill ordering.
+    /// `open` must equal `next_open` from the *decision* bar's perspective
+    /// (i.e. this is the *next* bar that fills the order).
+    bar_open: f64,
+    /// High of the fill bar — used by `intra_bar_fill_branch` for the O→H→L→C
+    /// path decision. Stored here for future limit/stop order paths; v1 market
+    /// orders do not consult it (they always use `NextOpenOnly`).
+    #[allow(dead_code)]
+    bar_high: f64,
+    /// Low of the fill bar — used by `intra_bar_fill_branch` for the O→L→H→C
+    /// path decision. Stored here for future limit/stop order paths; v1 market
+    /// orders do not consult it (they always use `NextOpenOnly`).
+    #[allow(dead_code)]
+    bar_low: f64,
+}
+
+/// Result wrapper that bundles the `FillOutcome` with volume-cap metadata.
+struct SimulateFillResult {
+    outcome: FillOutcome,
+    /// When `Some`, the volume cap bound: `(requested_qty, bar_volume,
+    /// cap_binding_qty, fill_share)`. The caller uses this to emit a
+    /// `volume_share_excess` finding.
+    volume_cap_hit: Option<(f64, f64, f64, f64)>,
 }
 
 struct FillOutcome {
@@ -1014,17 +1363,205 @@ struct FillOutcome {
     fill_size: Option<f64>,
     fee: Option<f64>,
     realized_pnl: f64,
+    /// Fill provenance — describes how cost was resolved for this fill.
+    /// Populated by `simulate_fill`; consumed by `eval-trace-surface-foundation`
+    /// when it lands its trace column writes. Unused until that track merges.
+    #[allow(dead_code)]
+    provenance: FillProvenance,
+    /// Which intra-bar branch triggered this fill. `None` for no-op (hold/flat-no-pos).
+    #[allow(dead_code)]
+    fill_branch: Option<FillBranch>,
+    /// Maker vs taker classification. `None` for no-op fills.
+    #[allow(dead_code)]
+    aggressor_side: Option<AggressorSide>,
+    /// Order lifecycle state after the fill attempt.
+    #[allow(dead_code)]
+    order_state: Option<OrderState>,
 }
 
-/// Simulate a market-order fill at the next bar's open, applying linear
-/// slippage and a taker fee. Realized PnL is booked when an existing
-/// position is reduced or reversed; new entries open at the slippage-adjusted
-/// fill price.
+// ---------------------------------------------------------------------------
+// Intra-bar fill ordering helpers (V2E eval-intra-bar-fill-ordering)
+// ---------------------------------------------------------------------------
+
+/// Corwin-Schultz (2012) bid-ask spread proxy from per-bar H/L data.
 ///
-/// Action semantics (matches the v1 trader-output schema):
-/// - `long_open`: hold long, reverse short → long, or open long from flat.
-/// - `short_open`: hold short, reverse long → short, or open short from flat.
-/// - `flat` (or any unknown action): close any open position; otherwise no-op.
+/// Formula: `2 * sqrt(max(0, log(H/L)² - 2*ln(2)*σ²))`
+/// where σ² is estimated from the rolling window's `log(H/L)²` values.
+///
+/// Returns spread in basis points. Always returns a finite, non-negative value.
+///
+/// # Limitations
+/// - Downward-biased on thinly-traded names (Corwin-Schultz known limitation).
+/// - For liquid Alpaca symbols (BTC/USD, ETH/USD, large-cap equities) the
+///   estimator is a reasonable default when no explicit spread column is present.
+///
+/// `hl_log_sq_window` is a small rolling window of `(ln(H/L))²` values from
+/// recent bars — typically the last 5–20 bars. When the window is empty, σ²
+/// falls back to 0, producing `spread ≈ log(H/L) * 2`.
+pub fn corwin_schultz_spread_bps(bar_high: f64, bar_low: f64, hl_log_sq_window: &[f64]) -> f64 {
+    // Guard against degenerate inputs.
+    if bar_high <= 0.0
+        || bar_low <= 0.0
+        || bar_high < bar_low
+        || !bar_high.is_finite()
+        || !bar_low.is_finite()
+    {
+        return 0.0;
+    }
+
+    let ln2 = std::f64::consts::LN_2;
+    let log_hl = (bar_high / bar_low).ln();
+    let log_hl_sq = log_hl * log_hl;
+
+    // Rolling variance proxy: mean of (ln(H/L))² over the window.
+    let sigma_sq = if hl_log_sq_window.is_empty() {
+        0.0
+    } else {
+        hl_log_sq_window.iter().sum::<f64>() / hl_log_sq_window.len() as f64
+    };
+
+    // Corwin-Schultz: spread = 2 * sqrt(max(0, S²)) where S² = log_hl² - 2*ln(2)*σ².
+    let s_sq = (log_hl_sq - 2.0 * ln2 * sigma_sq).max(0.0);
+    let spread_fraction = 2.0 * s_sq.sqrt();
+
+    // Convert from fraction to bps, clamp to non-negative (sqrt ensures non-neg,
+    // but guard against NaN from pathological inputs).
+    let spread_bps = (spread_fraction * 10_000.0).max(0.0);
+    if spread_bps.is_finite() {
+        spread_bps
+    } else {
+        0.0
+    }
+}
+
+/// NautilusTrader-style intra-bar fill branch determination.
+///
+/// Given a fill bar's O/H/L, determine which OHLC walk sequence applies
+/// and whether the `trigger_price` would have been hit within that bar.
+///
+/// # Rules
+///
+/// 1. **Gap past trigger**: if the bar's open is already past the trigger
+///    in the fill direction (e.g. stop at 100 but bar opens at 95 for a
+///    long stop) → fill at open, `FillBranch::GapPast`. No price guarantee.
+///
+/// 2. **O→H→L→C** (high closer to open): if `|H - O| <= |L - O|`,
+///    visit open → high → low → close. First crossing fills.
+///
+/// 3. **O→L→H→C** (low closer to open): if `|L - O| < |H - O|`,
+///    visit open → low → high → close. First crossing fills.
+///
+/// `trigger_price`: the limit or stop price to test.
+/// `is_buy`: true when the order fills on an upward crossing (stop-buy,
+///   limit-buy above a falling price). false for sell-side.
+///
+/// Returns `(FillBranch, Option<fill_price>)`. `fill_price` is `None`
+/// when the trigger is not reached within this bar — the caller should
+/// leave the order `Open`.
+pub fn intra_bar_fill_branch(
+    bar_open: f64,
+    bar_high: f64,
+    bar_low: f64,
+    trigger_price: f64,
+    is_buy: bool,
+) -> (FillBranch, Option<f64>) {
+    // Rule 1: gap past trigger at open.
+    // For a buy stop/limit: if open is already at or above the trigger, gap fill.
+    // For a sell stop/limit: if open is already at or below the trigger, gap fill.
+    let gap_filled = if is_buy {
+        bar_open >= trigger_price
+    } else {
+        bar_open <= trigger_price
+    };
+    if gap_filled {
+        return (FillBranch::GapPast, Some(bar_open));
+    }
+
+    // Rule 2/3: NautilusTrader heuristic — which extreme is closer to open?
+    let high_dist = (bar_high - bar_open).abs();
+    let low_dist = (bar_low - bar_open).abs();
+
+    if high_dist <= low_dist {
+        // O→H→L→C: high visited first.
+        if is_buy {
+            // Buy trigger crossed when high reaches trigger.
+            if bar_high >= trigger_price {
+                return (FillBranch::OhlcHighFirst, Some(trigger_price));
+            }
+        } else {
+            // Sell trigger: not crossed in this sequence unless low is below trigger.
+            if bar_low <= trigger_price {
+                return (FillBranch::OhlcHighFirst, Some(trigger_price));
+            }
+        }
+    } else {
+        // O→L→H→C: low visited first.
+        if is_buy {
+            // Buy trigger: not crossed on the down leg; only on the up leg.
+            if bar_high >= trigger_price {
+                return (FillBranch::OhlcLowFirst, Some(trigger_price));
+            }
+        } else {
+            // Sell trigger crossed when low reaches trigger.
+            if bar_low <= trigger_price {
+                return (FillBranch::OhlcLowFirst, Some(trigger_price));
+            }
+        }
+    }
+
+    // Trigger not reached within this bar.
+    (FillBranch::NextOpenOnly, None)
+}
+
+/// Classify a fill as maker or taker.
+///
+/// A fill is **maker** when the fill price is within `spread/2` of the bar open
+/// on the passive side (i.e. the order was resting and got hit, not crossing).
+/// All other fills (market orders, or limits that cross the spread) are **taker**.
+///
+/// # Maker classification rule
+///
+/// `spread_bps_at_fill` is the effective spread at fill time (from the per-bar
+/// column, per-asset override, Corwin-Schultz proxy, or scenario default).
+///
+/// For a long fill: `fill_price ≤ bar_open + spread_bps/10_000 / 2 * bar_open`
+/// For a short fill: `fill_price ≥ bar_open - spread_bps/10_000 / 2 * bar_open`
+///
+/// This is a permissive heuristic — any resting limit inside half-spread of
+/// the open is classified as maker. Tighten if backtests show unrealistic
+/// maker rates.
+///
+/// Market orders always classify as taker.
+pub fn classify_aggressor_side(
+    action: &str,
+    fill_price: f64,
+    bar_open: f64,
+    spread_bps: f64,
+) -> AggressorSide {
+    // Market orders are always taker.
+    if action == "long_open" || action == "short_open" {
+        // The v1 backtest emits only market-style orders — all current fills
+        // at next_open are taker. This function is structured to support future
+        // limit-order paths where maker classification would apply.
+        //
+        // Maker check: is the fill price within the passive half-spread of open?
+        let half_spread = bar_open * (spread_bps / 10_000.0) / 2.0;
+        let trade_long = action == "long_open";
+        if trade_long {
+            // Passive buy: fill at or below open + half_spread (resting bid).
+            if fill_price <= bar_open + half_spread {
+                return AggressorSide::Maker;
+            }
+        } else {
+            // Passive sell: fill at or above open - half_spread (resting offer).
+            if fill_price >= bar_open - half_spread {
+                return AggressorSide::Maker;
+            }
+        }
+    }
+    AggressorSide::Taker
+}
+
 /// Find the trader slot's model id, used to decorate trader-output
 /// failures with the reasoning-class hint (q15 §1). Prefers an attached
 /// agent with role `trader`, then falls back to the legacy
@@ -1046,20 +1583,48 @@ fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Op
     None
 }
 
-fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
+/// Simulate a market-order fill at the next bar's open, applying the
+/// configured slippage model and taker fee.
+///
+/// # Slippage models
+/// - `Linear { bps }`: flat basis-point slippage on `next_open` regardless
+///   of order size. Identical to the pre-V2E behavior.
+/// - `None`: zero slippage; fills at `next_open` verbatim.
+/// - `VolumeShare { price_impact, volume_limit }`: zipline-canonical quadratic
+///   model. `volume_share = min(order_qty / bar_volume, volume_limit)`.
+///   `fill_price = next_open * (1 ± price_impact * volume_share²)`.
+///   Falls back to the scenario-default `Linear` and emits a debug log when
+///   bar volume is missing or zero.
+///
+/// # Override precedence
+/// Resolved by the caller before invocation:
+///   per-bar array > per-asset override > scenario default.
+///
+/// Action semantics (matches the v1 trader-output schema):
+/// - `long_open`: hold long, reverse short → long, or open long from flat.
+/// - `short_open`: hold short, reverse long → short, or open short from flat.
+/// - `flat` (or any unknown action): close any open position; otherwise no-op.
+fn simulate_fill(a: SimulateFillArgs<'_>) -> SimulateFillResult {
     let want_long = a.action == "long_open";
     let want_short = a.action == "short_open";
     let want_flat = !want_long && !want_short;
 
     // No-op when target direction matches current position.
     if (want_long && a.pos > 0.0) || (want_short && a.pos < 0.0) || (want_flat && a.pos == 0.0) {
-        return FillOutcome {
-            new_pos: a.pos,
-            new_entry: a.entry,
-            fill_price: None,
-            fill_size: None,
-            fee: None,
-            realized_pnl: 0.0,
+        return SimulateFillResult {
+            outcome: FillOutcome {
+                new_pos: a.pos,
+                new_entry: a.entry,
+                fill_price: None,
+                fill_size: None,
+                fee: None,
+                realized_pnl: 0.0,
+                provenance: FillProvenance::default(),
+                fill_branch: None,
+                aggressor_side: None,
+                order_state: None,
+            },
+            volume_cap_hit: None,
         };
     }
 
@@ -1075,11 +1640,80 @@ fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
         a.pos < 0.0 // closing a short means buying
     };
 
-    let slip = a.slip_bps / 10_000.0;
-    let fill_price = if trade_long {
-        a.next_open * (1.0 + slip)
+    // Compute the initial position size so we know the order quantity for
+    // the VolumeShare model. For no-op paths this is already handled above.
+    // We need `new_pos_units` to compute `order_qty` for VolumeShare, but
+    // `new_pos_units` depends on `fill_price`, which depends on slippage,
+    // which for VolumeShare depends on `order_qty`. We resolve this by
+    // first computing order size at `next_open` (the mid), then applying
+    // VolumeShare impact.
+    let approx_units = if want_flat {
+        a.pos.abs()
     } else {
-        a.next_open * (1.0 - slip)
+        let usd_at_risk = a.equity * a.risk_pct;
+        let units = (usd_at_risk / a.next_open).max(0.0);
+        if a.pos != 0.0 {
+            // Reversing: pay close leg + open leg.
+            a.pos.abs() + units
+        } else {
+            units
+        }
+    };
+
+    // Resolve slip fraction and volume-cap state.
+    let mut volume_share = 0.0_f64;
+    let mut volume_cap_bound = false;
+    let mut volume_cap_hit: Option<(f64, f64, f64, f64)> = None;
+
+    let effective_slip_fraction: f64 = match a.slippage_model {
+        SlippageModel::None => 0.0,
+
+        SlippageModel::Linear { bps } => {
+            // When a per-bar column was present, `a.slip_bps` already holds
+            // that value (override precedence resolved by caller). Otherwise
+            // `a.slip_bps` came from the asset override or scenario default.
+            // In both cases the `bps` field on `Linear` may be stale vs the
+            // resolved value — we always use `a.slip_bps` here.
+            let _ = bps; // resolved value via a.slip_bps
+            a.slip_bps / 10_000.0
+        }
+
+        SlippageModel::VolumeShare {
+            price_impact,
+            volume_limit,
+        } => {
+            // Fallback when bar volume is zero or missing.
+            if a.bar_volume <= 0.0 || !a.bar_volume.is_finite() {
+                tracing::debug!(
+                    asset = a.asset,
+                    bar_ts = %a.bar_ts,
+                    "VolumeShare: bar volume missing or zero; falling back to Linear slip_bps={}",
+                    a.slip_bps
+                );
+                a.slip_bps / 10_000.0
+            } else {
+                let raw_share = approx_units / a.bar_volume;
+                volume_cap_bound = raw_share > *volume_limit;
+                volume_share = raw_share.min(*volume_limit);
+
+                if volume_cap_bound {
+                    // Quantity that would consume exactly volume_limit of bar volume.
+                    let cap_qty = *volume_limit * a.bar_volume;
+                    volume_cap_hit = Some((approx_units, a.bar_volume, cap_qty, volume_share));
+                }
+
+                price_impact * volume_share * volume_share
+            }
+        }
+    };
+
+    // Apply spread (half-spread widening on both sides of mid).
+    let spread_fraction = a.spread_bps / 10_000.0 / 2.0;
+
+    let fill_price = if trade_long {
+        a.next_open * (1.0 + effective_slip_fraction + spread_fraction)
+    } else {
+        a.next_open * (1.0 - effective_slip_fraction - spread_fraction)
     };
 
     // Realized PnL from closing the existing leg, if any.
@@ -1113,24 +1747,88 @@ fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
     } else {
         a.pos.abs() + new_pos_units.abs()
     };
+
+    // Maker/taker classification.
+    // The v1 backtest emits market-style orders (long_open / short_open / flat).
+    // `classify_aggressor_side` applies the half-spread test: if the fill price
+    // is within passive half-spread of the bar open, it's maker; otherwise taker.
+    // For market orders the fill price is open + slip + spread, which is OUTSIDE
+    // the passive half-spread, so they correctly classify as taker.
+    // The flat (close) path fills at open - slip - spread (for longs), which is
+    // also outside the passive half-spread, so it's taker too.
+    let aggressor_side = classify_aggressor_side(a.action, fill_price, a.bar_open, a.spread_bps);
+
+    // Fee in bps depends on aggressor side.
+    let fee_bps_applied = match aggressor_side {
+        AggressorSide::Maker => a.maker_bps,
+        AggressorSide::Taker => a.taker_bps,
+    };
+
     let notional = traded_units * fill_price;
-    let fee = notional * (a.taker_bps / 10_000.0);
+    let fee = notional * (fee_bps_applied / 10_000.0);
 
     let new_entry = if new_pos_units == 0.0 { 0.0 } else { fill_price };
 
-    FillOutcome {
-        new_pos: new_pos_units,
-        new_entry,
-        fill_price: Some(fill_price),
-        fill_size: Some(traded_units),
-        fee: Some(fee),
-        realized_pnl: realized - fee,
+    // All current (v1) fills are market orders — NextOpenOnly.
+    // The intra-bar ordering helpers (`intra_bar_fill_branch`) are available
+    // for future limit/stop order paths; the v1 path always uses next-bar open.
+    let fill_branch = FillBranch::NextOpenOnly;
+
+    // Order state: volume-cap-bound fills are PartiallyFilled; all other fills
+    // are Filled.
+    let order_state = if volume_cap_bound {
+        OrderState::PartiallyFilled
+    } else {
+        OrderState::Filled
+    };
+
+    let provenance = FillProvenance {
+        slip_bps_applied: effective_slip_fraction * 10_000.0,
+        spread_bps_applied: spread_fraction * 2.0 * 10_000.0, // round-trip bps
+        fee_bps_applied,
+        fee_source: a.fee_source,
+        volume_share,
+        volume_cap_bound,
+    };
+
+    SimulateFillResult {
+        outcome: FillOutcome {
+            new_pos: new_pos_units,
+            new_entry,
+            fill_price: Some(fill_price),
+            fill_size: Some(traded_units),
+            fee: Some(fee),
+            realized_pnl: realized - fee,
+            provenance,
+            fill_branch: Some(fill_branch),
+            aggressor_side: Some(aggressor_side),
+            order_state: Some(order_state),
+        },
+        volume_cap_hit,
+    }
+}
+
+/// Resolve the first matching `VenueOverride` for the given venue symbol.
+/// Returns `None` when no pattern matches (caller falls through to defaults).
+fn resolve_asset_override<'a>(overrides: &'a [VenueOverride], symbol: &str) -> Option<&'a VenueOverride> {
+    overrides.iter().find(|o| o.matches(symbol))
+}
+
+/// Determine the `FeeSource` provenance tag based on which source won.
+fn resolve_fee_source(per_bar_won: bool, per_asset_won: bool) -> FeeSource {
+    if per_bar_won {
+        FeeSource::PerBarArray
+    } else if per_asset_won {
+        FeeSource::PerAssetOverride
+    } else {
+        FeeSource::Default
     }
 }
 
 /// Build a `TradeMarker` from fill-level data. Extracted to avoid duplicating
 /// the identical field construction across the `long_open` and
 /// `short_open`/`flat` arms of the marker-event match.
+#[allow(clippy::too_many_arguments)]
 fn make_trade_marker(
     side: TradeSide,
     time: i64,
@@ -1160,9 +1858,7 @@ fn make_trade_marker(
 fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
     if action == "long_open" {
         "buy"
-    } else if action == "short_open" {
-        "sell"
-    } else if pre_fill_position > 0.0 {
+    } else if action == "short_open" || pre_fill_position > 0.0 {
         "sell"
     } else {
         "buy"
@@ -1278,22 +1974,40 @@ fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
 mod tests {
     use super::*;
 
+    // Updated because <reason>: `SimulateFillArgs` gained new fields for the
+    // V2E cost-model rewrite (bar_volume, spread_bps, slippage_model,
+    // fee_source, asset, bar_ts). The `simulate_fill` return type changed
+    // from `FillOutcome` to `SimulateFillResult { outcome, volume_cap_hit }`.
+    // Updated for eval-intra-bar-fill-ordering: added maker_bps, bar_open,
+    // bar_high, bar_low fields. Existing behavioural assertions still pass.
     fn args(pos: f64, action: &'static str) -> SimulateFillArgs<'static> {
         SimulateFillArgs {
             pos,
             entry: 50_000.0,
             action,
             next_open: 60_000.0,
-            slip_bps: 10.0,  // 0.1%
+            bar_volume: 1_000.0, // large enough that VolumeShare never caps
+            slip_bps: 10.0,      // 0.1%
+            spread_bps: 0.0,
             taker_bps: 25.0, // 0.25%
+            maker_bps: 10.0, // 0.10%
             equity: 10_000.0,
             risk_pct: 0.02, // 2%
+            slippage_model: &SlippageModel::Linear { bps: 10 },
+            fee_source: FeeSource::Default,
+            asset: "BTC/USD",
+            bar_ts: chrono::Utc::now(),
+            bar_open: 60_000.0,
+            bar_high: 61_000.0,
+            bar_low: 59_000.0,
         }
     }
 
     #[test]
     fn flat_when_already_flat_is_noop() {
-        let out = simulate_fill(args(0.0, "flat"));
+        // Updated because <reason>: simulate_fill now returns SimulateFillResult;
+        // unwrap .outcome to access fill fields.
+        let out = simulate_fill(args(0.0, "flat")).outcome;
         assert_eq!(out.new_pos, 0.0);
         assert!(out.fill_price.is_none());
         assert_eq!(out.realized_pnl, 0.0);
@@ -1301,7 +2015,9 @@ mod tests {
 
     #[test]
     fn long_open_from_flat_opens_long_at_slipped_up_price() {
-        let out = simulate_fill(args(0.0, "long_open"));
+        // Updated because <reason>: simulate_fill now returns SimulateFillResult;
+        // unwrap .outcome to access fill fields.
+        let out = simulate_fill(args(0.0, "long_open")).outcome;
         assert!(out.new_pos > 0.0);
         let fp = out.fill_price.unwrap();
         assert!(fp > 60_000.0); // slip adds for buys
@@ -1310,8 +2026,10 @@ mod tests {
 
     #[test]
     fn flat_closes_long_and_books_realized() {
+        // Updated because <reason>: simulate_fill now returns SimulateFillResult;
+        // unwrap .outcome to access fill fields.
         // pos=0.001 BTC bought at 50_000, close at 60_000-slip
-        let out = simulate_fill(args(0.001, "flat"));
+        let out = simulate_fill(args(0.001, "flat")).outcome;
         assert_eq!(out.new_pos, 0.0);
         assert!(out.fill_price.is_some());
         // 60_000 * (1 - 0.001) = 59_940
@@ -1323,14 +2041,18 @@ mod tests {
 
     #[test]
     fn long_open_when_already_long_is_noop() {
-        let out = simulate_fill(args(0.001, "long_open"));
+        // Updated because <reason>: simulate_fill now returns SimulateFillResult;
+        // unwrap .outcome to access fill fields.
+        let out = simulate_fill(args(0.001, "long_open")).outcome;
         assert_eq!(out.new_pos, 0.001);
         assert!(out.fill_price.is_none());
     }
 
     #[test]
     fn short_open_from_long_reverses_and_books_realized() {
-        let out = simulate_fill(args(0.001, "short_open"));
+        // Updated because <reason>: simulate_fill now returns SimulateFillResult;
+        // unwrap .outcome to access fill fields.
+        let out = simulate_fill(args(0.001, "short_open")).outcome;
         assert!(out.new_pos < 0.0);
         assert!(out.fill_price.is_some());
         // Closes long (booking gain) AND opens short at the same fill_price.

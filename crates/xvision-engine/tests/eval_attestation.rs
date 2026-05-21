@@ -24,6 +24,10 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -49,6 +53,7 @@ fn finalized_run() -> Run {
         n_trades: 17,
         n_decisions: 42,
         baselines: None,
+        ..Default::default()
     });
     r
 }

@@ -29,6 +29,7 @@ use crate::eval::guardrails::{
     self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
     GuardrailDecision,
 };
+use crate::eval::limits::EvalLimits;
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
@@ -73,6 +74,10 @@ pub struct PaperExecutor {
     /// proceeds. `None` / `Some(0.0)` disables the gate (matches the
     /// pre-rule behavior on venues we haven't catalogued yet).
     min_notional_usd: Option<f64>,
+    /// Per-run hard limits. Paper mode shares the same operator-safety
+    /// contract as backtest: limits are checked after each paid pipeline
+    /// decision and cancel the run before the next bar starts.
+    limits: Option<EvalLimits>,
 }
 
 impl PaperExecutor {
@@ -87,6 +92,7 @@ impl PaperExecutor {
             event_bus: None,
             obs_emitter: None,
             min_notional_usd: None,
+            limits: None,
         }
     }
 
@@ -99,6 +105,7 @@ impl PaperExecutor {
             event_bus: None,
             obs_emitter: None,
             min_notional_usd: None,
+            limits: None,
         }
     }
 
@@ -114,6 +121,7 @@ impl PaperExecutor {
             event_bus: None,
             obs_emitter: None,
             min_notional_usd: None,
+            limits: None,
         }
     }
 
@@ -130,6 +138,7 @@ impl PaperExecutor {
             event_bus: None,
             obs_emitter: None,
             min_notional_usd: None,
+            limits: None,
         }
     }
 
@@ -159,6 +168,11 @@ impl PaperExecutor {
     /// .min_notional_usd`).
     pub fn with_min_notional_usd(mut self, min_notional_usd: f64) -> Self {
         self.min_notional_usd = Some(min_notional_usd);
+        self
+    }
+
+    pub fn with_limits(mut self, limits: EvalLimits) -> Self {
+        self.limits = Some(limits);
         self
     }
 
@@ -485,6 +499,7 @@ impl Executor for PaperExecutor {
 }
 
 impl PaperExecutor {
+    #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
         run: &mut Run,
@@ -620,6 +635,7 @@ impl PaperExecutor {
         let mut consecutive_broker_error_last_msg: String = String::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        let run_started = std::time::Instant::now();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial balance so the first tick's drawdown is well-defined.
         let mut peak_equity = initial_balance.max(0.0);
@@ -839,6 +855,21 @@ impl PaperExecutor {
             store
                 .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
                 .await?;
+
+            if let Some(limits) = self.limits.as_ref() {
+                if !limits.is_empty() {
+                    if let Some(breach) = limits.check_for_cancel(
+                        decision_idx + 1,
+                        total_input_tokens,
+                        total_output_tokens,
+                        run_started,
+                    ) {
+                        let reason = breach.reason();
+                        let _ = store.cancel_active(&run.id, &reason).await;
+                        anyhow::bail!(reason);
+                    }
+                }
+            }
 
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
@@ -1110,8 +1141,8 @@ impl PaperExecutor {
                         None,
                         trace_side,
                         asset.clone(),
-                        size as f64,
-                        Some(reference_price_usd as f64),
+                        size,
+                        Some(reference_price_usd),
                         "market".to_string(),
                         "paper".to_string(),
                         Some(idempotency_key.clone()),
@@ -1138,9 +1169,9 @@ impl PaperExecutor {
                             em.emit_broker_call_finished(
                                 sid,
                                 BrokerCallOutcome::Filled,
-                                conf.fill_price.map(|p| p as f64),
-                                Some(conf.fill_size as f64),
-                                conf.fee.map(|f| f as f64),
+                                conf.fill_price,
+                                Some(conf.fill_size),
+                                conf.fee,
                                 Some(conf.broker_order_id.clone()),
                                 None,
                                 None,
@@ -1499,6 +1530,9 @@ impl PaperExecutor {
             // PaperExecutor does not have access to the raw bar slice post-hoc,
             // so baselines cannot be computed for paper-mode runs.
             baselines: None,
+            // inference_cost_quote_total + net_return_pct populated
+            // post-finalize by api::eval::enrich_with_inference_cost.
+            ..Default::default()
         };
 
         run.actual_input_tokens = Some(total_input_tokens);

@@ -20,7 +20,19 @@ import {
   scenarioGranularityToCli,
   useBarsFetchJob,
 } from "@/components/scenario/useBarsFetchJob";
-import type { Scenario, SlippageModel } from "@/api/types.gen";
+import type {
+  AssetRef,
+  CreateScenarioRequest,
+  Scenario,
+  ScenarioMutations,
+  SlippageModel,
+  TimeWindow,
+  VenueSettings,
+} from "@/api/types.gen";
+import {
+  ScenarioForm,
+  normalizeGranularity,
+} from "@/components/scenario/ScenarioForm";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -34,7 +46,38 @@ function fmtDate(iso: string): string {
 
 function fmtSlippage(model: SlippageModel): string {
   if (model.model === "none") return "none";
+  if (model.model === "volume_share")
+    return `volume share (impact=${model.price_impact}, limit=${model.volume_limit})`;
   return `linear ${model.bps} bps`;
+}
+
+// ── equality helpers (clone-mutations diff) ───────────────────────────────
+//
+// JSON-equality fallback for unchanged-vs-changed detection. These are
+// structurally small (≤ a few hundred bytes) so JSON.stringify is fine
+// here — we don't need a deep-equal dep. Used by the inline clone form
+// to decide whether each `ScenarioMutations` field should be `null`
+// (inherit parent) or the submitted value.
+
+function jsonEq(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function arraysEqual<T>(a: ReadonlyArray<T>, b: ReadonlyArray<T>): boolean {
+  if (a.length !== b.length) return false;
+  return jsonEq(a, b);
+}
+
+function assetsEqual(a: ReadonlyArray<AssetRef>, b: ReadonlyArray<AssetRef>): boolean {
+  return arraysEqual(a, b);
+}
+
+function timeWindowEquals(a: TimeWindow, b: TimeWindow): boolean {
+  return a.start === b.start && a.end === b.end;
+}
+
+function venueEquals(a: VenueSettings, b: VenueSettings): boolean {
+  return jsonEq(a, b);
 }
 
 // ── route ──────────────────────────────────────────────────────────────────
@@ -157,39 +200,66 @@ function DetailView({
   isDeleting: boolean;
 }) {
   const [cloneOpen, setCloneOpen] = useState(false);
-  const [cloneDisplayName, setCloneDisplayName] = useState(
-    `${s.display_name} (clone)`,
-  );
-  const [cloneDescription, setCloneDescription] = useState(s.description);
-  const [cloneNotes, setCloneNotes] = useState(s.notes ?? "");
-  const [cloneTags, setCloneTags] = useState(s.tags.join(", "));
 
-  function submitClone() {
-    const parsedTags = cloneTags
-      .split(",")
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0);
-    const tagsChanged =
-      parsedTags.length !== s.tags.length ||
-      parsedTags.some((t, i) => t !== s.tags[i]);
-    // `notes` is special-cased in `api/scenario.rs::clone`:
-    //   notes: mutations.notes,    // passthrough, NOT unwrap_or(parent)
-    // …whereas `description` / `tags` etc. use
-    // `mutations.X.unwrap_or(parent_s.X)`. Sending null for notes
-    // therefore writes empty notes, not "inherit parent". Always send
-    // the form's current notes value to preserve the prefilled parent
-    // text when the operator leaves it untouched. PR #341 review.
+  // Pre-fill the form from the parent scenario so the operator only
+  // needs to touch fields they actually want to override. ScenarioForm
+  // accepts `Partial<CreateScenarioRequest>` — Scenario carries all of
+  // CreateScenarioRequest's fields plus some extras (id, parent_…,
+  // created_at), which we just don't read.
+  //
+  // Note: we hand `display_name = "<parent> (clone)"` so the operator
+  // sees a sensible default. The diff-against-parent logic below treats
+  // any change from the parent name (including the "(clone)" default)
+  // as an explicit override.
+  const formInitial: Partial<CreateScenarioRequest> = {
+    display_name: `${s.display_name} (clone)`,
+    description: s.description,
+    asset_class: s.asset_class,
+    asset: s.asset,
+    quote_currency: s.quote_currency,
+    time_window: s.time_window,
+    capital: s.capital,
+    granularity: s.granularity,
+    timezone: s.timezone,
+    calendar: s.calendar,
+    venue: s.venue,
+    data_source: s.data_source,
+    replay_mode: s.replay_mode,
+    tags: s.tags,
+    notes: s.notes,
+    parent_scenario_id: null,
+    source: s.source,
+    warmup_bars: s.warmup_bars,
+  };
+
+  // Diff the submitted request against the parent and emit a
+  // `ScenarioMutations` payload with `null` for any field the operator
+  // left unchanged. The engine's `api/scenario.rs::clone` handler maps
+  // `null` to "inherit parent" for most fields; `notes` is special-
+  // cased there (passthrough, NOT unwrap_or(parent)) — we always send
+  // the form's current `notes` value to preserve PR #341's behaviour.
+  function submitCloneFromForm(req: CreateScenarioRequest) {
     onClone({
-      display_name: cloneDisplayName.trim() || null,
-      description: cloneDescription !== s.description ? cloneDescription : null,
-      notes: cloneNotes,
-      tags: tagsChanged ? parsedTags : null,
-      time_window: null,
-      asset: null,
-      granularity: null,
-      venue: null,
-      warmup_bars: null,
-    });
+      display_name: req.display_name !== s.display_name ? req.display_name : null,
+      description: req.description !== s.description ? req.description : null,
+      notes: req.notes,
+      tags: arraysEqual(req.tags, s.tags) ? null : req.tags,
+      time_window: timeWindowEquals(req.time_window, s.time_window)
+        ? null
+        : req.time_window,
+      asset: assetsEqual(req.asset, s.asset) ? null : req.asset,
+      // Normalize both sides before comparing — the parent stores the
+      // engine's canonical form (e.g. "Hour4") while the form emits
+      // the operator-friendly form ("4h"). They round-trip on the
+      // engine side but lexically differ, so a naive `!==` would
+      // mark every clone as a granularity override.
+      granularity:
+        normalizeGranularity(req.granularity) === normalizeGranularity(s.granularity)
+          ? null
+          : req.granularity,
+      venue: venueEquals(req.venue, s.venue) ? null : req.venue,
+      warmup_bars: req.warmup_bars !== s.warmup_bars ? req.warmup_bars : null,
+    } satisfies ScenarioMutations);
   }
 
   return (
@@ -278,70 +348,23 @@ function DetailView({
           <div className="mb-3 text-[12px] uppercase tracking-wide text-text-3">
             Edit before cloning
           </div>
-          <div className="grid grid-cols-1 gap-3">
-            <label className="block">
-              <span className="block text-[12px] text-text-2 mb-1">
-                Display name
-              </span>
-              <input
-                value={cloneDisplayName}
-                onChange={(e) => setCloneDisplayName(e.target.value)}
-                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
-              />
-            </label>
-            <label className="block">
-              <span className="block text-[12px] text-text-2 mb-1">
-                Description
-              </span>
-              <textarea
-                value={cloneDescription}
-                onChange={(e) => setCloneDescription(e.target.value)}
-                rows={2}
-                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40 resize-vertical"
-              />
-            </label>
-            <label className="block">
-              <span className="block text-[12px] text-text-2 mb-1">Notes</span>
-              <textarea
-                value={cloneNotes}
-                onChange={(e) => setCloneNotes(e.target.value)}
-                rows={2}
-                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40 resize-vertical"
-              />
-            </label>
-            <label className="block">
-              <span className="block text-[12px] text-text-2 mb-1">
-                Tags (comma-separated)
-              </span>
-              <input
-                value={cloneTags}
-                onChange={(e) => setCloneTags(e.target.value)}
-                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
-              />
-            </label>
-          </div>
-          <p className="m-0 mt-3 text-[12px] text-text-3 leading-snug">
-            Other fields (asset / window / venue / granularity) are inherited
-            from the parent. Use the wizard to clone with structural changes.
-          </p>
-          <div className="mt-3 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setCloneOpen(false)}
-              className="px-3 py-1.5 rounded text-[12.5px] text-text-3 hover:text-text"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={submitClone}
-              disabled={isCloning || cloneDisplayName.trim().length === 0}
-              data-testid="scenario-clone-submit"
-              className="px-3.5 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-50"
-            >
-              {isCloning ? "Cloning…" : "Create clone"}
-            </button>
-          </div>
+          {/*
+            ScenarioForm here reuses the wizard's widgets (asset picker,
+            date range, granularity selector, venue fees/slippage/latency,
+            warmup-bars input) so the operator can override any structural
+            field inline. `submitCloneFromForm` diffs the submitted
+            CreateScenarioRequest against the parent scenario and emits a
+            `ScenarioMutations` payload with `null` for unchanged fields,
+            preserving the engine's "inherit parent" semantics on the
+            clone handler.
+          */}
+          <ScenarioForm
+            initial={formInitial}
+            submitting={isCloning}
+            layout="inline"
+            onSubmit={submitCloneFromForm}
+            onCancel={() => setCloneOpen(false)}
+          />
         </div>
       )}
 

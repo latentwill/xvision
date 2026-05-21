@@ -150,6 +150,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
                 n_trades: 1,
                 n_decisions: decisions_a.len() as u32,
                 baselines: None,
+                ..Default::default()
             },
         )
         .await
@@ -241,6 +242,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
                 n_trades: 2,
                 n_decisions: decisions_b.len() as u32,
                 baselines: None,
+                ..Default::default()
             },
         )
         .await

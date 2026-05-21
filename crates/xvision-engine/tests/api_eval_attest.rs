@@ -15,9 +15,12 @@ use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("api_eval_attest.sqlite");
+    let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect(":memory:")
+        .connect(&db_url)
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
@@ -36,7 +39,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -67,6 +73,7 @@ async fn seed_completed_run(store: &RunStore, scenario_id: &str) -> Run {
         n_trades: 3,
         n_decisions: 5,
         baselines: None,
+        ..Default::default()
     };
     store.finalize(&run.id, &metrics).await.unwrap();
     // Re-read so we have completed_at + metrics on the run we hand back.

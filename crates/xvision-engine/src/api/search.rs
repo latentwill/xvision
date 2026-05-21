@@ -406,6 +406,8 @@ mod tests {
             evidence: serde_json::json!({}),
             extracted_at: chrono::Utc::now(),
             schema_version: "v1".into(),
+            evidence_cycle_ids: None,
+            produced_by_check: None,
             eval_review_id: None,
             review_type: None,
             confidence: None,
@@ -463,6 +465,9 @@ mod tests {
             estimated_total_tokens: None,
             actual_input_tokens: None,
             actual_output_tokens: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
+            bars_manifest: None,
         };
 
         // Two upserts in a row — second must not error and must not

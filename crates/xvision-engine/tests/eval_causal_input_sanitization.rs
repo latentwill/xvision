@@ -33,14 +33,16 @@ const MIGRATION_005: &str = include_str!("../migrations/005_agents.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_agent_slot_prompt_version.sql");
 const MIGRATION_020_UP: &str = include_str!("../migrations/020_agent_slot_inputs_policy.sql");
 const MIGRATION_020_DOWN: &str = include_str!("../migrations/020_agent_slot_inputs_policy.down.sql");
+const MIGRATION_025: &str = include_str!("../migrations/025_agent_slot_cache_and_window.sql");
 
 /// In-memory pool with the agents table and migrations 005 + 019 +
-/// 020 applied. Mirrors the runtime boot path.
+/// 020 + 025 applied. Mirrors the runtime boot path.
 async fn fresh_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(MIGRATION_005).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_019).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_020_UP).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_025).execute(&pool).await.unwrap();
     pool
 }
 
@@ -74,6 +76,7 @@ async fn migration_020_up_down_up_preserves_rows() {
     sqlx::query(MIGRATION_005).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_019).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_020_UP).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_025).execute(&pool).await.unwrap();
 
     let store = AgentStore::new(pool.clone());
     let id = store

@@ -335,10 +335,7 @@ async fn flush_failed(pool: &SqlitePool, batch: Vec<FinalizeMsg>) {
         }
     }
 
-    let placeholders = std::iter::repeat("?")
-        .take(ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(", ");
     let completed_case = build_case_clause(&completed_at_arms, "completed_at");
     let error_case = build_case_clause(&error_arms, "error");
 
@@ -391,10 +388,7 @@ async fn flush_completed(pool: &SqlitePool, batch: Vec<FinalizeMsg>) {
         }
     }
 
-    let placeholders = std::iter::repeat("?")
-        .take(ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(", ");
     let completed_case = build_case_clause(&completed_at_arms, "completed_at");
     let metrics_case = build_case_clause(&metrics_arms, "metrics_json");
 

@@ -216,6 +216,7 @@ async fn api_context_open_accepts_already_renamed_eval_agent_schema() {
             n_trades: 2,
             n_decisions: 3,
             baselines: None,
+            ..Default::default()
         },
         tokens_used: TokensUsed {
             input: 10,

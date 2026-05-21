@@ -299,6 +299,8 @@ fn normalize_finding(
         evidence: evidence_payload,
         extracted_at: now,
         schema_version: "2".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: Some("review_engine".into()),
         eval_review_id: Some(review_id.to_string()),
         review_type: Some(f.finding_type.clone()),
         confidence: Some(f.confidence),
@@ -355,6 +357,7 @@ mod tests {
             n_trades: 4,
             n_decisions: 3,
             baselines: None,
+            ..Default::default()
         };
         store.finalize(&run.id, &metrics).await.expect("finalize");
         run.metrics = Some(metrics);

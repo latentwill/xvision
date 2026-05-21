@@ -231,9 +231,7 @@ pub fn resolve(config_path: &Path, overrides: &CliOverrides) -> Result<ResolvedV
     );
 
     let mode_env = env_var_mode();
-    let mode_file = file_present
-        .then_some(file_cfg.retention.mode)
-        .filter(|v| *v != default_cfg.retention.mode);
+    let mode_file = config_retention_has_key(config_path, "mode")?.then_some(file_cfg.retention.mode);
     let mode = resolve_value(
         overrides.mode,
         mode_env,
@@ -341,6 +339,19 @@ pub fn resolve(config_path: &Path, overrides: &CliOverrides) -> Result<ResolvedV
 
 fn env_key(suffix: &str) -> String {
     format!("{ENV_OVERRIDE_PREFIX}_{suffix}")
+}
+
+fn config_retention_has_key(config_path: &Path, key: &str) -> Result<bool, RetentionError> {
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let text = fs::read_to_string(config_path)?;
+    let parsed: toml::Value = toml::from_str(&text).map_err(crate::config::ConfigError::from)?;
+    Ok(parsed
+        .get("observability")
+        .and_then(|v| v.get("retention"))
+        .and_then(|v| v.as_table())
+        .is_some_and(|table| table.contains_key(key)))
 }
 
 fn env_var_mode() -> Option<RetentionMode> {

@@ -32,4 +32,17 @@ describe("histogramBars", () => {
       ),
     ).toEqual([]);
   });
+
+  it("keeps high-cardinality bars inside the viewBox", () => {
+    const bars = histogramBars(
+      Array.from({ length: 100 }, (_, index) => ({ x: index, y: index - 50 })),
+      DEFAULT_VIEWBOX,
+    );
+    const maxX = DEFAULT_VIEWBOX.width - DEFAULT_VIEWBOX.padX;
+
+    expect(bars).toHaveLength(100);
+    for (const bar of bars) {
+      expect(bar.x + bar.width).toBeLessThanOrEqual(maxX);
+    }
+  });
 });

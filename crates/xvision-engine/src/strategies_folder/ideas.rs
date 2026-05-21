@@ -266,10 +266,13 @@ async fn collect_json_files(root: &Path, out: &mut Vec<PathBuf>) -> ApiResult<()
                 // Skip hidden bookkeeping like `.from-docs.json`.
                 continue;
             }
-            let metadata = match tokio::fs::metadata(&path).await {
+            let metadata = match tokio::fs::symlink_metadata(&path).await {
                 Ok(m) => m,
                 Err(_) => continue,
             };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
             if metadata.is_dir() {
                 stack.push(path);
                 continue;
@@ -303,21 +306,35 @@ async fn parse_idea(
     strategies_root: &Path,
     templates_root: &Path,
 ) -> ApiResult<Option<IdeaSummary>> {
-    let bytes = tokio::fs::read(path)
+    let canonical_path = tokio::fs::canonicalize(path)
         .await
-        .map_err(|e| crate::api::ApiError::Internal(format!("read {}: {e}", path.display())))?;
-    let raw: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|e| crate::api::ApiError::Internal(format!("parse json {}: {e}", path.display())))?;
+        .map_err(|e| crate::api::ApiError::Internal(format!("canonicalize {}: {e}", path.display())))?;
+    let canonical_strategies_root = tokio::fs::canonicalize(strategies_root).await.map_err(|e| {
+        crate::api::ApiError::Internal(format!("canonicalize {}: {e}", strategies_root.display()))
+    })?;
+    let canonical_templates_root = tokio::fs::canonicalize(templates_root).await.map_err(|e| {
+        crate::api::ApiError::Internal(format!("canonicalize {}: {e}", templates_root.display()))
+    })?;
+    if !canonical_path.starts_with(&canonical_templates_root) {
+        return Ok(None);
+    }
+
+    let bytes = tokio::fs::read(&canonical_path)
+        .await
+        .map_err(|e| crate::api::ApiError::Internal(format!("read {}: {e}", canonical_path.display())))?;
+    let raw: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+        crate::api::ApiError::Internal(format!("parse json {}: {e}", canonical_path.display()))
+    })?;
 
     // Use the path-relative-to-strategies-root as the source_rel_path
     // (`library/templates/EMA/ema_pullback_bounce.json`). We also need
     // the path-relative-to-templates-root to derive the category from
     // the first path component (`EMA`).
-    let rel_to_strategies = match path.strip_prefix(strategies_root) {
+    let rel_to_strategies = match canonical_path.strip_prefix(&canonical_strategies_root) {
         Ok(p) => p,
         Err(_) => return Ok(None),
     };
-    let rel_to_templates = match path.strip_prefix(templates_root) {
+    let rel_to_templates = match canonical_path.strip_prefix(&canonical_templates_root) {
         Ok(p) => p,
         Err(_) => return Ok(None),
     };

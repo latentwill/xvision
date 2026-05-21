@@ -110,6 +110,7 @@ pub async fn summarize_pdf(src: &Path) -> SummaryOutcome {
 
 /// Build a markdown summary for a CSV source file. Reads the header row
 /// + first [`CSV_SUMMARY_MAX_ROWS`] data rows and emits a markdown table.
+///
 /// Empty / unreadable CSV returns [`SummaryOutcome::ExtractorFailed`].
 pub async fn summarize_csv(src: &Path) -> SummaryOutcome {
     let text = match tokio::fs::read_to_string(src).await {
@@ -143,16 +144,11 @@ pub async fn summarize_csv(src: &Path) -> SummaryOutcome {
     );
     body.push_str(" |\n");
 
-    let mut count = 0usize;
-    for line in lines {
-        if count >= CSV_SUMMARY_MAX_ROWS {
-            break;
-        }
+    for line in lines.take(CSV_SUMMARY_MAX_ROWS) {
         let cells: Vec<&str> = line.split(',').collect();
         body.push_str("| ");
         body.push_str(&cells.join(" | "));
         body.push_str(" |\n");
-        count += 1;
     }
 
     let sidecar_path = match sidecar_path_for(src) {

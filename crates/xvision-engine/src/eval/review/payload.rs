@@ -292,6 +292,7 @@ mod tests {
             n_trades: 4,
             n_decisions: 10,
             baselines: None,
+            ..Default::default()
         });
         r
     }
