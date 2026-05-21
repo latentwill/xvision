@@ -79,6 +79,9 @@ fn mean_reversion_fixture(id: &str) -> Strategy {
 fn estimator_returns_positive_token_counts_for_real_strategy() {
     let b = mean_reversion_fixture("01H8N7ZTKN");
     let est = estimate_pipeline_tokens(&b, /*decision_points=*/ 100);
+    assert_eq!(est.input, 136_400);
+    assert_eq!(est.output, 16_000);
+    assert_eq!(est.total, 152_400);
     assert!(est.total > 0);
     assert!(est.input > 0);
     assert!(est.output > 0);

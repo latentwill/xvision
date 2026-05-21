@@ -154,6 +154,11 @@ async fn put_risk_preset_round_trips() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["applied"], "preset");
     assert_eq!(body["id"], id);
+
+    let strategy: serde_json::Value = server.get(&format!("/api/strategy/{id}")).await.json();
+    assert_eq!(strategy["risk"]["risk_pct_per_trade"], 0.010);
+    assert_eq!(strategy["risk"]["max_concurrent_positions"], 1);
+    assert_eq!(strategy["risk"]["max_leverage"], 2.0);
 }
 
 #[tokio::test]
@@ -226,6 +231,9 @@ async fn strategy_agents_add_rename_remove_round_trip() {
     add.assert_status_ok();
     let add_body: serde_json::Value = add.json();
     assert_eq!(add_body["agents"][0]["role"], "trader");
+    let persisted: serde_json::Value = server.get(&format!("/api/strategy/{strategy_id}")).await.json();
+    assert_eq!(persisted["agents"][0]["role"], "trader");
+    assert_eq!(persisted["agents"][0]["agent_id"], agent_id);
 
     let rename = server
         .patch(&format!("/api/strategy/{strategy_id}/agents/trader"))
@@ -236,6 +244,9 @@ async fn strategy_agents_add_rename_remove_round_trip() {
     rename.assert_status_ok();
     let rename_body: serde_json::Value = rename.json();
     assert_eq!(rename_body["agents"][0]["role"], "signal_trader");
+    let persisted: serde_json::Value = server.get(&format!("/api/strategy/{strategy_id}")).await.json();
+    assert_eq!(persisted["agents"][0]["role"], "signal_trader");
+    assert_eq!(persisted["agents"][0]["agent_id"], agent_id);
 
     let remove = server
         .delete(&format!("/api/strategy/{strategy_id}/agents/signal_trader"))
@@ -246,5 +257,11 @@ async fn strategy_agents_add_rename_remove_round_trip() {
         remove_body["agents"].as_array().unwrap().len(),
         0,
         "strategy should have no attached agents after remove"
+    );
+    let persisted: serde_json::Value = server.get(&format!("/api/strategy/{strategy_id}")).await.json();
+    assert_eq!(
+        persisted["agents"].as_array().map_or(0, |agents| agents.len()),
+        0,
+        "persisted strategy should have no attached agents after remove",
     );
 }

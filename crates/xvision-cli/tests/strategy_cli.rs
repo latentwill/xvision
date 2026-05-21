@@ -305,14 +305,7 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
     let scout_id = create_agent(dir.path(), "Scout");
 
     let out = xvn(
-        &[
-            "strategy",
-            "add-agent",
-            strategy_id,
-            &scout_id,
-            "--role",
-            "scout",
-        ],
+        &["strategy", "add-agent", strategy_id, &scout_id, "--role", "scout"],
         dir.path(),
     );
     assert!(
@@ -349,6 +342,15 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
         out.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = xvn(&["strategy", "show", strategy_id], dir.path());
+    assert!(out.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("strategy show json");
+    let agents: &[serde_json::Value] = json["agents"].as_array().map_or(&[], Vec::as_slice);
+    assert!(
+        !agents.iter().any(|agent| agent["role"] == "scout"),
+        "scout agent must be absent after remove-agent: {json:#}"
     );
 }
 
@@ -393,7 +395,10 @@ fn migrate_agents_converts_legacy_slots_to_agent_refs() {
 fn run_inline_with_mock_dispatch_seeds_real_ohlcv_and_reports_usage() {
     let dir = tempdir().unwrap();
     let id = "01H8N7ZCLIRUNREALDATA00001";
-    let path = write_strategy_file(dir.path(), id, "real-data");
+    let mut strategy = build_mean_reversion(id, "real-data");
+    strategy.manifest.asset_universe = vec!["BTC/USD".into()];
+    let path = dir.path().join("seed-strategy-btc.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&strategy).unwrap()).unwrap();
 
     let out = xvn(
         &["strategy", "new", "--from-file", path.to_str().unwrap()],
@@ -424,8 +429,24 @@ fn run_inline_with_mock_dispatch_seeds_real_ohlcv_and_reports_usage() {
     // before each decision; presence of that line proves the OHLCV
     // tool actually ran and the seed was populated from real fixture
     // bars, not the placeholder strings.
-    assert!(stdout.contains("seed_summary:"), "stdout: {stdout}");
-    assert!(stdout.contains("bars="), "stdout: {stdout}");
+    let seed_summary = stdout
+        .lines()
+        .find(|line| line.contains("seed_summary:"))
+        .unwrap_or_else(|| panic!("missing seed_summary line in stdout: {stdout}"));
+    assert!(
+        seed_summary.contains("asset=BTC/USD"),
+        "seed_summary must use the strategy asset: {seed_summary}"
+    );
+    assert!(
+        seed_summary.contains("fixture=test-fixture-btc-2024-01"),
+        "seed_summary must name the selected fixture: {seed_summary}"
+    );
+    let bars = seed_summary
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("bars="))
+        .and_then(|value| value.parse::<usize>().ok())
+        .expect("seed_summary bars count");
+    assert!(bars > 0, "seed_summary must report nonzero bars: {seed_summary}");
     assert!(stdout.contains("decision[0]:"), "stdout: {stdout}");
     assert!(stdout.contains("decisions:"));
     assert!(stdout.contains("input_tokens:"));

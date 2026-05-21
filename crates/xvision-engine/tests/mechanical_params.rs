@@ -101,14 +101,15 @@ fn legacy_strategy_json_with_template_field_still_loads() {
     // `PublicManifest` as a free-text label; the strategy must load
     // and round-trip byte-for-byte.
     let original_params = json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50});
-    let strategy_json = json!({
-        "manifest": manifest_for("trend_follower"),
-        "risk": RiskPreset::Balanced.expand(),
-        "mechanical_params": original_params.clone(),
-    });
-    let strategy: Strategy = serde_json::from_value(strategy_json).expect("legacy shape must parse");
+    let legacy = strategy_with("trend_follower", original_params.clone());
+    let strategy_json = serde_json::to_value(&legacy).expect("legacy fixture serializes");
+    let strategy: Strategy = serde_json::from_value(strategy_json.clone()).expect("legacy shape must parse");
     assert_eq!(strategy.manifest.template, "trend_follower");
     let reserialized = serde_json::to_value(&strategy).expect("strategy must serialize");
+    assert_eq!(
+        reserialized, strategy_json,
+        "full legacy strategy JSON drifted on round-trip",
+    );
     assert_eq!(
         reserialized["mechanical_params"], original_params,
         "mechanical_params drifted on round-trip",
@@ -150,10 +151,7 @@ fn min_warmup_bars_uses_walker_on_every_strategy() {
     );
     assert_eq!(s.min_warmup_bars(), 40);
 
-    let s = strategy_with(
-        "operator-authored",
-        json!({"lookback_bars": 30, "threshold": 99}),
-    );
+    let s = strategy_with("operator-authored", json!({"lookback_bars": 30, "threshold": 99}));
     assert_eq!(s.min_warmup_bars(), 60);
 }
 
@@ -215,5 +213,8 @@ async fn set_mechanical_param_accepts_arbitrary_key() {
     .expect("arbitrary key must persist post-removal");
     let loaded = store.load(&s.manifest.id).await.unwrap();
     assert_eq!(loaded.mechanical_params["ema_slow"], json!(50));
-    assert_eq!(loaded.mechanical_params["new_experimental_key"], json!("anything"));
+    assert_eq!(
+        loaded.mechanical_params["new_experimental_key"],
+        json!("anything")
+    );
 }
