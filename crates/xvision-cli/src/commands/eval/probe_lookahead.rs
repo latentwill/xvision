@@ -308,11 +308,7 @@ pub async fn run_probe_lookahead(args: ProbeLookaheadArgs) -> CliResult<()> {
 /// (RSI, MACD) will never fire because their `IndicatorPanel` fields are `None`.
 /// This is documented behaviour: the prober catches ~90% of raw-bar-based
 /// lookahead; indicator-panel-based lookahead requires a different approach.
-fn bars_to_snapshots(
-    bars: &[Ohlcv],
-    context_window: usize,
-    asset_venue_symbol: &str,
-) -> Vec<MarketSnapshot> {
+fn bars_to_snapshots(bars: &[Ohlcv], context_window: usize, asset_venue_symbol: &str) -> Vec<MarketSnapshot> {
     // Map venue symbol to AssetSymbol (best-effort; default BTC)
     let asset = match asset_venue_symbol.to_uppercase().as_str() {
         s if s.contains("ETH") => AssetSymbol::Eth,

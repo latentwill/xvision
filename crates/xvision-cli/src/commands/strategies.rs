@@ -26,10 +26,8 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 
 use xvision_engine::api::{Actor, ApiContext, ApiError};
-use xvision_engine::strategies_folder::{
-    self, prepop, ImportOptions, ImportOutcome, SUBFOLDER_ALLOWLIST,
-};
 use xvision_engine::strategies_folder::prepop::InitOptions;
+use xvision_engine::strategies_folder::{self, prepop, ImportOptions, ImportOutcome, SUBFOLDER_ALLOWLIST};
 
 use crate::exit::{CliError, CliResult, XvnExit};
 
@@ -114,11 +112,10 @@ pub async fn run(cmd: StrategiesCmd) -> CliResult<()> {
 }
 
 async fn run_init(args: InitArgs) -> CliResult<()> {
-    let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home.clone())
-        .map_err(|e| CliError {
-            exit: XvnExit::Usage,
-            source: e,
-        })?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home.clone()).map_err(|e| CliError {
+        exit: XvnExit::Usage,
+        source: e,
+    })?;
 
     let report = prepop::init(&xvn_home, InitOptions { force: args.force })
         .await
@@ -138,10 +135,7 @@ async fn run_init(args: InitArgs) -> CliResult<()> {
     );
 
     if !report.created_subfolders.is_empty() {
-        println!(
-            "  created subfolders: {}",
-            report.created_subfolders.join(", ")
-        );
+        println!("  created subfolders: {}", report.created_subfolders.join(", "));
     }
 
     for rel in &report.drift {
@@ -186,12 +180,7 @@ fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
     }
 }
 
-async fn run_import(
-    path: PathBuf,
-    to: Option<String>,
-    no_clobber: bool,
-    json: bool,
-) -> CliResult<()> {
+async fn run_import(path: PathBuf, to: Option<String>, no_clobber: bool, json: bool) -> CliResult<()> {
     if let Some(name) = to.as_deref() {
         if !SUBFOLDER_ALLOWLIST.contains(&name) {
             return Err(CliError::usage(anyhow::anyhow!(
@@ -218,9 +207,8 @@ async fn run_import(
 
 fn emit_outcome(outcome: &ImportOutcome, json: bool) -> CliResult<()> {
     if json {
-        let body = serde_json::to_string_pretty(outcome).map_err(|e| {
-            CliError::upstream(anyhow::anyhow!("serialize ImportOutcome: {e}"))
-        })?;
+        let body = serde_json::to_string_pretty(outcome)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize ImportOutcome: {e}")))?;
         println!("{body}");
         return Ok(());
     }

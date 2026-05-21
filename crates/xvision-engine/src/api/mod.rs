@@ -63,8 +63,7 @@ const MIGRATION_025_AGENT_SLOT_CACHE_AND_WINDOW: &str =
     include_str!("../../migrations/025_agent_slot_cache_and_window.sql");
 const MIGRATION_026_TRACE_SURFACE_FOUNDATION: &str =
     include_str!("../../migrations/026_trace_surface_foundation.sql");
-const MIGRATION_027_RUN_BARS_MANIFEST: &str =
-    include_str!("../../migrations/027_run_bars_manifest.sql");
+const MIGRATION_027_RUN_BARS_MANIFEST: &str = include_str!("../../migrations/027_run_bars_manifest.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -570,9 +569,7 @@ async fn migrate_trace_surface_foundation(pool: &SqlitePool) -> ApiResult<()> {
 /// cli-operator-safety-p0 slice 2/3.
 async fn migrate_run_bars_manifest(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "eval_runs", "bars_content_hash").await? {
-        sqlx::query(MIGRATION_027_RUN_BARS_MANIFEST)
-            .execute(pool)
-            .await?;
+        sqlx::query(MIGRATION_027_RUN_BARS_MANIFEST).execute(pool).await?;
     }
     Ok(())
 }

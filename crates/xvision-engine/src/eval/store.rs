@@ -88,7 +88,7 @@ impl RunStore {
         let bars_manifest_json = run
             .bars_manifest
             .as_ref()
-            .map(|v| serde_json::to_string(v))
+            .map(serde_json::to_string)
             .transpose()
             .context("serialize bars_manifest")?;
 

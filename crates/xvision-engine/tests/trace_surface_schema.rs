@@ -107,6 +107,9 @@ fn completed_run() -> Run {
         RunMode::Backtest,
     );
     r.status = RunStatus::Queued;
+    // Updated because eval-net-of-inference-cost-metric added
+    // `inference_cost_quote_total` and `net_return_pct` to MetricsSummary.
+    // Use ..Default::default() to keep the literal stable across future field additions.
     r.metrics = Some(MetricsSummary {
         total_return_pct: 2.5,
         sharpe: 0.9,
@@ -115,8 +118,7 @@ fn completed_run() -> Run {
         n_trades: 8,
         n_decisions: 20,
         baselines: None,
-        inference_cost_quote_total: None,
-        net_return_pct: None,
+        ..Default::default()
     });
     r
 }
