@@ -13,13 +13,12 @@
 //!   `emit_run_finished` (`running → <terminal>`). Carries the typed
 //!   `SpanAttributes` bag + `{"from", "to"}` so the trace dock can
 //!   render a per-run state timeline.
-//! - `recovery.attempt` — F-4 reserves the wire identifier. NOT
-//!   emitted by F-4; F-5 (`harness-recovery-state-machine`) owns
-//!   emission. The round-trip lock at
-//!   `xvision-observability/tests/span_kind_roundtrip.rs` guards the
-//!   wire format; this file asserts that no F-4-owned code path
-//!   emits it (regression guard against accidental emission slipping
-//!   in via a future PR rebase).
+//! - `recovery.attempt` — F-4 reserves the wire identifier. Emission
+//!   landed in F-5 (`harness-recovery-state-machine`) but only when a
+//!   tool actually fails — the happy-path scenarios in *this* file
+//!   never trip the block-list, so the regression guard at line ~188
+//!   still holds for F-4-owned tests. F-5's failure-path coverage
+//!   lives in `agent_recovery_state_machine.rs`.
 
 use std::sync::Arc;
 
@@ -185,11 +184,13 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
         );
     }
 
-    // F-4 reserves `recovery.attempt` but does NOT emit it. Guards
-    // against accidental emission slipping in via a future rebase.
+    // F-5 emits `recovery.attempt` only on tool failure. This test
+    // drives the happy path (one tool call, succeeds), so no recovery
+    // span should appear. The failure-path coverage lives in
+    // `agent_recovery_state_machine.rs`.
     assert!(
         !kinds.iter().any(|k| matches!(k, SpanKind::RecoveryAttempt)),
-        "F-4 must not emit recovery.attempt — F-5 owns that seam. kinds={kinds:?}"
+        "happy-path tool execution must not emit recovery.attempt — that's F-5's failure seam. kinds={kinds:?}"
     );
 }
 

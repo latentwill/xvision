@@ -278,6 +278,17 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     let mut iterations: usize = 0;
     let mut tool_names_called: Vec<String> = Vec::new();
     let mut last_stop_reason: StopReason = StopReason::EndTurn;
+    // F-5 (`harness-recovery-state-machine`): per-slot block-list for
+    // repeated `(tool_name, input_hash)` failures. The first
+    // [`crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR`] failures of
+    // a given pair pass through (the model gets the `is_error: true`
+    // tool_result and self-heals via the
+    // `agent-error-feedback-self-healing` path). The next attempt of
+    // the same pair is short-circuited with a typed
+    // `repeated_tool_failure` error injected as the tool_result so the
+    // model sees the block instead of looping; we also emit a
+    // `recovery.attempt` span so the trace dock surfaces the gate.
+    let mut repeated_failures = crate::agent::recovery::RepeatedToolFailureTracker::new();
 
     loop {
         if iterations >= MAX_TOOL_LOOP_ITERATIONS {
@@ -514,9 +525,66 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 obs.emit_tool_validate_input(&fresh_span_id(), None, &tu_name)
                     .await;
             }
-            let (content, is_error) = match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
-                Ok(s) => (s, None),
-                Err(e) => (format!("tool error: {e}"), Some(true)),
+            // F-5: short-circuit if the block-list says this exact
+            // (tool_name, input_hash) pair has already failed
+            // MAX_TOOL_RETRIES_PER_PAIR times. The model receives a
+            // structured `repeated_tool_failure` tool_result and a
+            // `recovery.attempt` span is emitted so the gate is
+            // visible in the trace.
+            let blocked = repeated_failures.is_blocked(&tu_name, &tu_input);
+            let (content, is_error) = if blocked {
+                let input_hash =
+                    crate::agent::recovery::RepeatedToolFailureTracker::input_hash(&tu_input);
+                if let Some(obs) = input.obs.as_ref() {
+                    obs.emit_recovery_failed(
+                        &fresh_span_id(),
+                        None,
+                        "repeated_tool_failure",
+                        crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR as u32,
+                        &format!(
+                            "tool '{tu_name}' input_hash={input_hash} exceeded \
+                             {} retries; further calls with this exact input are blocked",
+                            crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR
+                        ),
+                    )
+                    .await;
+                }
+                (
+                    format!(
+                        "repeated_tool_failure: tool '{tu_name}' with this exact \
+                         input has failed {} times in this slot execution. The \
+                         input is blocked for the remainder of this run. Retry \
+                         with a different input or choose a different tool.",
+                        crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR
+                    ),
+                    Some(true),
+                )
+            } else {
+                match tool_call::invoke(&tu_name, tu_input.clone(), input.tools.clone()).await {
+                    Ok(s) => (s, None),
+                    Err(e) => {
+                        let count = repeated_failures.record_failure(&tu_name, &tu_input);
+                        // First failure of a pair is normal self-healing
+                        // territory (the agent gets `is_error: true` and
+                        // re-decides). Second-and-later failures of the
+                        // same exact pair are the recovery seam — emit a
+                        // `recovery.attempt` span so the trace dock
+                        // surfaces the building retry pressure before
+                        // the block fires on attempt N=MAX.
+                        if count >= 2 {
+                            if let Some(obs) = input.obs.as_ref() {
+                                obs.emit_recovery_attempt(
+                                    &fresh_span_id(),
+                                    None,
+                                    "repeated_tool_failure",
+                                    (count - 1) as u32,
+                                )
+                                .await;
+                            }
+                        }
+                        (format!("tool error: {e}"), Some(true))
+                    }
+                }
             };
             if let Some(obs) = input.obs.as_ref() {
                 obs.emit_tool_validate_output(&fresh_span_id(), None, &tu_name)

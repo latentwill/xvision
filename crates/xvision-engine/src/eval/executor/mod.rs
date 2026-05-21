@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::agent::llm::{LlmDispatch, OpenAiCompatError};
+use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::ResolvedAgentSlot;
 use crate::eval::run::{MetricsSummary, Run};
 use crate::eval::scenario::Scenario;
@@ -90,88 +90,14 @@ pub async fn start_watchdog(pool: SqlitePool, config: WatchdogConfig) -> anyhow:
 /// The matcher walks the full `anyhow::Error` source chain (via the alternate
 /// `Display`) so an underlying broker rejection survives a `with_context`
 /// wrap from the surface caller.
+///
+/// Since F-5 (`harness-recovery-state-machine`) this is a thin adapter
+/// over [`crate::agent::recovery::classify`], which returns a typed
+/// [`crate::agent::recovery::FailureClass`]. The wire-side `&'static str`
+/// tag is `FailureClass::tag()` — preserved across the F-5 cutover so
+/// `eval_runs.error` `[<tag>]` consumers do not break.
 pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
-    if let Some(te) = err.downcast_ref::<TraderOutputError>() {
-        return te.class_tag();
-    }
-    // Walk the error chain looking for the typed OpenAI-compat error
-    // surfaced by `OpenaiCompatDispatch::complete` after its retry
-    // budget is exhausted (intake #344). The chain walk matters because
-    // upstream callers wrap dispatch failures with `with_context`
-    // before they reach the executor's surface.
-    for cause in err.chain() {
-        if let Some(typed) = cause.downcast_ref::<OpenAiCompatError>() {
-            return typed.class_tag();
-        }
-    }
-    let s = format!("{:#}", err).to_lowercase();
-    // Trader-output errors may have been wrapped with `.context(...)` and
-    // not survive downcast — check the message form as a fallback.
-    for kind in [
-        TraderFailureKind::EmptyText,
-        TraderFailureKind::ToolUseOnly,
-        TraderFailureKind::Truncated,
-        TraderFailureKind::InvalidJson,
-        TraderFailureKind::MissingField,
-        TraderFailureKind::InvalidField,
-        TraderFailureKind::MissingResponse,
-    ] {
-        let needle = format!("trader_output[{}]", kind.tag());
-        if s.contains(&needle) {
-            return kind.tag();
-        }
-    }
-    // eval-broker-error-circuit-breaker: loop-control class — must
-    // match BEFORE the generic broker_* fallbacks below so the abort
-    // message (which embeds e.g. `broker_min_order_size`) doesn't get
-    // re-classified as the inner broker class. The circuit-breaker
-    // class is what downstream consumers (UI banners, retry policy)
-    // want to see; the embedded inner class is diagnostic only.
-    if s.contains("repeated_broker_error") {
-        return "repeated_broker_error";
-    }
-    // Broker classes — match before the generic `timeout` fallback so a
-    // broker-side fill timeout doesn't get tagged `provider_timeout`.
-    if s.contains("broker_unsupported")
-        || s.contains("not shortable")
-        || s.contains("asset is not shortable")
-        || (s.contains("bracket") && s.contains("not supported"))
-        || s.contains("not supported for this asset class")
-    {
-        return "broker_unsupported";
-    }
-    if s.contains("insufficient buying power")
-        || s.contains("insufficient balance")
-        || s.contains("insufficient funds")
-    {
-        return "broker_insufficient_funds";
-    }
-    if s.contains("not permitted") || s.contains("forbidden") {
-        return "broker_auth";
-    }
-    if s.contains("alpaca order") && s.contains("rejected") {
-        return "broker_rejected";
-    }
-    if s.contains("did not fill within") {
-        return "broker_timeout";
-    }
-    if s.contains("timed out") || s.contains("timeout") {
-        return "provider_timeout";
-    }
-    if s.contains("tcp connect") || s.contains("dns error") || s.contains("connection refused") {
-        return "provider_connect";
-    }
-    if s.contains("anthropic api error") || s.contains("openai-compat api error") {
-        return "provider_http_error";
-    }
-    if s.contains("provider_decode")
-        || s.contains("error decoding response body")
-        || s.contains("invalid json response body")
-        || s.contains("eof while parsing")
-    {
-        return "provider_decode";
-    }
-    "unclassified"
+    crate::agent::recovery::classify(err).tag()
 }
 
 /// Format the persisted/displayed failure string for a run error. The
