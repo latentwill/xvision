@@ -9,6 +9,7 @@ pub mod templates;
 pub mod validate;
 
 use serde::{Deserialize, Serialize};
+pub use xvision_filters::{ActivationMode, Filter};
 
 pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use crate::strategies::manifest::PublicManifest;
@@ -128,6 +129,26 @@ pub struct Strategy {
 
     /// Template-specific mechanical params (e.g., rsi thresholds, EMA periods).
     pub mechanical_params: serde_json::Value,
+
+    // ── Filter v1 (track-plan-touches) ───────────────────────────────────
+    /// When the strategy's pipeline should be invoked per bar.
+    /// `EveryBar` (default) keeps the pre-filter-v1 behavior: every bar
+    /// runs the pipeline. `FilterGated` requires `filter.is_some()` and
+    /// only runs the pipeline on bars where the filter's runtime returns
+    /// an `Active` decision. `CompiledRules` is reserved for v1.5 and
+    /// rejected by [`Strategy::validate_filter`].
+    #[serde(default = "default_activation_mode")]
+    pub activation_mode: ActivationMode,
+
+    /// Inline filter spec when `activation_mode == FilterGated`. Embedded
+    /// in the strategy JSON for v1 (no separate file or DB row — Stage 4
+    /// adds CRUD). Must be `None` when `activation_mode == EveryBar`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Filter>,
+}
+
+fn default_activation_mode() -> ActivationMode {
+    ActivationMode::EveryBar
 }
 
 fn is_default_pipeline(p: &PipelineDef) -> bool {
@@ -203,6 +224,10 @@ struct StrategyRaw {
     trader_slot: Option<LLMSlot>,
     risk: RiskConfig,
     mechanical_params: serde_json::Value,
+    #[serde(default = "default_activation_mode")]
+    activation_mode: ActivationMode,
+    #[serde(default)]
+    filter: Option<Filter>,
 }
 
 impl<'de> Deserialize<'de> for Strategy {
@@ -221,6 +246,8 @@ impl<'de> Deserialize<'de> for Strategy {
             trader_slot: raw.trader_slot,
             risk: raw.risk,
             mechanical_params: raw.mechanical_params,
+            activation_mode: raw.activation_mode,
+            filter: raw.filter,
         })
     }
 }
@@ -249,6 +276,8 @@ mod tests {
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: params,
+            activation_mode: ActivationMode::EveryBar,
+            filter: None,
         }
     }
 

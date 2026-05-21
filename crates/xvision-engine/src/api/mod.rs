@@ -73,6 +73,8 @@ const MIGRATION_030_SAFETY_STATE_AND_AUDIT: &str =
     include_str!("../../migrations/030_safety_state_and_audit.sql");
 const MIGRATION_031_EVAL_RUNS_VENUE_LABEL: &str =
     include_str!("../../migrations/031_eval_runs_venue_label.sql");
+const MIGRATION_032_FILTERS_AND_EVALUATIONS: &str =
+    include_str!("../../migrations/032_filters_and_evaluations.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -219,6 +221,7 @@ impl ApiContext {
         migrate_agent_slot_memory_mode(&pool).await?;
         migrate_safety_state_and_audit(&pool).await?;
         migrate_eval_runs_venue_label(&pool).await?;
+        migrate_filters_and_evaluations(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -799,6 +802,23 @@ async fn migrate_eval_runs_venue_label(pool: &SqlitePool) -> ApiResult<()> {
         sqlx::query(MIGRATION_031_EVAL_RUNS_VENUE_LABEL)
             .execute(pool)
             .await?;
+    }
+    Ok(())
+}
+
+async fn migrate_filters_and_evaluations(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "filters").await?
+        || !table_exists(pool, "eval_filter_evaluations").await?
+    {
+        // The .sql file is idempotent (`CREATE TABLE IF NOT EXISTS`) so
+        // running it on a partial-migration is safe.
+        for stmt in MIGRATION_032_FILTERS_AND_EVALUATIONS.split(';') {
+            let trimmed = stmt.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            sqlx::query(trimmed).execute(pool).await?;
+        }
     }
     Ok(())
 }
