@@ -46,6 +46,11 @@ fi
 # back, so on first boot we copy the seed into a writable location under
 # $DATA_DIR and re-point XVN_CONFIG_PATH there. Subsequent boots see the
 # already-seeded file and leave it alone.
+#
+# CONTRACT: Dockerfile.deploy intentionally does NOT pre-set XVN_CONFIG_PATH
+# so that docker-exec sessions inherit the writable path via the XVN_HOME-based
+# fallback ($XVN_HOME/config/default.toml). This export is the sole setter of
+# XVN_CONFIG_PATH in the container environment.
 WRITABLE_CONFIG_DIR="$DATA_DIR/config"
 WRITABLE_CONFIG_PATH="$WRITABLE_CONFIG_DIR/default.toml"
 mkdir -p "$WRITABLE_CONFIG_DIR"

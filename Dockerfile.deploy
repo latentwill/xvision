@@ -159,9 +159,14 @@ VOLUME ["/data"]
 ENV XVN_DATA_DIR=/data \
     XVN_HOME=/data \
     XVN_CONFIG_DIR=/config \
-    XVN_CONFIG_PATH=/config/default.toml \
     XVN_AGENTD_BIN=/opt/xvision-agentd/dist/index.js \
     APCA_API_BASE_URL=https://paper-api.alpaca.markets
+# XVN_CONFIG_PATH is intentionally NOT set here. The entrypoint seeds the
+# read-only /config/default.toml to the writable $XVN_HOME/config/default.toml
+# on first boot and exports XVN_CONFIG_PATH to that writable path. Leaving it
+# unset in the image env means docker-exec sessions fall back to
+# $XVN_HOME/config/default.toml (same writable file) instead of inheriting the
+# stale seed path and seeing an empty provider list.
 
 EXPOSE 8788
 
