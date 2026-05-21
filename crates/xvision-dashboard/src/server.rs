@@ -139,9 +139,14 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs", post(cli::create))
-        .route("/api/cli/jobs/:id", get(cli::get))
+        // DELETE /api/cli/jobs/:id — send SIGTERM → SIGKILL (5s grace) to the
+        // backing process. Closes the gap between `xvn eval cancel` (which
+        // marks the run row via POST /api/eval/runs/:id/cancel) and actually
+        // killing the dashboard child process. Idempotent on terminal jobs.
+        .route("/api/cli/jobs/:id", get(cli::get).delete(cli::delete))
         .route("/api/cli/jobs/:id/output", get(cli::output))
         .route("/api/cli/jobs/:id/events", get(cli::events))
+        // POST /api/cli/jobs/:id/cancel — kept for backwards compatibility.
         .route("/api/cli/jobs/:id/cancel", post(cli::cancel))
         .route("/api/search", get(search_route::handler))
         .route("/api/settings/brokers", get(settings::brokers::get))

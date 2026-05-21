@@ -1117,6 +1117,8 @@ async fn resolve_agent_slots(
             temperature: slot.temperature,
             inputs_policy: slot.inputs_policy,
             bar_history_limit: slot.bar_history_limit,
+            memory_mode: slot.memory_mode,
+            agent_id: agent.agent_id.clone(),
         });
     }
     Ok(out)
@@ -1709,6 +1711,12 @@ async fn build_paper_executor(
     if let Some(emitter) = obs {
         paper = paper.with_observability(emitter);
     }
+    // V2D: thread the server-built recorder onto the executor so per-slot
+    // `memory_mode = AgentScoped` actually emits recall/write events. The
+    // recorder treats `Off` as a no-op, so legacy strategies are unaffected.
+    if let Some(recorder) = ctx.memory_recorder.clone() {
+        paper = paper.with_memory_recorder(recorder);
+    }
     if let Some(l) = limits {
         paper = paper.with_limits(l.clone());
     }
@@ -1785,6 +1793,10 @@ async fn build_backtest_executor(
                 if let Some(emitter) = obs {
                     bt = bt.with_observability(emitter);
                 }
+                // V2D: thread the server-built recorder onto the executor.
+                if let Some(recorder) = ctx.memory_recorder.clone() {
+                    bt = bt.with_memory_recorder(recorder);
+                }
                 if let Some(l) = limits {
                     bt = bt.with_limits(l.clone());
                 }
@@ -1808,6 +1820,10 @@ async fn build_backtest_executor(
     let mut bt = BacktestExecutor::new().with_event_bus(ctx.event_bus.clone());
     if let Some(emitter) = obs {
         bt = bt.with_observability(emitter);
+    }
+    // V2D: thread the server-built recorder onto the executor.
+    if let Some(recorder) = ctx.memory_recorder.clone() {
+        bt = bt.with_memory_recorder(recorder);
     }
     if let Some(l) = limits {
         bt = bt.with_limits(l.clone());
@@ -2733,6 +2749,8 @@ mod tests {
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -2775,6 +2793,8 @@ mod tests {
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -2809,6 +2829,8 @@ mod tests {
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();

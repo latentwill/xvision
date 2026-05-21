@@ -38,6 +38,35 @@ The CLI does not have a create verb today — authoring uses the dashboard form.
 
 ---
 
+## Memory
+
+Every agent slot has a **Memory** selector, right next to the provider
+and model pickers. It controls whether the slot carries anything
+forward between cycles and between runs. It is **off by default** and
+stays off until you change it — a slot with the selector untouched
+behaves exactly like agents did before memory shipped.
+
+Three positions:
+
+- **Off** — no memory. Nothing is recorded, nothing is recalled. Use
+  this when you want a clean A/B between two prompts or a backtest
+  with hard guarantees that the agent only sees what's in its prompt.
+- **Global** — the slot shares a memory pool with every other slot
+  also set to Global. Useful when several agents in a strategy should
+  pool what they learn.
+- **Agent-scoped** — the slot has its own private memory keyed to the
+  agent id. Other agents, including other slots in the same strategy,
+  can't see it.
+
+In v1, Memory mostly records — the recall side ships empty by design,
+so you'll see the Memory panel on the eval-review page sit at "no
+recall items" even with Global or Agent-scoped selected. That's
+expected; the design behind it (and the reason backtest replays
+don't leak future knowledge) is covered in the full memory
+overview at `docs/v2d-memory-overview.md` in the repo.
+
+---
+
 ## Read an agent from the CLI
 
 ```

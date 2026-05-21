@@ -110,6 +110,11 @@ async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
         .execute(&ctx.db)
         .await
         .unwrap();
+    // V2D: memory_mode column.
+    sqlx::query(include_str!("../migrations/029_agent_slot_memory_mode.sql"))
+        .execute(&ctx.db)
+        .await
+        .unwrap();
     (ctx, dir)
 }
 
@@ -152,13 +157,14 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
     strategy
 }
 
-fn write_openrouter_config(xvn_home: &std::path::Path) {
+fn write_openrouter_config(xvn_home: &std::path::Path, enabled_model: &str) {
     let config_dir = xvn_home.join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
     let path = config_dir.join("default.toml");
     std::fs::write(
         &path,
-        r#"
+        format!(
+            r#"
 [runtime]
 mode = "backtest"
 executor = "alpaca"
@@ -169,7 +175,7 @@ name = "openrouter"
 kind = "openai-compat"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
-enabled_models = ["anthropic/claude-3.5-sonnet"]
+enabled_models = ["{enabled_model}"]
 
 [trader]
 model_path = "models/x.gguf"
@@ -192,6 +198,7 @@ vectors = "data/vectors"
 probes = "data/probes"
 sqlite_url = "sqlite://x.db"
 "#,
+        ),
     )
     .unwrap();
 }
@@ -315,7 +322,7 @@ async fn run_returns_not_found_for_unknown_scenario() {
 #[tokio::test]
 async fn run_rejects_openrouter_legacy_anthropic_model_before_queueing() {
     let (ctx, tmp) = ctx_with_tables().await;
-    write_openrouter_config(tmp.path());
+    write_openrouter_config(tmp.path(), "anthropic/claude-3.5-sonnet");
     let agent_id = "01TESTSTRATEGY000000000000OR";
     let mut strategy = save_test_strategy(&ctx, agent_id).await;
     let slot = strategy.trader_slot.as_mut().unwrap();
@@ -672,49 +679,6 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
 // strategy whose AgentRef points at an `openrouter`-configured agent
 // (a) selects the OpenRouter provider before queueing, and (b) never
 // returns an error that names the Anthropic provider.
-fn write_openrouter_only_config_with_deepseek(xvn_home: &std::path::Path) {
-    let config_dir = xvn_home.join("config");
-    std::fs::create_dir_all(&config_dir).unwrap();
-    let path = config_dir.join("default.toml");
-    std::fs::write(
-        &path,
-        r#"
-[runtime]
-mode = "backtest"
-executor = "alpaca"
-random_seed = 42
-
-[[providers]]
-name = "openrouter"
-kind = "openai-compat"
-base_url = "https://openrouter.ai/api/v1"
-api_key_env = "OPENROUTER_API_KEY"
-enabled_models = ["deepseek/deepseek-v4-flash"]
-
-[trader]
-model_path = "models/x.gguf"
-temperature = 0.0
-forward_paper_temperature = 0.4
-max_tokens = 512
-[trader.vectors]
-enabled = false
-config = "off"
-
-[backtest]
-step = 24
-horizon = 16
-bootstrap_resamples = 1000
-bootstrap_block_size = 8
-
-[paths]
-data_root = "data"
-vectors = "data/vectors"
-probes = "data/probes"
-sqlite_url = "sqlite://x.db"
-"#,
-    )
-    .unwrap();
-}
 async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: &str) {
     let agent_store = AgentStore::new(ctx.db.clone());
     let agent_id = agent_store
@@ -739,6 +703,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 prompt_version: String::new(),
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
             }],
         })
         .await
@@ -782,14 +747,14 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
     let _env_lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _openrouter_key = scoped_unset("OPENROUTER_API_KEY");
     let (ctx, tmp) = ctx_with_agents_table().await;
-    write_openrouter_only_config_with_deepseek(tmp.path());
+    write_openrouter_config(tmp.path(), "deepseek/deepseek-v4-flash");
     let strategy_id = "01KRMYS1N4QT5B9EM32VNXJJ9V";
     save_openrouter_strategy_with_agent_ref(&ctx, strategy_id).await;
 
     // Force OPENROUTER_API_KEY to be unset for the duration of this
     // test so dispatch construction returns a deterministic
     // openrouter-specific error rather than reaching out to the real
-    // network. The `write_openrouter_config` provider entry references
+    // network. The OpenRouter provider entry references
     // `OPENROUTER_API_KEY` as its `api_key_env`, so an unset value
     // yields ApiError::Validation("no API key for provider `openrouter`
     // (env var OPENROUTER_API_KEY is unset). ...").

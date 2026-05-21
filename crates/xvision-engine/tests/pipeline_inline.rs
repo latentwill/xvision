@@ -131,6 +131,15 @@ async fn three_slot_pipeline_chains_outputs() {
         dispatch: pipeline_dispatch,
         tools,
         obs: None,
+        memory_recorder: None,
+
+        scenario_start: None,
+
+        run_id: String::new(),
+
+        scenario_id: String::new(),
+
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -176,6 +185,15 @@ async fn skips_missing_optional_slots() {
         dispatch,
         tools,
         obs: None,
+        memory_recorder: None,
+
+        scenario_start: None,
+
+        run_id: String::new(),
+
+        scenario_id: String::new(),
+
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -206,6 +224,8 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         },
         ResolvedAgentSlot {
             role: "trader".into(),
@@ -221,6 +241,8 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         },
     ];
 
@@ -233,6 +255,15 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
         dispatch,
         tools,
         obs: None,
+        memory_recorder: None,
+
+        scenario_start: None,
+
+        run_id: String::new(),
+
+        scenario_id: String::new(),
+
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -264,6 +295,8 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         },
         ResolvedAgentSlot {
             role: "final_decider".into(),
@@ -279,6 +312,8 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         },
     ];
 
@@ -294,6 +329,15 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
         dispatch,
         tools,
         obs: None,
+        memory_recorder: None,
+
+        scenario_start: None,
+
+        run_id: String::new(),
+
+        scenario_id: String::new(),
+
+        cycle_idx: 0,
     })
     .await
     .unwrap();

@@ -79,8 +79,9 @@ unambiguous.
 | 025 | agent-slot-cache-and-window          | merged        |
 | 026 | eval-trace-surface-foundation (V2E)  | merged 2026-05-21 |
 | 027 | eval-candle-integrity-and-manifest (V2E) | in flight 2026-05-21 |
+| 029 | agent-slot-memory-mode (V2D)         | in flight 2026-05-21 |
 
-The next available number is **028**. The conductor must approve and
+The next available number is **030**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 

@@ -272,11 +272,11 @@ impl AppState {
             self.cli_runner.start(job);
         }
 
-        if restarted > 0 || recovery.failed_running > 0 {
+        if restarted > 0 || recovery.orphaned_running > 0 {
             tracing::info!(
                 target: "xvision::dashboard",
                 restarted_queued = restarted,
-                failed_running = recovery.failed_running,
+                orphaned_running = recovery.orphaned_running,
                 "recovered cli jobs at startup",
             );
         }
