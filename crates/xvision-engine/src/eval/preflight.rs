@@ -178,11 +178,7 @@ async fn probe_one_provider(
         probe_http(client, kind_str, base_url, &api_key).await
     };
 
-    let latency_ms = if reachable {
-        Some(started.elapsed().as_millis() as u64)
-    } else {
-        Some(started.elapsed().as_millis() as u64)
-    };
+    let latency_ms = Some(started.elapsed().as_millis() as u64);
 
     PreflightResult {
         provider_name: name.to_string(),
