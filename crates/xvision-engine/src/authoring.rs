@@ -15,6 +15,7 @@ use ulid::Ulid;
 
 use crate::strategies::{
     agent_ref::canonical_role,
+    manifest::PublicManifest,
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
@@ -145,6 +146,14 @@ pub struct ValidateDraftOut {
 // dispatcher functions
 // ---------------------------------------------------------------------------
 
+/// List the strategy templates with display name + plain summary.
+///
+/// Kept for non-wizard callers (`xvision-mcp`, dashboard
+/// `routes/strategies.rs`, CLI). The wizard no longer consults
+/// templates as a separate library concept — see the
+/// `templates-elimination` contract (2026-05-21) and the deferred
+/// follow-up `strategy-template-registry-removal` that completes the
+/// engine-side removal.
 pub fn list_templates() -> Vec<TemplateInfo> {
     template_registry::list_template_names()
         .iter()
@@ -163,10 +172,56 @@ pub async fn create_strategy(
     req: CreateStrategyReq,
 ) -> anyhow::Result<CreateStrategyOut> {
     let tpl = template_registry::get(&req.template)
-        .ok_or_else(|| anyhow::anyhow!("unknown template '{}' — try list_templates", req.template))?;
+        .ok_or_else(|| anyhow::anyhow!("unknown template '{}'", req.template))?;
     let id = Ulid::new().to_string();
     let creator = req.creator.unwrap_or_else(|| "@anonymous".to_string());
     let draft = tpl.new_draft(id.clone(), req.name, creator);
+    store.save(&draft).await?;
+    Ok(CreateStrategyOut { id })
+}
+
+/// Build a minimal draft Strategy with no agents and no placeholder
+/// trader prompt. The wizard uses this path: subsequent
+/// `create_strategy_agent` / `update_slot` calls fill in real agent
+/// content before the operator hits save.
+///
+/// Manifest carries `template: "custom"` so the typed-`MechanicalParams`
+/// dispatch falls through to `MechanicalParams::Custom` and
+/// `mechanical_params: {}` validates. The strategies module is not edited
+/// — the public `Strategy` / `PublicManifest` types are constructed
+/// directly. No call into `template_registry`.
+pub async fn create_blank_strategy(
+    store: &dyn StrategyStore,
+    name: String,
+    creator: Option<String>,
+) -> anyhow::Result<CreateStrategyOut> {
+    let id = Ulid::new().to_string();
+    let creator = creator.unwrap_or_else(|| "@anonymous".to_string());
+    let draft = Strategy {
+        manifest: PublicManifest {
+            id: id.clone(),
+            display_name: name,
+            plain_summary: String::new(),
+            creator,
+            template: "custom".into(),
+            regime_fit: Vec::new(),
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            required_models: Vec::new(),
+            required_tools: Vec::new(),
+            risk_preset_or_config: "conservative".into(),
+            published_at: None,
+            min_warmup_bars: None,
+        },
+        hypothesis: None,
+        agents: Vec::new(),
+        pipeline: PipelineDef::default(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: None,
+        risk: RiskPreset::Conservative.expand(),
+        mechanical_params: serde_json::json!({}),
+    };
     store.save(&draft).await?;
     Ok(CreateStrategyOut { id })
 }
@@ -522,50 +577,27 @@ mod tests {
         (store, td)
     }
 
-    #[test]
-    fn list_templates_returns_known_set() {
-        let names: Vec<_> = list_templates().into_iter().map(|t| t.name).collect();
-        assert!(names.contains(&"trend_follower".to_string()));
-        assert!(names.contains(&"breakout".to_string()));
-        assert!(names.contains(&"mean_reversion".to_string()));
-    }
-
-    #[test]
-    fn custom_template_is_registered_for_blank_draft_fallback() {
-        // The wizard's `create_strategy` defaults to the `custom`
-        // template when the agent omits `template`. Pin the
-        // dependency: if `custom` ever gets renamed, the wizard
-        // default needs to follow.
-        let names: Vec<_> = list_templates().into_iter().map(|t| t.name).collect();
-        assert!(
-            names.contains(&"custom".to_string()),
-            "wizard create_strategy fallback assumes the `custom` template \
-             is registered; available: {names:?}"
-        );
-    }
-
     #[tokio::test]
-    async fn create_strategy_from_custom_template_produces_blank_mechanical_params() {
-        // Acceptance: the wizard's no-template path produces a draft
-        // with empty `mechanical_params` and no legacy regime/intern
-        // slots — a clean starting point the `set_*` tools can fill.
+    async fn create_blank_strategy_produces_empty_agents_and_no_placeholder_slot() {
+        // Acceptance: the wizard's blank-draft path produces a draft
+        // with no AgentRefs and no trader_slot (no placeholder prompt),
+        // so the downstream `create_strategy_agent` / `update_slot` flow
+        // fills in real agent content before the save-gate sees it.
         let (store, _td) = store_in_tmp();
-        let out = create_strategy(
-            &store,
-            CreateStrategyReq {
-                template: "custom".into(),
-                name: "Blank Run".into(),
-                creator: Some("@test".into()),
-            },
-        )
-        .await
-        .expect("custom template create must succeed");
+        let out = create_blank_strategy(&store, "Blank Run".into(), Some("@test".into()))
+            .await
+            .expect("blank strategy create must succeed");
 
         let draft = get_strategy(&store, &out.id).await.expect("draft must load");
         assert!(
             draft.mechanical_params.as_object().is_some_and(|m| m.is_empty()),
             "blank draft must have empty mechanical_params, got: {:?}",
             draft.mechanical_params
+        );
+        assert!(draft.agents.is_empty(), "blank draft must have no AgentRefs");
+        assert!(
+            draft.trader_slot.is_none(),
+            "blank draft must not carry a placeholder trader slot"
         );
         assert!(
             draft.regime_slot.is_none(),
@@ -575,6 +607,19 @@ mod tests {
             draft.intern_slot.is_none(),
             "blank draft should not carry an intern slot"
         );
+        assert_eq!(draft.manifest.template, "custom");
+        assert_eq!(draft.manifest.display_name, "Blank Run");
+        assert_eq!(draft.manifest.creator, "@test");
+    }
+
+    #[tokio::test]
+    async fn create_blank_strategy_defaults_creator_to_anonymous() {
+        let (store, _td) = store_in_tmp();
+        let out = create_blank_strategy(&store, "x".into(), None)
+            .await
+            .expect("blank strategy create must succeed");
+        let draft = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(draft.manifest.creator, "@anonymous");
     }
 
     #[test]
