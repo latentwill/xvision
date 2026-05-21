@@ -602,6 +602,8 @@ async fn new_atomic(
         trader_slot: None,
         risk: xvision_engine::strategies::risk::RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_engine::strategies::ActivationMode::EveryBar,
+        filter: None,
     };
 
     // 3. Validate shape.
