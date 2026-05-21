@@ -9,7 +9,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
-import { StrategiesFolderRoute } from "./strategies-folder";
+import { StrategiesFolderView } from "./strategies-folder";
 import * as folderApi from "@/api/strategies-folder";
 
 vi.mock("@/api/strategies-folder", async () => {
@@ -23,9 +23,15 @@ vi.mock("@/api/strategies-folder", async () => {
   };
 });
 
-function renderRoute() {
+/**
+ * Render `StrategiesFolderView` — the reusable view body that is now
+ * mounted inside `/strategies?view=folder`. Tests work identically
+ * whether the component is rendered standalone here or via the toggle
+ * on the strategies route.
+ */
+function renderRoute(initialEntry = "/strategies?view=folder") {
   return render(
-    <MemoryRouter initialEntries={["/strategies-folder"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider
         client={
           new QueryClient({
@@ -33,7 +39,7 @@ function renderRoute() {
           })
         }
       >
-        <StrategiesFolderRoute />
+        <StrategiesFolderView />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -58,7 +64,7 @@ function stubMatchMediaDesktop() {
   });
 }
 
-describe("StrategiesFolderRoute", () => {
+describe("StrategiesFolderView", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     stubMatchMediaDesktop();
