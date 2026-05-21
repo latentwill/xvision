@@ -26,6 +26,9 @@ importers:
       github-slugger:
         specifier: ^2.0.0
         version: 2.0.0
+      klinecharts:
+        specifier: 10.0.0-beta2
+        version: 10.0.0-beta2
       lightweight-charts:
         specifier: ^4.1
         version: 4.2.3
@@ -47,6 +50,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      uplot:
+        specifier: ^1.6.32
+        version: 1.6.32
       zustand:
         specifier: ^4.5.5
         version: 4.5.7(@types/react@18.3.28)(react@18.3.1)
@@ -1061,6 +1067,9 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
+  klinecharts@10.0.0-beta2:
+    resolution: {integrity: sha512-CsbMhpJHNYLaJrvV56Lms2Y9U/DskNJORVvGRPXoKOT2jyW7hCdKI/0AqG1GW8e3HVwFZFOzCcCjcv0+cZf14g==}
+
   lightweight-charts@4.2.3:
     resolution: {integrity: sha512-5kS/2hY3wNYNzhnS8Gb+GAS07DX8GPF2YVDnd2NMC85gJVQ6RLU6YrXNgNJ6eg0AnWPwCnvaGtYmGky3HiLQEw==}
 
@@ -1607,6 +1616,9 @@ packages:
     hasBin: true
     peerDependencies:
       browserslist: '>= 4.21.0'
+
+  uplot@1.6.32:
+    resolution: {integrity: sha512-KIMVnG68zvu5XXUbC4LQEPnhwOxBuLyW1AHtpm6IKTXImkbLgkMy+jabjLgSLMasNuGGzQm/ep3tOkyTxpiQIw==}
 
   use-sync-external-store@1.6.0:
     resolution: {integrity: sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==}
@@ -2605,6 +2617,8 @@ snapshots:
 
   json5@2.2.3: {}
 
+  klinecharts@10.0.0-beta2: {}
+
   lightweight-charts@4.2.3:
     dependencies:
       fancy-canvas: 2.1.0
@@ -3412,6 +3426,8 @@ snapshots:
       browserslist: 4.28.2
       escalade: 3.2.0
       picocolors: 1.1.1
+
+  uplot@1.6.32: {}
 
   use-sync-external-store@1.6.0(react@18.3.1):
     dependencies:

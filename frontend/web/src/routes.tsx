@@ -36,6 +36,12 @@ const SettingsGeneralRoute = lazy(() => import("./routes/settings").then((m) => 
 const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsProvidersRoute })));
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
 const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
+const ChartLabLayout = lazy(() => import("./routes/chart-lab").then((m) => ({ default: m.ChartLabLayout })));
+const ChartLabOverview = lazy(() => import("./routes/chart-lab/ChartLabOverview").then((m) => ({ default: m.ChartLabOverview })));
+const ChartLabPrimitives = lazy(() => import("./routes/chart-lab/ChartLabPrimitives").then((m) => ({ default: m.ChartLabPrimitives })));
+const ChartLabSurfacesIndex = lazy(() => import("./routes/chart-lab/ChartLabSurfaces").then((m) => ({ default: m.ChartLabSurfacesIndex })));
+const ChartLabSurfaceDetail = lazy(() => import("./routes/chart-lab/ChartLabSurfaces").then((m) => ({ default: m.ChartLabSurfaceDetail })));
+const ChartLabTokens = lazy(() => import("./routes/chart-lab/ChartLabTokens").then((m) => ({ default: m.ChartLabTokens })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -102,6 +108,23 @@ export const router = createBrowserRouter([
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
       { path: "safety", element: page(<SafetyRoute />) },
+      {
+        path: "chart-lab",
+        element: page(<ChartLabLayout />),
+        children: [
+          { index: true, element: page(<ChartLabOverview />) },
+          { path: "primitives", element: page(<ChartLabPrimitives />) },
+          {
+            path: "surfaces",
+            element: page(<ChartLabSurfacesIndex />),
+          },
+          {
+            path: "surfaces/:surface",
+            element: page(<ChartLabSurfaceDetail />),
+          },
+          { path: "tokens", element: page(<ChartLabTokens />) },
+        ],
+      },
       { path: "docs", element: page(<DocsRoute />) },
       {
         path: "settings",

@@ -48,6 +48,87 @@ type ChartThemeDefinition = {
   };
 };
 
+export type Chart2ThemeDefinition = {
+  surface: {
+    bg: string;
+    panelBg: string;
+    gridStrong: string;
+    gridSoft: string;
+    axisText: string;
+    axisTick: string;
+    crosshair: string;
+  };
+  candle: {
+    up: string;
+    down: string;
+    wickUp: string;
+    wickDown: string;
+    borderUp: string;
+    borderDown: string;
+  };
+  overlay: {
+    sma20: string;
+    sma30: string;
+    sma50: string;
+    sma60: string;
+    sma90: string;
+    sma200: string;
+    ema20: string;
+    ema30: string;
+    ema50: string;
+    ema60: string;
+    ema90: string;
+    ema200: string;
+    bollUpper: string;
+    bollMiddle: string;
+    bollLower: string;
+    donchianUpper: string;
+    donchianLower: string;
+  };
+  marker: {
+    buy: string;
+    sell: string;
+    veto: string;
+    hold: string;
+    halo: string;
+    textOnAccent: string;
+  };
+  position: {
+    longBand: string;
+    shortBand: string;
+    longLine: string;
+    shortLine: string;
+  };
+  panes: {
+    equity: string;
+    equityFillTop: string;
+    equityFillBottom: string;
+    drawdown: string;
+    drawdownFillTop: string;
+    drawdownFillBottom: string;
+    volumeUp: string;
+    volumeDown: string;
+    rsi: string;
+    rsiGuide: string;
+    macdLine: string;
+    macdSignal: string;
+    macdHist: string;
+    atr: string;
+  };
+  compare: {
+    palette: [string, string, string, string, string, string, string, string];
+  };
+  motion: {
+    hoverMs: number;
+    animMs: number;
+  };
+  density: {
+    axisFont: string;
+    axisGap: number;
+    paneGap: number;
+  };
+};
+
 export type ThemeDefinition = {
   id: ResolvedTheme;
   label: string;
@@ -62,6 +143,7 @@ export type ThemeDefinition = {
   };
   cssVars: Record<string, string>;
   chart: ChartThemeDefinition;
+  chart2: Chart2ThemeDefinition;
 };
 
 export const THEME_PREFERENCE_KEY = "xvn.theme.preference";
@@ -154,6 +236,88 @@ export const themeDefinitions: Record<ResolvedTheme, ThemeDefinition> = {
         atr: "#a16207",
       },
     },
+    chart2: {
+      surface: {
+        bg: "#fffaf0",
+        panelBg: "#f3ecdd",
+        gridStrong: "#d8d0c2",
+        gridSoft: "#ece5d4",
+        axisText: "#5f584b",
+        axisTick: "#b9ad99",
+        crosshair: "#8a5f16",
+      },
+      candle: {
+        up: "#16a34a",
+        down: "#dc2626",
+        wickUp: "#16a34a",
+        wickDown: "#dc2626",
+        borderUp: "#15803d",
+        borderDown: "#b91c1c",
+      },
+      overlay: {
+        sma20: "#0284c7",
+        sma30: "#047857",
+        sma50: "#a16207",
+        sma60: "#059669",
+        sma90: "#16a34a",
+        sma200: "#b91c1c",
+        ema20: "#7c3aed",
+        ema30: "#0369a1",
+        ema50: "#a16207",
+        ema60: "#0284c7",
+        ema90: "#0ea5e9",
+        ema200: "#b91c1c",
+        bollUpper: "#15803d",
+        bollMiddle: "#64748b",
+        bollLower: "#15803d",
+        donchianUpper: "#c2410c",
+        donchianLower: "#c2410c",
+      },
+      marker: {
+        buy: "#16a34a",
+        sell: "#dc2626",
+        veto: "#ca8a04",
+        hold: "#475569",
+        halo: "rgba(138, 95, 22, 0.18)",
+        textOnAccent: "#fffaf0",
+      },
+      position: {
+        longBand: "rgba(34, 197, 94, 0.10)",
+        shortBand: "rgba(239, 68, 68, 0.10)",
+        longLine: "#16a34a",
+        shortLine: "#dc2626",
+      },
+      panes: {
+        equity: "#0891b2",
+        equityFillTop: "rgba(8, 145, 178, 0.24)",
+        equityFillBottom: "rgba(8, 145, 178, 0)",
+        drawdown: "#dc2626",
+        drawdownFillTop: "rgba(220, 38, 38, 0.22)",
+        drawdownFillBottom: "rgba(220, 38, 38, 0)",
+        volumeUp: "rgba(22, 163, 74, 0.6)",
+        volumeDown: "rgba(220, 38, 38, 0.6)",
+        rsi: "#7c3aed",
+        rsiGuide: "#94a3b8",
+        macdLine: "#0891b2",
+        macdSignal: "#ea580c",
+        macdHist: "#64748b",
+        atr: "#a16207",
+      },
+      compare: {
+        palette: [
+          "#0891b2",
+          "#a16207",
+          "#16a34a",
+          "#7c3aed",
+          "#dc2626",
+          "#ea580c",
+          "#0369a1",
+          "#475569",
+        ],
+      },
+      motion: { hoverMs: 80, animMs: 160 },
+      density: { axisFont: "11px Inter, system-ui, sans-serif", axisGap: 6, paneGap: 8 },
+    },
   },
   "folio-dark": {
     id: "folio-dark",
@@ -233,6 +397,88 @@ export const themeDefinitions: Record<ResolvedTheme, ThemeDefinition> = {
         atr: "#fbbf24",
       },
     },
+    chart2: {
+      surface: {
+        bg: "#14120e",
+        panelBg: "#1b1810",
+        gridStrong: "#2a2618",
+        gridSoft: "#221f15",
+        axisText: "#a39a85",
+        axisTick: "#3a3322",
+        crosshair: "#d4a547",
+      },
+      candle: {
+        up: "#22c55e",
+        down: "#ef4444",
+        wickUp: "#22c55e",
+        wickDown: "#ef4444",
+        borderUp: "#16a34a",
+        borderDown: "#b91c1c",
+      },
+      overlay: {
+        sma20: "#7dd3fc",
+        sma30: "#a7f3d0",
+        sma50: "#fbbf24",
+        sma60: "#6ee7b7",
+        sma90: "#34d399",
+        sma200: "#f87171",
+        ema20: "#a78bfa",
+        ema30: "#bae6fd",
+        ema50: "#fbbf24",
+        ema60: "#7dd3fc",
+        ema90: "#38bdf8",
+        ema200: "#f87171",
+        bollUpper: "#34d399",
+        bollMiddle: "#94a3b8",
+        bollLower: "#34d399",
+        donchianUpper: "#fb923c",
+        donchianLower: "#fb923c",
+      },
+      marker: {
+        buy: "#22c55e",
+        sell: "#ef4444",
+        veto: "#facc15",
+        hold: "#94a3b8",
+        halo: "rgba(212, 165, 71, 0.18)",
+        textOnAccent: "#0f0e0c",
+      },
+      position: {
+        longBand: "rgba(34, 197, 94, 0.08)",
+        shortBand: "rgba(239, 68, 68, 0.08)",
+        longLine: "#22c55e",
+        shortLine: "#ef4444",
+      },
+      panes: {
+        equity: "#22d3ee",
+        equityFillTop: "rgba(34, 211, 238, 0.30)",
+        equityFillBottom: "rgba(34, 211, 238, 0)",
+        drawdown: "#ef4444",
+        drawdownFillTop: "rgba(239, 68, 68, 0.30)",
+        drawdownFillBottom: "rgba(239, 68, 68, 0)",
+        volumeUp: "rgba(34, 197, 94, 0.55)",
+        volumeDown: "rgba(239, 68, 68, 0.55)",
+        rsi: "#a78bfa",
+        rsiGuide: "#475569",
+        macdLine: "#22d3ee",
+        macdSignal: "#f97316",
+        macdHist: "#94a3b8",
+        atr: "#fbbf24",
+      },
+      compare: {
+        palette: [
+          "#22d3ee",
+          "#fbbf24",
+          "#34d399",
+          "#a78bfa",
+          "#f87171",
+          "#fb923c",
+          "#7dd3fc",
+          "#94a3b8",
+        ],
+      },
+      motion: { hoverMs: 80, animMs: 160 },
+      density: { axisFont: "11px Inter, system-ui, sans-serif", axisGap: 6, paneGap: 8 },
+    },
   },
   black: {
     id: "black",
@@ -311,6 +557,88 @@ export const themeDefinitions: Record<ResolvedTheme, ThemeDefinition> = {
         macdHistogram: "#a3a3a3",
         atr: "#f0c75e",
       },
+    },
+    chart2: {
+      surface: {
+        bg: "#000000",
+        panelBg: "#101010",
+        gridStrong: "#202020",
+        gridSoft: "#151515",
+        axisText: "#b8b8b8",
+        axisTick: "#343434",
+        crosshair: "#f0c75e",
+      },
+      candle: {
+        up: "#22c55e",
+        down: "#ef4444",
+        wickUp: "#22c55e",
+        wickDown: "#ef4444",
+        borderUp: "#16a34a",
+        borderDown: "#b91c1c",
+      },
+      overlay: {
+        sma20: "#7dd3fc",
+        sma30: "#99f6e4",
+        sma50: "#f0c75e",
+        sma60: "#5eead4",
+        sma90: "#2dd4bf",
+        sma200: "#fb7185",
+        ema20: "#c4b5fd",
+        ema30: "#bae6fd",
+        ema50: "#f0c75e",
+        ema60: "#67e8f9",
+        ema90: "#22d3ee",
+        ema200: "#fb7185",
+        bollUpper: "#4ade80",
+        bollMiddle: "#a3a3a3",
+        bollLower: "#4ade80",
+        donchianUpper: "#fb923c",
+        donchianLower: "#fb923c",
+      },
+      marker: {
+        buy: "#22c55e",
+        sell: "#ef4444",
+        veto: "#facc15",
+        hold: "#a3a3a3",
+        halo: "rgba(240, 199, 94, 0.18)",
+        textOnAccent: "#000000",
+      },
+      position: {
+        longBand: "rgba(34, 197, 94, 0.09)",
+        shortBand: "rgba(239, 68, 68, 0.09)",
+        longLine: "#22c55e",
+        shortLine: "#ef4444",
+      },
+      panes: {
+        equity: "#22d3ee",
+        equityFillTop: "rgba(34, 211, 238, 0.26)",
+        equityFillBottom: "rgba(34, 211, 238, 0)",
+        drawdown: "#f87171",
+        drawdownFillTop: "rgba(248, 113, 113, 0.26)",
+        drawdownFillBottom: "rgba(248, 113, 113, 0)",
+        volumeUp: "rgba(34, 197, 94, 0.55)",
+        volumeDown: "rgba(239, 68, 68, 0.55)",
+        rsi: "#c4b5fd",
+        rsiGuide: "#525252",
+        macdLine: "#22d3ee",
+        macdSignal: "#fb923c",
+        macdHist: "#a3a3a3",
+        atr: "#f0c75e",
+      },
+      compare: {
+        palette: [
+          "#22d3ee",
+          "#f0c75e",
+          "#2dd4bf",
+          "#c4b5fd",
+          "#fb7185",
+          "#fb923c",
+          "#7dd3fc",
+          "#a3a3a3",
+        ],
+      },
+      motion: { hoverMs: 80, animMs: 160 },
+      density: { axisFont: "11px Inter, system-ui, sans-serif", axisGap: 6, paneGap: 8 },
     },
   },
 };
