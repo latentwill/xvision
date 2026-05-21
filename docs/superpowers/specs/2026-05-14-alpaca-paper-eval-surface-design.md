@@ -1,9 +1,10 @@
 # Alpaca Paper Eval Surface - Design
 
-> **Status:** Draft / spec. Drafted 2026-05-14.
+> **Status: SUPERSEDED** (2026-05-21) — see `team/intake/2026-05-21-alpaca-live-eval-and-executor-refactor.md`. The Paper-mode executor this spec elaborates on is being **deleted** by the `executor-refactor` track. The Alpaca surface work that's still relevant (`BrokerSurface` widening for live execution) moves into the `live-bar-source-alpaca` and `live-eval-launch-and-freeze` track contracts. Keep this file as historical context for the Alpaca API surface inventory; do not implement against it.
+> **Originally drafted:** 2026-05-14.
 > **Author:** xvision team.
 > **Companion specs:** [Eval Engine Design](./2026-05-08-eval-engine-design.md) | [Custom-Scenario Eval](./2026-05-11-custom-scenario-eval-design.md) | [TradingView Lightweight Eval Surface](./2026-05-14-tradingview-lightweight-eval-surface-design.md)
-> **Tracking:** Follow-up to the current BTC-only Alpaca executor and narrow `BrokerSurface`. This spec supersedes the "paper mode is just submit_order/position/balance" cut in `crates/xvision-engine/src/eval/executor/paper.rs`, `crates/xvision-execution/src/broker_surface.rs`, and `crates/xvision-execution/src/alpaca.rs`.
+> **Tracking:** Follow-up to the current BTC-only Alpaca executor and narrow `BrokerSurface`. This spec was originally written to extend the "paper mode is just submit_order/position/balance" cut in `crates/xvision-engine/src/eval/executor/paper.rs`, `crates/xvision-execution/src/broker_surface.rs`, and `crates/xvision-execution/src/alpaca.rs` — but `PaperExecutor` is now scheduled for deletion. See the superseded note above.
 
 ---
 

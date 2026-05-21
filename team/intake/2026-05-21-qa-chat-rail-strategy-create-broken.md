@@ -46,7 +46,7 @@ log copied into the intake brief — the relevant lines are:
 
 ## Already in flight / queue notes
 
-- Watcher v1 / v1.5 + DSPy adoption: separate intake at
+- Filter v1 / v1.5 + DSPy adoption: separate intake at
   `team/intake/2026-05-21-dspy-dsrs-optimizer-adoption.md`. Unrelated.
 - Canonical template / trader scaffolding: see
   `team/intake/2026-05-20-canonical-template-needs-trader.md`. The
