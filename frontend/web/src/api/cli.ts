@@ -6,7 +6,10 @@ export type CliJobStatus =
   | "succeeded"
   | "failed"
   | "timed_out"
-  | "cancelled";
+  | "cancelled"
+  | "orphaned"
+  | "output_cap_exceeded"
+  | "runtime_cap_exceeded";
 
 export type CreateCliJobRequest = {
   argv: string[];
@@ -33,6 +36,20 @@ export type CliJob = {
   stdout_truncated: boolean;
   stderr_truncated: boolean;
   error_message: string | null;
+  // Audit fields (v2b-remote-cli-job-safety)
+  pid: number | null;
+  job_user: string | null;
+  job_source: string | null;
+  command_class: string | null;
+  cancelled_at: string | null;
+  cancel_signal: string | null;
+  recovered_at: string | null;
+  recovery_reason: string | null;
+  max_runtime_seconds: number;
+  max_output_bytes: number;
+  output_cap_exceeded: boolean;
+  runtime_cap_exceeded: boolean;
+  output_bytes: number;
 };
 
 export type CliJobOutput = {
@@ -66,11 +83,32 @@ export function getCliJobOutput(jobId: string): Promise<CliJobOutput> {
   );
 }
 
+export function cancelCliJob(jobId: string): Promise<CliJob> {
+  return apiFetch<CliJob>(`/api/cli/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function isTerminalCliJobStatus(status: CliJobStatus | undefined) {
   return (
     status === "succeeded" ||
     status === "failed" ||
     status === "timed_out" ||
-    status === "cancelled"
+    status === "cancelled" ||
+    status === "orphaned" ||
+    status === "output_cap_exceeded" ||
+    status === "runtime_cap_exceeded"
+  );
+}
+
+/** Returns true when the job ended abnormally (killed, orphaned, cap-breached). */
+export function isAbnormalCliJobStatus(status: CliJobStatus | undefined) {
+  return (
+    status === "failed" ||
+    status === "timed_out" ||
+    status === "cancelled" ||
+    status === "orphaned" ||
+    status === "output_cap_exceeded" ||
+    status === "runtime_cap_exceeded"
   );
 }

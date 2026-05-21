@@ -44,7 +44,7 @@ use chrono::Utc;
 use serde_json::json;
 use ulid::Ulid;
 
-use crate::eval::findings::{Finding, Severity};
+use crate::eval::findings::{uniformity::detect_uniformity, Finding, Severity};
 use crate::eval::review::{EvalReview, ReviewStatus, ReviewVerdict};
 use crate::eval::store::RunStore;
 
@@ -145,6 +145,26 @@ pub async fn run_auto_review(
         return Ok(AutoReviewOutcome::AlreadyExists {
             review_id: prior.id.clone(),
         });
+    }
+
+    // ── Uniformity smell-tests ────────────────────────────────────────
+    // Read decisions and run the pure uniformity detector *before* reading
+    // the existing findings, so any new findings it emits are visible to
+    // the verdict-mapping step below. This must run before classify_verdict.
+    let decisions = store
+        .read_decisions(run_id)
+        .await
+        .context("auto-review: read decisions for uniformity check")?;
+    let uniformity_findings = detect_uniformity(&decisions);
+    for uf in &uniformity_findings {
+        if let Err(e) = store.record_finding(uf).await {
+            tracing::warn!(
+                error = %e,
+                run_id,
+                kind = %uf.kind,
+                "auto-review: failed to persist uniformity finding (continuing)"
+            );
+        }
     }
 
     let findings = store

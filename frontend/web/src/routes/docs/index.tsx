@@ -1,28 +1,28 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { DocsMarkdown } from "@/features/docs/DocsMarkdown";
+import { DocsToc } from "@/features/docs/DocsToc";
+import { extractToc } from "@/features/docs/extractToc";
+import { useDocsPrefs } from "@/features/docs/useDocsPrefs";
 import { docsKeys, getDocsIndex, getDocsPage } from "@/api/docs";
 
 /**
  * `/docs` — in-app documentation surface.
  *
- * Two-pane layout: sidebar lists baked pages from `/api/docs/index`,
- * main pane renders the selected page's markdown body. Includes a
- * client-side fuzzy filter so the operator can find a page by title
- * substring without leaving the route (acceptance: "Search across docs
- * index works (client-side fuzzy match acceptable).").
+ * Three-pane layout (sidebar / article / right-rail TOC), matching the
+ * folio-dark prototype in `docs/design/xvnwiki/docs/`. The right-rail
+ * TOC tracks H2/H3 headings on the current page with scrollspy.
  *
- * Supports `?slug=<slug>` query param for deep-linking: the rail, wizard,
- * inspector, or any other component can navigate to a specific docs page
- * by appending `?slug=<slug>` to `/docs`. Clicking a sidebar item updates
- * the URL so the page is reload-safe and shareable. Browser back/forward
- * navigates between pages.
+ * `?slug=<slug>` deep-links to a specific page. Display preferences
+ * (density, TOC visibility) persist in localStorage. `⌘K` / `Ctrl+K`
+ * focuses the page filter.
  *
- * No network fetch beyond the dashboard's own `/api/docs/*` routes;
- * the content is baked into the deployed image.
+ * Per the no-popups rule, the "Display options" panel is an
+ * inline-expand below the sidebar — never a floating tweaks drawer
+ * like the prototype's HTML mock.
  */
 export function DocsRoute() {
   const index = useQuery({
@@ -33,6 +33,10 @@ export function DocsRoute() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [filter, setFilter] = useState("");
+  const [showOptions, setShowOptions] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const filterRef = useRef<HTMLInputElement>(null);
+  const { prefs, setDensity, setToc } = useDocsPrefs();
 
   const pages = index.data ?? [];
 
@@ -46,9 +50,6 @@ export function DocsRoute() {
     );
   }, [pages, filter]);
 
-  // Group the filtered pages by `section`, preserving the order in which
-  // each section first appears. The backend guarantees pages with the same
-  // section are contiguous, so a linear walk is enough — no re-sorting.
   const grouped = useMemo(() => {
     const groups: { section: string; pages: typeof filtered }[] = [];
     for (const p of filtered) {
@@ -62,14 +63,9 @@ export function DocsRoute() {
     return groups;
   }, [filtered]);
 
-  // Derive the active slug from the URL param. If the param names a slug
-  // that isn't in the loaded index (unknown or index not yet loaded), fall
-  // back to the first entry so the main pane always shows something useful.
   const urlSlug = searchParams.get("slug");
   const slugInIndex = urlSlug != null && pages.some((p) => p.slug === urlSlug);
-  const activeSlug = slugInIndex
-    ? urlSlug
-    : (pages[0]?.slug ?? null);
+  const activeSlug = slugInIndex ? urlSlug : (pages[0]?.slug ?? null);
 
   const page = useQuery({
     queryKey: activeSlug ? docsKeys.page(activeSlug) : docsKeys.all,
@@ -78,32 +74,76 @@ export function DocsRoute() {
     staleTime: 60_000,
   });
 
+  const tocItems = useMemo(
+    () => (page.data ? extractToc(page.data) : []),
+    [page.data],
+  );
+
+  // ⌘K / Ctrl+K focuses the page filter. Mirrors the prototype's
+  // keyboard hint without yet implementing full-text search.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        const tag = (e.target as HTMLElement | null)?.tagName ?? "";
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        filterRef.current?.focus();
+        filterRef.current?.select();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  async function handleCopyMarkdown() {
+    if (!page.data) return;
+    try {
+      await navigator.clipboard.writeText(page.data);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API unavailable; silently no-op.
+    }
+  }
+
+  const densityArticleClass =
+    prefs.density === "comfortable"
+      ? "leading-[1.65] text-[14.5px]"
+      : "leading-[1.55] text-[13.5px]";
+
+  const showTocRail = prefs.toc === "shown";
+
   return (
     <>
       <Topbar title="Docs" sub="In-app reference" />
-      {/*
-        Two-pane reader on tablet/desktop, stacked single-column on
-        phone. Sidebar uses the folio-dark prototype's treatment (see
-        `docs/design/xvnwiki/docs/docs.css`): hairline right border,
-        sticky inside the scroll container, muted uppercase section
-        eyebrows (10.5px / 0.14em tracking), and a left-edge accent on
-        the active item (`inset 2px 0 0 var(--accent)`). Main pane caps
-        the reader measure at ~880px so long lines stay scannable per
-        the prototype's `.main { max-width: 880px }` block.
-      */}
-      <div className="md:grid md:grid-cols-[240px_1fr] md:gap-8 flex flex-col gap-4">
+      <div
+        className={
+          showTocRail
+            ? "lg:grid lg:grid-cols-[240px_minmax(0,1fr)_200px] md:grid md:grid-cols-[240px_1fr] md:gap-8 flex flex-col gap-4 lg:gap-8"
+            : "md:grid md:grid-cols-[240px_1fr] md:gap-8 flex flex-col gap-4"
+        }
+      >
         <aside
           className="md:border-r md:border-border-soft md:pr-6 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-48px)] md:overflow-y-auto"
           aria-label="Docs navigation"
         >
-          <input
-            type="search"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter docs…"
-            aria-label="Filter docs"
-            className="w-full bg-surface-elev border border-border-soft rounded-sm px-2.5 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-gold/40 mb-3"
-          />
+          <div className="relative mb-3">
+            <input
+              ref={filterRef}
+              type="search"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter docs…"
+              aria-label="Filter docs"
+              className="w-full bg-surface-elev border border-border-soft rounded-sm pl-2.5 pr-10 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-gold/40"
+            />
+            <span
+              className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] text-text-3 border border-border-soft rounded-sm px-1 leading-none py-0.5 pointer-events-none select-none"
+              aria-hidden="true"
+            >
+              ⌘K
+            </span>
+          </div>
           <nav className="flex flex-col gap-0.5" data-testid="docs-index">
             {index.isPending ? (
               <div className="text-[12px] text-text-3 py-2">Loading…</div>
@@ -141,10 +181,10 @@ export function DocsRoute() {
                         onClick={() => setSearchParams({ slug: p.slug })}
                         aria-current={isActive ? "page" : undefined}
                         data-testid={`docs-index-item-${p.slug}`}
-                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] transition-colors leading-snug ${
+                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] border-l-2 transition-colors leading-snug ${
                           isActive
-                            ? "text-text bg-gold/10 shadow-[inset_2px_0_0_theme(colors.gold.DEFAULT)]"
-                            : "text-text-2 hover:text-text hover:bg-surface-elev"
+                            ? "text-text bg-gold/10 border-gold"
+                            : "text-text-2 border-transparent hover:text-text hover:bg-surface-elev"
                         }`}
                       >
                         {p.title}
@@ -155,9 +195,62 @@ export function DocsRoute() {
               ))
             )}
           </nav>
+
+          <div className="mt-6 pt-4 border-t border-border-soft">
+            <button
+              type="button"
+              onClick={() => setShowOptions((v) => !v)}
+              aria-expanded={showOptions}
+              aria-controls="docs-display-options"
+              data-testid="docs-display-options-toggle"
+              className="w-full flex items-center justify-between text-[10.5px] uppercase tracking-[0.14em] font-semibold text-text-3 hover:text-text-2 px-2"
+            >
+              <span>Display options</span>
+              <span aria-hidden="true">{showOptions ? "−" : "+"}</span>
+            </button>
+            {showOptions && (
+              <div
+                id="docs-display-options"
+                className="mt-3 px-2 flex flex-col gap-3"
+              >
+                <DocsPrefRow
+                  label="Density"
+                  value={prefs.density}
+                  options={[
+                    { value: "compact", label: "Compact" },
+                    { value: "comfortable", label: "Comfy" },
+                  ]}
+                  onChange={(v) => setDensity(v as "compact" | "comfortable")}
+                  testId="docs-pref-density"
+                />
+                <DocsPrefRow
+                  label="On-page TOC"
+                  value={prefs.toc}
+                  options={[
+                    { value: "shown", label: "On" },
+                    { value: "hidden", label: "Off" },
+                  ]}
+                  onChange={(v) => setToc(v as "shown" | "hidden")}
+                  testId="docs-pref-toc"
+                />
+              </div>
+            )}
+          </div>
         </aside>
 
         <main className="min-w-0 md:max-w-[880px]">
+          <div className="flex items-center justify-end mb-2">
+            <button
+              type="button"
+              onClick={handleCopyMarkdown}
+              disabled={!page.data}
+              data-testid="docs-copy-md"
+              title="Copy this page as Markdown — useful for pasting into an LLM"
+              className="text-[11.5px] font-mono text-text-3 hover:text-text border border-border-soft rounded-sm px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {copied ? "Copied" : "Copy as Markdown"}
+            </button>
+          </div>
           <Card className="p-6 md:p-10">
             {!activeSlug ? (
               <div className="text-text-3 text-[13px]">
@@ -174,13 +267,67 @@ export function DocsRoute() {
                 Could not load page <code>{activeSlug}</code>.
               </div>
             ) : (
-              <article data-testid="docs-page-body">
+              <article
+                data-testid="docs-page-body"
+                className={densityArticleClass}
+              >
                 <DocsMarkdown body={page.data ?? ""} />
               </article>
             )}
           </Card>
         </main>
+
+        {showTocRail && <DocsToc items={tocItems} />}
       </div>
     </>
+  );
+}
+
+function DocsPrefRow({
+  label,
+  value,
+  options,
+  onChange,
+  testId,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+  testId: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[12px] text-text-2">{label}</span>
+      <div
+        className="inline-flex border border-border-soft rounded-sm overflow-hidden"
+        role="radiogroup"
+        aria-label={label}
+        data-testid={testId}
+      >
+        {options.map((opt, i) => {
+          const on = opt.value === value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => onChange(opt.value)}
+              data-value={opt.value}
+              className={[
+                "px-2 py-1 text-[11.5px] font-mono transition-colors",
+                i > 0 ? "border-l border-border-soft" : "",
+                on
+                  ? "bg-gold/10 text-gold"
+                  : "text-text-3 hover:text-text-2",
+              ].join(" ")}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

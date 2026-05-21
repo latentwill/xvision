@@ -299,6 +299,20 @@ describe("ScenariosDetailRoute bars cache actions", () => {
       started_at: "2026-05-12T00:00:00Z",
       finished_at: "2026-05-12T00:00:01Z",
       error_message: null,
+      // v2b-remote-cli-job-safety audit fields
+      pid: null,
+      job_user: null,
+      job_source: null,
+      command_class: "bars",
+      cancelled_at: null,
+      cancel_signal: null,
+      recovered_at: null,
+      recovery_reason: null,
+      max_runtime_seconds: 3600,
+      max_output_bytes: 10485760,
+      output_cap_exceeded: false,
+      runtime_cap_exceeded: false,
+      output_bytes: 0,
     });
     vi.mocked(cliApi.getCliJobOutput).mockResolvedValue({
       job_id: "job-1",
@@ -353,6 +367,26 @@ describe("ScenariosDetailRoute bars cache actions", () => {
   });
 });
 
+// `<ResponsiveListCard>` reads `useViewportMode()` which calls
+// `window.matchMedia`. jsdom doesn't provide it; install a desktop
+// stub so the route mounts.
+function stubMatchMediaDesktop() {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query.includes("min-width: 1280px"),
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 describe("RunsTab strategy name display", () => {
   const runRow = {
     id: "01HZ000000000000000000001",
@@ -360,11 +394,13 @@ describe("RunsTab strategy name display", () => {
     scenario_id: scenario.id,
     mode: "Backtest",
     status: "Completed",
+    started_at: "2026-05-19T09:00:00Z",
     completed_at: "2026-05-19T10:00:00Z",
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    stubMatchMediaDesktop();
     vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
     vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
   });
@@ -423,5 +459,61 @@ describe("RunsTab strategy name display", () => {
     expect(await screen.findByText(runRow.agent_id)).toBeInTheDocument();
     // Non-matching strategy name must NOT appear
     expect(screen.queryByText("Other Strategy")).not.toBeInTheDocument();
+  });
+
+  it("filters by strategy substring and excludes runs from other scenarios", async () => {
+    const otherScenarioRun = {
+      ...runRow,
+      id: "01HZ000000000000000000003",
+      scenario_id: "scenario-other",
+    };
+    const matchingRun = {
+      ...runRow,
+      id: "01HZ000000000000000000004",
+      agent_id: "01HZ000000000000000000005",
+    };
+
+    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: runRow.agent_id,
+        display_name: "Mean Reversion v3",
+        template: "single_llm",
+        decision_cadence_minutes: 60,
+        tags: [],
+        models: [],
+        providers: [],
+      },
+      {
+        agent_id: matchingRun.agent_id,
+        display_name: "Trend Follow v1",
+        template: "single_llm",
+        decision_cadence_minutes: 60,
+        tags: [],
+        models: [],
+        providers: [],
+      },
+    ]);
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      runRow,
+      matchingRun,
+      otherScenarioRun,
+    ] as unknown as Awaited<ReturnType<typeof evalApi.listRuns>>);
+
+    renderRoute();
+    fireEvent.click(await screen.findByRole("button", { name: "Runs" }));
+
+    // Both scenario-scoped runs render; the other-scenario run does not.
+    expect(await screen.findByText("Mean Reversion v3")).toBeInTheDocument();
+    expect(screen.getByText("Trend Follow v1")).toBeInTheDocument();
+    expect(screen.queryByText(otherScenarioRun.id)).not.toBeInTheDocument();
+
+    // Typing "trend" in the toolbar search narrows to the matching row.
+    const search = screen.getByPlaceholderText(/search run id or strategy/i);
+    fireEvent.change(search, { target: { value: "trend" } });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Mean Reversion v3")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Trend Follow v1")).toBeInTheDocument();
   });
 });

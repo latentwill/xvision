@@ -1,0 +1,36 @@
+-- 029_agent_slot_memory_mode.sql — V2D agent memory wave.
+--
+-- Adds a per-slot `memory_mode` knob so an operator can opt an agent
+-- into the cortex-memory layer (`xvision-memory` crate). The field is
+-- part of the V2D wave (cortex-memory integration plan
+-- `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`).
+--
+-- Allowed values (parsed via `MemoryMode::parse_or_off` on read):
+--   * `off`           — today's behavior. The dispatcher does not
+--                       consult or write the cortex-memory store for
+--                       this slot. This is the migration default so
+--                       every pre-029 row keeps its current behavior
+--                       with no operator action required.
+--   * `global`        — the slot reads/writes against the shared
+--                       `global` namespace; entries persisted by any
+--                       agent in this mode are visible to any other
+--                       agent also using `global`.
+--   * `agent_scoped`  — the slot reads/writes against an
+--                       `agent:{agent_id}` namespace; entries are
+--                       isolated to that single agent.
+--
+-- The column is `TEXT NOT NULL DEFAULT 'off'` so existing rows pick up
+-- the safe default automatically. No backfill pass is required; the
+-- next save through `AgentStore` re-stamps whatever value the operator
+-- selected in the UI/CLI.
+--
+-- The application layer enforces the allowed-values set via the
+-- `xvision_memory::types::MemoryMode` enum's `serde(rename_all =
+-- "snake_case")` parse step. Unknown strings round-trip back to `Off`
+-- via `parse_or_off` so a future column-value typo can't crash the
+-- store reader on every read. A CHECK constraint would be tighter, but
+-- SQLite can't add CHECK constraints via `ALTER TABLE` without a full
+-- table rebuild — not worth the complexity for a value space the
+-- engine already pins at the Rust boundary.
+
+ALTER TABLE agent_slots ADD COLUMN memory_mode TEXT NOT NULL DEFAULT 'off';

@@ -34,6 +34,9 @@ const MIGRATION_019: &str = include_str!("../migrations/019_agent_slot_prompt_ve
 const MIGRATION_020_UP: &str = include_str!("../migrations/020_agent_slot_inputs_policy.sql");
 const MIGRATION_020_DOWN: &str = include_str!("../migrations/020_agent_slot_inputs_policy.down.sql");
 const MIGRATION_025: &str = include_str!("../migrations/025_agent_slot_cache_and_window.sql");
+// V2D: memory_mode column. AgentStore::insert_slot binds memory_mode on
+// every save, so the test pool must apply 029 before any insert path runs.
+const MIGRATION_028: &str = include_str!("../migrations/029_agent_slot_memory_mode.sql");
 
 /// In-memory pool with the agents table and migrations 005 + 019 +
 /// 020 + 025 applied. Mirrors the runtime boot path.
@@ -43,6 +46,7 @@ async fn fresh_pool() -> SqlitePool {
     sqlx::query(MIGRATION_019).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_020_UP).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_025).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_028).execute(&pool).await.unwrap();
     pool
 }
 
@@ -59,6 +63,7 @@ fn sample_slot(policy: InputsPolicy) -> AgentSlot {
         prompt_version: String::new(),
         inputs_policy: policy,
         bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::default(),
     }
 }
 
@@ -77,6 +82,7 @@ async fn migration_020_up_down_up_preserves_rows() {
     sqlx::query(MIGRATION_019).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_020_UP).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_025).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_028).execute(&pool).await.unwrap();
 
     let store = AgentStore::new(pool.clone());
     let id = store

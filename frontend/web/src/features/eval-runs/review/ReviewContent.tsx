@@ -1,4 +1,5 @@
 import { FindingCard } from "./FindingCard";
+import { MemoryPanel, type MemoryPanelEvent } from "./MemoryPanel";
 import { VerdictBadge } from "./VerdictBadge";
 import type { EvalReview, ReviewFinding } from "@/api/eval-review";
 import { CANONICAL_AGENT_PROFILES } from "@/api/eval-review";
@@ -132,6 +133,13 @@ export function ReviewContent({
       <Section title="Evidence map" emptyHint="No evidence map available.">
         <EvidenceList findings={findings} />
       </Section>
+
+      {/* V2D Memory panel — surfaces the dispatcher's `memory_recall`,
+          `memory_write`, and `memory_disabled_no_embedder` events when
+          they're persisted into the review's raw output. Returns null
+          (renders nothing) when the events array is empty, so reviews
+          generated before the V2D wave land cleanly. */}
+      <MemoryPanel events={raw.memory_events} />
     </div>
   );
 }
@@ -176,18 +184,26 @@ type RawShape = {
   risks: string[];
   next_tests: string[];
   questions: string[];
+  /// V2D dispatcher-seam events lifted onto the review's raw output JSON.
+  /// Backend may populate this from the per-cycle `events.jsonl` rows;
+  /// frontend tolerates absence so older reviews don't crash here.
+  memory_events: MemoryPanelEvent[];
 };
 
 function parseRaw(raw: string | null): RawShape {
-  if (!raw) return { risks: [], next_tests: [], questions: [] };
+  if (!raw)
+    return { risks: [], next_tests: [], questions: [], memory_events: [] };
   try {
     const parsed = JSON.parse(raw) as Partial<RawShape>;
     return {
       risks: Array.isArray(parsed.risks) ? parsed.risks : [],
       next_tests: Array.isArray(parsed.next_tests) ? parsed.next_tests : [],
       questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+      memory_events: Array.isArray(parsed.memory_events)
+        ? (parsed.memory_events as MemoryPanelEvent[])
+        : [],
     };
   } catch {
-    return { risks: [], next_tests: [], questions: [] };
+    return { risks: [], next_tests: [], questions: [], memory_events: [] };
   }
 }

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -49,6 +56,11 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  try {
+    window.localStorage.removeItem("xvn-docs-prefs");
+  } catch {
+    // ignore — localStorage may be unavailable in some envs
+  }
 });
 
 describe("DocsRoute", () => {
@@ -152,6 +164,64 @@ describe("DocsRoute", () => {
       "aria-current",
       "page",
     );
+  });
+
+  test("Copy as Markdown writes the page body to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    renderRoute();
+    const copy = await screen.findByTestId("docs-copy-md");
+    await waitFor(() => expect(copy).not.toBeDisabled());
+
+    fireEvent.click(copy);
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const arg = writeText.mock.calls[0][0] as string;
+    expect(arg).toMatch(/^# Quickstart/);
+    await waitFor(() => expect(copy).toHaveTextContent(/copied/i));
+  });
+
+  test("⌘K focuses the page filter input", async () => {
+    renderRoute();
+    await screen.findByTestId("docs-index-item-quickstart");
+    const filter = screen.getByLabelText("Filter docs") as HTMLInputElement;
+    expect(filter).not.toHaveFocus();
+    act(() => {
+      const ev = new KeyboardEvent("keydown", {
+        key: "k",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      window.dispatchEvent(ev);
+    });
+    expect(filter).toHaveFocus();
+  });
+
+  test("display-options panel toggles TOC visibility and persists", async () => {
+    const { unmount } = renderRoute();
+    await screen.findByTestId("docs-index-item-quickstart");
+
+    // Open the inline display-options panel.
+    fireEvent.click(screen.getByTestId("docs-display-options-toggle"));
+    const tocSeg = await screen.findByTestId("docs-pref-toc");
+
+    // Flip TOC off; the persisted pref should reflect that.
+    const offBtn = tocSeg.querySelector('[data-value="hidden"]') as HTMLButtonElement;
+    fireEvent.click(offBtn);
+    await waitFor(() => {
+      const raw = window.localStorage.getItem("xvn-docs-prefs");
+      expect(raw && JSON.parse(raw).toc).toBe("hidden");
+    });
+
+    unmount();
+    // Mount a fresh route — the pref should round-trip from localStorage.
+    renderRoute();
+    await screen.findByTestId("docs-index-item-quickstart");
+    expect(screen.queryByTestId("docs-toc")).toBeNull();
   });
 
   test("sidebar renders one header per declared section", async () => {
