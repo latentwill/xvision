@@ -49,6 +49,10 @@ async fn engine_pool_with_026() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -111,6 +115,8 @@ fn completed_run() -> Run {
         n_trades: 8,
         n_decisions: 20,
         baselines: None,
+        inference_cost_quote_total: None,
+        net_return_pct: None,
     });
     r
 }
