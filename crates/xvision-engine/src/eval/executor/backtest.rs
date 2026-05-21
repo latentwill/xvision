@@ -19,6 +19,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use chrono::Utc;
+use ulid::Ulid;
 use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
@@ -32,10 +34,13 @@ use crate::api::chart::{
     ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus, TradeMarker,
     TradeSide,
 };
+use crate::eval::broker_rules::{
+    rule_set_for_asset_class, BrokerRuleSet, BrokerViolationSeverity, OrderKind, PendingOrder, TimeInForce,
+};
 use crate::eval::cost_arrays::BarCostTable;
 use crate::eval::early_stop::{self, EarlyStopConfig};
 use crate::eval::executor::Executor;
-use crate::eval::findings::{make_volume_share_excess_finding, Finding};
+use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
 use crate::eval::guardrails::{
     self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
     GuardrailDecision,
@@ -387,6 +392,16 @@ impl BacktestExecutor {
         // them after the loop so we don't block the hot path on DB I/O.
         let mut volume_share_findings: Vec<Finding> = Vec::new();
 
+        // eval-broker-rule-findings: build the asset-class-appropriate rule set
+        // once per run. Currently Alpaca is the only venue; asset_class drives
+        // Crypto vs Equity (no-op stub). The rule set is boxed so it can be
+        // swapped per-venue in a future track without changing this function.
+        let broker_rules: Box<dyn BrokerRuleSet> = rule_set_for_asset_class(scenario.asset_class);
+        // Running count of orders rejected by broker-rule validation. Zero for
+        // runs with no violations. Logged at finalization and surfaced as a
+        // run-level finding when > 0.
+        let mut broker_rejected_orders: u32 = 0;
+
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];
         let mut position: f64 = 0.0; // base-asset units; +long, -short
@@ -709,6 +724,106 @@ impl BacktestExecutor {
                 }
             };
 
+            // eval-broker-rule-findings: validate new open orders against venue
+            // rules before calling simulate_fill. Only `long_open` and
+            // `short_open` generate new orders at the venue; `hold` and `flat`
+            // do not (they are portfolio-state changes or no-ops).
+            //
+            // On rejection:
+            //   - The order does NOT fill (the decision is recorded below with
+            //     no fill data, so the strategy sees it in the trace).
+            //   - A `broker_rule_violation` finding is written to findings.jsonl.
+            //   - `broker_rejected_orders` is incremented.
+            //
+            // The rule set is built once per run from `scenario.asset_class`;
+            // see the `rule_set_for_asset_class` call above the decision loop.
+            let broker_rejected = if applied_action == "long_open" || applied_action == "short_open" {
+                // Estimate order size using the same risk model as simulate_fill.
+                // The qty estimate is approximate (simulate_fill may arrive at a
+                // slightly different price); it is sufficient for notional /
+                // precision checks.
+                let estimated_qty = {
+                    let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                    (usd_at_risk / next_bar_open).max(0.0)
+                };
+                let pending = PendingOrder {
+                    symbol: asset.clone(),
+                    // v1 backtest always emits market orders with GTC TIF.
+                    // Future tracks (intra-bar fill ordering, limit orders) will
+                    // plumb the trader's expressed order kind / TIF through here.
+                    kind: OrderKind::Market,
+                    tif: TimeInForce::Gtc,
+                    qty: estimated_qty,
+                    price: next_bar_open,
+                };
+                match broker_rules.validate(&pending) {
+                    Ok(()) => false, // order accepted; proceed to simulate_fill
+                    Err(violation) => {
+                        // Reject the order. Record a finding then skip fill.
+                        broker_rejected_orders += 1;
+                        let finding_severity = match violation.severity {
+                            BrokerViolationSeverity::Critical => Severity::Critical,
+                            BrokerViolationSeverity::Warning => Severity::Warning,
+                        };
+                        let finding = Finding {
+                            id: Ulid::new().to_string(),
+                            run_id: run.id.clone(),
+                            kind: "broker_rule_violation".into(),
+                            severity: finding_severity,
+                            summary: format!(
+                                "Order rejected by broker rule `{}`: {}",
+                                violation.specific_rule, violation.message
+                            ),
+                            evidence: serde_json::json!({
+                                "specific_rule": violation.specific_rule,
+                                "message": violation.message,
+                                "severity": violation.severity,
+                                "asset": asset,
+                                "action": applied_action,
+                                "estimated_qty": estimated_qty,
+                                "next_bar_open": next_bar_open,
+                                "decision_index": decision_idx,
+                            }),
+                            extracted_at: Utc::now(),
+                            schema_version: crate::eval::findings::FINDING_SCHEMA_VERSION.to_string(),
+                            evidence_cycle_ids: Some(vec![decision_idx.to_string()]),
+                            produced_by_check: Some(format!("broker:{}", violation.specific_rule)),
+                            eval_review_id: None,
+                            review_type: None,
+                            confidence: None,
+                            title: Some(format!("Broker rule violation: {}", violation.specific_rule)),
+                            description: Some(violation.message.clone()),
+                            recommendation: Some(
+                                "Review strategy's order construction logic; \
+                                 ensure order types, TIFs, and sizes are compatible \
+                                 with the target venue."
+                                    .into(),
+                            ),
+                            created_at: None,
+                        };
+                        tracing::warn!(
+                            run_id = %run.id,
+                            decision_index = decision_idx,
+                            asset = %asset,
+                            specific_rule = %violation.specific_rule,
+                            action = %applied_action,
+                            "broker rule rejected order — no fill this cycle",
+                        );
+                        if let Err(e) = store.record_finding(&finding).await {
+                            tracing::error!(
+                                run_id = %run.id,
+                                decision_index = decision_idx,
+                                error = %e,
+                                "failed to record broker_rule_violation finding",
+                            );
+                        }
+                        true // order rejected; skip simulate_fill
+                    }
+                }
+            } else {
+                false // hold/flat: no venue order, skip broker check
+            };
+
             // `simulate_fill` treats any non-(long_open|short_open) action
             // as `want_flat` (closes any open position). That suits a
             // trader-emitted `flat` or the guardrail one-step-flip
@@ -716,7 +831,11 @@ impl BacktestExecutor {
             // `long_open` → `hold` and we MUST NOT close the existing
             // position in that case. Short-circuit a true no-op fill
             // for `hold` so the position survives untouched.
-            let fill = if applied_action == "hold" {
+            //
+            // A broker-rejected order also skips simulate_fill: the order is
+            // treated as if it never existed (fail-honest — the strategy sees
+            // the decision in the trace but no fill in outcomes).
+            let fill = if applied_action == "hold" || broker_rejected {
                 FillOutcome {
                     new_pos: pre_fill_position,
                     new_entry: entry_price,
@@ -1034,6 +1153,7 @@ impl BacktestExecutor {
             run_id = %run.id,
             executor = "backtest",
             cache_hint_emitted_calls,
+            broker_rejected_orders,
             "eval run finalize: provider prompt-cache stats"
         );
         // Persist volume_share_excess findings accumulated during the run.
@@ -1043,6 +1163,64 @@ impl BacktestExecutor {
                     run_id = %run.id,
                     error = %e,
                     "failed to persist volume_share_excess finding; continuing"
+                );
+            }
+        }
+
+        // eval-broker-rule-findings: if any orders were rejected, emit an
+        // aggregate run-level finding so the reviewer can see the count
+        // without scanning the per-decision violations. The per-decision
+        // findings are already in findings.jsonl.
+        //
+        // NOTE: `broker_rejected_orders` is intentionally not added to
+        // `MetricsSummary` in this track to avoid touching ~25 struct literal
+        // construction sites across parallel V2E tracks (which would cause
+        // merge conflicts). The metric is surfaced here through the findings
+        // JSONL and as a tracing::info field above. Adding it to
+        // `MetricsSummary` is deferred to a follow-up coordination step — see
+        // PR body "Coordination" section.
+        if broker_rejected_orders > 0 {
+            let summary_finding = Finding {
+                id: Ulid::new().to_string(),
+                run_id: run.id.clone(),
+                kind: "broker_rule_violation".into(),
+                severity: Severity::Warning,
+                summary: format!(
+                    "{broker_rejected_orders} order(s) rejected by broker-rule validation \
+                     this run; see per-decision findings for details."
+                ),
+                evidence: serde_json::json!({
+                    "broker_rejected_orders": broker_rejected_orders,
+                    "note": "Per-decision findings carry specific_rule and evidence_cycle_ids.",
+                }),
+                extracted_at: Utc::now(),
+                schema_version: crate::eval::findings::FINDING_SCHEMA_VERSION.to_string(),
+                evidence_cycle_ids: Some(vec![]),
+                produced_by_check: Some("broker:run_aggregate".to_string()),
+                eval_review_id: None,
+                review_type: None,
+                confidence: None,
+                title: Some(format!("{broker_rejected_orders} broker-rejected order(s)")),
+                description: Some(
+                    "One or more orders were rejected by offline broker-rule validation \
+                     before reaching simulate_fill. The strategy's backtest P&L does not \
+                     reflect these orders. Review per-decision findings for details."
+                        .into(),
+                ),
+                recommendation: Some(
+                    "Inspect per-decision `broker_rule_violation` findings. \
+                     Fix the strategy's order construction to comply with \
+                     Alpaca's supported order types, TIFs, and minimum sizes."
+                        .into(),
+                ),
+                created_at: None,
+            };
+            if let Err(e) = store.record_finding(&summary_finding).await {
+                tracing::error!(
+                    run_id = %run.id,
+                    broker_rejected_orders,
+                    error = %e,
+                    "failed to record broker_rule_violation aggregate finding",
                 );
             }
         }

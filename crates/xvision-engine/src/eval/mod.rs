@@ -10,6 +10,7 @@ pub mod attestation;
 pub mod bars;
 pub mod batch_store;
 pub mod behavior;
+pub mod broker_rules;
 pub mod compare;
 pub mod concurrency;
 pub mod cost;
@@ -36,6 +37,10 @@ pub mod store;
 pub mod watchdog;
 
 pub use attestation::{EvalAttestation, TokensUsed};
+pub use broker_rules::{
+    rule_set_for_asset_class, AlpacaCryptoRules, AlpacaEquityRules, AlpacaEquityViolationKind, BrokerRuleSet,
+    BrokerRuleViolation, BrokerViolationSeverity, OrderKind, PendingOrder, TimeInForce,
+};
 pub use compare::{
     compare_runs, compare_runs_default, CompareOptions, ComparisonEquityCurve, ComparisonEquitySample,
     ComparisonReport, ComparisonRunSummary, ManifestMismatch,
