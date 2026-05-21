@@ -74,13 +74,18 @@ unambiguous.
 | 020 | eval-causal-input-sanitization (F-6) | merged        |
 | 021 | eval-batch-persistence               | merged        |
 | 022 | eval-bundle-agent-id-map (F-11)      | in flight     |
-| 023 | eval-trace-surface-foundation (V2E)  | reserved 2026-05-20 |
+| 023 | (gap — reserved for eval-trace-surface-foundation, reclaimed by 026 due to collision) | unused |
 | 024 | eval-candle-integrity-and-manifest (V2E) | reserved 2026-05-20 |
 | 025 | eval-prompt-cache-and-rolling-window (F-8) | in flight |
+| 026 | eval-trace-surface-foundation (V2E)  | in flight 2026-05-21 |
 
-The next available number is **026**. The conductor must approve and
+The next available number is **027**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
+
+Note 2026-05-21: 023 was reserved for eval-trace-surface-foundation but
+023–025 already existed on disk; the track landed as 026 to avoid
+collision. 023 is now a gap.
 
 Note 2026-05-19: numbers 006, 008, 009 were never landed (collapsed during
 the QA waves); the on-disk sequence skips them. New claims continue from

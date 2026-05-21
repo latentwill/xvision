@@ -140,7 +140,7 @@ fn check_slot(idx: usize, slot: &AgentSlot) -> Result<(), PromptSchemaDriftError
     let mut missing: Vec<String> = mentioned
         .into_iter()
         .filter(|t| {
-            !registered.contains(t.as_str()) && !(t == "ohlcv_history" && registered.contains("ohlcv"))
+            !(registered.contains(t.as_str()) || t == "ohlcv_history" && registered.contains("ohlcv"))
         })
         .collect();
     missing.sort();

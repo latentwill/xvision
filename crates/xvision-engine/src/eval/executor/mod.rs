@@ -11,6 +11,7 @@
 
 pub mod backtest;
 pub mod paper;
+pub mod trace_types;
 pub mod trader_output;
 
 use std::sync::Arc;
@@ -27,6 +28,9 @@ use crate::tools::ToolRegistry;
 
 pub use backtest::BacktestExecutor;
 pub use paper::PaperExecutor;
+pub use trace_types::{
+    AggressorSide, DecisionTrace, FeeSource, FillBranch, FillTrace, ToolCall, DECISIONS_SCHEMA_VERSION,
+};
 pub use trader_output::{TraderFailureKind, TraderOutputError};
 
 use sqlx::SqlitePool;
@@ -191,6 +195,7 @@ pub trait Executor: Send + Sync {
     /// + equity sample + the final metrics through `store`. Returns the
     /// computed `MetricsSummary` for callers that want the value without
     /// re-reading from the store.
+    #[allow(clippy::too_many_arguments)]
     async fn run(
         &self,
         run: &mut Run,

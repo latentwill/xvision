@@ -36,7 +36,7 @@ const MIGRATION_020_DOWN: &str = include_str!("../migrations/020_agent_slot_inpu
 const MIGRATION_025: &str = include_str!("../migrations/025_agent_slot_cache_and_window.sql");
 
 /// In-memory pool with the agents table and migrations 005 + 019 +
-/// 020 applied. Mirrors the runtime boot path.
+/// 020 + 025 applied. Mirrors the runtime boot path.
 async fn fresh_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(MIGRATION_005).execute(&pool).await.unwrap();

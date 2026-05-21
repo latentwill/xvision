@@ -283,7 +283,7 @@ fn five_decision_synthetic_backtest_with_limit_10_produces_10_bar_history_per_ca
 
     let mut per_decision_history_lengths = Vec::with_capacity(5);
     for i in 0..5 {
-        let combined_idx = warmup_count + i;
+        let combined_idx: usize = warmup_count + i;
         let history_start = combined_idx.saturating_sub(history_window);
         let raw_slice = &combined[history_start..combined_idx];
         let sliced = slice_to_limit(raw_slice, bar_history_limit);

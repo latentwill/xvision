@@ -81,20 +81,15 @@ impl AgentRef {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineKind {
+    /// New strategies default to Single. The operator picks Sequential
+    /// when adding the second agent in the inspector.
+    #[default]
     Single,
     Sequential,
     Graph,
-}
-
-impl Default for PipelineKind {
-    fn default() -> Self {
-        // New strategies default to Single. The operator picks Sequential
-        // when adding the second agent in the inspector.
-        Self::Single
-    }
 }
 
 /// One directed edge in a `Graph` pipeline. Ignored for `Single` and
@@ -119,20 +114,11 @@ pub struct PipelineEdge {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PipelineDef {
     pub kind: PipelineKind,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<PipelineEdge>,
-}
-
-impl Default for PipelineDef {
-    fn default() -> Self {
-        Self {
-            kind: PipelineKind::default(),
-            edges: Vec::new(),
-        }
-    }
 }
 
 impl PipelineDef {

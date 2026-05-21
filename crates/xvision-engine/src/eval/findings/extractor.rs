@@ -15,7 +15,7 @@ use chrono::Utc;
 use ulid::Ulid;
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
-use crate::eval::findings::{Finding, Severity};
+use crate::eval::findings::{Finding, Severity, FINDING_SCHEMA_VERSION};
 use crate::eval::run::Run;
 
 const PROMPT: &str = include_str!("prompts/extractor-v1.md");
@@ -87,7 +87,9 @@ pub async fn extract_findings(
             summary: r.summary,
             evidence: r.evidence,
             extracted_at: now,
-            schema_version: "1".into(),
+            schema_version: FINDING_SCHEMA_VERSION.into(),
+            evidence_cycle_ids: None,
+            produced_by_check: Some("extractor".into()),
             eval_review_id: None,
             review_type: None,
             confidence: None,

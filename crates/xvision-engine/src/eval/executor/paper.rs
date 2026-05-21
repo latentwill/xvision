@@ -485,6 +485,7 @@ impl Executor for PaperExecutor {
 }
 
 impl PaperExecutor {
+    #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
         run: &mut Run,
@@ -1110,8 +1111,8 @@ impl PaperExecutor {
                         None,
                         trace_side,
                         asset.clone(),
-                        size as f64,
-                        Some(reference_price_usd as f64),
+                        size,
+                        Some(reference_price_usd),
                         "market".to_string(),
                         "paper".to_string(),
                         Some(idempotency_key.clone()),
@@ -1138,9 +1139,9 @@ impl PaperExecutor {
                             em.emit_broker_call_finished(
                                 sid,
                                 BrokerCallOutcome::Filled,
-                                conf.fill_price.map(|p| p as f64),
-                                Some(conf.fill_size as f64),
-                                conf.fee.map(|f| f as f64),
+                                conf.fill_price,
+                                Some(conf.fill_size),
+                                conf.fee,
                                 Some(conf.broker_order_id.clone()),
                                 None,
                                 None,

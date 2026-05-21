@@ -191,10 +191,7 @@ pub struct ListStrategiesRequest {
 /// id set, returns the recency-sorted slice plus the unsliced total.
 /// Hydration cost is bounded to the page size so a 10k-strategy library
 /// no longer drags every JSON file off disk on every list request.
-pub async fn list_paged(
-    ctx: &ApiContext,
-    req: ListStrategiesRequest,
-) -> ApiResult<PagedStrategySummaries> {
+pub async fn list_paged(ctx: &ApiContext, req: ListStrategiesRequest) -> ApiResult<PagedStrategySummaries> {
     let started = Instant::now();
     let result = list_paged_inner(ctx, req).await;
 
@@ -215,10 +212,7 @@ pub async fn list_paged(
     result
 }
 
-async fn list_paged_inner(
-    ctx: &ApiContext,
-    req: ListStrategiesRequest,
-) -> ApiResult<PagedStrategySummaries> {
+async fn list_paged_inner(ctx: &ApiContext, req: ListStrategiesRequest) -> ApiResult<PagedStrategySummaries> {
     let (page_ids, total) = collect_strategy_ids(ctx, req.limit, req.offset).await?;
     let items = hydrate_strategy_summaries(ctx, &page_ids).await?;
     Ok(PagedStrategySummaries { items, total })
@@ -258,10 +252,7 @@ async fn collect_strategy_ids(
 /// Failures on individual files surface as `Internal` so a bad JSON
 /// blob takes down the whole list (consistent with the previous
 /// behaviour of `list_inner`).
-async fn hydrate_strategy_summaries(
-    ctx: &ApiContext,
-    ids: &[String],
-) -> ApiResult<Vec<StrategySummary>> {
+async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResult<Vec<StrategySummary>> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let agent_store = AgentStore::new(ctx.db.clone());
     let mut out = Vec::with_capacity(ids.len());
@@ -857,7 +848,7 @@ fn update_slot_pair(req: &UpdateSlotReq) -> ApiResult<Option<ProviderModelPair>>
 }
 
 fn append_runtime_errors(out: &mut ValidateDraftOut, mut errors: Vec<String>) {
-    out.errors.extend(errors.drain(..));
+    out.errors.append(&mut errors);
     out.ok = out.errors.is_empty();
 }
 

@@ -2,7 +2,7 @@
 //!
 //! Given a completed eval run, this module reads the run's
 //! `eval_findings` rows and writes ONE `eval_reviews` row with a verdict
-//! + score derived from finding severity counts. **No LLM call.** It is
+//! and score derived from finding severity counts. **No LLM call.** It is
 //! the rule-based companion to the LLM-driven engine in
 //! [`super::engine::run_review`], suitable for being fired from the
 //! eval-finalize success path so every completed run gets a quick,
@@ -380,6 +380,8 @@ mod tests {
             evidence: Value::Null,
             extracted_at: Utc.with_ymd_and_hms(2026, 5, 19, 0, 0, 0).unwrap(),
             schema_version: "v1".into(),
+            evidence_cycle_ids: None,
+            produced_by_check: None,
             eval_review_id: None,
             review_type: None,
             confidence: None,

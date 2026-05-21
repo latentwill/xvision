@@ -90,7 +90,7 @@ impl ProviderEntry {
     }
 }
 
-fn validate_provider_name(name: &String, _ctx: &()) -> garde::Result {
+fn validate_provider_name(name: &str, _ctx: &()) -> garde::Result {
     if name.is_empty() || name.len() > 32 {
         return Err(garde::Error::new("provider name must be 1..=32 chars"));
     }

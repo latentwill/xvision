@@ -39,6 +39,12 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    // V2E trace-surface: adds evidence_cycle_ids_json + produced_by_check
+    // columns that record_finding now writes.
+    sqlx::query(include_str!("../migrations/026_trace_surface_foundation.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -101,10 +107,14 @@ async fn extract_findings_parses_clean_json_array() {
     assert_eq!(findings[0].severity, Severity::Warning);
     assert_eq!(findings[1].kind, "drawdown_concentration");
     assert_eq!(findings[1].severity, Severity::Critical);
-    // Each finding must carry the run id.
+    // Each finding must carry the run id and the current schema version.
+    // Updated: schema_version bumped to "2" by V2E trace-surface (migration 026).
     for f in &findings {
         assert_eq!(f.run_id, run.id);
-        assert_eq!(f.schema_version, "1");
+        assert_eq!(
+            f.schema_version,
+            xvision_engine::eval::findings::FINDING_SCHEMA_VERSION
+        );
         assert!(!f.id.is_empty());
     }
 }
@@ -192,6 +202,8 @@ async fn run_store_record_finding_and_read_findings_round_trip() {
         evidence: serde_json::json!({"value": -3.2}),
         extracted_at: Utc::now(),
         schema_version: "1".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: None,
         eval_review_id: None,
         review_type: None,
         confidence: None,
@@ -209,6 +221,8 @@ async fn run_store_record_finding_and_read_findings_round_trip() {
         evidence: serde_json::json!({"value": 18.0}),
         extracted_at: Utc::now(),
         schema_version: "1".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: None,
         eval_review_id: None,
         review_type: None,
         confidence: None,
@@ -246,6 +260,8 @@ fn finding_serde_round_trip() {
         evidence: serde_json::json!({"sigma": 4.2}),
         extracted_at: Utc.with_ymd_and_hms(2025, 4, 1, 12, 0, 0).unwrap(),
         schema_version: "1".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: None,
         eval_review_id: None,
         review_type: None,
         confidence: None,

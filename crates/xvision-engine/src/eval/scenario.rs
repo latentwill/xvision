@@ -627,7 +627,7 @@ fn default_fill_model() -> FillModel {
 /// indexer hook, and downstream tests in `tests/eval_*.rs`) keep
 /// compiling. Slated for removal in M3.
 #[deprecated(
-    since = "M2",
+    since = "0.2.0",
     note = "use `api::scenario::list` / `api::scenario::get` (DB-backed) or `scenario_seed::canonical_seed_rows` (seed rebuild)"
 )]
 pub fn canonical_scenarios() -> Vec<Scenario> {
