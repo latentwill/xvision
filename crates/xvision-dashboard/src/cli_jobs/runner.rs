@@ -15,6 +15,9 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use super::model::{CliJob, CliJobStatus, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_RUNTIME_SECONDS};
 use super::store::{CliJobStore, FinishParams};
 
+#[cfg(unix)]
+use nix::sys::signal::Signal;
+
 pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
 pub const MAX_TIMEOUT_SECS: u64 = 6 * 60 * 60;
 
@@ -217,20 +220,27 @@ impl CliJobRunner {
             timeout_secs = job.timeout_secs,
             "cli job runner starting with caps",
         );
-        let mut child = Command::new(&self.cli_command)
+        let mut command = Command::new(&self.cli_command);
+        command
             .args(&job.argv)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "spawn '{}' for cli job '{}'",
-                    self.cli_command.display(),
-                    job.job_id
-                )
-            })?;
+            .kill_on_drop(true);
+        #[cfg(unix)]
+        {
+            // Put each CLI job in its own process group so cancellation and caps
+            // terminate descendants such as shell-spawned `sleep` processes that
+            // inherit stdout/stderr FDs.
+            command.process_group(0);
+        }
+        let mut child = command.spawn().with_context(|| {
+            format!(
+                "spawn '{}' for cli job '{}'",
+                self.cli_command.display(),
+                job.job_id
+            )
+        })?;
         // Persist the child PID for orphan-recovery after a restart.
         let child_pid = child.id();
         store.mark_running_with_pid(&job.job_id, child_pid).await?;
@@ -341,9 +351,7 @@ impl CliJobRunner {
                                         max_output_bytes,
                                         "cli job exceeded output cap; sending SIGTERM",
                                     );
-                                    // SIGTERM first; SIGKILL after grace period is handled
-                                    // below via the `cancelled` + `sigterm_deadline` path.
-                                    let _ = child.start_kill();
+                                    send_sigkill(&mut child);
                                 }
                             }
                         }
@@ -358,7 +366,7 @@ impl CliJobRunner {
                 _ = &mut timeout, if exit_status.is_none() && !timed_out && !cancelled && !output_cap_exceeded && !runtime_cap_exceeded => {
                     timed_out = true;
                     error_message = Some(format!("job exceeded caller timeout of {timeout_secs}s"));
-                    let _ = child.start_kill();
+                    send_sigkill(&mut child);
                 }
                 _ = &mut runtime_cap, if exit_status.is_none() && !timed_out && !cancelled && !output_cap_exceeded && !runtime_cap_exceeded => {
                     runtime_cap_exceeded = true;
@@ -419,7 +427,7 @@ impl CliJobRunner {
                     if cancelled {
                         cancel_signal = Some("SIGKILL".into());
                     }
-                    let _ = child.start_kill();
+                    send_sigkill(&mut child);
                     exit_status = Some(child.wait().await.context("wait for cli child after SIGKILL")?);
                 }
             }
@@ -505,43 +513,63 @@ impl CliJobRunner {
 }
 
 /// Send SIGTERM on Unix; fall back to `start_kill` (which delivers SIGKILL)
-/// on platforms without `nix`. The 5-second grace period in the caller
-/// handles the escalation to SIGKILL.
+/// on platforms without `nix`. Jobs are spawned into their own process group,
+/// so Unix signals target the group and terminate descendants too. The
+/// 5-second grace period in the caller handles escalation to SIGKILL.
 fn send_sigterm_or_kill(child: &mut tokio::process::Child) {
     #[cfg(unix)]
     {
-        if let Some(pid) = child.id() {
-            // SAFETY: pid is a valid non-zero u32 from the running child.
-            match nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
-            ) {
-                Ok(()) => {
-                    tracing::debug!(
-                        target: "xvision::dashboard",
-                        pid,
-                        "sent SIGTERM to cli job child process",
-                    );
-                    return;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "xvision::dashboard",
-                        pid,
-                        error = %e,
-                        "SIGTERM delivery failed; escalating to SIGKILL",
-                    );
-                }
-            }
-        } else {
-            tracing::warn!(
-                target: "xvision::dashboard",
-                "child.id() returned None; process may have already exited",
-            );
+        if send_signal_to_process_group(child, Signal::SIGTERM) {
+            return;
         }
     }
     // Fallback (non-Unix or SIGTERM delivery failed): use tokio's kill (SIGKILL).
     let _ = child.start_kill();
+}
+
+fn send_sigkill(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    {
+        if send_signal_to_process_group(child, Signal::SIGKILL) {
+            return;
+        }
+    }
+    let _ = child.start_kill();
+}
+
+#[cfg(unix)]
+fn send_signal_to_process_group(child: &mut tokio::process::Child, signal: Signal) -> bool {
+    if let Some(pid) = child.id() {
+        let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
+        match nix::sys::signal::kill(pgid, signal) {
+            Ok(()) => {
+                tracing::debug!(
+                    target: "xvision::dashboard",
+                    pid,
+                    signal = ?signal,
+                    "sent signal to cli job process group",
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "xvision::dashboard",
+                    pid,
+                    signal = ?signal,
+                    error = %e,
+                    "process group signal delivery failed; falling back to child kill",
+                );
+                false
+            }
+        }
+    } else {
+        tracing::warn!(
+            target: "xvision::dashboard",
+            signal = ?signal,
+            "child.id() returned None; process may have already exited",
+        );
+        false
+    }
 }
 
 #[derive(Clone, Copy)]
