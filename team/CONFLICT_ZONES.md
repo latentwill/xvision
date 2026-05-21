@@ -33,6 +33,12 @@ Conductor: see `team/CONDUCTOR.md`.
 | `crates/xvision-engine/src/templates/**` | `strategy-template-registry-removal` (deletion; deferred) | qa-chat-rail-2026-05-21 | Directory deleted by follow-up contract. |
 | `crates/xvision-engine/src/agents/templates.rs` | **NOT touched** — AgentTemplate (agent-picker), distinct from strategy templates | qa-chat-rail-2026-05-21 | Stays in both contracts. |
 | `frontend/web/src/routes.tsx` | shared: `strategies-folder-into-view-toggle` + `memory-into-agents-section` | qa-chat-rail-2026-05-21 | Disjoint blocks (strategies/folder rows vs. memory row). Coordinate via `team/queue/`; later claimant rebases. Released when both contracts merge. |
+| `crates/xvision-engine/src/agent/recovery.rs` | `harness-recovery-state-machine` (pr-open #499); then `harness-recovery-malformed-json` → `harness-recovery-schema-missing-field` → `harness-recovery-context-overflow` (sequential, NOT stacked) | harness-observability-tail-2026-05-21 | Sequential handoff. Each phase-2 contract claims `recovery.rs` after the prior merges. The `depends_on` chain in each contract enforces ordering. |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | `harness-recovery-malformed-json` (deferred); then `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Re-claimed for phase-2 trader-output recovery wiring. Sequential. |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | `harness-recovery-malformed-json` (deferred); then `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Same dual-executor pattern — repair logic must apply uniformly to paper and backtest. |
+| `crates/xvision-engine/src/eval/executor/trader_output.rs` | `harness-recovery-schema-missing-field` (deferred) | harness-observability-tail-2026-05-21 | Adds `TraderOutputError::problem_fields()` helper for the targeted-patch flow. |
+| `crates/xvision-engine/src/agent/execute.rs` | `harness-recovery-state-machine` (pr-open #499); then `harness-recovery-context-overflow` (deferred) | harness-observability-tail-2026-05-21 | Phase-2c adds the summarize-retry loop into the dispatcher-error path. Sequential after #499 merges. |
+| `crates/xvision-engine/src/agent/llm.rs` | `harness-recovery-context-overflow` (deferred) | harness-observability-tail-2026-05-21 | Phase-2c may add a typed `ContextOverflow` variant to `OpenAiCompatError`. |
 
 ## Rules
 

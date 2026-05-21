@@ -15,7 +15,11 @@
 > Also 2026-05-21 — `harness-observability-tail-2026-05-21` filed:
 > F-5 recovery state machine, the last open finding from the
 > 2026-05-18 harness observability audit (F-1/2/6 merged on the
-> boards; F-3/4/7 landed silently and are now noted).
+> boards; F-3/4/7 landed silently and are now noted). Phase 1
+> (typed dispatcher + repeated-tool block) shipped as PR #499; three
+> phase-2 contracts decompose the audit's per-class recovery policies
+> (MalformedJson, SchemaMissingField, ContextOverflow) and are queued
+> blocked on the phase-1 merge.
 > Earlier 2026-05-21 sweep: 28 merged contracts archived under
 > `team/archive/2026-05-21-conductor-sweep/`.
 
@@ -54,7 +58,10 @@ without board entries — confirmed via code grep
 `frontend/web/src/stores/trace-dock.ts:65-186`). F-5 is the only
 remaining open finding.
 
-- [harness-recovery-state-machine](contracts/harness-recovery-state-machine.md) — **P1 integration** · ready · single-writer on `eval/executor/mod.rs` and `agent/execute.rs`, coordinate with `agent-error-feedback-self-healing`
+- [harness-recovery-state-machine](contracts/harness-recovery-state-machine.md) — **P1 integration** · pr-open #499 · phase 1: typed FailureClass + repeated-tool block list. Per-class recovery policies split into the three phase-2 contracts below
+- [harness-recovery-malformed-json](contracts/harness-recovery-malformed-json.md) — **P2 integration** · deferred (depends on #499) · phase 2a: repair-prompt retry on TraderInvalidJson / TraderTruncated (paper + backtest seam)
+- [harness-recovery-schema-missing-field](contracts/harness-recovery-schema-missing-field.md) — **P2 integration** · deferred (depends on `harness-recovery-malformed-json`) · phase 2b: targeted-patch retry on TraderMissingField / TraderInvalidField, with merge-and-reparse
+- [harness-recovery-context-overflow](contracts/harness-recovery-context-overflow.md) — **P2 integration** · deferred (depends on #499) · phase 2c: cheap-model history summarize + retry; adds `FailureClass::ContextOverflow` variant and `agent/summarize.rs` module
 
 ## Reserved
 
