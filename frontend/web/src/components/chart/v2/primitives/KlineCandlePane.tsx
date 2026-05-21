@@ -66,7 +66,13 @@ export function KlineCandlePane({
       console.warn("[KlineCandlePane] init() threw:", err);
       return;
     }
+    if (!chart) return;
     chartRef.current = chart;
+    // KlineCharts v10 only invokes DataLoader#getBars once symbol and period
+    // are both configured. M0 fixtures are already normalized, so a generic
+    // chart-v2 identity is enough until API-backed symbols arrive in M1.
+    chart.setSymbol({ ticker: "chart-v2", pricePrecision: 4, volumePrecision: 2 });
+    chart.setPeriod({ type: "minute", span: 1 });
 
     const obs = new ResizeObserver(() => {
       try {
