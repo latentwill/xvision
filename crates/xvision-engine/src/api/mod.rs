@@ -63,6 +63,8 @@ const MIGRATION_025_AGENT_SLOT_CACHE_AND_WINDOW: &str =
     include_str!("../../migrations/025_agent_slot_cache_and_window.sql");
 const MIGRATION_026_TRACE_SURFACE_FOUNDATION: &str =
     include_str!("../../migrations/026_trace_surface_foundation.sql");
+const MIGRATION_027_RUN_BARS_MANIFEST: &str =
+    include_str!("../../migrations/027_run_bars_manifest.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -191,6 +193,7 @@ impl ApiContext {
         migrate_hypothesis_and_experiments(&pool).await?;
         migrate_agent_slot_cache_and_window(&pool).await?;
         migrate_trace_surface_foundation(&pool).await?;
+        migrate_run_bars_manifest(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -555,6 +558,22 @@ async fn migrate_trace_surface_foundation(pool: &SqlitePool) -> ApiResult<()> {
             .await?;
     }
 
+    Ok(())
+}
+
+/// Apply migration 027: `bars_content_hash`, `manifest_canonical`,
+/// `bars_manifest` columns on `eval_runs`. Gated on `bars_content_hash`
+/// not yet existing so the migration is idempotent on already-upgraded
+/// databases. Wiring was missing on the PR #415 that introduced the
+/// migration file — `RunStore::create` references the columns and the
+/// insert otherwise fails on fresh databases. Fixed alongside
+/// cli-operator-safety-p0 slice 2/3.
+async fn migrate_run_bars_manifest(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "bars_content_hash").await? {
+        sqlx::query(MIGRATION_027_RUN_BARS_MANIFEST)
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 
