@@ -37,13 +37,15 @@
 //!        the caller's error chain names the SQLite error class.
 //!
 //!    Test `error_message_names_sqlite_class_on_unique_violation` drives a
-//!    deterministic UNIQUE constraint violation (the easiest constraint to
-//!    trigger without a real second OS connection) and asserts the error
-//!    string contains the SQLite class label rather than the opaque old text.
+//!    deterministic UNIQUE constraint violation through `ChatSessionStore::append`
+//!    and asserts the error string contains the SQLite class label rather than
+//!    the opaque old text.
 
-use sqlx::sqlite::SqlitePoolOptions;
+use std::{str::FromStr, time::Duration};
+
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
-use xvision_engine::chat_session::{ContextScope, ChatSessionStore};
+use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -62,6 +64,26 @@ async fn fresh_pool() -> SqlitePool {
         .await
         .unwrap();
     pool
+}
+
+async fn file_pool_with_short_busy_timeout() -> (SqlitePool, tempfile::TempDir) {
+    let td = tempfile::tempdir().unwrap();
+    let db_path = td.path().join("chat.sqlite");
+    let url = format!("sqlite://{}", db_path.display());
+    let opts = SqliteConnectOptions::from_str(&url)
+        .unwrap()
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_millis(1));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(opts)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/003_chat_sessions.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    (pool, td)
 }
 
 fn block(text: &str) -> serde_json::Value {
@@ -111,7 +133,10 @@ async fn seq_does_not_collide_after_failed_insert() {
     let m1 = ChatSessionStore::append(&pool, &sid, "user", &[block("second")])
         .await
         .unwrap();
-    assert_eq!(m1.seq, 1, "seq must advance past the committed row, ignoring the rolled-back insert");
+    assert_eq!(
+        m1.seq, 1,
+        "seq must advance past the committed row, ignoring the rolled-back insert"
+    );
 }
 
 // ── root cause B: FK violation ────────────────────────────────────────────────
@@ -167,11 +192,9 @@ async fn append_to_nonexistent_session_fk_error_names_constraint() {
 // ── root cause C: error message quality ──────────────────────────────────────
 
 /// The core fix: when an insert fails, the error message must name the SQLite
-/// error class. Drive a deterministic UNIQUE constraint violation by inserting
-/// the same (session_id, seq) pair twice — which the schema does not block with
-/// a UNIQUE index (only a non-unique index exists), so we insert via raw SQL to
-/// force the PK collision on `id` instead, which is still a SQLite UNIQUE error
-/// and exercises the same code path.
+/// error class. Drive a deterministic UNIQUE constraint violation inside
+/// `ChatSessionStore::append` by adding a test-only unique index after the
+/// first append, then appending another message with the same role.
 ///
 /// This is the most direct reproduction of the swallowed-error bug:
 /// previously the operator saw "stream error: insert chat_messages row"
@@ -183,40 +206,53 @@ async fn error_message_names_sqlite_class_on_unique_violation() {
         .await
         .unwrap();
 
-    // Insert a row directly with a known id.
-    let fixed_id = "01JTEST00000000000000000001";
+    ChatSessionStore::append(&pool, &sid, "user", &[block("first")])
+        .await
+        .unwrap();
     sqlx::query(
-        "INSERT INTO chat_messages (id, session_id, seq, role, content_blocks_json, ts) \
-         VALUES (?1, ?2, 0, 'user', '[]', '2026-01-01T00:00:00Z')",
+        "CREATE UNIQUE INDEX test_unique_chat_messages_session_role \
+         ON chat_messages(session_id, role)",
     )
-    .bind(fixed_id)
-    .bind(&sid)
     .execute(&pool)
     .await
     .unwrap();
 
-    // Now try to insert the same primary key via raw SQL — this bypasses the
-    // seq-selection logic and forces the `execute` inside `append`'s body to
-    // produce a UNIQUE constraint error on `id`. We do this by inserting
-    // directly (not via append) to simulate the exact insert statement failing.
-    let result = sqlx::query(
-        "INSERT INTO chat_messages (id, session_id, seq, role, content_blocks_json, ts) \
-         VALUES (?1, ?2, 1, 'user', '[]', '2026-01-01T00:00:00Z')",
-    )
-    .bind(fixed_id) // duplicate primary key
-    .bind(&sid)
-    .execute(&pool)
-    .await;
-
-    let err = result.expect_err("duplicate PK must fail");
-    // This is the SQLx error that was previously swallowed. Its string must
-    // contain the SQLite error class — which the new `sqlite_error_label`
-    // helper and `map_err` propagate to the caller.
+    let err = ChatSessionStore::append(&pool, &sid, "user", &[block("second")])
+        .await
+        .expect_err("test-only unique index must force append to fail");
     let msg = err.to_string();
     assert!(
-        msg.contains("UNIQUE constraint failed"),
-        "SQLite must report UNIQUE constraint failed; got: {msg}"
+        msg.contains("insert chat_messages row: UNIQUE constraint failed"),
+        "append error must include the inline SQLite class label; got: {msg}"
     );
+}
+
+#[tokio::test]
+async fn append_error_includes_sqlite_busy_label_when_writer_lock_is_held() {
+    let (pool, _td) = file_pool_with_short_busy_timeout().await;
+    let sid = ChatSessionStore::create_session(&pool, &ContextScope::Workspace)
+        .await
+        .unwrap();
+
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO chat_sessions (id, started_at, last_activity_at, context_scope_json) \
+         VALUES ('lock-holder', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '{}')",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    let err = ChatSessionStore::append(&pool, &sid, "user", &[block("blocked")])
+        .await
+        .expect_err("held writer transaction must force SQLITE_BUSY on append");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("insert chat_messages row: database is locked (SQLITE_BUSY)"),
+        "append error must include the inline SQLITE_BUSY label; got: {msg}"
+    );
+
+    tx.rollback().await.unwrap();
 }
 
 /// Integration: after a rolled-back transaction that simulates a failed

@@ -37,7 +37,7 @@ use super::context::ContextScope;
 fn sqlite_error_label(e: &sqlx::Error) -> &'static str {
     let msg = e.to_string();
     if msg.contains("UNIQUE constraint failed") {
-        "UNIQUE constraint failed (session_id, seq)"
+        "UNIQUE constraint failed"
     } else if msg.contains("FOREIGN KEY constraint failed") {
         "FOREIGN KEY constraint failed (session_id → chat_sessions)"
     } else if msg.contains("database is locked") || msg.contains("SQLITE_BUSY") {
