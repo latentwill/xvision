@@ -37,7 +37,6 @@
 
 use std::collections::HashMap;
 
-use anyhow::Result;
 use chrono::Utc;
 use ulid::Ulid;
 
@@ -189,9 +188,7 @@ pub fn make_guardrail_summary_finding(run_id: &str, result: &GuardrailSummaryRes
     let mut reason_lines: Vec<String> = result
         .counts_by_reason
         .iter()
-        .map(|((reason, orig, app), count)| {
-            format!("{reason}: original={orig} applied={app} count={count}")
-        })
+        .map(|((reason, orig, app), count)| format!("{reason}: original={orig} applied={app} count={count}"))
         .collect();
     reason_lines.sort(); // deterministic order for tests
 
@@ -296,9 +293,7 @@ pub async fn fire_guardrail_summary(store: &RunStore, run_id: &str) {
     let mut by_reason: Vec<String> = result
         .counts_by_reason
         .iter()
-        .map(|((reason, orig, app), count)| {
-            format!("{reason}(orig={orig},app={app})={count}")
-        })
+        .map(|((reason, orig, app), count)| format!("{reason}(orig={orig},app={app})={count}"))
         .collect();
     by_reason.sort();
 
@@ -500,10 +495,7 @@ mod tests {
         let result = summarise_notes(&notes, 5).unwrap();
         let finding = make_guardrail_summary_finding("run-abc", &result);
         assert_eq!(finding.kind, KIND_GUARDRAIL_REWRITE_RATE);
-        assert_eq!(
-            finding.produced_by_check.as_deref(),
-            Some(PRODUCED_BY_GUARD)
-        );
+        assert_eq!(finding.produced_by_check.as_deref(), Some(PRODUCED_BY_GUARD));
     }
 
     #[test]

@@ -1,19 +1,14 @@
-//! Integration and unit coverage for `eval::guardrail_summary`
+//! Integration coverage for `eval::guardrail_summary`
 //! (eval-guardrail-log-collapse track).
 //!
 //! Tests here verify:
 //!
-//! 1. **Pure summarisation** — `summarise_notes` with mocked tuples covers the
-//!    four severity thresholds from the spec (0, 1-in-100 info, 15-in-100
-//!    warning, 60-in-100 critical). These are the canonical unit tests
-//!    mandated by the intake doc.
-//!
-//! 2. **DB integration** — `fire_guardrail_summary` writes exactly one
+//! 1. **DB integration** — `fire_guardrail_summary` writes exactly one
 //!    `eval_findings` row of kind `guardrail_rewrite_rate` when the run has
 //!    ≥ 1 guardrail-rewrite notes in `supervisor_notes`, and writes nothing
 //!    when no guard notes are present.
 //!
-//! 3. **Executor integration** — a backtest with a strategy that emits only
+//! 2. **Executor integration** — a backtest with a strategy that emits only
 //!    `long_open` on every bar (3 bars) produces 2 pyramid-blocked notes
 //!    (first bar opens a long, the next two are pyramid-blocked). After
 //!    calling `fire_guardrail_summary`, exactly one finding is written.
@@ -27,11 +22,9 @@ use sqlx::SqlitePool;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
-use xvision_engine::eval::guardrail_summary::{
-    fire_guardrail_summary, summarise_notes, KIND_GUARDRAIL_REWRITE_RATE,
-};
 use xvision_engine::eval::findings::Severity;
-use xvision_engine::eval::run::{Run, RunMode};
+use xvision_engine::eval::guardrail_summary::{fire_guardrail_summary, KIND_GUARDRAIL_REWRITE_RATE};
+use xvision_engine::eval::run::{Run, RunMode, RunStatus};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;
@@ -66,6 +59,14 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/017_eval_findings_review_columns.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
         .execute(&pool)
         .await
@@ -88,51 +89,12 @@ async fn fresh_store() -> RunStore {
     RunStore::new(pool)
 }
 
-// ── Pure unit tests for summarise_notes ──────────────────────────────────────
-// These mirror the spec's four required threshold cases.
-
-fn guard_note(content: &str) -> (String, String, String) {
-    ("guard".to_string(), "warn".to_string(), content.to_string())
-}
-
-fn pyramid_note(idx: u32) -> (String, String, String) {
-    guard_note(&format!(
-        "pyramid blocked: original=long_open applied=hold asset=BTC/USD decision_index={idx}"
-    ))
-}
-
-#[test]
-fn spec_zero_notes_no_finding() {
-    // 0 rewritten → None (no finding emitted)
-    assert!(summarise_notes(&[], 100).is_none());
-}
-
-#[test]
-fn spec_one_in_100_is_info() {
-    // 1 / 100 = 1% → info
-    let notes = vec![pyramid_note(0)];
-    let r = summarise_notes(&notes, 100).expect("result for 1 note");
-    assert_eq!(r.severity, Severity::Info, "1% should be info");
-    assert_eq!(r.rewrite_count, 1);
-    assert_eq!(r.total_decisions, 100);
-}
-
-#[test]
-fn spec_fifteen_in_100_is_warning() {
-    // 15 / 100 = 15% → warning
-    let notes: Vec<_> = (0..15).map(pyramid_note).collect();
-    let r = summarise_notes(&notes, 100).expect("result for 15 notes");
-    assert_eq!(r.severity, Severity::Warning, "15% should be warning");
-    assert_eq!(r.rewrite_count, 15);
-}
-
-#[test]
-fn spec_sixty_in_100_is_critical() {
-    // 60 / 100 = 60% → critical ("strategy is fighting the guardrail every bar")
-    let notes: Vec<_> = (0..60).map(pyramid_note).collect();
-    let r = summarise_notes(&notes, 100).expect("result for 60 notes");
-    assert_eq!(r.severity, Severity::Critical, "60% should be critical");
-    assert_eq!(r.rewrite_count, 60);
+async fn create_completed_run(store: &RunStore, run_id: &str) {
+    let mut run = Run::new_queued("a".into(), "s".into(), RunMode::Backtest);
+    run.id = run_id.to_string();
+    run.status = RunStatus::Completed;
+    run.completed_at = Some(Utc::now());
+    store.create(&run).await.unwrap();
 }
 
 // ── DB integration tests ──────────────────────────────────────────────────────
@@ -153,11 +115,7 @@ async fn fire_guardrail_summary_writes_no_finding_when_no_guard_notes() {
     let store = fresh_store().await;
     // Create a run with no supervisor notes.
     let run_id = "01TESTGSUMMARY0NONOTES00000A";
-    sqlx::query("INSERT INTO eval_runs (id, agent_id, scenario_id, status, mode, created_at) VALUES (?, 'a', 's', 'completed', 'backtest', '2026-01-01T00:00:00Z')")
-        .bind(run_id)
-        .execute(&store.pool_for_test())
-        .await
-        .unwrap();
+    create_completed_run(&store, run_id).await;
 
     fire_guardrail_summary(&store, run_id).await;
 
@@ -172,15 +130,12 @@ async fn fire_guardrail_summary_writes_no_finding_when_no_guard_notes() {
 async fn fire_guardrail_summary_writes_one_finding_when_guard_notes_exist() {
     let store = fresh_store().await;
     let run_id = "01TESTGSUMMARY0HASNOTES00000";
-    sqlx::query("INSERT INTO eval_runs (id, agent_id, scenario_id, status, mode, created_at) VALUES (?, 'a', 's', 'completed', 'backtest', '2026-01-01T00:00:00Z')")
-        .bind(run_id)
-        .execute(&store.pool_for_test())
-        .await
-        .unwrap();
+    create_completed_run(&store, run_id).await;
 
     // Insert 3 guard-role supervisor notes (bypassing agent_runs FK since FK is off).
     for i in 0u32..3 {
-        let content = format!("pyramid blocked: original=long_open applied=hold asset=BTC/USD decision_index={i}");
+        let content =
+            format!("pyramid blocked: original=long_open applied=hold asset=BTC/USD decision_index={i}");
         store
             .record_supervisor_note(run_id, "guard", "warn", &content)
             .await
@@ -258,7 +213,7 @@ fn daily_bars(count: usize) -> Vec<Ohlcv> {
     let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     (0..count)
         .map(|i| {
-            let px = 50_000.0 + i as f64 * 100.0;
+            let px = 50_000.0;
             Ohlcv {
                 timestamp: start + Duration::days(i as i64),
                 open: px,
@@ -275,9 +230,7 @@ fn sequenced_dispatch(actions: &[&str]) -> Arc<dyn LlmDispatch> {
     let resps: Vec<LlmResponse> = actions
         .iter()
         .map(|a| {
-            let body = format!(
-                r#"{{"action":"{a}","conviction":0.7,"justification":"test {a}"}}"#
-            );
+            let body = format!(r#"{{"action":"{a}","conviction":0.7,"justification":"test {a}"}}"#);
             LlmResponse {
                 content: vec![ContentBlock::Text { text: body }],
                 stop_reason: StopReason::EndTurn,
@@ -323,7 +276,10 @@ async fn three_pyramid_blocks_produce_one_guardrail_summary_finding() {
     // Confirm 2 pyramid-block notes were written.
     let notes = store.read_supervisor_notes(&run.id).await.unwrap();
     let guard_count = notes.iter().filter(|(role, _, _)| role == "guard").count();
-    assert_eq!(guard_count, 2, "2 pyramid blocks expected for 3 consecutive long_open");
+    assert_eq!(
+        guard_count, 2,
+        "2 pyramid blocks expected for 3 consecutive long_open"
+    );
 
     // Fire the summary hook.
     fire_guardrail_summary(&store, &run.id).await;

@@ -73,8 +73,7 @@ pub struct PaperExecutor {
     /// keeps the dispatcher's memory seam dormant (the recorder is
     /// already a no-op for `MemoryMode::Off`, but this also covers
     /// tests / CLI rehearsal that never built one).
-    memory_recorder:
-        Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    memory_recorder: Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
     /// Pre-submit minimum-notional gate (`risk-gate-min-notional`).
     /// When `Some(min)` and `min > 0.0`, orders with notional (size ×
     /// reference price) strictly less than `min` are vetoed before
