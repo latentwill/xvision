@@ -8187,6 +8187,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "xvision-filters"
+version = "0.21.0"
+dependencies = [
+ "chrono",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml",
+ "ts-rs",
+ "ulid",
+]
+
+[[package]]
 name = "xvision-harness"
 version = "0.21.0"
 dependencies = [
