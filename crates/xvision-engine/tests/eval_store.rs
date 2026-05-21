@@ -1,43 +1,13 @@
 use chrono::{TimeZone, Utc};
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+mod common;
+
 use tempfile::TempDir;
 use xvision_engine::eval::{DecisionRow, ListFilter, MetricsSummary, Run, RunMode, RunStatus, RunStore};
 
-async fn pool_with_migration() -> (SqlitePool, TempDir) {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("eval_store.sqlite");
-    let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&db_url)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    (pool, dir)
-}
-
-async fn store_with_migration() -> (RunStore, TempDir) {
-    let (pool, dir) = pool_with_migration().await;
-    (RunStore::new(pool), dir)
+async fn store_with_migration() -> (RunStore, TempDir, String) {
+    let (ctx, dir) = common::open_api_context().await;
+    let scenario_id = common::seeded_scenario_id(&ctx).await;
+    (RunStore::new(ctx.db), dir, scenario_id)
 }
 
 fn fresh_run(scenario: &str, mode: RunMode) -> Run {
@@ -46,20 +16,20 @@ fn fresh_run(scenario: &str, mode: RunMode) -> Run {
 
 #[tokio::test]
 async fn list_returns_empty_for_fresh_pool() {
-    let (store, _db_dir) = store_with_migration().await;
+    let (store, _db_dir, _scenario_id) = store_with_migration().await;
     let out = store.list(ListFilter::default()).await.unwrap();
     assert!(out.is_empty());
 }
 
 #[tokio::test]
 async fn create_then_get_round_trips() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("crypto-bull-q1-2025", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
     let back = store.get(&id).await.unwrap();
     assert_eq!(back.id, id);
-    assert_eq!(back.scenario_id, "crypto-bull-q1-2025");
+    assert_eq!(back.scenario_id, scenario_id);
     assert_eq!(back.mode, RunMode::Backtest);
     assert_eq!(back.status, RunStatus::Queued);
     assert!(back.metrics.is_none());
@@ -68,15 +38,15 @@ async fn create_then_get_round_trips() {
 
 #[tokio::test]
 async fn get_unknown_id_errors() {
-    let (store, _db_dir) = store_with_migration().await;
+    let (store, _db_dir, _scenario_id) = store_with_migration().await;
     let r = store.get("missing").await;
     assert!(r.is_err(), "get on unknown id should error");
 }
 
 #[tokio::test]
 async fn update_status_transitions_queued_to_running_to_completed() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("scenario-x", RunMode::Paper);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Paper);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -92,8 +62,8 @@ async fn update_status_transitions_queued_to_running_to_completed() {
 
 #[tokio::test]
 async fn update_status_failed_persists_error_message() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("scenario-x", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
     store
@@ -107,8 +77,8 @@ async fn update_status_failed_persists_error_message() {
 
 #[tokio::test]
 async fn cancelled_run_cannot_be_revived_or_finalized() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("scenario-x", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -139,8 +109,8 @@ async fn cancelled_run_cannot_be_revived_or_finalized() {
 
 #[tokio::test]
 async fn fail_active_does_not_overwrite_cancelled_run() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("scenario-x", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -154,8 +124,8 @@ async fn fail_active_does_not_overwrite_cancelled_run() {
 
 #[tokio::test]
 async fn update_status_does_not_revive_terminal_run() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("scenario-x", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
     store
@@ -176,8 +146,8 @@ async fn update_status_does_not_revive_terminal_run() {
 
 #[tokio::test]
 async fn finalize_sets_metrics_status_and_completed_at() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("scenario-x", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -200,10 +170,10 @@ async fn finalize_sets_metrics_status_and_completed_at() {
 
 #[tokio::test]
 async fn list_with_strategy_filter_only_returns_matching() {
-    let (store, _db_dir) = store_with_migration().await;
-    let mut a = fresh_run("scenario-a", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let mut a = fresh_run(&scenario_id, RunMode::Backtest);
     a.agent_id = "hash-A".into();
-    let mut b = fresh_run("scenario-a", RunMode::Backtest);
+    let mut b = fresh_run(&scenario_id, RunMode::Backtest);
     b.agent_id = "hash-B".into();
     store.create(&a).await.unwrap();
     store.create(&b).await.unwrap();
@@ -221,9 +191,9 @@ async fn list_with_strategy_filter_only_returns_matching() {
 
 #[tokio::test]
 async fn list_with_status_filter_only_returns_matching() {
-    let (store, _db_dir) = store_with_migration().await;
-    let r1 = fresh_run("s1", RunMode::Backtest);
-    let r2 = fresh_run("s2", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let r1 = fresh_run(&scenario_id, RunMode::Backtest);
+    let r2 = fresh_run(&scenario_id, RunMode::Backtest);
     store.create(&r1).await.unwrap();
     store.create(&r2).await.unwrap();
     store
@@ -244,8 +214,8 @@ async fn list_with_status_filter_only_returns_matching() {
 
 #[tokio::test]
 async fn record_decision_and_read_decisions_in_index_order() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("s1", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -282,8 +252,8 @@ async fn record_decision_and_read_decisions_in_index_order() {
 
 #[tokio::test]
 async fn record_decision_duplicate_index_errors() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("s1", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -309,8 +279,8 @@ async fn record_decision_duplicate_index_errors() {
 
 #[tokio::test]
 async fn record_and_read_equity_curve_in_timestamp_order() {
-    let (store, _db_dir) = store_with_migration().await;
-    let run = fresh_run("s1", RunMode::Backtest);
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 

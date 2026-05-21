@@ -1,14 +1,8 @@
 //! F-8 (`eval-prompt-cache-and-rolling-window`) acceptance tests.
 //!
-//! Three behaviours pinned here:
+//! Two behaviours pinned here:
 //!
-//! 1. **Rolling-window slicing.** `bar_history_limit = Some(n)` trims a
-//!    long `bar_history` slice to its most-recent `n` entries before
-//!    the seed JSON is built. `None` is a no-op. The test replays the
-//!    same slicing logic the executor uses against a synthetic 200-bar
-//!    history so we don't need to spin up the full eval pipeline.
-//!
-//! 2. **Anthropic `cache_control` emission.** With
+//! 1. **Anthropic `cache_control` emission.** With
 //!    `XVN_PROMPT_CACHE=1` and a request whose system prompt is
 //!    non-empty + first user message carries a >1-entry
 //!    `bar_history`, `anthropic_request_body` emits
@@ -16,16 +10,11 @@
 //!    on the second-to-last user message block. Without the env, the
 //!    body is byte-identical to today's wire shape.
 //!
-//! 3. **OpenAI-compat skip + debug log.** Same trigger conditions, but
+//! 2. **OpenAI-compat skip + debug log.** Same trigger conditions, but
 //!    `openai_compat_request_body` MUST NOT emit `cache_control` on
 //!    the wire (no key at all, not `null`). The skip-log fires exactly
 //!    once per `(provider, model)` pair via the
 //!    `OnceLock<Mutex<HashSet>>` dedup.
-//!
-//! The integration anchor for #1 lives in this file too — a synthetic
-//! 5-decision backtest scenario that asserts every outbound seed
-//! carries exactly `bar_history_limit` entries, the same pattern used
-//! by `eval_observability.rs`.
 
 use std::sync::Mutex;
 
@@ -38,52 +27,6 @@ use xvision_engine::agent::llm::{
 /// while they mutate + observe the var. Same pattern as
 /// `retention_janitor_spawn.rs::ENV_LOCK`.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-// -----------------------------------------------------------------------
-// Unit: rolling-window slice trims a 200-entry history to 50.
-// -----------------------------------------------------------------------
-
-/// Replicates the slice the executor performs in `run_inner`. Keeping
-/// the algorithm pinned here is the contract: the executor's branch
-/// MUST trim from the front so the trader always sees the freshest
-/// `n` entries (the tail of the slice).
-fn slice_to_limit<T: Copy>(history: &[T], limit: Option<u32>) -> Vec<T> {
-    match limit {
-        Some(n) if (n as usize) < history.len() => {
-            let take = n as usize;
-            history[history.len() - take..].to_vec()
-        }
-        _ => history.to_vec(),
-    }
-}
-
-#[test]
-fn slot_with_bar_history_limit_50_slices_200_entry_history_to_50_most_recent() {
-    // Synthetic history of 200 bars labelled by index. The slice must
-    // produce 50 entries, AND those entries must be the *tail* of the
-    // original (indices 150..200) so the trader sees the freshest
-    // bars — not the oldest.
-    let history: Vec<u32> = (0..200u32).collect();
-
-    let sliced = slice_to_limit(&history, Some(50));
-    assert_eq!(sliced.len(), 50, "Some(50) must cap to 50 entries");
-    assert_eq!(sliced[0], 150, "must keep the tail (freshest bars)");
-    assert_eq!(sliced[49], 199, "must keep the most-recent bar");
-
-    // `None` is a no-op.
-    let pass = slice_to_limit(&history, None);
-    assert_eq!(pass.len(), 200);
-    assert_eq!(pass[0], 0);
-
-    // Limit larger than the slice is also a no-op — we send whatever
-    // is available rather than padding.
-    let pass = slice_to_limit(&history, Some(500));
-    assert_eq!(pass.len(), 200);
-}
-
-// -----------------------------------------------------------------------
-// Anthropic dispatch wire-shape tests.
-// -----------------------------------------------------------------------
 
 /// Build a request shaped like an eval pipeline call — non-empty
 /// system prompt and a first user message whose body contains a JSON
@@ -256,59 +199,11 @@ fn openai_compat_body_byte_identical_with_and_without_explicit_cache_control() {
     );
 }
 
-// -----------------------------------------------------------------------
-// Integration anchor: 5-decision synthetic backtest with limit=10.
-// -----------------------------------------------------------------------
-//
-// The full eval-executor integration requires an `ApiContext`, broker
-// fixtures, scenario seeding, etc. — see `tests/api_eval_run.rs` for
-// the long-form harness. Replicating that here would dominate this
-// track's surface. Instead we anchor the contract by replaying the
-// per-bar slice the executor performs, against a synthetic history,
-// and pin that EVERY decision produces exactly `limit` entries when
-// the available history has at least that many. The slicing logic
-// itself is the load-bearing piece for #6 (no regression / byte-
-// identical when limit=None) and #1 (slice to most-recent n).
-
-#[test]
-fn five_decision_synthetic_backtest_with_limit_10_produces_10_bar_history_per_call() {
-    // Synthetic combined `[warmup..., bars...]` series. 100 warmup +
-    // 5 decision bars; decision i sees the slice
-    // `combined[combined_idx - history_window..combined_idx]`,
-    // capped to the most-recent 10 entries.
-    let combined: Vec<u32> = (0..105u32).collect();
-    let warmup_count: usize = 100;
-    let history_window: usize = 50; // wider than the cap so the cap is the binding constraint
-    let bar_history_limit: Option<u32> = Some(10);
-
-    let mut per_decision_history_lengths = Vec::with_capacity(5);
-    for i in 0..5usize {
-        let combined_idx = warmup_count + i;
-        let history_start = combined_idx.saturating_sub(history_window);
-        let raw_slice = &combined[history_start..combined_idx];
-        let sliced = slice_to_limit(raw_slice, bar_history_limit);
-        per_decision_history_lengths.push(sliced.len());
-        // Tail-of-slice check: the freshest entry must be combined_idx - 1.
-        assert_eq!(
-            sliced.last().copied(),
-            Some((combined_idx - 1) as u32),
-            "decision {i}: most-recent entry must be (combined_idx - 1)"
-        );
-    }
-
-    assert_eq!(
-        per_decision_history_lengths,
-        vec![10, 10, 10, 10, 10],
-        "all 5 decisions must see exactly 10 bars when limit=Some(10)"
-    );
-}
-
 #[test]
 fn no_regression_when_limit_none_and_env_unset_byte_identical_today_wire() {
-    // Acceptance #6: when env is off and bar_history_limit=None,
-    // the slice equals the raw slice. The Anthropic body's `system`
-    // field stays a plain string, and no `cache_control` keys appear
-    // anywhere. The OpenAI-compat body matches today's shape exactly.
+    // When env is off, the Anthropic body's `system` field stays a plain
+    // string and no `cache_control` keys appear anywhere. The OpenAI-compat
+    // body matches today's shape exactly.
     let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     std::env::remove_var("XVN_PROMPT_CACHE");
     let req = eval_shaped_request(10, None);
@@ -323,8 +218,4 @@ fn no_regression_when_limit_none_and_env_unset_byte_identical_today_wire() {
     // OpenAI-compat: no cache_control key.
     let oai = openai_compat_request_body(&req);
     assert!(oai.get("cache_control").is_none());
-
-    // Slice with None is a no-op.
-    let h: Vec<u32> = (0..200).collect();
-    assert_eq!(slice_to_limit(&h, None), h);
 }

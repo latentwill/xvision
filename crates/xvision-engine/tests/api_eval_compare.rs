@@ -4,66 +4,14 @@
 //! curves ↔ findings correctly.
 
 use chrono::{Duration, TimeZone, Utc};
-use sqlx::sqlite::SqlitePoolOptions;
-use xvision_engine::api::eval::{self, CompareRunsRequest};
-use xvision_engine::api::{Actor, ApiContext, ApiError};
-use xvision_engine::eval::findings::{Finding, Severity};
-use xvision_engine::eval::run::{MetricsSummary, RunMode, RunStatus};
-use xvision_engine::eval::{DecisionRow, Run, RunStore};
+mod common;
 
-async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/001_api_audit.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/017_eval_findings_review_columns.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    // V2E trace-surface: evidence_cycle_ids_json + produced_by_check columns.
-    sqlx::query(include_str!("../migrations/026_trace_surface_foundation.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext::new(
-        pool,
-        Actor::Cli {
-            user: "operator".into(),
-        },
-        dir.path().to_path_buf(),
-    );
-    (ctx, dir)
-}
+use common::{open_api_context as ctx_with_eval_tables, seeded_scenario_id};
+use xvision_engine::api::eval::{self, CompareRunsRequest};
+use xvision_engine::api::ApiError;
+use xvision_engine::eval::findings::{Finding, Severity};
+use xvision_engine::eval::run::{MetricsSummary, RunMode};
+use xvision_engine::eval::{DecisionRow, Run, RunStore};
 
 async fn seed_completed_run(
     store: &RunStore,
@@ -149,9 +97,10 @@ fn metrics(total_return_pct: f64, sharpe: f64) -> MetricsSummary {
 async fn compare_returns_two_runs_with_curves_and_findings() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
+    let scenario_id = seeded_scenario_id(&ctx).await;
 
-    let run_a = seed_completed_run(&store, "h-A", "scen", metrics(15.0, 1.2), 5).await;
-    let run_b = seed_completed_run(&store, "h-B", "scen", metrics(8.5, 0.7), 7).await;
+    let run_a = seed_completed_run(&store, "h-A", &scenario_id, metrics(15.0, 1.2), 5).await;
+    let run_b = seed_completed_run(&store, "h-B", &scenario_id, metrics(8.5, 0.7), 7).await;
     let _f_a = seed_finding(&store, &run_a.id, "A regime quirk").await;
     let _f_b = seed_finding(&store, &run_b.id, "B regime quirk").await;
 
@@ -196,7 +145,8 @@ async fn compare_returns_two_runs_with_curves_and_findings() {
 async fn compare_returns_not_found_for_unknown_run() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let real = seed_completed_run(&store, "h", "scen", metrics(1.0, 0.1), 1).await;
+    let scenario_id = seeded_scenario_id(&ctx).await;
+    let real = seed_completed_run(&store, "h", &scenario_id, metrics(1.0, 0.1), 1).await;
 
     let err = eval::compare(
         &ctx,
@@ -242,7 +192,8 @@ async fn compare_rejects_empty_run_ids() {
 async fn compare_rejects_single_run_id() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let real = seed_completed_run(&store, "h", "scen", metrics(1.0, 0.1), 1).await;
+    let scenario_id = seeded_scenario_id(&ctx).await;
+    let real = seed_completed_run(&store, "h", &scenario_id, metrics(1.0, 0.1), 1).await;
 
     let err = eval::compare(
         &ctx,
@@ -266,9 +217,10 @@ async fn compare_rejects_single_run_id() {
 async fn compare_handles_run_with_no_findings() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
+    let scenario_id = seeded_scenario_id(&ctx).await;
 
-    let run_a = seed_completed_run(&store, "h-A", "scen", metrics(2.0, 0.5), 3).await;
-    let run_b = seed_completed_run(&store, "h-B", "scen", metrics(3.0, 0.6), 3).await;
+    let run_a = seed_completed_run(&store, "h-A", &scenario_id, metrics(2.0, 0.5), 3).await;
+    let run_b = seed_completed_run(&store, "h-B", &scenario_id, metrics(3.0, 0.6), 3).await;
     // Only run_a gets a finding; run_b is finding-free.
     let _f = seed_finding(&store, &run_a.id, "A only").await;
 
@@ -290,8 +242,9 @@ async fn compare_handles_run_with_no_findings() {
 async fn compare_writes_audit_row() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let run_a = seed_completed_run(&store, "h-A", "scen", metrics(2.0, 0.5), 3).await;
-    let run_b = seed_completed_run(&store, "h-B", "scen", metrics(3.0, 0.6), 3).await;
+    let scenario_id = seeded_scenario_id(&ctx).await;
+    let run_a = seed_completed_run(&store, "h-A", &scenario_id, metrics(2.0, 0.5), 3).await;
+    let run_b = seed_completed_run(&store, "h-B", &scenario_id, metrics(3.0, 0.6), 3).await;
 
     let _ = eval::compare(
         &ctx,

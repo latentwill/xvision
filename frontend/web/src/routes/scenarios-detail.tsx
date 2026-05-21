@@ -38,10 +38,7 @@ import type {
   TimeWindow,
   VenueSettings,
 } from "@/api/types.gen";
-import {
-  ScenarioForm,
-  normalizeGranularity,
-} from "@/components/scenario/ScenarioForm";
+import { ScenarioForm } from "@/components/scenario/ScenarioForm";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -257,13 +254,10 @@ function DetailView({
         ? null
         : req.time_window,
       asset: assetsEqual(req.asset, s.asset) ? null : req.asset,
-      // Normalize both sides before comparing — the parent stores the
-      // engine's canonical form (e.g. "Hour4") while the form emits
-      // the operator-friendly form ("4h"). They round-trip on the
-      // engine side but lexically differ, so a naive `!==` would
-      // mark every clone as a granularity override.
+      // Compare the current UI granularity strings case-insensitively.
+      // ScenarioForm intentionally owns the fixed operator-facing palette.
       granularity:
-        normalizeGranularity(req.granularity) === normalizeGranularity(s.granularity)
+        req.granularity.trim().toLowerCase() === s.granularity.trim().toLowerCase()
           ? null
           : req.granularity,
       venue: venueEquals(req.venue, s.venue) ? null : req.venue,

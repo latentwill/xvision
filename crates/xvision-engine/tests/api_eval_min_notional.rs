@@ -203,20 +203,22 @@ fn ensure_flash_fixture() {
     ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
 }
 
-async fn run_tiny_paper_eval(ctx: &ApiContext, agent_id: &str) -> (Run, Arc<MockBrokerSurface>) {
+async fn run_tiny_notional_probe(
+    agent_id: &str,
+    risk_toml: bool,
+    expected: &str,
+) -> (ApiContext, tempfile::TempDir, Arc<MockBrokerSurface>, Run) {
+    let (ctx, dir) = ctx_with_tables().await;
+    if risk_toml {
+        write_paper_min_notional_risk_toml(&ctx.xvn_home);
+    }
     ensure_flash_fixture();
-    save_tiny_risk_strategy(ctx, agent_id).await;
+    save_tiny_risk_strategy(&ctx, agent_id).await;
 
-    // Tiny buying power so sizing × tiny risk_pct produces a clearly
-    // sub-$10 notional even at BTC ~$42k from the synthetic fixture.
-    // $100 × 0.001 = $0.10 USD at risk → notional == $0.10 << $10.
     let mock_broker = Arc::new(MockBrokerSurface::new(100.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker.clone());
-    let dispatch = long_open_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
-
     let run = eval::run_with_deps(
-        ctx,
+        &ctx,
         EvalRunRequest {
             agent_id: agent_id.into(),
             scenario_id: "flash-crash-2024-08".into(),
@@ -226,14 +228,14 @@ async fn run_tiny_paper_eval(ctx: &ApiContext, agent_id: &str) -> (Run, Arc<Mock
             skip_preflight: false,
         },
         broker,
-        dispatch,
+        long_open_dispatch(),
         xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
+        Arc::new(ToolRegistry::empty()),
     )
     .await
-    .expect("run_with_deps must complete");
+    .expect(expected);
 
-    (run, mock_broker)
+    (ctx, dir, mock_broker, run)
 }
 
 /// End-to-end: a paper-eval run whose order would be ~$0.10 notional
@@ -242,10 +244,15 @@ async fn run_tiny_paper_eval(ctx: &ApiContext, agent_id: &str) -> (Run, Arc<Mock
 /// called; every decision row carries `[below_venue_min_notional]`.
 #[tokio::test]
 async fn api_eval_paper_run_vetoes_below_paper_min_notional() {
-    let (ctx, _d) = ctx_with_tables().await;
-    write_paper_min_notional_risk_toml(&ctx.xvn_home);
-    let agent_id = "01TESTSTRATEGYAPIMINNOTIONAL";
-    let (run, mock_broker) = run_tiny_paper_eval(&ctx, agent_id).await;
+    // Tiny buying power so sizing × tiny risk_pct produces a clearly
+    // sub-$10 notional even at BTC ~$42k from the synthetic fixture.
+    // $100 × 0.001 = $0.10 USD at risk → notional == $0.10 << $10.
+    let (ctx, _d, mock_broker, run) = run_tiny_notional_probe(
+        "01TESTSTRATEGYAPIMINNOTIONAL",
+        true,
+        "run_with_deps must complete when MinNotional gate fires",
+    )
+    .await;
 
     // Acceptance #1: broker NEVER called — the whole point of the gate.
     let submitted = mock_broker.submitted();
@@ -294,10 +301,13 @@ async fn api_eval_paper_run_vetoes_below_paper_min_notional() {
 /// some unrelated guard, and pins the "missing config → no-op" contract.
 #[tokio::test]
 async fn api_eval_paper_run_without_risk_toml_does_not_veto() {
-    let (ctx, _d) = ctx_with_tables().await;
-    // NOTE: no `write_paper_min_notional_risk_toml` — the file is absent.
-    let agent_id = "01TESTSTRATEGYAPIMINNOTIONA2";
-    let (run, mock_broker) = run_tiny_paper_eval(&ctx, agent_id).await;
+    // NOTE: no risk.toml is written; the file is absent.
+    let (_ctx, _d, mock_broker, run) = run_tiny_notional_probe(
+        "01TESTSTRATEGYAPIMINNOTIONA2",
+        false,
+        "run_with_deps must complete",
+    )
+    .await;
 
     assert_eq!(run.status, RunStatus::Completed);
     // Without `risk.toml`, the MinNotional gate is disabled (default 0.0)
