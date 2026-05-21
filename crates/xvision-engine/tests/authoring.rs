@@ -53,10 +53,7 @@ async fn create_blank_strategy_produces_no_agents_and_no_placeholder_slot() {
     assert_eq!(draft.manifest.template, "custom");
     assert_eq!(draft.manifest.display_name, "Blank Draft");
     assert_eq!(draft.manifest.creator, "@op");
-    assert!(draft
-        .mechanical_params
-        .as_object()
-        .is_some_and(|m| m.is_empty()));
+    assert!(draft.mechanical_params.as_object().is_some_and(|m| m.is_empty()));
 }
 
 #[tokio::test]
@@ -76,9 +73,8 @@ async fn create_strategy_with_named_template_still_seeds_a_real_strategy() {
     // but direct callers (MCP, CLI, dashboard `/api/strategies` route)
     // still construct via the named-template path. The existing
     // template-backed `authoring::create_strategy` must still produce a
-    // ready-to-save strategy with the expected manifest.template tag and
-    // a non-empty trader_slot prompt (template-seeded, not a placeholder
-    // SHA-256 match).
+    // ready-to-save strategy with expected trend_follower content, not an
+    // arbitrary non-empty placeholder.
     let (ctx, _td) = fresh_api_context().await;
     let out = api_strategy::create_strategy(
         &ctx,
@@ -98,9 +94,18 @@ async fn create_strategy_with_named_template_still_seeds_a_real_strategy() {
         .as_ref()
         .expect("template seeds a trader slot");
     assert!(
-        !trader.prompt.is_empty(),
-        "template-seeded trader prompt must not be empty"
+        trader.prompt.contains("EMA(12) > EMA(26) > EMA(50)"),
+        "template-seeded trader prompt must include trend_follower EMA logic; got: {}",
+        trader.prompt
     );
+    assert_eq!(
+        trader.allowed_tools,
+        vec!["ohlcv".to_string(), "indicator_panel".to_string()]
+    );
+    assert_eq!(trader.model_requirement, "anthropic.claude-sonnet-4.6");
+    assert_eq!(strategy.mechanical_params["ema_fast"], 12);
+    assert_eq!(strategy.mechanical_params["ema_mid"], 26);
+    assert_eq!(strategy.mechanical_params["ema_slow"], 50);
 }
 
 #[tokio::test]
@@ -122,7 +127,7 @@ async fn create_strategy_with_unknown_template_surfaces_engine_error_verbatim() 
     .expect_err("unknown template must error");
     let msg = err.to_string();
     assert!(
-        msg.contains("no_such_template") || msg.contains("unknown template"),
+        msg.contains("no_such_template"),
         "error must name the failing template, got: {msg}"
     );
 }
