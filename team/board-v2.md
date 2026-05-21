@@ -8,16 +8,26 @@
 >
 > Last updated: 2026-05-21 — conductor sweep. V2B wave (all three
 > tracks) merged and archived. V2D agent-memory foundation merged
-> (commit `81007d1`); D5 kills + D2 cross-symbol add tracked as
-> follow-up PRs #453 / #455 / #458 / #460. V2E and V2F also complete.
-> No V2 phase is currently in the Active block — next phase is V2C
-> (marketplace), waiting on operator intake.
+> (commit `81007d1`); V2D v1.1 memory-ops follow-up is active. V2E
+> and V2F also complete. Next major phase is V2C (marketplace),
+> waiting on operator intake.
 
 ## Active
 
-_(no V2 phase currently decomposed into open contracts. Operator
-review queued for V2C (marketplace) intake; V2B follow-up PRs above
-land via per-PR review, not new contracts.)_
+### V2D follow-up (memory ops + audit, v1.1)
+
+Decomposed 2026-05-21 from
+`team/intake/2026-05-21-v2d-memory-manual-ops-and-audit.md`. V2D
+itself (PR #404, merged 2026-05-21) shipped the storage, recorder,
+selector, and eval-review panel, but no operator surface for managing
+memory items. This follow-up wave adds the CLI verbs, HTTP API, and
+dashboard UI so an operator can browse Observations, seed Patterns,
+and forget memory without editing SQLite directly.
+
+Single-contract decomposition (mirroring V2D's shape): CLI / API / UI
+are three sequential phases on one branch.
+
+- [v2d-memory-cli-and-api](contracts/v2d-memory-cli-and-api.md) — foundation · ready · single-contract wave · no migration
 
 ## Recently closed
 
@@ -67,16 +77,24 @@ All seven contracts merged in a single ~30-minute wave:
 `team/archive/2026-05-21-conductor-sweep/contracts/` (was still on
 disk when the rest of V2E archived).
 
-Implementation plan:
-`docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`.
+### V2D (agent memory) — complete 2026-05-21
 
-Notes:
-- Migrations landed: **026** (trace-surface foundation: determinism_receipts table, eval_findings.evidence_cycle_ids_json + .produced_by_check), **027** (run_bars_manifest: bars_content_hash, manifest_canonical, feed/adjustment/session/calendar/timezone on eval_runs), and `0003` on `xvision-core` (cycles indices on model_id/prompt_template_hash/regime_tag).
-- `Finding` schema bumped: `evidence_cycle_ids` and `produced_by_check` are now typed Option fields, not embedded in evidence JSON.
-- `MetricsSummary` derives `Default`; new optional fields `inference_cost_quote_total`, `net_return_pct`. `total_return_pct` aliased as `gross_return_pct`.
-- `VenueSettings` gained required `overrides: Vec<VenueOverride>` field; all literals must include it.
-- `crates/xvision-engine/src/eval/executor/backtest.rs` is now multi-owner across foundation + cost-model + intra-bar + broker-rule.
-- Migration numbering note: foundation originally reserved 023 and candle 024; both shifted (026/027) due to on-disk collision with 022–025 that landed during V2E decomposition.
+Wave shipped as PR #404 (merged 2026-05-21, commit `81007d1`). What
+landed:
+
+- `xvision-memory` crate (cortex two-tier store: Observations +
+  Patterns).
+- Engine migration **028** (`agent_slots.memory_mode`).
+- F+L+T leakage protection (tier split + case-law wrapper +
+  training-window filter).
+- `MemoryRecorder` end-to-end through pipeline + executors.
+- AgentForm Memory selector (Off / Global / Agent-scoped).
+- MemoryPanel in eval-review.
+- Operator docs at `docs/v2d-memory-overview.md`.
+
+Design discussion:
+`docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`.
+Plan: `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`.
 
 ### V2F (strategy authoring & user knowledge) — complete 2026-05-21
 
@@ -265,7 +283,7 @@ share files; safe to run in parallel either way.
 | # | Item | Source |
 |---|---|---|
 | 11 | Autoresearcher mutation / eval / judge loop | autoresearcher plans |
-| 11a | **Autoresearcher = cortex memory distillation pass** — reads V2D Observations, proposes/judges/promotes Patterns, retires stale ones. Needs write access to the Patterns tier (`MemoryStore::upsert_pattern` / `demote_pattern`); auto-recorder is INSERT-only on Observations. Each promoted Pattern must carry `training_window_end` (latest bar timestamp across contributing Observations) so the dispatcher's time-window recall filter can exclude Patterns from in-replay scenarios. Editing semantics (create / supersede / retire) must land before the first nightly autoresearcher run that targets a Pattern-consuming agent — otherwise the loop is purely evaluative and nothing accumulates. | `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` |
+| 11a | **Autoresearcher = cortex memory distillation pass** — reads V2D Observations, proposes/judges/promotes Patterns, retires stale ones. Needs write access to the Patterns tier (`MemoryStore::upsert_pattern` / `demote_pattern`); auto-recorder is INSERT-only on Observations. Each promoted Pattern must carry `training_window_end` (latest bar timestamp across contributing Observations) so the dispatcher's time-window recall filter can exclude Patterns from in-replay scenarios. Editing semantics (create / supersede / retire) must land before the first nightly autoresearcher run that targets a Pattern-consuming agent — otherwise the loop is purely evaluative and nothing accumulates. **Folded in from the V2D follow-up grill pass: Package C (manual distillation primitives — operator-driven Observation → Pattern promotion).** The same UI + CLI surface the autoresearcher uses for promote/judge/retire should also support a manual "promote this Observation as a Pattern" path so operators can hand-distill before the autoresearcher's loop is reliable. Doing this in V3 instead of V2D v1.1 avoids building the surface twice. | `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` · `team/intake/2026-05-21-v2d-memory-manual-ops-and-audit.md` Decision 1 |
 | 12 | Autoresearcher dashboard + lineage review | autoresearcher dashboard plan |
 | 13 | Final UI/UX pass across dashboard surfaces | design docs, chart plans |
 | 16 | Chart aesthetics + customization pass using Lightweight Charts layout/grid/crosshair/series/scale options | F32, [Lightweight Charts customization](https://tradingview.github.io/lightweight-charts/tutorials/customization/intro) |
@@ -428,7 +446,8 @@ Intake doc when this opens: `team/intake/2026-05-19-eval-accuracy-and-trace-surf
 - V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (closed; 7 contracts merged).
 - V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (closed; 6 contracts merged).
 - V2B intake: `team/intake/2026-05-21-v2b-security-operability.md` (active — 3 contracts ready, dispatch pending operator review).
-- V2D intake: `team/intake/2026-05-21-v2d-agent-memory.md` (active — single-contract wave; plan at `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`).
+- V2D intake: `team/intake/2026-05-21-v2d-agent-memory.md` (closed; single-contract wave merged as PR #404 on 2026-05-21).
+- V2D follow-up intake: `team/intake/2026-05-21-v2d-memory-manual-ops-and-audit.md` (active — single-contract wave `v2d-memory-cli-and-api`; CLI verbs + HTTP API + dashboard memory tab + workspace memory page).
 - V2C/V3/V4: no intake yet.
 
 ## Closeout
