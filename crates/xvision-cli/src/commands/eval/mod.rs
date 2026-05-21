@@ -142,6 +142,11 @@ pub struct RunArgs {
     /// caps are advisory (logged but not enforced).
     #[arg(long)]
     pub cancel_on_token_limit: bool,
+    /// Skip the provider reachability preflight check before launching the run.
+    /// Use in offline development or CI replay where the provider endpoint is
+    /// known-unreachable but the run should proceed anyway.
+    #[arg(long)]
+    pub skip_preflight: bool,
 }
 
 #[derive(Args, Debug)]
@@ -424,6 +429,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         mode,
         params_override: None,
         limits,
+        skip_preflight: args.skip_preflight,
     };
 
     println!(

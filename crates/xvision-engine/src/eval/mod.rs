@@ -26,6 +26,7 @@ pub mod findings;
 pub mod guardrail_summary;
 pub mod guardrails;
 pub mod limits;
+pub mod preflight;
 pub mod metrics;
 pub mod orders;
 pub mod postprocess;

@@ -239,6 +239,7 @@ async fn run_with_deps_completes_paper_run_with_mocks() {
             mode: RunMode::Paper,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
         broker,
         dispatch,
@@ -274,6 +275,7 @@ async fn run_returns_not_found_for_unknown_strategy() {
             mode: RunMode::Paper,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
         broker,
         dispatch,
@@ -306,6 +308,7 @@ async fn run_returns_not_found_for_unknown_scenario() {
             mode: RunMode::Paper,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
         broker,
         dispatch,
@@ -340,6 +343,7 @@ async fn run_rejects_openrouter_legacy_anthropic_model_before_queueing() {
             mode: RunMode::Backtest,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
     )
     .await;
@@ -386,6 +390,7 @@ async fn run_with_deps_completes_backtest_run_with_mocks() {
             mode: RunMode::Backtest,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
         None, // backtest mode doesn't need a broker
         dispatch,
@@ -439,6 +444,7 @@ async fn backtest_run_cancels_when_max_decisions_breaches() {
                 max_decisions: Some(1),
                 ..Default::default()
             }),
+            skip_preflight: false,
         },
         None,
         dispatch,
@@ -517,6 +523,7 @@ async fn paper_run_cancels_when_max_decisions_breaches() {
                 max_decisions: Some(1),
                 ..Default::default()
             }),
+            skip_preflight: false,
         },
         Some(mock_broker),
         dispatch,
@@ -579,6 +586,7 @@ async fn run_rejects_paper_mode_without_broker() {
             mode: RunMode::Paper,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
         None,
         dispatch,
@@ -612,6 +620,7 @@ async fn run_writes_audit_row_on_completion() {
             mode: RunMode::Paper,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
         broker,
         dispatch,
@@ -652,6 +661,7 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
             mode: RunMode::Paper,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
         broker,
         dispatch,
@@ -772,6 +782,7 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
             mode: RunMode::Backtest,
             params_override: None,
             limits: None,
+            skip_preflight: false,
         },
     )
     .await;
