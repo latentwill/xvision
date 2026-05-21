@@ -483,6 +483,79 @@ async fn backtest_run_cancels_when_max_decisions_breaches() {
 }
 
 #[tokio::test]
+async fn paper_run_cancels_when_max_decisions_breaches() {
+    // Regression for the completed cli-operator-safety-p0 bundle:
+    // slice 2 initially wired hard limits only into BacktestExecutor.
+    // Paper launches accept the same EvalRunRequest.limits field, so
+    // they must cancel with the same persisted reason.
+    let (ctx, _d) = ctx_with_tables().await;
+    let agent_id = "01TESTSTRATEGY00000LIMITPAPR";
+    save_test_strategy(&ctx, agent_id).await;
+    ensure_flash_fixture();
+
+    let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
+        r#"{"action":"hold","conviction":0.5,"justification":"paper-limit-test"}"#,
+    ));
+    let tools = Arc::new(ToolRegistry::empty());
+
+    let result = eval::run_with_deps(
+        &ctx,
+        EvalRunRequest {
+            agent_id: agent_id.into(),
+            scenario_id: "flash-crash-2024-08".into(),
+            mode: RunMode::Paper,
+            params_override: None,
+            limits: Some(xvision_engine::eval::limits::EvalLimits {
+                max_decisions: Some(1),
+                ..Default::default()
+            }),
+        },
+        Some(mock_broker),
+        dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
+        tools,
+    )
+    .await;
+
+    let err = result.expect_err("paper max_decisions=1 must cause the executor to bail");
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("max_decisions=1"),
+        "the error message should name the cap that fired: got {err_msg:?}",
+    );
+
+    let runs = eval::list(
+        &ctx,
+        eval::ListRunsRequest {
+            agent_id: Some(agent_id.into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("list runs");
+    let run = runs.first().expect("at least one run was created");
+    assert_eq!(
+        run.status,
+        RunStatus::Cancelled,
+        "paper max_decisions=1 must persist the run as Cancelled, got {:?}",
+        run.status,
+    );
+    let error = run
+        .error
+        .as_deref()
+        .expect("a paper limit-cancel must write a reason into Run.error");
+    assert!(
+        error.starts_with("cancelled by limit:"),
+        "Run.error should start with the limit-cancel prefix: got {error:?}",
+    );
+    assert!(
+        error.contains("max_decisions=1"),
+        "Run.error should name the breach reason: got {error:?}",
+    );
+}
+
+#[tokio::test]
 async fn run_rejects_paper_mode_without_broker() {
     let (ctx, _d) = ctx_with_tables().await;
     let agent_id = "01TESTSTRATEGY000000000000PAP";

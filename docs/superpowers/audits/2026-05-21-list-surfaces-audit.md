@@ -18,7 +18,7 @@ effort and so non-list surfaces are explicitly carved out.
 
 This document is the checklist the next migration wave reads.
 
-## Inventory
+## Surfaces Inventory
 
 Methodology: grep for `.map(` / `<table>` / `<Card>` repetition across
 `frontend/web/src/routes/`, `frontend/web/src/features/`, and

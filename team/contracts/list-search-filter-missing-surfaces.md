@@ -5,7 +5,7 @@ wave: docs-lists-metric-polish-2026-05-21
 worktree: .worktrees/list-search-filter-missing-surfaces
 branch: task/list-search-filter-missing-surfaces
 base: origin/main
-status: blocked                                                  # waits on list-search-filter-completion-audit
+status: ready                                                    # audit landed in #430
 depends_on:
   - list-search-filter-completion-audit                          # the audit defines the migration checklist
 blocks: []

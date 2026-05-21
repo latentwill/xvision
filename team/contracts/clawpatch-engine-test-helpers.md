@@ -5,7 +5,7 @@ wave: clawpatch-blockers-2026-05-21
 worktree: .worktrees/clawpatch-engine-test-helpers
 branch: task/clawpatch-engine-test-helpers
 base: origin/main
-status: ready
+status: merged
 depends_on: []
 blocks: []
 stacking: none

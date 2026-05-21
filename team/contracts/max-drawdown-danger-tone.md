@@ -5,7 +5,7 @@ wave: docs-lists-metric-polish-2026-05-21
 worktree: .worktrees/max-drawdown-danger-tone
 branch: task/max-drawdown-danger-tone
 base: origin/main
-status: ready
+status: merged
 depends_on: []
 blocks: []
 stacking: none
