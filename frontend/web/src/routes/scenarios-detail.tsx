@@ -600,7 +600,7 @@ const RUNS_STATUS_FILTER: FilterDef = {
     { value: "running", label: "Running" },
     { value: "cancelled", label: "Cancelled" },
     { value: "failed", label: "Failed" },
-    { value: "pending", label: "Pending" },
+    { value: "queued", label: "Pending" },
   ],
 };
 
