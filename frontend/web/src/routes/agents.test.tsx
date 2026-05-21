@@ -109,6 +109,15 @@ describe("AgentsRoute", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("surfaces a Memory link pointing at /agents/memory", async () => {
+    renderRoute();
+    await waitFor(() =>
+      expect(agentsApi.listAgentsPaged).toHaveBeenCalled(),
+    );
+    const memoryLink = await screen.findByRole("link", { name: /^Memory$/i });
+    expect(memoryLink).toHaveAttribute("href", "/agents/memory");
+  });
+
   it("renders agent name and slot count in the populated list", async () => {
     vi.mocked(agentsApi.listAgentsPaged).mockResolvedValue({
       items: [

@@ -10,11 +10,20 @@ const PRIMARY: Item[] = [
   { to: "/strategies-folder", label: "Folder", icon: "book" },
   { to: "/agents", label: "Agents", icon: "user" },
   { to: "/scenarios", label: "Scenarios", icon: "list" },
-  { to: "/memory", label: "Memory", icon: "flame" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
   { to: "/docs", label: "Docs", icon: "book" },
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
+
+// Sub-items rendered indented under their parent section. Keyed by the
+// parent `to` value so the Sidebar can look them up when rendering.
+type SubItem = { to: string; label: string };
+
+const SUB_ITEMS: Record<string, SubItem[]> = {
+  "/agents": [
+    { to: "/agents/memory", label: "Memory" },
+  ],
+};
 
 export function Sidebar({ className = "" }: { className?: string }) {
   const { resolvedTheme, setDarkTheme, setLightTheme } = useTheme();
@@ -35,28 +44,45 @@ export function Sidebar({ className = "" }: { className?: string }) {
 
       <nav className="flex-1 flex flex-col">
         {PRIMARY.map((it) => (
-          <NavLink
-            key={it.to}
-            to={it.to}
-            end={it.to === "/"}
-            className={({ isActive }) =>
-              [
-                "flex items-center gap-3 px-6 py-2.5 text-[13.5px] border-l-2 transition-colors",
-                isActive
-                  ? "text-text border-gold bg-gold/[0.06]"
-                  : "text-text-2 border-transparent hover:text-text",
-              ].join(" ")
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <span className={isActive ? "text-gold" : ""}>
-                  <Icon name={it.icon} size={17} />
-                </span>
-                <span>{it.label}</span>
-              </>
-            )}
-          </NavLink>
+          <div key={it.to}>
+            <NavLink
+              to={it.to}
+              end={it.to === "/"}
+              className={({ isActive }) =>
+                [
+                  "flex items-center gap-3 px-6 py-2.5 text-[13.5px] border-l-2 transition-colors",
+                  isActive
+                    ? "text-text border-gold bg-gold/[0.06]"
+                    : "text-text-2 border-transparent hover:text-text",
+                ].join(" ")
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <span className={isActive ? "text-gold" : ""}>
+                    <Icon name={it.icon} size={17} />
+                  </span>
+                  <span>{it.label}</span>
+                </>
+              )}
+            </NavLink>
+            {(SUB_ITEMS[it.to] ?? []).map((sub) => (
+              <NavLink
+                key={sub.to}
+                to={sub.to}
+                className={({ isActive }) =>
+                  [
+                    "flex items-center gap-2 pl-[3.25rem] pr-6 py-1.5 text-[12.5px] border-l-2 transition-colors",
+                    isActive
+                      ? "text-text border-gold bg-gold/[0.04]"
+                      : "text-text-3 border-transparent hover:text-text-2",
+                  ].join(" ")
+                }
+              >
+                {sub.label}
+              </NavLink>
+            ))}
+          </div>
         ))}
       </nav>
 

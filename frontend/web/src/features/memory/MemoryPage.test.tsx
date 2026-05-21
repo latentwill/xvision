@@ -18,7 +18,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { MemoryPage } from "./MemoryPage";
 import * as memoryApi from "@/api/memory";
@@ -76,7 +76,7 @@ function observation(
   };
 }
 
-function renderPage(initialEntries: string[] = ["/memory"]) {
+function renderPage(initialEntries: string[] = ["/agents/memory"]) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -101,6 +101,26 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+describe("MemoryPage — /memory redirect", () => {
+  it("redirects /memory to /agents/memory", () => {
+    render(
+      <MemoryRouter initialEntries={["/memory"]}>
+        <Routes>
+          <Route
+            path="/memory"
+            element={<Navigate to="/agents/memory" replace />}
+          />
+          <Route
+            path="/agents/memory"
+            element={<div>memory-page-sentinel</div>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("memory-page-sentinel")).toBeInTheDocument();
+  });
 });
 
 describe("MemoryPage — empty state", () => {
@@ -228,7 +248,7 @@ describe("MemoryPage — deep-link highlight", () => {
       return emptyList();
     });
 
-    renderPage(["/memory?pattern=pat-b"]);
+    renderPage(["/agents/memory?pattern=pat-b"]);
 
     const target = await screen.findByText(/second target/);
     // Walk up to the LI wrapper and check the highlight marker attribute.

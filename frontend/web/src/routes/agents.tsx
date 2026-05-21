@@ -149,6 +149,12 @@ export function AgentsRoute() {
 
       <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         <Link
+          to="/agents/memory"
+          className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-[13px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text"
+        >
+          Memory
+        </Link>
+        <Link
           to="/agents/skills"
           className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-[13px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text"
         >
