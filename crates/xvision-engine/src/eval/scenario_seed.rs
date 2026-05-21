@@ -100,6 +100,7 @@ fn seed_btc(id: &str, name: &str, regime_tag: &str, start: DateTime<Utc>, end: D
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         replay_mode: ReplayMode::Continuous,
         capital: Capital::default(),

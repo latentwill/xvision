@@ -308,9 +308,13 @@ async fn final_bar_uses_close_as_next_open_fallback() {
     let fill_price = decisions[0]
         .fill_price
         .expect("actionable final-bar decision should be filled");
+    // Updated because <reason>: SlippageModel gained a VolumeShare variant in
+    // eval-cost-model-per-bar-and-volume-share; the match must cover it.
     let expected_fill = match &scenario.venue.slippage {
         SlippageModel::Linear { bps } => final_close * (1.0 + *bps as f64 / 10_000.0),
         SlippageModel::None => final_close,
+        // VolumeShare at negligible size (test uses tiny equity) → ~zero impact.
+        SlippageModel::VolumeShare { .. } => final_close,
     };
     assert!(
         (fill_price - expected_fill).abs() < 1e-6,

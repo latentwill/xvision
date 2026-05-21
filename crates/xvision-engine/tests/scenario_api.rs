@@ -65,6 +65,7 @@ fn valid_request() -> CreateScenarioRequest {
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         data_source: DataSource::AlpacaHistorical {
             feed: None,

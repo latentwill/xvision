@@ -577,6 +577,7 @@ fn scenario_data_manifest_derives_from_data_source() {
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         replay_mode: ReplayMode::Continuous,
         capital: Capital::default(),

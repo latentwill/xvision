@@ -13,6 +13,7 @@ pub mod behavior;
 pub mod compare;
 pub mod concurrency;
 pub mod cost;
+pub mod cost_arrays;
 pub mod cycle_features;
 pub mod determinism;
 pub mod early_stop;
@@ -40,6 +41,7 @@ pub use compare::{
     ComparisonReport, ComparisonRunSummary, ManifestMismatch,
 };
 pub use cost::{compute_token_cost_usd, compute_token_cost_usd_from_catalog};
+pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
 pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
@@ -49,8 +51,9 @@ pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 pub use scenario::canonical_scenarios;
 pub use scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
-    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
-    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, VolumeConstraint, WalkModel,
+    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource, FeeSource,
+    Fees, FillModel, FillProvenance, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency,
+    RefreshPolicy, ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueOverride,
+    VenueSettings, VolumeConstraint, WalkModel,
 };
 pub use store::{DecisionRow, ListFilter, RunStore};

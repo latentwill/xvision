@@ -2547,24 +2547,21 @@ mod tests {
         // its `list_strategies_folder` call.
         let notes_dir = td.path().join("strategies").join("notes");
         std::fs::create_dir_all(&notes_dir).unwrap();
-        std::fs::write(
-            notes_dir.join("ideas.md"),
-            b"# my ideas\n\n- mean reversion\n",
-        )
-        .unwrap();
+        std::fs::write(notes_dir.join("ideas.md"), b"# my ideas\n\n- mean reversion\n").unwrap();
 
         let events = drain(&mut wl).await;
         assert!(
             matches!(&events[0], WizardEvent::ToolCall { tool, .. } if tool == "list_strategies_folder"),
-            "first event: {:?}", events.first()
+            "first event: {:?}",
+            events.first()
         );
         match &events[1] {
             WizardEvent::ToolResult { tool, result } => {
                 assert_eq!(tool, "list_strategies_folder");
                 let arr = result.as_array().expect("entries[]");
                 assert!(
-                    arr.iter().any(|e| e.get("rel_path").and_then(|v| v.as_str())
-                        == Some("notes/ideas.md")),
+                    arr.iter()
+                        .any(|e| e.get("rel_path").and_then(|v| v.as_str()) == Some("notes/ideas.md")),
                     "expected ideas.md in {result}"
                 );
             }
@@ -2661,8 +2658,7 @@ mod tests {
     #[tokio::test]
     async fn wizard_reads_strategies_file() {
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, _pool, td, _sid) =
-            loop_with_session(mock, "open my note", ContextScope::Workspace).await;
+        let (wl, _pool, td, _sid) = loop_with_session(mock, "open my note", ContextScope::Workspace).await;
 
         let notes_dir = td.path().join("strategies").join("notes");
         std::fs::create_dir_all(&notes_dir).unwrap();

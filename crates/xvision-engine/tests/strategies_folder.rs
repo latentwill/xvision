@@ -33,13 +33,7 @@ async fn build_pool(td: &TempDir) -> SqlitePool {
 async fn build_ctx() -> (ApiContext, TempDir) {
     let td = tempfile::tempdir().unwrap();
     let pool = build_pool(&td).await;
-    let ctx = ApiContext::new(
-        pool,
-        Actor::Cli {
-            user: "test".into(),
-        },
-        td.path().to_path_buf(),
-    );
+    let ctx = ApiContext::new(pool, Actor::Cli { user: "test".into() }, td.path().to_path_buf());
     (ctx, td)
 }
 
@@ -95,11 +89,15 @@ async fn list_and_read_json_file() {
     touch(&file, br#"{"name":"recipe"}"#);
     let _ = td;
 
-    let entries = strategies_folder::list(&ctx, Some("strategy-files")).await.unwrap();
+    let entries = strategies_folder::list(&ctx, Some("strategy-files"))
+        .await
+        .unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, FileKind::Json);
 
-    let body = strategies_folder::read(&ctx, "strategy-files/recipe.json").await.unwrap();
+    let body = strategies_folder::read(&ctx, "strategy-files/recipe.json")
+        .await
+        .unwrap();
     assert_eq!(body.kind, FileKind::Json);
     assert!(body.content.contains("recipe"));
 }
@@ -248,7 +246,9 @@ async fn read_missing_file_returns_not_found() {
     let (ctx, _td) = build_ctx().await;
     std::fs::create_dir_all(strategies_folder::folder_root(&ctx.xvn_home)).unwrap();
 
-    let err = strategies_folder::read(&ctx, "notes/missing.md").await.unwrap_err();
+    let err = strategies_folder::read(&ctx, "notes/missing.md")
+        .await
+        .unwrap_err();
     assert!(matches!(err, ApiError::NotFound(_)), "got {err:?}");
 }
 

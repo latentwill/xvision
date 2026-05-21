@@ -22,6 +22,13 @@
 //!
 //! A scenario with any `Critical` data-defect finding requires
 //! `--allow-defective-data` to proceed.
+//!
+//! # Volume-share excess findings (V2E, eval-cost-model-per-bar-and-volume-share)
+//!
+//! `volume_share_excess` kind: emitted by the backtest simulator when
+//! `order_qty / bar_volume > volume_limit` in the `VolumeShare` slippage
+//! model. Payload: `{ requested_qty, bar_volume, cap_binding_qty,
+//! fill_share }`. `produced_by_check = "sim:volume_cap"`.
 
 pub mod extractor;
 
@@ -210,5 +217,53 @@ fn data_defect_summary(defect: &DataDefect) -> String {
         DataDefect::WickShockOutlier { at, ts, sigma } => {
             format!("bar[{at}] at {ts} is a wick-shock outlier (sigma={sigma:.1})")
         }
+    }
+}
+
+/// Build a `volume_share_excess` finding (V2E — eval-cost-model-per-bar-and-volume-share).
+///
+/// Emitted once per binding cycle when `order_qty / bar_volume > volume_limit`
+/// in the `VolumeShare` slippage model.
+///
+/// - `produced_by_check`: `"sim:volume_cap"` (simulator volume-cap gate)
+/// - `evidence_cycle_ids`: contains the `cycle_id` whose order hit the cap
+pub fn make_volume_share_excess_finding(
+    run_id: &str,
+    cycle_id: u32,
+    requested_qty: f64,
+    bar_volume: f64,
+    cap_binding_qty: f64,
+    fill_share: f64,
+) -> Finding {
+    Finding {
+        id: Ulid::new().to_string(),
+        run_id: run_id.to_owned(),
+        kind: "volume_share_excess".to_owned(),
+        severity: Severity::Warning,
+        summary: format!(
+            "Order qty {:.6} exceeds volume cap ({:.4} of bar volume {:.2}); capped to {:.6}",
+            requested_qty, fill_share, bar_volume, cap_binding_qty,
+        ),
+        evidence: serde_json::json!({
+            "requested_qty": requested_qty,
+            "bar_volume": bar_volume,
+            "cap_binding_qty": cap_binding_qty,
+            "fill_share": fill_share,
+        }),
+        extracted_at: Utc::now(),
+        schema_version: FINDING_SCHEMA_VERSION.to_owned(),
+        evidence_cycle_ids: Some(vec![cycle_id.to_string()]),
+        produced_by_check: Some("sim:volume_cap".to_owned()),
+        eval_review_id: None,
+        review_type: None,
+        confidence: None,
+        title: Some("Volume share cap binding".to_owned()),
+        description: Some(
+            "The requested order size exceeds the configured volume_limit fraction of bar volume. \
+             Fill was capped; partial fill semantics apply."
+                .to_owned(),
+        ),
+        recommendation: None,
+        created_at: None,
     }
 }
