@@ -1,30 +1,19 @@
 //! Safety gate tests — pause blocks broker submit, venue mismatch detection,
 //! per-run limit breach, and audit row written for every gated action.
 
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+mod support;
+
+use support::safety_pool_with_migrations;
 use xvision_engine::safety::{
     AuthContext, SafetyGate, SafetyGateError, SafetyLimitCheck, SafetyLimits, SafetyManager, VenueLabel,
 };
-
-async fn safety_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/030_safety_state_and_audit.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool
-}
 
 fn anon() -> AuthContext {
     AuthContext::api_anonymous()
 }
 
 async fn open_manager() -> SafetyManager {
-    let pool = safety_pool().await;
+    let pool = safety_pool_with_migrations().await;
     let mgr = SafetyManager::new(pool);
     mgr.bootstrap(false).await.unwrap();
     mgr

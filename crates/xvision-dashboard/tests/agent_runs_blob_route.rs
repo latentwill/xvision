@@ -5,29 +5,11 @@
 //! `model_calls` / `agent_runs` rows, then exercises the route's four
 //! response codes (200 / 400 / 403 / 404).
 
-use tempfile::TempDir;
-use xvision_dashboard::{server::build_router, AppState};
+mod support;
+
+use support::live_server;
+use xvision_dashboard::AppState;
 use xvision_observability::BlobStore;
-
-async fn boot_server() -> (String, TempDir, AppState) {
-    let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init dashboard state");
-    let router = build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.expect("axum serve failed");
-    });
-
-    (base_url, tmp, state)
-}
 
 async fn seed_run(state: &AppState, run_id: &str, retention: &str) {
     sqlx::query(
@@ -100,7 +82,7 @@ fn write_blob(state: &AppState, payload: &[u8]) -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn returns_200_with_blob_bytes_when_owned_by_run_and_retention_allows() {
-    let (base_url, _tmp, state) = boot_server().await;
+    let (base_url, _tmp, state) = live_server().await;
     let run_id = "run_blob_200";
     let payload = b"hello world prompt body";
 
@@ -130,7 +112,7 @@ async fn returns_200_with_blob_bytes_when_owned_by_run_and_retention_allows() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn returns_200_when_owned_by_model_response_ref() {
-    let (base_url, _tmp, state) = boot_server().await;
+    let (base_url, _tmp, state) = live_server().await;
     let run_id = "run_blob_model_response";
     let payload = b"hello world response body";
 
@@ -147,7 +129,7 @@ async fn returns_200_when_owned_by_model_response_ref() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn returns_200_when_owned_by_tool_output_ref() {
-    let (base_url, _tmp, state) = boot_server().await;
+    let (base_url, _tmp, state) = live_server().await;
     let run_id = "run_blob_tool_output";
     let payload = b"hello world tool output";
 
@@ -164,7 +146,7 @@ async fn returns_200_when_owned_by_tool_output_ref() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn returns_400_for_non_hex_ref() {
-    let (base_url, _tmp, _state) = boot_server().await;
+    let (base_url, _tmp, _state) = live_server().await;
     // 64 chars but contains a `/` (URL-encoded) — most server routers
     // would split the path; we test with an obviously-wrong ref that
     // still routes (uppercase rejected; non-hex letter included).
@@ -176,7 +158,7 @@ async fn returns_400_for_non_hex_ref() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn returns_404_when_ref_not_owned_by_run() {
-    let (base_url, _tmp, state) = boot_server().await;
+    let (base_url, _tmp, state) = live_server().await;
     let run_id = "run_blob_404a";
     let payload = b"orphan payload";
 
@@ -192,7 +174,7 @@ async fn returns_404_when_ref_not_owned_by_run() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn returns_404_when_blob_missing_on_disk_but_referenced_in_db() {
-    let (base_url, _tmp, state) = boot_server().await;
+    let (base_url, _tmp, state) = live_server().await;
     let run_id = "run_blob_404b";
 
     seed_run(&state, run_id, "full_debug").await;
@@ -208,7 +190,7 @@ async fn returns_404_when_blob_missing_on_disk_but_referenced_in_db() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn returns_403_when_retention_is_hash_only() {
-    let (base_url, _tmp, state) = boot_server().await;
+    let (base_url, _tmp, state) = live_server().await;
     let run_id = "run_blob_403";
     let payload = b"this should not be served";
 
@@ -232,7 +214,7 @@ async fn returns_403_when_retention_is_hash_only() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn returns_404_for_unknown_run_id() {
-    let (base_url, _tmp, _state) = boot_server().await;
+    let (base_url, _tmp, _state) = live_server().await;
     let blob_hex = "1111111111111111111111111111111111111111111111111111111111111111";
     let url = format!("{base_url}/api/agent-runs/run_does_not_exist/blobs/{blob_hex}");
     let resp = reqwest::get(&url).await.unwrap();

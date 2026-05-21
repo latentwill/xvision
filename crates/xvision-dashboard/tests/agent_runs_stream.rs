@@ -9,33 +9,15 @@ use std::time::Duration;
 
 use chrono::Utc;
 use futures_util::StreamExt;
-use tempfile::TempDir;
+mod support;
+
+use support::live_server;
 use tokio::time::timeout;
-use xvision_dashboard::{server::build_router, AppState};
+use xvision_dashboard::AppState;
 use xvision_observability::types::{RunStatus, SpanKind};
 use xvision_observability::{
     ModelCallFinishedEvent, RunEvent, RunFinishedEvent, RunStartedEvent, SpanStartedEvent,
 };
-
-async fn boot_server() -> (String, TempDir, AppState) {
-    let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init dashboard state");
-    let router = build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.expect("axum serve failed");
-    });
-
-    (base_url, tmp, state)
-}
 
 /// Insert a minimal `agent_runs` row so `build_export` can produce a
 /// snapshot for the stream's first event. We bypass the bus on this
@@ -115,7 +97,7 @@ async fn publish_live_events(bus: &xvision_observability::RunEventBus, run_id: &
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
-    let (base_url, _tmp, state) = boot_server().await;
+    let (base_url, _tmp, state) = live_server().await;
 
     let run_id = "run_sse_int_01";
     seed_run_row(&state, run_id).await;
@@ -194,7 +176,7 @@ async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_stream_returns_404_for_unknown_run() {
-    let (base_url, _tmp, _state) = boot_server().await;
+    let (base_url, _tmp, _state) = live_server().await;
     let url = format!("{base_url}/api/agent-runs/run_does_not_exist/stream");
     let client = reqwest::Client::new();
     let resp = timeout(Duration::from_secs(5), client.get(&url).send())

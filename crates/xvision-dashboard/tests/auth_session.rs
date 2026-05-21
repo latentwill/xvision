@@ -30,38 +30,13 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use axum_test::TestServer;
-use tempfile::TempDir;
-use tower::ServiceExt;
-use xvision_dashboard::{
-    server::build_router,
-    AppState,
+mod support;
+
+use support::{
+    router_with_dashboard_migrations, state_with_dashboard_migrations, test_server_with_dashboard_migrations,
 };
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async fn boot() -> (TestServer, TempDir) {
-    let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init dashboard state");
-    // Run dashboard migrations so dashboard_sessions + auth_audit tables exist.
-    state.run_dashboard_migrations().await.expect("dashboard migrations");
-    let server = TestServer::new(build_router(state)).unwrap();
-    (server, tmp)
-}
-
-async fn boot_router_for_non_loopback() -> (Router, TempDir) {
-    let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init dashboard state");
-    state.run_dashboard_migrations().await.expect("dashboard migrations");
-    let router = build_router(state);
-    (router, tmp)
-}
+use tower::ServiceExt;
+use xvision_dashboard::server::build_router;
 
 /// Send a request from a non-loopback IP via `tower::ServiceExt::oneshot`.
 async fn send_from_public(
@@ -76,9 +51,7 @@ async fn send_from_public(
     if let Some(token) = auth_header {
         builder = builder.header("authorization", format!("Bearer {token}"));
     }
-    let body_bytes = body
-        .map(|v| serde_json::to_vec(&v).unwrap())
-        .unwrap_or_default();
+    let body_bytes = body.map(|v| serde_json::to_vec(&v).unwrap()).unwrap_or_default();
     let mut request = builder.body(Body::from(body_bytes)).unwrap();
     // Inject a public IP so require_auth_middleware sees a non-loopback client.
     request
@@ -100,7 +73,7 @@ async fn send_from_public(
 
 #[tokio::test]
 async fn create_session_returns_201_and_token() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server_with_dashboard_migrations().await;
     let response = server
         .post("/api/auth/session")
         .json(&serde_json::json!({}))
@@ -116,7 +89,7 @@ async fn create_session_returns_201_and_token() {
 
 #[tokio::test]
 async fn current_session_returns_401_without_token() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server_with_dashboard_migrations().await;
     // No authorization header — expect 401.
     let response = server.get("/api/auth/session/current").await;
     response.assert_status(StatusCode::UNAUTHORIZED);
@@ -124,7 +97,7 @@ async fn current_session_returns_401_without_token() {
 
 #[tokio::test]
 async fn current_session_returns_session_info_with_valid_token() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server_with_dashboard_migrations().await;
 
     // Create a session.
     let create_resp = server
@@ -149,7 +122,7 @@ async fn current_session_returns_session_info_with_valid_token() {
 
 #[tokio::test]
 async fn delete_session_revokes_token() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server_with_dashboard_migrations().await;
 
     // Create a session.
     let create_resp = server
@@ -185,7 +158,7 @@ async fn delete_session_revokes_token() {
 /// is wired correctly by sampling one route from each major section.
 #[tokio::test]
 async fn mutating_routes_return_401_from_non_loopback_without_token() {
-    let (router, _tmp) = boot_router_for_non_loopback().await;
+    let (router, _tmp) = router_with_dashboard_migrations().await;
 
     let cases: &[(&str, &str, Option<serde_json::Value>)] = &[
         // agents
@@ -199,7 +172,11 @@ async fn mutating_routes_return_401_from_non_loopback_without_token() {
         // settings — provider add
         ("POST", "/api/settings/providers", Some(serde_json::json!({}))),
         // settings — danger
-        ("POST", "/api/settings/danger/reset-workspace", Some(serde_json::json!({}))),
+        (
+            "POST",
+            "/api/settings/danger/reset-workspace",
+            Some(serde_json::json!({})),
+        ),
         // wizard
         ("POST", "/api/wizard/chat", Some(serde_json::json!({}))),
         // chat-rail
@@ -233,7 +210,7 @@ async fn mutating_routes_return_401_from_non_loopback_without_token() {
 
 #[tokio::test]
 async fn read_only_routes_are_accessible_without_session_token() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server_with_dashboard_migrations().await;
 
     let read_only_routes = [
         "/api/health",
@@ -263,7 +240,7 @@ async fn read_only_routes_are_accessible_without_session_token() {
 #[tokio::test]
 async fn mutating_routes_loopback_pass_without_session_token() {
     // axum_test::TestServer uses loopback, so no session token needed.
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server_with_dashboard_migrations().await;
 
     // POST /api/scenarios — requires valid body but should not 401.
     let response = server
@@ -286,11 +263,7 @@ async fn expired_session_token_is_rejected() {
     use chrono::Utc;
     use xvision_dashboard::auth::session::{hash_token, insert_session};
 
-    let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init state");
-    state.run_dashboard_migrations().await.expect("migrations");
+    let (state, _tmp) = state_with_dashboard_migrations().await;
     let pool = state.pool.clone();
 
     // Manually insert an already-expired session.
