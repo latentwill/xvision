@@ -313,17 +313,18 @@ Implications:
 
 Open questions for intake (do not decide on the board):
 
-- Cortex sidecar HTTP shape: roll our own, or align to mem0 / Honcho /
-  mempalace? (User precedent on the `todoworld` project leaned toward
-  consuming an existing library; here they explicitly said "rust cortex
-  memory" so the bias is Rust-native, but a thin wrapper over an existing
-  vector store is still on the table.)
-- Persistence: SQLite-backed, embedded? Or external (Qdrant / Postgres /
-  in-process)? Affects sidecar vs in-crate decision.
-- Forget / TTL semantics: explicit user-driven forget vs time decay.
+- Cortex sidecar HTTP shape (V2D v1 ships in-process; sidecar is a v2
+  follow-up gated on F28 plugin architecture). xvision is locked on
+  the cortex architecture — no third-party memory-system adapters are
+  on the table.
+- Persistence: V2D shipped SQLite-backed embedded; the sidecar form
+  may revisit external stores (Qdrant / Postgres) at the F28 stage.
+- Forget / TTL semantics: explicit user-driven forget shipped in V2D;
+  time decay deferred until V3 autoresearcher gates a real eviction
+  story.
 - Privacy: the install-customizer spec already binds the sidecar to
-  127.0.0.1 with no external creds; confirm that survives the per-agent
-  toggle.
+  127.0.0.1 with no external creds; V2D inherited that for the
+  in-process variant.
 
 Intake doc when this opens: `team/intake/<date>-v2d.md`. Expected
 decomposition (preliminary, conductor refines on intake):

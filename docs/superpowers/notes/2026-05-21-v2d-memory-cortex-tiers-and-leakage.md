@@ -194,7 +194,7 @@ via Phase 3's threading).
 
 The `xvision-memory` crate's own `memory_items` table (not the engine
 migration) gets extended *before* Phase 1.5 ships. Engine migration
-027 (V2D's claim) is unaffected — it only adds `agent_slots.memory_mode`.
+029 (V2D's claim) is unaffected — it only adds `agent_slots.memory_mode`.
 
 ```sql
 ALTER TABLE memory_items ADD COLUMN tier TEXT NOT NULL DEFAULT 'observation';

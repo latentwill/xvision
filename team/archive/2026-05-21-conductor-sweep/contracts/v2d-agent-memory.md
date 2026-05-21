@@ -92,7 +92,6 @@ dependency graph).
 - Cross-namespace retrieval blending (v1.1, Decision 4).
 - TTL / time decay / LRU eviction (Decision 7 — operator-driven
   forget is enough until V3).
-- mem0 / Honcho / mempalace third-party adapters.
 - Memory-aware findings inside the eval-review surface (post-V2D
   follow-up).
 - Any change to `crates/xvision-engine/src/eval/**` — eval-review

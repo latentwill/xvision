@@ -2191,7 +2191,7 @@ Expected: PASS. The migration registry shows `029 | agent-slot-memory-mode | mer
 
 ## What this plan does NOT cover
 
-Per the intake's "Out of this intake" section: the `cortex-http` sidecar (deferred to v2 after F28), cross-host memory sharing, tool-driven `memory_recall` / `memory_write` (v1.1), cross-namespace retrieval blending (v1.1), embedder-swap re-embedding (v1.1), memory-aware findings (post-V2D), TTL / time decay (operator-driven forget is enough until V3), and any mem0 / Honcho / mempalace third-party adapter (the store's narrow public API leaves room without changing the dispatcher seam). The implementation plan above stays inside the V2D scope.
+Per the intake's "Out of this intake" section: the `cortex-http` sidecar (deferred to v2 after F28), cross-host memory sharing, tool-driven `memory_recall` / `memory_write` (v1.1), cross-namespace retrieval blending (v1.1), embedder-swap re-embedding (v1.1), memory-aware findings (post-V2D), and TTL / time decay (operator-driven forget is enough until V3). The implementation plan above stays inside the V2D scope. **xvision is locked on the cortex architecture — no third-party memory-system adapters are in scope, now or as a follow-up.**
 
 ## What lands in `team/MANIFEST.md`
 
