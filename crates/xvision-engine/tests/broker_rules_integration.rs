@@ -29,7 +29,7 @@
 use std::sync::Arc;
 
 use chrono::{Duration, TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
@@ -51,7 +51,11 @@ use xvision_engine::tools::ToolRegistry;
 // ── Infrastructure ────────────────────────────────────────────────────────────
 
 async fn fresh_store() -> RunStore {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     sqlx::query("PRAGMA foreign_keys = OFF")
         .execute(&pool)
         .await

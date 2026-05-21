@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_engine::{
     agents::AgentSlot,
     api::{
@@ -10,7 +10,11 @@ use xvision_engine::{
 };
 
 async fn ctx_with_strategies_dir() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
