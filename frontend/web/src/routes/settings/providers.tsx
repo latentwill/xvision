@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Card } from "@/components/primitives/Card";
+import {
+  ResponsiveListCard,
+  useListState,
+  useListUrlState,
+  type FilterDef,
+  type SortOption,
+} from "@/components/lists";
+import { MListRow } from "@/components/lists/MListRow";
 import { ApiError } from "@/api/client";
 import {
   addProvider,
@@ -108,10 +115,33 @@ function isHttpUrl(s: string): boolean {
   return /^https?:\/\/.+/i.test(s);
 }
 
+const PROVIDER_SORT_OPTIONS: SortOption[] = [
+  { value: "name", label: "Name A → Z" },
+  { value: "kind", label: "Kind (Anthropic → OpenAI-compat)" },
+];
+
+const PROVIDER_KIND_FILTER: FilterDef = {
+  id: "kind",
+  label: "Kind",
+  options: [
+    { value: "all", label: "All kinds" },
+    { value: "anthropic", label: "Anthropic" },
+    { value: "openai-compat", label: "OpenAI-compat" },
+  ],
+};
+
+const PROVIDER_COLUMNS = [
+  { key: "name", label: "Name" },
+  { key: "kind", label: "Kind" },
+  { key: "base_url", label: "Base URL" },
+  { key: "key", label: "Key", align: "right" as const },
+  { key: "actions", label: "", align: "right" as const },
+];
+
 export function SettingsProvidersRoute() {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
-  const list = useQuery({
+  const providersQuery = useQuery({
     queryKey: settingsKeys.providers(),
     queryFn: listProviders,
   });
@@ -121,107 +151,128 @@ export function SettingsProvidersRoute() {
     onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.providers() }),
   });
 
-  if (list.isPending) {
-    return (
-      <Card className="p-6 animate-pulse">
-        <div className="h-4 w-48 bg-surface-elev rounded mb-3" />
-        <div className="h-4 w-72 bg-surface-elev rounded" />
-      </Card>
-    );
-  }
-  if (list.isError || !list.data) {
-    return (
-      <Card className="p-6">
-        <div className="font-serif italic text-[20px] text-danger mb-2">
-          couldn't load providers
-        </div>
-        <p className="m-0 mb-4 text-text-2 text-[13px]">
-          <code className="text-danger font-mono text-[12px]">
-            {errorMessage(list.error)}
-          </code>
-        </p>
-        <button
-          onClick={() => list.refetch()}
-          className="px-3 py-1.5 rounded text-[12px] border border-border text-text hover:border-text-3"
-        >
-          Retry
-        </button>
-      </Card>
-    );
-  }
+  const rows: ProviderRow[] = providersQuery.data?.providers ?? [];
 
-  const rows = list.data.providers;
+  const list = useListState<ProviderRow>({
+    rows,
+    filters: [PROVIDER_KIND_FILTER],
+    sortOptions: PROVIDER_SORT_OPTIONS,
+    filterFn: (row, query, values) => {
+      const kind = values.kind ?? "all";
+      if (kind !== "all" && row.kind !== kind) return false;
+      const needle = query.trim().toLowerCase();
+      if (needle.length === 0) return true;
+      return (
+        row.name.toLowerCase().includes(needle) ||
+        row.kind.toLowerCase().includes(needle)
+      );
+    },
+    sortFn: (rs, key) => {
+      switch (key) {
+        case "kind":
+          return [...rs].sort((a, b) => {
+            const cmp = a.kind.localeCompare(b.kind);
+            return cmp !== 0 ? cmp : a.name.localeCompare(b.name);
+          });
+        case "name":
+        default:
+          return [...rs].sort((a, b) => a.name.localeCompare(b.name));
+      }
+    },
+  });
+  useListUrlState("settings-providers", list);
 
   return (
     <div className="space-y-5">
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
-              LLM providers
-            </h3>
-            <p className="m-0 mt-1 text-text-3 text-[12px]">
-              Models xvision can call for the intern, agent rail, and
-              authoring wizard.
-            </p>
-          </div>
-          {!adding && rows.length > 0 ? (
-            <button
-              onClick={() => setAdding(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded text-[12px] border border-border text-text hover:border-text-3"
-            >
-              + Add provider
-            </button>
-          ) : null}
+      {/* Page chrome — title + add affordance + intro + add form stay above
+          the standardised list card. The list itself handles loading /
+          error / empty / populated states. */}
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+            LLM providers
+          </h3>
+          <p className="m-0 mt-1 text-text-3 text-[12px]">
+            Models xvision can call for the intern, agent rail, and
+            authoring wizard.
+          </p>
         </div>
-        <p className="m-0 mb-4 text-text-3 text-[12px] leading-snug">
-          Paste a provider's API key to enable it. Keys are stored on disk
-          under <code className="font-mono">~/.xvn/secrets/providers.toml</code>{" "}
-          (owner-only) — they never round-trip through this UI again.
-        </p>
-
-        {adding || rows.length === 0 ? (
-          <AddProviderForm
-            allowCancel={rows.length > 0}
-            onCancel={() => setAdding(false)}
-            onAdded={() => {
-              setAdding(false);
-              qc.invalidateQueries({ queryKey: settingsKeys.providers() });
-            }}
-          />
+        {!adding && rows.length > 0 ? (
+          <button
+            onClick={() => setAdding(true)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded text-[12px] border border-border text-text hover:border-text-3"
+          >
+            + Add provider
+          </button>
         ) : null}
+      </div>
+      <p className="m-0 text-text-3 text-[12px] leading-snug">
+        Paste a provider's API key to enable it. Keys are stored on disk
+        under <code className="font-mono">~/.xvn/secrets/providers.toml</code>{" "}
+        (owner-only) — they never round-trip through this UI again.
+      </p>
 
-        {rows.length > 0 && (
-          <table className="w-full mt-2">
-            <thead>
-              <tr className="text-text-3 text-[11px] uppercase tracking-wider text-left">
-                <th className="py-2 pr-3 font-normal">Name</th>
-                <th className="py-2 pr-3 font-normal">Kind</th>
-                <th className="py-2 pr-3 font-normal">Base URL</th>
-                <th className="py-2 pr-3 font-normal text-right">Key</th>
-                <th className="py-2 pr-0 font-normal text-right" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <ProviderRowView
-                  key={p.name}
-                  row={p}
-                  onRemove={() => remove.mutate(p.name)}
-                  removeError={
-                    remove.variables === p.name && remove.isError
-                      ? errorMessage(remove.error)
-                      : null
-                  }
-                  removeBusy={
-                    remove.variables === p.name && remove.isPending
-                  }
-                />
-              ))}
-            </tbody>
-          </table>
+      {adding || rows.length === 0 ? (
+        <AddProviderForm
+          allowCancel={rows.length > 0}
+          onCancel={() => setAdding(false)}
+          onAdded={() => {
+            setAdding(false);
+            qc.invalidateQueries({ queryKey: settingsKeys.providers() });
+          }}
+        />
+      ) : null}
+
+      <ResponsiveListCard<ProviderRow>
+        listId="settings-providers"
+        title="Configured providers"
+        count={list.totalRows}
+        toolbar={{
+          search: { ...list.search, placeholder: "Search name or kind…" },
+          filters: list.filters,
+          sort: list.sort,
+          clearAll: list.clearAll,
+        }}
+        columns={PROVIDER_COLUMNS}
+        rows={list.rows}
+        loading={providersQuery.isPending}
+        error={
+          providersQuery.isError
+            ? {
+                message: errorMessage(providersQuery.error),
+                retry: () => providersQuery.refetch(),
+              }
+            : null
+        }
+        empty={
+          rows.length === 0
+            ? "No providers yet — use the form above to add one."
+            : "No providers match these filters."
+        }
+        renderRow={(p) => (
+          <ProviderRowView
+            key={p.name}
+            row={p}
+            onRemove={() => remove.mutate(p.name)}
+            removeError={
+              remove.variables === p.name && remove.isError
+                ? errorMessage(remove.error)
+                : null
+            }
+            removeBusy={remove.variables === p.name && remove.isPending}
+          />
         )}
-      </Card>
+        renderMobileRow={(p) => (
+          <MListRow
+            key={p.name}
+            title={p.name}
+            subtitle={safeUrlHost(p.base_url) || p.base_url}
+            badge={p.kind}
+            badgeColor={p.kind === "anthropic" ? "gold" : "muted"}
+            meta={`env: ${p.api_key_env || "—"}`}
+          />
+        )}
+      />
     </div>
   );
 }
