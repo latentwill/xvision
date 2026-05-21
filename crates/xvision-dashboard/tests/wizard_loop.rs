@@ -19,18 +19,20 @@
 //!    (prepop + blank draft) so the operator decides. Test verifies the
 //!    wizard does not silently skip the prepop offer.
 //!
-//! The tests use `MockDispatch::sequence` to script the model's tool-use
-//! loop. The folder tool calls are routed to the real tempdir-backed
-//! filesystem, so the assertions test that the model (as scripted) behaves
-//! according to the folder-recall rules.
+//! The tests wrap `MockDispatch::sequence` in a request recorder. The folder
+//! tool calls are routed to the real tempdir-backed filesystem, and the
+//! assertions verify the follow-up model request contains the real tool
+//! results plus the folder-recall policy that should drive the final answer.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tempfile::TempDir;
 use tokio::fs;
 use xvision_dashboard::wizard_loop::{WizardEvent, WizardLoop};
 use xvision_dashboard::AppState;
-use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
+use xvision_engine::agent::llm::{
+    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
+};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -75,6 +77,43 @@ fn tool_call_names(events: &[WizardEvent]) -> Vec<String> {
         .collect()
 }
 
+struct RecordingDispatch {
+    inner: MockDispatch,
+    requests: Arc<Mutex<Vec<LlmRequest>>>,
+}
+
+#[async_trait::async_trait]
+impl LlmDispatch for RecordingDispatch {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        self.requests.lock().unwrap().push(req.clone());
+        self.inner.complete(req).await
+    }
+}
+
+fn recording_sequence(responses: Vec<LlmResponse>) -> (Arc<dyn LlmDispatch>, Arc<Mutex<Vec<LlmRequest>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(RecordingDispatch {
+        inner: MockDispatch::sequence(responses),
+        requests: requests.clone(),
+    });
+    (dispatch, requests)
+}
+
+fn request_text(req: &LlmRequest) -> String {
+    format!(
+        "{}\n{}",
+        req.system_prompt,
+        serde_json::to_string(&req.messages).expect("messages serialize")
+    )
+}
+
+fn assert_contains(haystack: &str, needle: &str, context: &str) {
+    assert!(
+        haystack.contains(needle),
+        "{context} must contain {needle:?}; got: {haystack}"
+    );
+}
+
 // ── test 1: non-empty folder regression ────────────────────────────────────
 
 /// When `list_strategies_folder` returns 3 entries the wizard narrative must
@@ -90,19 +129,29 @@ async fn non_empty_folder_wizard_cites_rel_path() {
     let strat_dir = tmp.path().join("strategies");
     fs::create_dir_all(strat_dir.join("notes")).await.unwrap();
     fs::create_dir_all(strat_dir.join("docs")).await.unwrap();
-    fs::create_dir_all(strat_dir.join("strategy-files")).await.unwrap();
+    fs::create_dir_all(strat_dir.join("strategy-files"))
+        .await
+        .unwrap();
 
     let entry_a = "notes/macd-notes.md";
     let entry_b = "docs/rsi-reference.txt";
     let entry_c = "strategy-files/btc-breakout.json";
 
-    fs::write(strat_dir.join("notes/macd-notes.md"), b"# MACD notes").await.unwrap();
-    fs::write(strat_dir.join("docs/rsi-reference.txt"), b"RSI reference").await.unwrap();
-    fs::write(strat_dir.join("strategy-files/btc-breakout.json"), b"{}").await.unwrap();
+    fs::write(strat_dir.join("notes/macd-notes.md"), b"# MACD notes")
+        .await
+        .unwrap();
+    fs::write(strat_dir.join("docs/rsi-reference.txt"), b"RSI reference")
+        .await
+        .unwrap();
+    fs::write(strat_dir.join("strategy-files/btc-breakout.json"), b"{}")
+        .await
+        .unwrap();
 
     // Script the model: (1) call list_strategies_folder, then (2) emit a
-    // narrative that cites one of the returned paths.
-    let mock = Arc::new(MockDispatch::sequence(vec![
+    // narrative that cites one of the returned paths. The recorder asserts
+    // that the second request contains the real tool result rel_paths, so the
+    // canned final text is not the only source of coverage.
+    let (mock, requests) = recording_sequence(vec![
         MockDispatch::tool_use("tu_1", "list_strategies_folder", serde_json::json!({})),
         LlmResponse {
             content: vec![ContentBlock::Text {
@@ -114,7 +163,7 @@ async fn non_empty_folder_wizard_cites_rel_path() {
             input_tokens: 10,
             output_tokens: 20,
         },
-    ]));
+    ]);
 
     let session_id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
         .await
@@ -133,11 +182,36 @@ async fn non_empty_folder_wizard_cites_rel_path() {
 
     let events = drain(&mut wl).await;
     let narrative = all_tokens(&events);
+    let requests = requests.lock().unwrap();
+    assert!(
+        requests.len() >= 2,
+        "tool-use loop must dispatch again after list_strategies_folder"
+    );
+    let second_request = request_text(&requests[1]);
+    assert_contains(
+        &second_request,
+        entry_a,
+        "second wizard request after non-empty folder result",
+    );
+    assert_contains(
+        &second_request,
+        entry_b,
+        "second wizard request after non-empty folder result",
+    );
+    assert_contains(
+        &second_request,
+        entry_c,
+        "second wizard request after non-empty folder result",
+    );
+    assert_contains(
+        &second_request,
+        "cite the returned entries by their `rel_path`",
+        "wizard system prompt",
+    );
 
     // Must cite at least one of the returned rel_paths.
-    let cites_a_path = narrative.contains(entry_a)
-        || narrative.contains(entry_b)
-        || narrative.contains(entry_c);
+    let cites_a_path =
+        narrative.contains(entry_a) || narrative.contains(entry_b) || narrative.contains(entry_c);
     assert!(
         cites_a_path,
         "wizard narrative must cite at least one rel_path from the folder result; \
@@ -145,7 +219,13 @@ async fn non_empty_folder_wizard_cites_rel_path() {
     );
 
     // Must NOT claim the folder is empty.
-    let empty_phrases = ["folder is empty", "folder appears empty", "folder was empty", "no files", "nothing in"];
+    let empty_phrases = [
+        "folder is empty",
+        "folder appears empty",
+        "folder was empty",
+        "no files",
+        "nothing in",
+    ];
     for phrase in empty_phrases {
         assert!(
             !narrative.to_ascii_lowercase().contains(phrase),
@@ -170,7 +250,7 @@ async fn empty_folder_named_pattern_offers_prepop_not_create_strategy() {
 
     // Script: (1) call list_strategies_folder (returns []), (2) call
     // list_strategy_ideas (returns []), (3) emit prepop offer narrative.
-    let mock = Arc::new(MockDispatch::sequence(vec![
+    let (mock, requests) = recording_sequence(vec![
         MockDispatch::tool_use("tu_1", "list_strategies_folder", serde_json::json!({})),
         MockDispatch::tool_use("tu_2", "list_strategy_ideas", serde_json::json!({})),
         LlmResponse {
@@ -184,7 +264,7 @@ async fn empty_folder_named_pattern_offers_prepop_not_create_strategy() {
             input_tokens: 10,
             output_tokens: 30,
         },
-    ]));
+    ]);
 
     let session_id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
         .await
@@ -204,6 +284,33 @@ async fn empty_folder_named_pattern_offers_prepop_not_create_strategy() {
     let events = drain(&mut wl).await;
     let tool_calls = tool_call_names(&events);
     let narrative = all_tokens(&events);
+    let requests = requests.lock().unwrap();
+    assert!(
+        requests.len() >= 3,
+        "named-pattern flow must dispatch after both empty folder tool results"
+    );
+    let final_request = request_text(&requests[2]);
+    assert_contains(
+        &final_request,
+        "make me a fibonacci+RSI strategy",
+        "named-pattern final wizard request",
+    );
+    assert_contains(
+        &final_request,
+        r#""content":"[]""#,
+        "named-pattern final wizard request",
+    );
+    assert_contains(
+        &final_request,
+        "Genuinely empty + named pattern",
+        "wizard system prompt",
+    );
+    assert_contains(
+        &final_request,
+        "explicitly offer `xvn strategies init`",
+        "wizard system prompt",
+    );
+    assert_contains(&final_request, "Do NOT jump straight", "wizard system prompt");
 
     // Must NOT have called create_strategy before offering prepop.
     assert!(
@@ -255,7 +362,7 @@ async fn empty_folder_general_request_offers_prepop() {
 
     // Script: (1) list_strategies_folder (returns []), (2) list_strategy_ideas
     // (returns []), (3) narrative offering both options.
-    let mock = Arc::new(MockDispatch::sequence(vec![
+    let (mock, requests) = recording_sequence(vec![
         MockDispatch::tool_use("tu_1", "list_strategies_folder", serde_json::json!({})),
         MockDispatch::tool_use("tu_2", "list_strategy_ideas", serde_json::json!({})),
         LlmResponse {
@@ -269,7 +376,7 @@ async fn empty_folder_general_request_offers_prepop() {
             input_tokens: 10,
             output_tokens: 30,
         },
-    ]));
+    ]);
 
     let session_id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
         .await
@@ -289,13 +396,39 @@ async fn empty_folder_general_request_offers_prepop() {
     let events = drain(&mut wl).await;
     let tool_calls = tool_call_names(&events);
     let narrative = all_tokens(&events);
+    let requests = requests.lock().unwrap();
+    assert!(
+        requests.len() >= 3,
+        "general empty-folder flow must dispatch after both empty folder tool results"
+    );
+    let final_request = request_text(&requests[2]);
+    assert_contains(
+        &final_request,
+        "make me a strategy",
+        "general empty-folder final wizard request",
+    );
+    assert_contains(
+        &final_request,
+        r#""content":"[]""#,
+        "general empty-folder final wizard request",
+    );
+    assert_contains(
+        &final_request,
+        "Genuinely empty + general request",
+        "wizard system prompt",
+    );
+    assert_contains(
+        &final_request,
+        "offer `xvn strategies init` as an option",
+        "wizard system prompt",
+    );
 
-    // The prepop offer must be present — either in narrative or as a tool
-    // call if the wizard calls it (but that's unusual without operator consent).
+    // The prepop offer must be visible in the emitted narrative. The
+    // list_strategy_ideas tool call alone is only state gathering; it is not
+    // an operator-facing offer.
     let offers_init = narrative.contains("init")
         || narrative.to_ascii_lowercase().contains("seed")
-        || narrative.to_ascii_lowercase().contains("prepop")
-        || tool_calls.contains(&"list_strategy_ideas".to_string());
+        || narrative.to_ascii_lowercase().contains("prepop");
 
     // If create_strategy was called the narrative must still mention init/seed.
     if tool_calls.contains(&"create_strategy".to_string()) {
