@@ -1,2 +1,6 @@
-// Surfaces barrel — surface compositions land here in this PR.
-export {};
+export * from "./RunChartV2";
+export * from "./CompareChartV2";
+export * from "./ScenarioChartV2";
+export * from "./StrategyChartV2";
+export * from "./LiveChartV2";
+export * from "./WizardPreviewChartV2";
