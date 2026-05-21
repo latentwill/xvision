@@ -23,6 +23,7 @@ pub mod chart;
 pub mod eval;
 pub mod experiment;
 pub mod health;
+pub mod memory;
 pub mod safety;
 pub mod scenario;
 pub mod search;
