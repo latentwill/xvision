@@ -38,6 +38,11 @@ sqlx            = { workspace = true, features = ["migrate"] }
 sysinfo         = { version = "0.32", default-features = false, features = ["system"] }
 # nix: SIGTERM delivery on Unix. Feature-gated in source via #[cfg(unix)].
 nix             = { version = "0.29", default-features = false, features = ["signal", "process"] }
+# sha2: SHA-256 for session token hashing in crate::auth::session.
+sha2            = "0.10"
+# getrandom: cryptographically random bytes for session token generation.
+# Already a transitive dep via ulid; declared explicitly for clarity.
+getrandom       = "0.2"
 
 [dev-dependencies]
 axum-test = "16"
