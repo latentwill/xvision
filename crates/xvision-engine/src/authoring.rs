@@ -223,6 +223,8 @@ pub async fn create_blank_strategy(
         trader_slot: None,
         risk: RiskPreset::Conservative.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     };
     store.save(&draft).await?;
     Ok(CreateStrategyOut { id })

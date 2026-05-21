@@ -13,6 +13,7 @@ serde = { workspace = true }
 [dependencies]
 xvision-core          = { path = "../xvision-core" }
 xvision-engine        = { path = "../xvision-engine" }
+xvision-filters       = { path = "../xvision-filters" }
 xvision-memory        = { path = "../xvision-memory" }
 xvision-observability = { path = "../xvision-observability" }
 axum            = { version = "0.7", features = ["macros", "multipart"] }

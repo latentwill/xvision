@@ -190,7 +190,9 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, strategy_id: &str) -> Strateg
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
-    strategy
+    strategy,
+    activation_mode: xvision_filters::ActivationMode::EveryBar,
+    filter: None,
 }
 
 fn long_open_dispatch() -> Arc<dyn LlmDispatch> {

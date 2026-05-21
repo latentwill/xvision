@@ -189,6 +189,8 @@ async fn list_returns_summaries_for_existing_strategys() {
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     };
     store.save(&strategy).await.unwrap();
 

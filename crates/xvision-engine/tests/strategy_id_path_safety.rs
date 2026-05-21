@@ -37,6 +37,8 @@ fn strategy_with_id(id: &str) -> Strategy {
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 

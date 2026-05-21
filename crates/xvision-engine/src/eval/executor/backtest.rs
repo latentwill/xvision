@@ -513,6 +513,18 @@ impl BacktestExecutor {
         let mut inherit_remaining: u32 = 0;
         let mut prev_position: f64 = position;
 
+        // track-plan-touches: build the per-run filter hook. Returns
+        // `None` for `EveryBar` strategies (the default) — the loop
+        // body short-circuits the hook call when `filter_hook.is_none()`.
+        // Errors (CompiledRules, FilterGated without filter) surface
+        // here and abort the run, matching the rest of the pre-loop
+        // strategy invariants.
+        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?;
+        // Cache the pool handle for the hook's per-bar inserts. We
+        // reach through `store` rather than threading it as a separate
+        // parameter so the executor's surface area stays unchanged.
+        let pool = store.pool().clone();
+
         // executor-trait-extraction: per-bar loop is now driven by the
         // BarSource trait. The indexed access (T+1 look-ahead,
         // decision_bars push, history slicing) still uses the local
@@ -559,6 +571,25 @@ impl BacktestExecutor {
                 scenario_progress_pct,
                 current_ts: bar.timestamp,
             });
+
+            // track-plan-touches: per-bar filter evaluation. `None`
+            // means EveryBar strategy (no gating). When the outcome's
+            // decision is not `Active`, skip the agent pipeline for
+            // this bar — record the evaluation, emit the event, then
+            // `continue` past pipeline / decision / fill / metrics
+            // work. The bar is still counted in `decision_bars` (already
+            // pushed above) so post-loop baselines see the same bar
+            // slice the strategy would have considered.
+            if let Some(hook) = filter_hook.as_mut() {
+                let in_position = position.abs() > f64::EPSILON;
+                let outcome = hook.evaluate(bar, in_position);
+                hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &outcome)
+                    .await?;
+                if !outcome.decision.is_active() {
+                    i += 1;
+                    continue;
+                }
+            }
 
             // History slice: last `history_window` bars strictly before
             // the current bar. `combined_idx` points at `bar` inside the

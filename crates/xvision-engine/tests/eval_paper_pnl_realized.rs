@@ -89,7 +89,9 @@ fn minimal_strategy() -> Strategy {
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
         hypothesis: None,
-    }
+    },
+    activation_mode: xvision_filters::ActivationMode::EveryBar,
+    filter: None,
 }
 
 /// 4-bar scenario at 60-min cadence. Bars have rising closes so fills are

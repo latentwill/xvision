@@ -104,6 +104,8 @@ fn tiny_risk_strategy() -> Strategy {
         }),
         risk,
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 
