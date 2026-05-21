@@ -1117,6 +1117,7 @@ impl XvisionTools {
                 scenario_id: scenario_id.clone(),
                 mode,
                 params_override: None,
+                limits: None,
             };
 
             let entry = match api_eval::run(&ctx, run_req).await {

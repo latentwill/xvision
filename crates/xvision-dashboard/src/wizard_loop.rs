@@ -917,6 +917,7 @@ impl WizardLoop {
                     scenario_id: scenario.id,
                     mode,
                     params_override: None,
+                    limits: None,
                 };
                 let out = api_eval::start_run(
                     &xvision_engine::api::ApiContext::new(

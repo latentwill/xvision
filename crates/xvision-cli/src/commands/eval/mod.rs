@@ -118,6 +118,30 @@ pub struct RunArgs {
     /// Output the final Run as JSON.
     #[arg(long)]
     pub json: bool,
+
+    // ===== Hard limits (cli-operator-safety-p0 slice 2/3) =====
+    /// Max decision cycles. Breach cancels the run with a stable
+    /// reason in the `error` field. Backtest mode only — paper mode
+    /// silently ignores the cap today.
+    #[arg(long)]
+    pub max_decisions: Option<u32>,
+    /// Max cumulative input tokens across all model calls in the run.
+    /// Requires `--cancel-on-token-limit` to actually cancel; without
+    /// the flag, the cap is advisory.
+    #[arg(long)]
+    pub max_input_tokens: Option<u64>,
+    /// Max cumulative output tokens across all model calls in the run.
+    /// Same advisory/strict semantics as `--max-input-tokens`.
+    #[arg(long)]
+    pub max_output_tokens: Option<u64>,
+    /// Max wall-clock seconds the run may take. Always a hard cap.
+    #[arg(long)]
+    pub max_wall_clock_secs: Option<u64>,
+    /// When set, breach of a token cap (`--max-input-tokens` or
+    /// `--max-output-tokens`) cancels the run. Without the flag, token
+    /// caps are advisory (logged but not enforced).
+    #[arg(long)]
+    pub cancel_on_token_limit: bool,
 }
 
 #[derive(Args, Debug)]
@@ -375,11 +399,31 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         .await
         .exit_with(XvnExit::Upstream)?;
     let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
+
+    // Build `EvalLimits` from the CLI flags. If every cap is `None`
+    // and `cancel_on_token_limit` is false, leave `limits: None` so
+    // the engine's pre-limits codepath stays hot.
+    let limits = {
+        let l = xvision_engine::eval::limits::EvalLimits {
+            max_decisions: args.max_decisions,
+            max_input_tokens: args.max_input_tokens,
+            max_output_tokens: args.max_output_tokens,
+            max_wall_clock_secs: args.max_wall_clock_secs,
+            cancel_on_token_limit: args.cancel_on_token_limit,
+        };
+        if l.is_empty() && !l.cancel_on_token_limit {
+            None
+        } else {
+            Some(l)
+        }
+    };
+
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
         scenario_id: args.scenario.clone(),
         mode,
         params_override: None,
+        limits,
     };
 
     println!(

@@ -72,6 +72,14 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // 027 added `bars_content_hash`, `manifest_canonical`, `bars_manifest`
+    // columns referenced by `RunStore::create`. Without this migration the
+    // insert fails with "insert eval_runs id=..." for every test in this
+    // file. Pre-existing scaffold gap introduced by PR #415.
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext::new(
@@ -223,6 +231,7 @@ async fn run_with_deps_completes_paper_run_with_mocks() {
             scenario_id: scenario_id.into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -257,6 +266,7 @@ async fn run_returns_not_found_for_unknown_strategy() {
             scenario_id: canonical_scenarios()[0].id.clone(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -288,6 +298,7 @@ async fn run_returns_not_found_for_unknown_scenario() {
             scenario_id: "no-such-scenario".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -321,6 +332,7 @@ async fn run_rejects_openrouter_legacy_anthropic_model_before_queueing() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Backtest,
             params_override: None,
+            limits: None,
         },
     )
     .await;
@@ -366,6 +378,7 @@ async fn run_with_deps_completes_backtest_run_with_mocks() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Backtest,
             params_override: None,
+            limits: None,
         },
         None, // backtest mode doesn't need a broker
         dispatch,
@@ -392,6 +405,84 @@ async fn run_with_deps_completes_backtest_run_with_mocks() {
 }
 
 #[tokio::test]
+async fn backtest_run_cancels_when_max_decisions_breaches() {
+    // Hard-limits acceptance test (cli-operator-safety-p0 slice 2/3).
+    // Launch a backtest with `max_decisions = 1`. The mock dispatch
+    // emits a real decision every bar, so after the first decision the
+    // executor must mark the run Cancelled with the breach reason in
+    // `error` instead of running to completion.
+    let (ctx, _d) = ctx_with_tables().await;
+    let agent_id = "01TESTSTRATEGY00000LIMIT0001";
+    save_test_strategy(&ctx, agent_id).await;
+    ensure_flash_fixture();
+
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
+        r#"{"action":"long_open","conviction":0.5,"justification":"limit-test"}"#,
+    ));
+    let tools = Arc::new(ToolRegistry::empty());
+
+    let result = eval::run_with_deps(
+        &ctx,
+        EvalRunRequest {
+            agent_id: agent_id.into(),
+            scenario_id: "flash-crash-2024-08".into(),
+            mode: RunMode::Backtest,
+            params_override: None,
+            limits: Some(xvision_engine::eval::limits::EvalLimits {
+                max_decisions: Some(1),
+                ..Default::default()
+            }),
+        },
+        None,
+        dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
+        tools,
+    )
+    .await;
+
+    // The executor `anyhow::bail!`s with the breach reason when the
+    // limit fires, which propagates up as `ApiError::Internal`. The
+    // RUN ROW in the DB carries the truth: status = Cancelled, error
+    // = the stable "cancelled by limit:" prefix.
+    let err = result.expect_err("max_decisions=1 must cause the executor to bail");
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("max_decisions=1"),
+        "the error message should name the cap that fired: got {err_msg:?}",
+    );
+
+    // Find the latest run for this agent and assert the persisted state.
+    let runs = eval::list(
+        &ctx,
+        eval::ListRunsRequest {
+            agent_id: Some(agent_id.into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("list runs");
+    let run = runs.first().expect("at least one run was created");
+    assert_eq!(
+        run.status,
+        RunStatus::Cancelled,
+        "max_decisions=1 must land the persisted run as Cancelled, got {:?}",
+        run.status,
+    );
+    let error = run
+        .error
+        .as_deref()
+        .expect("a limit-cancel must write a reason into Run.error");
+    assert!(
+        error.contains("max_decisions=1"),
+        "Run.error should name the breach reason: got {error:?}",
+    );
+    assert!(
+        error.starts_with("cancelled by limit:"),
+        "Run.error should start with the limit-cancel prefix so the dashboard can distinguish operator cancels: got {error:?}",
+    );
+}
+
+#[tokio::test]
 async fn run_rejects_paper_mode_without_broker() {
     let (ctx, _d) = ctx_with_tables().await;
     let agent_id = "01TESTSTRATEGY000000000000PAP";
@@ -407,6 +498,7 @@ async fn run_rejects_paper_mode_without_broker() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         None,
         dispatch,
@@ -439,6 +531,7 @@ async fn run_writes_audit_row_on_completion() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -478,6 +571,7 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -639,6 +733,7 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Backtest,
             params_override: None,
+            limits: None,
         },
     )
     .await;
