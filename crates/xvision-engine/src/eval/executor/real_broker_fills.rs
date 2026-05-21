@@ -84,11 +84,24 @@ impl FillSink for RealBrokerFills {
         };
         let side = if trade_long { Side::Buy } else { Side::Sell };
 
-        let size = if want_flat {
-            req.pos.abs()
+        let target_pos = if want_flat {
+            0.0
         } else {
             let usd_at_risk = req.equity * req.risk_pct;
-            (usd_at_risk / req.next_open).max(0.0)
+            let units = (usd_at_risk / req.next_open).max(0.0);
+            if want_long {
+                units
+            } else {
+                -units
+            }
+        };
+
+        let size = if req.pos == 0.0 {
+            target_pos.abs()
+        } else if target_pos == 0.0 {
+            req.pos.abs()
+        } else {
+            req.pos.abs() + target_pos.abs()
         };
 
         if !size.is_finite() || size <= 0.0 {
@@ -135,8 +148,14 @@ impl FillSink for RealBrokerFills {
                     size
                 };
                 let signed_filled = if trade_long { fill_size } else { -fill_size };
-                let new_pos = if want_flat { 0.0 } else { req.pos + signed_filled };
-                let new_entry = if new_pos == 0.0 { 0.0 } else { fill_price };
+                let new_pos = req.pos + signed_filled;
+                let new_entry = if new_pos == 0.0 {
+                    0.0
+                } else if req.pos != 0.0 && new_pos.signum() == req.pos.signum() {
+                    req.entry
+                } else {
+                    fill_price
+                };
                 let realized = if req.pos != 0.0 {
                     req.pos * (fill_price - req.entry)
                 } else {
@@ -165,7 +184,11 @@ impl FillSink for RealBrokerFills {
                     provenance,
                     fill_branch: Some(crate::eval::executor::trace_types::FillBranch::NextOpenOnly),
                     aggressor_side: Some(crate::eval::executor::trace_types::AggressorSide::Taker),
-                    order_state: Some(OrderState::Filled),
+                    order_state: Some(if fill_size + f64::EPSILON < size {
+                        OrderState::PartiallyFilled
+                    } else {
+                        OrderState::Filled
+                    }),
                     volume_cap_hit: None,
                 }
             }

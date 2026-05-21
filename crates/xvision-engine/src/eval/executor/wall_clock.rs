@@ -80,9 +80,12 @@ mod tests {
     #[test]
     fn default_uses_real_wall_clock_within_a_few_seconds_of_utc_now() {
         let clock = WallClock::default();
+        let before = Utc::now() - chrono::Duration::seconds(1);
         let from_clock = clock.now();
-        let from_utc = Utc::now();
-        let delta = (from_utc.timestamp() - from_clock.timestamp()).abs();
-        assert!(delta <= 2, "WallClock::default must follow Utc::now");
+        let after = Utc::now() + chrono::Duration::seconds(1);
+        assert!(
+            from_clock >= before && from_clock <= after,
+            "WallClock::default must follow Utc::now: from_clock={from_clock}, before={before}, after={after}"
+        );
     }
 }

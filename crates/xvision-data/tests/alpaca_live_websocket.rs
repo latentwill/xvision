@@ -22,35 +22,45 @@ fn ts(seconds: i64) -> DateTime<Utc> {
 }
 
 fn bar_at(seconds: i64) -> MarketBar {
+    let seed = seconds as f64 / 60.0;
     MarketBar {
         timestamp: ts(seconds),
-        open: 1.0,
-        high: 1.1,
-        low: 0.9,
-        close: 1.05,
-        volume: 100.0,
+        open: seed + 1.0,
+        high: seed + 1.1,
+        low: seed + 0.9,
+        close: seed + 1.05,
+        volume: seed * 100.0,
     }
+}
+
+fn assert_bar_eq(actual: &MarketBar, expected: &MarketBar) {
+    assert_eq!(actual.timestamp, expected.timestamp);
+    assert_eq!(actual.open, expected.open);
+    assert_eq!(actual.high, expected.high);
+    assert_eq!(actual.low, expected.low);
+    assert_eq!(actual.close, expected.close);
+    assert_eq!(actual.volume, expected.volume);
 }
 
 #[tokio::test]
 async fn yields_bars_in_order_without_gaps() {
     let granularity = BarGranularity::Minute1;
-    let items = vec![
-        LiveBarItem::Bar(bar_at(60)),
-        LiveBarItem::Bar(bar_at(120)),
-        LiveBarItem::Bar(bar_at(180)),
-    ];
+    let expected = vec![bar_at(60), bar_at(120), bar_at(180)];
+    let items = expected.iter().cloned().map(LiveBarItem::Bar).collect::<Vec<_>>();
     let mut sub = client().subscription_from_stream(granularity, stream::iter(items));
 
     let mut bars = Vec::new();
     while let Some(evt) = sub.recv().await {
         match evt {
-            BarStreamEvent::Bar(b) => bars.push(b.timestamp),
+            BarStreamEvent::Bar(b) => bars.push(b),
             BarStreamEvent::GapDetected { .. } => panic!("no gap expected here"),
             BarStreamEvent::BudgetExhausted { .. } => panic!("no budget exhaustion expected here"),
         }
     }
-    assert_eq!(bars, vec![ts(60), ts(120), ts(180)]);
+    assert_eq!(bars.len(), expected.len());
+    for (actual, expected) in bars.iter().zip(expected.iter()) {
+        assert_bar_eq(actual, expected);
+    }
 }
 
 #[tokio::test]
@@ -71,11 +81,11 @@ async fn emits_gap_detected_when_a_bar_is_skipped() {
     // Expected order: Bar(60), Bar(120), GapDetected(expected=180, observed=300), Bar(300).
     assert_eq!(events.len(), 4, "got events: {events:?}");
     match &events[0] {
-        BarStreamEvent::Bar(b) => assert_eq!(b.timestamp, ts(60)),
+        BarStreamEvent::Bar(b) => assert_bar_eq(b, &bar_at(60)),
         other => panic!("expected Bar(60), got {other:?}"),
     }
     match &events[1] {
-        BarStreamEvent::Bar(b) => assert_eq!(b.timestamp, ts(120)),
+        BarStreamEvent::Bar(b) => assert_bar_eq(b, &bar_at(120)),
         other => panic!("expected Bar(120), got {other:?}"),
     }
     match &events[2] {
@@ -89,7 +99,7 @@ async fn emits_gap_detected_when_a_bar_is_skipped() {
         other => panic!("expected GapDetected at index 2, got {other:?}"),
     }
     match &events[3] {
-        BarStreamEvent::Bar(b) => assert_eq!(b.timestamp, ts(300)),
+        BarStreamEvent::Bar(b) => assert_bar_eq(b, &bar_at(300)),
         other => panic!("expected Bar(300) after gap, got {other:?}"),
     }
 }
@@ -152,7 +162,8 @@ async fn successful_bar_resets_disconnect_counter() {
         0,
         "budget should NOT exhaust when a successful bar landed mid-stream; events: {events:?}"
     );
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, BarStreamEvent::Bar(b) if b.timestamp == ts(60))));
+    assert!(events.iter().any(|e| matches!(e, BarStreamEvent::Bar(b) if {
+        assert_bar_eq(b, &bar_at(60));
+        true
+    })));
 }

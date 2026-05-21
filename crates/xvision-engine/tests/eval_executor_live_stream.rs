@@ -114,6 +114,7 @@ async fn websocket_budget_exhaustion_transitions_to_polling_fallback() {
         LiveBarItem::Disconnect { reason: "a".into() },
         LiveBarItem::Disconnect { reason: "b".into() },
         LiveBarItem::Disconnect { reason: "c".into() },
+        LiveBarItem::Bar(market_bar_at(999)),
     ];
     let ws_sub = client()
         .with_reconnect_budget(2)
