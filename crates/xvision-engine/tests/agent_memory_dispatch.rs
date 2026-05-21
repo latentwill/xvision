@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use chrono::TimeZone;
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::agent::memory_recorder::{MemoryRecorder, RecallResult};
@@ -13,14 +14,29 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_memory::store::MemoryStore;
-use xvision_memory::types::{MemoryItem, MemoryMode};
+use xvision_memory::types::{MemoryItem, MemoryMode, Tier};
+
+fn pattern_item(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
+    MemoryItem {
+        id: id.into(),
+        namespace: ns.into(),
+        tier: Tier::Pattern,
+        text: text.into(),
+        embedding: emb,
+        created_at: chrono::Utc::now(),
+        run_id: None,
+        scenario_id: None,
+        cycle_idx: None,
+        training_window_end: None,
+    }
+}
 
 #[tokio::test]
 async fn recall_returns_empty_when_mode_is_off() {
     let store = MemoryStore::open_in_memory().await.unwrap();
     let recorder = MemoryRecorder::new(std::sync::Arc::new(store));
     let r = recorder
-        .recall(MemoryMode::Off, "agent-1", "any query text", 5)
+        .recall(MemoryMode::Off, "agent-1", "any query text", 5, None)
         .await
         .unwrap();
     assert!(matches!(r, RecallResult::Skipped));
@@ -29,19 +45,12 @@ async fn recall_returns_empty_when_mode_is_off() {
 #[tokio::test]
 async fn recall_returns_top_k_for_agent_scoped() {
     let store = MemoryStore::open_in_memory().await.unwrap();
-    // Pre-seed two items in the agent-scoped namespace.
+    // Pre-seed two Patterns in the agent-scoped namespace. Recall is
+    // Patterns-only, so seeding Observations here would never surface.
     for (id, text) in [("m1", "first note"), ("m2", "second note")] {
         store
-            .upsert(
-                &MemoryItem {
-                    id: id.into(),
-                    namespace: "agent:agent-1".into(),
-                    text: text.into(),
-                    embedding: vec![1.0, 0.0],
-                    created_at: chrono::Utc::now(),
-                    source_run_id: None,
-                    source_cycle_id: None,
-                },
+            .upsert_pattern(
+                &pattern_item(id, "agent:agent-1", text, vec![1.0, 0.0]),
                 "test-embedder",
             )
             .await
@@ -53,7 +62,7 @@ async fn recall_returns_top_k_for_agent_scoped() {
         vec![1.0, 0.0],
     );
     let r = recorder
-        .recall(MemoryMode::AgentScoped, "agent-1", "query", 5)
+        .recall(MemoryMode::AgentScoped, "agent-1", "query", 5, None)
         .await
         .unwrap();
     match r {
@@ -66,7 +75,7 @@ async fn recall_returns_top_k_for_agent_scoped() {
 }
 
 #[tokio::test]
-async fn record_writes_into_correct_namespace() {
+async fn record_writes_observation_into_correct_namespace() {
     let store = MemoryStore::open_in_memory().await.unwrap();
     let store_arc = std::sync::Arc::new(store);
     let recorder = MemoryRecorder::with_static_embedder(
@@ -79,17 +88,22 @@ async fn record_writes_into_correct_namespace() {
             MemoryMode::AgentScoped,
             "agent-1",
             "decision text",
-            None,
-            None,
+            "run-1".into(),
+            "scenario-1".into(),
+            7,
         )
         .await
         .unwrap();
-    let hits = store_arc
-        .query("agent:agent-1", &[0.0, 1.0], 5)
-        .await
-        .unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].text, "decision text");
+    // Observations are not visible via recall; assert via a direct
+    // SQL probe so we can prove the write landed.
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM memory_items WHERE namespace = ? AND tier = 'observation'",
+    )
+    .bind("agent:agent-1")
+    .fetch_one(store_arc.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.0, 1);
 }
 
 /// Dispatch double that captures every `LlmRequest` it observes so we can
@@ -139,11 +153,12 @@ impl LlmDispatch for CapturingDispatch {
 
 #[tokio::test]
 async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
-    // Arrange: pre-seed two memories in the agent-scoped namespace,
+    // Arrange: pre-seed two PATTERNS in the agent-scoped namespace,
     // build a MemoryRecorder with a deterministic StaticEmbedder, and
     // attach it to SlotInput. The CapturingDispatch then lets us peek
     // at the LlmRequest.system_prompt the recall+assembly seam handed
-    // to the dispatcher.
+    // to the dispatcher. Recall is Patterns-only under F+L+T, so the
+    // pre-seed MUST be Patterns or nothing would surface.
     let store = MemoryStore::open_in_memory().await.unwrap();
     let store_arc = Arc::new(store);
     for (id, text) in [
@@ -151,16 +166,8 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
         ("m2", "SECOND_PRIOR_OBS_FIXTURE"),
     ] {
         store_arc
-            .upsert(
-                &MemoryItem {
-                    id: id.into(),
-                    namespace: "agent:agent-xyz".into(),
-                    text: text.into(),
-                    embedding: vec![1.0, 0.0],
-                    created_at: chrono::Utc::now(),
-                    source_run_id: None,
-                    source_cycle_id: None,
-                },
+            .upsert_pattern(
+                &pattern_item(id, "agent:agent-xyz", text, vec![1.0, 0.0]),
                 "test-embedder",
             )
             .await
@@ -197,6 +204,10 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
         memory: Some(recorder),
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-xyz".into(),
+        scenario_start: None,
+        run_id: "run-fixture".into(),
+        scenario_id: "scenario-fixture".into(),
+        cycle_idx: 0,
     })
     .await
     .expect("execute_slot must succeed with CapturingDispatch");
@@ -212,11 +223,11 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
     );
     assert!(
         sys.contains("FIRST_PRIOR_OBS_FIXTURE"),
-        "expected first pre-seeded memory in system_prompt, got: {sys}",
+        "expected first pre-seeded pattern in system_prompt, got: {sys}",
     );
     assert!(
         sys.contains("SECOND_PRIOR_OBS_FIXTURE"),
-        "expected second pre-seeded memory in system_prompt, got: {sys}",
+        "expected second pre-seeded pattern in system_prompt, got: {sys}",
     );
     assert!(
         sys.contains("BASE_SYSTEM_PROMPT"),
@@ -233,11 +244,144 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
 }
 
 #[tokio::test]
+async fn recall_wraps_each_pattern_in_caselaw_framing() {
+    // Phase 1.5 L (rhetorical) wrapper — each recalled Pattern is
+    // framed as a precedent ("A prior decision noted ... Consider
+    // whether this situation matches the present cycle.") instead of a
+    // raw bullet.
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    let store_arc = Arc::new(store);
+    store_arc
+        .upsert_pattern(
+            &pattern_item("p1", "agent:agent-caselaw", "RANGE_BOUND_FADES_BREAKOUTS", vec![1.0, 0.0]),
+            "test-embedder",
+        )
+        .await
+        .unwrap();
+
+    let recorder = Arc::new(MemoryRecorder::with_static_embedder(
+        Arc::clone(&store_arc),
+        "test-embedder",
+        vec![1.0, 0.0],
+    ));
+
+    let slot = LLMSlot {
+        role: "trader".into(),
+        prompt: "BASE".into(),
+        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        allowed_tools: Vec::new(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4-6".into()),
+    };
+    let dispatch = Arc::new(CapturingDispatch::new("{}"));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    execute_slot(SlotInput {
+        slot: &slot,
+        upstream_inputs: serde_json::json!({}),
+        dispatch: dispatch.clone(),
+        tools,
+        response_schema: None,
+        max_tokens: None,
+        temperature: None,
+        obs: None,
+        memory: Some(recorder),
+        memory_mode: MemoryMode::AgentScoped,
+        agent_id: "agent-caselaw".into(),
+        scenario_start: None,
+        run_id: "r".into(),
+        scenario_id: "s".into(),
+        cycle_idx: 0,
+    })
+    .await
+    .unwrap();
+
+    let sys = dispatch.last_system_prompt();
+    assert!(
+        sys.contains("A prior decision noted:"),
+        "case-law wrapper opener missing in system_prompt: {sys}",
+    );
+    assert!(
+        sys.contains("Consider whether this situation matches the present cycle."),
+        "case-law wrapper closer missing in system_prompt: {sys}",
+    );
+    assert!(
+        sys.contains("RANGE_BOUND_FADES_BREAKOUTS"),
+        "pattern body missing in system_prompt: {sys}",
+    );
+}
+
+#[tokio::test]
+async fn recall_excludes_pattern_when_training_window_overlaps_scenario() {
+    // Phase 1.5 T (temporal) leakage guard — a Pattern whose
+    // training_window_end falls AFTER the current scenario start must
+    // be filtered out, even though it lives in the right namespace.
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    let store_arc = Arc::new(store);
+    let mut p = pattern_item(
+        "p1",
+        "agent:agent-leakage",
+        "TRAINED_INSIDE_THE_REPLAY_WINDOW",
+        vec![1.0, 0.0],
+    );
+    p.training_window_end = Some(chrono::Utc.with_ymd_and_hms(2024, 9, 1, 0, 0, 0).unwrap());
+    store_arc.upsert_pattern(&p, "test-embedder").await.unwrap();
+
+    let recorder = Arc::new(MemoryRecorder::with_static_embedder(
+        Arc::clone(&store_arc),
+        "test-embedder",
+        vec![1.0, 0.0],
+    ));
+
+    let slot = LLMSlot {
+        role: "trader".into(),
+        prompt: "BASE".into(),
+        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        allowed_tools: Vec::new(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4-6".into()),
+    };
+    let dispatch = Arc::new(CapturingDispatch::new("{}"));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    let scenario_start = chrono::Utc.with_ymd_and_hms(2024, 8, 1, 0, 0, 0).unwrap();
+
+    execute_slot(SlotInput {
+        slot: &slot,
+        upstream_inputs: serde_json::json!({}),
+        dispatch: dispatch.clone(),
+        tools,
+        response_schema: None,
+        max_tokens: None,
+        temperature: None,
+        obs: None,
+        memory: Some(recorder),
+        memory_mode: MemoryMode::AgentScoped,
+        agent_id: "agent-leakage".into(),
+        scenario_start: Some(scenario_start),
+        run_id: "r".into(),
+        scenario_id: "s".into(),
+        cycle_idx: 0,
+    })
+    .await
+    .unwrap();
+
+    let sys = dispatch.last_system_prompt();
+    assert!(
+        !sys.contains("<prior_observations>"),
+        "training window overlap must suppress the prior_observations block entirely, got: {sys}",
+    );
+    assert!(
+        !sys.contains("TRAINED_INSIDE_THE_REPLAY_WINDOW"),
+        "leaked pattern body present in system_prompt: {sys}",
+    );
+}
+
+#[tokio::test]
 async fn execute_slot_writes_final_decision_into_namespace() {
     // Companion to the recall test: after the final EndTurn turn the
-    // recorder should have a new entry in the agent-scoped namespace
-    // carrying the assistant's final text. Uses a fresh in-memory
-    // store so we can assert hit count == 1.
+    // recorder should have a new Observation entry in the agent-scoped
+    // namespace carrying the assistant's final text.
     let store = MemoryStore::open_in_memory().await.unwrap();
     let store_arc = Arc::new(store);
     let recorder = Arc::new(MemoryRecorder::with_static_embedder(
@@ -269,16 +413,27 @@ async fn execute_slot_writes_final_decision_into_namespace() {
         memory: Some(recorder),
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-xyz".into(),
+        scenario_start: None,
+        run_id: "run-fixture".into(),
+        scenario_id: "scenario-fixture".into(),
+        cycle_idx: 0,
     })
     .await
     .unwrap();
 
-    let hits = store_arc
-        .query("agent:agent-xyz", &[0.25, 0.75], 5)
-        .await
-        .unwrap();
-    assert_eq!(hits.len(), 1, "memory_write must persist exactly one item");
-    assert_eq!(hits[0].text, "FINAL_DECISION_FIXTURE_TEXT");
+    // Observations aren't returned by `query` (Patterns-only), so probe
+    // SQL directly to assert exactly one Observation landed with the
+    // final assistant text.
+    let row: (i64, String) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(GROUP_CONCAT(text), '') \
+         FROM memory_items WHERE namespace = ? AND tier = 'observation'",
+    )
+    .bind("agent:agent-xyz")
+    .fetch_one(store_arc.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.0, 1);
+    assert!(row.1.contains("FINAL_DECISION_FIXTURE_TEXT"));
 }
 
 /// Build a minimal `Strategy` whose `agents` slot is populated so
@@ -316,32 +471,35 @@ fn pipeline_fixture_strategy() -> Strategy {
 
 /// End-to-end smoke test for the V2D Phase 3 wiring bridge.
 ///
-/// Builds a `PipelineInputs` whose `memory_recorder` is `Some`, holds a
-/// pre-seeded namespace, and carries one `ResolvedAgentSlot` with
-/// `memory_mode = AgentScoped` + a non-empty `agent_id`. After
-/// `run_pipeline` returns, the recorder's store must contain a NEW item
-/// under `agent:<agent_id>` (in addition to the pre-seed) — proving the
-/// recall+write seam actually fired through the pipeline call site, not
-/// just through `execute_slot` directly (which the sibling tests cover).
+/// Builds a `PipelineInputs` whose `memory_recorder` is `Some` and one
+/// `ResolvedAgentSlot` with `memory_mode = AgentScoped` + a non-empty
+/// `agent_id`. After `run_pipeline` returns, the recorder's store must
+/// contain exactly one new Observation in the agent-scoped namespace —
+/// proving the recall+write seam fired through the pipeline call site.
+///
+/// Under F+L+T this test pre-seeds nothing (a pre-seed Observation
+/// would never surface to recall, and a pre-seed Pattern would change
+/// the assertion shape from the original test); instead it just
+/// asserts the count goes from 0 → 1.
 #[tokio::test]
 async fn pipeline_threads_memory_recorder_to_execute_slot() {
     let store = MemoryStore::open_in_memory().await.unwrap();
     let store_arc = Arc::new(store);
 
-    // Pre-seed one memory in the agent-scoped namespace so we can
-    // distinguish "the recorder fired and wrote a new item" from
-    // "the recorder never touched the store".
+    // Pre-seed one Pattern in the agent-scoped namespace so recall has
+    // something to surface AND so we can prove the recorder ran by
+    // counting Observations (which only the recorder writes) post-run.
+    // Patterns + Observations live in the same table, distinguished by
+    // tier — so the assertion after run_pipeline checks the
+    // tier='observation' count specifically.
     store_arc
-        .upsert(
-            &MemoryItem {
-                id: "preseed-1".into(),
-                namespace: "agent:agent-pipeline-fixture".into(),
-                text: "PRESEED_FIXTURE".into(),
-                embedding: vec![0.5, 0.5],
-                created_at: chrono::Utc::now(),
-                source_run_id: None,
-                source_cycle_id: None,
-            },
+        .upsert_pattern(
+            &pattern_item(
+                "preseed-pattern-1",
+                "agent:agent-pipeline-fixture",
+                "PRESEED_PATTERN_FIXTURE",
+                vec![0.5, 0.5],
+            ),
             "test-embedder",
         )
         .await
@@ -385,6 +543,13 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         tools,
         obs: None,
         memory_recorder: Some(recorder),
+        // Live/paper-style call (no temporal filter) so the preseed
+        // Pattern surfaces to recall — proving the recall path actually
+        // ran inside execute_slot.
+        scenario_start: None,
+        run_id: "pipeline-run-1".into(),
+        scenario_id: "pipeline-scenario-1".into(),
+        cycle_idx: 0,
     })
     .await
     .expect("run_pipeline must succeed");
@@ -393,27 +558,37 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         "trader-role slot must populate PipelineOutputs.trader",
     );
 
-    // The store now contains the preseed plus exactly one new item that
-    // carries the dispatched assistant text. If the recorder were not
-    // threaded, the store would still hold only the preseed.
-    let hits = store_arc
-        .query("agent:agent-pipeline-fixture", &[0.5, 0.5], 10)
-        .await
-        .unwrap();
+    // Observations live alongside Patterns in the same table — probe
+    // via direct SQL because recall (Patterns-only) hides them. Expect
+    // exactly one new Observation carrying the assistant's final text.
+    let row: (i64, String) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(GROUP_CONCAT(text), '') \
+         FROM memory_items WHERE namespace = ? AND tier = 'observation'",
+    )
+    .bind("agent:agent-pipeline-fixture")
+    .fetch_one(store_arc.pool())
+    .await
+    .unwrap();
     assert_eq!(
-        hits.len(),
-        2,
-        "pipeline must write exactly one new memory item alongside the preseed; \
-         got {hits:?}",
+        row.0, 1,
+        "pipeline must write exactly one new Observation; got count={}, texts={}",
+        row.0, row.1,
     );
     assert!(
-        hits.iter().any(|m| m.text.contains("PIPELINE_THREADED_DECISION")),
-        "new memory item must carry the assistant's final text, proving the \
-         recorder ran inside execute_slot via the pipeline; got {hits:?}",
+        row.1.contains("PIPELINE_THREADED_DECISION"),
+        "new Observation must carry the assistant's final text, proving the \
+         recorder ran inside execute_slot via the pipeline; got texts={}",
+        row.1,
     );
-    assert!(
-        hits.iter().any(|m| m.text == "PRESEED_FIXTURE"),
-        "preseed must survive — the recall+write path must not blow away \
-         existing namespace contents; got {hits:?}",
-    );
+
+    // And the preseed Pattern must still be there (recorder must not
+    // blow away namespace contents).
+    let pattern_row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM memory_items WHERE namespace = ? AND tier = 'pattern'",
+    )
+    .bind("agent:agent-pipeline-fixture")
+    .fetch_one(store_arc.pool())
+    .await
+    .unwrap();
+    assert_eq!(pattern_row.0, 1, "preseed pattern must survive");
 }

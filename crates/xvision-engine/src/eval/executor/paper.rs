@@ -857,6 +857,14 @@ impl PaperExecutor {
                 tools: tools.clone(),
                 obs: self.obs_emitter.clone(),
                 memory_recorder: self.memory_recorder.clone(),
+                // V2D Phase 1.5 — paper-eval replay is also bound to a
+                // historical scenario window, so we forward the start
+                // date for Pattern recall filtering. Run/scenario
+                // provenance flows down to Observation writes.
+                scenario_start: Some(scenario.time_window.start),
+                run_id: run.id.clone(),
+                scenario_id: scenario.id.clone(),
+                cycle_idx: decision_idx as i64,
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;

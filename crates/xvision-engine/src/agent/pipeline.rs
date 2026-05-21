@@ -82,6 +82,23 @@ pub struct PipelineInputs<'a> {
     /// store + embedder configured.
     pub memory_recorder:
         Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    /// V2D Phase 1.5 — current scenario start, forwarded into
+    /// `SlotInput.scenario_start` so the recorder's recall path can
+    /// exclude Patterns whose `training_window_end` overlaps the
+    /// scenario. `None` is the safe default (live/paper mode or
+    /// non-eval call sites — no temporal filter applied).
+    pub scenario_start: Option<chrono::DateTime<chrono::Utc>>,
+    /// V2D Phase 1.5 — current run id, forwarded into Observation
+    /// provenance on memory write. Empty string when no run is
+    /// associated.
+    pub run_id: String,
+    /// V2D Phase 1.5 — current scenario id, forwarded into Observation
+    /// provenance on memory write. Empty string when no scenario is
+    /// associated.
+    pub scenario_id: String,
+    /// V2D Phase 1.5 — current decision-cycle index, forwarded into
+    /// Observation provenance on memory write. `0` is the safe default.
+    pub cycle_idx: i64,
 }
 
 #[derive(Debug)]
@@ -119,6 +136,10 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             memory: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await?;
         total_in += out.input_tokens;
@@ -143,6 +164,10 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             memory: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await?;
         total_in += out.input_tokens;
@@ -167,6 +192,10 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             memory: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await?;
         total_in += out.input_tokens;
@@ -226,6 +255,10 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             memory: input.memory_recorder.clone(),
             memory_mode: resolved.memory_mode,
             agent_id: resolved.agent_id.clone(),
+            scenario_start: input.scenario_start,
+            run_id: input.run_id.clone(),
+            scenario_id: input.scenario_id.clone(),
+            cycle_idx: input.cycle_idx,
         })
         .await?;
         total_in += out.input_tokens;

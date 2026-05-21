@@ -132,6 +132,14 @@ async fn three_slot_pipeline_chains_outputs() {
         tools,
         obs: None,
         memory_recorder: None,
+
+        scenario_start: None,
+
+        run_id: String::new(),
+
+        scenario_id: String::new(),
+
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -178,6 +186,14 @@ async fn skips_missing_optional_slots() {
         tools,
         obs: None,
         memory_recorder: None,
+
+        scenario_start: None,
+
+        run_id: String::new(),
+
+        scenario_id: String::new(),
+
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -240,6 +256,14 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
         tools,
         obs: None,
         memory_recorder: None,
+
+        scenario_start: None,
+
+        run_id: String::new(),
+
+        scenario_id: String::new(),
+
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -306,6 +330,14 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
         tools,
         obs: None,
         memory_recorder: None,
+
+        scenario_start: None,
+
+        run_id: String::new(),
+
+        scenario_id: String::new(),
+
+        cycle_idx: 0,
     })
     .await
     .unwrap();

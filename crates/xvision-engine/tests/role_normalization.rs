@@ -104,6 +104,14 @@ async fn pipeline_output_assigned_for_role_variants() {
             tools,
             obs: None,
             memory_recorder: None,
+
+            scenario_start: None,
+
+            run_id: String::new(),
+
+            scenario_id: String::new(),
+
+            cycle_idx: 0,
         })
         .await
         .expect("pipeline runs");

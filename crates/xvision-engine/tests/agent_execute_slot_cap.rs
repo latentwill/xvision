@@ -123,6 +123,10 @@ async fn execute_slot_caps_runaway_tool_use_loop() {
         memory: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
     })
     .await
     .expect_err("runaway tool-use loop must terminate at the iteration cap");

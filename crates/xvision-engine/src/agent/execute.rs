@@ -12,12 +12,12 @@ use std::sync::Arc;
 use crate::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, ResponseSchema, StopReason,
 };
-use crate::agent::memory_recorder::RecallResult;
+use crate::agent::memory_recorder::{render_recalled_patterns, RecallResult};
 use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
-use xvision_memory::types::{MemoryMatch, Namespace};
+use xvision_memory::types::Namespace;
 
 /// Hard cap on the number of tool-use round-trips inside `execute_slot`.
 /// A pathological model that always emits `ToolUse` (no `EndTurn`) would
@@ -117,6 +117,22 @@ pub struct SlotInput<'a> {
     /// tests). With `memory: None` or `memory_mode: Off` this is
     /// ignored.
     pub agent_id: String,
+    /// V2D Phase 1.5 — current scenario start. Forwarded to
+    /// `MemoryRecorder::recall` so the store can exclude Patterns
+    /// whose `training_window_end` overlaps the scenario. `None` is
+    /// the safe default for live/paper mode (no replay risk) and for
+    /// every non-eval call site (unit tests, legacy `LLMSlot` pipeline).
+    pub scenario_start: Option<chrono::DateTime<chrono::Utc>>,
+    /// V2D Phase 1.5 — current run id. Plumbed into Observation
+    /// provenance on write. Empty string when memory is off / the
+    /// slot has no associated run (the recorder will no-op).
+    pub run_id: String,
+    /// V2D Phase 1.5 — current scenario id. Plumbed into Observation
+    /// provenance on write. Empty string when memory is off.
+    pub scenario_id: String,
+    /// V2D Phase 1.5 — current decision-cycle index. Plumbed into
+    /// Observation provenance on write. `0` when memory is off.
+    pub cycle_idx: i64,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
@@ -193,7 +209,13 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     let prior_block = if let Some(recorder) = &input.memory {
         let query_text = serde_json::to_string(&input.upstream_inputs).unwrap_or_default();
         match recorder
-            .recall(input.memory_mode, &input.agent_id, &query_text, 5)
+            .recall(
+                input.memory_mode,
+                &input.agent_id,
+                &query_text,
+                5,
+                input.scenario_start,
+            )
             .await?
         {
             RecallResult::Skipped => None,
@@ -212,7 +234,14 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                     k = matches.len(),
                     "V2D memory recall hits",
                 );
-                Some(render_prior_observations(&matches))
+                // Zero hits → no block. An empty `<prior_observations>`
+                // shell would just waste tokens and trip the leakage
+                // T-filter tests that assert absence on suppression.
+                if matches.is_empty() {
+                    None
+                } else {
+                    Some(render_recalled_patterns(&matches))
+                }
             }
         }
     } else {
@@ -414,8 +443,9 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                             input.memory_mode,
                             &input.agent_id,
                             &assistant_text,
-                            None,
-                            None,
+                            input.run_id.clone(),
+                            input.scenario_id.clone(),
+                            input.cycle_idx,
                         )
                         .await
                     {
@@ -505,32 +535,6 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
 
         iterations += 1;
     }
-}
-
-/// Truncate `text` to at most 160 chars, appending a `…` when trimmed.
-/// Used by the V2D memory recall/write paths for log-line previews and
-/// the `<prior_observations>` block.
-fn preview(text: &str) -> String {
-    let mut s: String = text.chars().take(160).collect();
-    if text.chars().count() > 160 {
-        s.push('…');
-    }
-    s
-}
-
-/// Render a stable `<prior_observations>` block prepended to the
-/// slot's system prompt when V2D recall surfaces hits. The block is
-/// deliberately compact (one bullet per match, truncated body) so it
-/// doesn't blow the prompt budget on a busy namespace.
-fn render_prior_observations(matches: &[MemoryMatch]) -> String {
-    let mut out = String::from("<prior_observations>\n");
-    for m in matches {
-        out.push_str("- ");
-        out.push_str(&preview(&m.text));
-        out.push('\n');
-    }
-    out.push_str("</prior_observations>");
-    out
 }
 
 pub(crate) fn response_schema_for_slot(slot: &LLMSlot) -> Option<ResponseSchema> {
@@ -651,6 +655,10 @@ mod tests {
             memory: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await
         .unwrap();
@@ -701,6 +709,10 @@ mod tests {
             memory: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await
         .unwrap();

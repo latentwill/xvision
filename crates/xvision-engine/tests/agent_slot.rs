@@ -31,6 +31,10 @@ async fn execute_slot_returns_parsed_output() {
         memory: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -82,6 +86,10 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
         memory: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -142,6 +150,10 @@ async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
         memory: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
     })
     .await
     .unwrap();
@@ -176,6 +188,10 @@ async fn execute_slot_succeeds_even_when_caller_passes_extra_inputs() {
         memory: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
     })
     .await;
     assert!(result.is_ok());

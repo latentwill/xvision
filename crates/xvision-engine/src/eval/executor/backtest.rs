@@ -653,6 +653,14 @@ impl BacktestExecutor {
                 tools: tools.clone(),
                 obs: self.obs_emitter.clone(),
                 memory_recorder: self.memory_recorder.clone(),
+                // V2D Phase 1.5 — backtest dispatches with the scenario
+                // start so the recorder's Pattern recall can exclude
+                // anything trained inside the replay window. Run/scenario
+                // provenance flows down to Observation writes.
+                scenario_start: Some(scenario.time_window.start),
+                run_id: run.id.clone(),
+                scenario_id: scenario.id.clone(),
+                cycle_idx: decision_idx as i64,
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
