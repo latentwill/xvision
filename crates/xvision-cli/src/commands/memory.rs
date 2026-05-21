@@ -232,11 +232,14 @@ async fn run_add_pattern(args: AddPatternArgs) -> CliResult<()> {
 
     // Normalize `--training-end YYYY-MM-DD` to RFC3339 — engine
     // accepts only RFC3339 timestamps, but operators most often pass a
-    // date. Append `T00:00:00Z` on bare dates so both shapes work
-    // without forcing the operator to know the engine's wire format.
+    // date. Append `T23:59:59Z` (end-of-day) on bare dates so the
+    // recall filter's `training_window_end < scenario.start` comparison
+    // matches the operator's mental model that "the Pattern's training
+    // data goes through the END of this day." The dashboard UI does
+    // the same normalisation; CLI ↔ UI wire payloads stay symmetric.
     let training_window_end = match args.training_end.as_deref() {
         None => None,
-        Some(s) if looks_like_bare_date(s) => Some(format!("{s}T00:00:00Z")),
+        Some(s) if looks_like_bare_date(s) => Some(format!("{s}T23:59:59Z")),
         Some(s) => Some(s.to_string()),
     };
 
