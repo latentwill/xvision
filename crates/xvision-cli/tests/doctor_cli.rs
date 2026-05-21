@@ -23,6 +23,10 @@ fn doctor_json_reports_effective_paths_and_templates() {
         body["db_path"].as_str().unwrap(),
         dir.path().join("xvn.db").display().to_string(),
     );
-    assert!(body["templates"].as_array().unwrap().len() >= 3);
+    // Post-2026-05-21 template-registry removal: doctor's `templates`
+    // field is an empty array. Wire-format preserved so external
+    // consumers keep parsing the JSON; the starter library lives at
+    // `$XVN_HOME/strategies/library/` (via `xvn strategies init`).
+    assert!(body["templates"].as_array().unwrap().is_empty());
     assert_eq!(body["remote_target"], "local");
 }

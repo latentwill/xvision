@@ -105,7 +105,6 @@ pub mod get {
     use xvision_engine::eval::export as eval_export;
     use xvision_engine::eval::run::{Run, RunMode, RunStatus};
     use xvision_engine::eval::store::RunStore;
-    use xvision_engine::templates::registry;
 
     pub mod json {
         use super::*;
@@ -141,14 +140,12 @@ pub mod get {
             .await
             .expect("create agent");
 
-            let tpl_name = registry::list_template_names()
-                .first()
-                .cloned()
-                .expect("at least one template registered");
+            // Post-2026-05-21 template-registry removal: create_strategy
+            // produces a blank draft; the AddAgentReq below wires the
+            // real agent in, which is what the parity test exercises.
             let strategy = api_strategy::create_strategy(
                 ctx,
                 CreateStrategyReq {
-                    template: tpl_name,
                     name: "object-shape-fixture-strategy".into(),
                     creator: None,
                 },

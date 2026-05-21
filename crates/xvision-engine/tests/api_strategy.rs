@@ -58,7 +58,6 @@ async fn create_sample_strategy(ctx: &ApiContext) -> Strategy {
     let out = strategy::create_strategy(
         ctx,
         xvision_engine::authoring::CreateStrategyReq {
-            template: "trend_follower".into(),
             name: "sample-strategy".into(),
             creator: Some("@tester".into()),
         },

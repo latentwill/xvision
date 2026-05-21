@@ -17,7 +17,6 @@ use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, Str
 use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
 use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
-use xvision_engine::templates::registry;
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 use xvision_engine::tools::ToolRegistry;
 
@@ -32,29 +31,34 @@ pub struct StrategyCmd {
 
 #[derive(Subcommand, Debug)]
 enum StrategyAction {
-    /// Create a new strategy draft from a template, or atomically create a
-    /// strategy + agent + provider/model binding in one command.
+    /// Create a new strategy draft from a prompt file, or load one from
+    /// `--from-file`.
     ///
-    /// Atomic mode (--prompt): reads the prompt from a file, creates one Agent
-    /// in the workspace agent library, then creates a Strategy with that agent
-    /// wired in. Emits `{"strategy_id","agent_id","eval_ready","provider","model","warnings"}`
-    /// when --json is set.
+    /// Atomic mode (`--prompt`): reads the prompt from a file, creates
+    /// one Agent in the workspace agent library, then creates a
+    /// Strategy with that agent wired in. Emits
+    /// `{"strategy_id","agent_id","eval_ready","provider","model","warnings"}`
+    /// when `--json` is set.
     ///
-    /// Template mode (--template): existing behaviour. Incompatible with --prompt.
+    /// From-file mode (`--from-file`): loads a complete Strategy object
+    /// (JSON or TOML) and persists it as-is.
+    ///
+    /// The pre-2026-05-21 template-registry `--template <name>` mode
+    /// was removed alongside the strategy template registry. Operators
+    /// scaffold via the folder + wizard or `xvn strategies init`
+    /// (which materialises operator-readable starters under
+    /// `$XVN_HOME/strategies/library/`).
     #[command(visible_alias = "create")]
     New {
         /// Load a full Strategy object from a JSON or TOML file.
         #[arg(long)]
         from_file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "prompt")]
-        template: Option<String>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
         creator: Option<String>,
-        /// Provider name (e.g. `openrouter`, `anthropic`). In template mode,
-        /// seeds auto-created template agents. In atomic mode (--prompt),
-        /// required — sets the agent's provider.
+        /// Provider name (e.g. `openrouter`, `anthropic`). In atomic
+        /// mode (`--prompt`), required — sets the agent's provider.
         #[arg(long)]
         provider: Option<String>,
         /// Model id (e.g. `kimi-k2`, `deepseek/deepseek-chat`). See `--provider`.
@@ -68,9 +72,9 @@ enum StrategyAction {
         /// Path to a prompt file. Activates atomic mode: reads the file,
         /// materializes one Agent in the workspace library with this prompt +
         /// provider/model + role, then creates a Strategy wiring that agent.
-        /// Incompatible with --template. Required fields in atomic mode:
+        /// Required fields in atomic mode:
         /// --name, --provider, --model, --role, --asset, --timeframe.
-        #[arg(long, conflicts_with = "template")]
+        #[arg(long)]
         prompt: Option<PathBuf>,
         /// Role the created agent plays in the strategy (e.g. `trader`).
         /// Only used in atomic mode (--prompt).
@@ -141,9 +145,12 @@ enum StrategyAction {
         #[arg(long, value_enum, default_value_t = ObjectFormat::Json)]
         format: ObjectFormat,
     },
-    /// List available strategy templates.
+    /// Deprecated. The strategy `template_registry` was removed on
+    /// 2026-05-21. Use `xvn strategies init` to populate the
+    /// operator-readable starter library at
+    /// `$XVN_HOME/strategies/library/` instead.
     Templates {
-        /// Emit the template registry and entries as JSON.
+        /// Emit a JSON stub describing the deprecation.
         #[arg(long)]
         json: bool,
     },
@@ -218,7 +225,6 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
     match cmd.action {
         StrategyAction::New {
             from_file,
-            template,
             name,
             creator,
             provider,
@@ -243,7 +249,6 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             };
             new(
                 from_file,
-                template,
                 name,
                 creator,
                 provider,
@@ -435,7 +440,6 @@ pub fn build_atomic_create_output(
 #[allow(clippy::too_many_arguments)]
 async fn new(
     from_file: Option<PathBuf>,
-    template: Option<String>,
     name: Option<String>,
     creator: Option<String>,
     provider_override: Option<String>,
@@ -445,7 +449,7 @@ async fn new(
     role: Option<String>,
     asset: Option<String>,
     timeframe: Option<String>,
-    hypothesis_flags: HypothesisFlags,
+    _hypothesis_flags: HypothesisFlags,
 ) -> CliResult<()> {
     // ── atomic mode: --prompt ─────────────────────────────────────────────
     if let Some(prompt_path) = prompt {
@@ -464,13 +468,14 @@ async fn new(
     }
 
     if let Some(path) = from_file {
-        // --provider/--model only seed auto-created template agents.
-        // With --from-file the strategy comes through verbatim, so
-        // silently accepting the flags would mislead operators into
-        // thinking the loaded strategy got re-seeded.
+        // --provider/--model previously seeded auto-created template
+        // agents in the now-removed template-mode codepath. With
+        // template-mode gone they only make sense in --prompt atomic
+        // mode. With --from-file the strategy comes through verbatim;
+        // accepting these flags silently would mislead operators.
         if provider_override.is_some() || model_override.is_some() {
             return Err(CliError::usage(anyhow::anyhow!(
-                "--provider and --model only apply to template-seeded strategies and cannot be combined with --from-file. Edit the strategy file directly to change agent provider/model."
+                "--provider and --model only apply to --prompt atomic mode and cannot be combined with --from-file. Edit the strategy file directly to change agent provider/model."
             )));
         }
         let strategy = load_strategy_file(&path)?;
@@ -492,86 +497,15 @@ async fn new(
         return Ok(());
     }
 
-    let template = template.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "strategy create requires --template unless --from-file is set"
-        ))
-    })?;
-    let name = name.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "strategy create requires --name unless --from-file is set"
-        ))
-    })?;
-    let tpl = registry::get(&template).ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "unknown template '{template}' — try `xvn strategy templates`"
-        ))
-    })?;
-    let id = Ulid::new().to_string();
-    let creator = creator
-        .or_else(|| std::env::var("XVN_CREATOR").ok())
-        .unwrap_or_else(|| "@anonymous".to_string());
-    let mut draft = tpl.new_draft(id.clone(), name.clone(), creator);
-    let legacy = legacy_slots(&draft);
-    if draft.agents.is_empty() && !legacy.is_empty() {
-        let ctx = open_ctx().await?;
-        let mut agent_refs = Vec::with_capacity(legacy.len());
-        for (role, slot) in legacy {
-            let agent = api_agents::create(
-                &ctx,
-                api_agents::CreateAgentRequest {
-                    name: format!("{name} {role}"),
-                    description: format!(
-                        "Generated from strategy {} template {} role {role}",
-                        draft.manifest.id, draft.manifest.template
-                    ),
-                    tags: vec![
-                        "strategy-template-seed".to_string(),
-                        draft.manifest.template.clone(),
-                    ],
-                    slots: vec![slot_to_agent_slot(
-                        &slot,
-                        provider_override.as_deref(),
-                        model_override.as_deref(),
-                    )],
-                },
-            )
-            .await
-            .map_err(|e| api_to_cli("strategy create", e))?;
-            agent_refs.push(AgentRef {
-                agent_id: agent.agent_id,
-                role,
-            });
-        }
-        draft.agents = agent_refs;
-        draft.pipeline = if draft.agents.len() <= 1 {
-            PipelineDef::default()
-        } else {
-            PipelineDef::sequential()
-        };
-        draft.regime_slot = None;
-        draft.intern_slot = None;
-        draft.trader_slot = None;
-    }
-    // ── hypothesis annotation (intake #7) ─────────────────────────────────
-    if let Some(h) = parse_hypothesis(hypothesis_flags)? {
-        draft.hypothesis = Some(h);
-    }
-    validate_strategy(&draft).exit_with(XvnExit::Usage)?;
-    store().save(&draft).await.exit_with(XvnExit::Upstream)?;
-    if json {
-        let out = serde_json::json!({
-            "id": id,
-            "strategy": draft,
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
-        );
-        return Ok(());
-    }
-    println!("{id}");
-    Ok(())
+    // Pre-2026-05-21 the CLI supported `--template <name>` to scaffold
+    // a strategy from the in-binary template_registry. The registry
+    // was removed; the equivalent path is `xvn strategies init`
+    // (writes operator-readable starters under
+    // `$XVN_HOME/strategies/library/`) followed by either `--from-file`
+    // or `--prompt` here.
+    Err(CliError::usage(anyhow::anyhow!(
+        "strategy create requires --from-file or --prompt. The pre-2026-05-21 template_registry was removed; run `xvn strategies init` to populate operator-readable starters under $XVN_HOME/strategies/library/."
+    )))
 }
 
 /// Atomic-mode create: one command that creates a strategy + agent + provider/model
@@ -724,12 +658,9 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     if let Err(e) = validate_strategy(&strategy) {
         errors.push(e.to_string());
     }
-    if !strategy.manifest.template.is_empty() && registry::get(&strategy.manifest.template).is_none() {
-        errors.push(format!(
-            "unknown template '{}' - not in registry",
-            strategy.manifest.template
-        ));
-    }
+    // The strategy template_registry was removed on 2026-05-21; the
+    // `manifest.template` field is now a free-text label and no
+    // longer validated against a binary registry.
 
     let Some(scenario_id) = scenario_id else {
         warnings.push("no --scenario supplied; run shape-only check only".to_string());
@@ -1005,23 +936,18 @@ async fn show(id: &str, format: ObjectFormat) -> CliResult<()> {
 }
 
 async fn templates(json: bool) -> CliResult<()> {
-    let names = registry::list_template_names();
+    // Deprecation stub. The strategy `template_registry` was removed
+    // on 2026-05-21 (see
+    // `team/contracts/strategy-template-registry-removal.md`). The
+    // command is retained so existing scripts and muscle memory
+    // don't break loudly; it points operators at the replacement
+    // surface (`xvn strategies init`) instead.
+    const DEPRECATION_NOTE: &str = "The strategy template_registry was removed on 2026-05-21. Run `xvn strategies init` to populate the operator-readable starter library at $XVN_HOME/strategies/library/.";
     if json {
-        let templates = names
-            .iter()
-            .filter_map(|name| {
-                registry::get(name).map(|tpl| {
-                    serde_json::json!({
-                        "name": tpl.name(),
-                        "display_name": tpl.display_name(),
-                        "plain_summary": tpl.plain_summary(),
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
         let out = serde_json::json!({
-            "registry_version": registry::registry_version(),
-            "templates": templates,
+            "registry_version": null,
+            "templates": Vec::<serde_json::Value>::new(),
+            "deprecation_note": DEPRECATION_NOTE,
         });
         println!(
             "{}",
@@ -1029,11 +955,7 @@ async fn templates(json: bool) -> CliResult<()> {
         );
         return Ok(());
     }
-    for name in names {
-        if let Some(tpl) = registry::get(&name) {
-            println!("{:<20} {}", name, tpl.display_name());
-        }
-    }
+    println!("{DEPRECATION_NOTE}");
     Ok(())
 }
 
@@ -1469,18 +1391,13 @@ pub mod get {
         use xvision_engine::eval::export as eval_export;
         use xvision_engine::eval::run::{Run, RunMode, RunStatus};
         use xvision_engine::eval::store::RunStore;
-        use xvision_engine::templates::registry;
 
         async fn seed_strategy_and_completed_run(ctx: &ApiContext) -> (String, String) {
-            // Pick any registered template — the canonical `mean_reversion`
-            // exists in the seeded registry and produces a fully-typed
-            // `Strategy` we can round-trip without bespoke fixture wiring.
-            let tpl_name = registry::list_template_names()
-                .first()
-                .cloned()
-                .expect("at least one template registered");
+            // Post-2026-05-21 template-registry removal: create_strategy
+            // produces a blank draft. The parity test below depends only
+            // on the Strategy struct shape (not on template starter
+            // content), so a blank starter is sufficient.
             let req = CreateStrategyReq {
-                template: tpl_name,
                 name: "object-shape-fixture".into(),
                 creator: None,
             };
@@ -1638,32 +1555,27 @@ pub mod atomic_create {
         assert_eq!(out["warnings"].as_array().unwrap().len(), 1);
     }
 
-    // ── clap conflict: --template and --prompt cannot coexist ─────────────
+    // ── post-template-registry-removal: --template no longer accepted ────
 
     #[test]
-    fn clap_rejects_template_and_prompt_together() {
+    fn clap_rejects_template_flag_entirely() {
+        // Pre-2026-05-21 the CLI accepted `--template <name>` and
+        // scaffolded from the in-binary template_registry. The
+        // registry was removed; clap must reject the flag now.
         use clap::CommandFactory;
         let cmd = crate::Cli::command();
-        // `strategy new --template foo --prompt /dev/null --name bar --asset ETH/USD --timeframe 4h`
-        // should fail at the clap conflict_with level.
         let result = cmd.try_get_matches_from([
             "xvn",
             "strategy",
             "create",
             "--template",
             "mean_reversion",
-            "--prompt",
-            "/dev/null",
             "--name",
             "test",
-            "--asset",
-            "ETH/USD",
-            "--timeframe",
-            "4h",
         ]);
         assert!(
             result.is_err(),
-            "expected clap error for --template + --prompt together, got Ok"
+            "expected clap error for removed --template flag, got Ok"
         );
     }
 }

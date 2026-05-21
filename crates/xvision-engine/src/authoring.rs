@@ -22,7 +22,6 @@ use crate::strategies::{
     validate::validate_strategy,
     AgentRef, PipelineDef, PipelineKind, Strategy,
 };
-use crate::templates::registry as template_registry;
 
 // ---------------------------------------------------------------------------
 // types — request / response shapes shared by both surfaces.
@@ -30,6 +29,13 @@ use crate::templates::registry as template_registry;
 // dashboard speaks them directly.
 // ---------------------------------------------------------------------------
 
+/// Stale shape kept only so external callers that imported the type
+/// continue to compile. The MCP `xvn_list_templates` tool that
+/// surfaced these was removed alongside the strategy template
+/// registry on 2026-05-21; operator-readable strategy starters now
+/// live as prepop seeds under `docs/strategies/templates/` and are
+/// surfaced through the strategies folder (`xvn strategies init`),
+/// not through this struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateInfo {
@@ -38,11 +44,15 @@ pub struct TemplateInfo {
     pub plain_summary: String,
 }
 
+/// Request shape for [`create_strategy`]. After the 2026-05-21
+/// template-registry removal, no `template` discriminator is taken —
+/// `create_strategy` always produces a blank draft and operators
+/// fill it in via the wizard / folder / subsequent slot writes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateStrategyReq {
-    pub template: String,
     pub name: String,
+    #[serde(default)]
     pub creator: Option<String>,
 }
 
@@ -146,38 +156,30 @@ pub struct ValidateDraftOut {
 // dispatcher functions
 // ---------------------------------------------------------------------------
 
-/// List the strategy templates with display name + plain summary.
+/// Returns an empty template list.
 ///
-/// Kept for non-wizard callers (`xvision-mcp`, dashboard
-/// `routes/strategies.rs`, CLI). The wizard no longer consults
-/// templates as a separate library concept — see the
-/// `templates-elimination` contract (2026-05-21) and the deferred
-/// follow-up `strategy-template-registry-removal` that completes the
-/// engine-side removal.
+/// The strategy `template_registry` was removed on 2026-05-21
+/// (see `team/contracts/strategy-template-registry-removal.md`).
+/// Operator-readable strategy starters now live as prepop seeds under
+/// `docs/strategies/templates/` and surface through the strategies
+/// folder (`xvn strategies init`). This function is kept as a stub so
+/// existing non-wizard callers that haven't migrated yet don't fail
+/// to compile; new callers should read seeds from
+/// `xvision_engine::strategies_folder` instead.
 pub fn list_templates() -> Vec<TemplateInfo> {
-    template_registry::list_template_names()
-        .iter()
-        .filter_map(|name| {
-            template_registry::get(name).map(|t| TemplateInfo {
-                name: t.name().to_string(),
-                display_name: t.display_name().to_string(),
-                plain_summary: t.plain_summary().to_string(),
-            })
-        })
-        .collect()
+    Vec::new()
 }
 
+/// Create a new draft strategy. After the 2026-05-21
+/// template-registry removal this always produces a blank `Strategy`
+/// — there is no `template` discriminator to scaffold from. Operators
+/// (via the wizard, CLI, or MCP follow-up calls) populate slots /
+/// agents / mechanical_params / risk on the blank draft before save.
 pub async fn create_strategy(
     store: &dyn StrategyStore,
     req: CreateStrategyReq,
 ) -> anyhow::Result<CreateStrategyOut> {
-    let tpl = template_registry::get(&req.template)
-        .ok_or_else(|| anyhow::anyhow!("unknown template '{}'", req.template))?;
-    let id = Ulid::new().to_string();
-    let creator = req.creator.unwrap_or_else(|| "@anonymous".to_string());
-    let draft = tpl.new_draft(id.clone(), req.name, creator);
-    store.save(&draft).await?;
-    Ok(CreateStrategyOut { id })
+    create_blank_strategy(store, req.name, req.creator).await
 }
 
 /// Build a minimal draft Strategy with no agents and no placeholder
@@ -493,25 +495,13 @@ pub async fn set_mechanical_param(
 ) -> anyhow::Result<()> {
     let mut strategy = store.load(&req.id).await?;
     let map = strategy.mechanical_params.as_object_mut().ok_or_else(|| {
-        anyhow::anyhow!("mechanical_params is not a JSON object — template invariant violation")
+        anyhow::anyhow!("mechanical_params is not a JSON object")
     })?;
-    map.insert(req.key.clone(), req.value);
-    // F-6: validate the patched mechanical_params against the typed
-    // variant for the active template before persisting. Catches typos
-    // (unknown field for the template) and bad types (e.g. string in
-    // an integer slot) at the API boundary instead of letting them
-    // reach the engine. `Custom` templates pass through unchanged.
-    crate::strategies::mechanical::MechanicalParams::from_value(
-        &strategy.manifest.template,
-        strategy.mechanical_params.clone(),
-    )
-    .map_err(|e| {
-        anyhow::anyhow!(
-            "set_mechanical_param: `{}` is not a valid param for template `{}` ({e})",
-            req.key,
-            strategy.manifest.template,
-        )
-    })?;
+    map.insert(req.key, req.value);
+    // Post-2026-05-21 template-registry removal: no per-template typed
+    // dispatch exists, so the param is persisted verbatim. Per-strategy
+    // schema validation lands in a future change keyed on the
+    // strategies-folder seed library, not on a binary registry.
     store.save(&strategy).await
 }
 
@@ -625,11 +615,24 @@ mod tests {
     #[test]
     fn create_strategy_request_rejects_unknown_fields() {
         let err = serde_json::from_str::<CreateStrategyReq>(
-            r#"{"template":"trend_follower","name":"x","creator":null,"surprise":true}"#,
+            r#"{"name":"x","creator":null,"surprise":true}"#,
         )
         .expect_err("unknown create-strategy fields must be rejected");
 
         assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn create_strategy_request_rejects_legacy_template_field() {
+        // Post-template-registry-removal: the `template` field is no
+        // longer accepted on the create request shape. Existing
+        // callers must drop it; serde catches stragglers.
+        let err = serde_json::from_str::<CreateStrategyReq>(
+            r#"{"template":"trend_follower","name":"x","creator":null}"#,
+        )
+        .expect_err("legacy template field must be rejected");
+        assert!(err.to_string().contains("unknown field"));
+        assert!(err.to_string().contains("template"));
     }
 
     #[tokio::test]
@@ -638,7 +641,6 @@ mod tests {
         let out = create_strategy(
             &store,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "btc-mom-1".into(),
                 creator: Some("@test".into()),
             },
@@ -647,7 +649,10 @@ mod tests {
         .unwrap();
         let strategy = get_strategy(&store, &out.id).await.unwrap();
         assert_eq!(strategy.manifest.id, out.id);
-        assert_eq!(strategy.manifest.template, "trend_follower");
+        // create_strategy now produces a blank draft. The `template`
+        // field stays on `PublicManifest` as a free-text label but
+        // create_blank_strategy stamps it `"custom"` for back-compat.
+        assert_eq!(strategy.manifest.template, "custom");
     }
 
     #[tokio::test]
@@ -656,7 +661,6 @@ mod tests {
         let out = create_strategy(
             &store,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -690,7 +694,6 @@ mod tests {
         let out = create_strategy(
             &store,
             CreateStrategyReq {
-                template: "mean_reversion".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -727,7 +730,6 @@ mod tests {
         let out = create_strategy(
             &store,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -766,7 +768,6 @@ mod tests {
         let out = create_strategy(
             &store,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -828,7 +829,6 @@ mod tests {
         let out = create_strategy(
             &store,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -859,7 +859,6 @@ mod tests {
         let out = create_strategy(
             &store,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -888,23 +887,34 @@ mod tests {
         let out = create_strategy(
             &store,
             CreateStrategyReq {
-                template: "mean_reversion".into(),
                 name: "x".into(),
                 creator: None,
             },
         )
         .await
         .unwrap();
+        // Post-template-registry-removal, create_strategy yields a blank
+        // draft (no trader_slot). Wire a legacy trader_slot up here so
+        // the drift check has something to chew on.
         let mut strategy = get_strategy(&store, &out.id).await.unwrap();
-        strategy.trader_slot.as_mut().unwrap().prompt =
-            "Trade BTC/USD on 6-hour candles. Return JSON.".into();
+        // Prompt mentions ETH/USD so it drifts from create_blank_strategy's
+        // default asset_universe of ["BTC/USD"]. (Pre-2026-05-21 templates
+        // seeded ETH/USD and the test used BTC/USD for the same purpose.)
+        strategy.trader_slot = Some(LLMSlot {
+            role: "trader".into(),
+            prompt: "Trade ETH/USD on 6-hour candles. Return JSON.".into(),
+            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            allowed_tools: vec!["ohlcv".into()],
+            provider: None,
+            model: None,
+        });
         store.save(&strategy).await.unwrap();
 
         let v = validate_draft(&store, &out.id).await.unwrap();
 
         assert!(!v.ok);
         assert!(
-            v.errors.iter().any(|e| e.contains("BTC/USD")),
+            v.errors.iter().any(|e| e.contains("ETH/USD")),
             "expected asset drift error, got {:?}",
             v.errors,
         );

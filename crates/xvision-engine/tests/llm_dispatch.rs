@@ -30,7 +30,7 @@ async fn mock_dispatch_sequence_drives_tool_use_loop() {
         MockDispatch::tool_use(
             "tu_1",
             "xvn_create_strategy",
-            serde_json::json!({"template":"trend_follower","name":"x"}),
+            serde_json::json!({"name":"x"}),
         ),
         xvision_engine::agent::llm::LlmResponse {
             content: vec![ContentBlock::Text {

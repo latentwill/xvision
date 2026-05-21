@@ -1,16 +1,15 @@
-use xvision_engine::baselines::ma_crossover::ma_crossover_template;
-use xvision_engine::strategies::validate::validate_strategy;
+//! Post-2026-05-21: the marketplace baseline `ma_crossover_template()`
+//! was removed alongside the strategy `template_registry`. The
+//! operator-readable starter content for this baseline migrates to a
+//! prepop seed entry surfaced via `xvn strategies init`.
+//!
+//! The deterministic `Algorithm` implementation used by A/B compare
+//! arms (`MaCrossover`) lives separately in
+//! `crates/xvision-eval/src/baselines/ma_crossover.rs` and is
+//! unaffected by this change.
+//!
+//! File retained as a historical breadcrumb (see
+//! `team/contracts/strategy-template-registry-removal.md`).
 
 #[test]
-fn ma_crossover_produces_valid_strategy() {
-    let tpl = ma_crossover_template();
-    let draft = tpl.new_draft(
-        "01H8N7ZBASE".into(),
-        "btc-ma-cross".into(),
-        "@xvision_official".into(),
-    );
-    validate_strategy(&draft).expect("baseline must validate");
-    assert!(draft.trader_slot.is_some());
-    let trader = draft.trader_slot.unwrap();
-    assert!(trader.prompt.to_lowercase().contains("crossover"));
-}
+fn ma_crossover_template_no_longer_exists_documented_marker() {}

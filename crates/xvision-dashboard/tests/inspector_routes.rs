@@ -28,7 +28,6 @@ async fn create_draft(state: &AppState) -> String {
     create_strategy(
         &state.api_context(),
         CreateStrategyReq {
-            template: "trend_follower".into(),
             name: "btc-mom-test".into(),
             creator: Some("@tester".into()),
         },
@@ -47,7 +46,7 @@ async fn get_strategy_returns_full_strategy() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["manifest"]["id"], id);
-    assert_eq!(body["manifest"]["template"], "trend_follower");
+    assert_eq!(body["manifest"]["template"], "custom");
 }
 
 #[tokio::test]
@@ -73,7 +72,7 @@ async fn clone_strategy_creates_editable_copy() {
     let clone_id = body["manifest"]["id"].as_str().expect("clone id");
     assert_ne!(clone_id, id);
     assert_eq!(body["manifest"]["display_name"], "BTC Momentum Copy");
-    assert_eq!(body["manifest"]["template"], "trend_follower");
+    assert_eq!(body["manifest"]["template"], "custom");
     assert!(body["manifest"]["published_at"].is_null());
 
     let fetched = server.get(&format!("/api/strategy/{clone_id}")).await;

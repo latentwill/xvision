@@ -1317,7 +1317,6 @@ mod tests {
         let out = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "btc-mom".into(),
                 creator: Some("@tester".into()),
             },
@@ -1329,23 +1328,12 @@ mod tests {
         assert_eq!(strategy.manifest.id, out.id);
     }
 
-    #[tokio::test]
-    async fn create_strategy_unknown_template_is_validation_error() {
-        let (ctx, _d) = ctx_with_audit().await;
-        let r = create_strategy(
-            &ctx,
-            CreateStrategyReq {
-                template: "no-such-template".into(),
-                name: "x".into(),
-                creator: None,
-            },
-        )
-        .await;
-        assert!(
-            matches!(r, Err(ApiError::Validation(_))),
-            "expected Validation, got {r:?}",
-        );
-    }
+    // Pre-2026-05-21: the create_strategy_unknown_template test asserted
+    // that an unrecognised template name surfaced as ApiError::Validation.
+    // The template_registry was removed; there is no registry to miss
+    // against, so the corresponding negative case no longer exists.
+    // The remaining `CreateStrategyReq` shape validation
+    // (unknown-field at serde) is covered in `tests/authoring.rs`.
 
     #[tokio::test]
     async fn update_slot_audits_and_returns_updated_fields() {
@@ -1353,7 +1341,6 @@ mod tests {
         let created = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -1384,7 +1371,6 @@ mod tests {
         let created = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -1435,7 +1421,6 @@ mod tests {
         let created = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -1462,7 +1447,6 @@ mod tests {
         let created = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "mean_reversion".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -1494,7 +1478,6 @@ mod tests {
         let created = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -1519,7 +1502,6 @@ mod tests {
         let created = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -1543,7 +1525,6 @@ mod tests {
         let created = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "mean_reversion".into(),
                 name: "x".into(),
                 creator: None,
             },
@@ -1555,7 +1536,11 @@ mod tests {
             UpdateSlotReq {
                 id: created.id.clone(),
                 slot: "trader".into(),
-                prompt: Some("Trade BTC/USD on a 6h candle schedule.".into()),
+                // Use ETH/USD here so the prompt asset drifts from
+                // create_blank_strategy's default asset_universe of
+                // ["BTC/USD"]. (Pre-2026-05-21 templates seeded ETH/USD
+                // and the test used BTC/USD for the same purpose.)
+                prompt: Some("Trade ETH/USD on a 6h candle schedule.".into()),
                 model_requirement: None,
                 provider: None,
                 model: None,
@@ -1569,7 +1554,7 @@ mod tests {
 
         assert!(!out.ok);
         assert!(
-            out.errors.iter().any(|e| e.contains("BTC/USD")),
+            out.errors.iter().any(|e| e.contains("ETH/USD")),
             "expected asset drift error, got {:?}",
             out.errors,
         );
@@ -1593,7 +1578,6 @@ mod tests {
         let created = create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             },

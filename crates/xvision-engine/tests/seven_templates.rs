@@ -1,47 +1,22 @@
-use xvision_engine::strategies::validate::validate_strategy;
-use xvision_engine::templates::registry;
-
-const EXPECTED_TEMPLATES: &[&str] = &[
-    "trend_follower",
-    "breakout",
-    "mean_reversion",
-    "momentum",
-    "range_trade",
-    "scalping",
-    "news_trader",
-    "custom",
-    "ma_crossover_baseline",
-];
+//! Post-2026-05-21: the strategy `template_registry` was removed
+//! (see `team/contracts/strategy-template-registry-removal.md`).
+//!
+//! This file previously enumerated the eight registered templates and
+//! asserted each produced a `validate_strategy`-passing draft. With
+//! the registry gone, operator-readable starters live as prepop seeds
+//! under `docs/strategies/templates/`; that surface is covered by
+//! `tests/strategies_folder_prepop.rs`.
+//!
+//! The file is retained (rather than deleted) so the historical
+//! contract acceptance stays discoverable via `git log -- tests/`.
 
 #[test]
-fn all_v1_templates_are_registered() {
-    let names = registry::list_template_names();
-    for name in EXPECTED_TEMPLATES {
-        assert!(
-            names.contains(&name.to_string()),
-            "missing template: {name} (registered: {names:?})"
-        );
-    }
-}
-
-#[test]
-fn each_template_produces_a_valid_draft() {
-    for name in EXPECTED_TEMPLATES {
-        let tpl = registry::get(name).unwrap_or_else(|| panic!("template {name} missing from registry"));
-        // ULID-shaped 26-char id (validate_strategy doesn't enforce format,
-        // just shape; this matches the assertion in the plan).
-        let id = "01H8N7Z0000000000000000000";
-        assert_eq!(id.len(), 26);
-        let draft = tpl.new_draft(id.to_string(), format!("test-{name}"), "@test".into());
-        validate_strategy(&draft).unwrap_or_else(|e| panic!("{name}: {e}"));
-    }
-}
-
-#[test]
-fn templates_have_unique_names() {
-    let names = registry::list_template_names();
-    let mut sorted = names.clone();
-    sorted.sort();
-    sorted.dedup();
-    assert_eq!(names.len(), sorted.len(), "duplicate template names: {names:?}");
+fn template_registry_no_longer_exists_documented_marker() {
+    // Compile-time marker: if the registry path is ever resurrected,
+    // the import below will fail. (No reachable symbol from
+    // xvision-engine for `templates::registry` after this change.)
+    //
+    // Acceptance assertion happens at the grep guard in CI:
+    // `rg --hidden -n 'template_registry' crates/` must return only
+    // documentation comments.
 }

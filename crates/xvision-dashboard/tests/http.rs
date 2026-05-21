@@ -156,10 +156,13 @@ async fn strategies_list_returns_seeded_strategy() {
 async fn post_create_strategy_is_visible_in_public_strategies_list() {
     let (server, _tmp) = boot().await;
 
+    // Post-2026-05-21 template-registry removal: the `template`
+    // field is no longer accepted on the create-strategy payload.
+    // Callers send `{ name, creator }`; the resulting draft carries
+    // `manifest.template = "custom"` (free-text label).
     let response = server
         .post("/api/strategies")
         .json(&serde_json::json!({
-            "template": "mean_reversion",
             "name": "Wizard Visible",
             "creator": "@wizard"
         }))
@@ -178,7 +181,7 @@ async fn post_create_strategy_is_visible_in_public_strategies_list() {
         .expect("created strategy present in list");
 
     assert_eq!(created["display_name"], "Wizard Visible");
-    assert_eq!(created["template"], "mean_reversion");
+    assert_eq!(created["template"], "custom");
 }
 
 #[tokio::test]

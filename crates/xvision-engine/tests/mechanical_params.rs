@@ -1,10 +1,22 @@
-//! F-6 integration tests for `MechanicalParams`, the deserialize-time
-//! boundary validation on `Strategy`, the pre-persist seam in
-//! `StrategyStore::save`, and the tightened `set_mechanical_param`
-//! API surface. Complements the unit tests in
-//! `crates/xvision-engine/src/strategies/mechanical.rs` and the
-//! cross-field validator tests in `xvision-core` by exercising the
-//! full path from raw JSON through the store.
+//! Mechanical-params integration tests, post 2026-05-21
+//! template-registry removal.
+//!
+//! Before the registry removal, `MechanicalParams` typed dispatch
+//! enforced `deny_unknown_fields` per canonical template
+//! (TrendFollower / Breakout / MeanReversion / …). With the registry
+//! gone there is no per-template schema in the binary; every strategy
+//! is treated as operator-authored and `mechanical_params` is
+//! preserved verbatim. These tests pin the post-removal contract:
+//!
+//! - Arbitrary keys on `mechanical_params` are accepted at every
+//!   layer (Strategy deserialize, Store save, set_mechanical_param).
+//! - Legacy strategy JSON carrying typed shapes round-trips byte-for-byte.
+//! - `min_warmup_bars` derivation uses the JSON walker on every
+//!   strategy (no more per-template typed dispatch).
+//!
+//! Per-strategy schema validation, when re-introduced, will be keyed
+//! on the prepop seed library (`docs/strategies/templates/`) rather
+//! than a binary registry.
 
 use serde_json::json;
 use xvision_engine::authoring::{set_mechanical_param, SetMechanicalParamReq};
@@ -13,13 +25,13 @@ use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
 use xvision_engine::strategies::{MechanicalParams, PipelineDef, Strategy};
 
-fn manifest_for(template: &str) -> PublicManifest {
+fn manifest_for(template_label: &str) -> PublicManifest {
     PublicManifest {
         id: "01HZSTRATEGY00000000000001".into(),
-        display_name: "F-6 fixture".into(),
-        plain_summary: "fixture for the harness-typed-mechanical-params integration tests".into(),
-        creator: "@f6-tests".into(),
-        template: template.into(),
+        display_name: "fixture".into(),
+        plain_summary: "mechanical-params integration fixture".into(),
+        creator: "@mech-tests".into(),
+        template: template_label.into(),
         regime_fit: vec![],
         asset_universe: vec![],
         decision_cadence_minutes: 60,
@@ -31,9 +43,9 @@ fn manifest_for(template: &str) -> PublicManifest {
     }
 }
 
-fn strategy_with(template: &str, params: serde_json::Value) -> Strategy {
+fn strategy_with(template_label: &str, params: serde_json::Value) -> Strategy {
     Strategy {
-        manifest: manifest_for(template),
+        manifest: manifest_for(template_label),
         hypothesis: None,
         agents: vec![],
         pipeline: PipelineDef::default(),
@@ -52,10 +64,7 @@ fn store_in_tmp() -> (FilesystemStore, tempfile::TempDir) {
 }
 
 #[test]
-fn each_template_default_params_validate_end_to_end() {
-    // Every canonical template's default mechanical_params must (a)
-    // parse via the typed enum, (b) round-trip through Strategy's
-    // custom Deserialize, and (c) re-serialize without drift.
+fn mechanical_params_from_value_preserves_arbitrary_json() {
     let cases: Vec<(&str, serde_json::Value)> = vec![
         (
             "trend_follower",
@@ -72,108 +81,34 @@ fn each_template_default_params_validate_end_to_end() {
             }),
         ),
         (
-            "breakout",
-            json!({"donchian_period": 20, "volume_confirm_multiple": 1.5}),
-        ),
-        (
-            "momentum",
-            json!({
-                "macd_fast": 12,
-                "macd_slow": 26,
-                "macd_signal": 9,
-                "adx_period": 14,
-                "adx_threshold": 25
-            }),
-        ),
-        (
-            "scalping",
-            json!({"ema_fast": 5, "ema_slow": 13, "stop_pct": 0.003, "take_profit_pct": 0.006}),
-        ),
-        (
-            "range_trade",
-            json!({
-                "bb_period": 20,
-                "bb_sigma": 2.0,
-                "lower_threshold": 0.1,
-                "upper_threshold": 0.9
-            }),
-        ),
-        (
-            "news_trader",
-            json!({"extreme_move_atr_multiple": 3.0, "lookback_bars": 4}),
+            "operator-authored",
+            json!({"any": "shape", "deeply": {"nested": 42}}),
         ),
     ];
 
-    for (template, params) in cases {
-        let typed = MechanicalParams::from_value(template, params.clone())
-            .unwrap_or_else(|e| panic!("template {} parse failed: {}", template, e));
-        // Round-trip the value through MechanicalParams to assert the
-        // wire shape is preserved byte-for-byte.
-        assert_eq!(typed.to_value(), params, "drift for template {template}");
+    for (label, params) in cases {
+        let mech = MechanicalParams::from_value(label, params.clone())
+            .unwrap_or_else(|e| panic!("template {label} from_value failed: {e}"));
+        assert_eq!(mech.to_value(), params, "round-trip drift for {label}");
     }
 }
 
 #[test]
-fn unknown_field_on_canonical_template_rejected_at_strategy_deserialize() {
-    // Build a valid Strategy JSON, then inject a bogus key into
-    // mechanical_params. Strategy's custom Deserialize must surface
-    // the error from MechanicalParams::from_value.
-    let mut strategy_json = json!({
-        "manifest": manifest_for("trend_follower"),
-        "risk": RiskPreset::Balanced.expand(),
-        "mechanical_params": {"ema_fast": 12, "not_a_real_param": 99}
-    });
-    // For trend_follower deny_unknown_fields, the parse must fail.
-    let err = serde_json::from_value::<Strategy>(strategy_json.clone())
-        .expect_err("unknown field for canonical template must reject");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("unknown field"),
-        "expected unknown field error, got: {msg}"
-    );
-    assert!(
-        msg.contains("not_a_real_param"),
-        "should name the bad key, got: {msg}"
-    );
-
-    // Sanity check: removing the bad key parses cleanly.
-    strategy_json["mechanical_params"] = json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50});
-    let strategy: Strategy =
-        serde_json::from_value(strategy_json).expect("valid mechanical_params must parse");
-    assert_eq!(strategy.manifest.template, "trend_follower");
-}
-
-#[test]
-fn custom_template_accepts_arbitrary_json_at_strategy_deserialize() {
-    let strategy_json = json!({
-        "manifest": manifest_for("my-experimental-template"),
-        "risk": RiskPreset::Balanced.expand(),
-        "mechanical_params": {"weird_param": "anything", "nested": {"deep": 42}}
-    });
-    let strategy: Strategy = serde_json::from_value(strategy_json)
-        .expect("Custom template arm must accept arbitrary mechanical_params shape");
-    match strategy.typed_params() {
-        MechanicalParams::Custom(_) => {}
-        other => panic!("expected Custom variant for unknown template, got {:?}", other),
-    }
-}
-
-#[test]
-fn legacy_strategy_json_roundtrips_byte_for_byte() {
-    // A strategy authored before F-6 (or by today's templates module)
-    // must serialize back to the same on-disk shape. mechanical_params
-    // is the canonical trend_follower flat object.
+fn legacy_strategy_json_with_template_field_still_loads() {
+    // Backward-compat: a strategy authored before the 2026-05-21
+    // template-registry removal carried `template: "trend_follower"`
+    // and a typed params shape. Post-removal the field stays on
+    // `PublicManifest` as a free-text label; the strategy must load
+    // and round-trip byte-for-byte.
     let original_params = json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50});
     let strategy_json = json!({
         "manifest": manifest_for("trend_follower"),
         "risk": RiskPreset::Balanced.expand(),
         "mechanical_params": original_params.clone(),
     });
-    let strategy: Strategy = serde_json::from_value(strategy_json.clone()).expect("legacy shape must parse");
+    let strategy: Strategy = serde_json::from_value(strategy_json).expect("legacy shape must parse");
+    assert_eq!(strategy.manifest.template, "trend_follower");
     let reserialized = serde_json::to_value(&strategy).expect("strategy must serialize");
-    // The relevant invariant is that mechanical_params is byte-identical
-    // on the round trip (manifest serialization includes default fields
-    // we skip, so we narrow to the params field).
     assert_eq!(
         reserialized["mechanical_params"], original_params,
         "mechanical_params drifted on round-trip",
@@ -181,59 +116,80 @@ fn legacy_strategy_json_roundtrips_byte_for_byte() {
 }
 
 #[test]
-fn min_warmup_bars_uses_typed_dispatch_for_canonical_templates() {
-    // trend_follower with ema_slow=50 -> 100 (max * 2).
+fn arbitrary_params_accepted_at_strategy_deserialize() {
+    // Pre-removal: a `not_a_real_param` key on trend_follower would be
+    // rejected by `deny_unknown_fields`. Post-removal there is no
+    // per-template schema, so the key passes through verbatim.
+    let strategy_json = json!({
+        "manifest": manifest_for("trend_follower"),
+        "risk": RiskPreset::Balanced.expand(),
+        "mechanical_params": {"ema_fast": 12, "not_a_real_param": 99}
+    });
+    let strategy: Strategy = serde_json::from_value(strategy_json)
+        .expect("post-removal: arbitrary mechanical_params keys are accepted");
+    assert_eq!(strategy.mechanical_params["not_a_real_param"], json!(99));
+    match strategy.typed_params() {
+        MechanicalParams::Custom(_) => {}
+    }
+}
+
+#[test]
+fn min_warmup_bars_uses_walker_on_every_strategy() {
+    // Post-removal: no typed dispatch — every strategy goes through
+    // the JSON walker. Same derivation outcome (max period * 2) as
+    // before, but via a single code path.
     let s = strategy_with(
         "trend_follower",
         json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50}),
     );
     assert_eq!(s.min_warmup_bars(), 100);
 
-    // breakout with donchian_period=20 -> 40.
     let s = strategy_with(
         "breakout",
         json!({"donchian_period": 20, "volume_confirm_multiple": 1.5}),
     );
     assert_eq!(s.min_warmup_bars(), 40);
-}
 
-#[test]
-fn min_warmup_bars_falls_back_to_walker_for_custom_templates() {
-    // Unknown template -> Custom -> walker picks the largest period-
-    // like key (lookback_bars=30 -> 60).
     let s = strategy_with(
-        "my-experimental-template",
+        "operator-authored",
         json!({"lookback_bars": 30, "threshold": 99}),
     );
     assert_eq!(s.min_warmup_bars(), 60);
 }
 
 #[tokio::test]
-async fn save_via_store_rejects_unknown_param_key_for_canonical_template() {
+async fn save_via_store_accepts_arbitrary_keys_post_registry_removal() {
+    // Pre-removal: `bogus_param` on a trend_follower strategy was
+    // rejected by the F-6 typed seam. Post-removal: accepted and
+    // persisted verbatim.
     let (store, _td) = store_in_tmp();
-    let bad = strategy_with("trend_follower", json!({"bogus_param": 1}));
-    let err = store
-        .save(&bad)
+    let s = strategy_with("trend_follower", json!({"bogus_param": 1}));
+    store
+        .save(&s)
         .await
-        .expect_err("pre-persist seam must reject unknown mechanical_params key");
-    assert!(err.to_string().contains("typed validation"));
+        .expect("post-removal: arbitrary mechanical_params keys are accepted at save");
+    let loaded = store.load(&s.manifest.id).await.unwrap();
+    assert_eq!(loaded.mechanical_params["bogus_param"], json!(1));
 }
 
 #[tokio::test]
-async fn save_via_store_accepts_custom_template_with_arbitrary_params() {
+async fn save_via_store_accepts_custom_label_with_arbitrary_params() {
     let (store, _td) = store_in_tmp();
     let s = strategy_with(
-        "my-experimental-template",
+        "my-experimental-label",
         json!({"weird": "shape", "anything": [1, 2, 3]}),
     );
     store
         .save(&s)
         .await
-        .expect("Custom arm preserves operator templates");
+        .expect("post-removal: arbitrary label + arbitrary params accepted");
 }
 
 #[tokio::test]
-async fn set_mechanical_param_accepts_known_key() {
+async fn set_mechanical_param_accepts_arbitrary_key() {
+    // Pre-removal: a typed validator rejected unknown keys for
+    // canonical templates. Post-removal: any key persists, since
+    // there is no per-strategy schema to validate against.
     let (store, _td) = store_in_tmp();
     let s = strategy_with("trend_follower", json!({"ema_fast": 12}));
     store.save(&s).await.unwrap();
@@ -246,60 +202,18 @@ async fn set_mechanical_param_accepts_known_key() {
         },
     )
     .await
-    .expect("ema_slow is a known trend_follower key");
-    let loaded = store.load(&s.manifest.id).await.unwrap();
-    assert_eq!(
-        loaded.mechanical_params["ema_slow"],
-        json!(50),
-        "patched value must persist",
-    );
-}
-
-#[tokio::test]
-async fn set_mechanical_param_rejects_unknown_key_for_canonical_template() {
-    let (store, _td) = store_in_tmp();
-    let s = strategy_with("trend_follower", json!({"ema_fast": 12}));
-    store.save(&s).await.unwrap();
-    let err = set_mechanical_param(
-        &store,
-        SetMechanicalParamReq {
-            id: s.manifest.id.clone(),
-            key: "not_a_real_param".into(),
-            value: json!(123),
-        },
-    )
-    .await
-    .expect_err("unknown key for canonical template must reject");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("not_a_real_param"),
-        "expected error to name the rejected key, got: {msg}",
-    );
-    assert!(
-        msg.contains("trend_follower"),
-        "expected error to name the template, got: {msg}",
-    );
-    // Confirm the original mechanical_params is unchanged on disk.
-    let loaded = store.load(&s.manifest.id).await.unwrap();
-    assert_eq!(loaded.mechanical_params, json!({"ema_fast": 12}));
-}
-
-#[tokio::test]
-async fn set_mechanical_param_accepts_any_key_for_custom_template() {
-    let (store, _td) = store_in_tmp();
-    let s = strategy_with("my-custom-template", json!({"foo": 1}));
-    store.save(&s).await.unwrap();
+    .expect("known key must persist");
     set_mechanical_param(
         &store,
         SetMechanicalParamReq {
             id: s.manifest.id.clone(),
-            key: "bar".into(),
+            key: "new_experimental_key".into(),
             value: json!("anything"),
         },
     )
     .await
-    .expect("Custom templates accept arbitrary keys");
+    .expect("arbitrary key must persist post-removal");
     let loaded = store.load(&s.manifest.id).await.unwrap();
-    assert_eq!(loaded.mechanical_params["foo"], json!(1));
-    assert_eq!(loaded.mechanical_params["bar"], json!("anything"));
+    assert_eq!(loaded.mechanical_params["ema_slow"], json!(50));
+    assert_eq!(loaded.mechanical_params["new_experimental_key"], json!("anything"));
 }
