@@ -1,32 +1,51 @@
-//! Filter v1 — deterministic per-bar gate data model, DSL parser, and
-//! validator.
+//! Filter v1 — deterministic per-bar gate data model, DSL parser,
+//! validator, and runtime evaluator.
 //!
-//! Stage 1 of the Filter v1 plan: pure data model with no engine
-//! wiring. See `docs/superpowers/specs/2026-05-21-filter-v1.md` and the
-//! companion plan at `docs/superpowers/plans/2026-05-21-filter-v1.md`
-//! § "Stage 1 — Domain + validation".
+//! Stages 1 + 2 of the Filter v1 plan. Stage 1 shipped the pure data
+//! model. Stage 2 (this expansion — see
+//! `team/contracts/track-plan-touches.md`) adds:
 //!
-//! Public surface:
+//! * `indicators` — incremental math for the six v1 indicators.
+//! * `state` — per-filter mutable runtime state (warmup, cooldown,
+//!   daily wakeup counter, previous-bar leaf cache for `crosses_*`).
+//! * `runtime` — the per-bar evaluator. Given a validated `Filter`,
+//!   a `FilterState`, a `Bar`, and an `EvalContext`, produces a
+//!   `FilterEvalOutcome` carrying an `ActivationDecision`.
 //!
-//! * `parse_toml(&str)` / `parse_json(&str)` — DSL → `Filter`.
-//! * `validate(&Filter)` — semantic checks, returns typed
-//!   `ValidationError` with stable `E_FILTER_*` codes.
-//! * `Filter`, `Condition`, `Operand`, `IndicatorRef`, `Operator`, and
-//!   the supporting enums.
-//!
-//! The crate intentionally has **no** runtime behaviour — no indicator
-//! math, no event emission, no engine deps. Stages 2–5 add those.
+//! The crate stays engine-independent: `Bar` is a local OHLCV
+//! reduction, and the runtime takes `&self` so callers can hold one
+//! `RuntimeFilter` across many concurrent `FilterState`s.
 
 pub mod errors;
+pub mod events;
+pub mod indicators;
 pub mod parse;
+pub mod runtime;
+pub mod state;
 pub mod types;
 pub mod validate;
 
 pub use errors::{ParseError, ValidationError};
+pub use events::{FilterEventV1, FilterSummary, SuppressedReason};
+pub use indicators::{Bar, IndicatorEngine, IndicatorKey};
 pub use parse::{parse_json, parse_toml};
+pub use runtime::{
+    referenced_indicators, ActivationDecision, ConditionResult, EvalContext, FilterEvalOutcome,
+    RuntimeFilter, Transition,
+};
+pub use state::{collect_indicator_refs, FilterState};
 pub use types::{
     ActivationMode, AgentContextTemplateId, Condition, ConditionTree, Filter, FilterId, FilterStatus,
     IndicatorName, IndicatorRef, Operand, Operator, ScanCadence, StrategyId, Symbol, Timeframe,
     WakeInPosition, DEFAULT_AGENT_CONTEXT_TEMPLATE,
 };
 pub use validate::validate;
+
+/// Average token cost of a single LLM briefing dispatch, used by
+/// [`events::FilterSummary::from_events`] to estimate the tokens saved
+/// by FilterGated activation versus the EveryBar baseline.
+///
+/// v1 ships a global constant matching the scaling-assumption block in
+/// `MANUAL.md`. A v1.5 follow-up will replace this with a per-strategy
+/// measurement so the savings number tracks actual prompt sizes.
+pub const AVG_BRIEFING_TOKEN_COST: u64 = 50_000;
