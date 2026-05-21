@@ -12,6 +12,14 @@
 > blocked P2 leaf (`wizard-folder-recall-honesty`), two parallel
 > P2 frontend leaves (`strategies-folder-into-view-toggle`,
 > `memory-into-agents-section`).
+> Also 2026-05-21 — `harness-observability-tail-2026-05-21` filed:
+> F-5 recovery state machine, the last open finding from the
+> 2026-05-18 harness observability audit (F-1/2/6 merged on the
+> boards; F-3/4/7 landed silently and are now noted). Phase 1
+> (typed dispatcher + repeated-tool block) shipped as PR #499; three
+> phase-2 contracts decompose the audit's per-class recovery policies
+> (MalformedJson, SchemaMissingField, ContextOverflow) and are queued
+> blocked on the phase-1 merge.
 > Earlier 2026-05-21 sweep: 28 merged contracts archived under
 > `team/archive/2026-05-21-conductor-sweep/`.
 
@@ -36,6 +44,24 @@ existing template starter library into folder seed entries.
 - [wizard-folder-recall-honesty](contracts/wizard-folder-recall-honesty.md) — P2 leaf · merged #488
 - [strategies-folder-into-view-toggle](contracts/strategies-folder-into-view-toggle.md) — P2 frontend leaf · pr-open #479
 - [memory-into-agents-section](contracts/memory-into-agents-section.md) — P2 frontend leaf · pr-open #478
+
+### harness-observability-tail-2026-05-21 — F-5 recovery state machine (audit tail)
+
+Filed 2026-05-21 from the archived intake
+`team/intake/archive/2026-05-18-harness-observability-audit.md`. Six of
+the seven audit findings are closed: F-1 (#277), F-2 (#294), F-6 (#302)
+on the boards; F-3 (migration 019), F-4 (SpanKind variants), and F-7
+(trace-dock Simple/Advanced toggle) landed silently across other waves
+without board entries — confirmed via code grep
+(`crates/xvision-engine/migrations/019_agent_slot_prompt_version.sql`,
+`crates/xvision-observability/src/types.rs:104-131`,
+`frontend/web/src/stores/trace-dock.ts:65-186`). F-5 is the only
+remaining open finding.
+
+- [harness-recovery-state-machine](contracts/harness-recovery-state-machine.md) — **P1 integration** · pr-open #499 · phase 1: typed FailureClass + repeated-tool block list. Per-class recovery policies split into the three phase-2 contracts below
+- [harness-recovery-malformed-json](contracts/harness-recovery-malformed-json.md) — **P2 integration** · deferred (depends on #499) · phase 2a: repair-prompt retry on TraderInvalidJson / TraderTruncated (paper + backtest seam)
+- [harness-recovery-schema-missing-field](contracts/harness-recovery-schema-missing-field.md) — **P2 integration** · deferred (depends on `harness-recovery-malformed-json`) · phase 2b: targeted-patch retry on TraderMissingField / TraderInvalidField, with merge-and-reparse
+- [harness-recovery-context-overflow](contracts/harness-recovery-context-overflow.md) — **P2 integration** · deferred (depends on #499) · phase 2c: cheap-model history summarize + retry; adds `FailureClass::ContextOverflow` variant and `agent/summarize.rs` module
 
 ## Reserved
 

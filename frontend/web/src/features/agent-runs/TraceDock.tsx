@@ -91,6 +91,14 @@ export function TraceDock() {
     [advanced_view, filter.filtered],
   );
 
+  // Count of spans Simple mode would hide. Surfaced on the SIMPLE toggle
+  // so operators can see the toggle is doing work; without this the
+  // button reads as inert when the run has few instrumentation spans.
+  const simpleHiddenCount = useMemo(
+    () => filter.filtered.filter((s) => SIMPLE_HIDDEN_KINDS.has(s.kind)).length,
+    [filter.filtered],
+  );
+
   const selectedSpan = useMemo(
     () => filter.filtered.find((s) => s.span_id === selectedSpanId) ?? displaySpans[0] ?? null,
     [filter.filtered, displaySpans, selectedSpanId],
@@ -275,8 +283,12 @@ export function TraceDock() {
             type="button"
             aria-pressed={!advanced_view}
             onClick={() => setAdvancedView(false)}
-            title="Simple — hide instrumentation spans, collapse attribute bag"
-            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            title={
+              simpleHiddenCount > 0
+                ? `Simple — hide ${simpleHiddenCount} instrumentation span${simpleHiddenCount === 1 ? "" : "s"}, collapse attribute bag`
+                : "Simple — hide instrumentation spans, collapse attribute bag"
+            }
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center gap-1"
             style={{
               background: !advanced_view ? "var(--surface-card)" : "transparent",
               border: `1px solid ${!advanced_view ? "var(--text-2)" : "var(--border)"}`,
@@ -285,6 +297,11 @@ export function TraceDock() {
             }}
           >
             SIMPLE
+            {simpleHiddenCount > 0 ? (
+              <span className="text-text-3" style={{ fontVariantNumeric: "tabular-nums" }}>
+                −{simpleHiddenCount}
+              </span>
+            ) : null}
           </button>
           <button
             type="button"
