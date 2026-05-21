@@ -13,7 +13,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::safety::auth_stub::AuthContext;
+use crate::safety::AuthContext;
 
 /// Kind of action that was recorded.
 #[derive(Debug, Clone, Serialize, Deserialize)]

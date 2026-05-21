@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::safety::audit::{AuditAction, AuditResult, SafetyAuditWriter};
-use crate::safety::auth_stub::AuthContext;
+use crate::safety::AuthContext;
 
 /// In-memory + DB representation of the global pause gate.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -31,7 +31,7 @@ pub struct SafetyState {
     /// UTC timestamp of the last pause toggle, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paused_at: Option<DateTime<Utc>>,
-    /// User who set the current state (from AuthContext stub).
+    /// User who set the current state (from AuthContext).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paused_by: Option<String>,
     /// Human reason provided with the pause toggle, if any.

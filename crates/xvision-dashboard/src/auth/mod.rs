@@ -34,6 +34,5 @@ pub mod session;
 // flat `crate::auth::*` import path.
 pub use gate::{auth_middleware, AuthState, AUTH_TOKEN_ENV, AUTH_TOKEN_HEADER, AUTH_TOKEN_QUERY_PARAM};
 
-// Re-export the canonical AuthContext so the follow-up PR can swap
-// `crate::cli_jobs::auth_stub::AuthContext` → `crate::auth::AuthContext`.
+// Re-export the canonical AuthContext.
 pub use context::AuthContext;

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::safety::audit::SafetyAuditRow;
-use crate::safety::auth_stub::AuthContext;
+use crate::safety::AuthContext;
 use crate::safety::state::{SafetyManager, SafetyState};
 
 /// Optional body for `POST /api/safety/pause` and `POST /api/safety/resume`.
