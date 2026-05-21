@@ -109,6 +109,7 @@ const scenario = {
   created_at: "2026-05-12T00:00:00Z",
   created_by: "test",
   archived_at: null,
+  warmup_bars: 200,
 } as unknown as Scenario;
 
 const chartPayload: ScenarioChartPayload = {
@@ -166,10 +167,12 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     // QA22 / `strategy-clone-editable-frontend`: "Clone to edit" now
     // opens an inline form (no popup per the workspace UI rule) where
     // the operator can amend display_name/description/notes/tags
-    // before submitting. The submit button calls cloneScenario with
-    // the mutations.
+    // before submitting. `scenario-clone-form-structural-fields`
+    // upgraded the inline form to `<ScenarioForm>` so the operator
+    // can also override asset/window/granularity/venue/warmup_bars;
+    // submit is labelled "Create →" per the shared component.
     fireEvent.click(await screen.findByRole("button", { name: "Clone to edit" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Create clone" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Create/i }));
 
     await waitFor(() => {
       expect(scenarioApi.cloneScenario).toHaveBeenCalledWith(
@@ -179,6 +182,69 @@ describe("ScenariosDetailRoute bars cache actions", () => {
         }),
       );
     });
+  });
+
+  it("emits the changed granularity in clone mutations when the operator overrides it", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+    vi.mocked(scenarioApi.cloneScenario).mockResolvedValue({
+      ...scenario,
+      id: "sc_clone_granularity",
+      granularity: "5m",
+      parent_scenario_id: scenario.id,
+      source: "Clone",
+    } as Scenario);
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clone to edit" }));
+
+    // The form is pre-filled from the parent. The granularity widget is
+    // a <select>; change it to a different supported option.
+    const granularitySelect = await screen.findByLabelText(/Granularity/i);
+    fireEvent.change(granularitySelect, { target: { value: "5m" } });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Create/i }));
+
+    await waitFor(() => {
+      expect(scenarioApi.cloneScenario).toHaveBeenCalledWith(
+        scenario.id,
+        expect.objectContaining({
+          granularity: "5m",
+        }),
+      );
+    });
+  });
+
+  it("sends null for structural fields the operator did not touch", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+    vi.mocked(scenarioApi.cloneScenario).mockResolvedValue({
+      ...scenario,
+      id: "sc_clone_untouched",
+      parent_scenario_id: scenario.id,
+      source: "Clone",
+    } as Scenario);
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clone to edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Create/i }));
+
+    await waitFor(() => {
+      expect(scenarioApi.cloneScenario).toHaveBeenCalled();
+    });
+    const args = vi.mocked(scenarioApi.cloneScenario).mock.calls[0]!;
+    const mutations = args[1] as Record<string, unknown>;
+    // The operator only opened the form and hit submit without
+    // touching structural fields → those must be null (inherit
+    // parent). display_name diverges from parent ("(clone)" suffix
+    // pre-filled) so it's a non-null override.
+    expect(mutations.granularity).toBeNull();
+    expect(mutations.asset).toBeNull();
+    expect(mutations.time_window).toBeNull();
+    expect(mutations.venue).toBeNull();
+    expect(mutations.warmup_bars).toBeNull();
   });
 
   it("archives a scenario without leaving the detail view", async () => {
