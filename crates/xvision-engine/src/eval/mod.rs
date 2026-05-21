@@ -36,7 +36,8 @@ pub mod watchdog;
 
 pub use attestation::{EvalAttestation, TokensUsed};
 pub use compare::{
-    compare_runs, ComparisonEquityCurve, ComparisonEquitySample, ComparisonReport, ComparisonRunSummary,
+    compare_runs, compare_runs_default, CompareOptions, ComparisonEquityCurve, ComparisonEquitySample,
+    ComparisonReport, ComparisonRunSummary, ManifestMismatch,
 };
 pub use cost::{compute_token_cost_usd, compute_token_cost_usd_from_catalog};
 pub use findings::{Finding, Severity};

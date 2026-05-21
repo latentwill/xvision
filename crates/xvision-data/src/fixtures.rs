@@ -3,6 +3,14 @@
 //! Fixtures live at `data/probes/<fixture>.parquet` under the workspace root
 //! for local runs, or under `$XVN_DATA_DIR/probes` / `$XVN_PROBES_DIR` in
 //! deployments.
+//!
+//! # Validator hook
+//!
+//! `load_ohlcv_fixture_with_hash` is the recommended entry point for scenario
+//! runners. It reads the Parquet bytes, computes `bars_content_hash` via
+//! `manifest::bars_content_hash`, parses the bars, and returns both together.
+//! Callers can then run `validate::validate_ohlcv` over the bars before
+//! feeding them into the backtest loop.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +21,8 @@ use chrono::{DateTime, TimeZone, Utc};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 use xvision_core::market::Ohlcv;
+
+use crate::manifest::bars_content_hash;
 
 /// Absolute path to the probe fixture directory.
 ///
@@ -44,10 +54,35 @@ pub fn fixture_path(fixture: &str) -> PathBuf {
 /// chronological order. `asset` is currently informational — fixtures are
 /// per-asset so the caller picks the right file.
 pub fn load_ohlcv_fixture(fixture: &str, _asset: &str, lookback_bars: usize) -> anyhow::Result<Vec<Ohlcv>> {
+    let (bars, _hash) = load_ohlcv_fixture_with_hash(fixture, _asset, lookback_bars)?;
+    Ok(bars)
+}
+
+/// Load a parquet OHLCV fixture and compute the content hash of the raw
+/// Parquet bytes.
+///
+/// Returns `(bars, bars_content_hash)` where `bars_content_hash` is the
+/// sha256 hex digest of the Parquet file bytes. The hash is computed before
+/// any trimming so it reflects the on-disk file, not the requested slice.
+/// Persist `bars_content_hash` on the `Run` record (see migration 027).
+///
+/// This is the **recommended entry point** for scenario runners that need
+/// to participate in the determinism receipt. After calling this function,
+/// run `validate::validate_ohlcv` over the returned bars.
+pub fn load_ohlcv_fixture_with_hash(
+    fixture: &str,
+    _asset: &str,
+    lookback_bars: usize,
+) -> anyhow::Result<(Vec<Ohlcv>, String)> {
     let path = fixture_path(fixture);
-    let file =
-        std::fs::File::open(&path).map_err(|e| anyhow::anyhow!("opening {}: {}", path.display(), e))?;
-    let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
+    let raw_bytes = std::fs::read(&path).map_err(|e| anyhow::anyhow!("reading {}: {}", path.display(), e))?;
+
+    // Compute hash over the raw Parquet bytes before parsing.
+    let content_hash = bars_content_hash(&raw_bytes);
+
+    // Convert to bytes::Bytes which implements parquet's ChunkReader trait.
+    let parquet_bytes = bytes::Bytes::from(raw_bytes);
+    let reader = ParquetRecordBatchReaderBuilder::try_new(parquet_bytes)?.build()?;
 
     let mut bars = Vec::new();
     for batch in reader {
@@ -74,7 +109,7 @@ pub fn load_ohlcv_fixture(fixture: &str, _asset: &str, lookback_bars: usize) -> 
     }
 
     let start = bars.len().saturating_sub(lookback_bars);
-    Ok(bars.split_off(start))
+    Ok((bars.split_off(start), content_hash))
 }
 
 fn string_value<'a>(array: &'a dyn Array, row: usize, column: &str) -> anyhow::Result<&'a str> {
@@ -183,5 +218,32 @@ mod tests {
         // Verify it loads back.
         let bars = load_ohlcv_fixture("test-fixture-btc-2024-01", "BTC/USD", 50).unwrap();
         assert_eq!(bars.len(), 50);
+    }
+
+    /// bars_content_hash is stable across multiple loads of the same file.
+    #[test]
+    fn bars_content_hash_is_stable_across_loads() {
+        ensure_test_fixture("test-fixture-btc-2024-01").unwrap();
+        let (_, h1) = load_ohlcv_fixture_with_hash("test-fixture-btc-2024-01", "BTC/USD", 50).unwrap();
+        let (_, h2) = load_ohlcv_fixture_with_hash("test-fixture-btc-2024-01", "BTC/USD", 50).unwrap();
+        assert_eq!(
+            h1, h2,
+            "bars_content_hash must be identical across loads of the same file"
+        );
+        assert_eq!(h1.len(), 64, "sha256 hex must be 64 chars");
+    }
+
+    /// load_ohlcv_fixture and load_ohlcv_fixture_with_hash return the same bars.
+    #[test]
+    fn with_hash_variant_returns_same_bars() {
+        ensure_test_fixture("test-fixture-btc-2024-01").unwrap();
+        let bars_plain = load_ohlcv_fixture("test-fixture-btc-2024-01", "BTC/USD", 30).unwrap();
+        let (bars_hashed, _) =
+            load_ohlcv_fixture_with_hash("test-fixture-btc-2024-01", "BTC/USD", 30).unwrap();
+        assert_eq!(bars_plain.len(), bars_hashed.len());
+        for (a, b) in bars_plain.iter().zip(bars_hashed.iter()) {
+            assert_eq!(a.timestamp, b.timestamp);
+            assert_eq!(a.open, b.open);
+        }
     }
 }

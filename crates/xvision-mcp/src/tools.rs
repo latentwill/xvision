@@ -810,9 +810,15 @@ impl XvisionTools {
         Parameters(req): Parameters<EvalCompareReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
-        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids: req.run_ids })
-            .await
-            .map_err(api_err_to_mcp)?;
+        let report = api_eval::compare(
+            &ctx,
+            CompareRunsRequest {
+                run_ids: req.run_ids,
+                allow_manifest_mismatch: false,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
         json_or_err(&report)
     }
 
@@ -1210,9 +1216,15 @@ impl XvisionTools {
         };
 
         let ctx = self.api_context().await?;
-        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids })
-            .await
-            .map_err(api_err_to_mcp)?;
+        let report = api_eval::compare(
+            &ctx,
+            CompareRunsRequest {
+                run_ids,
+                allow_manifest_mismatch: false,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
 
         if req.markdown {
             let md = format_comparison_markdown(&report);
@@ -1297,9 +1309,15 @@ impl XvisionTools {
         let ctx = self.api_context().await?;
         let sort_key = req.sort.as_deref().unwrap_or("return");
 
-        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids: req.run_ids })
-            .await
-            .map_err(api_err_to_mcp)?;
+        let report = api_eval::compare(
+            &ctx,
+            CompareRunsRequest {
+                run_ids: req.run_ids,
+                allow_manifest_mismatch: false,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
 
         let store = RunStore::new(ctx.db.clone());
         let mut rows: Vec<CompareRunRow> = Vec::with_capacity(report.runs.len());

@@ -912,6 +912,8 @@ mod tests {
             }),
             error: None,
             behavior: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
         }
     }
 }

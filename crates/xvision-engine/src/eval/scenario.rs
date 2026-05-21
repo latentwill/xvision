@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 pub use xvision_core::Capital;
 pub use xvision_data::alpaca::BarGranularity;
 use xvision_data::asset_whitelist::{alpaca_crypto_asset, alpaca_crypto_history_start_for};
+use xvision_data::manifest::{AdjustmentKind, DataManifest, FeedKind, SessionFilter};
+use xvision_data::validate::CalendarHint;
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -306,6 +308,51 @@ impl Scenario {
             ));
         }
         Ok(())
+    }
+
+    /// Build a `DataManifest` from this scenario's data-source and calendar
+    /// settings. Used by the eval engine at run-start to produce the
+    /// `manifest_canonical` hash persisted on `eval_runs` (migration 027).
+    pub fn data_manifest(&self) -> DataManifest {
+        let (feed, adjustment) = match &self.data_source {
+            DataSource::AlpacaHistorical { feed, adjustment } => {
+                let feed_kind = match feed.as_deref() {
+                    Some("iex") => FeedKind::Iex,
+                    Some("sip") => FeedKind::Sip,
+                    Some("crypto") | None => FeedKind::Crypto,
+                    Some(other) => FeedKind::Other(other.to_string()),
+                };
+                let adj_kind = match adjustment {
+                    AdjustmentMode::Raw => AdjustmentKind::Raw,
+                    AdjustmentMode::SplitAdjusted => AdjustmentKind::SplitAdjusted,
+                    AdjustmentMode::SplitDividendAdjusted => AdjustmentKind::SplitDividendAdjusted,
+                };
+                (feed_kind, adj_kind)
+            }
+            DataSource::SyntheticWalk { .. } => (FeedKind::Synthetic, AdjustmentKind::Raw),
+        };
+        let calendar_str = match &self.calendar {
+            CalendarRef::Continuous24x7 => "Continuous24x7".to_string(),
+            CalendarRef::UsEquities => "UsEquities".to_string(),
+            CalendarRef::Custom(s) => s.clone(),
+        };
+        DataManifest {
+            feed,
+            adjustment,
+            timeframe: format!("{:?}", self.granularity),
+            session_filter: SessionFilter::All,
+            calendar: calendar_str,
+            timezone: self.timezone.clone(),
+        }
+    }
+
+    /// Returns the `CalendarHint` for use by the OHLCV validator's gap
+    /// detection logic.
+    pub fn calendar_hint(&self) -> CalendarHint {
+        match &self.calendar {
+            CalendarRef::UsEquities => CalendarHint::UsEquities,
+            CalendarRef::Continuous24x7 | CalendarRef::Custom(_) => CalendarHint::Continuous24x7,
+        }
     }
 }
 

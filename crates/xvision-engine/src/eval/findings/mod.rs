@@ -4,11 +4,31 @@
 //! (see `docs/superpowers/specs/2026-05-15-eval-review-agent.md`) plus
 //! the V2E trace-surface additions from migration 026
 //! (`eval-trace-surface-foundation`, 2026-05-21).
+//!
+//! # Data-defect findings (V2E, migration 027)
+//!
+//! The `data_defect` finding kind is registered here. Data-defect findings
+//! are emitted by `xvision_data::validate::validate_ohlcv` at fixture-load
+//! time and at scenario start. They always carry:
+//!
+//! - `kind = "data_defect"`
+//! - `evidence.produced_by_check = "validator:ohlcv"`
+//! - `evidence.evidence_cycle_ids = []` (data defects pre-exist the cycle)
+//!
+//! Severity mapping:
+//! - `Error`-tier defects → `Severity::Critical`
+//! - `Warning`-tier defects → `Severity::Warning`
+//! - `Info`-tier defects → `Severity::Info`
+//!
+//! A scenario with any `Critical` data-defect finding requires
+//! `--allow-defective-data` to proceed.
 
 pub mod extractor;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ulid::Ulid;
+use xvision_data::validate::{defect_to_finding_evidence, DataDefect, DefectSeverity};
 
 /// Current finding schema version. Bump when fields are added in a
 /// backwards-incompatible way; additive `Option<_>` fields + `serde(default)`
@@ -118,6 +138,77 @@ impl Severity {
             "warning" => Some(Severity::Warning),
             "critical" => Some(Severity::Critical),
             _ => None,
+        }
+    }
+}
+
+// ── Data-defect finding constructor ──────────────────────────────────────────
+
+impl Finding {
+    /// Construct a `data_defect` finding from a `DataDefect` detected by the
+    /// OHLCV validator.
+    ///
+    /// - `kind = "data_defect"`
+    /// - `produced_by_check = "validator:ohlcv"`
+    /// - `evidence_cycle_ids = []` (data defects pre-exist the cycle)
+    /// - Severity is mapped from the defect's tier: Error → Critical,
+    ///   Warning → Warning, Info → Info.
+    pub fn from_data_defect(run_id: &str, defect: &DataDefect) -> Self {
+        let severity = match defect.severity() {
+            DefectSeverity::Error => Severity::Critical,
+            DefectSeverity::Warning => Severity::Warning,
+            DefectSeverity::Info => Severity::Info,
+        };
+        let summary = data_defect_summary(defect);
+        let evidence = defect_to_finding_evidence(defect);
+        Finding {
+            id: Ulid::new().to_string(),
+            run_id: run_id.to_string(),
+            kind: "data_defect".to_string(),
+            severity,
+            summary,
+            evidence,
+            extracted_at: Utc::now(),
+            schema_version: FINDING_SCHEMA_VERSION.to_string(),
+            evidence_cycle_ids: Some(vec![]),
+            produced_by_check: Some("validator:ohlcv".to_string()),
+            eval_review_id: None,
+            review_type: None,
+            confidence: None,
+            title: None,
+            description: None,
+            recommendation: None,
+            created_at: None,
+        }
+    }
+}
+
+fn data_defect_summary(defect: &DataDefect) -> String {
+    match defect {
+        DataDefect::NonMonotonicTimestamp { at, prev_ts, this_ts } => {
+            format!("bar[{at}] timestamp {this_ts} is not after previous timestamp {prev_ts}")
+        }
+        DataDefect::DuplicateTimestamp { at, ts } => {
+            format!("bar[{at}] has duplicate timestamp {ts}")
+        }
+        DataDefect::MissingBar {
+            at,
+            expected_ts,
+            gap_bars,
+        } => {
+            format!("bar[{at}] has a gap: {gap_bars} missing bar(s) before {expected_ts}")
+        }
+        DataDefect::OhlcViolation { at, ts, kind } => {
+            format!("bar[{at}] at {ts} violates OHLC invariant: {kind:?}")
+        }
+        DataDefect::NegativeOrNanField { at, ts, field } => {
+            format!("bar[{at}] at {ts} has negative or NaN value for field '{field}'")
+        }
+        DataDefect::ZeroVolumeBar { at, ts } => {
+            format!("bar[{at}] at {ts} has zero volume")
+        }
+        DataDefect::WickShockOutlier { at, ts, sigma } => {
+            format!("bar[{at}] at {ts} is a wick-shock outlier (sigma={sigma:.1})")
         }
     }
 }
