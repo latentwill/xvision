@@ -113,6 +113,67 @@ pub async fn load_warmup_bars(
     .await
 }
 
+/// Tag for live-warmup cache rows. Used by [`load_warmup_window`] so
+/// the now-anchored warmup window (loaded by `LiveStream::new_with_warmup`)
+/// goes through the same cache table as scenario warmup but lives
+/// under a distinct `data_source` column. Mirrors
+/// [`WARMUP_DATA_SOURCE_TAG`].
+pub const LIVE_WARMUP_DATA_SOURCE_TAG: &str = "alpaca-historical-v1-live-warmup";
+
+/// Synchronously load the most recent `warmup_bars` bars for `asset`
+/// at `granularity`, ending at `now`. The returned [`Ohlcv`] vector is
+/// ordered oldest-first and ready to be drained by the executor's
+/// per-bar loop before live bars start arriving.
+///
+/// Goes through the same cache + singleflight path as backtest
+/// scenarios (see [`load_bars`] and [`load_warmup_bars`]) so the
+/// `LiveStream` warmup never duplicates a fetch for a window the
+/// scenario layer already cached. Tagged with
+/// [`LIVE_WARMUP_DATA_SOURCE_TAG`] in the cache so the now-anchored
+/// rows don't collide with scenario-anchored warmup rows.
+///
+/// Added by the Alpaca-Live executor refactor (sub-track 3); the
+/// `LiveStream::new_with_warmup` constructor is the primary caller.
+pub async fn load_warmup_window(
+    ctx: &ApiContext,
+    asset: &str,
+    granularity: BarGranularity,
+    now: DateTime<Utc>,
+    warmup_bars: u32,
+) -> ApiResult<Vec<xvision_core::market::Ohlcv>> {
+    if warmup_bars == 0 {
+        return Ok(Vec::new());
+    }
+    let secs = (granularity.seconds() as i64) * (warmup_bars as i64);
+    let start = now - chrono::Duration::seconds(secs);
+    let end = now;
+    let cache_key = compute_cache_key(asset, granularity, start, end, LIVE_WARMUP_DATA_SOURCE_TAG);
+    let market_bars = load_bars(
+        ctx,
+        &BarCacheArgs {
+            cache_key,
+            asset_pair: asset.to_string(),
+            granularity,
+            start,
+            end,
+            data_source_tag: LIVE_WARMUP_DATA_SOURCE_TAG.into(),
+        },
+    )
+    .await?;
+    Ok(market_bars.into_iter().map(market_bar_to_ohlcv).collect())
+}
+
+fn market_bar_to_ohlcv(b: MarketBar) -> xvision_core::market::Ohlcv {
+    xvision_core::market::Ohlcv {
+        timestamp: b.timestamp,
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+        volume: b.volume,
+    }
+}
+
 /// Read bars for the window described by `args`, going through the
 /// `bars_cache` table. On miss, calls the Alpaca fetcher on the context
 /// and back-fills the cache before returning. Concurrent misses for the
