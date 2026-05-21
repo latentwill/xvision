@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
+import { StrategiesFolderView } from "./strategies-folder";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import {
@@ -64,7 +65,91 @@ function shapeOf(row: StrategyListItem): "single" | "multi" {
   return agentCount(row) > 1 ? "multi" : "single";
 }
 
+type StrategiesView = "list" | "folder";
+
 export function StrategiesRoute() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view: StrategiesView =
+    searchParams.get("view") === "folder" ? "folder" : "list";
+
+  function setView(next: StrategiesView) {
+    setSearchParams(
+      (prev) => {
+        const next2 = new URLSearchParams(prev);
+        if (next === "list") {
+          next2.delete("view");
+        } else {
+          next2.set("view", next);
+        }
+        return next2;
+      },
+      { replace: false },
+    );
+  }
+
+  const topbarSub =
+    view === "folder"
+      ? "Notes, docs, and reference files the wizard can quote back to you."
+      : undefined;
+
+  return (
+    <>
+      <Topbar title="Strategies" sub={topbarSub} />
+
+      <div className="mb-4 flex items-center gap-3">
+        <ViewToggle view={view} onChange={setView} />
+      </div>
+
+      {view === "folder" ? (
+        <StrategiesFolderView />
+      ) : (
+        <StrategiesListView />
+      )}
+    </>
+  );
+}
+
+/** Inline segmented control for List / Folder views. */
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: StrategiesView;
+  onChange: (v: StrategiesView) => void;
+}) {
+  const views: [StrategiesView, string][] = [
+    ["list", "List"],
+    ["folder", "Folder"],
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Strategies view"
+      className="flex rounded border border-border overflow-hidden"
+    >
+      {views.map(([v, label]) => (
+        <button
+          key={v}
+          type="button"
+          role="tab"
+          aria-selected={view === v}
+          onClick={() => onChange(v)}
+          className={[
+            "px-3 py-1 text-[12.5px] font-medium transition-colors",
+            view === v
+              ? "bg-surface-elev text-text"
+              : "text-text-3 hover:text-text-2",
+          ].join(" ")}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** List view body — the original StrategiesRoute content. */
+function StrategiesListView() {
   // QA-round-7 backend-pagination follow-up (#386 gap): page-size +
   // page-nav drive `limit`/`offset` in the TanStack query key so page
   // changes refetch the next slice instead of slicing one big
@@ -155,21 +240,22 @@ export function StrategiesRoute() {
 
   return (
     <>
-      <Topbar title="Strategies" sub={subtitle} />
-
-      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-        <Link
-          to="/strategies/new"
-          className="inline-flex w-full items-center justify-center gap-2 rounded border border-border px-3.5 py-1.5 text-[13px] font-medium text-text-2 transition-colors hover:border-text-3 hover:text-text sm:w-auto"
-        >
-          <Icon name="plus" size={13} /> New strategy
-        </Link>
-        <Link
-          to="/strategies/new"
-          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
-        >
-          <Icon name="plus" size={13} /> Open form
-        </Link>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[12.5px] text-text-3">{subtitle}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/strategies/new"
+            className="inline-flex w-full items-center justify-center gap-2 rounded border border-border px-3.5 py-1.5 text-[13px] font-medium text-text-2 transition-colors hover:border-text-3 hover:text-text sm:w-auto"
+          >
+            <Icon name="plus" size={13} /> New strategy
+          </Link>
+          <Link
+            to="/strategies/new"
+            className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
+          >
+            <Icon name="plus" size={13} /> Open form
+          </Link>
+        </div>
       </div>
 
       <ResponsiveListCard<StrategyListItem>

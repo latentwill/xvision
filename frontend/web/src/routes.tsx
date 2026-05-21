@@ -12,6 +12,10 @@ const ScenariosRoute = lazy(() => import("./routes/scenarios").then((m) => ({ de
 const ScenariosNewRoute = lazy(() => import("./routes/scenarios-new").then((m) => ({ default: m.ScenariosNewRoute })));
 const ScenariosDetailRoute = lazy(() => import("./routes/scenarios-detail").then((m) => ({ default: m.ScenariosDetailRoute })));
 const StrategiesNewRoute = lazy(() => import("./routes/strategies-new").then((m) => ({ default: m.StrategiesNewRoute })));
+// StrategiesFolderRoute: the standalone `/strategies-folder` route
+// is kept for backward compatibility but resolves as a redirect to
+// `/strategies?view=folder`. Lazy import kept so existing deep-links
+// (bookmarks, shared URLs) continue to land on the folder view.
 const StrategiesFolderRoute = lazy(() => import("./routes/strategies-folder").then((m) => ({ default: m.StrategiesFolderRoute })));
 const StrategyDetailRoute = lazy(() => import("./routes/strategies-detail").then((m) => ({ default: m.StrategyDetailRoute })));
 const AgentsRoute = lazy(() => import("./routes/agents").then((m) => ({ default: m.AgentsRoute })));

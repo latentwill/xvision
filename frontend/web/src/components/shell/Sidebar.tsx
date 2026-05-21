@@ -7,7 +7,6 @@ type Item = { to: string; label: string; icon: IconName };
 const PRIMARY: Item[] = [
   { to: "/", label: "Dashboard", icon: "home" },
   { to: "/strategies", label: "Strategies", icon: "chart" },
-  { to: "/strategies-folder", label: "Folder", icon: "book" },
   { to: "/agents", label: "Agents", icon: "user" },
   { to: "/scenarios", label: "Scenarios", icon: "list" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },

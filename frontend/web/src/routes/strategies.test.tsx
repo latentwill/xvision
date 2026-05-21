@@ -11,6 +11,18 @@ import { MemoryRouter } from "react-router-dom";
 
 import { StrategiesRoute } from "./strategies";
 import * as strategiesApi from "@/api/strategies";
+import * as folderApi from "@/api/strategies-folder";
+
+vi.mock("@/api/strategies-folder", async () => {
+  const actual = await vi.importActual<typeof import("@/api/strategies-folder")>(
+    "@/api/strategies-folder",
+  );
+  return {
+    ...actual,
+    listStrategiesFolder: vi.fn(),
+    importStrategiesFolderFile: vi.fn(),
+  };
+});
 
 vi.mock("@/api/strategies", async () => {
   const actual = await vi.importActual<typeof import("@/api/strategies")>(
@@ -218,5 +230,88 @@ describe("StrategiesRoute", () => {
       expect(screen.getAllByText(/Alpha Strategy/).length).toBeGreaterThan(0),
     );
     expect(screen.queryByText(/Beta Strategy/)).not.toBeInTheDocument();
+  });
+
+  it("renders the List | Folder segmented control", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+
+    renderRoute("/strategies");
+
+    // The toggle must be present with both options.
+    expect(await screen.findByRole("tab", { name: "List" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Folder" })).toBeTruthy();
+  });
+
+  it("defaults to list view when ?view is absent", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+
+    renderRoute("/strategies");
+
+    // List tab is selected, folder file picker is NOT present.
+    const listTab = await screen.findByRole("tab", { name: "List" });
+    expect(listTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("strategies-folder-file-input")).toBeNull();
+  });
+
+  it("renders folder content when ?view=folder is in the URL", async () => {
+    vi.mocked(folderApi.listStrategiesFolder).mockResolvedValue([]);
+
+    renderRoute("/strategies?view=folder");
+
+    // Folder tab should be selected and the file picker rendered.
+    const folderTab = await screen.findByRole("tab", { name: "Folder" });
+    expect(folderTab).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByTestId("strategies-folder-file-input")).toBeTruthy();
+  });
+
+  it("clicking Folder tab updates ?view= and renders folder content", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.mocked(folderApi.listStrategiesFolder).mockResolvedValue([]);
+
+    renderRoute("/strategies");
+
+    const folderTab = await screen.findByRole("tab", { name: "Folder" });
+    fireEvent.click(folderTab);
+
+    // After clicking, folder view content should appear.
+    expect(await screen.findByTestId("strategies-folder-file-input")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Folder" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("clicking List tab from folder view hides folder content and shows list", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.mocked(folderApi.listStrategiesFolder).mockResolvedValue([]);
+
+    renderRoute("/strategies?view=folder");
+
+    // Start on folder view.
+    expect(await screen.findByTestId("strategies-folder-file-input")).toBeTruthy();
+
+    const listTab = screen.getByRole("tab", { name: "List" });
+    fireEvent.click(listTab);
+
+    // Folder picker gone, list content now active.
+    await waitFor(() =>
+      expect(screen.queryByTestId("strategies-folder-file-input")).toBeNull(),
+    );
+    expect(screen.getByRole("tab", { name: "List" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });
