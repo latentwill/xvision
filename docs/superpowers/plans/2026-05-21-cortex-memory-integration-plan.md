@@ -6,6 +6,8 @@
 
 **Architecture:** A new `xvision-memory` crate owns a SQLite-backed cosine-top-k store at `~/.xvn/memory.db`. `AgentSlot` gains a `memory_mode: MemoryMode` field (engine migration 027). The `execute_slot` dispatcher seam in `crates/xvision-engine/src/agent/execute.rs` recalls top-k matches and prepends them to `system_prompt` for non-off slots, then a post-dispatch recorder writes the decision back to the slot's namespace. Two new `events.jsonl` event kinds (`memory_recall` / `memory_write`) drive the eval-review UI. Sidecar / cortex-http boundary is deferred to v2 per `team/intake/2026-05-21-v2d-agent-memory.md` Decision 1.
 
+**Cortex tier split (added 2026-05-21):** the store is two-tier — `tier=resource` (concrete observations, provenance-tagged with `run_id`/`scenario_id`/`cycle_idx`, never recalled at decision time) and `tier=skill` (abstracted patterns, no provenance, recalled at decision time). The auto-recorder writes Resources only; recall queries Skills only. This dissolves the look-ahead leakage problem identified in `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` — backtest replays cannot recall prior runs' decisions because the recall path is Skills-only and Skills is empty in v1. Skills are populated by an explicit distillation pass (V3 autoresearcher item 11a on the V2 board) or a manual seeding CLI (v1.1 follow-up).
+
 **Tech Stack:** Rust workspace (`sqlx::SqlitePool`, `serde`, `thiserror`, `chrono`, `sha2`); existing `xvision-intern` provider clients for embedding calls (OpenAI / Voyage); ts-rs for the frontend type surface; React (`AgentForm.tsx`) for the Memory selector.
 
 ---
@@ -13,10 +15,11 @@
 ## Source context (read before starting)
 
 - Intake: `team/intake/2026-05-21-v2d-agent-memory.md` — the 10 locked decisions and per-track scope. Every phase below maps to one of the five intake tracks.
+- **Design discussion: `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`** — captures the cortex tier split and the look-ahead leakage problem it solves. Phase 1.5 + 6 are derived from this note.
 - Existing AgentSlot field pattern: `crates/xvision-engine/src/agents/model.rs:96` (struct), `crates/xvision-engine/migrations/025_agent_slot_cache_and_window.sql` (migration template that already follows the "NULL-default safe migration" pattern).
 - Dispatcher seam: `crates/xvision-engine/src/agent/execute.rs:1` — `execute_slot` builds and dispatches one `LlmRequest` per loop iteration. `LlmRequest.system_prompt` is at `crates/xvision-engine/src/agent/llm.rs:109`.
 - Frontend type surface: `frontend/web/src/api/types.gen/AgentSlot.ts` is ts-rs generated; the codegen runs via the existing `ts-export` feature on the engine crate. Hand edits there are overwritten.
-- Migration registry: `team/MANIFEST.md`; next available number is **026** and is claimed by Phase 3 of this plan.
+- Migration registry: `team/MANIFEST.md`; V2D claims engine migration **027** (renumbered from 026 after upstream collision with V2E trace-surface-foundation).
 
 ## Phase 0: `v2d-cortex-memory-plan` (this document)
 
@@ -661,6 +664,174 @@ git commit -m "v2d: add Embedder trait + StaticEmbedder"
 ```
 
 End of Phase 1. The `xvision-memory` crate is complete. No engine touch. Ready for `v2d-agent-memory-mode` to depend on it.
+
+---
+
+## Phase 1.5: cortex tier split (`xvision-memory` refactor)
+
+**Added 2026-05-21** after the `/grill-me` design pass surfaced a
+look-ahead leakage problem in the single-tier shape — see
+`docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`.
+
+This phase converts the single-tier store from Phase 1 into a two-tier
+cortex shape:
+
+- **Resources** tier — concrete observations with mandatory provenance
+  (`run_id`, `scenario_id`, `cycle_idx`). Written by the auto-recorder
+  (Phase 3). **Never recalled at decision time.**
+- **Skills** tier — abstracted patterns, no provenance. Recalled by the
+  dispatcher at decision time. Populated by an explicit distillation
+  pass (V3 autoresearcher item 11a on the V2 board) or a manual seeding
+  CLI (v1.1 follow-up).
+
+In v1, the Skills tier ships empty. The auto-recorder writes Resources
+(building the autoresearcher's input substrate). Recall returns empty
+for every query because Skills has nothing in it. No leakage is
+possible because the read path the LLM sees cannot surface Resources.
+
+**Files:**
+- Modify: `crates/xvision-memory/migrations/0001_init.sql` (add `tier` + provenance columns; pre-Phase-2 schema only — engine migration 027 is unaffected because the column lives on the memory crate's own table)
+- Modify: `crates/xvision-memory/src/types.rs` (add `Tier` enum, extend `MemoryItem` with `tier` + `run_id` / `scenario_id` / `cycle_idx`)
+- Modify: `crates/xvision-memory/src/store.rs` (`upsert` rejects Skills; new `upsert_skill`; new `demote_skill`; `query` filters `WHERE tier='skill'`)
+- Modify: `crates/xvision-memory/tests/store.rs` (extend coverage to enforce Resource/Skill separation)
+
+### Task 1.5.1: `Tier` enum + extended `MemoryItem`
+
+- [ ] **Step 1.5.1.1: Add `Tier` to `types.rs`**
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tier {
+    /// Episodic — concrete observation with mandatory provenance.
+    /// Never recalled at decision time.
+    Resource,
+    /// Semantic — abstracted pattern, no provenance. Recalled at
+    /// decision time.
+    Skill,
+}
+
+impl Tier {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Tier::Resource => "resource",
+            Tier::Skill => "skill",
+        }
+    }
+    pub fn parse_or_resource(s: &str) -> Self {
+        match s { "skill" => Tier::Skill, _ => Tier::Resource }
+    }
+}
+```
+
+Extend `MemoryItem`:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryItem {
+    pub id: String,
+    pub namespace: String,
+    pub tier: Tier,
+    pub text: String,
+    pub embedding: Vec<f32>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Resource provenance — REQUIRED on Resources, MUST be `None` on
+    /// Skills. The store enforces this at write time.
+    pub run_id: Option<String>,
+    pub scenario_id: Option<String>,
+    pub cycle_idx: Option<i64>,
+}
+```
+
+Remove the old `source_run_id` / `source_cycle_id` fields (they're
+replaced by the tier-aware provenance).
+
+### Task 1.5.2: Schema bump on `memory_items`
+
+- [ ] **Step 1.5.2.1: Rewrite `crates/xvision-memory/migrations/0001_init.sql`** (it's not yet on the merged main, so a rewrite is safe — bump the table definition rather than ALTER):
+
+```sql
+CREATE TABLE memory_items (
+    id            TEXT PRIMARY KEY,
+    namespace     TEXT NOT NULL,
+    tier          TEXT NOT NULL,
+    text          TEXT NOT NULL,
+    embedding     BLOB NOT NULL,
+    embedding_dim INTEGER NOT NULL,
+    embedder_id   TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    run_id        TEXT,
+    scenario_id   TEXT,
+    cycle_idx     INTEGER
+);
+
+CREATE INDEX idx_memory_items_tier_namespace ON memory_items(tier, namespace);
+CREATE INDEX idx_memory_items_created        ON memory_items(created_at);
+```
+
+### Task 1.5.3: Tier-discriminated store API
+
+- [ ] **Step 1.5.3.1: Split `upsert` into `upsert_resource` + `upsert_skill`**
+
+`MemoryStore::upsert_resource` — accepts a `MemoryItem` where
+`tier == Resource`. Asserts the three provenance fields are `Some`.
+Inserts.
+
+`MemoryStore::upsert_skill` — accepts a `MemoryItem` where `tier ==
+Skill`. Asserts the three provenance fields are `None`. INSERT OR
+REPLACE.
+
+`MemoryStore::demote_skill(id: &str)` — DELETE FROM memory_items
+WHERE id = ? AND tier = 'skill'.
+
+The old `upsert` is removed — callers must pick a tier. The
+recorder (Phase 3) calls `upsert_resource`; the autoresearcher (V3)
+will call `upsert_skill` / `demote_skill`.
+
+- [ ] **Step 1.5.3.2: `query` filters `tier='skill'`**
+
+```rust
+pub async fn query(&self, namespace: &str, query_embedding: &[f32], k: usize) -> anyhow::Result<Vec<MemoryMatch>> {
+    let rows: Vec<(String, String, Vec<u8>)> = sqlx::query_as(
+        "SELECT id, text, embedding FROM memory_items \
+         WHERE namespace = ? AND tier = 'skill'",
+    )
+    /* ... */
+}
+```
+
+Add a new internal `query_resources_for_run` that the autoresearcher
+will call later — *not* exposed to the dispatcher.
+
+### Task 1.5.4: Update Phase 1 tests
+
+- [ ] **Step 1.5.4.1: Extend test fixtures with `tier` + provenance**
+
+The Phase 1 tests build `MemoryItem` literals. Update them to set
+`tier: Tier::Resource` + provenance for the seeded items in the
+upsert/query tests. Add new tests:
+
+- `upsert_resource_requires_provenance` — rejects when any of
+  `run_id` / `scenario_id` / `cycle_idx` is `None`.
+- `upsert_skill_requires_no_provenance` — rejects when any provenance
+  field is `Some`.
+- `query_only_returns_skills_never_resources` — seed one Resource and
+  one Skill in the same namespace; query returns the Skill, never
+  the Resource.
+- `demote_skill_removes_only_the_named_skill` — uses `demote_skill`
+  to remove one row; other rows untouched.
+
+### Task 1.5.5: Commit
+
+```bash
+git add crates/xvision-memory/migrations crates/xvision-memory/src crates/xvision-memory/tests
+git commit -m "v2d(1.5): cortex tier split — Resources + Skills with tier-discriminated API"
+```
+
+End of Phase 1.5. The memory crate is now cortex-shaped. Resources
+are write-only-from-recorder; Skills are read-by-dispatcher only.
+Recall in v1 returns empty (Skills tier is empty) until distillation
+ships.
 
 ---
 
@@ -1727,7 +1898,79 @@ git add frontend/web/src/components/eval-review/MemoryPanel.tsx \
 git commit -m "v2d: render MemoryPanel in eval-review cycle detail"
 ```
 
-End of Phase 5. V2D is functionally complete: the operator can toggle memory per slot, the dispatcher recalls + records on non-off slots, the eval review surface shows what got recalled and written.
+End of Phase 5. V2D's wiring is in place. The operator can toggle memory per slot, the dispatcher records observations (Resources) on non-off slots, the eval review surface shows what got recorded. Recall is Skills-only and returns empty in v1 (Skills tier ships empty by design — see Phase 1.5).
+
+---
+
+## Phase 6: operator-facing docs
+
+V2D ships with operator-facing documentation explaining the cortex
+model — *what gets remembered, what gets recalled, why backtest replays
+don't leak future knowledge*. The discussion in
+`docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`
+is the source; this phase distills it into operator-friendly form.
+
+**Files:**
+- Create: `docs/v2d-memory-overview.md` (operator-facing — short, plain
+  language, screenshot-friendly)
+- Modify: `MANUAL.md` (add one paragraph linking to the overview from
+  the operator-prerequisites section)
+- Modify: `docs/v2a-overview.md` (or wherever the V2A onboarding tour
+  documents agent configuration — add a "Memory" section pointing at
+  the new overview)
+
+### Task 6.1: Write the operator-facing overview
+
+- [ ] **Step 6.1.1: Create `docs/v2d-memory-overview.md`**
+
+Cover, in plain operator language (no internal crate names, no Rust
+types):
+
+1. What memory is for — agents accumulating reusable knowledge.
+2. The three modes (off / global / agent-scoped) and when each makes
+   sense.
+3. **The cortex two-layer model** — observations (Resources) vs
+   patterns (Skills). Use the boiled-down mental model from the
+   design note's "Operator mental model" section verbatim.
+4. **Why backtest replays don't leak** — explain that the recall
+   path only reads Skills (currently empty), so even though a
+   backtest writes Resources, no future-knowledge ever flows back
+   into the LLM's context.
+5. **What the operator sees today** — Skills is empty in v1, so the
+   Memory panel will show "no recall items" even with `agent_scoped`
+   selected. That's expected; Skills populate when the autoresearcher
+   (V3) is enabled, or when a manual seeding CLI ships (v1.1
+   follow-up).
+6. **`xvn memory forget`** — operator-driven clearing.
+7. **Coming next** — link to the V2 board's V3 entry (item 11a) for
+   when the autoresearcher will start populating Skills.
+
+- [ ] **Step 6.1.2: Add a one-paragraph hook in `MANUAL.md`**
+
+Find the section where existing operator-prerequisite docs are
+linked. Add a single line like:
+
+```markdown
+- **Agent memory**: see `docs/v2d-memory-overview.md` for how the
+  per-slot memory toggle works and why backtest replays don't leak
+  future knowledge.
+```
+
+- [ ] **Step 6.1.3: Add a Memory subsection to the V2A overview**
+
+The V2A onboarding tour walks operators through agent configuration.
+Add a "Memory" subsection (2-4 paragraphs, mirror the existing tone
+of that doc) covering only what operators need at first contact:
+the selector, off-by-default, and the link to the full overview.
+
+- [ ] **Step 6.1.4: Commit**
+
+```bash
+git add docs/v2d-memory-overview.md MANUAL.md docs/v2a-overview.md
+git commit -m "v2d(6): operator-facing cortex memory docs"
+```
+
+End of Phase 6. V2D is complete and documented.
 
 ---
 
@@ -1773,6 +2016,6 @@ Per the intake's "Out of this intake" section: the `cortex-http` sidecar (deferr
 
 | #   | Owner                                | Status        |
 |-----|--------------------------------------|---------------|
-| 026 | agent-slot-memory-mode (V2D)         | in flight → merged |
+| 027 | agent-slot-memory-mode (V2D)         | in flight → merged |
 
-The conductor flips status to `merged` when Phase 2 (the migration phase) ships its PR.
+The conductor flips status to `merged` when Phase 2 (the migration phase) ships its PR. (Originally reserved as 026; renumbered to 027 after upstream landed `eval-trace-surface-foundation` against 026.)

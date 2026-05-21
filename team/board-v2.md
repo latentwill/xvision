@@ -281,6 +281,7 @@ share files; safe to run in parallel either way.
 | # | Item | Source |
 |---|---|---|
 | 11 | Autoresearcher mutation / eval / judge loop | autoresearcher plans |
+| 11a | **Autoresearcher = cortex memory distillation pass** — reads V2D Resources, proposes/judges/promotes Skills, retires stale ones. Needs write access to the Skills tier (`MemoryStore::upsert_skill` / `demote_skill`); auto-recorder still INSERT-only on Resources. Editing semantics (create / supersede / retire) must land before the first nightly autoresearcher run that targets a Skills-consuming agent — otherwise the loop is purely evaluative and nothing accumulates. | `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` |
 | 12 | Autoresearcher dashboard + lineage review | autoresearcher dashboard plan |
 | 13 | Final UI/UX pass across dashboard surfaces | design docs, chart plans |
 | 16 | Chart aesthetics + customization pass using Lightweight Charts layout/grid/crosshair/series/scale options | F32, [Lightweight Charts customization](https://tradingview.github.io/lightweight-charts/tutorials/customization/intro) |
