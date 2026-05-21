@@ -181,10 +181,10 @@ export function DocsRoute() {
                         onClick={() => setSearchParams({ slug: p.slug })}
                         aria-current={isActive ? "page" : undefined}
                         data-testid={`docs-index-item-${p.slug}`}
-                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] transition-colors leading-snug ${
+                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] border-l-2 transition-colors leading-snug ${
                           isActive
-                            ? "text-text bg-gold/10 shadow-[inset_2px_0_0_theme(colors.gold.DEFAULT)]"
-                            : "text-text-2 hover:text-text hover:bg-surface-elev"
+                            ? "text-text bg-gold/10 border-gold"
+                            : "text-text-2 border-transparent hover:text-text hover:bg-surface-elev"
                         }`}
                       >
                         {p.title}
