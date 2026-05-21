@@ -22,11 +22,11 @@ fn injected_now_fn_is_used_and_advance_to_is_noop() {
 #[test]
 fn default_constructor_follows_utc_now() {
     let clock = WallClock::default();
-    let before = Utc::now() - chrono::Duration::seconds(1);
+    let before = Utc::now();
     let from_clock: DateTime<Utc> = clock.now();
-    let after = Utc::now() + chrono::Duration::seconds(1);
+    let after = Utc::now();
     assert!(
-        from_clock >= before && from_clock <= after,
-        "from_clock={from_clock}, before={before}, after={after}"
+        before <= from_clock && from_clock <= after,
+        "default wall clock returned {from_clock}, outside [{before}, {after}]"
     );
 }
