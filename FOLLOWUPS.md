@@ -457,3 +457,34 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
   tickets without opening a broad remediation wrapper.
 - **Blocking:** blocking for treating the Web UI eval launcher and wizard as
   ready for unattended agent use.
+
+### F41 [Shared]. Eval contract honesty + agent-graph composition (xvnej 2026-05-21 QA rerun)
+
+- **Trigger:** QA rerun on `xvnej-app` (`xvision:deploy-latest`, started
+  2026-05-21 01:16) reported poor / identical metrics across breakout +
+  pullback strategies. Container inspection found the LLM was never actually
+  called — every decision returned a fixture from the `gemini-local` Serveo
+  endpoint, the eval pipeline shipped `status=completed` regardless, and
+  pyramid-blocked warnings drowned a 432/432 forced-hold pattern that no
+  finding surfaced.
+- **Scope:** execute the tracks in
+  [`team/intake/2026-05-21-eval-honesty-and-agent-graph.md`](intake/2026-05-21-eval-honesty-and-agent-graph.md).
+  Two cohorts: (a) eval contract honesty — smell-test for uniform decisions,
+  per-call `(provider, model)` attestation in the export, provider preflight
+  before launch, log-spam collapse, skip-LLM-when-no-legal-action; (b)
+  agent-graph composition — formalize `kind` on `AgentRef`
+  (`trader/watcher/critic/intern`) with per-kind I/O contracts, Watcher emits
+  user-named signals into downstream briefings, strategy declares graph
+  edges that can short-circuit downstream calls. Plus token-efficiency
+  knobs, indicator-tool wiring, scaffolding cleanup, and the
+  `XVN_CONFIG_PATH` docker-compose papercut.
+- **Explicitly out of scope:** anything that authors strategies/agents for
+  the user (no canonical Mean Reversion Agent template), anything that
+  gates the user's model choice (`required_models` demoted to informational
+  `attested_with`), anything that stuffs interpretation into the briefing
+  (agents request indicators via the tool, the system does not pre-compute
+  for them).
+- **Blocking:** YES for treating eval results as trustworthy. Every metric
+  in the dashboard today is derived from a fixture response; tier-0 items
+  (stub detection, provider attestation, preflight) must land before
+  publishing any further eval numbers as evidence.
