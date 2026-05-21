@@ -10,8 +10,41 @@
 //! via the legacy `canonical_scenarios()` fallback path.
 
 use xvision_data::fixtures::ensure_test_fixture;
+use xvision_engine::agents::{store::NewAgent, AgentSlot, AgentStore, InputsPolicy};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::strategies::AgentRef;
+
+/// Seed a trader-role `Agent` in the test's agent store and return its
+/// `agent_id`. The returned id is plumbed into the strategy's
+/// `AgentRef { agent_id, role: "trader" }` so `resolve_agent_slots`
+/// loads a real row instead of erroring with `NotFound` once the
+/// legacy `trader_slot` fallback in `validate_eval_trader_source` is
+/// removed.
+async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
+    let store = AgentStore::new(ctx.db.clone());
+    store
+        .create(NewAgent {
+            name: format!("{label}-trader"),
+            description: "eval_run_scenario fixture trader".into(),
+            tags: vec!["fixture".into(), "trader".into()],
+            slots: vec![AgentSlot {
+                name: "main".into(),
+                provider: "anthropic".into(),
+                model: "claude-sonnet-4.6".into(),
+                system_prompt: "Decide.".into(),
+                skill_ids: vec![],
+                max_tokens: Some(4096),
+                temperature: None,
+                prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
+            }],
+        })
+        .await
+        .expect("seed trader agent")
+}
 
 async fn seed_bars_for_scenario(ctx: &ApiContext, scenario: &xvision_engine::eval::Scenario) {
     let asset = scenario.asset[0].venue_symbol.as_str();
@@ -88,7 +121,6 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     use xvision_engine::eval::run::RunMode;
     use xvision_engine::strategies::manifest::PublicManifest;
     use xvision_engine::strategies::risk::RiskPreset;
-    use xvision_engine::strategies::slot::LLMSlot;
     use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
     use xvision_engine::strategies::Strategy;
     use xvision_engine::tools::ToolRegistry;
@@ -102,10 +134,11 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     // Seed a strategy on disk so the strategy lookup step passes
     // (otherwise the test trips on NotFound for the strategy, not the
     // scenario — the latter is what we want to assert here).
-    let agent_id = "01TESTSTRATEGYRUNSCENARIO0XA";
+    let strategy_id = "01TESTSTRATEGYRUNSCENARIO0XA";
+    let trader_agent_id = seed_trader_agent(&ctx, strategy_id).await;
     let strategy = Strategy {
         manifest: PublicManifest {
-            id: agent_id.into(),
+            id: strategy_id.into(),
             display_name: "Test strategy".into(),
             plain_summary: "for eval_run_scenario test".into(),
             creator: "@tester".into(),
@@ -121,18 +154,14 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
+        agents: vec![AgentRef {
+            agent_id: trader_agent_id,
+            role: "trader".into(),
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "Decide.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
-            allowed_tools: vec![],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     };
@@ -149,7 +178,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     let r = eval::run_with_deps(
         &ctx,
         EvalRunRequest {
-            agent_id: agent_id.into(),
+            agent_id: strategy_id.into(),
             scenario_id: "no-such-scenario-anywhere".into(),
             mode: RunMode::Paper,
             params_override: None,
@@ -182,7 +211,6 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     use xvision_engine::eval::run::{RunMode, RunStatus};
     use xvision_engine::strategies::manifest::PublicManifest;
     use xvision_engine::strategies::risk::RiskPreset;
-    use xvision_engine::strategies::slot::LLMSlot;
     use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
     use xvision_engine::strategies::Strategy;
     use xvision_engine::tools::ToolRegistry;
@@ -193,10 +221,11 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
         .await
         .unwrap();
 
-    let agent_id = "01TESTSTRATEGYRUNSCENARIO0XB";
+    let strategy_id = "01TESTSTRATEGYRUNSCENARIO0XB";
+    let trader_agent_id = seed_trader_agent(&ctx, strategy_id).await;
     let strategy = Strategy {
         manifest: PublicManifest {
-            id: agent_id.into(),
+            id: strategy_id.into(),
             display_name: "Test strategy".into(),
             plain_summary: "DB scenario lookup test".into(),
             creator: "@tester".into(),
@@ -212,18 +241,14 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
+        agents: vec![AgentRef {
+            agent_id: trader_agent_id,
+            role: "trader".into(),
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "Decide.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
-            allowed_tools: vec![],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     };
@@ -246,7 +271,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     let run = eval::run_with_deps(
         &ctx,
         EvalRunRequest {
-            agent_id: agent_id.into(),
+            agent_id: strategy_id.into(),
             scenario_id: "flash-crash-aug-2024".into(),
             mode: RunMode::Paper,
             params_override: None,
@@ -277,7 +302,6 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
     use xvision_engine::eval::scenario::TimeWindow;
     use xvision_engine::strategies::manifest::PublicManifest;
     use xvision_engine::strategies::risk::RiskPreset;
-    use xvision_engine::strategies::slot::LLMSlot;
     use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
     use xvision_engine::strategies::Strategy;
     use xvision_engine::tools::ToolRegistry;
@@ -316,10 +340,11 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
     .await
     .unwrap();
 
-    let agent_id = "01TESTBUNDLEMISSINGFIXTURE";
+    let strategy_id = "01TESTBUNDLEMISSINGFIXTURE";
+    let trader_agent_id = seed_trader_agent(&ctx, strategy_id).await;
     let bundle = Strategy {
         manifest: PublicManifest {
-            id: agent_id.into(),
+            id: strategy_id.into(),
             display_name: "Missing fixture test".into(),
             plain_summary: "for missing fixture preflight".into(),
             creator: "@tester".into(),
@@ -335,18 +360,14 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
+        agents: vec![AgentRef {
+            agent_id: trader_agent_id,
+            role: "trader".into(),
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "Decide.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
-            allowed_tools: vec![],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     };
@@ -361,7 +382,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
     let err = eval::run_with_deps(
         &ctx,
         EvalRunRequest {
-            agent_id: agent_id.into(),
+            agent_id: strategy_id.into(),
             scenario_id: missing.id.clone(),
             mode: RunMode::Backtest,
             params_override: None,
@@ -396,7 +417,6 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
     use xvision_engine::eval::run::RunMode;
     use xvision_engine::strategies::manifest::PublicManifest;
     use xvision_engine::strategies::risk::RiskPreset;
-    use xvision_engine::strategies::slot::LLMSlot;
     use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
     use xvision_engine::strategies::Strategy;
     use xvision_engine::tools::ToolRegistry;
@@ -416,10 +436,11 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
         .unwrap()
         .with_alpaca_fetcher(unroutable);
 
-    let agent_id = "01TESTWARMUPNOFALLBACKFIX";
+    let strategy_id = "01TESTWARMUPNOFALLBACKFIX";
+    let trader_agent_id = seed_trader_agent(&ctx, strategy_id).await;
     let bundle = Strategy {
         manifest: PublicManifest {
-            id: agent_id.into(),
+            id: strategy_id.into(),
             display_name: "Warmup fallback guard".into(),
             plain_summary: "for warmup fallback preflight".into(),
             creator: "@tester".into(),
@@ -434,18 +455,14 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
+        agents: vec![AgentRef {
+            agent_id: trader_agent_id,
+            role: "trader".into(),
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "Decide.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
-            allowed_tools: vec![],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     };
@@ -477,7 +494,7 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
     let err = eval::run_with_deps(
         &ctx,
         EvalRunRequest {
-            agent_id: agent_id.into(),
+            agent_id: strategy_id.into(),
             scenario_id: cloned.id.clone(),
             mode: RunMode::Backtest,
             params_override: None,

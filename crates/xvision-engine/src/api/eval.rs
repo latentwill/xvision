@@ -1134,27 +1134,17 @@ fn validate_eval_trader_source(
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<()> {
-    // QA22 / `strategy-require-at-least-one-agent`: empty `agents`
-    // hard-blocks at the eval boundary, regardless of legacy slot
-    // contents. The CLI `xvn strategy create` path already migrates
-    // legacy template slots to AgentRefs before save, so newly
-    // created strategies arrive here with agents populated. Old
-    // strategies stored with only `trader_slot` filled are kept
-    // runnable via the fallback below to avoid orphaning prod data,
-    // but the operator-facing error names the missing-agent
-    // condition first.
-    if strategy.agents.is_empty() && strategy.trader_slot.is_none() {
+    // QA22 / `strategy-require-at-least-one-agent`: the eval boundary
+    // requires at least one attached agent. The legacy `trader_slot`
+    // fallback that previously kept pre-refactor strategies runnable
+    // was removed 2026-05-21 — the CLI `xvn strategy create` path has
+    // been auto-migrating template slots to `AgentRef` at save time
+    // since the strategies refactor, and the engine fixtures that
+    // formerly relied on the fallback now seed real `Agent` rows
+    // (see `strategy-require-at-least-one-agent-fixture-migration`).
+    if strategy.agents.is_empty() {
         return Err(ApiError::Validation(format!(
             "strategy `{}` has no agent attached. At least one agent (with a `trader` role) is required to run an eval. Attach an agent in the Strategy Inspector or via `xvn agent attach`.",
-            strategy.manifest.id
-        )));
-    }
-    if agent_slots.is_empty() {
-        if strategy.trader_slot.is_some() {
-            return Ok(());
-        }
-        return Err(ApiError::Validation(format!(
-            "eval requires a trader output source for strategy `{}`. Attach an agent with role `trader`.",
             strategy.manifest.id
         )));
     }
@@ -1173,7 +1163,7 @@ fn validate_eval_trader_source(
         .collect::<Vec<_>>()
         .join(", ");
     Err(ApiError::Validation(format!(
-        "eval requires an attached agent with role `trader` when strategy `{}` uses attached agents. Attached roles: [{}]. Attach a trader agent, or remove attached agents to use the legacy trader slot.",
+        "eval requires an attached agent with role `trader` for strategy `{}`. Attached roles: [{}]. Attach a trader agent in the Strategy Inspector or via `xvn agent attach`.",
         strategy.manifest.id, roles
     )))
 }
@@ -2942,14 +2932,11 @@ mod tests {
         assert!(err.to_string().contains("unknown field"));
     }
 
-    #[test]
-    fn eval_trader_source_accepts_legacy_trader_slot_without_agents() {
-        let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
-        let mut strategy = strategy_with_legacy_slot(legacy_slot);
-        strategy.agents.clear();
-
-        validate_eval_trader_source(&strategy, &[]).unwrap();
-    }
+    // `eval_trader_source_accepts_legacy_trader_slot_without_agents`
+    // deleted 2026-05-21 alongside the legacy fallback removal — the
+    // eval boundary no longer accepts an empty `Strategy.agents` even
+    // when `trader_slot` is populated. See
+    // `team/contracts/strategy-require-at-least-one-agent-fixture-migration.md`.
 
     #[test]
     fn eval_trader_source_rejects_attached_agents_without_trader_role() {
@@ -2981,10 +2968,6 @@ mod tests {
             msg.contains("seeker"),
             "expected attached role in error, got {msg}"
         );
-        assert!(
-            msg.contains("legacy trader slot"),
-            "expected legacy slot remediation in error, got {msg}"
-        );
     }
 
     #[test]
@@ -3010,18 +2993,16 @@ mod tests {
     }
 
     #[test]
-    fn eval_trader_source_rejects_empty_agents_with_no_legacy_slots() {
+    fn eval_trader_source_rejects_empty_agents() {
         // QA22 / `strategy-require-at-least-one-agent`: when the
-        // strategy has neither attached agents nor a legacy
-        // trader_slot, the eval boundary names the missing-agent
-        // condition explicitly (not the generic "trader output
-        // source" wording) so operators know which fix to make.
+        // strategy has no attached agents the eval boundary names the
+        // missing-agent condition explicitly so operators know which
+        // fix to make. Post-2026-05-21 the legacy `trader_slot`
+        // fallback is gone — an empty `agents` is fatal regardless of
+        // whether `trader_slot` is set.
         let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
         let mut strategy = strategy_with_legacy_slot(legacy_slot);
         strategy.agents.clear();
-        strategy.regime_slot = None;
-        strategy.intern_slot = None;
-        strategy.trader_slot = None;
 
         let err = validate_eval_trader_source(&strategy, &[]).unwrap_err();
         let msg = err.to_string();

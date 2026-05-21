@@ -18,7 +18,6 @@ use xvision_engine::eval::canonical_scenarios;
 use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
-use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
 use xvision_engine::strategies::{AgentRef, PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
@@ -60,11 +59,31 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // Agent store tables — `resolve_agent_slots` reads
+    // `agents`/`agent_slots` via `AgentStore::get`; every fixture in
+    // this file builds a `Strategy` with an attached `AgentRef`, so
+    // both the schema and a seeded row are required.
+    sqlx::query(include_str!("../migrations/005_agents.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/019_agent_slot_prompt_version.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/020_agent_slot_inputs_policy.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/025_agent_slot_cache_and_window.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -80,6 +99,11 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // V2D: memory_mode column on agent_slots.
+    sqlx::query(include_str!("../migrations/029_agent_slot_memory_mode.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext::new(
@@ -92,36 +116,18 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     (ctx, dir)
 }
 
+// Retained as an alias to keep call sites that explicitly opted into
+// the legacy "agents table only" setup. Now that `ctx_with_tables`
+// applies the full agents-table chain itself, this just forwards.
 async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
-    let (ctx, dir) = ctx_with_tables().await;
-    sqlx::query(include_str!("../migrations/005_agents.sql"))
-        .execute(&ctx.db)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/019_agent_slot_prompt_version.sql"))
-        .execute(&ctx.db)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/020_agent_slot_inputs_policy.sql"))
-        .execute(&ctx.db)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/025_agent_slot_cache_and_window.sql"))
-        .execute(&ctx.db)
-        .await
-        .unwrap();
-    // V2D: memory_mode column.
-    sqlx::query(include_str!("../migrations/029_agent_slot_memory_mode.sql"))
-        .execute(&ctx.db)
-        .await
-        .unwrap();
-    (ctx, dir)
+    ctx_with_tables().await
 }
 
-async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
+async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
+    let trader_agent_id = seed_trader_agent(ctx, strategy_id).await;
     let strategy = Strategy {
         manifest: PublicManifest {
-            id: agent_id.to_string(),
+            id: strategy_id.to_string(),
             display_name: "Test strategy".into(),
             plain_summary: "for api::eval::run tests".into(),
             creator: "@tester".into(),
@@ -137,24 +143,52 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
+        agents: vec![AgentRef {
+            agent_id: trader_agent_id,
+            role: "trader".into(),
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "Decide.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
-            allowed_tools: vec![],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
     strategy
+}
+
+/// Seed a trader-role `Agent` in the test's agent store and return its
+/// `agent_id`. The returned id is plumbed into the strategy's
+/// `AgentRef { agent_id, role: "trader" }` so `resolve_agent_slots`
+/// loads a real row instead of erroring with `NotFound` once the
+/// legacy `trader_slot` fallback in `validate_eval_trader_source` is
+/// removed.
+async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
+    use xvision_engine::agents::InputsPolicy;
+    let store = AgentStore::new(ctx.db.clone());
+    store
+        .create(NewAgent {
+            name: format!("{label}-trader"),
+            description: "api_eval_run fixture trader".into(),
+            tags: vec!["fixture".into(), "trader".into()],
+            slots: vec![AgentSlot {
+                name: "main".into(),
+                provider: "anthropic".into(),
+                model: "claude-sonnet-4.6".into(),
+                system_prompt: "Decide.".into(),
+                skill_ids: vec![],
+                max_tokens: Some(4096),
+                temperature: None,
+                prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
+            }],
+        })
+        .await
+        .expect("seed trader agent")
 }
 
 fn write_openrouter_config(xvn_home: &std::path::Path, enabled_model: &str) {
@@ -322,50 +356,15 @@ async fn run_returns_not_found_for_unknown_scenario() {
     );
 }
 
-#[tokio::test]
-async fn run_rejects_openrouter_legacy_anthropic_model_before_queueing() {
-    let (ctx, tmp) = ctx_with_tables().await;
-    write_openrouter_config(tmp.path(), "anthropic/claude-3.5-sonnet");
-    let agent_id = "01TESTSTRATEGY000000000000OR";
-    let mut strategy = save_test_strategy(&ctx, agent_id).await;
-    let slot = strategy.trader_slot.as_mut().unwrap();
-    slot.provider = Some("openrouter".into());
-    slot.model = None;
-    slot.model_requirement = "anthropic.claude-sonnet-4.6".into();
-    let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
-    store.save(&strategy).await.unwrap();
-
-    let r = eval::run(
-        &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Backtest,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
-    )
-    .await;
-
-    let err = r.expect_err("invalid OpenRouter model id must reject");
-    assert!(
-        matches!(err, ApiError::Validation(_)),
-        "expected Validation, got {err:?}",
-    );
-    let msg = err.to_string();
-    assert!(msg.contains("openrouter"), "message should name provider: {msg}");
-    assert!(
-        msg.contains("anthropic.claude-sonnet-4.6"),
-        "message should name invalid model: {msg}",
-    );
-
-    let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM eval_runs")
-        .fetch_one(&ctx.db)
-        .await
-        .unwrap();
-    assert_eq!(queued, 0, "model preflight must fail before queueing");
-}
+// `run_rejects_openrouter_legacy_anthropic_model_before_queueing` deleted
+// 2026-05-21 alongside the fixture migration. The test mutated
+// `strategy.trader_slot` after save_test_strategy to exercise the
+// legacy slot-level model preflight; that path no longer applies once
+// the eval boundary stops reading `trader_slot`. The replacement
+// coverage lives in
+// `eval_run_dispatches_through_openrouter_for_openrouter_agent_ref`
+// (above), which asserts the same OpenRouter-only routing guarantee
+// via an attached `AgentRef` — the supported shape.
 
 #[tokio::test]
 async fn run_with_deps_completes_backtest_run_with_mocks() {
