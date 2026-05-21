@@ -41,6 +41,9 @@ use crate::eval::broker_rules::{
 use crate::eval::cost_arrays::BarCostTable;
 use crate::eval::early_stop::{self, EarlyStopConfig};
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
+use crate::eval::executor::traits::{
+    BarSource, Clock, FillRecord, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
+};
 use crate::eval::executor::Executor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
 use crate::eval::guardrails::{
@@ -51,6 +54,7 @@ use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
 };
+#[cfg(test)]
 use crate::eval::orders::OrderState;
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, MetricsSummary, Run, RunStatus};
@@ -380,6 +384,22 @@ impl BacktestExecutor {
             anyhow::bail!("scenario {} has no bars; nothing to backtest", scenario.id,);
         }
 
+        // executor-trait-extraction (sub-track 1): the per-bar loop is
+        // now driven by the BarSource trait, timestamp progression by
+        // the Clock trait, and fill production by the FillSink trait.
+        // Trait-object dispatch keeps codegen reasonable when sub-track
+        // 3 lands the Live impl on the same `BacktestExecutor` shape.
+        //
+        // The BarSource owns its own copy of the bars (clone is cheap —
+        // `Ohlcv` is `Copy`-like data); the executor keeps the original
+        // `bars: Vec<Ohlcv>` for indexed T+1 look-ahead and for the
+        // post-loop `compute_baselines` call. The two stay in lockstep
+        // because the BarSource is constructed from the same vector and
+        // is drained in step with the indexed iteration below.
+        let mut bar_source: Box<dyn BarSource> = Box::new(InjectedBars::new(bars.clone()));
+        let mut clock: Box<dyn Clock> = Box::new(InstantClock::new());
+        let mut fill_sink: Box<dyn FillSink> = Box::new(SimulatedFills::new());
+
         // Used by RunTick to report bar-clock progress. Cadence can make
         // actual decisions sparser; the final bar produces a decision too
         // (it fills against its own close instead of the absent T+1 open —
@@ -493,7 +513,22 @@ impl BacktestExecutor {
         let mut inherit_remaining: u32 = 0;
         let mut prev_position: f64 = position;
 
-        for (i, bar) in bars.iter().enumerate() {
+        // executor-trait-extraction: per-bar loop is now driven by the
+        // BarSource trait. The indexed access (T+1 look-ahead,
+        // decision_bars push, history slicing) still uses the local
+        // `bars` slice, which is the same data the BarSource was built
+        // from. Clock advancement is driven explicitly inside the loop.
+        let mut i: usize = 0;
+        while let Some(bar) = bar_source.next_bar().await {
+            // Sync indexed view of the bar — the `bars` slice and the
+            // BarSource share the same underlying data, so the same
+            // index works for both.
+            debug_assert!(i < bars.len(), "bar_source out of sync with bars vec");
+            // Update the logical clock to this bar's timestamp before
+            // any decision-side work. Live impls will ignore this
+            // (their `WallClock::advance_to` will be a no-op).
+            clock.advance_to(bar.timestamp);
+            let bar = &bars[i];
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
             }
@@ -501,6 +536,7 @@ impl BacktestExecutor {
             // is divisible by the strategy's cadence. With hourly bars and
             // 60-min cadence this always matches.
             if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
+                i += 1;
                 continue;
             }
             // Track every cadence-gated bar so baselines can replay the same
@@ -700,6 +736,7 @@ impl BacktestExecutor {
                 inherit_remaining -= 1;
                 prev_position = position;
                 decision_idx += 1;
+                i += 1;
                 continue;
             }
 
@@ -948,8 +985,8 @@ impl BacktestExecutor {
             // A broker-rejected order also skips simulate_fill: the order is
             // treated as if it never existed (fail-honest — the strategy sees
             // the decision in the trace but no fill in outcomes).
-            let fill = if applied_action == "hold" || broker_rejected {
-                FillOutcome {
+            let fill: FillRecord = if applied_action == "hold" || broker_rejected {
+                FillRecord {
                     new_pos: pre_fill_position,
                     new_entry: entry_price,
                     fill_price: None,
@@ -960,6 +997,7 @@ impl BacktestExecutor {
                     fill_branch: None,
                     aggressor_side: None,
                     order_state: None,
+                    volume_cap_hit: None,
                 }
             } else {
                 // Resolve per-bar and per-asset cost overrides.
@@ -1031,29 +1069,39 @@ impl BacktestExecutor {
                     .map(|b| (b.open, b.high, b.low))
                     .unwrap_or((bar.close, bar.close, bar.close));
 
-                let fill_result = simulate_fill(SimulateFillArgs {
-                    pos: pre_fill_position,
-                    entry: entry_price,
-                    action: &applied_action,
-                    next_open: next_bar_open,
-                    bar_volume: bar.volume,
-                    slip_bps: effective_slip_bps,
-                    spread_bps: effective_spread_bps,
-                    taker_bps: effective_taker_bps,
-                    maker_bps: effective_maker_bps,
-                    equity,
-                    risk_pct: strategy.risk.risk_pct_per_trade,
-                    slippage_model: effective_slippage_model,
-                    fee_source,
-                    asset: &asset,
-                    bar_ts: bar.timestamp,
-                    bar_open: fill_bar_open,
-                    bar_high: fill_bar_high,
-                    bar_low: fill_bar_low,
-                });
+                // executor-trait-extraction: fill production now routes
+                // through the FillSink trait. SimulatedFills::submit
+                // runs the verbatim pre-refactor `simulate_fill` body;
+                // sub-track 3's broker-backed impl will replace this
+                // call with a forward-to-broker call without changing
+                // the surrounding loop. The request is owned (no
+                // borrowed references) so future async-broker impls
+                // can hold it across `.await`.
+                let fill_record: FillRecord = fill_sink
+                    .submit(FillRequest {
+                        pos: pre_fill_position,
+                        entry: entry_price,
+                        action: applied_action.clone(),
+                        next_open: next_bar_open,
+                        bar_volume: bar.volume,
+                        slip_bps: effective_slip_bps,
+                        spread_bps: effective_spread_bps,
+                        taker_bps: effective_taker_bps,
+                        maker_bps: effective_maker_bps,
+                        equity,
+                        risk_pct: strategy.risk.risk_pct_per_trade,
+                        slippage_model: effective_slippage_model.clone(),
+                        fee_source,
+                        asset: asset.clone(),
+                        bar_ts: bar.timestamp,
+                        bar_open: fill_bar_open,
+                        bar_high: fill_bar_high,
+                        bar_low: fill_bar_low,
+                    })
+                    .await;
 
                 // Collect volume_share_excess finding if the cap bound.
-                if let Some((req_qty, bar_vol, cap_qty, fill_share)) = fill_result.volume_cap_hit {
+                if let Some((req_qty, bar_vol, cap_qty, fill_share)) = fill_record.volume_cap_hit {
                     volume_share_findings.push(make_volume_share_excess_finding(
                         &run.id,
                         decision_idx,
@@ -1064,7 +1112,7 @@ impl BacktestExecutor {
                     ));
                 }
 
-                fill_result.outcome
+                fill_record
             };
             position = fill.new_pos;
             entry_price = fill.new_entry;
@@ -1250,6 +1298,7 @@ impl BacktestExecutor {
             prev_position = position;
 
             decision_idx += 1;
+            i += 1;
         }
 
         if store.is_terminal(&run.id).await? {
@@ -1372,6 +1421,18 @@ impl BacktestExecutor {
     }
 }
 
+// executor-trait-extraction: `SimulateFillArgs`, `SimulateFillResult`,
+// `FillOutcome`, and `simulate_fill` were the inline fill-simulation
+// scaffolding before the FillSink trait absorbed the same logic. The
+// trait-side equivalents are `FillRequest`, `FillRecord`, and
+// `SimulatedFills` in `super::traits`. These local copies are kept
+// (gated to test builds) because the inline unit tests at the bottom of
+// this file exercise the pre-refactor signatures directly — pinning
+// the byte-identical behavior between the inline code (the regression
+// target) and the trait-side lift (the actual production path). When
+// sub-track 2 or 3 needs to delete one or the other, this is where
+// the cleanup happens.
+#[cfg(test)]
 struct SimulateFillArgs<'a> {
     pos: f64,
     entry: f64,
@@ -1415,6 +1476,8 @@ struct SimulateFillArgs<'a> {
 }
 
 /// Result wrapper that bundles the `FillOutcome` with volume-cap metadata.
+#[cfg(test)]
+#[allow(dead_code)]
 struct SimulateFillResult {
     outcome: FillOutcome,
     /// When `Some`, the volume cap bound: `(requested_qty, bar_volume,
@@ -1423,6 +1486,8 @@ struct SimulateFillResult {
     volume_cap_hit: Option<(f64, f64, f64, f64)>,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 struct FillOutcome {
     new_pos: f64,
     new_entry: f64,
@@ -1671,6 +1736,7 @@ fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Op
 /// - `long_open`: hold long, reverse short → long, or open long from flat.
 /// - `short_open`: hold short, reverse long → short, or open short from flat.
 /// - `flat` (or any unknown action): close any open position; otherwise no-op.
+#[cfg(test)]
 fn simulate_fill(a: SimulateFillArgs<'_>) -> SimulateFillResult {
     let want_long = a.action == "long_open";
     let want_short = a.action == "short_open";
