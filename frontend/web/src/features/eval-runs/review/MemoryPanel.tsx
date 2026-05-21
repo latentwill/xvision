@@ -19,8 +19,19 @@
 // `kind`/`payload` is a deliberately loose discriminated shape so the
 // panel works against any future cycle-events fetch without coupling to
 // a generated wire type that doesn't exist yet.
+//
+// Phase 4 deep-link: each recall row gets an overflow trigger that
+// reveals an "Open Pattern" link. The destination resolves from the
+// recall payload's `namespace`:
+//
+//   - `agent:<id>` → `/agents/<id>?tab=memory&pattern=<id>`
+//   - `global`     → `/memory?pattern=<id>`
+//
+// The destination pages read `?pattern=<id>` and highlight + scroll
+// the matching row. "Demote" is deferred to V3 (see TODO below).
 
-import type { FC } from "react";
+import { useState, type FC } from "react";
+import { Link } from "react-router-dom";
 
 type RecallItem = { id: string; score: number; text_preview: string };
 type RecallPayload = { namespace: string; k: number; items: RecallItem[] };
@@ -42,6 +53,21 @@ function isMemoryEvent(e: MemoryPanelEvent): e is MemoryEvent {
   );
 }
 
+/**
+ * Build the deep-link destination for a recalled item. The recall
+ * payload's `namespace` is the source of truth; we don't try to peek
+ * at the item's stored namespace because recall already pinned it.
+ */
+export function recallItemHref(namespace: string, itemId: string): string {
+  if (namespace.startsWith("agent:")) {
+    const agentId = namespace.slice("agent:".length);
+    return `/agents/${encodeURIComponent(agentId)}?tab=memory&pattern=${encodeURIComponent(itemId)}`;
+  }
+  // Default to the workspace page (covers `global` plus any future
+  // workspace-scoped namespaces the operator might surface).
+  return `/memory?pattern=${encodeURIComponent(itemId)}`;
+}
+
 export const MemoryPanel: FC<{ events: MemoryPanelEvent[] }> = ({ events }) => {
   const memEvents = events.filter(isMemoryEvent);
   if (memEvents.length === 0) return null;
@@ -60,12 +86,11 @@ export const MemoryPanel: FC<{ events: MemoryPanelEvent[] }> = ({ events }) => {
                 </div>
                 <ul className="mt-1 space-y-1">
                   {e.payload.items.map((it) => (
-                    <li key={it.id} className="flex gap-2">
-                      <span className="tabular-nums text-text-3">
-                        {it.score.toFixed(2)}
-                      </span>
-                      <span className="text-text-2">{it.text_preview}</span>
-                    </li>
+                    <RecallRow
+                      key={it.id}
+                      item={it}
+                      namespace={e.payload.namespace}
+                    />
                   ))}
                 </ul>
               </li>
@@ -97,5 +122,65 @@ export const MemoryPanel: FC<{ events: MemoryPanelEvent[] }> = ({ events }) => {
         })}
       </ul>
     </section>
+  );
+};
+
+// ── recall row with overflow menu ───────────────────────────────────────────
+
+const RecallRow: FC<{ item: RecallItem; namespace: string }> = ({
+  item,
+  namespace,
+}) => {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <li
+      className="flex gap-2 items-start relative group"
+      title={item.text_preview}
+    >
+      <span className="tabular-nums text-text-3">{item.score.toFixed(2)}</span>
+      <span className="text-text-2 flex-1" title={item.text_preview}>
+        {item.text_preview}
+      </span>
+      <div className="relative shrink-0">
+        <button
+          type="button"
+          aria-label="Open recall actions"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="px-1.5 py-0.5 rounded text-text-3 hover:text-text hover:bg-surface-elev/60 transition-colors"
+        >
+          ⋯
+        </button>
+        {open ? (
+          <>
+            {/* Click-away catch — clicking outside the menu closes it. */}
+            <div
+              className="fixed inset-0 z-30"
+              onClick={() => setOpen(false)}
+              role="presentation"
+            />
+            <div
+              role="menu"
+              className="absolute right-0 top-full mt-1 z-40 min-w-[160px] rounded-sm border border-border bg-surface-card shadow-md py-1"
+            >
+              <Link
+                to={recallItemHref(namespace, item.id)}
+                onClick={() => setOpen(false)}
+                className="block px-3 py-1.5 text-[12px] text-text-2 hover:text-text hover:bg-surface-elev/60"
+              >
+                Open Pattern
+              </Link>
+              {/* TODO(V3): "Demote" — convert a recalled item back to */}
+              {/* an Observation or delete it from Patterns. Deferred */}
+              {/* to V3 supersede/replace semantics; until then, the */}
+              {/* per-agent + workspace Patterns sub-tabs already */}
+              {/* expose deletion via the standard list affordances. */}
+            </div>
+          </>
+        ) : null}
+      </div>
+    </li>
   );
 };

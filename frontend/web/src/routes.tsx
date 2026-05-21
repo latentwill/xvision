@@ -24,6 +24,7 @@ const EvalCompareRoute = lazy(() => import("./routes/eval-compare").then((m) => 
 const LiveRoute = lazy(() => import("./routes/live").then((m) => ({ default: m.LiveRoute })));
 const SetupRoute = lazy(() => import("./routes/setup").then((m) => ({ default: m.SetupRoute })));
 const DocsRoute = lazy(() => import("./routes/docs").then((m) => ({ default: m.DocsRoute })));
+const MemoryPage = lazy(() => import("./features/memory/MemoryPage").then((m) => ({ default: m.MemoryPage })));
 const SettingsLayout = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsLayout })));
 const SettingsBrokersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsBrokersRoute })));
 const SettingsDangerRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsDangerRoute })));
@@ -91,6 +92,7 @@ export const router = createBrowserRouter([
       { path: "eval-runs/:runId", element: page(<EvalRunDetailRoute />) },
       { path: "agent-runs/:runId", element: page(<AgentRunDetailRoute />) },
       { path: "eval-runs/compare", element: page(<EvalCompareRoute />) },
+      { path: "memory", element: page(<MemoryPage />) },
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
       { path: "safety", element: page(<SafetyRoute />) },

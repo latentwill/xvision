@@ -10,6 +10,7 @@ const PRIMARY: Item[] = [
   { to: "/strategies-folder", label: "Folder", icon: "book" },
   { to: "/agents", label: "Agents", icon: "user" },
   { to: "/scenarios", label: "Scenarios", icon: "list" },
+  { to: "/memory", label: "Memory", icon: "flame" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
   { to: "/docs", label: "Docs", icon: "book" },
   { to: "/settings", label: "Settings", icon: "sliders" },

@@ -11,14 +11,24 @@
 //
 // New-agent flow (no `agentId` yet) keeps the bare AgentForm — there's
 // no memory namespace until the agent exists.
+//
+// Phase 4 deep-link support: `?tab=memory` selects the Memory tab on
+// mount (the eval-review MemoryPanel's "Open Pattern" deep-link drops
+// the operator here), and `?pattern=<id>` is forwarded to the surface
+// so the matching row highlights and scrolls into view.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { AgentForm } from "./AgentForm";
 import { MemoryTab } from "./MemoryTab";
 import type { AgentSlot } from "@/api/agents";
 
 type Tab = "configuration" | "memory";
+
+function tabFromParam(param: string | null): Tab {
+  return param === "memory" ? "memory" : "configuration";
+}
 
 export function AgentDetailTabs({
   agentId,
@@ -27,7 +37,16 @@ export function AgentDetailTabs({
   agentId?: string;
   initialSlots?: AgentSlot[];
 }) {
-  const [tab, setTab] = useState<Tab>("configuration");
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => tabFromParam(params.get("tab")));
+
+  // Re-sync the active tab when the URL changes (e.g. browser back/forward,
+  // or another component pushes a new query string).
+  useEffect(() => {
+    setTab(tabFromParam(params.get("tab")));
+  }, [params]);
+
+  const highlightPatternId = params.get("pattern");
 
   // Pre-save state — only the form is meaningful. The Memory tab
   // needs an agent_id to scope its namespace, so we hide it until the
@@ -42,7 +61,7 @@ export function AgentDetailTabs({
       {tab === "configuration" ? (
         <AgentForm agentId={agentId} initialSlots={initialSlots} />
       ) : (
-        <MemoryTab agentId={agentId} />
+        <MemoryTab agentId={agentId} highlightPatternId={highlightPatternId} />
       )}
     </div>
   );
