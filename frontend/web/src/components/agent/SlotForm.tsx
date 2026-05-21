@@ -160,6 +160,27 @@ export function SlotForm({
         />
       </Field>
 
+      {/* V2D — cortex-memory mode. `off` keeps the dispatcher's memory
+          seam dormant (the default). `global` shares the workspace pool
+          across every memory-enabled agent; `agent_scoped` isolates this
+          agent's history. See:
+          docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md */}
+      <div className="mt-4">
+        <Field label="Memory">
+          <select
+            value={slot.memory_mode ?? "off"}
+            onChange={(e) =>
+              patch("memory_mode", e.target.value as AgentSlot["memory_mode"])
+            }
+            className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
+          >
+            <option value="off">Off</option>
+            <option value="global">Global (shared across agents)</option>
+            <option value="agent_scoped">Agent-scoped (this agent only)</option>
+          </select>
+        </Field>
+      </div>
+
       {slot.skill_ids.length > 0 ? (
         <div className="grid grid-cols-2 gap-4 mt-4">
           <Field label="Skills">
