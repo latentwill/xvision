@@ -129,9 +129,7 @@ impl MemoryRecorder {
             cycle_idx: Some(cycle_idx),
             training_window_end: None,
         };
-        self.store
-            .upsert_observation(&item, embedder.id())
-            .await?;
+        self.store.upsert_observation(&item, embedder.id()).await?;
         Ok(Some(id))
     }
 }

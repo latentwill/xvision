@@ -20,6 +20,7 @@ use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
 use xvision_engine::eval::run::{Run, RunMode};
+#[allow(deprecated)]
 use xvision_engine::eval::scenario::{canonical_scenarios, SlippageModel};
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;

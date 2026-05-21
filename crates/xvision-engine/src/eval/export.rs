@@ -773,6 +773,8 @@ mod roundtrip {
             trader_slot: Some(slot),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         }
     }
 
@@ -1275,6 +1277,8 @@ mod provider_attestation {
             }),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         }
     }
 

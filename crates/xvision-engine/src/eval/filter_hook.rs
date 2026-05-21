@@ -110,10 +110,8 @@ impl FilterHook {
                 .map(|c| c.passed)
                 .collect::<Vec<_>>(),
         )?;
-        let in_warmup =
-            matches!(outcome.decision, ActivationDecision::Warming { .. }) as i64;
-        let in_cooldown =
-            matches!(outcome.decision, ActivationDecision::Cooldown { .. }) as i64;
+        let in_warmup = matches!(outcome.decision, ActivationDecision::Warming { .. }) as i64;
+        let in_cooldown = matches!(outcome.decision, ActivationDecision::Cooldown { .. }) as i64;
         let wakeups_today: i64 = match outcome.decision {
             ActivationDecision::CappedForDay { wakeups_today } => wakeups_today as i64,
             _ => self.state.wakeups_on(ts) as i64,
@@ -150,11 +148,7 @@ impl FilterHook {
                     bar_index: self.bar_index.saturating_sub(1),
                     ts,
                     decision_tag: outcome.decision.tag().to_string(),
-                    conditions_passed: outcome
-                        .conditions_passed
-                        .iter()
-                        .map(|c| c.passed)
-                        .collect(),
+                    conditions_passed: outcome.conditions_passed.iter().map(|c| c.passed).collect(),
                     tree_true: outcome.tree_true,
                     trip: outcome.decision.is_trip(),
                 },

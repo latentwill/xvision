@@ -807,9 +807,7 @@ async fn migrate_eval_runs_venue_label(pool: &SqlitePool) -> ApiResult<()> {
 }
 
 async fn migrate_filters_and_evaluations(pool: &SqlitePool) -> ApiResult<()> {
-    if !table_exists(pool, "filters").await?
-        || !table_exists(pool, "eval_filter_evaluations").await?
-    {
+    if !table_exists(pool, "filters").await? || !table_exists(pool, "eval_filter_evaluations").await? {
         // The .sql file is idempotent (`CREATE TABLE IF NOT EXISTS`) so
         // running it on a partial-migration is safe.
         for stmt in MIGRATION_032_FILTERS_AND_EVALUATIONS.split(';') {

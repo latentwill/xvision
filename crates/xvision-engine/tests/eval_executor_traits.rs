@@ -160,7 +160,10 @@ async fn simulated_fills_long_open_from_flat_matches_pre_refactor() {
         rec.realized_pnl,
         fee
     );
-    assert!(rec.volume_cap_hit.is_none(), "linear slippage does not bind volume cap");
+    assert!(
+        rec.volume_cap_hit.is_none(),
+        "linear slippage does not bind volume cap"
+    );
 }
 
 #[tokio::test]
@@ -221,8 +224,7 @@ async fn simulated_fills_volume_share_cap_emits_provenance_tuple() {
         volume_limit: 0.05,
     };
     let rec = sink.submit(req).await;
-    let (_req_qty, bar_vol, cap_qty, fill_share) =
-        rec.volume_cap_hit.expect("cap should have bound");
+    let (_req_qty, bar_vol, cap_qty, fill_share) = rec.volume_cap_hit.expect("cap should have bound");
     assert_eq!(bar_vol, 0.0001);
     assert!((fill_share - 0.05).abs() < 1e-9);
     assert!((cap_qty - 0.05 * 0.0001).abs() < 1e-9);

@@ -116,8 +116,8 @@ mod tests {
         // future work threads the actual model into the id. For now
         // this test pins the current behaviour so a refactor that
         // changes id() generation flags as a deliberate decision.
-        let e = OpenAiEmbedder::new("https://api.openai.com/v1", "test-key")
-            .with_model("text-embedding-3-large");
+        let e =
+            OpenAiEmbedder::new("https://api.openai.com/v1", "test-key").with_model("text-embedding-3-large");
         assert_eq!(e.id(), "openai:text-embedding-3-small");
     }
 }

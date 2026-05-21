@@ -72,14 +72,14 @@ async fn distinct_provider_model_keys_run_in_parallel() {
         .await;
 
     // A second key must not block, even with global permits=1.
-    timeout(
+    let _other_model = timeout(
         Duration::from_millis(200),
         ctx.launch_gate.acquire("openrouter", "openai/gpt-5-codex"),
     )
     .await
     .expect("distinct model must not block on a saturated peer key");
 
-    timeout(
+    let _other_provider = timeout(
         Duration::from_millis(200),
         ctx.launch_gate
             .acquire("anthropic", "google/gemini-3.1-flash-lite"),

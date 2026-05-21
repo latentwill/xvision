@@ -575,17 +575,44 @@ impl BacktestExecutor {
             // track-plan-touches: per-bar filter evaluation. `None`
             // means EveryBar strategy (no gating). When the outcome's
             // decision is not `Active`, skip the agent pipeline for
-            // this bar — record the evaluation, emit the event, then
-            // `continue` past pipeline / decision / fill / metrics
-            // work. The bar is still counted in `decision_bars` (already
-            // pushed above) so post-loop baselines see the same bar
-            // slice the strategy would have considered.
+            // this bar — record the evaluation, emit the event, keep
+            // equity/metrics dense for chart continuity, then `continue`
+            // past pipeline / decision / fill work. The bar is still
+            // counted in `decision_bars` (already pushed above) so
+            // post-loop baselines see the same bar slice the strategy
+            // would have considered.
             if let Some(hook) = filter_hook.as_mut() {
                 let in_position = position.abs() > f64::EPSILON;
                 let outcome = hook.evaluate(bar, in_position);
                 hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &outcome)
                     .await?;
                 if !outcome.decision.is_active() {
+                    equity = initial + realized_total + position * (next_bar_open - entry_price);
+                    store.record_equity(&run.id, bar.timestamp, equity).await?;
+                    self.emit_chart(
+                        &run.id,
+                        RunChartEvent::Equity(ChartEquityPoint {
+                            time: bar.timestamp.timestamp(),
+                            equity_usd: equity,
+                        }),
+                    )
+                    .await;
+                    equity_curve.push(equity);
+
+                    if equity > peak_equity {
+                        peak_equity = equity;
+                    }
+                    let drawdown_pct = if peak_equity > 0.0 {
+                        ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    self.emit(ProgressEvent::MetricsUpdated {
+                        run_id: run.id.clone(),
+                        equity,
+                        drawdown_pct,
+                        n_trades,
+                    });
                     i += 1;
                     continue;
                 }
@@ -919,10 +946,7 @@ impl BacktestExecutor {
                         // for operator visibility but the fill still proceeds
                         // — the venue would accept the order after truncating
                         // precision, so the backtest must mirror that.
-                        let is_blocking = matches!(
-                            violation.severity,
-                            BrokerViolationSeverity::Critical
-                        );
+                        let is_blocking = matches!(violation.severity, BrokerViolationSeverity::Critical);
                         if is_blocking {
                             broker_rejected_orders += 1;
                         }
@@ -2265,6 +2289,8 @@ mod tests {
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         }
     }
 

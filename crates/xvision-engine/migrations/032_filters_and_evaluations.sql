@@ -4,7 +4,7 @@
 -- Adds two tables:
 --
 --   * `filters` — forward-declared persistence layer for filter specs.
---     Strategies in v1 carry their Filter inline in the JSON file; this
+--     Strategies in v1 carry their Filter inline in the JSON file. This
 --     table is a v2 destination (Stage 4 wires CRUD against it). It's
 --     created here so the schema lands alongside the runtime that
 --     produces filter_id-keyed rows in eval_filter_evaluations.
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS eval_filter_evaluations (
     ts                  TEXT NOT NULL,
     -- The filter that was evaluated. May be NULL for inline filters
     -- that don't have a row in `filters` yet (v1 strategies embed
-    -- their filter in the JSON; Stage 4 promotes them).
+    -- their filter in the JSON. Stage 4 promotes them).
     filter_id           TEXT,
     -- Inline display name copy so a row is interpretable without
     -- joining filters even when filter_id is NULL.

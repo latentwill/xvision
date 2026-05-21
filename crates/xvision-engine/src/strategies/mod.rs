@@ -437,6 +437,8 @@ mod tests {
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: json!({}),
+            activation_mode: ActivationMode::EveryBar,
+            filter: None,
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(!s.contains("\"agents\""), "empty agents omitted: {s}");
@@ -470,6 +472,8 @@ mod tests {
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: json!({}),
+            activation_mode: ActivationMode::EveryBar,
+            filter: None,
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(

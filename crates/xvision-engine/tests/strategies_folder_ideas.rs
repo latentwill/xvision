@@ -310,7 +310,7 @@ async fn list_ideas_clamps_limit_to_max() {
     let (ctx, td) = fresh_ctx().await;
     // Seed enough valid templates to prove the over-cap request clamps at
     // MAX_LIMIT instead of just returning every available row.
-    for i in 0..=(MAX_LIMIT as u32) {
+    for i in 0..=MAX_LIMIT {
         let body = format!(
             r#"{{
   "name": "ema_test_{i}",

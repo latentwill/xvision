@@ -236,7 +236,7 @@ fn inference_cost_metric_dominance_threshold_negative_gross() {
 fn inference_cost_metric_backward_compat_old_json_deserializes_to_none() {
     // Old stored MetricsSummary JSON without the new optional fields.
     let old_json = r#"{
-        "total_return_pct": 3.14,
+        "total_return_pct": 3.125,
         "sharpe": 1.5,
         "max_drawdown_pct": 7.2,
         "win_rate": 0.58,
@@ -244,7 +244,7 @@ fn inference_cost_metric_backward_compat_old_json_deserializes_to_none() {
         "n_decisions": 15
     }"#;
     let m: MetricsSummary = serde_json::from_str(old_json).unwrap();
-    assert_eq!(m.total_return_pct, 3.14);
+    assert_eq!(m.total_return_pct, 3.125);
     assert_eq!(m.inference_cost_quote_total, None);
     assert_eq!(m.net_return_pct, None);
 }

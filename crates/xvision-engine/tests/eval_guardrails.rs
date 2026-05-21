@@ -125,9 +125,9 @@ fn minimal_strategy(agent_id: &str) -> Strategy {
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
         hypothesis: None,
-    },
-    activation_mode: xvision_filters::ActivationMode::EveryBar,
-    filter: None,
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
+    }
 }
 
 /// Daily bars starting 2026-01-01, monotonically increasing close. The
@@ -256,16 +256,16 @@ async fn four_consecutive_long_open_pyramid_blocks_to_three_holds() {
         decisions[0].fill_price.is_some() && decisions[0].fill_size.unwrap_or(0.0) > 0.0,
         "first long_open must fill — guardrail allows the first open"
     );
-    for i in 1..4 {
+    for (i, decision) in decisions.iter().enumerate().take(4).skip(1) {
         assert!(
-            decisions[i].fill_price.is_none(),
+            decision.fill_price.is_none(),
             "decision {i} (pyramid-blocked) must have no fill_price; got {:?}",
-            decisions[i].fill_price,
+            decision.fill_price,
         );
         assert!(
-            decisions[i].fill_size.is_none() || decisions[i].fill_size == Some(0.0),
+            decision.fill_size.is_none() || decision.fill_size == Some(0.0),
             "decision {i} (pyramid-blocked) must have no fill_size; got {:?}",
-            decisions[i].fill_size,
+            decision.fill_size,
         );
     }
 

@@ -31,7 +31,8 @@ fn redact_openai_key_in_error_response() {
 #[test]
 fn redact_anthropic_key_in_sse_event() {
     // Planted in a simulated SSE event payload.
-    let sse_line = r#"data: {"type":"error","message":"auth failed: sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ"}"#;
+    let sse_line =
+        r#"data: {"type":"error","message":"auth failed: sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ"}"#;
     let cleaned = redact(sse_line);
     assert!(
         cleaned.contains("[REDACTED:PROVIDER_TOKEN]"),
@@ -87,7 +88,8 @@ fn redact_alpaca_api_key_in_error_response() {
 
 #[test]
 fn redact_private_key_hex_in_log_line() {
-    let log_line = "job_output: private_key=0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+    let log_line =
+        "job_output: private_key=0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
     let cleaned = redact(log_line);
     assert!(
         cleaned.contains("[REDACTED:PRIVATE_KEY_HEX]"),
@@ -212,7 +214,13 @@ fn redact_multiple_secrets_in_one_payload() {
     assert!(broker_redacted, "broker key must be redacted: {cleaned}");
     assert!(tailscale_redacted, "tailscale key must be redacted: {cleaned}");
     // Raw secrets must not appear.
-    assert!(!cleaned.contains("sk-ABCDEF"), "provider token in output: {cleaned}");
+    assert!(
+        !cleaned.contains("sk-ABCDEF"),
+        "provider token in output: {cleaned}"
+    );
     assert!(!cleaned.contains("PKABCDEF"), "broker key in output: {cleaned}");
-    assert!(!cleaned.contains("tskey-abcdef"), "tailscale key in output: {cleaned}");
+    assert!(
+        !cleaned.contains("tskey-abcdef"),
+        "tailscale key in output: {cleaned}"
+    );
 }

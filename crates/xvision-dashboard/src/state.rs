@@ -365,12 +365,10 @@ impl AppState {
         .await
         .context("create auth_audit table")?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_auth_audit_timestamp ON auth_audit (timestamp)",
-        )
-        .execute(&self.pool)
-        .await
-        .context("create auth_audit timestamp index")?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_auth_audit_timestamp ON auth_audit (timestamp)")
+            .execute(&self.pool)
+            .await
+            .context("create auth_audit timestamp index")?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_auth_audit_session_token_hash ON auth_audit (session_token_hash)",

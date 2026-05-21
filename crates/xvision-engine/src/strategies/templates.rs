@@ -144,6 +144,8 @@ pub fn example_strategies() -> Vec<Strategy> {
                 "ema_slow": 50,
                 "atr_period": 14
             }),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         },
         Strategy {
             manifest: PublicManifest {
@@ -192,6 +194,8 @@ pub fn example_strategies() -> Vec<Strategy> {
                 "bollinger_sigma": 2.0,
                 "atr_period": 14
             }),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         },
         Strategy {
             manifest: PublicManifest {
@@ -230,6 +234,8 @@ pub fn example_strategies() -> Vec<Strategy> {
                 "donchian_period": 20,
                 "atr_period": 14
             }),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         },
     ]
 }

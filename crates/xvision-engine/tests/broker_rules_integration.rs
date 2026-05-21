@@ -215,9 +215,9 @@ fn strategy_with_risk_pct(agent_id: &str, risk_pct: f64) -> Strategy {
         risk,
         mechanical_params: serde_json::json!({}),
         hypothesis: None,
-    },
-    activation_mode: xvision_filters::ActivationMode::EveryBar,
-    filter: None,
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
+    }
 }
 
 fn trader_resp(action: &str) -> LlmResponse {

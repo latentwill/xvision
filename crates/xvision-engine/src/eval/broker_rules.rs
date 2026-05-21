@@ -496,9 +496,9 @@ mod tests {
     fn fractional_order_rounding_at_max_precision_passes() {
         // BTC max is 9. Exactly 9 decimal places should pass.
         // 0.000000001 = 1e-9 (9 decimal places)
-        let order = btc_market_order(0.000000001, 100_000.0); // notional = $0.0001
-                                                              // Notional is below min ($1), so this would fail on min-notional.
-                                                              // Use a price that brings notional above $1.
+        let _order = btc_market_order(0.000000001, 100_000.0); // notional = $0.0001
+                                                               // Notional is below min ($1), so this would fail on min-notional.
+                                                               // Use a price that brings notional above $1.
         let order_big_price = PendingOrder {
             symbol: "BTC/USD".into(),
             kind: OrderKind::Market,
