@@ -392,8 +392,8 @@ describe("RunsTab strategy name display", () => {
     id: "01HZ000000000000000000001",
     agent_id: "01HZ000000000000000000002",
     scenario_id: scenario.id,
-    mode: "Backtest",
-    status: "Completed",
+    mode: "backtest",
+    status: "completed",
     started_at: "2026-05-19T09:00:00Z",
     completed_at: "2026-05-19T10:00:00Z",
   };
@@ -515,5 +515,56 @@ describe("RunsTab strategy name display", () => {
       expect(screen.queryByText("Mean Reversion v3")).not.toBeInTheDocument();
     });
     expect(screen.getByText("Trend Follow v1")).toBeInTheDocument();
+  });
+
+  it("filters pending runs using the backend queued status value", async () => {
+    const queuedRun = {
+      ...runRow,
+      id: "01HZ000000000000000000006",
+      status: "queued",
+      completed_at: null,
+    };
+    const failedRun = {
+      ...runRow,
+      id: "01HZ000000000000000000007",
+      status: "failed",
+      completed_at: null,
+    };
+
+    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: runRow.agent_id,
+        display_name: "Mean Reversion v3",
+        template: "single_llm",
+        decision_cadence_minutes: 60,
+        tags: [],
+        models: [],
+        providers: [],
+      },
+    ]);
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      queuedRun,
+      failedRun,
+    ] as unknown as Awaited<ReturnType<typeof evalApi.listRuns>>);
+
+    renderRoute();
+    fireEvent.click(await screen.findByRole("button", { name: "Runs" }));
+
+    expect(await screen.findByText(queuedRun.id)).toBeInTheDocument();
+    expect(screen.getByText(failedRun.id)).toBeInTheDocument();
+
+    const statusFilter = screen
+      .getAllByRole("combobox")
+      .find((el) =>
+        Array.from((el as HTMLSelectElement).options).some(
+          (option) => option.value === "queued",
+        ),
+      ) as HTMLSelectElement;
+    fireEvent.change(statusFilter, { target: { value: "queued" } });
+
+    await waitFor(() => {
+      expect(screen.queryByText(failedRun.id)).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(queuedRun.id)).toBeInTheDocument();
   });
 });
