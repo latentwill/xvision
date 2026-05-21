@@ -291,7 +291,7 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
     // materialise both `providers_used` and the strategy's
     // `model_requirement` together. Failures are swallowed so an
     // unavailable DB row doesn't block the export.
-    if let (Some(ref s), Some(ref diag)) = (strategy.as_ref(), provider_diagnostics.as_ref()) {
+    if let (Some(s), Some(diag)) = (strategy.as_ref(), provider_diagnostics.as_ref()) {
         emit_provider_mismatch_finding_if_needed(&store, &run.id, s, diag).await;
     }
 

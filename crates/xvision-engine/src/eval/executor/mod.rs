@@ -10,10 +10,13 @@
 //! `RunMode` and call `run(...)` once per `xvn eval run` invocation.
 
 pub mod backtest;
+pub mod live_source;
 pub mod paper;
+pub mod real_broker_fills;
 pub mod trace_types;
 pub mod trader_output;
 pub mod traits;
+pub mod wall_clock;
 
 use std::sync::Arc;
 
@@ -28,7 +31,9 @@ use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
 pub use backtest::BacktestExecutor;
+pub use live_source::{LiveStream, LiveStreamError};
 pub use paper::PaperExecutor;
+pub use real_broker_fills::RealBrokerFills;
 pub use trace_types::{
     AggressorSide, DecisionTrace, FeeSource, FillBranch, FillTrace, ToolCall, DECISIONS_SCHEMA_VERSION,
 };
@@ -36,6 +41,7 @@ pub use trader_output::{TraderFailureKind, TraderOutputError};
 pub use traits::{
     BarSource, Clock, FillRecord, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
 };
+pub use wall_clock::WallClock;
 
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;

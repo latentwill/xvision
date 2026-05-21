@@ -29,6 +29,10 @@ tracing      = { workspace = true }
 sha2         = "0.10"
 hex          = "0.4"
 bytes        = "1"
+async-trait  = { workspace = true }
+apca         = { workspace = true }
+futures      = "0.3"
+rand         = { version = "0.8", default-features = false, features = ["std", "std_rng", "small_rng"] }
 ts-rs        = { version = "9", optional = true }
 
 [dev-dependencies]
