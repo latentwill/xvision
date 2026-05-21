@@ -64,6 +64,7 @@ const MIGRATION_025_AGENT_SLOT_CACHE_AND_WINDOW: &str =
 const MIGRATION_026_TRACE_SURFACE_FOUNDATION: &str =
     include_str!("../../migrations/026_trace_surface_foundation.sql");
 const MIGRATION_027_RUN_BARS_MANIFEST: &str = include_str!("../../migrations/027_run_bars_manifest.sql");
+const MIGRATION_028_CLI_JOB_AUDIT: &str = include_str!("../../migrations/028_cli_job_audit.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -193,6 +194,7 @@ impl ApiContext {
         migrate_agent_slot_cache_and_window(&pool).await?;
         migrate_trace_surface_foundation(&pool).await?;
         migrate_run_bars_manifest(&pool).await?;
+        migrate_cli_job_audit(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -638,6 +640,16 @@ async fn migrate_hypothesis_and_experiments(pool: &SqlitePool) -> ApiResult<()> 
             .await?;
     }
 
+    Ok(())
+}
+
+/// Apply migration 028 (v2b-remote-cli-job-safety): add audit, PID-tracking,
+/// and supervisor-cap columns to `cli_jobs`. Gated on column absence so the
+/// migration is idempotent on already-upgraded databases.
+async fn migrate_cli_job_audit(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "cli_jobs", "pid").await? {
+        sqlx::query(MIGRATION_028_CLI_JOB_AUDIT).execute(pool).await?;
+    }
     Ok(())
 }
 

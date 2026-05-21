@@ -297,7 +297,10 @@ async fn startup_recovers_queued_jobs() {
 }
 
 #[tokio::test]
-async fn startup_fails_running_jobs_as_orphans() {
+async fn startup_orphans_running_jobs_whose_pid_is_not_alive() {
+    // Insert a job in Running state with no PID recorded (simulates a job
+    // started before migration 028, or a job whose PID was not written).
+    // The orphan-recovery sweep should transition it to `orphaned`.
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
         .await
@@ -307,6 +310,7 @@ async fn startup_fails_running_jobs_as_orphans() {
         .create_queued(vec!["eval".into(), "watch".into(), "slow-run".into()], 30)
         .await
         .expect("create queued job");
+    // mark_running with no PID simulates a pre-028 row (pid IS NULL).
     store.mark_running(&job.job_id).await.expect("mark running");
 
     drop(store);
@@ -317,7 +321,10 @@ async fn startup_fails_running_jobs_as_orphans() {
     let response = server.get(&path).await;
     response.assert_status_ok();
     let meta: serde_json::Value = response.json();
-    assert_eq!(meta["status"], "failed");
+    // NULL pid → confirmed orphan; status is now "orphaned" not "failed"
+    // so the operator can distinguish "lost due to restart" from "ran but failed".
+    assert_eq!(meta["status"], "orphaned");
+    assert_eq!(meta["recovery_reason"], "process_not_found");
     assert!(meta["error_message"]
         .as_str()
         .unwrap_or("")
