@@ -236,12 +236,36 @@ fn scenario_validation_rejects_unsupported_asset() {
 }
 
 #[test]
-fn scenario_validation_requires_single_crypto_usd_asset() {
+fn scenario_validation_accepts_multi_asset_crypto_usd_basket() {
+    // Multi-asset Alpaca unlock: validate_v1 accepts N>=1 whitelisted
+    // crypto assets in a USD quote. Downstream execution still trades
+    // `asset[0]` until the portfolio allocator lands; the validator just
+    // stops gating multi-asset scenarios from being created.
     let mut scenario = valid_crypto_scenario("ETH");
     scenario.asset.push(asset_ref("SOL"));
-    let err = scenario.validate_v1().unwrap_err();
-    assert!(err.to_string().contains("single asset"));
+    scenario.validate_v1().unwrap();
+}
 
+#[test]
+fn scenario_validation_rejects_empty_asset_list() {
+    let mut scenario = valid_crypto_scenario("ETH");
+    scenario.asset.clear();
+    let err = scenario.validate_v1().unwrap_err();
+    assert!(err.to_string().contains("at least one asset"));
+}
+
+#[test]
+fn scenario_validation_rejects_unwhitelisted_asset_in_basket() {
+    // Every asset in the basket must clear the whitelist — a single bad
+    // entry fails the whole scenario.
+    let mut scenario = valid_crypto_scenario("ETH");
+    scenario.asset.push(asset_ref("XRP"));
+    let err = scenario.validate_v1().unwrap_err();
+    assert!(err.to_string().contains("Alpaca crypto whitelist"));
+}
+
+#[test]
+fn scenario_validation_requires_crypto_usd_envelope() {
     let mut scenario = valid_crypto_scenario("ETH");
     scenario.asset_class = AssetClass::Equity;
     let err = scenario.validate_v1().unwrap_err();

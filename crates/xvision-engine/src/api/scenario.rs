@@ -273,11 +273,10 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
         ));
     }
     ensure_display_name_available(ctx, &req.display_name).await?;
-    if req.asset.len() != 1 {
-        return Err(ApiError::Validation(format!(
-            "asset.len() must be 1 in v1 (got {})",
-            req.asset.len()
-        )));
+    if req.asset.is_empty() {
+        return Err(ApiError::Validation(
+            "scenario requires at least one asset".into(),
+        ));
     }
     if !matches!(req.asset_class, AssetClass::Crypto) {
         return Err(ApiError::Validation("asset_class must be Crypto in v1".into()));
@@ -305,11 +304,13 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
             floor.to_rfc3339()
         )));
     }
-    if !is_alpaca_crypto_supported(&req.asset[0].symbol) {
-        return Err(ApiError::Validation(format!(
-            "asset '{}' is not in the Alpaca crypto whitelist",
-            req.asset[0].symbol
-        )));
+    for asset in &req.asset {
+        if !is_alpaca_crypto_supported(&asset.symbol) {
+            return Err(ApiError::Validation(format!(
+                "asset '{}' is not in the Alpaca crypto whitelist",
+                asset.symbol
+            )));
+        }
     }
     if let Some(parent) = &req.parent_scenario_id {
         let p = scenario_store::get_scenario(ctx, parent)
