@@ -6,31 +6,48 @@
 > Same rules as the main board (`team/board.md`): one line per active track,
 > each linking to a `team/contracts/<slug>.md`. Conductor-owned.
 >
-> Last updated: 2026-05-21 — V2E wave 1 complete (all 7 contracts merged:
-> #411, #412, #415, #417, #418, #422, #435). V2B (security hardening)
-> decomposed and dispatched as the next active phase. V2A and V2F also
-> complete (see Recently closed).
+> Last updated: 2026-05-21 — conductor sweep. V2B wave (all three
+> tracks) merged and archived. V2D agent-memory foundation merged
+> (commit `81007d1`); D5 kills + D2 cross-symbol add tracked as
+> follow-up PRs #453 / #455 / #458 / #460. V2E and V2F also complete.
+> No V2 phase is currently in the Active block — next phase is V2C
+> (marketplace), waiting on operator intake.
 
-## Active — V2B (security hardening)
+## Active
 
-Decomposed 2026-05-21 from `team/intake/2026-05-21-v2b-security-operability.md`.
-Source: action plan §V2B (`docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`
-items 4–6) + FOLLOWUPS.md F35/F37/F21 + remote-CLI spec.
-
-Three tracks; secret-redaction + audit-log work folds into the
-relevant track rather than getting standalone contracts (the action
-plan calls them out as work packages, not separable items).
-
-- [v2b-dashboard-auth-boundary](contracts/v2b-dashboard-auth-boundary.md) — foundation · ready · explicit auth for mutating dashboard API routes; session + bind defaults; redaction tests fold in
-- [v2b-remote-cli-job-safety](contracts/v2b-remote-cli-job-safety.md) — leaf · ready · orphan recovery + cancellation + stale-lock cleanup + per-job audit fields; runtime/output caps
-- [v2b-broker-wallet-kill-switch](contracts/v2b-broker-wallet-kill-switch.md) — leaf · ready · global pause/kill switch + per-run notional/leverage/loss limits + testnet/paper labels enforcement
-
-Recommended sequencing: dashboard-auth-boundary first (foundation —
-defines the auth surface other tracks audit against); the two leaves
-parallel-safe after foundation merges. Holding dispatch pending
-operator review of intake.
+_(no V2 phase currently decomposed into open contracts. Operator
+review queued for V2C (marketplace) intake; V2B follow-up PRs above
+land via per-PR review, not new contracts.)_
 
 ## Recently closed
+
+### V2B (security hardening) — complete 2026-05-21
+
+All three contracts merged:
+
+| Track | PR |
+|---|---|
+| v2b-dashboard-auth-boundary | #465 |
+| v2b-remote-cli-job-safety | #447 |
+| v2b-broker-wallet-kill-switch | #466 |
+
+Archived under `team/archive/2026-05-21-conductor-sweep/contracts/`.
+Source: action plan §V2B + `team/intake/2026-05-21-v2b-security-operability.md`.
+
+### V2D (agent memory) — foundation complete 2026-05-21
+
+Single-contract wave shipped as commit `81007d1` ("v2d: agent memory
++ cortex tier split (F+L+T)"). All five planned phases landed on the
+same branch. Contract archived under
+`team/archive/2026-05-21-conductor-sweep/contracts/v2d-agent-memory.md`.
+
+Open follow-up PRs (V2D v1.1 wave — track via PR review, no new
+contracts decomposed):
+
+- **#453** — v2d-followup: decompose v1.1 memory ops + audit wave
+- **#455** — chore(v2d): reconcile docs — migration 027→029 + drop third-party adapter mentions
+- **#460** — v2d-followup: memory ops + audit (CLI + API + UI + docs)
+- **#458** — Memory scope triage (D5 kills, D2 cross-symbol add)
 
 ### V2E (eval accuracy & trace surface) — complete 2026-05-21
 
@@ -46,17 +63,9 @@ All seven contracts merged in a single ~30-minute wave:
 | 24 | eval-intra-bar-fill-ordering | #435 |
 | 25 | eval-net-of-inference-cost-metric | #417 |
 
-## Active — V2D (agent memory)
-
-Decomposed 2026-05-21 from `team/intake/2026-05-21-v2d-agent-memory.md`.
-Per-intake choice: a single contract carries the whole wave on one branch
-(`task/v2d-agent-memory`) with five internal phases per the plan. The
-5-phases-as-one-contract shape was chosen because Phases 1→2→3 are
-strictly sequential (compile dependencies) and Phases 4+5 share the
-event surface that Phase 3 introduces — splitting the wave into five
-contracts would add coordination overhead with no parallelism payoff.
-
-- [v2d-agent-memory](contracts/v2d-agent-memory.md) — foundation · claimed · single-contract wave · claims migration **029**
+`eval-trace-surface-foundation` archived under
+`team/archive/2026-05-21-conductor-sweep/contracts/` (was still on
+disk when the rest of V2E archived).
 
 Implementation plan:
 `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`.
