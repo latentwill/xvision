@@ -1,5 +1,9 @@
 # Intake — 2026-05-19 — Compare AB evaluations feature
 
+**Status: Reserved — gated on charting rework (F33).** Do not open
+contracts until the chart rework lands. The 10 asks below remain valid
+as the decomposition source once F33 is complete.
+
 Operator ask 2026-05-19: invest in the "Compare AB evaluations" surface
 as a first-class product feature. Sits alongside the multi-eval capsule
 work landing in the same wave — capsule gives the operator awareness

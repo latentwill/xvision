@@ -1,5 +1,7 @@
 # Custom-Scenario Eval — M1: Bars cache + Alpaca fetcher + asset unlock
 
+> **Status (2026-05-21):** Bars-cache (Tasks 1–8, 14) and the Alpaca fetcher SHIPPED. The asset-unlock residual (Tasks 9–13: `AssetSymbol` enum expansion, BTC-only wall removal in `xvision-execution`, F18 `TraderDecision.asset`, CLI wiring) is moved to `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md` as a focused follow-on plan. Treat this file as the historical M1 record for the bars-cache + fetcher pieces; new work targets the 2026-05-21 plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Drop the BTC-only wall on Alpaca crypto and add a deterministic, SQLite-backed historical-bars cache so `xvn ab-compare --asset ETH --from … --to …` runs end-to-end.

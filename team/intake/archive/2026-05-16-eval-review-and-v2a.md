@@ -30,6 +30,12 @@ Source specs/plans:
 - V2C, V3, V4 — long horizon; no contracts yet.
 - Autoresearcher mutation loop — deferred per eval-review spec.
 
+## Queued for next intake
+
+| Item | Notes |
+|---|---|
+| Charting overhaul: KlineCharts + uPlot + Claude design system | Replace current charting stack. KlineCharts for candlestick/k-line pane, uPlot for oscillator/time-series panes (RSI, MACD, equity curve etc.), styled to match Claude design system. High priority — target next version after V2A lands. |
+
 ## Next deploy snapshot
 
 `main` at audit time: `c5a3cf1` — typed trader-output failures with raw provider diagnostics (#180).
