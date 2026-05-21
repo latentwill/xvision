@@ -16,14 +16,14 @@ Conductor: see `team/CONDUCTOR.md`.
 | `team/CONFLICT_ZONES.md` | conductor | process | Always conductor-only |
 | `crates/xvision-engine/migrations/**` | (none) | - | A new migration number is reserved in the contract |
 | `Cargo.toml` (workspace) | (none) | - | Crate add/remove proposed via a foundation contract |
-| `frontend/web/package.json` | `v2a-driver-tour` | v2a | Driver.js dependency lands |
-| `frontend/web/src/routes/index.tsx` | `v2a-driver-tour` | v2a | Tour mount point lands |
-| `crates/xvision-dashboard/src/server.rs` | `agent-run-observability-blob-fetch-route`; `q15-tailscale-serve-api-reachability` is deferred | agent-run-observability-followups / q15 | Blob route merges, or revived q15 declares stacking |
-| `crates/xvision-dashboard/src/state.rs` | `agent-run-observability-blob-fetch-route`; `q15-tailscale-serve-api-reachability` is deferred | agent-run-observability-followups / q15 | Blob route merges, or revived q15 declares stacking |
-| `crates/xvision-observability/src/lib.rs` | `agent-run-observability-blob-fetch-route` | agent-run-observability-followups | Blob route merges |
-| `crates/xvision-dashboard/src/routes/agent_runs.rs` | `agent-run-observability-blob-fetch-route` | agent-run-observability-followups | Blob route merges |
-| `frontend/web/src/features/agent-runs/SpanInspector.tsx` | `agent-run-observability-blob-fetch-route` | agent-run-observability-followups | Blob route merges |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | `alpaca-paper-crypto-submit` | post-q15 | Alpaca paper crypto submit merges |
+| `frontend/web/package.json` | (none) | - | Released 2026-05-21 — `v2a-driver-tour` merged earlier |
+| `frontend/web/src/routes/index.tsx` | (none) | - | Released 2026-05-21 — `v2a-driver-tour` merged earlier |
+| `crates/xvision-dashboard/src/server.rs` | (none) | - | Released 2026-05-21 — observability-blob-fetch-route + q15 both closed |
+| `crates/xvision-dashboard/src/state.rs` | (none) | - | Released 2026-05-21 |
+| `crates/xvision-observability/src/lib.rs` | (none) | - | Released 2026-05-21 |
+| `crates/xvision-dashboard/src/routes/agent_runs.rs` | (none) | - | Released 2026-05-21 |
+| `frontend/web/src/features/agent-runs/SpanInspector.tsx` | (none) | - | Released 2026-05-21 |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | (none) | - | Released 2026-05-21 — `alpaca-paper-crypto-submit` closed |
 
 ## Rules
 
