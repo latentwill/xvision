@@ -1291,6 +1291,7 @@ impl WizardLoop {
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                     bar_history_limit: None,
+                    memory_mode: Default::default(),
                 }],
             },
         )

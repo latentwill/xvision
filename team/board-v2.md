@@ -46,6 +46,21 @@ All seven contracts merged in a single ~30-minute wave:
 | 24 | eval-intra-bar-fill-ordering | #435 |
 | 25 | eval-net-of-inference-cost-metric | #417 |
 
+## Active — V2D (agent memory)
+
+Decomposed 2026-05-21 from `team/intake/2026-05-21-v2d-agent-memory.md`.
+Per-intake choice: a single contract carries the whole wave on one branch
+(`task/v2d-agent-memory`) with five internal phases per the plan. The
+5-phases-as-one-contract shape was chosen because Phases 1→2→3 are
+strictly sequential (compile dependencies) and Phases 4+5 share the
+event surface that Phase 3 introduces — splitting the wave into five
+contracts would add coordination overhead with no parallelism payoff.
+
+- [v2d-agent-memory](contracts/v2d-agent-memory.md) — foundation · claimed · single-contract wave · claims migration **029**
+
+Implementation plan:
+`docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`.
+
 Notes:
 - Migrations landed: **026** (trace-surface foundation: determinism_receipts table, eval_findings.evidence_cycle_ids_json + .produced_by_check), **027** (run_bars_manifest: bars_content_hash, manifest_canonical, feed/adjustment/session/calendar/timezone on eval_runs), and `0003` on `xvision-core` (cycles indices on model_id/prompt_template_hash/regime_tag).
 - `Finding` schema bumped: `evidence_cycle_ids` and `produced_by_check` are now typed Option fields, not embedded in evidence JSON.
@@ -169,11 +184,11 @@ through `team/intake/<date>-<phase>.md` first.
 | 9 | Testnet marketplace list/buy/sell/delegate flow | marketplace spec |
 | 10 | Reputation + validation receipt write/readback | SLF4, SLF5 |
 
-### V2D — agent memory (new phase; enables V3 autoresearcher)
+### V2D — agent memory (decomposed 2026-05-21 — see "Active — V2D" above)
 
 | # | Item | Source |
 |---|---|---|
-| 15 | Rust cortex memory + per-agent memory toggle (off / global / agent-specific) | New — see "V2D notes" below |
+| 15 | Rust cortex memory + per-agent memory toggle (off / global / agent-specific) | Decomposed: contract `v2d-agent-memory`, plan `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md` |
 
 V2D is a prerequisite for the V3 autoresearcher: a mutator/judge loop without
 persistent memory keeps re-discovering the same lessons. Land before V3 unless
@@ -241,6 +256,7 @@ share files; safe to run in parallel either way.
 | # | Item | Source |
 |---|---|---|
 | 11 | Autoresearcher mutation / eval / judge loop | autoresearcher plans |
+| 11a | **Autoresearcher = cortex memory distillation pass** — reads V2D Observations, proposes/judges/promotes Patterns, retires stale ones. Needs write access to the Patterns tier (`MemoryStore::upsert_pattern` / `demote_pattern`); auto-recorder is INSERT-only on Observations. Each promoted Pattern must carry `training_window_end` (latest bar timestamp across contributing Observations) so the dispatcher's time-window recall filter can exclude Patterns from in-replay scenarios. Editing semantics (create / supersede / retire) must land before the first nightly autoresearcher run that targets a Pattern-consuming agent — otherwise the loop is purely evaluative and nothing accumulates. | `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` |
 | 12 | Autoresearcher dashboard + lineage review | autoresearcher dashboard plan |
 | 13 | Final UI/UX pass across dashboard surfaces | design docs, chart plans |
 | 16 | Chart aesthetics + customization pass using Lightweight Charts layout/grid/crosshair/series/scale options | F32, [Lightweight Charts customization](https://tradingview.github.io/lightweight-charts/tutorials/customization/intro) |
@@ -385,7 +401,8 @@ Intake doc when this opens: `team/intake/2026-05-19-eval-accuracy-and-trace-surf
 - V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (closed; 7 contracts merged).
 - V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (closed; 6 contracts merged).
 - V2B intake: `team/intake/2026-05-21-v2b-security-operability.md` (active — 3 contracts ready, dispatch pending operator review).
-- V2C/V2D/V3/V4: no intake yet.
+- V2D intake: `team/intake/2026-05-21-v2d-agent-memory.md` (active — single-contract wave; plan at `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`).
+- V2C/V3/V4: no intake yet.
 
 ## Closeout
 

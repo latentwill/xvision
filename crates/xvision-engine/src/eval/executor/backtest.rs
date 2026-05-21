@@ -97,6 +97,12 @@ pub struct BacktestExecutor {
     /// `/api/agent-runs/<run_id>` and the trace dock. `None` keeps
     /// existing unit-test paths silent.
     obs_emitter: Option<ObsEmitter>,
+    /// V2D cortex-memory recorder. Built once at server start
+    /// (`ApiContext.memory_recorder`) and threaded through
+    /// `with_memory_recorder` here so every `run_pipeline` invocation
+    /// can pass it down into `execute_slot` for recall/write. `None`
+    /// keeps the dispatcher's memory seam dormant.
+    memory_recorder: Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
     /// Optional per-run hard caps. When set, the per-bar loop checks
     /// `EvalLimits::check_for_cancel` after each decision's tokens are
     /// counted; on breach the run is marked Cancelled with a stable
@@ -124,6 +130,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
             limits: None,
         }
     }
@@ -142,6 +149,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
             limits: None,
         }
     }
@@ -154,6 +162,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
             limits: None,
         }
     }
@@ -171,6 +180,18 @@ impl BacktestExecutor {
     /// `execute_slot` invocation via `PipelineInputs.obs`.
     pub fn with_observability(mut self, emitter: ObsEmitter) -> Self {
         self.obs_emitter = Some(emitter);
+        self
+    }
+
+    /// Attach the V2D cortex-memory recorder. When present, every
+    /// `run_pipeline` invocation threads it into `SlotInput.memory` so
+    /// slots whose `memory_mode != Off` actually consult / write the
+    /// memory store. `None` (the default) leaves the seam dormant.
+    pub fn with_memory_recorder(
+        mut self,
+        recorder: std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>,
+    ) -> Self {
+        self.memory_recorder = Some(recorder);
         self
     }
 
@@ -689,6 +710,15 @@ impl BacktestExecutor {
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),
                 obs: self.obs_emitter.clone(),
+                memory_recorder: self.memory_recorder.clone(),
+                // V2D Phase 1.5 — backtest dispatches with the scenario
+                // start so the recorder's Pattern recall can exclude
+                // anything trained inside the replay window. Run/scenario
+                // provenance flows down to Observation writes.
+                scenario_start: Some(scenario.time_window.start),
+                run_id: run.id.clone(),
+                scenario_id: scenario.id.clone(),
+                cycle_idx: decision_idx as i64,
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
@@ -2119,6 +2149,8 @@ mod tests {
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         }
     }
 

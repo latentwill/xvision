@@ -180,6 +180,20 @@ pub struct AgentSlot {
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
     pub bar_history_limit: Option<u32>,
+    /// How the dispatcher consults the cortex-memory layer
+    /// (`xvision-memory`) for this slot. Persisted on the
+    /// `agent_slots.memory_mode` column (migration 026). Defaults to
+    /// `Off` so existing rows and clients that omit the field keep
+    /// today's behavior — the dispatcher does not consult or write the
+    /// memory store. See the V2D cortex-memory integration plan
+    /// (`docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`).
+    ///
+    /// The ts-rs derive is intentionally omitted in Phase 2 — the
+    /// `xvision-memory::MemoryMode` enum will be exported through the
+    /// engine's `ts-export` feature in Phase 4, which is when the
+    /// frontend gains a UI for this knob.
+    #[serde(default)]
+    pub memory_mode: xvision_memory::types::MemoryMode,
 }
 
 impl AgentSlot {
@@ -252,6 +266,7 @@ impl Agent {
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::default(),
                 bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
             }],
             archived: false,
             created_at: now,
@@ -287,6 +302,31 @@ mod tests {
         // executor behavior (no cap — full warmup_bars slice) is
         // preserved until the operator opts in.
         assert_eq!(a.slots[0].bar_history_limit, None);
+        // V2D: new slots default to `Off` so the dispatcher does not
+        // consult or write the cortex-memory store until an operator
+        // explicitly opts in.
+        assert_eq!(
+            a.slots[0].memory_mode,
+            xvision_memory::types::MemoryMode::Off
+        );
+    }
+
+    #[test]
+    fn memory_mode_defaults_to_off_on_deserialize() {
+        // V2D: clients that omit `memory_mode` on POST/PUT bodies must
+        // round-trip back as `Off` so the field is additive — pre-026
+        // payloads keep today's behavior with no client changes.
+        // `deny_unknown_fields` means we have to construct a full JSON
+        // body that excludes only `memory_mode`.
+        let json = serde_json::json!({
+            "name": "main",
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "system_prompt": "p",
+            "skill_ids": [],
+        });
+        let slot: AgentSlot = serde_json::from_value(json).unwrap();
+        assert_eq!(slot.memory_mode, xvision_memory::types::MemoryMode::Off);
     }
 
     #[test]

@@ -66,6 +66,15 @@ pub struct PaperExecutor {
     /// Optional observability emitter (`qa-eval-observability-wiring`).
     /// See `BacktestExecutor::obs_emitter`.
     obs_emitter: Option<ObsEmitter>,
+    /// V2D cortex-memory recorder. Built once at server start
+    /// (`ApiContext.memory_recorder`) and threaded through
+    /// `with_memory_recorder` here so every `run_pipeline` invocation
+    /// can pass it down into `execute_slot` for recall/write. `None`
+    /// keeps the dispatcher's memory seam dormant (the recorder is
+    /// already a no-op for `MemoryMode::Off`, but this also covers
+    /// tests / CLI rehearsal that never built one).
+    memory_recorder:
+        Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
     /// Pre-submit minimum-notional gate (`risk-gate-min-notional`).
     /// When `Some(min)` and `min > 0.0`, orders with notional (size ×
     /// reference price) strictly less than `min` are vetoed before
@@ -91,6 +100,7 @@ impl PaperExecutor {
             progress: None,
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
             min_notional_usd: None,
             limits: None,
         }
@@ -104,6 +114,7 @@ impl PaperExecutor {
             progress: None,
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
             min_notional_usd: None,
             limits: None,
         }
@@ -120,6 +131,7 @@ impl PaperExecutor {
             progress: Some(progress),
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
             min_notional_usd: None,
             limits: None,
         }
@@ -137,6 +149,7 @@ impl PaperExecutor {
             progress: Some(progress),
             event_bus: None,
             obs_emitter: None,
+            memory_recorder: None,
             min_notional_usd: None,
             limits: None,
         }
@@ -150,6 +163,18 @@ impl PaperExecutor {
     /// Attach an observability emitter (`qa-eval-observability-wiring`).
     pub fn with_observability(mut self, emitter: ObsEmitter) -> Self {
         self.obs_emitter = Some(emitter);
+        self
+    }
+
+    /// Attach the V2D cortex-memory recorder. When present, every
+    /// `run_pipeline` invocation threads it into `SlotInput.memory` so
+    /// slots whose `memory_mode != Off` actually consult / write the
+    /// memory store. `None` (the default) leaves the seam dormant.
+    pub fn with_memory_recorder(
+        mut self,
+        recorder: std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>,
+    ) -> Self {
+        self.memory_recorder = Some(recorder);
         self
     }
 
@@ -846,6 +871,15 @@ impl PaperExecutor {
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),
                 obs: self.obs_emitter.clone(),
+                memory_recorder: self.memory_recorder.clone(),
+                // V2D Phase 1.5 — paper-eval replay is also bound to a
+                // historical scenario window, so we forward the start
+                // date for Pattern recall filtering. Run/scenario
+                // provenance flows down to Observation writes.
+                scenario_start: Some(scenario.time_window.start),
+                run_id: run.id.clone(),
+                scenario_id: scenario.id.clone(),
+                cycle_idx: decision_idx as i64,
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
@@ -1611,6 +1645,8 @@ mod role_tests {
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         }
     }
 
@@ -1712,6 +1748,8 @@ mod role_tests {
                 temperature: None,
                 inputs_policy: InputsPolicy::Oracle,
                 bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::Off,
+                agent_id: String::new(),
             },
             ResolvedAgentSlot {
                 role: "trader".into(),
@@ -1727,6 +1765,8 @@ mod role_tests {
                 temperature: None,
                 inputs_policy: InputsPolicy::Causal,
                 bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::Off,
+                agent_id: String::new(),
             },
         ];
         assert_eq!(resolve_inputs_policy(&slots), InputsPolicy::Causal);

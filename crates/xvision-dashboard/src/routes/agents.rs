@@ -222,6 +222,7 @@ pub mod get {
                     prompt_version: AgentSlot::compute_prompt_version(system_prompt),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                     bar_history_limit: None,
+                    memory_mode: Default::default(),
                 }],
             },
         )

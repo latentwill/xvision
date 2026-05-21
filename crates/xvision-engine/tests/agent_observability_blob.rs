@@ -21,35 +21,12 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use xvision_engine::agent::llm::{
-    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, ResponseSchema, StopReason,
-};
+use xvision_engine::agent::llm::{LlmRequest, Message, ResponseSchema};
 use xvision_engine::agent::observability::{ObsEmitter, ObsRetentionPolicy};
 use xvision_observability::{
     BlobRef, BlobStore, ModelCallFinishedEvent, NoopRecorder, ObservabilityConfig, RetentionMode, RunEvent,
     RunEventBus,
 };
-
-/// LlmDispatch that returns a fixed assistant text. The body is the
-/// payload we'll assert was written verbatim under `full_debug`.
-struct CannedDispatch {
-    text: String,
-}
-
-#[async_trait]
-impl LlmDispatch for CannedDispatch {
-    async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
-        Ok(LlmResponse {
-            content: vec![ContentBlock::Text {
-                text: self.text.clone(),
-            }],
-            stop_reason: StopReason::EndTurn,
-            input_tokens: 7,
-            output_tokens: 11,
-        })
-    }
-}
 
 fn policy_for(mode: RetentionMode) -> ObsRetentionPolicy {
     let mut cfg = ObservabilityConfig::default();
@@ -146,8 +123,6 @@ async fn full_debug_persists_prompt_and_response_blobs() {
 
     let resp_bytes = store.read(&BlobRef(rref.clone())).expect("response blob");
     assert_eq!(std::str::from_utf8(&resp_bytes).unwrap(), "The answer is 4.");
-
-    let _ = CannedDispatch { text: assistant };
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
