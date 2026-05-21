@@ -357,6 +357,7 @@ mod tests {
             n_trades: 4,
             n_decisions: 3,
             baselines: None,
+            ..Default::default()
         };
         store.finalize(&run.id, &metrics).await.expect("finalize");
         run.metrics = Some(metrics);

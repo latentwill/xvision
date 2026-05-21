@@ -164,9 +164,11 @@ mod tests {
                 n_trades: 3,
                 n_decisions,
                 baselines: None,
+                ..Default::default()
             }),
             error: None,
             behavior,
+            net_return_pct: None,
         }
     }
 
@@ -268,6 +270,7 @@ mod tests {
             metrics: None,
             error: Some("timeout".into()),
             behavior: None,
+            net_return_pct: None,
         };
         let report = make_report(vec![run]);
         let md = render_markdown(&report, "s");

@@ -5,4 +5,4 @@
  * (future) MCP browse tools so the payload stays bounded as the engine adds
  * internal telemetry fields to `Run`.
  */
-export type RunSummary = { id: string, agent_id: string, scenario_id: string, mode: string, status: string, started_at: string, completed_at: string | null, sharpe: number | null, max_drawdown_pct: number | null, total_return_pct: number | null, error: string | null, actual_input_tokens: number | null, actual_output_tokens: number | null, };
+export type RunSummary = { id: string, agent_id: string, scenario_id: string, mode: string, status: string, started_at: string, completed_at: string | null, sharpe: number | null, max_drawdown_pct: number | null, total_return_pct: number | null, error: string | null, actual_input_tokens: number | null, actual_output_tokens: number | null, inference_cost_quote_total?: number | null, net_return_pct?: number | null, };

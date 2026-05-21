@@ -291,6 +291,24 @@ impl RunStore {
         Ok(res.rows_affected())
     }
 
+    /// Overwrite `metrics_json` on a completed run. Called post-finalize when
+    /// additional aggregations (e.g. inference cost) are computed after the
+    /// executor writes the initial metrics blob. Unlike `finalize`, this does
+    /// NOT require the run to be in a non-terminal state — it patches the
+    /// JSON column unconditionally on the completed row.
+    ///
+    /// Returns `Ok(false)` when no row matched (unknown run id).
+    pub async fn patch_metrics(&self, id: &str, metrics: &MetricsSummary) -> Result<bool> {
+        let metrics_json = serde_json::to_string(metrics).context("serialize metrics for patch")?;
+        let res = sqlx::query("UPDATE eval_runs SET metrics_json = ? WHERE id = ?")
+            .bind(&metrics_json)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("patch eval_runs metrics_json")?;
+        Ok(res.rows_affected() > 0)
+    }
+
     /// Mark an active run completed: persist metrics_json, set completed_at =
     /// now, flip status to Completed. Terminal rows are never revived.
     pub async fn finalize(&self, id: &str, metrics: &MetricsSummary) -> Result<()> {

@@ -420,6 +420,7 @@ mod tests {
             n_trades: 10,
             n_decisions: 20,
             baselines: None,
+            ..Default::default()
         };
         run_store.finalize(&run1.id, &metrics).await.unwrap();
         run_store.finalize(&run2.id, &metrics).await.unwrap();

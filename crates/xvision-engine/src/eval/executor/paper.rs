@@ -1500,6 +1500,9 @@ impl PaperExecutor {
             // PaperExecutor does not have access to the raw bar slice post-hoc,
             // so baselines cannot be computed for paper-mode runs.
             baselines: None,
+            // inference_cost_quote_total + net_return_pct populated
+            // post-finalize by api::eval::enrich_with_inference_cost.
+            ..Default::default()
         };
 
         run.actual_input_tokens = Some(total_input_tokens);

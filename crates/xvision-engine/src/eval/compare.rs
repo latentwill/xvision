@@ -106,6 +106,13 @@ pub struct ComparisonRunSummary {
     /// `None` for pre-migration rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manifest_canonical: Option<String>,
+    /// Net return after deducting LLM inference cost. `None` for old runs
+    /// without pricing data or when the model isn't in the pricing catalog.
+    /// Mirror of `MetricsSummary::net_return_pct` hoisted to the comparison
+    /// arm so the compare view can render a Net column without deep-reading
+    /// the full metrics blob.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net_return_pct: Option<f64>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -184,6 +191,7 @@ pub async fn compare_runs(
             .ok()
             .map(|rows| derive_behavior_summary(&rows));
 
+        let net_return_pct = run.metrics.as_ref().and_then(|m| m.net_return_pct);
         runs.push(ComparisonRunSummary {
             id: run.id.clone(),
             agent_id: run.agent_id.clone(),
@@ -197,6 +205,7 @@ pub async fn compare_runs(
             behavior,
             bars_content_hash: run.bars_content_hash.clone(),
             manifest_canonical: run.manifest_canonical.clone(),
+            net_return_pct,
         });
         curves.push(ComparisonEquityCurve {
             run_id: run.id.clone(),

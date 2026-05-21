@@ -63,6 +63,7 @@ async fn finalized_run(store: &RunStore) -> Run {
         n_trades: 18,
         n_decisions: 60,
         baselines: None,
+        ..Default::default()
     };
     store.begin_running(&r.id).await.unwrap();
     store.finalize(&r.id, &metrics).await.unwrap();

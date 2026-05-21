@@ -739,7 +739,17 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     }
     if let Some(m) = run.metrics.as_ref() {
         println!("\nMetrics");
-        println!("  total_return  {:.2}%", m.total_return_pct);
+        println!("  gross_return  {:.2}%", m.total_return_pct);
+        if let Some(cost) = m.inference_cost_quote_total {
+            println!("  infer_cost    ${cost:.4}");
+        } else {
+            println!("  infer_cost    n/a");
+        }
+        if let Some(net) = m.net_return_pct {
+            println!("  net_return    {:.2}%", net);
+        } else {
+            println!("  net_return    n/a");
+        }
         println!("  sharpe        {:.3}", m.sharpe);
         println!("  max_drawdown  {:.2}%", m.max_drawdown_pct);
         println!("  win_rate      {:.2}", m.win_rate);

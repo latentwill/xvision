@@ -4,4 +4,4 @@
  * Headline metrics the eval engine computes after a run completes.
  * Persisted as `metrics_json` on the `eval_runs` row by `RunStore::finalize`.
  */
-export type MetricsSummary = { total_return_pct: number, sharpe: number, max_drawdown_pct: number, win_rate: number, n_trades: number, n_decisions: number, };
+export type MetricsSummary = { total_return_pct: number, sharpe: number, max_drawdown_pct: number, win_rate: number, n_trades: number, n_decisions: number, inference_cost_quote_total?: number | null, net_return_pct?: number | null, };
