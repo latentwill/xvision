@@ -167,6 +167,30 @@ fn all_indicators_and_operators_parse() {
             combos_tried += 1;
         }
 
+        // Indicator-rhs comparison ops.
+        for op in operators_numeric_rhs.iter() {
+            let toml_doc = format!(
+                "[filter]\n\
+                 id = \"f_01\"\n\
+                 strategy_id = \"s_01\"\n\
+                 display_name = \"t\"\n\
+                 asset_scope = [\"BTC/USD\"]\n\
+                 timeframe = \"1h\"\n\
+                 \n\
+                 [[filter.conditions.all]]\n\
+                 lhs = \"{lhs}\"\n\
+                 op  = \"{op}\"\n\
+                 rhs = \"sma_50\"\n",
+                lhs = lhs,
+                op = op.dsl_token(),
+            );
+            let f = parse_toml(&toml_doc)
+                .unwrap_or_else(|e| panic!("parse failed for {} {} sma_50: {}", lhs, op.dsl_token(), e));
+            validate(&f)
+                .unwrap_or_else(|e| panic!("validate failed for {} {} sma_50: {}", lhs, op.dsl_token(), e));
+            combos_tried += 1;
+        }
+
         // Crosses ops (both sides indicator).
         for op in operators_crosses.iter() {
             let toml_doc = format!(
@@ -214,24 +238,30 @@ fn all_indicators_and_operators_parse() {
     }
 
     // `close` (periodless) compared with crosses_above against an EMA.
-    let toml_doc = "[filter]\n\
-                    id = \"f_01\"\n\
-                    strategy_id = \"s_01\"\n\
-                    display_name = \"t\"\n\
-                    asset_scope = [\"BTC/USD\"]\n\
-                    timeframe = \"1h\"\n\
-                    \n\
-                    [[filter.conditions.all]]\n\
-                    lhs = \"close\"\n\
-                    op  = \"crosses_above\"\n\
-                    rhs = \"ema_20\"\n";
-    let f = parse_toml(toml_doc).expect("close crosses_above ema_20 must parse");
-    validate(&f).expect("close crosses_above ema_20 must validate");
-    combos_tried += 1;
+    for op in operators_numeric_rhs.iter().chain(operators_crosses.iter()) {
+        let toml_doc = format!(
+            "[filter]\n\
+             id = \"f_01\"\n\
+             strategy_id = \"s_01\"\n\
+             display_name = \"t\"\n\
+             asset_scope = [\"BTC/USD\"]\n\
+             timeframe = \"1h\"\n\
+             \n\
+             [[filter.conditions.all]]\n\
+             lhs = \"close\"\n\
+             op  = \"{op}\"\n\
+             rhs = \"ema_20\"\n",
+            op = op.dsl_token(),
+        );
+        let f = parse_toml(&toml_doc)
+            .unwrap_or_else(|e| panic!("parse failed for close {} ema_20: {}", op.dsl_token(), e));
+        validate(&f).unwrap_or_else(|e| panic!("validate failed for close {} ema_20: {}", op.dsl_token(), e));
+        combos_tried += 1;
+    }
 
-    // 5 periodic indicators × (5 numeric-rhs + 2 crosses + 1 between) = 40 combos
-    // plus the close case = 41.
-    assert_eq!(combos_tried, 41, "expected 41 combos exercised");
+    // 5 periodic indicators × (5 numeric-rhs + 5 indicator-rhs + 2 crosses + 1 between)
+    // = 65 combos, plus close × (5 comparisons + 2 crosses) = 72.
+    assert_eq!(combos_tried, 72, "expected 72 combos exercised");
 }
 
 #[test]

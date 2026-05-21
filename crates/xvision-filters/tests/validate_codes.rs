@@ -152,32 +152,20 @@ fn unknown_operator_rejected_at_parse() {
                     op  = \"!=\"\n\
                     rhs = \"ema_20\"\n";
     let err = parse_toml(toml_doc).expect_err("unknown operator must reject at parse");
-    // Accept either the specific UnknownOperator class or the generic
-    // Toml class; some serde error shapes don't carry enough hint to
-    // classify. The wire-level requirement is "parse rejects with a
-    // ParseError that surfaces the operator field"; both variants meet
-    // that contract.
     match err {
-        ParseError::UnknownOperator { token, .. } => {
+        ParseError::UnknownOperator { token, path } => {
             assert!(
                 token.contains('!') || token == "<unknown>",
                 "unexpected operator token: {}",
                 token
             );
-        }
-        ParseError::Toml { message, .. } => {
-            // Confirm the error message at least references the operator
-            // field or the bad token. Otherwise the classifier needs
-            // tightening.
             assert!(
-                message.to_ascii_lowercase().contains("variant")
-                    || message.contains("!=")
-                    || message.to_ascii_lowercase().contains("operator"),
-                "unexpected toml error: {}",
-                message
+                path.contains("/conditions") && path.ends_with("/op"),
+                "unexpected operator path: {}",
+                path
             );
         }
-        other => panic!("unexpected parse error variant: {:?}", other),
+        other => panic!("expected ParseError::UnknownOperator, got {:?}", other),
     }
 }
 
@@ -392,9 +380,6 @@ fn cooldown_neg_rejected_at_parse() {
                     op  = \">\"\n\
                     rhs = \"ema_20\"\n";
     let err = parse_toml(toml_doc).expect_err("negative cooldown must reject at parse");
-    // Either the classified `NegativeUnsigned` variant, or the generic
-    // Toml variant if classification missed it; both meet the contract
-    // ("test exercises the deserializer rejecting negative integers").
     match err {
         ParseError::NegativeUnsigned { token, path } => {
             assert!(
@@ -402,20 +387,9 @@ fn cooldown_neg_rejected_at_parse() {
                 "unexpected token: {}",
                 token
             );
-            assert!(
-                path.to_ascii_lowercase().contains("cooldown") || path.starts_with("offset"),
-                "unexpected path: {}",
-                path
-            );
+            assert_eq!(path, "/cooldown_bars", "unexpected path: {}", path);
         }
-        ParseError::Toml { message, .. } => {
-            assert!(
-                message.contains("-1") || message.to_ascii_lowercase().contains("u32"),
-                "unexpected toml error message: {}",
-                message
-            );
-        }
-        other => panic!("unexpected parse error variant: {:?}", other),
+        other => panic!("expected ParseError::NegativeUnsigned, got {:?}", other),
     }
 }
 

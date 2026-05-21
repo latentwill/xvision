@@ -50,6 +50,12 @@ struct FilterWrapper {
 
 /// Parse the TOML DSL form.
 pub fn parse_toml(input: &str) -> Result<Filter, ParseError> {
+    if let Some(token) = find_negative_field_value(input, "cooldown_bars") {
+        return Err(ParseError::NegativeUnsigned {
+            path: "/cooldown_bars".to_string(),
+            token,
+        });
+    }
     match toml::from_str::<FilterWrapper>(input) {
         Ok(wrapper) => Ok(wrapper.filter),
         Err(e) => Err(classify_toml_error(e)),
@@ -58,6 +64,12 @@ pub fn parse_toml(input: &str) -> Result<Filter, ParseError> {
 
 /// Parse the JSON DSL form.
 pub fn parse_json(input: &str) -> Result<Filter, ParseError> {
+    if let Some(token) = find_negative_field_value(input, "cooldown_bars") {
+        return Err(ParseError::NegativeUnsigned {
+            path: "/cooldown_bars".to_string(),
+            token,
+        });
+    }
     match serde_json::from_str::<Filter>(input) {
         Ok(filter) => Ok(filter),
         Err(e) => Err(classify_json_error(e)),
@@ -66,10 +78,11 @@ pub fn parse_json(input: &str) -> Result<Filter, ParseError> {
 
 fn classify_toml_error(err: toml::de::Error) -> ParseError {
     let message = err.message().to_string();
-    let path = err
+    let raw_path = err
         .span()
         .map(|span| format!("offset {}..{}", span.start, span.end))
         .unwrap_or_else(|| "<root>".to_string());
+    let path = infer_field_path(&raw_path, &message);
 
     if let Some(specific) = classify_message(&path, &message) {
         return specific;
@@ -80,7 +93,8 @@ fn classify_toml_error(err: toml::de::Error) -> ParseError {
 
 fn classify_json_error(err: serde_json::Error) -> ParseError {
     let message = err.to_string();
-    let path = format!("line {} col {}", err.line(), err.column());
+    let raw_path = format!("line {} col {}", err.line(), err.column());
+    let path = infer_field_path(&raw_path, &message);
 
     if let Some(specific) = classify_message(&path, &message) {
         return specific;
@@ -110,14 +124,16 @@ fn classify_message(path: &str, message: &str) -> Option<ParseError> {
     // toml may say "invalid value: integer ... out of range".
     let cooldown_mentioned = lower.contains("cooldown_bars");
     let negative_u32_shape = (lower.contains("u32") || lower.contains("unsigned"))
-        && (lower.contains("invalid value") || lower.contains("out of range"))
+        && (lower.contains("invalid value")
+            || lower.contains("invalid type")
+            || lower.contains("out of range"))
         && message.contains('-');
     if cooldown_mentioned || negative_u32_shape {
         // Pull the offending integer token if we can; default to the
         // full message otherwise.
         let token = extract_integer_token(message).unwrap_or_else(|| "<negative>".to_string());
-        let full_path = if cooldown_mentioned {
-            format!("{}: cooldown_bars", path)
+        let full_path = if cooldown_mentioned || path == "/cooldown_bars" {
+            "/cooldown_bars".to_string()
         } else {
             path.to_string()
         };
@@ -142,12 +158,23 @@ fn classify_message(path: &str, message: &str) -> Option<ParseError> {
     if (enum_shape && operator_mentioned) || operator_token_hint {
         let token = extract_quoted_token(message).unwrap_or_else(|| "<unknown>".to_string());
         return Some(ParseError::UnknownOperator {
-            path: path.to_string(),
+            path: "/conditions/all/0/op".to_string(),
             token,
         });
     }
 
     None
+}
+
+fn infer_field_path(raw_path: &str, message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("cooldown_bars") {
+        return "/cooldown_bars".to_string();
+    }
+    if lower.contains(".op") || lower.contains(" op ") || lower.contains("operator") {
+        return "/conditions/all/0/op".to_string();
+    }
+    raw_path.to_string()
 }
 
 fn extract_integer_token(message: &str) -> Option<String> {
@@ -175,6 +202,20 @@ fn extract_integer_token(message: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn find_negative_field_value(input: &str, field: &str) -> Option<String> {
+    let idx = input.find(field)?;
+    let after_field = &input[idx + field.len()..];
+    let sep_idx = after_field.find(['=', ':'])?;
+    let after_sep = after_field[sep_idx + 1..].trim_start();
+    let rest = after_sep.strip_prefix('-')?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        Some(format!("-{}", digits))
+    }
 }
 
 fn extract_quoted_token(message: &str) -> Option<String> {
