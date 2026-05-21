@@ -43,16 +43,13 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    // F-8: bar_history_limit column (migration 025).
-    sqlx::query(include_str!(
-        "../migrations/025_agent_slot_cache_and_window.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../migrations/025_agent_slot_cache_and_window.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     // V2D: memory_mode column (migration 026).
     sqlx::query(include_str!(
-        "../migrations/026_agent_slot_memory_mode.sql"
+        "../migrations/027_agent_slot_memory_mode.sql"
     ))
     .execute(&pool)
     .await

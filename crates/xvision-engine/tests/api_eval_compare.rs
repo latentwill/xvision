@@ -45,6 +45,11 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // V2E trace-surface: evidence_cycle_ids_json + produced_by_check columns.
+    sqlx::query(include_str!("../migrations/026_trace_surface_foundation.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::new(
         pool,
@@ -109,6 +114,8 @@ async fn seed_finding(store: &RunStore, run_id: &str, summary: &str) -> Finding 
         evidence: serde_json::json!({"foo": "bar"}),
         extracted_at: Utc::now(),
         schema_version: "v1".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: None,
         eval_review_id: None,
         review_type: None,
         confidence: None,

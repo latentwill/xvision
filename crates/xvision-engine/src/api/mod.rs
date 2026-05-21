@@ -61,8 +61,10 @@ const MIGRATION_023_HYPOTHESIS_AND_EXPERIMENTS: &str =
     include_str!("../../migrations/023_hypothesis_and_experiments.sql");
 const MIGRATION_025_AGENT_SLOT_CACHE_AND_WINDOW: &str =
     include_str!("../../migrations/025_agent_slot_cache_and_window.sql");
-const MIGRATION_026_AGENT_SLOT_MEMORY_MODE: &str =
-    include_str!("../../migrations/026_agent_slot_memory_mode.sql");
+const MIGRATION_026_TRACE_SURFACE_FOUNDATION: &str =
+    include_str!("../../migrations/026_trace_surface_foundation.sql");
+const MIGRATION_027_AGENT_SLOT_MEMORY_MODE: &str =
+    include_str!("../../migrations/027_agent_slot_memory_mode.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -190,6 +192,7 @@ impl ApiContext {
         migrate_scenario_regime_labels(&pool).await?;
         migrate_hypothesis_and_experiments(&pool).await?;
         migrate_agent_slot_cache_and_window(&pool).await?;
+        migrate_trace_surface_foundation(&pool).await?;
         migrate_agent_slot_memory_mode(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
@@ -545,13 +548,26 @@ async fn migrate_agent_slot_cache_and_window(pool: &SqlitePool) -> ApiResult<()>
     Ok(())
 }
 
-/// Apply the `agent_slots.memory_mode` column add from migration 026
+/// Apply migration 026 (V2E trace-surface-foundation): `determinism_receipts`
+/// table + `evidence_cycle_ids_json` / `produced_by_check` columns on
+/// `eval_findings`. Gated on column probe for idempotence.
+async fn migrate_trace_surface_foundation(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_findings", "evidence_cycle_ids_json").await? {
+        sqlx::query(MIGRATION_026_TRACE_SURFACE_FOUNDATION)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply the `agent_slots.memory_mode` column add from migration 027
 /// (V2D per-slot cortex-memory toggle). Same probe-then-apply pattern
 /// as 019 / 020 / 025 so `ApiContext::open` is idempotent on an
 /// already-initialized home.
 async fn migrate_agent_slot_memory_mode(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agent_slots", "memory_mode").await? {
-        sqlx::query(MIGRATION_026_AGENT_SLOT_MEMORY_MODE)
+        sqlx::query(MIGRATION_027_AGENT_SLOT_MEMORY_MODE)
             .execute(pool)
             .await?;
     }

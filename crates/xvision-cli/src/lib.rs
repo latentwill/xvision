@@ -229,6 +229,11 @@ pub enum Command {
     },
     /// Strategy authoring (create / validate / ls / show / templates / run).
     Strategy(commands::strategy::StrategyCmd),
+    /// Operations on `$XVN_HOME/strategies/` — `init` populates the
+    /// per-user notes/docs/library folders + the curated template
+    /// library; `import` adds user files (md/txt/csv/pdf/json) with
+    /// summary sidecars for csv/pdf.
+    Strategies(commands::strategies::StrategiesCmd),
     /// Stage 1 (Intern) in isolation — preview prompt or run a backend call.
     Intern(commands::intern::InternCmd),
     /// Stage 2 (Trader) in isolation — preview prompt or run a backend call.
@@ -356,6 +361,7 @@ impl Cli {
             .await
             .map_err(Into::into),
             Command::Strategy(cmd) => commands::strategy::run(cmd).await,
+            Command::Strategies(cmd) => commands::strategies::run(cmd).await,
             Command::Intern(cmd) => commands::intern::run(cmd).await.map_err(Into::into),
             Command::Trader(cmd) => commands::trader::run(cmd).await.map_err(Into::into),
             Command::Risk(cmd) => commands::risk::run(cmd).await.map_err(Into::into),

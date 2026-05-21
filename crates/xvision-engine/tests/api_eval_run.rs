@@ -98,16 +98,13 @@ async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
         .execute(&ctx.db)
         .await
         .unwrap();
-    // F-8: bar_history_limit column.
-    sqlx::query(include_str!(
-        "../migrations/025_agent_slot_cache_and_window.sql"
-    ))
-    .execute(&ctx.db)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../migrations/025_agent_slot_cache_and_window.sql"))
+        .execute(&ctx.db)
+        .await
+        .unwrap();
     // V2D: memory_mode column.
     sqlx::query(include_str!(
-        "../migrations/026_agent_slot_memory_mode.sql"
+        "../migrations/027_agent_slot_memory_mode.sql"
     ))
     .execute(&ctx.db)
     .await

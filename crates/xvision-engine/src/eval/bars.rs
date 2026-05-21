@@ -29,8 +29,8 @@ use crate::api::{ApiContext, ApiError, ApiResult};
 const GZIP_THRESHOLD_BARS: usize = 1000;
 
 /// Arguments for [`load_bars`]. `cache_key` should be derived
-/// deterministically from the other fields (asset + granularity + window
-/// + source); callers compute it via a shared helper rather than passing
+/// deterministically from the other fields (asset, granularity, window,
+/// and source); callers compute it via a shared helper rather than passing
 /// arbitrary strings.
 #[derive(Debug, Clone)]
 pub struct BarCacheArgs {

@@ -26,6 +26,7 @@ pub mod show_briefing;
 pub mod show_decision;
 pub mod show_metrics;
 pub mod store_cmd;
+pub mod strategies;
 pub mod strategy;
 pub mod trader;
 pub mod venue;

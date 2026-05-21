@@ -1,7 +1,10 @@
+import { useNavigate } from "react-router-dom";
+
 import { InlineChartCard } from "@/components/chat/inline-chart/InlineChartCard";
 import { ChatActionCard } from "@/components/chat/cards/ChatActionCard";
 import { ChatRunListCard } from "@/components/chat/cards/ChatRunListCard";
 import { ChatStrategyCard } from "@/components/chat/cards/ChatStrategyCard";
+import { runInlineAction } from "@/components/chat/cards/actions";
 import type { RichDisplayBlock } from "./types";
 
 export function ContentBlockView({ block }: { block: RichDisplayBlock }) {
@@ -26,16 +29,38 @@ function ChoiceChips({
 }: {
   chips: Array<{ label: string; href?: string | null; command?: string | null }>;
 }) {
+  const navigate = useNavigate();
   return (
     <div className="flex flex-wrap gap-1">
-      {chips.map((chip) => (
-        <span
-          key={`${chip.label}:${chip.href ?? chip.command ?? ""}`}
-          className="rounded-full border border-border-soft px-2.5 py-1 text-[11px] text-text-2"
-        >
-          {chip.label}
-        </span>
-      ))}
+      {chips.map((chip) => {
+        const key = `${chip.label}:${chip.href ?? chip.command ?? ""}`;
+        const className =
+          "rounded-full border border-border-soft px-2.5 py-1 text-[11px] text-text-2";
+        if (chip.href) {
+          return (
+            <a key={key} href={chip.href} className={className}>
+              {chip.label}
+            </a>
+          );
+        }
+        if (chip.command) {
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => runInlineAction(chip, navigate)}
+              className={`${className} hover:text-text`}
+            >
+              {chip.label}
+            </button>
+          );
+        }
+        return (
+          <span key={key} className={className}>
+            {chip.label}
+          </span>
+        );
+      })}
     </div>
   );
 }

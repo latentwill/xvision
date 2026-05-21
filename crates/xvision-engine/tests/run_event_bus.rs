@@ -102,8 +102,8 @@ async fn bus_isolates_events_per_run_id() {
     assert!(matches!(ev, RunChartEvent::Status { .. }));
 
     // run-B subscriber should see nothing yet (non-blocking check).
-    assert!(
-        rx_b.try_recv().is_err(),
-        "run-B should not have received anything"
-    );
+    assert!(matches!(
+        rx_b.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
 }

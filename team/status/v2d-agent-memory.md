@@ -14,7 +14,7 @@ Per `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`:
 
 - [x] **Phase 0** — plan + intake committed.
 - [ ] **Phase 1** — `xvision-memory` crate (standalone).
-- [ ] **Phase 2** — engine migration 026 + `AgentSlot.memory_mode`.
+- [ ] **Phase 2** — engine migration 027 + `AgentSlot.memory_mode`.
 - [ ] **Phase 3** — `execute_slot` recall/record wiring.
 - [ ] **Phase 4** — `AgentForm` Memory selector (parallel with Phase 5).
 - [ ] **Phase 5** — `MemoryPanel` in eval-review (parallel with Phase 4).

@@ -33,14 +33,13 @@ const MIGRATION_005: &str = include_str!("../migrations/005_agents.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_agent_slot_prompt_version.sql");
 const MIGRATION_020_UP: &str = include_str!("../migrations/020_agent_slot_inputs_policy.sql");
 const MIGRATION_020_DOWN: &str = include_str!("../migrations/020_agent_slot_inputs_policy.down.sql");
-// F-8 bar_history_limit + V2D memory_mode — AgentStore now binds both
-// columns on every save, so the test pool must apply migrations 025 and
-// 026 before any insert path runs.
 const MIGRATION_025: &str = include_str!("../migrations/025_agent_slot_cache_and_window.sql");
-const MIGRATION_026: &str = include_str!("../migrations/026_agent_slot_memory_mode.sql");
+// V2D: memory_mode column. AgentStore::insert_slot binds memory_mode on
+// every save, so the test pool must apply 026 before any insert path runs.
+const MIGRATION_026: &str = include_str!("../migrations/027_agent_slot_memory_mode.sql");
 
 /// In-memory pool with the agents table and migrations 005 + 019 +
-/// 020 applied. Mirrors the runtime boot path.
+/// 020 + 025 applied. Mirrors the runtime boot path.
 async fn fresh_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(MIGRATION_005).execute(&pool).await.unwrap();

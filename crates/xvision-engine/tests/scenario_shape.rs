@@ -198,6 +198,10 @@ fn scenario_serde_roundtrip() {
             "data_fetched_at": null
         },
         "warmup_bars": 200,
+        "regime_label": null,
+        "volatility_label": null,
+        "trend_direction": null,
+        "regime_derived": false,
         "created_at": "2026-05-11T00:00:00Z",
         "created_by": "edkenne@gmail.com",
         "archived_at": null

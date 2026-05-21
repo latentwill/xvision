@@ -444,7 +444,7 @@ mod tests {
         // 026 adds agent_slots.memory_mode (V2D per-slot cortex-memory
         // toggle). AgentStore::insert_slot writes the column on every
         // save; the read path falls back to `Off` for pre-026 rows.
-        let migration_026 = include_str!("../../migrations/026_agent_slot_memory_mode.sql");
+        let migration_026 = include_str!("../../migrations/027_agent_slot_memory_mode.sql");
         sqlx::query(migration_026).execute(&pool).await.unwrap();
         pool
     }
@@ -690,6 +690,7 @@ mod tests {
                 tags: vec![],
                 slots: vec![AgentSlot {
                     bar_history_limit: None,
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
             })
@@ -706,6 +707,7 @@ mod tests {
                 tags: vec![],
                 slots: vec![AgentSlot {
                     bar_history_limit: Some(50),
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
             })
@@ -723,6 +725,7 @@ mod tests {
                 tags: vec![],
                 slots: vec![AgentSlot {
                     bar_history_limit: Some(0),
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
             })
@@ -747,6 +750,7 @@ mod tests {
                 UpdateAgent {
                     slots: Some(vec![AgentSlot {
                         bar_history_limit: Some(10),
+                        memory_mode: xvision_memory::types::MemoryMode::default(),
                         ..sample_slot()
                     }]),
                     ..Default::default()

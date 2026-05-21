@@ -4,29 +4,83 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-21 — QA Round 4 decomposition: opened
-> `paper-eval-inspector-parity` (P1 integration) and two carve-out
-> followups (`strategy-require-at-least-one-agent-fixture-migration`
-> P2 leaf; `scenario-clone-form-structural-fields` P2 integration).
-> Marked `mcp-eval-run-job-bridge` shipped (commit `11959db`) and
-> `trace-capsule-multi-eval-behavior` shipped via implementation
-> (#339, the design-spike step was bypassed). Lists v1 phase 2a
-> (`list-migrate-eval-runs`) merged via #399 on 2026-05-20; active
-> Lists work is now 2b → 2c. Previous sweep: 2026-05-20 conductor
-> sweep — Lists v1 phase 1 + QA Round 7 cleanup.
+> Last updated: 2026-05-21 — V2F decomposition (#406): six tracks
+> authored under a new V2F phase (strategies folder + template
+> refactor); see V2F active block below. Plus the prior 2026-05-21
+> work: final intake-queue reconciliation (every intake now shipped,
+> contracted, or Reserved with a stated reason); CLI agent research
+> workbench fully shipped (waves A–E); operator follow-on intake
+> (`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`)
+> opened with the `cli-operator-safety-p0` bundled contract; Docs
+> wiki intake (`team/intake/2026-05-20-docs-user-and-agent-wiki.md`)
+> reconciled with two new contracts (`docs-agentd-surface-page` P1,
+> `docs-freshness-staleness-guard` P3); Clawpatch-blockers wave
+> opened (3 bundled contracts covering B-1 through B-11);
+> Docs / lists / metric polish wave opened (5 contracts from the
+> 2026-05-21 intake); QA Round 4 decomposition followups still open.
+> Lists v1 phase 2 fully complete — 2a (#399), 2b (#400), 2c (#403)
+> all merged; the `<ListPagination>` JSX primitive is gone and
+> #401 cleared the 5 carry-over test failures (suite at 638/638).
+> Previous sweep: 2026-05-20 conductor sweep — Lists v1 phase 1 +
+> QA Round 7 cleanup.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 `team/board-v2.md`.
 
 ## Active
 
-- **Lists v1 — phase 2** (serial migration tracks; spec Decision 5,
-  `docs/superpowers/specs/2026-05-20-standard-list-component.md`):
-  - [list-migrate-strategies](contracts/list-migrate-strategies.md) — integration · ready · 2b — migrates `/strategies` to `<ResponsiveListCard>` + `useListState` + `useListUrlState`. Pattern lifts forward from 2a (#399).
-  - [list-migrate-decisions-and-tail](contracts/list-migrate-decisions-and-tail.md) — integration · ready · 2c — `/scenarios` + `/agents`, plus final deletion of the transitional `<ListPagination>` JSX primitive. Depends on 2b.
+- **V2F — strategy authoring & user knowledge** (six tracks; spec at
+  `docs/superpowers/plans/2026-05-21-v2f-strategies-folder-and-template-refactor.md`).
+  Detailed entries live on `team/board-v2.md`. Wave 1 (independent —
+  parallel-safe; all in PR):
+  - [strategies-folder-surface](contracts/strategies-folder-surface.md) — foundation · pr-open #414 · gates wave 2 + 3
+  - [agent-pipeline-template-library-expansion](contracts/agent-pipeline-template-library-expansion.md) — leaf · pr-open #409
+  - [wizard-prompt-strategy-folder-and-templates](contracts/wizard-prompt-strategy-folder-and-templates.md) — leaf · pr-open #408
+  Wave 2 (after foundation): `strategies-folder-prepopulation` + `strategies-folder-import` (parallel).
+  Wave 3: `strategy-ideas-tool-surface` (after prepopulation).
 
-  Sequencing: serial 2b → 2c per spec Decision 5. Phase 3
-  (`list-component-density-toggle`) remains deferred.
+- **CLI operator safety — 2026-05-20** (P0 bundle, decomposed from
+  `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`):
+  - [cli-operator-safety-p0](contracts/cli-operator-safety-p0.md) — integration · ready · P0 — bundles #1 `cli-eval-cancel` + #2 `eval-run-hard-limits` + #3 `experiment-run-scope-guardrails`. Adds `xvn eval cancel` (by-id, `--running`, `--strategy`, `--older-than`); `--max-decisions / --max-input-tokens / --max-output-tokens / --max-wall-clock / --cancel-on-token-limit` on `xvn eval run` with engine-side enforcement at `crates/xvision-engine/src/eval/limits.rs`; and `--max-runs` + default-sequential + dry-run plan + `--yes` on `xvn experiment run`. May claim migration 025. Blocks the P1 `cli-model-bakeoff` track. Source: Hermes operator session where Gemini 3.5 Flash over-launched and forced raw HTTP cancel calls.
+
+  P1 (#4–#12) and P2 (#13–#15) items from the same intake are Reserved.
+  They should decompose only after P0 lands.
+
+- **Docs user+agent wiki — outstanding gaps** (2 tracks; 14 of 16
+  intake tracks already shipped — see
+  `team/intake/2026-05-20-docs-user-and-agent-wiki.md` §"Status
+  reconciliation — 2026-05-21"):
+  - [docs-agentd-surface-page](contracts/docs-agentd-surface-page.md) — leaf · ready · P1 — write `crates/xvision-dashboard/wiki/agentd.md` covering the TypeScript UDS daemon's externally-observable surface (NDJSON event schema, tool-shim registry, session lifecycle). Daemon itself is forbidden — docs-only. May need a spec round-trip if the surface isn't stable.
+  - [docs-freshness-staleness-guard](contracts/docs-freshness-staleness-guard.md) — leaf · ready · P3 — CI lint at `scripts/docs-freshness-lint.sh` + workflow that fails when any wiki page exceeds 90 days since `last_reviewed`, or when a new top-level `xvn` verb lands without a same-PR `cli-reference.md` edit.
+
+  Sequencing: parallel. Independent surfaces.
+
+- **Clawpatch blockers — 2026-05-21** (3 bundled tracks, decomposed
+  from `team/intake/2026-05-19-clawpatch-blockers.md`; 11 B-findings
+  the autonomous loop couldn't close):
+  - [clawpatch-engine-test-helpers](contracts/clawpatch-engine-test-helpers.md) — leaf · ready · medium — covers B-1, B-2, B-3 (SQLite in-memory pool single-connection sweep — only `api_eval.rs` still has the naked `SqlitePool::connect(":memory:")` per 2026-05-21 recon) and B-4 (janitor `max_bytes_evicts_oldest_until_under_cap` staggered mtimes).
+  - [clawpatch-cli-test-assert](contracts/clawpatch-cli-test-assert.md) — leaf · ready · low — covers B-5 (add one `stdout.is_empty()` assertion in `crates/xvision-cli/tests/eval_export_cli.rs`). 15-minute job.
+  - [clawpatch-frontend-components](contracts/clawpatch-frontend-components.md) — leaf · ready · low/medium — covers B-6 (HealthPill test), B-7 (CacheStatusBadge test), B-8 (AgentForm.duplicateSlot `max_tokens: null`), B-9 (WizardPreviewChart `useMemo`), B-10 (SlotForm provider-change model clear), and B-11 (**MobileDrawer focus management — escalation-gated**: clawpatch's recommended `role="dialog"`/`aria-modal` fix conflicts with the CLAUDE.md no-popups rule; the contract requires the worker to either refactor MobileDrawer into a no-focus-trap inline drawer OR get an operator exemption before implementing the focus-trapping fix).
+
+  Sequencing: parallel. All three tracks are independent. The frontend
+  bundle could split per-component if a worker prefers; the contract
+  allows that via a contract-update PR.
+
+- **Docs / lists / metric polish — 2026-05-21** (5 tracks, decomposed
+  from `team/intake/2026-05-21-docs-lists-metric-polish.md`):
+  - [docs-ui-prototype-alignment](contracts/docs-ui-prototype-alignment.md) — leaf · ready · P1 — restyle `/docs` to the folio-dark prototype visual language. Behavior preserved (deep links, sidebar filtering, loading/empty/error states); presentation only. Forbidden from touching docs content (owned by `2026-05-20-docs-user-and-agent-wiki.md`).
+  - [list-search-filter-completion-audit](contracts/list-search-filter-completion-audit.md) — foundation · ready · P1 — single-deliverable audit doc at `docs/superpowers/audits/2026-05-21-list-surfaces-audit.md` inventorying every list-like surface in the SPA with its current search/filter/sort state. Blocks `list-search-filter-missing-surfaces`.
+  - [list-search-filter-missing-surfaces](contracts/list-search-filter-missing-surfaces.md) — integration · blocked (on audit) · P1 — migrates every list surface the audit flags as missing search/filter/sort to the phase-1 list component stack.
+  - [max-drawdown-danger-tone](contracts/max-drawdown-danger-tone.md) — leaf · ready · P1 — rewrite `drawdownToneClass` so any non-zero magnitude max DD renders red/danger across eval-runs list, run detail (desktop + mobile), compare table, and home (if applicable). Extract to a shared module and add tests.
+  - [docs-search-list-component-adoption](contracts/docs-search-list-component-adoption.md) — leaf · deferred · P2 — optional follow-up to adopt the standard list component search/chip idiom for the docs sidebar. Stays deferred until `docs-ui-prototype-alignment` lands AND the audit confirms docs nav qualifies.
+
+  Sequencing: `list-search-filter-completion-audit` first (foundation; ~1 day).
+  `docs-ui-prototype-alignment` and `max-drawdown-danger-tone` are
+  parallel-safe with each other and with the audit. The migration
+  track (`list-search-filter-missing-surfaces`) flips to `ready` when
+  the audit lands. The docs-list-adoption follow-up activates only on
+  conductor flip after the prototype alignment merges and the audit
+  recommendation supports it.
 
 - **QA Round 4 — outstanding tail** (decomposed from
   `team/intake/2026-05-19-qa-operator-round-4.md`; 8 of 11 original
@@ -42,17 +96,56 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ## Reserved
 
-_(empty — next decomposition wave should come through intake; see
-the V2 board for V2A leaves and V2E contracts already laid down.)_
+Intakes that exist in `team/intake/` but **need spec authoring first**
+before contracts can open. Conductor will not freelance these into
+contracts without an operator-approved spec:
+
+- **`team/intake/2026-05-19-compare-ab-evaluations.md`** — 10 open-
+  ended product asks for the AB-compare surface (live compare for
+  in-flight runs, promote/demote arms, per-agent metrics, side-by-side
+  traces, statistical confidence, templates, capsule→compare bridge,
+  mobile view, shareable charts, strategy-name labels). Needs a
+  product-design spec under `docs/superpowers/specs/` before
+  decomposition.
+- **`team/intake/2026-05-20-strategies-folder-and-template-refactor.md`**
+  — V2F phase seed: user-curated `strategies/` folder, pre-seeded
+  agent-pipeline templates, template-optional refactor follow-on.
+  Needs operator decision on V2F adoption + spec.
+- **`team/intake/2026-05-20-canonical-template-needs-trader.md`** —
+  P2, explicitly gated on the V2 capability-first agent-model spec
+  per the intake itself; resolves as part of that refactor.
+
+Intakes with **contracts already laid down** in `team/contracts/`
+that haven't yet entered the Active block:
+
+- **`team/intake/2026-05-19-eval-accuracy-and-trace-surface.md`** (V2E)
+  — 9 contracts under `team/contracts/eval-*` covering trace-surface
+  foundation, candle integrity + manifest, per-bar cost arrays,
+  volume-share slippage, intra-bar fill ordering, look-ahead prober,
+  broker-rule findings, net-of-inference-cost metric, and trace-surface
+  prober. See `team/board-v2.md` for V2E sequencing.
+
+P1 (#4–#12) and P2 (#13–#15) tracks from
+`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md` are
+also Reserved until P0 (the bundled `cli-operator-safety-p0` contract
+above) lands.
 
 ## Recently Closed
 
-Merged 2026-05-20 (not yet archived):
+Merged 2026-05-20 → 2026-05-21 (not yet archived):
 
-- **Lists v1 phase 2a** — `list-migrate-eval-runs` (#399). Migrated
-  `/eval-runs` to `<ResponsiveListCard>` + `useListState` +
-  `useListUrlState`; landed F-2 (search/filter) from QA Round 7.
-  Pattern is the reference for 2b/2c.
+- **Lists v1 phase 2** — fully landed. `list-migrate-eval-runs`
+  (#399, 2a), `list-migrate-strategies` (#400, 2b),
+  `list-migrate-decisions-and-tail` (#403, 2c). The transitional
+  `<ListPagination>` JSX primitive was deleted in 2c;
+  `useServerPagination` hook lifted to its own file. Phase 3
+  (`list-component-density-toggle`) remains deferred. Ready to
+  archive on the next conductor sweep.
+- **Pre-existing test failures cleanup** — `chore: fix 5 pre-existing
+  test failures carried across #386/#387/#397/#399` (#401). Three
+  were stale test assertions; the other two found a real production
+  duplicate-`data-testid` bug on `strategies-detail.tsx` from commit
+  `7c7c55a`. Full frontend suite now 638/638.
 
 QA Round 4 status reconciled 2026-05-21 (intake table updated, no archive yet — three tracks still open as `paper-eval-inspector-parity` / `strategy-require-at-least-one-agent-fixture-migration` / `scenario-clone-form-structural-fields`):
 

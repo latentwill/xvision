@@ -54,6 +54,13 @@ describe("AgentRunDetailRoute", () => {
     const inspectorAfter = await screen.findByTestId("span-inspector-fields-simple");
     expect(inspectorAfter).toHaveTextContent(/s3 · model\.call/);
     expect(inspectorAfter).not.toHaveTextContent(/s1 · agent\.run/);
+    expect(screen.queryByTestId("span-row-s1")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("span-inspector")).toHaveAttribute(
+        "data-span-id",
+        "s3",
+      ),
+    );
   });
 
   test("renders the retention badge with the run's retention_mode", async () => {

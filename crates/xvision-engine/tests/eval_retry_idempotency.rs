@@ -22,9 +22,12 @@ use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("eval_retry_idempotency.sqlite");
+    let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect(":memory:")
+        .connect(&db_url)
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
@@ -47,7 +50,6 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {

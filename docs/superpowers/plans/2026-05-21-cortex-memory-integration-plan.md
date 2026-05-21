@@ -4,7 +4,7 @@
 
 **Goal:** Give each `AgentSlot` an optional persistent memory (off / global / agent-scoped) backed by an embedded SQLite vector store, with automatic recall before dispatch and automatic recording after each decision, and surface memory activity in eval review.
 
-**Architecture:** A new `xvision-memory` crate owns a SQLite-backed cosine-top-k store at `~/.xvn/memory.db`. `AgentSlot` gains a `memory_mode: MemoryMode` field (engine migration 026). The `execute_slot` dispatcher seam in `crates/xvision-engine/src/agent/execute.rs` recalls top-k matches and prepends them to `system_prompt` for non-off slots, then a post-dispatch recorder writes the decision back to the slot's namespace. Two new `events.jsonl` event kinds (`memory_recall` / `memory_write`) drive the eval-review UI. Sidecar / cortex-http boundary is deferred to v2 per `team/intake/2026-05-21-v2d-agent-memory.md` Decision 1.
+**Architecture:** A new `xvision-memory` crate owns a SQLite-backed cosine-top-k store at `~/.xvn/memory.db`. `AgentSlot` gains a `memory_mode: MemoryMode` field (engine migration 027). The `execute_slot` dispatcher seam in `crates/xvision-engine/src/agent/execute.rs` recalls top-k matches and prepends them to `system_prompt` for non-off slots, then a post-dispatch recorder writes the decision back to the slot's namespace. Two new `events.jsonl` event kinds (`memory_recall` / `memory_write`) drive the eval-review UI. Sidecar / cortex-http boundary is deferred to v2 per `team/intake/2026-05-21-v2d-agent-memory.md` Decision 1.
 
 **Tech Stack:** Rust workspace (`sqlx::SqlitePool`, `serde`, `thiserror`, `chrono`, `sha2`); existing `xvision-intern` provider clients for embedding calls (OpenAI / Voyage); ts-rs for the frontend type surface; React (`AgentForm.tsx`) for the Memory selector.
 
@@ -666,17 +666,17 @@ End of Phase 1. The `xvision-memory` crate is complete. No engine touch. Ready f
 
 ## Phase 2: `v2d-agent-memory-mode` (engine schema + slot field)
 
-Adds `agent_slots.memory_mode` column, the `AgentSlot.memory_mode` field, and the store roundtrip. Engine-only. Claims migration **026**.
+Adds `agent_slots.memory_mode` column, the `AgentSlot.memory_mode` field, and the store roundtrip. Engine-only. Claims migration **027**.
 
 **Files:**
-- Create: `crates/xvision-engine/migrations/026_agent_slot_memory_mode.sql`
-- Create: `crates/xvision-engine/migrations/026_agent_slot_memory_mode.down.sql`
+- Create: `crates/xvision-engine/migrations/027_agent_slot_memory_mode.sql`
+- Create: `crates/xvision-engine/migrations/027_agent_slot_memory_mode.down.sql`
 - Modify: `crates/xvision-engine/src/agents/model.rs` (struct + default + tests)
 - Modify: `crates/xvision-engine/src/agents/store.rs` (column read/write)
 - Modify: `crates/xvision-engine/Cargo.toml` (add `xvision-memory` dep)
 - Modify: `team/MANIFEST.md` (claim 026)
 
-### Task 2.1: Reserve migration 026 in the manifest
+### Task 2.1: Reserve migration 027 in the manifest
 
 - [ ] **Step 2.1.1: Edit `team/MANIFEST.md`**
 
@@ -701,7 +701,7 @@ Expected: PASS.
 
 ```bash
 git add team/MANIFEST.md
-git commit -m "v2d: reserve migration 026 for agent_slot_memory_mode"
+git commit -m "v2d: reserve migration 027 for agent_slot_memory_mode"
 ```
 
 ### Task 2.2: Add `xvision-memory` as a dependency of `xvision-engine`
@@ -726,14 +726,14 @@ git add crates/xvision-engine/Cargo.toml Cargo.lock
 git commit -m "v2d: engine depends on xvision-memory"
 ```
 
-### Task 2.3: Migration 026
+### Task 2.3: Migration 027
 
 - [ ] **Step 2.3.1: Write the up migration**
 
-Create `crates/xvision-engine/migrations/026_agent_slot_memory_mode.sql`:
+Create `crates/xvision-engine/migrations/027_agent_slot_memory_mode.sql`:
 
 ```sql
--- 026_agent_slot_memory_mode.sql — V2D per-slot memory toggle.
+-- 027_agent_slot_memory_mode.sql — V2D per-slot memory toggle.
 --
 -- Adds a `memory_mode` text column to `agent_slots`. Values:
 --   * 'off'           — no recall, no record. Default for existing rows.
@@ -752,7 +752,7 @@ ALTER TABLE agent_slots ADD COLUMN memory_mode TEXT NOT NULL DEFAULT 'off';
 
 - [ ] **Step 2.3.2: Write the down migration**
 
-Create `crates/xvision-engine/migrations/026_agent_slot_memory_mode.down.sql`:
+Create `crates/xvision-engine/migrations/027_agent_slot_memory_mode.down.sql`:
 
 ```sql
 -- SQLite cannot DROP a column via ALTER TABLE before 3.35. We rebuild
@@ -774,9 +774,9 @@ ALTER TABLE agent_slots_new RENAME TO agent_slots;
 - [ ] **Step 2.3.3: Commit**
 
 ```bash
-git add crates/xvision-engine/migrations/026_agent_slot_memory_mode.sql \
-        crates/xvision-engine/migrations/026_agent_slot_memory_mode.down.sql
-git commit -m "v2d: migration 026 — agent_slots.memory_mode column"
+git add crates/xvision-engine/migrations/027_agent_slot_memory_mode.sql \
+        crates/xvision-engine/migrations/027_agent_slot_memory_mode.down.sql
+git commit -m "v2d: migration 027 — agent_slots.memory_mode column"
 ```
 
 ### Task 2.4: Add `memory_mode` to the `AgentSlot` struct
@@ -830,7 +830,7 @@ In `crates/xvision-engine/src/agents/model.rs`, after the `bar_history_limit` fi
     /// and `team/intake/2026-05-21-v2d-agent-memory.md` Decision 4.
     ///
     /// Persisted as a TEXT column on `agent_slots.memory_mode`
-    /// (migration 026). The store layer maps unknown values to `Off`
+    /// (migration 027). The store layer maps unknown values to `Off`
     /// so a corrupted row can never crash the read path.
     #[serde(default)]
     pub memory_mode: xvision_memory::types::MemoryMode,

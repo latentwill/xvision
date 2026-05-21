@@ -27,6 +27,8 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/016_eval_reviews.sql"),
         include_str!("../migrations/017_eval_findings_review_columns.sql"),
         include_str!("../migrations/022_eval_runs_agents_agent_id.sql"),
+        // V2E trace-surface: evidence_cycle_ids_json + produced_by_check columns.
+        include_str!("../migrations/026_trace_surface_foundation.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -63,6 +65,8 @@ fn finding(run_id: &str, severity: Severity, kind: &str, summary: &str) -> Findi
         evidence: serde_json::Value::Null,
         extracted_at: Utc::now(),
         schema_version: "v1".into(),
+        evidence_cycle_ids: None,
+        produced_by_check: None,
         eval_review_id: None,
         review_type: None,
         confidence: None,

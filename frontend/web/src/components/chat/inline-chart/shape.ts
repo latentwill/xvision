@@ -86,12 +86,10 @@ export function histogramBars(
   );
   if (finitePoints.length === 0) return [];
   const maxAbs = Math.max(...finitePoints.map((point) => Math.abs(point.y)), 1);
-  const gap = 2;
   const innerW = viewBox.width - viewBox.padX * 2;
-  const barW = Math.max(
-    2,
-    (innerW - gap * (finitePoints.length - 1)) / finitePoints.length,
-  );
+  const slotW = innerW / finitePoints.length;
+  const gap = finitePoints.length > 1 ? Math.min(2, slotW * 0.25) : 0;
+  const barW = Math.max(0, slotW - gap);
   const zeroY = viewBox.height / 2;
   const maxH = viewBox.height / 2 - viewBox.padY;
 
@@ -99,7 +97,7 @@ export function histogramBars(
     const h = Math.max(1, (Math.abs(point.y) / maxAbs) * maxH);
     const positive = point.y >= 0;
     return {
-      x: viewBox.padX + index * (barW + gap),
+      x: viewBox.padX + index * slotW,
       y: positive ? zeroY - h : zeroY,
       width: barW,
       height: h,

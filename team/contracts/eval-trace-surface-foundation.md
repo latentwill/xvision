@@ -5,7 +5,7 @@ wave: v2e
 worktree: .worktrees/eval-trace-surface-foundation
 branch: task/eval-trace-surface-foundation
 base: origin/main
-status: ready
+status: claimed
 depends_on: []
 blocks:
   - eval-intra-bar-fill-ordering

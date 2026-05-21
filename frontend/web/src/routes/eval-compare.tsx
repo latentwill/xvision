@@ -11,6 +11,7 @@ import { listScenarios, scenarioKeys } from "@/api/scenarios";
 import { listStrategies, strategyKeys } from "@/api/strategies";
 import { CompareChart } from "@/components/chart/CompareChart";
 import { isInflightRunStatus } from "@/lib/run-status";
+import { drawdownToneClass } from "@/lib/metric-tone";
 import {
   displayScenarioName,
   displayStrategyName,
@@ -210,7 +211,10 @@ function MetricsTable({
                   sign={signOf(r.metrics?.total_return_pct)}
                 />
                 <MetricCell value={fmtNumber(r.metrics?.sharpe, 3)} />
-                <MetricCell value={fmtPct(r.metrics?.max_drawdown_pct)} />
+                <MetricCell
+                  value={fmtPct(r.metrics?.max_drawdown_pct)}
+                  toneClass={drawdownToneClass(r.metrics?.max_drawdown_pct)}
+                />
                 <MetricCell value={fmtNumber(r.metrics?.win_rate, 2)} />
                 <MetricCell value={fmtInt(r.metrics?.n_trades)} />
                 <MetricCell value={fmtInt(r.metrics?.n_decisions)} />
@@ -223,15 +227,26 @@ function MetricsTable({
   );
 }
 
-function MetricCell({ value, sign }: { value: string; sign?: 1 | -1 | 0 }) {
+function MetricCell({
+  value,
+  sign,
+  toneClass,
+}: {
+  value: string;
+  sign?: 1 | -1 | 0;
+  /** Override the sign-derived tone class (e.g. for drawdown, which is
+   * always loss-coloured regardless of sign). */
+  toneClass?: string;
+}) {
   const tone =
-    sign == null
+    toneClass ??
+    (sign == null
       ? "text-text"
       : sign > 0
         ? "text-gold"
         : sign < 0
           ? "text-danger"
-          : "text-text-2";
+          : "text-text-2");
   return <td className={`py-2.5 px-3 text-right font-mono ${tone}`}>{value}</td>;
 }
 

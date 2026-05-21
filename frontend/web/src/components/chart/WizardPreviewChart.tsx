@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { getScenarioPreview } from '@/api/chart';
@@ -16,6 +16,7 @@ type Props = {
 };
 
 const DEBOUNCE_MS = 350;
+const PREVIEW_CREATED_AT = '1970-01-01T00:00:00.000Z';
 
 export function WizardPreviewChart({
   asset,
@@ -115,7 +116,7 @@ export function WizardPreviewChart({
   // Reuse ScenarioChart for visual consistency by synthesising the minimum
   // Scenario shape it needs. The chart only reads scenario.granularity +
   // bar_cache_policy.cache_key + asset[0] + tags.
-  const payload: ScenarioChartPayload = {
+  const payload: ScenarioChartPayload = useMemo(() => ({
     scenario: {
       id: 'preview',
       parent_scenario_id: null,
@@ -156,14 +157,22 @@ export function WizardPreviewChart({
         data_fetched_at: null,
       },
       tags: [],
-      created_at: new Date().toISOString(),
+      created_at: PREVIEW_CREATED_AT,
       created_by: '',
       archived_at: null,
     } as unknown as ScenarioChartPayload['scenario'],
     bars: query.data.bars,
     indicators: emptyIndicators(),
     cache_status: query.data.cache_status,
-  };
+  }), [
+    debounced.asset,
+    debounced.from,
+    debounced.granularity,
+    debounced.to,
+    query.data.bars,
+    query.data.cache_key,
+    query.data.cache_status,
+  ]);
 
   return (
     <div className="border border-border rounded">

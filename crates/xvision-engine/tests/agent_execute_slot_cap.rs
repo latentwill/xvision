@@ -98,6 +98,10 @@ fn trader_slot_with_health_tool() -> LLMSlot {
 /// counts, and last stop reason.
 #[tokio::test]
 async fn execute_slot_caps_runaway_tool_use_loop() {
+    assert_eq!(
+        MAX_TOOL_LOOP_ITERATIONS, 12,
+        "tool-loop cap is a budget contract, not just an implementation detail",
+    );
     let slot = trader_slot_with_health_tool();
     let dispatch = Arc::new(LoopingDispatch::new("xvision_health_ping"));
     let tool_invocations = Arc::new(AtomicUsize::new(0));

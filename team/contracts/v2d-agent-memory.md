@@ -14,8 +14,8 @@ allowed_paths:
   - crates/xvision-engine/src/agents/**
   - crates/xvision-engine/src/agent/**
   - crates/xvision-engine/tests/agent_memory_dispatch.rs
-  - crates/xvision-engine/migrations/026_agent_slot_memory_mode.sql
-  - crates/xvision-engine/migrations/026_agent_slot_memory_mode.down.sql
+  - crates/xvision-engine/migrations/027_agent_slot_memory_mode.sql
+  - crates/xvision-engine/migrations/027_agent_slot_memory_mode.down.sql
   - crates/xvision-engine/Cargo.toml
   - frontend/web/src/api/types.gen/MemoryMode.ts
   - frontend/web/src/api/types.gen/AgentSlot.ts
@@ -44,7 +44,7 @@ interfaces_used:
 parallel_safe: false
 parallel_conflicts:
   - any track that edits crates/xvision-engine/src/agents/model.rs
-  - any track that claims engine migration 026
+  - any track that claims engine migration 027
   - any track that edits frontend/web/src/components/agent/AgentForm.tsx
 verification:
   - cargo test -p xvision-memory
@@ -62,7 +62,7 @@ acceptance:
   - memory_recall / memory_write / memory_disabled_no_embedder events emit on the existing observability sink
   - AgentForm renders a Memory selector with three options and persists the choice
   - eval-review run detail shows a Memory panel filtering the three new event kinds
-  - migration 026 reserved in team/MANIFEST.md with matching _down.sql
+  - migration 027 reserved in team/MANIFEST.md with matching _down.sql
   - team/board-v2.md V2D section moved from "Not yet decomposed" to "Active" with link to the contract
 ---
 
@@ -121,7 +121,7 @@ git worktree add .worktrees/v2d-agent-memory -b task/v2d-agent-memory origin/mai
 
 # Notes
 
-- Migration 026 is claimed by this track. The `team/MANIFEST.md` row
+- Migration 027 is claimed by this track. The `team/MANIFEST.md` row
   flips to `merged` when this contract's PR merges.
 - The 5 phases inside the implementation plan are executed
   sequentially (Phases 1 → 2 → 3) then in parallel (Phases 4 + 5).

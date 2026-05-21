@@ -60,7 +60,7 @@ Pulled directly from the tree at intake time:
 - **Migrations.** Engine migration directory at
   `crates/xvision-engine/migrations/` reaches 025 (cache & window).
   Per `team/MANIFEST.md` the next available number is **026**; V2D
-  reserves 026 (see "Migration coordination" below).
+  reserves 027 (see "Migration coordination" below).
 
 ## Raw items → tracks
 
@@ -68,7 +68,7 @@ Pulled directly from the tree at intake time:
 |---|---|---|---|
 | Write the canonical cortex memory integration plan referenced from the install-customizer spec (was a dangling reference; written 2026-05-21 alongside this intake) | `v2d-cortex-memory-plan` | foundation | **Lands first as a doc-only PR.** Everything downstream cites it. Plan lives at `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`. |
 | New `xvision-memory` crate: SQLite-backed store keyed by namespace (`global` / `agent:<agent_id>`), top-k cosine retrieval, Embedder trait with OpenAI / Voyage adapters, `MemoryStore` open/upsert/query/forget API | `v2d-xvision-memory-crate` | foundation | Independent of the rest of the workspace; can ship as a standalone PR with its own unit tests. Migration **not** required — the crate manages its own SQLite file (`~/.xvn/memory.db`) so the engine migration registry stays clean. |
-| `agent_slots.memory_mode` column + `AgentSlot.memory_mode: MemoryMode { off, global, agent_scoped }` field; store roundtrip; engine migration 026; **slot-level toggle, agent-id-scoped namespace** so multiple slots in one Agent share the agent-scoped bucket but each independently opts in | `v2d-agent-memory-mode` | foundation | Claims migration **026**. Depends on `v2d-xvision-memory-crate` for the `MemoryMode` enum import. |
+| `agent_slots.memory_mode` column + `AgentSlot.memory_mode: MemoryMode { off, global, agent_scoped }` field; store roundtrip; engine migration 027; **slot-level toggle, agent-id-scoped namespace** so multiple slots in one Agent share the agent-scoped bucket but each independently opts in | `v2d-agent-memory-mode` | foundation | Claims migration **027**. Depends on `v2d-xvision-memory-crate` for the `MemoryMode` enum import. |
 | Dispatcher wiring: `execute_slot` recalls top-k for `memory_mode != off`, prepends to `system_prompt`; post-dispatch recorder writes `(context_digest, decision_text)` to the slot's namespace | `v2d-dispatcher-wiring` | foundation | Depends on the memory crate + slot field. Single edit site in `crates/xvision-engine/src/agent/execute.rs`; no per-provider changes. |
 | UI: Memory selector in `AgentForm.tsx` next to provider / model / temperature; ts-rs regen pulls `MemoryMode` into `frontend/web/src/api/types.gen/` | `v2d-memory-mode-ui` | leaf | Depends on the slot field being persisted. Stays in `frontend/web/src/components/agent/` — no global UI surface. |
 | Eval review surface: emit `memory_recall` and `memory_write` events on `events.jsonl`; render in the eval-review run detail UI as a small "Memory" panel per cycle | `v2d-eval-review-memory-surface` | leaf | Depends on the dispatcher wiring. Independent of the UI track. Without this, eval review audits an incomplete picture (board-v2 V2D notes). |
@@ -80,7 +80,7 @@ v2d-cortex-memory-plan  (doc only; lands first as standalone PR)
     │
     ├─→ v2d-xvision-memory-crate  (new crate; standalone tests)
     │       │
-    │       └─→ v2d-agent-memory-mode  (claims migration 026)
+    │       └─→ v2d-agent-memory-mode  (claims migration 027)
     │               │
     │               └─→ v2d-dispatcher-wiring
     │                       │
@@ -116,8 +116,8 @@ re-derive them:
 
 ## Migration coordination
 
-- `v2d-agent-memory-mode` claims engine migration **026**
-  (`026_agent_slot_memory_mode.sql` adds a `memory_mode TEXT NOT NULL
+- `v2d-agent-memory-mode` claims engine migration **027**
+  (`027_agent_slot_memory_mode.sql` adds a `memory_mode TEXT NOT NULL
   DEFAULT 'off'` column to `agent_slots`). The contract author updates
   `team/MANIFEST.md` in the same commit.
 - The memory crate does **not** touch the engine migration registry —
@@ -182,7 +182,7 @@ Each decomposed track should, at minimum:
 - **`v2d-agent-memory-mode`:** unit tests at
   `crates/xvision-engine/src/agents/store.rs` for `memory_mode`
   roundtrip including the default-off behavior on pre-026 rows.
-  Migration 026 has a matching `_down.sql`. `cargo test -p
+  Migration 027 has a matching `_down.sql`. `cargo test -p
   xvision-engine` is the gate; `bash scripts/board-lint.sh` for the
   manifest update.
 - **`v2d-dispatcher-wiring`:** integration test at
@@ -264,5 +264,5 @@ These resolve at decomposition, not in this intake:
   `v2d-dispatcher-wiring` modifies.
 - `frontend/web/src/components/agent/AgentForm.tsx` — the UI surface
   `v2d-memory-mode-ui` modifies.
-- `team/MANIFEST.md` — migration 026 reservation lands here in the
+- `team/MANIFEST.md` — migration 027 reservation lands here in the
   same commit as the migration file.

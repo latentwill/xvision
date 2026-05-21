@@ -83,6 +83,13 @@ pub enum Op {
     Review(review::ReviewArgs),
     /// Launch, wait, and report a batch of eval runs across multiple scenarios.
     Batch(batch::BatchArgs),
+    /// Cancel a run, or a set of running runs matched by filters.
+    ///
+    /// One of `<run_id>`, `--running`, `--strategy`, or `--older-than`
+    /// must be supplied. Calling with no selector exits with usage
+    /// status. The verb hits the same `eval::cancel` engine API as
+    /// `POST /api/eval/runs/:id/cancel`.
+    Cancel(CancelArgs),
 }
 
 #[derive(Args, Debug)]
@@ -154,6 +161,32 @@ pub struct WatchArgs {
     #[arg(long)]
     pub once: bool,
     /// Output the final/observed Run as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct CancelArgs {
+    /// Specific run id to cancel. Mutually compatible with the bulk
+    /// selectors below — if both are supplied, the explicit id is
+    /// merged with the filter set.
+    pub run_id: Option<String>,
+    /// Cancel every run currently in `queued` or `running` status.
+    #[arg(long)]
+    pub running: bool,
+    /// Cancel every active run belonging to this strategy/agent id.
+    #[arg(long)]
+    pub strategy: Option<String>,
+    /// Cancel every active run whose `started_at` is older than the
+    /// given duration (e.g. `2h`, `30m`, `1d`). Combines with the
+    /// other selectors as an additional filter on the matched set.
+    #[arg(long)]
+    pub older_than: Option<String>,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Output the cancellation report as JSON (`{cancelled_ids: [...],
+    /// outcomes: {id: "cancelled" | "not_running" | "not_found" | ...}}`).
     #[arg(long)]
     pub json: bool,
 }
@@ -285,6 +318,7 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Export(args) => run_export(args).await,
         Op::Review(args) => review::run_review_cmd(args).await,
         Op::Batch(args) => run_batch_cmd(args).await,
+        Op::Cancel(args) => run_cancel(args).await,
     }
 }
 
@@ -434,6 +468,169 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
             r.started_at.to_rfc3339(),
         );
     }
+    Ok(())
+}
+
+/// Parse a duration like `2h`, `30m`, `1d`, `45s` into a `chrono::Duration`.
+fn parse_older_than(s: &str) -> Result<chrono::Duration> {
+    let trimmed = s.trim();
+    let (digits, unit) = trimmed.split_at(
+        trimmed
+            .find(|c: char| !c.is_ascii_digit())
+            .context(format!("--older-than '{s}' must be a digit followed by a unit (s, m, h, d)"))?,
+    );
+    let n: i64 = digits
+        .parse()
+        .context(format!("--older-than '{s}' has a non-numeric prefix"))?;
+    let dur = match unit {
+        "s" => chrono::Duration::seconds(n),
+        "m" => chrono::Duration::minutes(n),
+        "h" => chrono::Duration::hours(n),
+        "d" => chrono::Duration::days(n),
+        other => anyhow::bail!(
+            "--older-than '{s}' has unknown unit '{other}'; expected one of: s, m, h, d"
+        ),
+    };
+    Ok(dur)
+}
+
+async fn run_cancel(args: CancelArgs) -> CliResult<()> {
+    // Require at least one selector. Calling `xvn eval cancel` with
+    // no arguments would otherwise be a silent no-op.
+    if args.run_id.is_none()
+        && !args.running
+        && args.strategy.is_none()
+        && args.older_than.is_none()
+    {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!(
+                "supply at least one of: <run_id>, --running, --strategy <id>, --older-than <duration>"
+            ),
+        });
+    }
+
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    // Resolve the older-than cutoff before we touch the DB so a bad
+    // duration string fails fast with Usage rather than Upstream.
+    let older_than_cutoff = match args.older_than.as_deref() {
+        Some(s) => Some(
+            chrono::Utc::now()
+                - parse_older_than(s).exit_with(XvnExit::Usage)?,
+        ),
+        None => None,
+    };
+
+    // Build the candidate set. The explicit run_id always lands in the
+    // set first; the filtered list extends it. We `dedup` after the
+    // join so the same id supplied via both selectors is only
+    // attempted once.
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(id) = args.run_id.as_deref() {
+        candidates.push(id.to_string());
+    }
+
+    // Run the bulk filter only when one of the bulk selectors is set;
+    // listing every run in the database just to discard them is
+    // wasteful when the operator passed only an explicit id.
+    if args.running || args.strategy.is_some() || older_than_cutoff.is_some() {
+        // The `--running` flag widens the status filter to {queued, running};
+        // pass `None` to ListRunsRequest and filter status client-side so we
+        // can include both. If `--strategy` is set, the engine pre-filters
+        // by agent_id. `--older-than` is client-side only.
+        let req = ListRunsRequest {
+            agent_id: args.strategy.clone(),
+            scenario_id: None,
+            status: None,
+            ..Default::default()
+        };
+        let runs = eval::list(&ctx, req)
+            .await
+            .map_err(|e| api_to_cli("eval list (for cancel)", e))?;
+        for r in runs {
+            // If `--running` is the only bulk selector, only include
+            // queued/running rows. Otherwise (e.g. `--strategy` alone)
+            // include every non-terminal row — operators cancelling by
+            // strategy expect both queued AND running to clear.
+            let is_active = matches!(r.status, RunStatus::Queued | RunStatus::Running);
+            if !is_active {
+                continue;
+            }
+            if let Some(cutoff) = older_than_cutoff {
+                if r.started_at >= cutoff {
+                    continue;
+                }
+            }
+            candidates.push(r.id);
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+
+    // Attempt each cancel. We collect outcomes rather than aborting on
+    // the first non-cancellable so a bulk cancel reports the full
+    // picture in one shot.
+    let mut outcomes: HashMap<String, String> = HashMap::new();
+    let mut cancelled_ids: Vec<String> = Vec::new();
+    for id in &candidates {
+        match eval::cancel(&ctx, id).await {
+            Ok(run) if run.status == RunStatus::Cancelled => {
+                outcomes.insert(id.clone(), "cancelled".to_string());
+                cancelled_ids.push(id.clone());
+            }
+            Ok(run) => {
+                // Shouldn't normally happen — the engine's cancel either
+                // returns Cancelled or errors. Record the observed status
+                // so the operator can see the divergence.
+                outcomes.insert(id.clone(), format!("unexpected_status:{}", run.status.as_str()));
+            }
+            Err(ApiError::NotFound(_)) => {
+                outcomes.insert(id.clone(), "not_found".to_string());
+            }
+            Err(ApiError::Validation(msg)) => {
+                // Engine's cancel returns Validation when the run is
+                // already terminal (Cancelled/Completed/Failed). Map
+                // each to a stable outcome string.
+                let label = if msg.contains("is already") {
+                    "already_terminal"
+                } else {
+                    "not_running"
+                };
+                outcomes.insert(id.clone(), label.to_string());
+            }
+            Err(e) => {
+                outcomes.insert(id.clone(), format!("error:{e}"));
+            }
+        }
+    }
+
+    if args.json {
+        let body = serde_json::json!({
+            "cancelled_ids": cancelled_ids,
+            "outcomes": outcomes,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&body).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
+    }
+
+    if candidates.is_empty() {
+        println!("(no matching active runs)");
+        return Ok(());
+    }
+    println!("RUN_ID\tOUTCOME");
+    for id in &candidates {
+        let outcome = outcomes.get(id).map(String::as_str).unwrap_or("?");
+        println!("{id}\t{outcome}");
+    }
+    println!();
+    println!("Cancelled {} run(s).", cancelled_ids.len());
     Ok(())
 }
 

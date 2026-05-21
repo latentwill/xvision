@@ -8,6 +8,28 @@
 >
 > Last updated: 2026-05-20.
 
+## Active — V2F (strategy authoring & user knowledge)
+
+Decomposed 2026-05-21 from `team/intake/2026-05-20-strategies-folder-and-template-refactor.md`.
+Plan: `docs/superpowers/plans/2026-05-21-v2f-strategies-folder-and-template-refactor.md`
+(resolves the four open intake questions; locks location at
+`$XVN_HOME/strategies/`, copy+manifest pre-population, `pdftotext`
++ CSV-summary import, three separate wizard tools).
+
+Six tracks, three waves:
+
+**Wave 1 — independent, parallel-safe (foundation + two leaves):**
+- [strategies-folder-surface](contracts/strategies-folder-surface.md) — foundation · ready · gates wave 2 + 3 · new `crates/xvision-engine/src/strategies_folder/` module + `list_strategies_folder` / `read_strategies_file` wizard tools
+- [agent-pipeline-template-library-expansion](contracts/agent-pipeline-template-library-expansion.md) — leaf · ready · 4–6 new agent templates added to `agents/templates.rs`
+- [wizard-prompt-strategy-folder-and-templates](contracts/wizard-prompt-strategy-folder-and-templates.md) — leaf · ready · refresh `prompts/wizard.md` to describe folder + new tools + expanded library; closes loop on #275
+
+**Wave 2 — after foundation merges, parallel-safe:**
+- [strategies-folder-prepopulation](contracts/strategies-folder-prepopulation.md) — leaf · ready · `xvn strategies init` + copy from `docs/strategies/` with provenance manifest
+- [strategies-folder-import](contracts/strategies-folder-import.md) — leaf · ready · `xvn strategies import` CLI + dashboard `/strategies-folder` drop-zone + `pdftotext` summaries
+
+**Wave 3 — after prepopulation merges:**
+- [strategy-ideas-tool-surface](contracts/strategy-ideas-tool-surface.md) — leaf · ready · `list_strategy_ideas` wizard tool that queries the pre-populated library
+
 ## Active — V2A (onboarding & docs)
 
 - [v2a-driver-tour](contracts/v2a-driver-tour.md) — leaf · ready · independent
@@ -402,7 +424,7 @@ Intake doc when this opens: `team/intake/2026-05-19-eval-accuracy-and-trace-surf
 - V2A intake: `team/intake/2026-05-16-eval-review-and-v2a.md` (V2A items 1–3 decomposed).
 - V2D intake: `team/intake/2026-05-21-v2d-agent-memory.md` (item 15 decomposed into a single-contract wave; plan at `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`).
 - V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (items 17–25 decomposed; 7 contracts in `team/contracts/eval-*` all `status: ready`).
-- V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (items 26–31, **not yet decomposed**).
+- V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (items 26–31, **decomposed 2026-05-21 → six tracks under V2F Active above; plan at `docs/superpowers/plans/2026-05-21-v2f-strategies-folder-and-template-refactor.md`**).
 - V2B/V2C/V3/V4: no intake yet.
 
 ## Closeout

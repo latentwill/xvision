@@ -201,7 +201,7 @@ pub fn auto_suffix_arm_names(specs: &mut [ArmSpec]) {
     }
 
     // Pass 3: apply.
-    for (spec, suffix) in specs.iter_mut().zip(suffixes.into_iter()) {
+    for (spec, suffix) in specs.iter_mut().zip(suffixes) {
         if let Some(suf) = suffix {
             spec.name = format!("{}[{}]", spec.name, suf);
         }

@@ -5,6 +5,7 @@
 //! enabled`) — Phase B emission code greps for it.
 
 use std::fs;
+use std::path::Path;
 use std::sync::Mutex;
 use tempfile::TempDir;
 use tracing::subscriber::with_default;
@@ -151,18 +152,7 @@ impl<'a> MakeWriter<'a> for VecWriter {
     }
 }
 
-#[test]
-fn explicit_full_debug_emits_startup_warn() {
-    // An operator who set full_debug explicitly (CLI flag here — equivalent
-    // to a TOML/env that resolves to a non-Default source) still gets the
-    // loud WARN so they know raw payloads land on disk. Only the implicit
-    // default (covered by `default_full_debug_does_not_emit_startup_warn`)
-    // is silent.
-    let _guard = env_lock();
-    clean_env();
-    let tmp = TempDir::new().unwrap();
-    let path = tmp.path().join("observability.toml");
-
+fn capture_startup_warn(path: &Path, overrides: &CliOverrides) -> String {
     let writer = VecWriter::default();
     let buf_for_assert = writer.buf.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -172,19 +162,67 @@ fn explicit_full_debug_emits_startup_warn() {
         .with_ansi(false)
         .finish();
 
+    with_default(subscriber, || {
+        let _ = resolve_retention(path, overrides).unwrap();
+    });
+
+    let logged = String::from_utf8(buf_for_assert.lock().unwrap().clone()).unwrap();
+    logged
+}
+
+#[test]
+fn explicit_full_debug_emits_startup_warn() {
+    // An operator who set full_debug explicitly (CLI, TOML, or env) gets the
+    // loud WARN so they know raw payloads land on disk. Only the implicit
+    // default (covered by `default_full_debug_does_not_emit_startup_warn`)
+    // is silent.
+    let _guard = env_lock();
+    clean_env();
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("observability.toml");
+
     let overrides = CliOverrides {
         mode: Some(RetentionMode::FullDebug),
         ..CliOverrides::default()
     };
-    with_default(subscriber, || {
-        let _ = resolve_retention(&path, &overrides).unwrap();
-    });
-
-    let logged = String::from_utf8(buf_for_assert.lock().unwrap().clone()).unwrap();
+    let logged = capture_startup_warn(&path, &overrides);
     assert!(
         logged.contains("full_debug retention enabled"),
-        "expected startup WARN line, got: {logged}"
+        "expected CLI startup WARN line, got: {logged}"
     );
+
+    fs::write(
+        &path,
+        r#"
+[observability.retention]
+mode = "full_debug"
+"#,
+    )
+    .unwrap();
+    let logged = capture_startup_warn(&path, &CliOverrides::default());
+    assert!(
+        logged.contains("full_debug retention enabled"),
+        "expected config startup WARN line, got: {logged}"
+    );
+
+    fs::write(
+        &path,
+        r#"
+[observability.retention]
+mode = "redacted"
+"#,
+    )
+    .unwrap();
+    // SAFETY: env mutation; serialized by `env_lock()`.
+    unsafe {
+        std::env::set_var(MODE_KEY, "full_debug");
+    }
+    let logged = capture_startup_warn(&path, &CliOverrides::default());
+    assert!(
+        logged.contains("full_debug retention enabled"),
+        "expected env startup WARN line, got: {logged}"
+    );
+    clean_env();
 }
 
 #[test]
@@ -197,18 +235,7 @@ fn default_full_debug_does_not_emit_startup_warn() {
     clean_env();
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("observability.toml"); // missing => default
-    let writer = VecWriter::default();
-    let buf_for_assert = writer.buf.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .with_writer(writer)
-        .without_time()
-        .with_ansi(false)
-        .finish();
-    with_default(subscriber, || {
-        let _ = resolve_retention(&path, &CliOverrides::default()).unwrap();
-    });
-    let logged = String::from_utf8(buf_for_assert.lock().unwrap().clone()).unwrap();
+    let logged = capture_startup_warn(&path, &CliOverrides::default());
     assert!(
         !logged.contains("full_debug retention enabled"),
         "implicit default full_debug should not WARN, got: {logged}"

@@ -406,6 +406,8 @@ mod tests {
             evidence: serde_json::json!({}),
             extracted_at: chrono::Utc::now(),
             schema_version: "v1".into(),
+            evidence_cycle_ids: None,
+            produced_by_check: None,
             eval_review_id: None,
             review_type: None,
             confidence: None,

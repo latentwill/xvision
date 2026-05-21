@@ -283,6 +283,36 @@ describe("EvalRunsRoute", () => {
     expect(scenariosApi.listScenarios).toHaveBeenCalled();
   });
 
+  it("renders a positive max-drawdown value with the danger tone class", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000005",
+        agent_id: "01TEST",
+        scenario_id: "crypto-bull-q1-2025",
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: "2026-05-13T07:30:00Z",
+        sharpe: 0.8,
+        max_drawdown_pct: 4.5,
+        total_return_pct: 2.1,
+        error: null,
+        actual_input_tokens: 100,
+        actual_output_tokens: 50,
+      },
+    ]);
+
+    renderRoute();
+
+    // Find the Max DD cell rendered with a positive (4.50%) value
+    // and assert it carries the magnitude-based danger tone class
+    // regardless of magnitude (the old helper used `text-warn` for
+    // |dd| < 10 and only `text-danger` at >= 10).
+    const ddCell = await screen.findByText("+4.50%");
+    expect(ddCell.className).toContain("text-danger");
+    expect(ddCell.className).not.toContain("text-warn");
+  });
+
   it("shows eval run duration from started and completed times", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([
       {
