@@ -34,23 +34,9 @@ async fn boot() -> (TestServer, TempDir) {
     (server, tmp)
 }
 
-/// A request that omits `skip_preflight` (field defaults to `false`) must
-/// not be rejected by the serde layer. The route will fail downstream
-/// (strategy not found → 404/400) but never with a "missing field" or
-/// "unknown field" serde error.
-#[tokio::test]
-async fn post_start_accepts_body_without_skip_preflight() {
+async fn assert_post_start_body_parses(case: &str, body: serde_json::Value) {
     let (server, _tmp) = boot().await;
-
-    let response = server
-        .post("/api/eval/runs")
-        .json(&serde_json::json!({
-            "agent_id": "nonexistent-strategy",
-            "scenario_id": "crypto-bull-q1-2025",
-            "mode": "backtest",
-            "params_override": null,
-        }))
-        .await;
+    let response = server.post("/api/eval/runs").json(&body).await;
 
     // The route should NOT return 422 Unprocessable (serde rejection).
     // Allowed responses: 400 (validation/strategy-not-found) or 404 (not found).
@@ -59,7 +45,7 @@ async fn post_start_accepts_body_without_skip_preflight() {
     assert_ne!(
         status,
         StatusCode::UNPROCESSABLE_ENTITY,
-        "body without skip_preflight must parse: got {status}"
+        "{case}: body must parse, got {status}"
     );
     // Serde errors also often surface as 400 with a "failed to parse" body.
     // Rule out the serde-error 400 by checking the body does not contain
@@ -68,41 +54,38 @@ async fn post_start_accepts_body_without_skip_preflight() {
         let body = response.text();
         assert!(
             !body.contains("Failed to deserialize") && !body.contains("unknown field"),
-            "expected strategy-not-found 400, not serde rejection: {body}"
+            "{case}: expected strategy-not-found 400, not serde rejection: {body}"
         );
     }
 }
 
-/// A request that explicitly sets `skip_preflight: true` must also be
-/// accepted by the serde layer. The route will fail for the same "strategy
-/// not found" reason, but the field is not rejected as unknown.
+/// Requests with omitted or true `skip_preflight` must not be rejected by the
+/// serde layer. The route can fail downstream (strategy not found), but never
+/// with a missing/unknown-field serde error.
 #[tokio::test]
-async fn post_start_accepts_skip_preflight_true() {
-    let (server, _tmp) = boot().await;
-
-    let response = server
-        .post("/api/eval/runs")
-        .json(&serde_json::json!({
-            "agent_id": "nonexistent-strategy",
-            "scenario_id": "crypto-bull-q1-2025",
-            "mode": "backtest",
-            "params_override": null,
-            "skip_preflight": true,
-        }))
-        .await;
-
-    let status = response.status_code();
-    assert_ne!(
-        status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "body with skip_preflight=true must parse: got {status}"
-    );
-    if status == StatusCode::BAD_REQUEST {
-        let body = response.text();
-        assert!(
-            !body.contains("Failed to deserialize") && !body.contains("unknown field"),
-            "expected strategy-not-found 400, not serde rejection: {body}"
-        );
+async fn post_start_accepts_skip_preflight_variants() {
+    for (case, body) in [
+        (
+            "omitted skip_preflight",
+            serde_json::json!({
+                "agent_id": "nonexistent-strategy",
+                "scenario_id": "crypto-bull-q1-2025",
+                "mode": "backtest",
+                "params_override": null,
+            }),
+        ),
+        (
+            "skip_preflight true",
+            serde_json::json!({
+                "agent_id": "nonexistent-strategy",
+                "scenario_id": "crypto-bull-q1-2025",
+                "mode": "backtest",
+                "params_override": null,
+                "skip_preflight": true,
+            }),
+        ),
+    ] {
+        assert_post_start_body_parses(case, body).await;
     }
 }
 

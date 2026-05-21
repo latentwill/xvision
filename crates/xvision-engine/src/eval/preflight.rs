@@ -101,10 +101,7 @@ pub async fn preflight_providers(
         }
     };
 
-    let client = match reqwest::Client::builder()
-        .timeout(PROBE_TIMEOUT)
-        .build()
-    {
+    let client = match reqwest::Client::builder().timeout(PROBE_TIMEOUT).build() {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(error = %e, "preflight_providers: failed to build HTTP client");
@@ -208,7 +205,9 @@ async fn probe_tcp(base_url: &str, timeout: Duration) -> (bool, Option<String>) 
         Ok(Err(e)) => (false, Some(format!("TCP connect failed: {e}"))),
         Err(_elapsed) => (
             false,
-            Some(format!("TCP connect to {host}:{port} timed out after {timeout:?}")),
+            Some(format!(
+                "TCP connect to {host}:{port} timed out after {timeout:?}"
+            )),
         ),
     }
 }
@@ -390,14 +389,11 @@ mod tests {
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/models"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"data": []})),
-            )
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})))
             .mount(&server)
             .await;
 
-        let ctx = test_ctx_with_provider("ok-provider", "openai-compat", &server.uri()).await;
+        let (ctx, _dir) = test_ctx_with_provider("ok-provider", "openai-compat", &server.uri()).await;
         let results = preflight_providers(&ctx, &["ok-provider".to_string()]).await;
 
         assert_eq!(results.len(), 1);
@@ -417,7 +413,6 @@ mod tests {
         let _listener_guard = listener;
 
         let base_url = format!("http://127.0.0.1:{port}/v1");
-        let ctx = test_ctx_with_provider("slow-provider", "openai-compat", &base_url).await;
 
         // Use a very short timeout via a specially crafted client to make the
         // test fast. We override PROBE_TIMEOUT's 5 s by calling probe_http
@@ -438,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_provider_name_returns_error_not_panic() {
-        let ctx = test_ctx_empty().await;
+        let (ctx, _dir) = test_ctx_empty().await;
         let results = preflight_providers(&ctx, &["nonexistent-provider".to_string()]).await;
 
         assert_eq!(results.len(), 1);
@@ -456,7 +451,11 @@ mod tests {
 
     /// Build an `ApiContext` whose runtime config contains exactly one provider
     /// at the given base_url.
-    async fn test_ctx_with_provider(name: &str, kind: &str, base_url: &str) -> crate::api::ApiContext {
+    async fn test_ctx_with_provider(
+        name: &str,
+        kind: &str,
+        base_url: &str,
+    ) -> (crate::api::ApiContext, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let config_dir = dir.path().join("config");
         std::fs::create_dir_all(&config_dir).unwrap();
@@ -475,7 +474,7 @@ base_url = "{base_url}"
 api_key_env = ""
 
 [intern]
-provider = "{name}"
+provider = "{kind}"
 base_url = "{base_url}"
 model = "test"
 api_key_env = ""
@@ -507,15 +506,16 @@ sqlite_url = "sqlite://x.db"
         std::fs::write(&config_path, config_content).unwrap();
 
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        crate::api::ApiContext::new(
+        let ctx = crate::api::ApiContext::new(
             pool,
             crate::api::Actor::Cli { user: "test".into() },
             dir.path().to_path_buf(),
-        )
+        );
+        (ctx, dir)
     }
 
     /// Build an `ApiContext` whose runtime config has no providers.
-    async fn test_ctx_empty() -> crate::api::ApiContext {
+    async fn test_ctx_empty() -> (crate::api::ApiContext, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let config_dir = dir.path().join("config");
         std::fs::create_dir_all(&config_dir).unwrap();
@@ -529,7 +529,7 @@ executor = "alpaca"
 random_seed = 42
 
 [intern]
-provider = "none"
+provider = "openai-compat"
 base_url = ""
 model = "x"
 api_key_env = ""
@@ -560,10 +560,11 @@ sqlite_url = "sqlite://x.db"
         )
         .unwrap();
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        crate::api::ApiContext::new(
+        let ctx = crate::api::ApiContext::new(
             pool,
             crate::api::Actor::Cli { user: "test".into() },
             dir.path().to_path_buf(),
-        )
+        );
+        (ctx, dir)
     }
 }

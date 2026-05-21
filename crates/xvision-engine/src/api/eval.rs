@@ -842,33 +842,14 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
 
-    // ── Provider preflight (eval-provider-preflight, 2026-05-21) ────────────
-    let provider_names = collect_provider_names_for_strategy(ctx, &strategy, &agent_slots).await;
-    if !req.skip_preflight && !provider_names.is_empty() {
-        let preflight_results =
-            crate::eval::preflight::preflight_providers(ctx, &provider_names).await;
-        let failing: Vec<_> = preflight_results.iter().filter(|r| !r.reachable).collect();
-        if !failing.is_empty() {
-            let error_body = crate::eval::preflight::format_preflight_error(&preflight_results);
-            tracing::warn!(
-                strategy_id = %req.agent_id,
-                scenario_id = %req.scenario_id,
-                failing_providers = %failing.iter().map(|r| r.provider_name.as_str()).collect::<Vec<_>>().join(", "),
-                "eval launch blocked by provider preflight: {error_body}",
-            );
-            return Err(ApiError::Validation(error_body));
-        }
-    } else if req.skip_preflight {
-        tracing::warn!(
-            strategy_id = %req.agent_id,
-            scenario_id = %req.scenario_id,
-            "provider preflight bypassed via skip_preflight — run will proceed regardless of provider state",
-        );
-    }
-
+    let provider_names = validate_provider_preflight(ctx, &req, &strategy, &agent_slots).await?;
+    let skip_preflight = req.skip_preflight;
     let (dispatch_arc, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
-    run_with_deps(ctx, req, broker, dispatch_arc, findings_model, tools_arc).await
+    let run = run_with_deps(ctx, req, broker, dispatch_arc, findings_model, tools_arc).await?;
+    let store = RunStore::new(ctx.db.clone());
+    write_preflight_supervisor_notes(&store, &run.id, &provider_names, skip_preflight).await;
+    Ok(run)
 }
 
 /// Build an Alpaca paper broker, preferring credentials stored via the
@@ -1038,6 +1019,37 @@ async fn collect_provider_names_for_strategy(
     }
 
     names
+}
+
+async fn validate_provider_preflight(
+    ctx: &ApiContext,
+    req: &EvalRunRequest,
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> ApiResult<Vec<String>> {
+    let provider_names = collect_provider_names_for_strategy(ctx, strategy, agent_slots).await;
+    if !req.skip_preflight && !provider_names.is_empty() {
+        let preflight_results = crate::eval::preflight::preflight_providers(ctx, &provider_names).await;
+        let failing: Vec<_> = preflight_results.iter().filter(|r| !r.reachable).collect();
+        if !failing.is_empty() {
+            let error_body = crate::eval::preflight::format_preflight_error(&preflight_results);
+            tracing::warn!(
+                strategy_id = %req.agent_id,
+                scenario_id = %req.scenario_id,
+                failing_providers = %failing.iter().map(|r| r.provider_name.as_str()).collect::<Vec<_>>().join(", "),
+                "eval launch blocked by provider preflight: {error_body}",
+            );
+            return Err(ApiError::Validation(error_body));
+        }
+    } else if req.skip_preflight {
+        tracing::warn!(
+            strategy_id = %req.agent_id,
+            scenario_id = %req.scenario_id,
+            "provider preflight bypassed via skip_preflight — run will proceed regardless of provider state",
+        );
+    }
+
+    Ok(provider_names)
 }
 
 /// Persist one `supervisor_notes` row per probed provider, and an additional
@@ -2039,37 +2051,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
 
-    // ── Provider preflight (eval-provider-preflight, 2026-05-21) ────────────
-    // Probe every provider the strategy's agents reference before queuing the
-    // run. A failed probe returns `ApiError::Validation` with an actionable
-    // error message so the operator can fix the endpoint before wasting time
-    // on a run that would fail or (worse) return fixture data silently.
-    //
-    // `skip_preflight = true` bypasses the check for offline-development and
-    // CI replay scenarios. A `warn`-severity `supervisor_notes` row is written
-    // after run creation when this opt-out is used.
-    let provider_names = collect_provider_names_for_strategy(ctx, &strategy, &agent_slots).await;
-    if !req.skip_preflight && !provider_names.is_empty() {
-        let preflight_results =
-            crate::eval::preflight::preflight_providers(ctx, &provider_names).await;
-        let failing: Vec<_> = preflight_results.iter().filter(|r| !r.reachable).collect();
-        if !failing.is_empty() {
-            let error_body = crate::eval::preflight::format_preflight_error(&preflight_results);
-            tracing::warn!(
-                strategy_id = %req.agent_id,
-                scenario_id = %req.scenario_id,
-                failing_providers = %failing.iter().map(|r| r.provider_name.as_str()).collect::<Vec<_>>().join(", "),
-                "eval launch blocked by provider preflight: {error_body}",
-            );
-            return Err(ApiError::Validation(error_body));
-        }
-    } else if req.skip_preflight {
-        tracing::warn!(
-            strategy_id = %req.agent_id,
-            scenario_id = %req.scenario_id,
-            "provider preflight bypassed via skip_preflight — run will proceed regardless of provider state",
-        );
-    }
+    let provider_names = validate_provider_preflight(ctx, &req, &strategy, &agent_slots).await?;
 
     let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
@@ -2133,13 +2115,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // Persist preflight results as supervisor_notes immediately after the run
     // row exists. Uses `info` severity for reachable providers and `warn` for
     // skip_preflight. Best-effort: a failed note write does NOT abort the run.
-    write_preflight_supervisor_notes(
-        &store,
-        &run.id,
-        &provider_names,
-        req.skip_preflight,
-    )
-    .await;
+    write_preflight_supervisor_notes(&store, &run.id, &provider_names, req.skip_preflight).await;
 
     if let Some(em) = obs_emitter.as_ref() {
         let objective = format!(
