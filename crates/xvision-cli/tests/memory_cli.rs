@@ -109,11 +109,7 @@ fn add_pattern_then_ls_shows_it() {
 #[test]
 fn add_pattern_requires_namespace_or_agent() {
     let (dir, mem) = paths();
-    let out = xvn(
-        &["memory", "add-pattern", "something"],
-        dir.path(),
-        &mem,
-    );
+    let out = xvn(&["memory", "add-pattern", "something"], dir.path(), &mem);
     assert!(!out.status.success(), "expected failure with no namespace");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -172,7 +168,10 @@ fn rm_deletes_target_item() {
     let rm = xvn(&["memory", "rm", id], dir.path(), &mem);
     assert_ok(&rm);
     let stdout = String::from_utf8_lossy(&rm.stdout);
-    assert!(stdout.contains("deleted 1"), "expected delete count, got: {stdout}");
+    assert!(
+        stdout.contains("deleted 1"),
+        "expected delete count, got: {stdout}"
+    );
 
     let ls = xvn(&["memory", "ls", "--json"], dir.path(), &mem);
     assert_ok(&ls);
@@ -185,11 +184,7 @@ fn forget_by_agent_removes_only_that_namespace() {
     let (dir, mem) = paths();
 
     // Seed two patterns in agent:A and one in global.
-    for (text, ns) in [
-        ("a-one", "agent:A"),
-        ("a-two", "agent:A"),
-        ("g-one", "global"),
-    ] {
+    for (text, ns) in [("a-one", "agent:A"), ("a-two", "agent:A"), ("g-one", "global")] {
         let out = xvn(
             &["memory", "add-pattern", text, "--namespace", ns, "--json"],
             dir.path(),
@@ -199,11 +194,7 @@ fn forget_by_agent_removes_only_that_namespace() {
     }
 
     // Forget agent:A via the --agent shorthand.
-    let forget = xvn(
-        &["memory", "forget", "--agent", "A", "--json"],
-        dir.path(),
-        &mem,
-    );
+    let forget = xvn(&["memory", "forget", "--agent", "A", "--json"], dir.path(), &mem);
     assert_ok(&forget);
     let body: serde_json::Value = serde_json::from_slice(&forget.stdout).unwrap();
     assert_eq!(body["deleted"], 2);
@@ -254,14 +245,8 @@ fn show_prints_all_fields_including_training_window_end() {
     assert_ok(&show);
     let stdout = String::from_utf8_lossy(&show.stdout);
     assert!(stdout.contains("tier:"), "expected tier label: {stdout}");
-    assert!(
-        stdout.contains("pattern"),
-        "expected tier value: {stdout}"
-    );
-    assert!(
-        stdout.contains("agent:Alpha"),
-        "expected namespace: {stdout}"
-    );
+    assert!(stdout.contains("pattern"), "expected tier value: {stdout}");
+    assert!(stdout.contains("agent:Alpha"), "expected namespace: {stdout}");
     assert!(
         stdout.contains("training_window_end:"),
         "expected training_window_end label: {stdout}"

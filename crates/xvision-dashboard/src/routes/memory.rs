@@ -42,8 +42,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
 use xvision_engine::api::memory::{
-    self, ForgetResponse, ListMemoryRequest, MemoryItemDto, MemoryListResponse,
-    PatternCreateRequest,
+    self, ForgetResponse, ListMemoryRequest, MemoryItemDto, MemoryListResponse, PatternCreateRequest,
 };
 use xvision_memory::store::MemoryStore;
 
@@ -58,9 +57,7 @@ use crate::state::AppState;
 static MEMORY_STORE: OnceCell<Arc<MemoryStore>> = OnceCell::const_new();
 
 async fn resolve_store() -> Result<Arc<MemoryStore>, DashboardError> {
-    let store = MEMORY_STORE
-        .get_or_try_init(memory::open_default_store)
-        .await?;
+    let store = MEMORY_STORE.get_or_try_init(memory::open_default_store).await?;
     Ok(store.clone())
 }
 

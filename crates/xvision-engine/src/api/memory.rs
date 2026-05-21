@@ -391,9 +391,7 @@ pub async fn create_pattern(
         None => None,
         Some(s) => Some(
             DateTime::parse_from_rfc3339(s)
-                .map_err(|e| {
-                    ApiError::Validation(format!("training_window_end must be RFC3339: {e}"))
-                })?
+                .map_err(|e| ApiError::Validation(format!("training_window_end must be RFC3339: {e}")))?
                 .with_timezone(&Utc),
         ),
     };
@@ -540,9 +538,7 @@ mod tests {
         let store = MemoryStore::open_in_memory().await.expect("open");
         let id = seed_pattern(&store, "global", "buy when fear is high").await;
 
-        let listed = list(&store, ListMemoryRequest::default())
-            .await
-            .expect("list");
+        let listed = list(&store, ListMemoryRequest::default()).await.expect("list");
         assert_eq!(listed.total, 1);
         assert_eq!(listed.items.len(), 1);
         assert_eq!(listed.items[0].id, id);
@@ -631,9 +627,7 @@ mod tests {
     #[tokio::test]
     async fn delete_one_returns_not_found_for_unknown_id() {
         let store = MemoryStore::open_in_memory().await.expect("open");
-        let err = delete_one(&store, "no-such-id")
-            .await
-            .expect_err("must 404");
+        let err = delete_one(&store, "no-such-id").await.expect_err("must 404");
         assert!(matches!(err, ApiError::NotFound(_)));
     }
 

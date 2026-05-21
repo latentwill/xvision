@@ -34,9 +34,7 @@
 use clap::{Args, Subcommand};
 
 use xvision_engine::api::memory as memory_api;
-use xvision_engine::api::memory::{
-    ListMemoryRequest, MemoryItemDto, PatternCreateRequest,
-};
+use xvision_engine::api::memory::{ListMemoryRequest, MemoryItemDto, PatternCreateRequest};
 use xvision_engine::api::ApiError;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
@@ -368,10 +366,7 @@ fn print_items_table(items: &[MemoryItemDto], total: u64) {
     // readable while still surfacing enough text for the operator to
     // recognize Patterns at a glance.
     let preview_width = 60;
-    println!(
-        "{:<26}  {:<10}  {:<24}  {}",
-        "id", "tier", "namespace", "text"
-    );
+    println!("{:<26}  {:<10}  {:<24}  {}", "id", "tier", "namespace", "text");
     println!("{}", "-".repeat(26 + 2 + 10 + 2 + 24 + 2 + preview_width));
     for it in items {
         let preview: String = if it.text.chars().count() > preview_width {
