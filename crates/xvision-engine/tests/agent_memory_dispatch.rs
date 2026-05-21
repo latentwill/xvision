@@ -4,9 +4,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
-use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::agent::memory_recorder::{MemoryRecorder, RecallResult};
+use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::{PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_memory::store::MemoryStore;
 use xvision_memory::types::{MemoryItem, MemoryMode};
@@ -275,4 +279,141 @@ async fn execute_slot_writes_final_decision_into_namespace() {
         .unwrap();
     assert_eq!(hits.len(), 1, "memory_write must persist exactly one item");
     assert_eq!(hits[0].text, "FINAL_DECISION_FIXTURE_TEXT");
+}
+
+/// Build a minimal `Strategy` whose `agents` slot is populated so
+/// `run_pipeline` takes the agent-pipeline branch (the one this PR
+/// wired the recorder into) rather than the legacy regime/intern/
+/// trader branch. The legacy slots are cleared explicitly so the
+/// agent-pipeline path is the only path that fires.
+fn pipeline_fixture_strategy() -> Strategy {
+    Strategy {
+        manifest: PublicManifest {
+            id: "01H8N7ZPIPELINE_MEM".into(),
+            display_name: "Pipeline Memory Threading".into(),
+            plain_summary: "x".into(),
+            creator: "@t".into(),
+            template: "mean_reversion".into(),
+            regime_fit: vec![RegimeFit::RangeBound],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 15,
+            required_models: vec!["mock".into()],
+            required_tools: vec!["ohlcv".into()],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+            min_warmup_bars: None,
+        },
+        hypothesis: None,
+        agents: Vec::new(),
+        pipeline: PipelineDef::sequential(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: None,
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+    }
+}
+
+/// End-to-end smoke test for the V2D Phase 3 wiring bridge.
+///
+/// Builds a `PipelineInputs` whose `memory_recorder` is `Some`, holds a
+/// pre-seeded namespace, and carries one `ResolvedAgentSlot` with
+/// `memory_mode = AgentScoped` + a non-empty `agent_id`. After
+/// `run_pipeline` returns, the recorder's store must contain a NEW item
+/// under `agent:<agent_id>` (in addition to the pre-seed) — proving the
+/// recall+write seam actually fired through the pipeline call site, not
+/// just through `execute_slot` directly (which the sibling tests cover).
+#[tokio::test]
+async fn pipeline_threads_memory_recorder_to_execute_slot() {
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    let store_arc = Arc::new(store);
+
+    // Pre-seed one memory in the agent-scoped namespace so we can
+    // distinguish "the recorder fired and wrote a new item" from
+    // "the recorder never touched the store".
+    store_arc
+        .upsert(
+            &MemoryItem {
+                id: "preseed-1".into(),
+                namespace: "agent:agent-pipeline-fixture".into(),
+                text: "PRESEED_FIXTURE".into(),
+                embedding: vec![0.5, 0.5],
+                created_at: chrono::Utc::now(),
+                source_run_id: None,
+                source_cycle_id: None,
+            },
+            "test-embedder",
+        )
+        .await
+        .unwrap();
+
+    let recorder = Arc::new(MemoryRecorder::with_static_embedder(
+        Arc::clone(&store_arc),
+        "test-embedder",
+        vec![0.5, 0.5],
+    ));
+
+    let strategy = pipeline_fixture_strategy();
+    let agent_slots = vec![ResolvedAgentSlot {
+        role: "trader".into(),
+        slot: LLMSlot {
+            role: "trader".into(),
+            prompt: "decide".into(),
+            model_requirement: "mock".into(),
+            allowed_tools: Vec::new(),
+            provider: None,
+            model: Some("mock".into()),
+        },
+        max_tokens: None,
+        temperature: None,
+        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+        bar_history_limit: None,
+        memory_mode: MemoryMode::AgentScoped,
+        agent_id: "agent-pipeline-fixture".into(),
+    }];
+
+    let dispatch = Arc::new(MockDispatch::echo(
+        r#"{"action":"hold","conviction":0.0,"justification":"PIPELINE_THREADED_DECISION"}"#,
+    ));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    let outs = run_pipeline(PipelineInputs {
+        strategy: &strategy,
+        agent_slots: &agent_slots,
+        seed_inputs: serde_json::json!({}),
+        dispatch,
+        tools,
+        obs: None,
+        memory_recorder: Some(recorder),
+    })
+    .await
+    .expect("run_pipeline must succeed");
+    assert!(
+        outs.trader.is_some(),
+        "trader-role slot must populate PipelineOutputs.trader",
+    );
+
+    // The store now contains the preseed plus exactly one new item that
+    // carries the dispatched assistant text. If the recorder were not
+    // threaded, the store would still hold only the preseed.
+    let hits = store_arc
+        .query("agent:agent-pipeline-fixture", &[0.5, 0.5], 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.len(),
+        2,
+        "pipeline must write exactly one new memory item alongside the preseed; \
+         got {hits:?}",
+    );
+    assert!(
+        hits.iter().any(|m| m.text.contains("PIPELINE_THREADED_DECISION")),
+        "new memory item must carry the assistant's final text, proving the \
+         recorder ran inside execute_slot via the pipeline; got {hits:?}",
+    );
+    assert!(
+        hits.iter().any(|m| m.text == "PRESEED_FIXTURE"),
+        "preseed must survive — the recall+write path must not blow away \
+         existing namespace contents; got {hits:?}",
+    );
 }
