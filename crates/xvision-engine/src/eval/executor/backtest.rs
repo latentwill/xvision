@@ -808,11 +808,18 @@ impl BacktestExecutor {
             // `short_open` generate new orders at the venue; `hold` and `flat`
             // do not (they are portfolio-state changes or no-ops).
             //
-            // On rejection:
-            //   - The order does NOT fill (the decision is recorded below with
-            //     no fill data, so the strategy sees it in the trace).
-            //   - A `broker_rule_violation` finding is written to findings.jsonl.
-            //   - `broker_rejected_orders` is incremented.
+            // Severity-driven behavior (per `BrokerRuleSet::validate` contract):
+            //   - `Critical` (e.g. unsupported_order_type, min_order_size):
+            //     the venue would hard-reject. Order does NOT fill, the
+            //     decision is recorded with no fill data, a finding is
+            //     written, and `broker_rejected_orders` is incremented.
+            //   - `Warning` (e.g. fractional_order_rounding): the venue
+            //     would accept with a soft correction (precision truncation).
+            //     A finding is still written for operator visibility, but the
+            //     fill PROCEEDS — otherwise a benign precision warning would
+            //     silently veto every fill on a crypto scenario where the
+            //     `risk_pct_per_trade × equity / price` quotient has long
+            //     decimal expansion.
             //
             // The rule set is built once per run from `scenario.asset_class`;
             // see the `rule_set_for_asset_class` call above the decision loop.
@@ -838,11 +845,27 @@ impl BacktestExecutor {
                 match broker_rules.validate(&pending) {
                     Ok(()) => false, // order accepted; proceed to simulate_fill
                     Err(violation) => {
-                        // Reject the order. Record a finding then skip fill.
-                        broker_rejected_orders += 1;
+                        // Per `BrokerRuleSet::validate` contract: only
+                        // `Critical` violations skip the fill (the venue would
+                        // hard-reject). `Warning` violations record a finding
+                        // for operator visibility but the fill still proceeds
+                        // — the venue would accept the order after truncating
+                        // precision, so the backtest must mirror that.
+                        let is_blocking = matches!(
+                            violation.severity,
+                            BrokerViolationSeverity::Critical
+                        );
+                        if is_blocking {
+                            broker_rejected_orders += 1;
+                        }
                         let finding_severity = match violation.severity {
                             BrokerViolationSeverity::Critical => Severity::Critical,
                             BrokerViolationSeverity::Warning => Severity::Warning,
+                        };
+                        let summary_lead = if is_blocking {
+                            "Order rejected by broker rule"
+                        } else {
+                            "Broker rule warning"
                         };
                         let finding = Finding {
                             id: Ulid::new().to_string(),
@@ -850,7 +873,7 @@ impl BacktestExecutor {
                             kind: "broker_rule_violation".into(),
                             severity: finding_severity,
                             summary: format!(
-                                "Order rejected by broker rule `{}`: {}",
+                                "{summary_lead} `{}`: {}",
                                 violation.specific_rule, violation.message
                             ),
                             evidence: serde_json::json!({
@@ -880,14 +903,25 @@ impl BacktestExecutor {
                             ),
                             created_at: None,
                         };
-                        tracing::warn!(
-                            run_id = %run.id,
-                            decision_index = decision_idx,
-                            asset = %asset,
-                            specific_rule = %violation.specific_rule,
-                            action = %applied_action,
-                            "broker rule rejected order — no fill this cycle",
-                        );
+                        if is_blocking {
+                            tracing::warn!(
+                                run_id = %run.id,
+                                decision_index = decision_idx,
+                                asset = %asset,
+                                specific_rule = %violation.specific_rule,
+                                action = %applied_action,
+                                "broker rule rejected order — no fill this cycle",
+                            );
+                        } else {
+                            tracing::debug!(
+                                run_id = %run.id,
+                                decision_index = decision_idx,
+                                asset = %asset,
+                                specific_rule = %violation.specific_rule,
+                                action = %applied_action,
+                                "broker rule warning — fill proceeds",
+                            );
+                        }
                         if let Err(e) = store.record_finding(&finding).await {
                             tracing::error!(
                                 run_id = %run.id,
@@ -896,7 +930,7 @@ impl BacktestExecutor {
                                 "failed to record broker_rule_violation finding",
                             );
                         }
-                        true // order rejected; skip simulate_fill
+                        is_blocking // Critical → skip simulate_fill; Warning → fill proceeds
                     }
                 }
             } else {

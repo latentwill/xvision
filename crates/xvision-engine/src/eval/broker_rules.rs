@@ -14,11 +14,11 @@
 //! ```text
 //! BacktestExecutor
 //!   → build_pending_order(trader_output, bar_price, equity)
-//!   → broker_rule_set.validate(&order)       ← this module
-//!       Ok    → simulate_fill(order)
-//!       Err   → emit BrokerRuleViolation finding
-//!               record decision (no fill)
-//!               increment broker_rejected_orders counter
+//!   → broker_rule_set.validate(&order)              ← this module
+//!       Ok                       → simulate_fill(order)
+//!       Err(Warning)             → emit finding, simulate_fill(order)
+//!       Err(Critical)            → emit finding, record decision (no fill),
+//!                                  increment broker_rejected_orders counter
 //! ```
 //!
 //! # Asset-class dispatch
