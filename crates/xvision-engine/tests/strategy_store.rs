@@ -1,7 +1,6 @@
 use tempfile::tempdir;
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
-use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
 use xvision_engine::strategies::{AgentRef, Strategy};
 
@@ -34,6 +33,8 @@ fn sample_strategy(id: &str) -> Strategy {
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 

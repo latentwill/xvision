@@ -20,6 +20,7 @@ use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
 use xvision_engine::eval::run::{Run, RunMode};
+#[allow(deprecated)]
 use xvision_engine::eval::scenario::{canonical_scenarios, SlippageModel};
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;
@@ -148,6 +149,8 @@ fn build_strategy(agent_id: &str) -> Strategy {
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 

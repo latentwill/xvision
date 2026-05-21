@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn eight_holds_is_eligible() {
         let cfg = EarlyStopConfig::default();
-        let plan = should_skip_next_decision(&vec![Action::Hold; 8], &convictions(8, 0.05), true, &cfg);
+        let plan = should_skip_next_decision(&[Action::Hold; 8], &convictions(8, 0.05), true, &cfg);
         assert!(plan.is_some());
     }
 
@@ -286,11 +286,15 @@ mod tests {
 
     #[test]
     fn zero_window_or_skip_disables_policy() {
-        let mut cfg = EarlyStopConfig::default();
-        cfg.window = 0;
+        let cfg = EarlyStopConfig {
+            window: 0,
+            ..EarlyStopConfig::default()
+        };
         assert!(should_skip_next_decision(&flats(8), &convictions(8, 0.0), true, &cfg).is_none());
-        cfg = EarlyStopConfig::default();
-        cfg.skip_count = 0;
+        let cfg = EarlyStopConfig {
+            skip_count: 0,
+            ..EarlyStopConfig::default()
+        };
         assert!(should_skip_next_decision(&flats(8), &convictions(8, 0.0), true, &cfg).is_none());
     }
 

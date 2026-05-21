@@ -144,6 +144,8 @@ async fn strategies_list_returns_seeded_strategy() {
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         })
         .await
         .unwrap();
@@ -1206,6 +1208,8 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         })
         .await
         .unwrap();

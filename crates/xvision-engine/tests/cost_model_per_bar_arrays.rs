@@ -144,7 +144,7 @@ fn venue_override_matches_exact_pattern() {
 fn venue_override_btc_beats_scenario_default() {
     // BTC/USD override has taker_bps=15; scenario default is 25.
     // The first matching override wins.
-    let overrides = vec![make_btc_override(), make_star_usd_override()];
+    let overrides = [make_btc_override(), make_star_usd_override()];
     let symbol = "BTC/USD";
     let found = overrides.iter().find(|o| o.matches(symbol));
     assert!(found.is_some());
@@ -155,7 +155,7 @@ fn venue_override_btc_beats_scenario_default() {
 #[test]
 fn eth_falls_through_to_star_pattern() {
     // ETH/USD doesn't match "BTC/USD" but does match "*USD".
-    let overrides = vec![make_btc_override(), make_star_usd_override()];
+    let overrides = [make_btc_override(), make_star_usd_override()];
     let symbol = "ETH/USD";
     let found = overrides.iter().find(|o| o.matches(symbol));
     assert!(found.is_some());
@@ -167,7 +167,7 @@ fn eth_falls_through_to_star_pattern() {
 
 #[test]
 fn no_matching_override_returns_none() {
-    let overrides = vec![make_btc_override()];
+    let overrides = [make_btc_override()];
     let symbol = "SOL/USD";
     let found = overrides.iter().find(|o| o.matches(symbol));
     assert!(found.is_none(), "SOL/USD should not match BTC/USD pattern");

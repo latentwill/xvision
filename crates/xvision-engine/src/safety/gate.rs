@@ -43,10 +43,10 @@
 //! acquires a read-lock (already in memory) and returns immediately.
 
 use crate::safety::audit::{AuditAction, AuditResult, SafetyAuditWriter};
-use crate::safety::AuthContext;
 use crate::safety::limits::{SafetyLimitCheck, SafetyLimits};
 use crate::safety::state::SafetyManager;
 use crate::safety::venue::VenueLabel;
+use crate::safety::AuthContext;
 
 /// The error returned when the pause gate or a safety limit blocks an action.
 #[derive(Debug, thiserror::Error)]

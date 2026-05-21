@@ -173,10 +173,7 @@ pub async fn insert_session(
 }
 
 /// Fetch a session by token_hash. Returns `None` if not found or expired.
-pub async fn find_session_by_hash(
-    pool: &SqlitePool,
-    token_hash: &str,
-) -> anyhow::Result<Option<SessionRow>> {
+pub async fn find_session_by_hash(pool: &SqlitePool, token_hash: &str) -> anyhow::Result<Option<SessionRow>> {
     use sqlx::Row as _;
     let now = Utc::now().to_rfc3339();
     let row = sqlx::query(
@@ -262,10 +259,7 @@ pub async fn create_session(
 }
 
 /// `DELETE /api/auth/session` — revoke the current session token.
-pub async fn delete_session(
-    State(state): State<crate::state::AppState>,
-    headers: HeaderMap,
-) -> StatusCode {
+pub async fn delete_session(State(state): State<crate::state::AppState>, headers: HeaderMap) -> StatusCode {
     let pool = &state.pool;
     let Some(token) = extract_session_token(&headers) else {
         return StatusCode::UNAUTHORIZED;

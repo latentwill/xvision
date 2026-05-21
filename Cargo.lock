@@ -8072,6 +8072,7 @@ dependencies = [
  "ulid",
  "xvision-core",
  "xvision-engine",
+ "xvision-filters",
  "xvision-memory",
  "xvision-observability",
 ]
@@ -8144,6 +8145,7 @@ dependencies = [
  "xvision-data",
  "xvision-eval",
  "xvision-execution",
+ "xvision-filters",
  "xvision-memory",
  "xvision-observability",
  "xvision-risk",

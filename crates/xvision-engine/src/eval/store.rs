@@ -70,6 +70,14 @@ impl RunStore {
         self.pool.clone()
     }
 
+    /// Borrow the underlying pool. Used by helpers that need to write
+    /// to tables (`eval_filter_evaluations`) the store does not yet
+    /// expose typed inserts for. Kept narrow — prefer adding a typed
+    /// helper here when the write site stabilizes.
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// INSERT INTO eval_runs.
     pub async fn create(&self, run: &Run) -> Result<()> {
         let params_override_json = run

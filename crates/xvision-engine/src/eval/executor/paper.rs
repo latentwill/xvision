@@ -1629,6 +1629,8 @@ mod role_tests {
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         }
     }
 
@@ -1699,7 +1701,7 @@ mod role_tests {
 
     #[test]
     fn build_bar_history_causal_assigns_bar_index_from_zero() {
-        let bars = vec![mk_bar(1, 10.0), mk_bar(2, 20.0), mk_bar(3, 30.0)];
+        let bars = [mk_bar(1, 10.0), mk_bar(2, 20.0), mk_bar(3, 30.0)];
         let refs: Vec<&Ohlcv> = bars.iter().collect();
         let history = build_bar_history(&refs, InputsPolicy::Causal);
         assert_eq!(history.len(), 3);
@@ -1722,7 +1724,7 @@ mod role_tests {
         // Regression: under `Raw`, every entry carries `timestamp` +
         // OHLCV in the original order. We probe field presence so
         // serde-internal key ordering doesn't make the test flaky.
-        let bars = vec![mk_bar(1_700_000_000, 100.0)];
+        let bars = [mk_bar(1_700_000_000, 100.0)];
         let refs: Vec<&Ohlcv> = bars.iter().collect();
         let history = build_bar_history(&refs, InputsPolicy::Raw);
         let obj = history[0].as_object().unwrap();

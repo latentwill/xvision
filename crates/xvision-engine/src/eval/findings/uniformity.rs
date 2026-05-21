@@ -89,9 +89,8 @@ pub fn detect_uniformity(decisions: &[DecisionRow]) -> Vec<Finding> {
     let has_all_justifications = justifications.len() == n;
     let unique_justifications: std::collections::HashSet<&str> = justifications.iter().copied().collect();
 
-    let check1_fired = has_all_justifications
-        && unique_justifications.len() == 1
-        && n >= MIN_DECISIONS_FOR_IDENTICAL;
+    let check1_fired =
+        has_all_justifications && unique_justifications.len() == 1 && n >= MIN_DECISIONS_FOR_IDENTICAL;
 
     let mut findings = Vec::new();
 
@@ -241,7 +240,12 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    fn decision(run_id: &str, action: &str, conviction: Option<f64>, justification: Option<&str>) -> DecisionRow {
+    fn decision(
+        run_id: &str,
+        action: &str,
+        conviction: Option<f64>,
+        justification: Option<&str>,
+    ) -> DecisionRow {
         DecisionRow {
             run_id: run_id.to_string(),
             decision_index: 0,
@@ -261,7 +265,14 @@ mod tests {
 
     fn identical_decisions(run_id: &str, n: usize) -> Vec<DecisionRow> {
         (0..n)
-            .map(|_| decision(run_id, "long_open", Some(0.42), Some("stub Gemini Flash 3.1 response")))
+            .map(|_| {
+                decision(
+                    run_id,
+                    "long_open",
+                    Some(0.42),
+                    Some("stub Gemini Flash 3.1 response"),
+                )
+            })
             .collect()
     }
 
@@ -321,12 +332,17 @@ mod tests {
     fn twelve_same_action_conviction_varied_justification_emits_critical_uniform_decision() {
         // Same (action, conviction) pair but varied justifications → check 1
         // does NOT fire (unique_justifications.len() > 1); check 2 fires.
-        let mut decisions: Vec<DecisionRow> = (0..12)
+        let decisions: Vec<DecisionRow> = (0..12)
             .map(|i| decision("run-d", "long_open", Some(0.42), Some(&format!("reason {i}"))))
             .collect();
         // Ensure uniqueness of justifications (guaranteed by index above).
-        let findings = detect_uniformity(&mut decisions);
-        assert_eq!(findings.len(), 1, "expected exactly 1 finding, got: {:?}", findings.iter().map(|f| &f.kind).collect::<Vec<_>>());
+        let findings = detect_uniformity(&decisions);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly 1 finding, got: {:?}",
+            findings.iter().map(|f| &f.kind).collect::<Vec<_>>()
+        );
         let f = &findings[0];
         assert_eq!(f.kind, "uniform_decision");
         assert_eq!(f.severity, Severity::Critical);
@@ -356,7 +372,11 @@ mod tests {
         let f = &findings[0];
         assert_eq!(f.kind, "near_uniform_justification");
         assert_eq!(f.severity, Severity::Warning);
-        assert!(f.summary.contains("92") || f.summary.contains("23"), "summary: {}", f.summary);
+        assert!(
+            f.summary.contains("92") || f.summary.contains("23"),
+            "summary: {}",
+            f.summary
+        );
     }
 
     #[test]
@@ -376,7 +396,13 @@ mod tests {
         let run_id = "run-g";
         let decisions: Vec<DecisionRow> = (0..20)
             .map(|i| {
-                let action = if i % 3 == 0 { "long_open" } else if i % 3 == 1 { "flat" } else { "short_open" };
+                let action = if i % 3 == 0 {
+                    "long_open"
+                } else if i % 3 == 1 {
+                    "flat"
+                } else {
+                    "short_open"
+                };
                 let conviction = Some(0.1 + (i as f64) * 0.04);
                 let justification = Some(format!("unique analysis for bar {i}"));
                 decision(run_id, action, conviction, justification.as_deref())

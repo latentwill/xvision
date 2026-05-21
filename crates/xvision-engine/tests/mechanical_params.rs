@@ -54,6 +54,8 @@ fn strategy_with(template_label: &str, params: serde_json::Value) -> Strategy {
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: params,
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 

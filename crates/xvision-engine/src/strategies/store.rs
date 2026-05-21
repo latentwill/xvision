@@ -315,6 +315,8 @@ mod tests {
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
         }
     }
 
@@ -408,7 +410,10 @@ mod tests {
             .await
             .expect("arbitrary mechanical_params keys preserved post-registry-removal");
         let loaded = store.load("01HZSTRATEGYANY00000000000").await.unwrap();
-        assert_eq!(loaded.mechanical_params, serde_json::json!({"weird": "shape", "n": 42}));
+        assert_eq!(
+            loaded.mechanical_params,
+            serde_json::json!({"weird": "shape", "n": 42})
+        );
     }
 
     // ── strategy-edit-top-level-fields — metadata patch ─────────────

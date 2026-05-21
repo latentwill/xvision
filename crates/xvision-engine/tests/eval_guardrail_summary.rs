@@ -206,6 +206,8 @@ fn minimal_strategy(agent_id: &str) -> Strategy {
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
         hypothesis: None,
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 

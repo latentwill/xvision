@@ -66,7 +66,7 @@ fn prompt_hash_changes_when_messages_change() {
 
 #[test]
 fn prompt_hash_changes_when_tools_change() {
-    let mut a = base_request();
+    let a = base_request();
     let mut b = base_request();
     b.tools.push(ToolDefinition {
         name: "xvn_rsi".into(),

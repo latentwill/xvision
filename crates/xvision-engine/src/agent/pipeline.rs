@@ -80,8 +80,7 @@ pub struct PipelineInputs<'a> {
     /// stay on the no-op recall path. The eval executors thread
     /// `ApiContext.memory_recorder` here when the server has a
     /// store + embedder configured.
-    pub memory_recorder:
-        Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    pub memory_recorder: Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
     /// V2D Phase 1.5 — current scenario start, forwarded into
     /// `SlotInput.scenario_start` so the recorder's recall path can
     /// exclude Patterns whose `training_window_end` overlaps the

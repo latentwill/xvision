@@ -305,10 +305,7 @@ mod tests {
         // V2D: new slots default to `Off` so the dispatcher does not
         // consult or write the cortex-memory store until an operator
         // explicitly opts in.
-        assert_eq!(
-            a.slots[0].memory_mode,
-            xvision_memory::types::MemoryMode::Off
-        );
+        assert_eq!(a.slots[0].memory_mode, xvision_memory::types::MemoryMode::Off);
     }
 
     #[test]

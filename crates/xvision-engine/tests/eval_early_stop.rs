@@ -150,6 +150,8 @@ fn build_strategy(agent_id: &str) -> Strategy {
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 
@@ -171,6 +173,7 @@ fn synthetic_bars(n: usize) -> Vec<Ohlcv> {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn flat_degeneracy_triggers_inherited_skip_window() {
     let _env_lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     pin_early_stop_defaults();
@@ -267,6 +270,7 @@ async fn flat_degeneracy_triggers_inherited_skip_window() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn second_skip_window_only_triggers_after_counter_resets() {
     let _env_lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     pin_early_stop_defaults();

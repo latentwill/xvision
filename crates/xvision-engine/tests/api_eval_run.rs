@@ -80,6 +80,8 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -559,12 +561,15 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
     let _env_lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _openrouter_key = scoped_unset("OPENROUTER_API_KEY");

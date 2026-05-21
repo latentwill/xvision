@@ -187,6 +187,8 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, strategy_id: &str) -> Strateg
         trader_slot: None,
         risk,
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

@@ -69,15 +69,39 @@ fn apply_patterns(input: &str) -> String {
 
     // Pattern: provider token prefixes — sk-, OR-, xai-
     // sk- keys include hyphens in body (e.g. sk-ant-api03-XXXXX for Anthropic).
-    out = redact_prefixed(&out, "sk-", |c| c.is_ascii_alphanumeric() || c == '-', 20, "PROVIDER_TOKEN");
-    out = redact_prefixed(&out, "OR-", |c| c.is_ascii_alphanumeric() || c == '-', 20, "PROVIDER_TOKEN");
+    out = redact_prefixed(
+        &out,
+        "sk-",
+        |c| c.is_ascii_alphanumeric() || c == '-',
+        20,
+        "PROVIDER_TOKEN",
+    );
+    out = redact_prefixed(
+        &out,
+        "OR-",
+        |c| c.is_ascii_alphanumeric() || c == '-',
+        20,
+        "PROVIDER_TOKEN",
+    );
     out = redact_prefixed(&out, "xai-", |c| c.is_ascii_alphanumeric(), 20, "PROVIDER_TOKEN");
 
     // Pattern: Alpaca broker key — PK followed by uppercase alphanumeric
-    out = redact_prefixed(&out, "PK", |c| c.is_ascii_uppercase() || c.is_ascii_digit(), 16, "BROKER_KEY");
+    out = redact_prefixed(
+        &out,
+        "PK",
+        |c| c.is_ascii_uppercase() || c.is_ascii_digit(),
+        16,
+        "BROKER_KEY",
+    );
 
     // Pattern: Tailscale auth key — tskey- followed by lowercase alphanumeric
-    out = redact_prefixed(&out, "tskey-", |c| c.is_ascii_lowercase() || c.is_ascii_digit(), 20, "TAILSCALE_KEY");
+    out = redact_prefixed(
+        &out,
+        "tskey-",
+        |c| c.is_ascii_lowercase() || c.is_ascii_digit(),
+        20,
+        "TAILSCALE_KEY",
+    );
 
     // Pattern: EVM private key hex — 0x followed by exactly 64 hex chars
     out = redact_hex_privkey(&out);
@@ -335,7 +359,10 @@ mod tests {
         // "sk-short" is only 5 chars in the body — below the 20-char minimum.
         let raw = "error: sk-short";
         let clean = redact(raw);
-        assert!(!clean.contains("[REDACTED"), "expected no redaction, got: {clean}");
+        assert!(
+            !clean.contains("[REDACTED"),
+            "expected no redaction, got: {clean}"
+        );
     }
 
     // ── Broker tokens ───────────────────────────────────────────────────────
@@ -413,7 +440,10 @@ mod tests {
         // "jumps" = 5, "quick" = 5, "brown" = 5... actually all words are 3-8 chars.
         // But there are only 9 unique words so 12-word run threshold shouldn't match in sequence.
         // The sentence has 9 words total (< 12), so no mnemonic match.
-        assert!(!clean.contains("[REDACTED"), "false positive on normal text: {clean}");
+        assert!(
+            !clean.contains("[REDACTED"),
+            "false positive on normal text: {clean}"
+        );
     }
 
     // ── No-op fast-path ─────────────────────────────────────────────────────

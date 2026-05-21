@@ -33,8 +33,7 @@
 //!
 //!    The fix replaces the `.context()` with a `map_err` that:
 //!    (a) logs `tracing::error!` with `db_error = %e` (structured field),
-//!    (b) returns `anyhow!("insert chat_messages row: <label> — {e}")` so
-//!        the caller's error chain names the SQLite error class.
+//!    (b) preserves the SQLite class in the returned error chain.
 //!
 //!    Test `error_message_names_sqlite_class_on_unique_violation` drives a
 //!    deterministic UNIQUE constraint violation through `ChatSessionStore::append`

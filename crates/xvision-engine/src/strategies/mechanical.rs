@@ -61,10 +61,7 @@ impl MechanicalParams {
     /// The `_template_hint` argument is retained for call-site
     /// compatibility with the previous `from_value(template, value)`
     /// signature and is otherwise ignored.
-    pub fn from_value(
-        _template_hint: &str,
-        value: serde_json::Value,
-    ) -> Result<Self, serde_json::Error> {
+    pub fn from_value(_template_hint: &str, value: serde_json::Value) -> Result<Self, serde_json::Error> {
         Ok(Self::Custom(value))
     }
 

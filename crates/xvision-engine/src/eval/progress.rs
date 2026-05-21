@@ -97,6 +97,27 @@ pub enum ProgressEvent {
     },
     /// Terminal-failure event. After this fires the executor exits.
     RunFailed { run_id: String, error: String },
+    /// Emitted once per bar when a `FilterGated` strategy's runtime
+    /// runs. Carries the activation decision and per-condition booleans
+    /// so consumers (trace dock, CLI watch) can surface "plan touches"
+    /// inline with the rest of the run timeline. Strategies in
+    /// `EveryBar` mode never emit this variant.
+    FilterEvaluated {
+        run_id: String,
+        bar_index: u64,
+        ts: DateTime<Utc>,
+        /// Stable decision tag from `xvision_filters::ActivationDecision::tag()`.
+        decision_tag: String,
+        /// Boolean per condition leaf (index aligns with the filter's
+        /// flat condition list). Empty during warmup.
+        conditions_passed: Vec<bool>,
+        /// True iff the leaf-rollup evaluated to true on this bar
+        /// (regardless of cooldown / cap / suppression).
+        tree_true: bool,
+        /// True only for the `false → true` transition of the rollup.
+        /// Hold bars (sustained true) report `false`.
+        trip: bool,
+    },
 }
 
 /// Sender half of the progress channel. Cheap to clone (it's an `Arc`

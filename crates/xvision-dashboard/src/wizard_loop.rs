@@ -3239,10 +3239,7 @@ mod tests {
         .await;
 
         let created = wl
-            .run_tool(
-                "create_strategy",
-                serde_json::json!({ "name": "Fib+RSI" }),
-            )
+            .run_tool("create_strategy", serde_json::json!({ "name": "Fib+RSI" }))
             .await
             .expect("create_strategy must succeed with no template");
         let id = created["id"].as_str().expect("created.id").to_string();
@@ -3284,7 +3281,9 @@ mod tests {
         let store = xvision_engine::strategies::store::FilesystemStore::new(
             xvision_engine::strategies::store::strategy_store_dir(td.path()),
         );
-        let draft = xvision_engine::authoring::get_strategy(&store, &id).await.unwrap();
+        let draft = xvision_engine::authoring::get_strategy(&store, &id)
+            .await
+            .unwrap();
         assert_eq!(draft.agents.len(), 1);
         assert_eq!(draft.agents[0].role, "trader");
         // Save-gate check: the trader agent's slot prompt is real (not
@@ -3292,7 +3291,10 @@ mod tests {
         // accept it. We don't run the save-gate here — that's covered
         // by the engine-level `agent_save_validate` tests — but we
         // confirm the wizard wrote a non-trivial prompt.
-        assert!(draft.trader_slot.is_none(), "blank draft never grew a trader_slot");
+        assert!(
+            draft.trader_slot.is_none(),
+            "blank draft never grew a trader_slot"
+        );
     }
 
     #[tokio::test]
@@ -3457,11 +3459,7 @@ mod tests {
         // the deserializer must surface the failure as a tool_result
         // error (not panic, not silently succeed).
         let mock = Arc::new(MockDispatch::sequence(vec![
-            MockDispatch::tool_use(
-                "tu_1",
-                "create_strategy",
-                serde_json::json!({}),
-            ),
+            MockDispatch::tool_use("tu_1", "create_strategy", serde_json::json!({})),
             LlmResponse {
                 content: vec![ContentBlock::Text {
                     text: "Need a name.".into(),

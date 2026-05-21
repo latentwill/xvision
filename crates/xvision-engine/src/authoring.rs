@@ -223,6 +223,8 @@ pub async fn create_blank_strategy(
         trader_slot: None,
         risk: RiskPreset::Conservative.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     };
     store.save(&draft).await?;
     Ok(CreateStrategyOut { id })
@@ -494,9 +496,10 @@ pub async fn set_mechanical_param(
     req: SetMechanicalParamReq,
 ) -> anyhow::Result<()> {
     let mut strategy = store.load(&req.id).await?;
-    let map = strategy.mechanical_params.as_object_mut().ok_or_else(|| {
-        anyhow::anyhow!("mechanical_params is not a JSON object")
-    })?;
+    let map = strategy
+        .mechanical_params
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("mechanical_params is not a JSON object"))?;
     map.insert(req.key, req.value);
     // Post-2026-05-21 template-registry removal: no per-template typed
     // dispatch exists, so the param is persisted verbatim. Per-strategy
@@ -614,10 +617,8 @@ mod tests {
 
     #[test]
     fn create_strategy_request_rejects_unknown_fields() {
-        let err = serde_json::from_str::<CreateStrategyReq>(
-            r#"{"name":"x","creator":null,"surprise":true}"#,
-        )
-        .expect_err("unknown create-strategy fields must be rejected");
+        let err = serde_json::from_str::<CreateStrategyReq>(r#"{"name":"x","creator":null,"surprise":true}"#)
+            .expect_err("unknown create-strategy fields must be rejected");
 
         assert!(err.to_string().contains("unknown field"));
     }

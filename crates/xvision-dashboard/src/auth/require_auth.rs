@@ -98,7 +98,9 @@ pub async fn require_auth_middleware(
     let method = request.method().as_str().to_uppercase();
     let path = request.uri().path().to_string();
     // Default to localhost when ConnectInfo is not injected (e.g. in unit tests).
-    let peer = peer_opt.map(|ci| ci.0).unwrap_or_else(|| "127.0.0.1:0".parse().unwrap());
+    let peer = peer_opt
+        .map(|ci| ci.0)
+        .unwrap_or_else(|| "127.0.0.1:0".parse().unwrap());
     let source_ip = peer.ip().to_string();
     let is_loopback = peer.ip().is_loopback();
 
@@ -137,7 +139,15 @@ pub async fn require_auth_middleware(
         }
         Ok(None) => {
             let status: u16 = 401;
-            write_audit_row(&pool, &path, &method, &token_hash[..16.min(token_hash.len())], &source_ip, status).await;
+            write_audit_row(
+                &pool,
+                &path,
+                &method,
+                &token_hash[..16.min(token_hash.len())],
+                &source_ip,
+                status,
+            )
+            .await;
             unauthenticated()
         }
         Err(e) => {

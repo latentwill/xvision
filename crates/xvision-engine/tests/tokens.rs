@@ -72,6 +72,8 @@ fn mean_reversion_fixture(id: &str) -> Strategy {
             "bollinger_sigma": 2.0,
             "atr_period": 14
         }),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 

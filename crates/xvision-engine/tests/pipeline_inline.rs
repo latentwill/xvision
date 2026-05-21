@@ -56,6 +56,8 @@ fn fixture_strategy() -> Strategy {
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
     }
 }
 

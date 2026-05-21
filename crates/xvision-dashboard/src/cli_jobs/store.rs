@@ -2,10 +2,10 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 
-use crate::auth::AuthContext;
 use super::model::{
     CliJob, CliJobOutput, CliJobStatus, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_RUNTIME_SECONDS,
 };
+use crate::auth::AuthContext;
 
 /// Hard per-stream persistence limit: we only keep the first 256 KB of each
 /// stream (stdout / stderr) in the `cli_job_output_chunks` table. The job's
