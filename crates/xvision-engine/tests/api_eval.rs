@@ -31,6 +31,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
