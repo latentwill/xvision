@@ -44,8 +44,6 @@
 //! Round-trip semantics: the export is `Serialize + Deserialize`, so the
 //! same bytes parse back into the same struct.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -672,6 +670,7 @@ mod roundtrip {
         for migration in [
             include_str!("../../migrations/001_api_audit.sql"),
             include_str!("../../migrations/002_eval.sql"),
+            include_str!("../../migrations/013_cli_jobs.sql"),
             include_str!("../../migrations/014_eval_agent_id.sql"),
             include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
             include_str!("../../migrations/022_eval_runs_agents_agent_id.sql"),
@@ -1097,6 +1096,7 @@ mod provider_attestation {
         for migration in [
             include_str!("../../migrations/001_api_audit.sql"),
             include_str!("../../migrations/002_eval.sql"),
+            include_str!("../../migrations/013_cli_jobs.sql"),
             include_str!("../../migrations/014_eval_agent_id.sql"),
             include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
             // 016 seeds agent_profiles (needed by eval_reviews FK)
@@ -1453,6 +1453,7 @@ mod provider_attestation {
         let export = build_export(&ctx, &run.id).await.expect("build_export");
         let diag = export
             .provider_diagnostics
+            .as_ref()
             .expect("provider_diagnostics must be present");
         assert_eq!(diag.providers_used.len(), 2, "two distinct pairs");
 
@@ -1460,10 +1461,7 @@ mod provider_attestation {
         let json = serde_json::to_string(&export).expect("serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
         let pu = &parsed["provider_diagnostics"]["providers_used"];
-        assert!(
-            pu.is_array(),
-            "providers_used must be a JSON array in the export"
-        );
+        assert!(pu.is_array(), "providers_used must be a JSON array in the export");
         let arr = pu.as_array().unwrap();
         assert_eq!(arr.len(), 2);
         // Each entry has provider, model, call_count
@@ -1472,6 +1470,36 @@ mod provider_attestation {
             assert!(entry.get("model").is_some());
             assert!(entry.get("call_count").is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn build_export_emits_provider_mismatch_finding_for_saved_strategy() {
+        let (ctx, _dir) = ctx_with_tables().await;
+        let strategy = strategy_with_requirement("anthropic.claude-sonnet-4.6");
+        let strategy_id = strategy.manifest.id.clone();
+        let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        strategy_store.save(&strategy).await.unwrap();
+
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued(strategy_id, "sc".into(), RunMode::Backtest);
+        run.actual_input_tokens = Some(100);
+        run.actual_output_tokens = Some(200);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        seed_model_calls(&ctx.db, &run.id, &[("gemini-local", "gemini-3.1-flash")]).await;
+
+        build_export(&ctx, &run.id).await.expect("build_export");
+
+        let findings = store.read_findings(&run.id).await.unwrap();
+        assert_eq!(
+            findings.iter().filter(|f| f.kind == "provider_mismatch").count(),
+            1,
+            "build_export should persist one provider_mismatch finding"
+        );
     }
 
     #[tokio::test]
@@ -1494,9 +1522,6 @@ mod provider_attestation {
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
         // providers_used must be absent when empty (skip_serializing_if)
         let pu = parsed["provider_diagnostics"].get("providers_used");
-        assert!(
-            pu.is_none(),
-            "providers_used must be absent from JSON when empty"
-        );
+        assert!(pu.is_none(), "providers_used must be absent from JSON when empty");
     }
 }
