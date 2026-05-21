@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
@@ -15,6 +15,15 @@ import {
 import { getScenarioChart, scenarioChartKeys } from "@/api/chart";
 import { listRuns } from "@/api/eval";
 import { listStrategies, strategyKeys } from "@/api/strategies";
+import type { RunSummary } from "@/api/types.gen";
+import {
+  ResponsiveListCard,
+  useListState,
+  useListUrlState,
+  type FilterDef,
+  type SortOption,
+} from "@/components/lists";
+import { MListRow } from "@/components/lists/MListRow";
 import { ScenarioChart } from "@/components/chart/ScenarioChart";
 import {
   scenarioGranularityToCli,
@@ -558,8 +567,54 @@ function DefinitionTab({ s }: { s: Scenario }) {
 
 // ── runs tab ───────────────────────────────────────────────────────────────
 
+// Migrated to ResponsiveListCard 2026-05-21 per audit row #8
+// (`docs/superpowers/audits/2026-05-21-list-surfaces-audit.md`). Adds
+// search by run id + strategy name, filters by mode + status, and
+// sorts by completed-desc (default), started-desc, or strategy A→Z.
+// URL state lives at `useListUrlState("scenario-runs", …)`. The
+// underlying server query is unchanged — `listRuns()` still returns
+// every run; client-side filtering narrows to `scenario_id`.
+
+const RUNS_SORT_OPTIONS: SortOption[] = [
+  { value: "completed-desc", label: "Recently completed" },
+  { value: "started-desc", label: "Recently started" },
+  { value: "strategy", label: "Strategy A → Z" },
+];
+
+const RUNS_MODE_FILTER: FilterDef = {
+  id: "mode",
+  label: "Mode",
+  options: [
+    { value: "all", label: "All modes" },
+    { value: "backtest", label: "Backtest" },
+    { value: "paper", label: "Paper" },
+  ],
+};
+
+const RUNS_STATUS_FILTER: FilterDef = {
+  id: "status",
+  label: "Status",
+  options: [
+    { value: "all", label: "All statuses" },
+    { value: "completed", label: "Completed" },
+    { value: "running", label: "Running" },
+    { value: "cancelled", label: "Cancelled" },
+    { value: "failed", label: "Failed" },
+    { value: "pending", label: "Pending" },
+  ],
+};
+
+const RUNS_DESKTOP_COLUMNS = [
+  { key: "run", label: "Run" },
+  { key: "strategy", label: "Strategy" },
+  { key: "mode", label: "Mode" },
+  { key: "status", label: "Status" },
+  { key: "completed", label: "Completed" },
+];
+
 function RunsTab({ scenarioId }: { scenarioId: string }) {
-  const { data, isPending, error } = useQuery({
+  const navigate = useNavigate();
+  const runs = useQuery({
     queryKey: ["runs", "by-scenario", scenarioId],
     queryFn: () => listRuns(),
   });
@@ -573,86 +628,151 @@ function RunsTab({ scenarioId }: { scenarioId: string }) {
     queryFn: listStrategies,
   });
 
-  const strategyNameMap = new Map<string, string>(
-    (strategies ?? []).map((s) => [s.agent_id, s.display_name]),
+  const strategyNameMap = useMemo(
+    () =>
+      new Map<string, string>(
+        (strategies ?? []).map((s) => [s.agent_id, s.display_name]),
+      ),
+    [strategies],
   );
 
-  if (isPending) {
-    return (
-      <div className="px-6 py-8 text-center text-text-3 text-[13px]">
-        Loading runs…
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="px-6 py-8 text-center text-danger text-[13px]">
-        {error instanceof Error ? error.message : String(error)}
-      </div>
-    );
-  }
+  const scopedRows = useMemo(
+    () => (runs.data ?? []).filter((r) => r.scenario_id === scenarioId),
+    [runs.data, scenarioId],
+  );
 
-  const filtered = (data ?? []).filter((r) => r.scenario_id === scenarioId);
-
-  if (filtered.length === 0) {
-    return (
-      <div className="px-6 py-8 text-center">
-        <p className="text-text-3 text-[13px] m-0">
-          No runs against this scenario yet.
-        </p>
-      </div>
-    );
-  }
+  const list = useListState<RunSummary>({
+    rows: scopedRows,
+    filters: [RUNS_MODE_FILTER, RUNS_STATUS_FILTER],
+    sortOptions: RUNS_SORT_OPTIONS,
+    filterFn: (row, query, values) => {
+      const mode = values.mode ?? "all";
+      if (mode !== "all" && row.mode !== mode) return false;
+      const status = values.status ?? "all";
+      if (status !== "all" && row.status !== status) return false;
+      const needle = query.trim().toLowerCase();
+      if (needle.length === 0) return true;
+      if (row.id.toLowerCase().includes(needle)) return true;
+      const strategyName =
+        strategyNameMap.get(row.agent_id) ?? row.agent_id;
+      return strategyName.toLowerCase().includes(needle);
+    },
+    sortFn: (rs, key) => {
+      switch (key) {
+        case "strategy":
+          return [...rs].sort((a, b) => {
+            const an = strategyNameMap.get(a.agent_id) ?? a.agent_id;
+            const bn = strategyNameMap.get(b.agent_id) ?? b.agent_id;
+            return an.localeCompare(bn);
+          });
+        case "started-desc":
+          return [...rs].sort((a, b) =>
+            (b.started_at || "").localeCompare(a.started_at || ""),
+          );
+        case "completed-desc":
+        default:
+          return [...rs].sort((a, b) => {
+            // Runs without a completed_at sort to the bottom of "Recently
+            // completed" so in-flight runs don't masquerade as the freshest
+            // result. Tie-break on started_at descending.
+            const ac = a.completed_at || "";
+            const bc = b.completed_at || "";
+            if (!ac && !bc) {
+              return (b.started_at || "").localeCompare(a.started_at || "");
+            }
+            if (!ac) return 1;
+            if (!bc) return -1;
+            return bc.localeCompare(ac);
+          });
+      }
+    },
+  });
+  useListUrlState("scenario-runs", list);
 
   return (
-    <div className="px-5 py-4 overflow-x-auto">
-      <table className="w-full text-[13px]">
-        <thead>
-          <tr className="text-text-3 text-left">
-            <th className="pb-2 pr-4 font-medium">Run</th>
-            <th className="pb-2 pr-4 font-medium">Strategy</th>
-            <th className="pb-2 pr-4 font-medium">Mode</th>
-            <th className="pb-2 pr-4 font-medium">Status</th>
-            <th className="pb-2 font-medium">Completed</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((r) => {
-            const strategyName = strategyNameMap.get(r.agent_id);
-            return (
-              <tr key={r.id} className="border-t border-border">
-                <td className="py-2 pr-4">
-                  <Link
-                    to={`/eval-runs/${r.id}`}
-                    className="font-mono text-[12px] text-text hover:underline"
-                  >
-                    {r.id}
-                  </Link>
-                </td>
-                <td className="py-2 pr-4">
-                  {strategyName != null ? (
-                    <>
-                      <div className="text-text-2">{strategyName}</div>
-                      <div className="font-mono text-[11px] text-text-3">
-                        {r.agent_id}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="font-mono text-[12px] text-text-2">
+    <div className="px-3 py-2">
+      <ResponsiveListCard<RunSummary>
+        listId="scenario-runs"
+        title="Runs"
+        count={list.totalRows}
+        toolbar={{
+          search: {
+            ...list.search,
+            placeholder: "Search run id or strategy…",
+          },
+          filters: list.filters,
+          sort: list.sort,
+          clearAll: list.clearAll,
+        }}
+        columns={RUNS_DESKTOP_COLUMNS}
+        rows={list.rows}
+        loading={runs.isPending}
+        error={
+          runs.isError
+            ? {
+                message:
+                  runs.error instanceof Error
+                    ? runs.error.message
+                    : String(runs.error),
+                retry: () => runs.refetch(),
+              }
+            : null
+        }
+        empty={
+          scopedRows.length === 0
+            ? "No runs against this scenario yet."
+            : "No runs match these filters."
+        }
+        renderRow={(r) => {
+          const strategyName = strategyNameMap.get(r.agent_id);
+          return (
+            <tr key={r.id} className="border-t border-border align-middle">
+              <td className="py-2 px-3">
+                <Link
+                  to={`/eval-runs/${r.id}`}
+                  className="font-mono text-[12px] text-text hover:underline"
+                >
+                  {r.id}
+                </Link>
+              </td>
+              <td className="py-2 pr-3">
+                {strategyName != null ? (
+                  <>
+                    <div className="text-text-2">{strategyName}</div>
+                    <div className="font-mono text-[11px] text-text-3">
                       {r.agent_id}
                     </div>
-                  )}
-                </td>
-                <td className="py-2 pr-4 text-text-2">{r.mode}</td>
-                <td className="py-2 pr-4 text-text-2">{r.status}</td>
-                <td className="py-2 text-text-3">
-                  {r.completed_at ? fmtDate(r.completed_at) : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  </>
+                ) : (
+                  <div className="font-mono text-[12px] text-text-2">
+                    {r.agent_id}
+                  </div>
+                )}
+              </td>
+              <td className="py-2 pr-3 text-text-2">{r.mode}</td>
+              <td className="py-2 pr-3 text-text-2">{r.status}</td>
+              <td className="py-2 px-3 text-text-3">
+                {r.completed_at ? fmtDate(r.completed_at) : "—"}
+              </td>
+            </tr>
+          );
+        }}
+        renderMobileRow={(r) => {
+          const strategyName = strategyNameMap.get(r.agent_id) ?? r.agent_id;
+          const completed = r.completed_at
+            ? `Completed ${fmtDate(r.completed_at)}`
+            : `Started ${fmtDate(r.started_at)}`;
+          return (
+            <MListRow
+              key={r.id}
+              onClick={() => navigate(`/eval-runs/${r.id}`)}
+              title={strategyName}
+              badge={r.status}
+              subtitle={`${r.mode} · ${completed}`}
+            />
+          );
+        }}
+      />
     </div>
   );
 }
