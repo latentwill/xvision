@@ -1,6 +1,6 @@
 #![allow(dead_code, deprecated)]
 
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::{canonical_scenarios, scenario_store};
 
@@ -34,6 +34,7 @@ async fn seed_flash_scenario(ctx: &ApiContext) {
 /// Apply every migration that touches eval-review state. Mirrors the
 /// prefix `ApiContext::open` walks at startup so eval-review integration
 /// tests do not each curate their own schema list.
+#[allow(dead_code)]
 pub async fn eval_review_pool_with_migrations() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     for sql in [
@@ -48,5 +49,20 @@ pub async fn eval_review_pool_with_migrations() -> SqlitePool {
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
+    pool
+}
+
+/// Apply the safety-state schema for safety integration tests.
+#[allow(dead_code)]
+pub async fn safety_pool_with_migrations() -> SqlitePool {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../../migrations/030_safety_state_and_audit.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }

@@ -29,11 +29,7 @@ use xvision_dashboard::{
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
-    prev: Option<String>,
-}
-
-struct EnvSnapshot {
+    _lock: Option<MutexGuard<'static, ()>>,
     prev: Option<String>,
 }
 
@@ -53,15 +49,14 @@ impl EnvGuard {
     fn capture_locked() -> Self {
         let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         Self {
-            _lock: lock,
+            _lock: Some(lock),
             prev: std::env::var(AUTH_TOKEN_ENV).ok(),
         }
     }
-}
 
-impl EnvSnapshot {
-    fn set(value: &str) -> Self {
+    fn set_without_lock(value: &str) -> Self {
         let guard = Self {
+            _lock: None,
             prev: std::env::var(AUTH_TOKEN_ENV).ok(),
         };
         std::env::set_var(AUTH_TOKEN_ENV, value);
@@ -70,15 +65,6 @@ impl EnvSnapshot {
 }
 
 impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match &self.prev {
-            Some(v) => std::env::set_var(AUTH_TOKEN_ENV, v),
-            None => std::env::remove_var(AUTH_TOKEN_ENV),
-        }
-    }
-}
-
-impl Drop for EnvSnapshot {
     fn drop(&mut self) {
         match &self.prev {
             Some(v) => std::env::set_var(AUTH_TOKEN_ENV, v),
@@ -155,7 +141,7 @@ fn env_guard_restores_token_after_panic() {
     let _env = EnvGuard::set("original");
 
     let result = std::panic::catch_unwind(|| {
-        let _temporary = EnvSnapshot::set("temporary");
+        let _temporary = EnvGuard::set_without_lock("temporary");
         assert_eq!(std::env::var(AUTH_TOKEN_ENV).as_deref(), Ok("temporary"));
         panic!("exercise env restoration during unwinding");
     });

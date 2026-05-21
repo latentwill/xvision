@@ -1,21 +1,10 @@
 //! Safety state tests — pause/resume toggles, in-memory consistency.
 //! All tests use in-memory SQLite with the safety migration applied.
 
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-use xvision_engine::safety::{AuthContext, SafetyManager};
+mod support;
 
-async fn safety_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/030_safety_state_and_audit.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool
-}
+use support::safety_pool_with_migrations;
+use xvision_engine::safety::{AuthContext, SafetyManager};
 
 fn system_auth() -> AuthContext {
     AuthContext::system()
@@ -27,7 +16,7 @@ fn anon() -> AuthContext {
 
 #[tokio::test]
 async fn safety_bootstrap_seeds_unpaused_on_fresh_paper_install() {
-    let pool = safety_pool().await;
+    let pool = safety_pool_with_migrations().await;
     let manager = SafetyManager::new(pool);
     manager.bootstrap(false).await.unwrap();
 
@@ -37,7 +26,7 @@ async fn safety_bootstrap_seeds_unpaused_on_fresh_paper_install() {
 
 #[tokio::test]
 async fn safety_bootstrap_seeds_paused_on_fresh_live_install() {
-    let pool = safety_pool().await;
+    let pool = safety_pool_with_migrations().await;
     let manager = SafetyManager::new(pool);
     manager.bootstrap(true).await.unwrap();
 
@@ -48,7 +37,7 @@ async fn safety_bootstrap_seeds_paused_on_fresh_live_install() {
 
 #[tokio::test]
 async fn safety_bootstrap_idempotent_on_second_call() {
-    let pool = safety_pool().await;
+    let pool = safety_pool_with_migrations().await;
     let manager = SafetyManager::new(pool);
     // First bootstrap with live → paused.
     manager.bootstrap(true).await.unwrap();
@@ -62,7 +51,7 @@ async fn safety_bootstrap_idempotent_on_second_call() {
 
 #[tokio::test]
 async fn pause_then_resume_toggles_state() {
-    let pool = safety_pool().await;
+    let pool = safety_pool_with_migrations().await;
     let manager = SafetyManager::new(pool);
     manager.bootstrap(false).await.unwrap();
     let auth = anon();
@@ -85,7 +74,7 @@ async fn pause_then_resume_toggles_state() {
 #[tokio::test]
 async fn pause_state_persists_to_db() {
     // Use a shared pool to simulate persistence across manager instances.
-    let pool = safety_pool().await;
+    let pool = safety_pool_with_migrations().await;
 
     // Pause via first manager.
     let mgr1 = SafetyManager::new(pool.clone());
@@ -105,7 +94,7 @@ async fn pause_state_persists_to_db() {
 
 #[tokio::test]
 async fn audit_row_written_on_toggle() {
-    let pool = safety_pool().await;
+    let pool = safety_pool_with_migrations().await;
     let manager = SafetyManager::new(pool);
     manager.bootstrap(false).await.unwrap();
     let auth = anon();

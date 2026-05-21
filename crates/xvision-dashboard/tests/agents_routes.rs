@@ -1,19 +1,9 @@
 //! Integration tests for `/api/agents` routes.
 
-use axum_test::TestServer;
-use serde_json::{json, Value};
-use tempfile::TempDir;
-use xvision_dashboard::server::build_router;
-use xvision_dashboard::AppState;
+mod support;
 
-async fn boot() -> (TestServer, TempDir) {
-    let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init dashboard state");
-    let server = TestServer::new(build_router(state)).unwrap();
-    (server, tmp)
-}
+use serde_json::{json, Value};
+use support::test_server;
 
 fn sample_prompt() -> &'static str {
     "You are a disciplined multi-asset trading agent. Review the latest market context, \
@@ -40,7 +30,7 @@ fn sample_create_body(name: &str) -> Value {
 
 #[tokio::test]
 async fn agents_list_is_empty_on_fresh_db() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server().await;
     let response = server.get("/api/agents").await;
     response.assert_status_ok();
     let body: Value = response.json();
@@ -50,7 +40,7 @@ async fn agents_list_is_empty_on_fresh_db() {
 
 #[tokio::test]
 async fn create_then_get_round_trips() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server().await;
 
     let create_res = server
         .post("/api/agents")
@@ -72,7 +62,7 @@ async fn create_then_get_round_trips() {
 
 #[tokio::test]
 async fn duplicate_name_returns_409() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server().await;
     let body = sample_create_body("dup-name");
 
     let first = server.post("/api/agents").json(&body).await;
@@ -86,7 +76,7 @@ async fn duplicate_name_returns_409() {
 
 #[tokio::test]
 async fn validate_returns_diagnostics_for_empty_prompt() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server().await;
 
     let mut body = sample_create_body("validate-1");
     body["slots"][0]["system_prompt"] = json!(""); // trigger warning
@@ -112,7 +102,7 @@ async fn validate_returns_diagnostics_for_empty_prompt() {
 
 #[tokio::test]
 async fn archive_then_list_excludes() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server().await;
 
     let create_res = server
         .post("/api/agents")
@@ -137,7 +127,7 @@ async fn archive_then_list_excludes() {
 
 #[tokio::test]
 async fn deployed_in_returns_empty_v1_stub() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server().await;
 
     let id = server
         .post("/api/agents")
@@ -156,7 +146,7 @@ async fn deployed_in_returns_empty_v1_stub() {
 
 #[tokio::test]
 async fn update_replaces_slots() {
-    let (server, _tmp) = boot().await;
+    let (server, _tmp) = test_server().await;
 
     let id = server
         .post("/api/agents")
