@@ -80,6 +80,14 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     .execute(&pool)
     .await
     .unwrap();
+    // 027 added bars_content_hash + manifest_canonical + bars_manifest
+    // columns referenced by RunStore::create. Scaffold gap from PR #415.
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/027_run_bars_manifest.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
