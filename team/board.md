@@ -4,20 +4,37 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-21 — conductor sweep. 28 merged contracts
-> archived under `team/archive/2026-05-21-conductor-sweep/`. The
-> current-wave Active block is empty; everything in flight is on
-> the V2 board (`team/board-v2.md`). All decomposed intakes from
-> 2026-05-19 through 2026-05-21 are now either merged, archived,
-> or explicitly Reserved with a stated reason.
+> Last updated: 2026-05-21 — `qa-chat-rail-2026-05-21` wave
+> decomposed from
+> `team/intake/2026-05-21-qa-chat-rail-strategy-create-broken.md`.
+> Five tracks: one P0 foundation (`templates-elimination`), one
+> parallel P1 engine leaf (`chat-messages-insert-failing`), one
+> blocked P2 leaf (`wizard-folder-recall-honesty`), two parallel
+> P2 frontend leaves (`strategies-folder-into-view-toggle`,
+> `memory-into-agents-section`).
+> Earlier 2026-05-21 sweep: 28 merged contracts archived under
+> `team/archive/2026-05-21-conductor-sweep/`.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
 
 ## Active
 
-_(no current-wave tracks open — see `team/board-v2.md` for V2B / V2D
-follow-ups and unresolved V2 phases.)_
+### qa-chat-rail-2026-05-21 — chat-rail "make me a strategy" path broken; templates eliminated
+
+Decomposed 2026-05-21 from
+`team/intake/2026-05-21-qa-chat-rail-strategy-create-broken.md`.
+The wave's spine is `templates-elimination`: the operator's
+"whatever is in my strategies folder is the context" stance
+retires the parallel `template_registry`, dissolves the
+placeholder-deadlock on `create_strategy`, and migrates the
+existing template starter library into folder seed entries.
+
+- [templates-elimination](contracts/templates-elimination.md) — **P0 foundation** · ready · blocks `wizard-folder-recall-honesty`
+- [chat-messages-insert-failing](contracts/chat-messages-insert-failing.md) — P1 engine leaf · ready · parallel-safe
+- [wizard-folder-recall-honesty](contracts/wizard-folder-recall-honesty.md) — P2 leaf · deferred · becomes `ready` when `templates-elimination` merges
+- [strategies-folder-into-view-toggle](contracts/strategies-folder-into-view-toggle.md) — P2 frontend leaf · ready · coordinates with `memory-into-agents-section` on `routes.tsx`
+- [memory-into-agents-section](contracts/memory-into-agents-section.md) — P2 frontend leaf · ready · coordinates with `strategies-folder-into-view-toggle` on `routes.tsx`
 
 ## Reserved
 

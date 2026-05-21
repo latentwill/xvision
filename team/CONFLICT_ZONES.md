@@ -24,6 +24,13 @@ Conductor: see `team/CONDUCTOR.md`.
 | `crates/xvision-dashboard/src/routes/agent_runs.rs` | (none) | - | Released 2026-05-21 |
 | `frontend/web/src/features/agent-runs/SpanInspector.tsx` | (none) | - | Released 2026-05-21 |
 | `crates/xvision-engine/src/eval/executor/paper.rs` | (none) | - | Released 2026-05-21 — `alpaca-paper-crypto-submit` closed |
+| `crates/xvision-dashboard/src/wizard_loop.rs` | `templates-elimination` | qa-chat-rail-2026-05-21 | Released when `templates-elimination` merges; `wizard-folder-recall-honesty` then claims it (sequential, NOT stacked). |
+| `crates/xvision-dashboard/prompts/wizard.md` | `templates-elimination` | qa-chat-rail-2026-05-21 | Same as above — sequential handoff. |
+| `crates/xvision-engine/src/authoring.rs` | `templates-elimination` | qa-chat-rail-2026-05-21 | Released when `templates-elimination` merges. |
+| `crates/xvision-engine/src/api/strategy.rs` | `templates-elimination` | qa-chat-rail-2026-05-21 | Released when `templates-elimination` merges. |
+| `crates/xvision-engine/src/strategies/manifest.rs` | `templates-elimination` | qa-chat-rail-2026-05-21 | Released when `templates-elimination` merges. |
+| `crates/xvision-engine/src/agents/templates.rs` | `templates-elimination` (deletion) | qa-chat-rail-2026-05-21 | File deleted by this contract; row removed at merge. |
+| `frontend/web/src/routes.tsx` | shared: `strategies-folder-into-view-toggle` + `memory-into-agents-section` | qa-chat-rail-2026-05-21 | Disjoint blocks (strategies/folder rows vs. memory row). Coordinate via `team/queue/`; later claimant rebases. Released when both contracts merge. |
 
 ## Rules
 
