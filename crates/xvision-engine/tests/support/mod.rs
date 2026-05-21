@@ -1,4 +1,35 @@
+#![allow(dead_code, deprecated)]
+
 use sqlx::SqlitePool;
+use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::eval::{canonical_scenarios, scenario_store};
+
+pub async fn api_eval_run_context() -> (ApiContext, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
+    let ctx = ApiContext::open(
+        dir.path(),
+        Actor::Cli {
+            user: "operator".into(),
+        },
+    )
+    .await
+    .unwrap();
+    seed_flash_scenario(&ctx).await;
+    (ctx, dir)
+}
+
+pub async fn api_eval_run_context_with_agents() -> (ApiContext, tempfile::TempDir) {
+    api_eval_run_context().await
+}
+
+async fn seed_flash_scenario(ctx: &ApiContext) {
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash canonical scenario must exist");
+    scenario_store::insert_scenario(ctx, &scenario).await.unwrap();
+}
 
 /// Apply every migration that touches eval-review state. Mirrors the
 /// prefix `ApiContext::open` walks at startup so eval-review integration
