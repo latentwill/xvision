@@ -55,6 +55,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
                 bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
             }],
         },
         AgentTemplate {
@@ -79,6 +80,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -95,6 +97,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                 },
             ],
         },
@@ -120,6 +123,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                 },
                 AgentSlot {
                     name: "risk_check".into(),
@@ -135,6 +139,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -151,6 +156,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                 },
             ],
         },

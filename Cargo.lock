@@ -8000,6 +8000,7 @@ dependencies = [
  "xvision-data",
  "xvision-eval",
  "xvision-execution",
+ "xvision-memory",
  "xvision-observability",
  "xvision-risk",
 ]

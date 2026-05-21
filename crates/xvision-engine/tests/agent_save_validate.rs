@@ -43,6 +43,20 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // F-8: bar_history_limit column (migration 025).
+    sqlx::query(include_str!(
+        "../migrations/025_agent_slot_cache_and_window.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // V2D: memory_mode column (migration 026).
+    sqlx::query(include_str!(
+        "../migrations/026_agent_slot_memory_mode.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     let dir = TempDir::new().unwrap();
     (AgentStore::new(pool), dir)
 }
@@ -80,6 +94,8 @@ fn rich_slot(asset: &str) -> AgentSlot {
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::default(),
     }
 }
 
@@ -173,6 +189,8 @@ async fn reject_short_prompt() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
             }],
         })
         .await;
@@ -210,6 +228,8 @@ async fn reject_default_placeholder_prompt() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
             }],
         })
         .await;
@@ -259,6 +279,8 @@ async fn wrong_id_namespace_strategy_get_with_agent_id() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
             }],
         })
         .await

@@ -237,6 +237,7 @@ fn agent_slot_to_llm_slot_smoke() {
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::default(),
     };
     let llm = agent_slot_to_llm_slot("trader", &s);
     assert_eq!(llm.role, "trader");

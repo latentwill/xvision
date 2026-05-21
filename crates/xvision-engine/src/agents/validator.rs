@@ -320,6 +320,7 @@ mod tests {
             prompt_version: String::new(),
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::default(),
         }
     }
 
