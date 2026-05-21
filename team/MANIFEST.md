@@ -78,10 +78,13 @@ unambiguous.
 | 024 | scenario-regime-labels               | merged        |
 | 025 | agent-slot-cache-and-window          | merged        |
 | 026 | eval-trace-surface-foundation (V2E)  | merged 2026-05-21 |
-| 027 | eval-candle-integrity-and-manifest (V2E) | in flight 2026-05-21 |
-| 029 | agent-slot-memory-mode (V2D)         | in flight 2026-05-21 |
+| 027 | eval-candle-integrity-and-manifest (V2E) | merged 2026-05-21 |
+| 028 | v2b-remote-cli-job-safety (cli_job_audit) | merged 2026-05-21 |
+| 029 | agent-slot-memory-mode (V2D)         | merged 2026-05-21 |
+| 030 | v2b-broker-wallet-kill-switch (safety_state + safety_audit) | in flight 2026-05-21 |
+| 031 | v2b-broker-wallet-kill-switch (eval_runs.venue_label)        | in flight 2026-05-21 |
 
-The next available number is **030**. The conductor must approve and
+The next available number is **032**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 

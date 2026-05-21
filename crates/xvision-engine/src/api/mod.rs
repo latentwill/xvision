@@ -23,6 +23,7 @@ pub mod chart;
 pub mod eval;
 pub mod experiment;
 pub mod health;
+pub mod safety;
 pub mod scenario;
 pub mod search;
 pub mod settings;
@@ -67,6 +68,10 @@ const MIGRATION_027_RUN_BARS_MANIFEST: &str = include_str!("../../migrations/027
 const MIGRATION_028_CLI_JOB_AUDIT: &str = include_str!("../../migrations/028_cli_job_audit.sql");
 const MIGRATION_029_AGENT_SLOT_MEMORY_MODE: &str =
     include_str!("../../migrations/029_agent_slot_memory_mode.sql");
+const MIGRATION_030_SAFETY_STATE_AND_AUDIT: &str =
+    include_str!("../../migrations/030_safety_state_and_audit.sql");
+const MIGRATION_031_EVAL_RUNS_VENUE_LABEL: &str =
+    include_str!("../../migrations/031_eval_runs_venue_label.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -211,6 +216,8 @@ impl ApiContext {
         migrate_run_bars_manifest(&pool).await?;
         migrate_cli_job_audit(&pool).await?;
         migrate_agent_slot_memory_mode(&pool).await?;
+        migrate_safety_state_and_audit(&pool).await?;
+        migrate_eval_runs_venue_label(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -768,6 +775,29 @@ async fn migrate_hypothesis_and_experiments(pool: &SqlitePool) -> ApiResult<()> 
 async fn migrate_cli_job_audit(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "cli_jobs", "pid").await? {
         sqlx::query(MIGRATION_028_CLI_JOB_AUDIT).execute(pool).await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 030 (v2b-broker-wallet-kill-switch): add `safety_state`
+/// (single-row pause gate) and `safety_audit` (event log) tables. Gated on
+/// table absence so the migration is idempotent on already-upgraded databases.
+async fn migrate_safety_state_and_audit(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "safety_state").await? {
+        sqlx::query(MIGRATION_030_SAFETY_STATE_AND_AUDIT)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 031 (v2b-broker-wallet-kill-switch): add `venue_label`
+/// column to `eval_runs`. Gated on column absence for idempotence.
+async fn migrate_eval_runs_venue_label(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "venue_label").await? {
+        sqlx::query(MIGRATION_031_EVAL_RUNS_VENUE_LABEL)
+            .execute(pool)
+            .await?;
     }
     Ok(())
 }

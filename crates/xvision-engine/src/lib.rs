@@ -11,6 +11,7 @@ pub mod chat_session;
 pub mod error;
 pub mod eval;
 pub mod providers;
+pub mod safety;
 pub mod search;
 pub mod skills;
 pub mod strategies;

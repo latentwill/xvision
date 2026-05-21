@@ -21,6 +21,7 @@ use crate::eval::scenario::{
     ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use crate::eval::scenario_store;
+use crate::safety::VenueLabel;
 
 fn legacy_default_strategy_filename() -> String {
     ["bun", "dle", "-canonical", "-defaults", ".json"].concat()
@@ -117,6 +118,8 @@ fn seed_btc(id: &str, name: &str, regime_tag: &str, start: DateTime<Utc>, end: D
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "system".into(),
         archived_at: None,
+        venue_label: VenueLabel::Paper,
+        safety_limits: None,
     };
     s.bar_cache_policy.cache_key = compute_cache_key(
         &s.asset[0].venue_symbol,

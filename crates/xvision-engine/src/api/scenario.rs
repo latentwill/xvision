@@ -22,6 +22,7 @@ use xvision_core::Capital;
 use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::eval::scenario::*;
 use crate::eval::{bars as engine_bars, scenario_store};
+use crate::safety::VenueLabel;
 use xvision_data::asset_whitelist::{alpaca_crypto_history_start, is_alpaca_crypto_supported};
 
 /// Request to create a new scenario. Caller fills in every field; the
@@ -166,6 +167,8 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
         created_at: Utc::now(),
         created_by: ctx.actor.id().to_string(),
         archived_at: None,
+        venue_label: VenueLabel::Paper,
+        safety_limits: None,
     };
     scenario
         .validate_v1()
