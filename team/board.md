@@ -39,12 +39,14 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
   Wave 2 (after foundation): `strategies-folder-prepopulation` + `strategies-folder-import` (parallel).
   Wave 3: `strategy-ideas-tool-surface` (after prepopulation).
 
-- **CLI operator safety — 2026-05-20** (P0 bundle, decomposed from
-  `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`):
-  - [cli-operator-safety-p0](contracts/cli-operator-safety-p0.md) — integration · ready · P0 — bundles #1 `cli-eval-cancel` + #2 `eval-run-hard-limits` + #3 `experiment-run-scope-guardrails`. Adds `xvn eval cancel` (by-id, `--running`, `--strategy`, `--older-than`); `--max-decisions / --max-input-tokens / --max-output-tokens / --max-wall-clock / --cancel-on-token-limit` on `xvn eval run` with engine-side enforcement at `crates/xvision-engine/src/eval/limits.rs`; and `--max-runs` + default-sequential + dry-run plan + `--yes` on `xvn experiment run`. May claim migration 025. Blocks the P1 `cli-model-bakeoff` track. Source: Hermes operator session where Gemini 3.5 Flash over-launched and forced raw HTTP cancel calls.
-
-  P1 (#4–#12) and P2 (#13–#15) items from the same intake are Reserved.
-  They should decompose only after P0 lands.
+- **CLI operator safety — 2026-05-20** (P0 bundle merged 2026-05-21 via
+  3 slices: #425 (`xvn eval cancel`), #428 (engine hard limits + flags),
+  #429 (`xvn experiment run` scope guardrails). P0 closed. P1 #12
+  (`remote-cli-safe-eval-allowlist`) folded into
+  `team/contracts/v2b-remote-cli-job-safety.md` (V2B). Remaining P1
+  (#4–#11) and P2 (#13–#15) items from
+  `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`
+  remain Reserved.
 
 - **Docs user+agent wiki — outstanding gaps** (2 tracks; 14 of 16
   intake tracks already shipped — see

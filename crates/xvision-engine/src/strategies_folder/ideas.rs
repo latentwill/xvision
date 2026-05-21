@@ -277,7 +277,10 @@ async fn collect_json_files(root: &Path, out: &mut Vec<PathBuf>) -> ApiResult<()
             if !metadata.is_file() {
                 continue;
             }
-            if path.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase())
+            if path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
                 == Some("json".to_string())
             {
                 out.push(path);
@@ -300,12 +303,11 @@ async fn parse_idea(
     strategies_root: &Path,
     templates_root: &Path,
 ) -> ApiResult<Option<IdeaSummary>> {
-    let bytes = tokio::fs::read(path).await.map_err(|e| {
-        crate::api::ApiError::Internal(format!("read {}: {e}", path.display()))
-    })?;
-    let raw: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
-        crate::api::ApiError::Internal(format!("parse json {}: {e}", path.display()))
-    })?;
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| crate::api::ApiError::Internal(format!("read {}: {e}", path.display())))?;
+    let raw: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| crate::api::ApiError::Internal(format!("parse json {}: {e}", path.display())))?;
 
     // Use the path-relative-to-strategies-root as the source_rel_path
     // (`library/templates/EMA/ema_pullback_bounce.json`). We also need

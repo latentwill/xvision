@@ -69,11 +69,7 @@ impl Default for ImportOptions {
 /// Read the file at `src` from disk and import it. Validates size before
 /// reading the body — a 100 MB file is rejected with a Validation error
 /// after a single `stat`, not after a full read.
-pub async fn import_from_path(
-    ctx: &ApiContext,
-    src: &Path,
-    opts: ImportOptions,
-) -> ApiResult<ImportOutcome> {
+pub async fn import_from_path(ctx: &ApiContext, src: &Path, opts: ImportOptions) -> ApiResult<ImportOutcome> {
     let metadata = tokio::fs::metadata(src).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             ApiError::NotFound(format!("import source {} not found", src.display()))
@@ -145,20 +141,20 @@ pub async fn import_bytes(
     let subfolder = resolve_subfolder(opts.subfolder.as_deref(), &ext)?;
     let root = folder_root(&ctx.xvn_home);
     let target_dir = root.join(&subfolder);
-    tokio::fs::create_dir_all(&target_dir).await.map_err(|e| {
-        ApiError::Internal(format!("create {}: {e}", target_dir.display()))
-    })?;
+    tokio::fs::create_dir_all(&target_dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("create {}: {e}", target_dir.display())))?;
     let target_path = target_dir.join(&safe_name);
 
     // Path-safety: make sure target stays inside the canonical folder
     // root. Canonicalize the *parent* (which we just created) — the file
     // itself may not exist yet.
-    let canonical_root = tokio::fs::canonicalize(&root).await.map_err(|e| {
-        ApiError::Internal(format!("canonicalize {}: {e}", root.display()))
-    })?;
-    let canonical_target_dir = tokio::fs::canonicalize(&target_dir).await.map_err(|e| {
-        ApiError::Internal(format!("canonicalize {}: {e}", target_dir.display()))
-    })?;
+    let canonical_root = tokio::fs::canonicalize(&root)
+        .await
+        .map_err(|e| ApiError::Internal(format!("canonicalize {}: {e}", root.display())))?;
+    let canonical_target_dir = tokio::fs::canonicalize(&target_dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("canonicalize {}: {e}", target_dir.display())))?;
     if !canonical_target_dir.starts_with(&canonical_root) {
         return Err(ApiError::Validation(format!(
             "path_escape: target {} resolves outside the strategies folder",
@@ -173,9 +169,9 @@ pub async fn import_bytes(
         )));
     }
 
-    tokio::fs::write(&target_path, bytes).await.map_err(|e| {
-        ApiError::Internal(format!("write {}: {e}", target_path.display()))
-    })?;
+    tokio::fs::write(&target_path, bytes)
+        .await
+        .map_err(|e| ApiError::Internal(format!("write {}: {e}", target_path.display())))?;
 
     let kind = FileKind::from_extension(Some(ext.as_str()));
     let entry = build_entry(&canonical_root, &target_path, kind).await?;
@@ -194,8 +190,7 @@ pub async fn import_bytes(
             SummaryOutcome::ExtractorUnavailable => {
                 findings.push(ImportFinding {
                     code: "summary_extractor_unavailable".into(),
-                    detail: "pdftotext not on PATH; original PDF imported without summary"
-                        .into(),
+                    detail: "pdftotext not on PATH; original PDF imported without summary".into(),
                 });
             }
             SummaryOutcome::ExtractorFailed(detail) => {
@@ -241,17 +236,13 @@ pub async fn import_bytes(
 /// Build a `FolderEntry` for a freshly-written file. Mirrors the shape
 /// `reader::list` emits so the dashboard can append the new row without
 /// re-listing.
-async fn build_entry(
-    canonical_root: &Path,
-    target_path: &Path,
-    kind: FileKind,
-) -> ApiResult<FolderEntry> {
-    let metadata = tokio::fs::metadata(target_path).await.map_err(|e| {
-        ApiError::Internal(format!("stat {}: {e}", target_path.display()))
-    })?;
-    let canonical = tokio::fs::canonicalize(target_path).await.map_err(|e| {
-        ApiError::Internal(format!("canonicalize {}: {e}", target_path.display()))
-    })?;
+async fn build_entry(canonical_root: &Path, target_path: &Path, kind: FileKind) -> ApiResult<FolderEntry> {
+    let metadata = tokio::fs::metadata(target_path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("stat {}: {e}", target_path.display())))?;
+    let canonical = tokio::fs::canonicalize(target_path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("canonicalize {}: {e}", target_path.display())))?;
     let rel_path = relative_to_root(canonical_root, &canonical);
     let modified_at = metadata
         .modified()

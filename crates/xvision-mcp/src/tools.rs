@@ -881,6 +881,7 @@ impl XvisionTools {
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 }],
             },
         )
@@ -1110,6 +1111,7 @@ impl XvisionTools {
                 scenario_id: scenario_id.clone(),
                 mode,
                 params_override: None,
+                limits: None,
             };
 
             let entry = match api_eval::run(&ctx, run_req).await {

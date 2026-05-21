@@ -6,88 +6,63 @@
 > Same rules as the main board (`team/board.md`): one line per active track,
 > each linking to a `team/contracts/<slug>.md`. Conductor-owned.
 >
-> Last updated: 2026-05-20.
+> Last updated: 2026-05-21 — V2E wave 1 complete (all 7 contracts merged:
+> #411, #412, #415, #417, #418, #422, #435). V2B (security hardening)
+> decomposed and dispatched as the next active phase. V2A and V2F also
+> complete (see Recently closed).
 
-## Active — V2F (strategy authoring & user knowledge)
+## Active — V2B (security hardening)
 
-Decomposed 2026-05-21 from `team/intake/2026-05-20-strategies-folder-and-template-refactor.md`.
-Plan: `docs/superpowers/plans/2026-05-21-v2f-strategies-folder-and-template-refactor.md`
-(resolves the four open intake questions; locks location at
-`$XVN_HOME/strategies/`, copy+manifest pre-population, `pdftotext`
-+ CSV-summary import, three separate wizard tools).
+Decomposed 2026-05-21 from `team/intake/2026-05-21-v2b-security-operability.md`.
+Source: action plan §V2B (`docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`
+items 4–6) + FOLLOWUPS.md F35/F37/F21 + remote-CLI spec.
 
-Six tracks, three waves:
+Three tracks; secret-redaction + audit-log work folds into the
+relevant track rather than getting standalone contracts (the action
+plan calls them out as work packages, not separable items).
 
-**Wave 1 — independent, parallel-safe (foundation + two leaves):**
-- [strategies-folder-surface](contracts/strategies-folder-surface.md) — foundation · ready · gates wave 2 + 3 · new `crates/xvision-engine/src/strategies_folder/` module + `list_strategies_folder` / `read_strategies_file` wizard tools
-- [agent-pipeline-template-library-expansion](contracts/agent-pipeline-template-library-expansion.md) — leaf · ready · 4–6 new agent templates added to `agents/templates.rs`
-- [wizard-prompt-strategy-folder-and-templates](contracts/wizard-prompt-strategy-folder-and-templates.md) — leaf · ready · refresh `prompts/wizard.md` to describe folder + new tools + expanded library; closes loop on #275
+- [v2b-dashboard-auth-boundary](contracts/v2b-dashboard-auth-boundary.md) — foundation · ready · explicit auth for mutating dashboard API routes; session + bind defaults; redaction tests fold in
+- [v2b-remote-cli-job-safety](contracts/v2b-remote-cli-job-safety.md) — leaf · ready · orphan recovery + cancellation + stale-lock cleanup + per-job audit fields; runtime/output caps
+- [v2b-broker-wallet-kill-switch](contracts/v2b-broker-wallet-kill-switch.md) — leaf · ready · global pause/kill switch + per-run notional/leverage/loss limits + testnet/paper labels enforcement
 
-**Wave 2 — after foundation merges, parallel-safe:**
-- [strategies-folder-prepopulation](contracts/strategies-folder-prepopulation.md) — leaf · ready · `xvn strategies init` + copy from `docs/strategies/` with provenance manifest
-- [strategies-folder-import](contracts/strategies-folder-import.md) — leaf · ready · `xvn strategies import` CLI + dashboard `/strategies-folder` drop-zone + `pdftotext` summaries
+Recommended sequencing: dashboard-auth-boundary first (foundation —
+defines the auth surface other tracks audit against); the two leaves
+parallel-safe after foundation merges. Holding dispatch pending
+operator review of intake.
 
-**Wave 3 — after prepopulation merges:**
-- [strategy-ideas-tool-surface](contracts/strategy-ideas-tool-surface.md) — leaf · ready · `list_strategy_ideas` wizard tool that queries the pre-populated library
+## Recently closed
 
-## Active — V2A (onboarding & docs)
+### V2E (eval accuracy & trace surface) — complete 2026-05-21
 
-- [v2a-driver-tour](contracts/v2a-driver-tour.md) — leaf · ready · independent
-- [v2a-in-app-docs](contracts/v2a-in-app-docs.md) — leaf · ready · independent
+All seven contracts merged in a single ~30-minute wave:
 
-`v2a-example-artifacts` merged via #205 on 2026-05-17; archived under
-`team/archive/2026-05-17-v2a/`. The remaining two leaves are independent —
-safe to claim in parallel.
+| # | Track | PR |
+|---|---|---|
+| 17 | eval-trace-surface-foundation | #422 |
+| 18+21 | eval-candle-integrity-and-manifest | #415 |
+| 19+20 | eval-cost-model-per-bar-and-volume-share | #418 |
+| 22 | eval-lookahead-bias-prober | #412 |
+| 23 | eval-broker-rule-findings | #411 |
+| 24 | eval-intra-bar-fill-ordering | #435 |
+| 25 | eval-net-of-inference-cost-metric | #417 |
 
-## Active — V2E (eval accuracy & trace surface)
+Notes:
+- Migrations landed: **026** (trace-surface foundation: determinism_receipts table, eval_findings.evidence_cycle_ids_json + .produced_by_check), **027** (run_bars_manifest: bars_content_hash, manifest_canonical, feed/adjustment/session/calendar/timezone on eval_runs), and `0003` on `xvision-core` (cycles indices on model_id/prompt_template_hash/regime_tag).
+- `Finding` schema bumped: `evidence_cycle_ids` and `produced_by_check` are now typed Option fields, not embedded in evidence JSON.
+- `MetricsSummary` derives `Default`; new optional fields `inference_cost_quote_total`, `net_return_pct`. `total_return_pct` aliased as `gross_return_pct`.
+- `VenueSettings` gained required `overrides: Vec<VenueOverride>` field; all literals must include it.
+- `crates/xvision-engine/src/eval/executor/backtest.rs` is now multi-owner across foundation + cost-model + intra-bar + broker-rule.
+- Migration numbering note: foundation originally reserved 023 and candle 024; both shifted (026/027) due to on-disk collision with 022–025 that landed during V2E decomposition.
 
-Decomposed 2026-05-20 from `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md`.
-**All seven contracts are `status: ready` — no worker has claimed any of
-them yet, no worktrees exist.** This is intentional: the conductor is
-holding V2E in the dock until the V2A leaves merge so capacity isn't
-split between waves.
+### V2F (strategy authoring & user knowledge) — complete 2026-05-21
 
-The intake's optional 9→7 re-pairing is applied:
-`eval-cost-model-per-bar-and-volume-share` merges items 19+20 from the
-research doc; `eval-candle-integrity-and-manifest` merges items 18+21.
-See the V2E notes section below for why and the dependency graph.
+Six tracks merged: strategies-folder-surface (#414), agent-pipeline-template-library-expansion (#409), wizard-prompt-strategy-folder-and-templates (#408), strategies-folder-prepopulation (#419), strategies-folder-import (#420), strategy-ideas-tool-surface (#421). Plan: `docs/superpowers/plans/2026-05-21-v2f-strategies-folder-and-template-refactor.md`.
 
-- [eval-trace-surface-foundation](contracts/eval-trace-surface-foundation.md) — foundation · ready · **lands first, blocks 3 downstream**
-- [eval-candle-integrity-and-manifest](contracts/eval-candle-integrity-and-manifest.md) — foundation · ready · independent (claims migration 024)
-- [eval-cost-model-per-bar-and-volume-share](contracts/eval-cost-model-per-bar-and-volume-share.md) — foundation · ready · blocks intra-bar (no migration; per-bar arrays live in bars Parquet)
-- [eval-intra-bar-fill-ordering](contracts/eval-intra-bar-fill-ordering.md) — leaf · ready · depends on cost-model + foundation
-- [eval-lookahead-bias-prober](contracts/eval-lookahead-bias-prober.md) — leaf · ready · depends on foundation
-- [eval-broker-rule-findings](contracts/eval-broker-rule-findings.md) — leaf · ready · independent
-- [eval-net-of-inference-cost-metric](contracts/eval-net-of-inference-cost-metric.md) — leaf · ready · depends on foundation + `model-call-cost-usd-population`
+### V2A (onboarding & docs) — complete 2026-05-18
 
-Recommended sequencing (per the intake's dependency graph):
-
-1. `eval-trace-surface-foundation` lands first as a solo step — every
-   downstream track emits into the trace shape it lands. Resist letting
-   item-1 leaves ship in parallel against the foundation; the per-finding
-   retrofit cost is higher than the wait.
-2. After foundation merges, fan out the remaining six. Three sequenced
-   pairs:
-   - `eval-cost-model-per-bar-and-volume-share` →
-     `eval-intra-bar-fill-ordering` (intra-bar strictly consumes the
-     fill-price machinery).
-   - `eval-candle-integrity-and-manifest` →
-     (no downstream within V2E, but trust-receipt renderer follow-up
-     depends on it).
-   - `eval-broker-rule-findings`,
-     `eval-lookahead-bias-prober`, and
-     `eval-net-of-inference-cost-metric` are independent leaves —
-     parallel safe.
-
-Migration coordination: foundation claims **023**, candle-integrity
-claims **024**; both reserved in `team/MANIFEST.md` 2026-05-20.
-`eval-net-of-inference-cost-metric` may claim **025** if it needs a
-small `run_metrics_summary.net_return_pct` column — decide at the
-contract author's first checkpoint.
-
-`crates/xvision-engine/src/eval/executor/backtest.rs` is now a four-track
-multi-owner zone (foundation + cost-model + intra-bar + broker-rule);
-see `team/OWNERSHIP.md` for the disjoint-region rule.
+- `v2a-example-artifacts` — merged #205 (2026-05-17). Archived under `team/archive/2026-05-17-v2a/`.
+- `v2a-driver-tour` — merged #258 (2026-05-18).
+- `v2a-in-app-docs` — merged #281 (2026-05-18); sidebar Docs link wired by `5b7f347`.
 
 ## Follow-ups / research needed
 
@@ -406,19 +381,20 @@ Intake doc when this opens: `team/intake/2026-05-19-eval-accuracy-and-trace-surf
 
 ## Wave intake
 
-- V2A intake: `team/intake/2026-05-16-eval-review-and-v2a.md` (V2A items 1–3 decomposed).
-- V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (items 17–25 decomposed; 7 contracts in `team/contracts/eval-*` all `status: ready`).
-- V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (items 26–31, **decomposed 2026-05-21 → six tracks under V2F Active above; plan at `docs/superpowers/plans/2026-05-21-v2f-strategies-folder-and-template-refactor.md`**).
-- V2B/V2C/V2D/V3/V4: no intake yet.
+- V2A intake: `team/intake/2026-05-16-eval-review-and-v2a.md` (closed).
+- V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (closed; 7 contracts merged).
+- V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (closed; 6 contracts merged).
+- V2B intake: `team/intake/2026-05-21-v2b-security-operability.md` (active — 3 contracts ready, dispatch pending operator review).
+- V2C/V2D/V3/V4: no intake yet.
 
 ## Closeout
 
-When all V2A contracts merge, the conductor:
+When all V2B contracts merge, the conductor:
 
-1. Archives V2A contracts to `team/archive/<date>-v2a/contracts/`.
-2. Updates this file to reflect the next active phase (V2B operability,
-   V2D memory, or both in parallel — conductor decides at intake time
-   based on V3 autoresearcher readiness).
+1. Archives V2B contracts to `team/archive/<date>-v2b/contracts/`.
+2. Updates this file to reflect the next active phase (V2C testnet,
+   V2D memory, or both — conductor decides at intake time based on
+   V3 autoresearcher readiness and marketplace flow scoping).
 3. Opens the next phase's intake doc and decomposes its items into contracts.
 
 ## See also

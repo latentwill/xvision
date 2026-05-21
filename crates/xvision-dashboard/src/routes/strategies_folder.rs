@@ -24,9 +24,7 @@ use axum::extract::{Multipart, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use xvision_engine::strategies_folder::{
-    self, FolderEntry, ImportFinding, ImportOptions, MAX_IMPORT_BYTES,
-};
+use xvision_engine::strategies_folder::{self, FolderEntry, ImportFinding, ImportOptions, MAX_IMPORT_BYTES};
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -58,11 +56,7 @@ pub async fn get_list(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<ListResponse>, DashboardError> {
-    let items = strategies_folder::list(
-        &state.api_context(),
-        params.subfolder.as_deref(),
-    )
-    .await?;
+    let items = strategies_folder::list(&state.api_context(), params.subfolder.as_deref()).await?;
     Ok(Json(ListResponse { items }))
 }
 
@@ -74,12 +68,14 @@ pub async fn post_import(
     let mut to: Option<String> = None;
     let mut no_clobber = false;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        DashboardError::Validation {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| DashboardError::Validation {
             field: "multipart".into(),
             msg: format!("read field: {e}"),
-        }
-    })? {
+        })?
+    {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "file" => {
@@ -88,10 +84,7 @@ pub async fn post_import(
                     // typical browser multipart behavior.
                     continue;
                 }
-                let filename = field
-                    .file_name()
-                    .unwrap_or("")
-                    .to_string();
+                let filename = field.file_name().unwrap_or("").to_string();
                 if filename.is_empty() {
                     return Err(DashboardError::Validation {
                         field: "file".into(),

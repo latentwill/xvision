@@ -80,6 +80,7 @@ fn rich_slot(asset: &str) -> AgentSlot {
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
     }
 }
 
@@ -173,6 +174,7 @@ async fn reject_short_prompt() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         })
         .await;
@@ -210,6 +212,7 @@ async fn reject_default_placeholder_prompt() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         })
         .await;
@@ -259,6 +262,7 @@ async fn wrong_id_namespace_strategy_get_with_agent_id() {
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         })
         .await

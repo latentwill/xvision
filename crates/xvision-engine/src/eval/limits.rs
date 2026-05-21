@@ -1,0 +1,232 @@
+//! Eval-run hard limits — per-run caps that stop a runaway token burn.
+//!
+//! Source: `team/contracts/cli-operator-safety-p0.md` slice 2/3.
+//!
+//! Limits are propagated from the CLI / dashboard launch request through
+//! `EvalRunRequest` into the executor builder. The executor checks
+//! `EvalLimits::check(...)` after each decision's token usage is
+//! accumulated. On breach, the executor records a reason and calls
+//! `RunStore::cancel_active`, which the next-bar `is_terminal` gate
+//! converts into a `RunStatus::Cancelled` exit.
+//!
+//! Choice of "cancelled" terminal status (over a new
+//! `cancelled_limit` enum variant) keeps the migration footprint at
+//! zero — the existing `error` column carries the breach reason and the
+//! dashboard's status filter already understands `cancelled`. If the
+//! product later wants to distinguish "operator-cancelled" from
+//! "limit-breach-cancelled" in the inspector, that's a follow-on
+//! migration.
+
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+
+/// Per-run caps. Every field is optional; `None` means "no cap".
+///
+/// Backend payload of the launch verb (`xvn eval run --max-decisions …`).
+/// Threaded through `EvalRunRequest` → executor builder.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvalLimits {
+    /// Max number of decision cycles the strategy may produce. Each
+    /// cadence-gated bar that the trader emits a decision for counts
+    /// as one. Warmup bars never count.
+    #[serde(default)]
+    pub max_decisions: Option<u32>,
+    /// Max cumulative input tokens across all model calls in the run.
+    #[serde(default)]
+    pub max_input_tokens: Option<u64>,
+    /// Max cumulative output tokens across all model calls in the run.
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
+    /// Max wall-clock seconds the run may take from start to terminal.
+    /// Serialized as seconds for wire stability across language clients.
+    #[serde(default)]
+    pub max_wall_clock_secs: Option<u64>,
+    /// When `true`, a token-cap breach lands the run as `Cancelled`
+    /// with a breach reason; when `false`, the breach is logged but
+    /// the run continues (advisory mode). Decisions/wall-clock breaches
+    /// always cancel — only token caps respect this flag.
+    #[serde(default)]
+    pub cancel_on_token_limit: bool,
+}
+
+impl EvalLimits {
+    /// Returns `true` if every cap is None (the default — pre-limits
+    /// behavior). Callers may skip the per-bar check when this is true.
+    pub fn is_empty(&self) -> bool {
+        self.max_decisions.is_none()
+            && self.max_input_tokens.is_none()
+            && self.max_output_tokens.is_none()
+            && self.max_wall_clock_secs.is_none()
+    }
+
+    /// Wall-clock cap parsed as a `Duration`. Returns `None` when
+    /// `max_wall_clock_secs` is unset.
+    pub fn max_wall_clock(&self) -> Option<Duration> {
+        self.max_wall_clock_secs.map(Duration::from_secs)
+    }
+
+    /// Evaluate every cap against the current counters. Returns the
+    /// first breach encountered, or `None` if every cap is either
+    /// unset or still under its threshold.
+    ///
+    /// `cancel_on_token_limit == false` defers token-cap breaches to
+    /// advisory mode — `check_for_cancel` filters those out; callers
+    /// who want the advisory signal can call `check_advisory` instead.
+    pub fn check_for_cancel(
+        &self,
+        decisions: u32,
+        input_tokens: u64,
+        output_tokens: u64,
+        started_at: Instant,
+    ) -> Option<LimitBreach> {
+        // Decisions and wall-clock are always hard caps. Token caps
+        // depend on `cancel_on_token_limit`.
+        if let Some(cap) = self.max_decisions {
+            if decisions >= cap {
+                return Some(LimitBreach::MaxDecisions { cap });
+            }
+        }
+        if let Some(d) = self.max_wall_clock() {
+            if started_at.elapsed() >= d {
+                return Some(LimitBreach::MaxWallClock {
+                    cap_secs: d.as_secs(),
+                });
+            }
+        }
+        if self.cancel_on_token_limit {
+            if let Some(cap) = self.max_input_tokens {
+                if input_tokens >= cap {
+                    return Some(LimitBreach::MaxInputTokens { cap });
+                }
+            }
+            if let Some(cap) = self.max_output_tokens {
+                if output_tokens >= cap {
+                    return Some(LimitBreach::MaxOutputTokens { cap });
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Which cap fired and at what threshold. Serialized into the run's
+/// `error` field so the inspector can render a human-readable reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LimitBreach {
+    MaxDecisions { cap: u32 },
+    MaxInputTokens { cap: u64 },
+    MaxOutputTokens { cap: u64 },
+    MaxWallClock { cap_secs: u64 },
+}
+
+impl LimitBreach {
+    /// Stable reason string written to the run's `error` column. Format:
+    /// `"cancelled by limit: <key>=<cap>"`. The prefix lets the
+    /// dashboard distinguish operator cancels (`"cancelled by user"`)
+    /// from limit cancels.
+    pub fn reason(&self) -> String {
+        match self {
+            LimitBreach::MaxDecisions { cap } => {
+                format!("cancelled by limit: max_decisions={cap}")
+            }
+            LimitBreach::MaxInputTokens { cap } => {
+                format!("cancelled by limit: max_input_tokens={cap}")
+            }
+            LimitBreach::MaxOutputTokens { cap } => {
+                format!("cancelled by limit: max_output_tokens={cap}")
+            }
+            LimitBreach::MaxWallClock { cap_secs } => {
+                format!("cancelled by limit: max_wall_clock_secs={cap_secs}")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t0() -> Instant {
+        Instant::now()
+    }
+
+    #[test]
+    fn default_is_empty_and_never_breaches() {
+        let limits = EvalLimits::default();
+        assert!(limits.is_empty());
+        assert!(limits
+            .check_for_cancel(1_000, 1_000_000, 1_000_000, t0())
+            .is_none());
+    }
+
+    #[test]
+    fn max_decisions_breaches_at_cap() {
+        let limits = EvalLimits {
+            max_decisions: Some(5),
+            ..Default::default()
+        };
+        assert!(limits.check_for_cancel(4, 0, 0, t0()).is_none());
+        assert_eq!(
+            limits.check_for_cancel(5, 0, 0, t0()),
+            Some(LimitBreach::MaxDecisions { cap: 5 })
+        );
+        assert_eq!(
+            limits.check_for_cancel(99, 0, 0, t0()),
+            Some(LimitBreach::MaxDecisions { cap: 5 })
+        );
+    }
+
+    #[test]
+    fn token_caps_require_cancel_on_token_limit_flag() {
+        let advisory = EvalLimits {
+            max_output_tokens: Some(100),
+            cancel_on_token_limit: false,
+            ..Default::default()
+        };
+        // Advisory mode: token breach does NOT trigger cancel.
+        assert!(advisory.check_for_cancel(0, 0, 1_000, t0()).is_none());
+
+        let strict = EvalLimits {
+            max_output_tokens: Some(100),
+            cancel_on_token_limit: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            strict.check_for_cancel(0, 0, 100, t0()),
+            Some(LimitBreach::MaxOutputTokens { cap: 100 })
+        );
+    }
+
+    #[test]
+    fn wall_clock_is_always_hard_cap() {
+        let limits = EvalLimits {
+            max_wall_clock_secs: Some(0), // breach immediately
+            cancel_on_token_limit: false,
+            ..Default::default()
+        };
+        // A zero-duration cap breaches on the very first check.
+        assert!(matches!(
+            limits.check_for_cancel(0, 0, 0, t0()),
+            Some(LimitBreach::MaxWallClock { cap_secs: 0 })
+        ));
+    }
+
+    #[test]
+    fn reason_strings_are_stable() {
+        assert_eq!(
+            LimitBreach::MaxDecisions { cap: 100 }.reason(),
+            "cancelled by limit: max_decisions=100"
+        );
+        assert_eq!(
+            LimitBreach::MaxOutputTokens { cap: 60_000 }.reason(),
+            "cancelled by limit: max_output_tokens=60000"
+        );
+    }
+}

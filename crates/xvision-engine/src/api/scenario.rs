@@ -199,10 +199,7 @@ pub async fn list(ctx: &ApiContext, filter: ListScenariosFilter) -> ApiResult<Ve
 /// Paged variant of `list`. Same filter semantics, plus a `total` field
 /// reflecting the row count AFTER filtering (before slicing) so the
 /// dashboard pager can render "page X of N".
-pub async fn list_paged(
-    ctx: &ApiContext,
-    filter: ListScenariosFilter,
-) -> ApiResult<PagedScenariosResp> {
+pub async fn list_paged(ctx: &ApiContext, filter: ListScenariosFilter) -> ApiResult<PagedScenariosResp> {
     let store_filter = scenario_store::ListScenariosFilter {
         source: filter.source,
         tags: filter.tags,

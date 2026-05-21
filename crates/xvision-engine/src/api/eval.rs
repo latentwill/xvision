@@ -199,10 +199,7 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
 /// rows plus the total count. The dashboard's `/api/eval/runs` route
 /// drives this so the SPA's pager has both halves of the contract in a
 /// single round-trip.
-pub async fn list_summaries_paged(
-    ctx: &ApiContext,
-    req: ListRunsRequest,
-) -> ApiResult<PagedRunSummaries> {
+pub async fn list_summaries_paged(ctx: &ApiContext, req: ListRunsRequest) -> ApiResult<PagedRunSummaries> {
     let started = Instant::now();
     let result = list_summaries_paged_inner(ctx, &req).await;
 
@@ -224,10 +221,7 @@ pub async fn list_summaries_paged(
     result
 }
 
-async fn list_summaries_paged_inner(
-    ctx: &ApiContext,
-    req: &ListRunsRequest,
-) -> ApiResult<PagedRunSummaries> {
+async fn list_summaries_paged_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<PagedRunSummaries> {
     let store = RunStore::new(ctx.db.clone());
     let filter = ListFilter {
         agent_id: req.agent_id.clone(),
@@ -575,6 +569,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         scenario_id: source.scenario_id.clone(),
         mode: source.mode,
         params_override: source.params_override.clone(),
+        limits: None,
     };
     let detail = start_run(ctx, req).await?;
     Ok(RetryOutcome {
@@ -777,6 +772,12 @@ pub struct EvalRunRequest {
     /// `eval_runs.params_override_json`.
     #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
+    /// Optional per-run hard caps (decisions / token totals / wall-clock).
+    /// Breach lands the run as `Cancelled` with a stable reason string in
+    /// `error`. See `crate::eval::limits::EvalLimits` for shape + semantics.
+    /// `None` (or every field None) is the pre-limits behavior.
+    #[serde(default)]
+    pub limits: Option<crate::eval::limits::EvalLimits>,
 }
 
 /// Public env-bound entry point: constructs broker (paper mode only) /
@@ -1289,7 +1290,9 @@ async fn run_inner(
             let b = broker.ok_or_else(|| ApiError::Validation("paper mode requires a broker".into()))?;
             build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
         }
-        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?,
+        RunMode::Backtest => {
+            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref()).await?
+        }
     };
 
     let store = RunStore::new(ctx.db.clone());
@@ -1610,6 +1613,7 @@ async fn build_backtest_executor(
     scenario: &Scenario,
     from_db: bool,
     obs: Option<crate::agent::observability::ObsEmitter>,
+    limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
     if from_db {
         match load_bars_for_scenario(ctx, scenario).await {
@@ -1635,6 +1639,9 @@ async fn build_backtest_executor(
                 if let Some(emitter) = obs {
                     bt = bt.with_observability(emitter);
                 }
+                if let Some(l) = limits {
+                    bt = bt.with_limits(l.clone());
+                }
                 return Ok(Box::new(bt));
             }
             Err(e) => {
@@ -1655,6 +1662,9 @@ async fn build_backtest_executor(
     let mut bt = BacktestExecutor::new().with_event_bus(ctx.event_bus.clone());
     if let Some(emitter) = obs {
         bt = bt.with_observability(emitter);
+    }
+    if let Some(l) = limits {
+        bt = bt.with_limits(l.clone());
     }
     Ok(Box::new(bt))
 }
@@ -1756,7 +1766,9 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             let b = broker.expect("paper mode broker built above");
             build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
         }
-        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?,
+        RunMode::Backtest => {
+            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref()).await?
+        }
     };
 
     run.params_override = req.params_override.clone();

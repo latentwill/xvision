@@ -219,6 +219,7 @@ async fn run_with_deps_completes_paper_run_with_mocks() {
             scenario_id: scenario_id.into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -253,6 +254,7 @@ async fn run_returns_not_found_for_unknown_strategy() {
             scenario_id: canonical_scenarios()[0].id.clone(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -284,6 +286,7 @@ async fn run_returns_not_found_for_unknown_scenario() {
             scenario_id: "no-such-scenario".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -317,6 +320,7 @@ async fn run_rejects_openrouter_legacy_anthropic_model_before_queueing() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Backtest,
             params_override: None,
+            limits: None,
         },
     )
     .await;
@@ -362,6 +366,7 @@ async fn run_with_deps_completes_backtest_run_with_mocks() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Backtest,
             params_override: None,
+            limits: None,
         },
         None, // backtest mode doesn't need a broker
         dispatch,
@@ -403,6 +408,7 @@ async fn run_rejects_paper_mode_without_broker() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         None,
         dispatch,
@@ -435,6 +441,7 @@ async fn run_writes_audit_row_on_completion() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -474,6 +481,7 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -635,6 +643,7 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Backtest,
             params_override: None,
+            limits: None,
         },
     )
     .await;

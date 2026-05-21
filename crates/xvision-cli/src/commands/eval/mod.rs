@@ -336,6 +336,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         scenario_id: args.scenario.clone(),
         mode,
         params_override: None,
+        limits: None,
     };
 
     println!(

@@ -16,6 +16,7 @@
 //!   leaves it — Phase 3.C work).
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -87,6 +88,12 @@ pub struct BacktestExecutor {
     /// `/api/agent-runs/<run_id>` and the trace dock. `None` keeps
     /// existing unit-test paths silent.
     obs_emitter: Option<ObsEmitter>,
+    /// Optional per-run hard caps. When set, the per-bar loop checks
+    /// `EvalLimits::check_for_cancel` after each decision's tokens are
+    /// counted; on breach the run is marked Cancelled with a stable
+    /// reason string in `Run.error`. `None` (the default) preserves
+    /// pre-limits behavior. See `crate::eval::limits`.
+    limits: Option<super::super::limits::EvalLimits>,
 }
 
 impl BacktestExecutor {
@@ -108,6 +115,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            limits: None,
         }
     }
 
@@ -125,6 +133,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            limits: None,
         }
     }
 
@@ -136,6 +145,7 @@ impl BacktestExecutor {
             warmup_bars: Vec::new(),
             event_bus: None,
             obs_emitter: None,
+            limits: None,
         }
     }
 
@@ -161,6 +171,15 @@ impl BacktestExecutor {
     ///   `BacktestExecutor::with_bars(bars).with_warmup(warmup)`.
     pub fn with_warmup(mut self, warmup_bars: Vec<Ohlcv>) -> Self {
         self.warmup_bars = warmup_bars;
+        self
+    }
+
+    /// Attach per-run hard caps. Builder-style so callers can chain after
+    /// `with_bars` / `with_warmup` / `with_event_bus`. When the limits
+    /// argument's `is_empty()` returns true, the executor stores it but
+    /// the per-bar check is a constant-time no-op.
+    pub fn with_limits(mut self, limits: super::super::limits::EvalLimits) -> Self {
+        self.limits = Some(limits);
         self
     }
 
@@ -378,6 +397,11 @@ impl BacktestExecutor {
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        // Wall-clock anchor for `EvalLimits::max_wall_clock_secs`. Captured
+        // at the start of the decision loop, NOT at `run.started_at` — the
+        // CLI cap is measured against the executor's own running window so
+        // a slow scenario-load doesn't burn the operator's budget.
+        let run_started: Instant = Instant::now();
         // engine-trade-guardrails-pyramid-flip-block (F-7):
         // tracks the trader's most recent emitted open direction on the
         // asset so the guardrail can detect a same-bar flip even when
@@ -639,6 +663,26 @@ impl BacktestExecutor {
             store
                 .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
                 .await?;
+
+            // Hard-limit breach check (cli-operator-safety-p0 slice 2/3).
+            // Decisions counter uses `decision_idx + 1` here because this
+            // bar's decision IS counted toward the cap — the next bar
+            // shouldn't run if the cap has just been reached. `is_empty()`
+            // short-circuits the call when no limits are configured.
+            if let Some(limits) = self.limits.as_ref() {
+                if !limits.is_empty() {
+                    if let Some(breach) = limits.check_for_cancel(
+                        decision_idx + 1,
+                        total_input_tokens,
+                        total_output_tokens,
+                        run_started,
+                    ) {
+                        let reason = breach.reason();
+                        let _ = store.cancel_active(&run.id, &reason).await;
+                        anyhow::bail!(reason);
+                    }
+                }
+            }
 
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");

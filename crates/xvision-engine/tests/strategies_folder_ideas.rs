@@ -15,9 +15,7 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::strategies_folder::folder_root;
-use xvision_engine::strategies_folder::ideas::{
-    list_ideas, IdeaFilter, MAX_LIMIT,
-};
+use xvision_engine::strategies_folder::ideas::{list_ideas, IdeaFilter, MAX_LIMIT};
 
 /// Build a fresh `ApiContext` backed by an empty sqlite file and a
 /// fresh tempdir for `xvn_home`. The ideas surface only touches the
@@ -99,7 +97,13 @@ fn rsi_capitulation_template() -> &'static str {
 #[tokio::test]
 async fn list_ideas_filters_by_category() {
     let (ctx, td) = fresh_ctx().await;
-    write_template(td.path(), "EMA", "ema_pullback_bounce.json", ema_pullback_template()).await;
+    write_template(
+        td.path(),
+        "EMA",
+        "ema_pullback_bounce.json",
+        ema_pullback_template(),
+    )
+    .await;
     write_template(
         td.path(),
         "EMA",
@@ -150,7 +154,13 @@ async fn list_ideas_filters_by_category() {
 #[tokio::test]
 async fn list_ideas_filters_by_indicator_substring() {
     let (ctx, td) = fresh_ctx().await;
-    write_template(td.path(), "EMA", "ema_pullback_bounce.json", ema_pullback_template()).await;
+    write_template(
+        td.path(),
+        "EMA",
+        "ema_pullback_bounce.json",
+        ema_pullback_template(),
+    )
+    .await;
     write_template(
         td.path(),
         "EMA",
@@ -224,7 +234,13 @@ async fn list_ideas_returns_empty_when_library_missing() {
 #[tokio::test]
 async fn list_ideas_skips_malformed_json_but_returns_valid_entries() {
     let (ctx, td) = fresh_ctx().await;
-    write_template(td.path(), "EMA", "ema_pullback_bounce.json", ema_pullback_template()).await;
+    write_template(
+        td.path(),
+        "EMA",
+        "ema_pullback_bounce.json",
+        ema_pullback_template(),
+    )
+    .await;
     write_template(
         td.path(),
         "EMA",
@@ -269,9 +285,9 @@ async fn list_ideas_skips_malformed_json_but_returns_valid_entries() {
 #[tokio::test]
 async fn list_ideas_clamps_limit_to_max() {
     let (ctx, td) = fresh_ctx().await;
-    // Drop 5 valid templates so we can verify both default and clamp
-    // behavior without needing 100+ files on disk.
-    for i in 0..5u32 {
+    // Seed enough valid templates to prove the over-cap request clamps at
+    // MAX_LIMIT instead of just returning every available row.
+    for i in 0..=(MAX_LIMIT as u32) {
         let body = format!(
             r#"{{
   "name": "ema_test_{i}",
@@ -290,9 +306,8 @@ async fn list_ideas_clamps_limit_to_max() {
         write_template(td.path(), "EMA", &format!("ema_test_{i}.json"), &body).await;
     }
 
-    // Request 500 → must clamp at MAX_LIMIT (100). We only have 5
-    // ideas on disk so we get 5 back, but the call must succeed
-    // without error (i.e., didn't bail on the over-cap value).
+    // Request 500 → must clamp at MAX_LIMIT (100), leaving the extra
+    // on-disk idea out of the response.
     let huge = list_ideas(
         &ctx,
         IdeaFilter {
@@ -302,7 +317,7 @@ async fn list_ideas_clamps_limit_to_max() {
     )
     .await
     .unwrap();
-    assert_eq!(huge.len(), 5);
+    assert_eq!(huge.len(), MAX_LIMIT as usize);
 
     // Request 2 → clamp doesn't kick in but limit is honored.
     let two = list_ideas(

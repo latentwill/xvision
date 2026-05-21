@@ -32,6 +32,7 @@ fn slot_with(max_tokens: Option<u32>, temperature: Option<f64>) -> AgentSlot {
         temperature,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
     }
 }
 
@@ -44,6 +45,7 @@ fn req_from(resolved_max: Option<u32>, resolved_temp: Option<f64>) -> LlmRequest
         tools: vec![],
         temperature: resolved_temp,
         response_schema: None,
+        cache_control: None,
     }
 }
 
