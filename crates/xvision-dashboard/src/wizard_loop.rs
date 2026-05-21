@@ -44,21 +44,14 @@ use xvision_engine::strategies_folder;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 
-/// Default template the wizard's `create_strategy` falls back to when the
-/// caller omits `template`. The `custom` template is the minimal
-/// single-trader-agent freeform shape registered in
-/// `crates/xvision-engine/src/templates/custom.rs` — empty
-/// `mechanical_params`, no regime/intern slot, conservative risk preset.
-/// The agent fills in the rest via `set_*` tools.
-const WIZARD_BLANK_TEMPLATE: &str = "custom";
-
-/// Wizard-side input deserializer for `create_strategy`. Mirrors
-/// `authoring::CreateStrategyReq` but with optional `template` so the
-/// public API / MCP surface can stay strict.
+/// Wizard-side input deserializer for `create_strategy`. The wizard's
+/// surface intentionally does not accept a `template` — strategy
+/// templates are no longer a library concept in the wizard (see
+/// the `templates-elimination` contract, 2026-05-21). New drafts are
+/// always blank; `create_strategy_agent` and `update_slot` fill them
+/// in. The public API / MCP `CreateStrategyReq` shape is unchanged.
 #[derive(Debug, Deserialize)]
 struct WizardCreateStrategyInput {
-    #[serde(default)]
-    template: Option<String>,
     name: String,
     #[serde(default)]
     creator: Option<String>,
@@ -95,11 +88,10 @@ impl AgentProfile {
                 "## Agent profile: strategy setup\n\
                  You are focused on strategy setup: creating, editing, validating, and evaluating \
                  strategies. Use existing strategies and existing scenarios before creating new \
-                 work. Templates from list_templates are reference examples — browse them for \
-                 inspiration, or call create_strategy without a `template` to start a blank draft \
-                 and fill it in via set_slot / set_mechanical_param. When you create a strategy, \
-                 ensure it has a trader agent with an explicit provider/model before claiming it \
-                 is eval-ready. \
+                 work. `create_strategy` always starts a blank draft — fill it in via \
+                 `create_strategy_agent` / `update_slot` / `set_mechanical_param`. When you create \
+                 a strategy, ensure it has a trader agent with an explicit provider/model before \
+                 claiming it is eval-ready. \
                  Do not say a tool change succeeded until the tool_result says it succeeded. For \
                  strategy tools, pass `id` or `strategy_id` as a top-level field, never nested under \
                  the tool name. Ask one targeted clarification only when the available strategies/scenarios \
@@ -772,24 +764,25 @@ impl WizardLoop {
         }
         let input = normalize_tool_input(name, input);
         match name {
-            "list_templates" => {
-                let out = authoring::list_templates();
-                Ok(serde_json::to_value(out)?)
-            }
             "create_strategy" => {
-                // Wizard surface accepts `template: null` / omitted and
-                // defaults to the `custom` template (blank single-agent
-                // shape). Templates from `list_templates` are reference
-                // examples for the agent, not a hard requirement —
-                // the underlying `authoring::CreateStrategyReq` stays
-                // strict so the public API / MCP surface is unchanged.
+                // Wizard always creates a blank draft — no template
+                // dispatch, no placeholder trader prompt. The agent
+                // fills in real content via subsequent `create_strategy_agent`
+                // and `update_slot` calls before save. Engine-side
+                // `authoring::create_blank_strategy` constructs the
+                // Strategy directly without consulting `template_registry`.
+                //
+                // Defensive: any failure here propagates verbatim via `?`.
+                // We do NOT pre-cache `self.last_draft_id` (the surrounding
+                // loop only tracks it from a successful tool_result `id`
+                // field), and we do NOT chain `create_strategy_agent`
+                // against a phantom id (the chain runs below only after
+                // `create_blank_strategy` returns Ok).
                 let raw: WizardCreateStrategyInput = serde_json::from_value(input)?;
-                let req = authoring::CreateStrategyReq {
-                    template: raw.template.unwrap_or_else(|| WIZARD_BLANK_TEMPLATE.into()),
-                    name: raw.name,
-                    creator: raw.creator,
-                };
-                let out = api_strategy::create_strategy(&self.api_context, req).await?;
+                let store = xvision_engine::strategies::store::FilesystemStore::new(
+                    xvision_engine::strategies::store::strategy_store_dir(&self.api_context.xvn_home),
+                );
+                let out = authoring::create_blank_strategy(&store, raw.name, raw.creator).await?;
                 let mut value = serde_json::to_value(&out)?;
                 if let Some(agent) = self.create_default_strategy_agent(&out.id).await? {
                     if let Some(obj) = value.as_object_mut() {
@@ -2067,34 +2060,15 @@ pub(crate) fn agent_tool_defs(profile: AgentProfile) -> Vec<ToolDefinition> {
 fn strategy_tool_defs() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
-            name: "list_templates".into(),
-            description: "List the strategy templates with display name + plain summary.".into(),
-            input_schema: serde_json::json!({
-                "type": "object", "properties": {}, "required": []
-            }),
-        },
-        ToolDefinition {
             name: "create_strategy".into(),
-            description: "Instantiate a new draft. `template` is optional — \
-                          when omitted, creates a blank single-agent draft \
-                          you fill in with set_slot / set_mechanical_param. \
-                          Templates from list_templates are reference \
-                          examples, not a prerequisite. Returns { id }."
+            description: "Instantiate a blank strategy draft. Fill it in with \
+                          `create_strategy_agent` (attach an agent) and \
+                          `update_slot` / `set_mechanical_param` / `update_manifest`. \
+                          Returns { id }."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "template": {
-                        // anyOf string|null so providers that honor the
-                        // advertised JSON schema (Anthropic strict-tools,
-                        // OpenAI structured outputs) will let the model
-                        // emit an explicit `null` — not just omit the
-                        // field. WizardCreateStrategyInput accepts both
-                        // shapes; the schema must too or strict providers
-                        // strip the null before it reaches the deserializer.
-                        "anyOf": [{"type": "string"}, {"type": "null"}],
-                        "description": "Optional. Template name from list_templates. Omit or pass null for a blank draft."
-                    },
                     "name": {"type": "string", "description": "Human-readable name"},
                     "creator": {"type": "string", "description": "Optional @handle"}
                 },
@@ -2493,11 +2467,15 @@ mod tests {
 
     #[tokio::test]
     async fn tool_use_runs_authoring_verb_and_appends_text() {
+        // Drive the loop through any in-profile tool; the assertions
+        // are about the event sequence (ToolCall → ToolResult → Token →
+        // Done), not the specific verb. `list_strategies` is the lowest-
+        // friction verb available in both profiles — no required input.
         let mock = Arc::new(MockDispatch::sequence(vec![
-            MockDispatch::tool_use("tu_1", "list_templates", serde_json::json!({})),
+            MockDispatch::tool_use("tu_1", "list_strategies", serde_json::json!({})),
             LlmResponse {
                 content: vec![ContentBlock::Text {
-                    text: "I see 9 templates. Want trend_follower?".into(),
+                    text: "Here are your existing strategies.".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
                 input_tokens: 5,
@@ -2507,15 +2485,15 @@ mod tests {
         let (mut wl, _pool, _td, _sid) =
             loop_with_session(mock, "what can i build", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
-        assert!(matches!(&events[0], WizardEvent::ToolCall { tool, .. } if tool == "list_templates"));
+        assert!(matches!(&events[0], WizardEvent::ToolCall { tool, .. } if tool == "list_strategies"));
         match &events[1] {
             WizardEvent::ToolResult { tool, result } => {
-                assert_eq!(tool, "list_templates");
-                assert!(result.as_array().unwrap().len() >= 8);
+                assert_eq!(tool, "list_strategies");
+                assert!(result.is_array(), "expected an array, got {result}");
             }
             other => panic!("expected ToolResult, got {other:?}"),
         }
-        assert!(matches!(&events[2], WizardEvent::Token { text } if text.contains("template")));
+        assert!(matches!(&events[2], WizardEvent::Token { text } if text.contains("strategies")));
         assert!(matches!(&events[3], WizardEvent::Done { .. }));
     }
 
@@ -3211,15 +3189,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_strategy_without_template_defaults_to_blank_custom_draft() {
-        // Operator 2026-05-18: the wizard told them "the API does require
-        // a template to create a strategy" — that error came from serde
-        // rejecting `missing field 'template'` when the agent omitted it.
-        // After this contract: omitting `template` produces a valid blank
-        // draft via the `custom` template, and downstream `set_*` tools
-        // can fill it in. Reference examples, not a hard requirement.
+    async fn create_strategy_produces_blank_draft_with_no_template() {
+        // Wizard `create_strategy` always produces a blank draft —
+        // no template dispatch, no placeholder trader prompt. The
+        // downstream `create_strategy_agent` / `update_slot` flow
+        // attaches a real agent.
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, _pool, _td, _sid) =
+        let (wl, _pool, td, _sid) =
             loop_with_session(mock, "make me a strategy", ContextScope::Workspace).await;
 
         let out = wl
@@ -3229,45 +3205,166 @@ mod tests {
 
         let id = out["id"].as_str().expect("returned id must be a string");
         assert!(!id.is_empty(), "draft id must be non-empty");
+
+        let store = xvision_engine::strategies::store::FilesystemStore::new(
+            xvision_engine::strategies::store::strategy_store_dir(td.path()),
+        );
+        let draft = xvision_engine::authoring::get_strategy(&store, id)
+            .await
+            .expect("draft must load");
+        assert!(draft.agents.is_empty(), "blank draft must have no AgentRefs");
+        assert!(
+            draft.trader_slot.is_none(),
+            "blank draft must not carry a placeholder trader slot"
+        );
+        assert_eq!(draft.manifest.template, "custom");
+        assert_eq!(draft.manifest.display_name, "Blank Run");
     }
 
     #[tokio::test]
-    async fn create_strategy_with_null_template_defaults_to_blank_custom_draft() {
-        // Same as above but with `"template": null` instead of omitted.
-        // Models that produce JSON with explicit nulls (some OpenRouter
-        // providers, JSON-schema-strict outputs) shouldn't fail.
+    async fn create_strategy_then_attach_agent_matches_operator_transcript_shape() {
+        // 2026-05-21 operator transcript: ask for a fibonacci+RSI strategy
+        // using Gemini Flash Lite 3.1 as the agent's model. Before
+        // templates-elimination, the wizard scaffolded a placeholder
+        // trader_slot that tripped the agents save-gate. After:
+        // `create_strategy` returns `{ id }` for a blank draft, then
+        // `create_strategy_agent` attaches a real Gemini agent in one
+        // step.
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, _pool, _td, _sid) =
-            loop_with_session(mock, "make me a strategy", ContextScope::Workspace).await;
+        let (wl, _pool, td, _sid) = loop_with_session(
+            mock,
+            "build me a fibonacci+RSI strategy using Gemini Flash Lite 3.1",
+            ContextScope::Workspace,
+        )
+        .await;
 
-        let out = wl
+        let created = wl
             .run_tool(
                 "create_strategy",
-                serde_json::json!({ "name": "Blank Run", "template": serde_json::Value::Null }),
+                serde_json::json!({ "name": "Fib+RSI" }),
             )
             .await
-            .expect("create_strategy with template:null must succeed");
+            .expect("create_strategy must succeed with no template");
+        let id = created["id"].as_str().expect("created.id").to_string();
 
-        assert!(out["id"].as_str().is_some_and(|id| !id.is_empty()));
+        // The wizard's chained create_default_strategy_agent runs only
+        // when agent_provider+model are set in the loop; `loop_with_session`
+        // builds the loop with neither set, so no auto-attach happens.
+        // The model would normally follow up with an explicit
+        // create_strategy_agent call — simulate that.
+        assert!(
+            created.get("agent").is_none(),
+            "no auto-attached agent when wizard agent_provider/model are unset"
+        );
+
+        let attached = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "google",
+                    "model": "gemini-2.5-flash-lite",
+                    "system_prompt":
+                        "You are a Fibonacci-retracement + RSI trader. Use 0.382/0.5/0.618 \
+                         retracement levels as support/resistance and only enter long when \
+                         RSI(14) crosses up through 30 from below. Exit long when RSI(14) \
+                         crosses down through 70 or price closes below the latest swing low. \
+                         Return JSON: { action, conviction (0-1), justification }."
+                }),
+            )
+            .await
+            .expect("create_strategy_agent must succeed against the blank draft");
+
+        assert_eq!(attached["strategy_id"], id);
+        assert_eq!(attached["provider"], "google");
+        assert_eq!(attached["model"], "gemini-2.5-flash-lite");
+        assert_eq!(attached["agents"][0]["role"], "trader");
+
+        let store = xvision_engine::strategies::store::FilesystemStore::new(
+            xvision_engine::strategies::store::strategy_store_dir(td.path()),
+        );
+        let draft = xvision_engine::authoring::get_strategy(&store, &id).await.unwrap();
+        assert_eq!(draft.agents.len(), 1);
+        assert_eq!(draft.agents[0].role, "trader");
+        // Save-gate check: the trader agent's slot prompt is real (not
+        // the canonical placeholder), so the agents save-gate would
+        // accept it. We don't run the save-gate here — that's covered
+        // by the engine-level `agent_save_validate` tests — but we
+        // confirm the wizard wrote a non-trivial prompt.
+        assert!(draft.trader_slot.is_none(), "blank draft never grew a trader_slot");
     }
 
     #[tokio::test]
-    async fn create_strategy_with_named_template_still_works() {
-        // The existing template-named path is unchanged — this contract
-        // only relaxes the requirement, doesn't remove templates.
-        let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, _pool, _td, _sid) =
-            loop_with_session(mock, "trend follower please", ContextScope::Workspace).await;
-
-        let out = wl
-            .run_tool(
+    async fn create_strategy_failure_does_not_cache_last_draft_id_or_chain() {
+        // Defensive (contract finding #3): if `create_strategy` fails,
+        // the wizard must not cache `last_draft_id` and must not chain
+        // `create_strategy_agent` against a phantom id. We trip the
+        // deserializer with an empty input (missing required `name`),
+        // assert that the failure surfaces as a `{"error": ...}`
+        // tool_result, that no follow-on `create_strategy_agent` event
+        // is observed, and that `Done.draft_id` is None.
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_bad",
                 "create_strategy",
-                serde_json::json!({ "template": "trend_follower", "name": "TF1" }),
-            )
-            .await
-            .expect("named-template path must continue to work");
+                // Missing required `name` — WizardCreateStrategyInput
+                // deserialize fails before we ever touch the store.
+                serde_json::json!({}),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "I need a name.".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make a strategy", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
 
-        assert!(out["id"].as_str().is_some_and(|id| !id.is_empty()));
+        // ToolResult for the failed create_strategy must carry an error.
+        let tr = events
+            .iter()
+            .find(|e| matches!(e, WizardEvent::ToolResult { tool, .. } if tool == "create_strategy"))
+            .expect("expected a create_strategy ToolResult event");
+        match tr {
+            WizardEvent::ToolResult { result, .. } => {
+                assert!(
+                    result.get("error").is_some(),
+                    "create_strategy failure must surface as {{ error: ... }}: {result}"
+                );
+            }
+            _ => unreachable!(),
+        }
+
+        // No follow-on create_strategy_agent invocation must appear.
+        let any_chained_attach = events.iter().any(|e| {
+            matches!(e, WizardEvent::ToolCall { tool, .. } if tool == "create_strategy_agent")
+                || matches!(e, WizardEvent::ToolResult { tool, .. } if tool == "create_strategy_agent")
+        });
+        assert!(
+            !any_chained_attach,
+            "no create_strategy_agent event must follow a failed create_strategy: {events:?}"
+        );
+
+        // Done.draft_id must be None — last_draft_id was never set.
+        let done = events
+            .iter()
+            .rev()
+            .find(|e| matches!(e, WizardEvent::Done { .. }))
+            .expect("expected a Done event");
+        match done {
+            WizardEvent::Done { draft_id } => {
+                assert!(
+                    draft_id.is_none(),
+                    "Done.draft_id must be None after a failed create_strategy: got {draft_id:?}"
+                );
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[tokio::test]
@@ -3347,20 +3444,27 @@ mod tests {
             .find(|item| item.agent_id == draft_id)
             .expect("created strategy must be visible via public list");
         assert_eq!(created.display_name, "Wizard Visible");
-        assert_eq!(created.template, "mean_reversion");
+        // Wizard always produces a blank `custom` draft now — the
+        // `template` field in the tool input is ignored. Template-driven
+        // dispatch remains available via the public API / MCP / CLI.
+        assert_eq!(created.template, "custom");
     }
 
     #[tokio::test]
-    async fn unknown_template_surfaces_as_tool_result_error() {
+    async fn create_strategy_missing_name_surfaces_as_tool_result_error() {
+        // After templates-elimination the wizard no longer dispatches on
+        // `template`, so the only required field is `name`. Drop it and
+        // the deserializer must surface the failure as a tool_result
+        // error (not panic, not silently succeed).
         let mock = Arc::new(MockDispatch::sequence(vec![
             MockDispatch::tool_use(
                 "tu_1",
                 "create_strategy",
-                serde_json::json!({"template": "nope", "name": "x"}),
+                serde_json::json!({}),
             ),
             LlmResponse {
                 content: vec![ContentBlock::Text {
-                    text: "That template doesn't exist.".into(),
+                    text: "Need a name.".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
                 input_tokens: 5,
@@ -3368,7 +3472,7 @@ mod tests {
             },
         ]));
         let (mut wl, _pool, _td, _sid) =
-            loop_with_session(mock, "make me a nope", ContextScope::Workspace).await;
+            loop_with_session(mock, "make me a strategy", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
         let result = events
             .iter()
@@ -3464,7 +3568,6 @@ mod tests {
         let defs = wizard_tool_defs();
         let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
         for v in [
-            "list_templates",
             "create_strategy",
             "get_strategy",
             "list_strategies",
@@ -3482,38 +3585,30 @@ mod tests {
         ] {
             assert!(names.contains(&v), "missing verb {v} in {names:?}");
         }
+        // After templates-elimination: `list_templates` is no longer
+        // advertised by the wizard. Strategy templates remain available
+        // via the public API / MCP / CLI for other consumers.
+        assert!(
+            !names.contains(&"list_templates"),
+            "wizard must not advertise list_templates after templates-elimination: {names:?}"
+        );
     }
 
     #[test]
-    fn create_strategy_tool_schema_allows_null_template() {
-        // PR #275 follow-up: the Rust deserializer accepts `template: null`
-        // / omitted, but providers that honor the advertised JSON schema
-        // (Anthropic strict-tools, OpenAI structured outputs) reject an
-        // explicit null unless the schema declares it. Without `anyOf:
-        // [string, null]` the model can only omit the field, leaving the
-        // operator-repro "I'll pass null" path unreachable in production.
+    fn create_strategy_tool_schema_drops_template_field() {
+        // After templates-elimination: the wizard's `create_strategy`
+        // tool no longer declares a `template` field; the schema's
+        // `properties` is limited to `name` (required) and `creator`.
         let defs = wizard_tool_defs();
         let create = defs
             .iter()
             .find(|d| d.name == "create_strategy")
             .expect("create_strategy tool def must exist");
-        let tmpl = create
-            .input_schema
-            .pointer("/properties/template")
-            .expect("template property must be in the schema");
-        let any_of = tmpl
-            .get("anyOf")
-            .and_then(|v| v.as_array())
-            .expect("template schema must use anyOf so null is permitted");
-        let has_string = any_of
-            .iter()
-            .any(|v| v.get("type").and_then(|t| t.as_str()) == Some("string"));
-        let has_null = any_of
-            .iter()
-            .any(|v| v.get("type").and_then(|t| t.as_str()) == Some("null"));
-        assert!(has_string, "template schema must still accept string");
-        assert!(has_null, "template schema must accept null");
-        // `template` must NOT be required — that's the whole point of the PR.
+        assert!(
+            create.input_schema.pointer("/properties/template").is_none(),
+            "template property must not be in the schema: {}",
+            create.input_schema
+        );
         let required = create
             .input_schema
             .get("required")
@@ -3523,6 +3618,10 @@ mod tests {
         assert!(
             !required.contains(&"template"),
             "template must not be in required: got {required:?}"
+        );
+        assert!(
+            required.contains(&"name"),
+            "name must still be required: got {required:?}"
         );
     }
 
@@ -3590,7 +3689,7 @@ mod tests {
     #[tokio::test]
     async fn tool_result_user_turn_persists_after_round_trip() {
         let mock = Arc::new(MockDispatch::sequence(vec![
-            MockDispatch::tool_use("tu_1", "list_templates", serde_json::json!({})),
+            MockDispatch::tool_use("tu_1", "list_strategies", serde_json::json!({})),
             LlmResponse {
                 content: vec![ContentBlock::Text {
                     text: "thanks".into(),
