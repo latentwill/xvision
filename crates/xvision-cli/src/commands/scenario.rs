@@ -405,8 +405,9 @@ fn parse_source(s: &str) -> CliResult<ScenarioSource> {
         "user" => Ok(ScenarioSource::User),
         "clone" => Ok(ScenarioSource::Clone),
         "generated" => Ok(ScenarioSource::Generated),
+        "frozen" => Ok(ScenarioSource::Frozen),
         other => Err(CliError::usage(anyhow::anyhow!(
-            "unknown source '{other}'; expected one of: canonical | user | clone | generated"
+            "unknown source '{other}'; expected one of: canonical | user | clone | generated | frozen"
         ))),
     }
 }
