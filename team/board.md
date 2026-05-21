@@ -107,10 +107,6 @@ contracts without an operator-approved spec:
   mobile view, shareable charts, strategy-name labels). Needs a
   product-design spec under `docs/superpowers/specs/` before
   decomposition.
-- **`team/intake/2026-05-20-strategies-folder-and-template-refactor.md`**
-  — V2F phase seed: user-curated `strategies/` folder, pre-seeded
-  agent-pipeline templates, template-optional refactor follow-on.
-  Needs operator decision on V2F adoption + spec.
 - **`team/intake/2026-05-20-canonical-template-needs-trader.md`** —
   P2, explicitly gated on the V2 capability-first agent-model spec
   per the intake itself; resolves as part of that refactor.
