@@ -39,6 +39,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -69,6 +73,7 @@ async fn seed_completed_run(store: &RunStore, scenario_id: &str) -> Run {
         n_trades: 3,
         n_decisions: 5,
         baselines: None,
+        ..Default::default()
     };
     store.finalize(&run.id, &metrics).await.unwrap();
     // Re-read so we have completed_at + metrics on the run we hand back.

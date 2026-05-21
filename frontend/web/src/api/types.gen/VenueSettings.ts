@@ -4,5 +4,12 @@ import type { FillModel } from "./FillModel";
 import type { LatencyModel } from "./LatencyModel";
 import type { SlippageModel } from "./SlippageModel";
 import type { Venue } from "./Venue";
+import type { VenueOverride } from "./VenueOverride";
 
-export type VenueSettings = { venue: Venue, fees: Fees, slippage: SlippageModel, latency: LatencyModel, fill_model: FillModel, };
+export type VenueSettings = { venue: Venue, fees: Fees, slippage: SlippageModel, latency: LatencyModel, fill_model: FillModel, 
+/**
+ * Per-symbol-pattern (glob) cost overrides. First matching pattern wins.
+ * Falls through to the scenario defaults when no pattern matches.
+ * Added in V2E eval-cost-model-per-bar-and-volume-share.
+ */
+overrides?: Array<VenueOverride>, };

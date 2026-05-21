@@ -608,7 +608,7 @@ function SummaryCard({
           value={fmtPct(summary.max_drawdown_pct)}
           tone={drawdownMetricTone(summary.max_drawdown_pct)}
         />
-        <Metric label="Total return" value={fmtPct(summary.total_return_pct)} />
+        <Metric label="Gross %" value={fmtPct(summary.total_return_pct)} />
         <Metric
           label="Total PnL"
           value={fmtPnlUsd(totalPnlUsd(equityCurve))}
@@ -637,6 +637,46 @@ function SummaryCard({
             totalCostUsd != null && Number.isFinite(totalCostUsd)
               ? formatCostUsdPrecise(totalCostUsd)
               : undefined
+          }
+        />
+        {/*
+          V2E: inference cost from MetricsSummary (aggregated post-run over
+          model_calls.cost_usd). Shown when pricing data is available;
+          falls back to em-dash for old runs or un-priced models.
+          Prefer summary.inference_cost_quote_total (populated by the
+          enrich_with_inference_cost pass) over totalCostUsd (which comes
+          from the agent-runs observability side) — they should match, but
+          the MetricsSummary field is the authoritative source for net_return_pct.
+        */}
+        <Metric
+          label="Infer cost (USD)"
+          value={
+            summary.inference_cost_quote_total != null
+              ? formatCostUsd(summary.inference_cost_quote_total)
+              : "—"
+          }
+          titleValue={
+            summary.inference_cost_quote_total != null &&
+            Number.isFinite(summary.inference_cost_quote_total)
+              ? formatCostUsdPrecise(summary.inference_cost_quote_total)
+              : undefined
+          }
+        />
+        <Metric
+          label="Net %"
+          value={
+            summary.net_return_pct != null
+              ? fmtPct(summary.net_return_pct)
+              : "—"
+          }
+          tone={
+            summary.net_return_pct == null
+              ? "neutral"
+              : summary.net_return_pct > 0
+                ? "pos"
+                : summary.net_return_pct < 0
+                  ? "neg"
+                  : "neutral"
           }
         />
       </div>

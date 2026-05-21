@@ -242,6 +242,7 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
             scenario_id: scenario_id.clone(),
             mode: req.mode,
             params_override: None,
+            limits: None,
         };
 
         let entry = match eval::run_with_deps(
@@ -564,6 +565,7 @@ pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> 
             scenario_id: scenario_id.clone(),
             mode,
             params_override: None,
+            limits: None,
         };
 
         let entry = match eval::run(ctx, run_req).await {

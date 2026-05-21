@@ -1,5 +1,15 @@
 // Settings → Skills — registry CRUD for the workspace skill library.
 // Agents reference skills by skill_id from this list.
+//
+// Migrated to the standard list component 2026-05-21 per
+// `docs/superpowers/audits/2026-05-21-list-surfaces-audit.md`. Search by
+// name; filter by kind (tool / prompt_fragment / evaluator); sort by
+// "recently added" (default) or name A→Z. URL state at
+// `useListUrlState("settings-skills", …)`.
+//
+// Inline edit semantics are preserved: a row in edit-mode replaces its
+// read-only render with the inline `<SkillForm>` inside the same `<tr>`,
+// no popups (per /CLAUDE.md no-popups rule).
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,7 +24,14 @@ import {
   type Skill,
   type SkillKind,
 } from "@/api/skills";
-import { Card } from "@/components/primitives/Card";
+import {
+  ResponsiveListCard,
+  useListState,
+  useListUrlState,
+  type FilterDef,
+  type SortOption,
+} from "@/components/lists";
+import { MListRow, type MListRowBadgeColor } from "@/components/lists/MListRow";
 import { Pill } from "@/components/primitives/Pill";
 
 const KIND_OPTIONS: { value: SkillKind; label: string; blurb: string }[] = [
@@ -35,6 +52,35 @@ const KIND_OPTIONS: { value: SkillKind; label: string; blurb: string }[] = [
   },
 ];
 
+const SORT_OPTIONS: SortOption[] = [
+  { value: "added", label: "Recently added" },
+  { value: "name", label: "Name A → Z" },
+];
+
+const KIND_FILTER: FilterDef = {
+  id: "kind",
+  label: "Kind",
+  options: [
+    { value: "all", label: "All kinds" },
+    { value: "tool", label: "Tool" },
+    { value: "prompt_fragment", label: "Prompt fragment" },
+    { value: "evaluator", label: "Evaluator" },
+  ],
+};
+
+const DESKTOP_COLUMNS = [
+  { key: "name", label: "Name" },
+  { key: "kind", label: "Kind" },
+  { key: "description", label: "Description" },
+  { key: "actions", label: "", align: "right" as const },
+];
+
+function kindBadgeColor(kind: SkillKind): MListRowBadgeColor {
+  // tool = gold (matches the existing `<Pill tone="gold">` on desktop);
+  // others use muted to match the existing default tone below.
+  return kind === "tool" ? "gold" : "muted";
+}
+
 export function SettingsSkillsRoute() {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -50,8 +96,42 @@ export function SettingsSkillsRoute() {
     onSuccess: () => qc.invalidateQueries({ queryKey: skillKeys.all }),
   });
 
+  const rows: Skill[] = q.data ?? [];
+
+  const list = useListState<Skill>({
+    rows,
+    filters: [KIND_FILTER],
+    sortOptions: SORT_OPTIONS,
+    filterFn: (row, query, values) => {
+      const kind = values.kind ?? "all";
+      if (kind !== "all" && row.kind !== kind) return false;
+      const needle = query.trim().toLowerCase();
+      if (needle.length === 0) return true;
+      return (
+        row.name.toLowerCase().includes(needle) ||
+        (row.description || "").toLowerCase().includes(needle)
+      );
+    },
+    sortFn: (rs, key) => {
+      switch (key) {
+        case "name":
+          return [...rs].sort((a, b) => a.name.localeCompare(b.name));
+        case "added":
+        default:
+          // listSkills returns server-ordered (most-recently-updated first).
+          // We preserve that for "added" since updated_at is the closest
+          // recency signal available on the type today.
+          return [...rs].sort((a, b) =>
+            (b.updated_at || "").localeCompare(a.updated_at || ""),
+          );
+      }
+    },
+  });
+  useListUrlState("settings-skills", list);
+
   return (
-    <Card className="p-5">
+    <div>
+      {/* Card-level title + add-button + intro stays as chrome above the list. */}
       <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
@@ -85,49 +165,61 @@ export function SettingsSkillsRoute() {
         />
       ) : null}
 
-      {q.isPending ? (
-        <div className="text-text-3 text-[13px] py-6 text-center">Loading…</div>
-      ) : q.isError ? (
-        <div className="text-danger text-[13px] py-6 text-center">
-          {errorMessage(q.error)}
-        </div>
-      ) : (q.data ?? []).length === 0 && !adding ? (
-        <div className="text-text-3 text-[13px] py-6 text-center">
-          No skills yet — click <span className="text-text">+ Add skill</span> to
-          create one.
-        </div>
-      ) : (
-        <table className="w-full mt-2">
-          <thead>
-            <tr className="text-text-3 text-[11px] uppercase tracking-wider text-left">
-              <th className="py-2 pr-3 font-normal">Name</th>
-              <th className="py-2 pr-3 font-normal">Kind</th>
-              <th className="py-2 pr-3 font-normal">Description</th>
-              <th className="py-2 pr-0 font-normal text-right" />
-            </tr>
-          </thead>
-          <tbody>
-            {(q.data ?? []).map((skill) => (
-              <SkillRow
-                key={skill.skill_id}
-                skill={skill}
-                editing={editingId === skill.skill_id}
-                onEdit={() => setEditingId(skill.skill_id)}
-                onCancelEdit={() => setEditingId(null)}
-                onSaved={() => {
-                  setEditingId(null);
-                  qc.invalidateQueries({ queryKey: skillKeys.all });
-                }}
-                onArchive={() => archive.mutate(skill.skill_id)}
-                archiving={
-                  archive.variables === skill.skill_id && archive.isPending
-                }
-              />
-            ))}
-          </tbody>
-        </table>
-      )}
-    </Card>
+      <ResponsiveListCard<Skill>
+        listId="settings-skills"
+        title="Skills"
+        count={list.totalRows}
+        toolbar={{
+          search: { ...list.search, placeholder: "Search name or description…" },
+          filters: list.filters,
+          sort: list.sort,
+          clearAll: list.clearAll,
+        }}
+        columns={DESKTOP_COLUMNS}
+        rows={list.rows}
+        loading={q.isPending}
+        error={
+          q.isError
+            ? {
+                message: errorMessage(q.error),
+                retry: () => q.refetch(),
+              }
+            : null
+        }
+        empty={
+          rows.length === 0
+            ? "No skills yet — click + Add skill to create one."
+            : "No skills match these filters."
+        }
+        renderRow={(skill) => (
+          <SkillRow
+            key={skill.skill_id}
+            skill={skill}
+            editing={editingId === skill.skill_id}
+            onEdit={() => setEditingId(skill.skill_id)}
+            onCancelEdit={() => setEditingId(null)}
+            onSaved={() => {
+              setEditingId(null);
+              qc.invalidateQueries({ queryKey: skillKeys.all });
+            }}
+            onArchive={() => archive.mutate(skill.skill_id)}
+            archiving={
+              archive.variables === skill.skill_id && archive.isPending
+            }
+          />
+        )}
+        renderMobileRow={(skill) => (
+          <MListRow
+            key={skill.skill_id}
+            onClick={() => setEditingId(skill.skill_id)}
+            title={skill.name}
+            badge={skill.kind.replace("_", " ")}
+            badgeColor={kindBadgeColor(skill.kind)}
+            subtitle={skill.description || "no description"}
+          />
+        )}
+      />
+    </div>
   );
 }
 
@@ -165,7 +257,7 @@ function SkillRow({
 
   return (
     <tr className="border-t border-border-soft align-middle">
-      <td className="py-2 pr-3">
+      <td className="py-2 px-3">
         <code className="font-mono text-[13px] text-text">{skill.name}</code>
       </td>
       <td className="py-2 pr-3">
@@ -178,7 +270,7 @@ function SkillRow({
           <span className="text-text-3 italic text-[12px]">no description</span>
         )}
       </td>
-      <td className="py-2 pr-0 text-right">
+      <td className="py-2 px-3 text-right">
         <button
           type="button"
           onClick={onEdit}

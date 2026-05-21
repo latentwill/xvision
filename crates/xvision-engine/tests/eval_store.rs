@@ -28,6 +28,10 @@ async fn pool_with_migration() -> (SqlitePool, TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     (pool, dir)
 }
 
@@ -119,6 +123,7 @@ async fn cancelled_run_cannot_be_revived_or_finalized() {
         n_trades: 17,
         n_decisions: 42,
         baselines: None,
+        ..Default::default()
     };
     let err = store.finalize(&id, &metrics).await.unwrap_err();
     assert!(
@@ -184,6 +189,7 @@ async fn finalize_sets_metrics_status_and_completed_at() {
         n_trades: 17,
         n_decisions: 42,
         baselines: None,
+        ..Default::default()
     };
     store.finalize(&id, &metrics).await.unwrap();
     let back = store.get(&id).await.unwrap();

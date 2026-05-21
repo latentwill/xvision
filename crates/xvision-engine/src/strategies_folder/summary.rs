@@ -91,9 +91,7 @@ pub async fn summarize_pdf(src: &Path) -> SummaryOutcome {
 
     let body = format!(
         "# Summary of {}\n\n_Extracted with `pdftotext`._\n\n```\n{}\n```\n",
-        src.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("<unknown>"),
+        src.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
         text.trim_end()
     );
 
@@ -106,32 +104,25 @@ pub async fn summarize_pdf(src: &Path) -> SummaryOutcome {
                 .to_string(),
             bytes: body.len() as u64,
         },
-        Err(e) => SummaryOutcome::ExtractorFailed(format!(
-            "write sidecar {}: {e}",
-            sidecar_path.display()
-        )),
+        Err(e) => SummaryOutcome::ExtractorFailed(format!("write sidecar {}: {e}", sidecar_path.display())),
     }
 }
 
 /// Build a markdown summary for a CSV source file. Reads the header row
 /// + first [`CSV_SUMMARY_MAX_ROWS`] data rows and emits a markdown table.
+///
 /// Empty / unreadable CSV returns [`SummaryOutcome::ExtractorFailed`].
 pub async fn summarize_csv(src: &Path) -> SummaryOutcome {
     let text = match tokio::fs::read_to_string(src).await {
         Ok(t) => t,
-        Err(e) => {
-            return SummaryOutcome::ExtractorFailed(format!("read csv {}: {e}", src.display()))
-        }
+        Err(e) => return SummaryOutcome::ExtractorFailed(format!("read csv {}: {e}", src.display())),
     };
 
     let mut lines = text.lines();
     let header = match lines.next() {
         Some(h) => h,
         None => {
-            return SummaryOutcome::ExtractorFailed(format!(
-                "csv {} is empty (no header row)",
-                src.display()
-            ))
+            return SummaryOutcome::ExtractorFailed(format!("csv {} is empty (no header row)", src.display()))
         }
     };
 
@@ -153,16 +144,11 @@ pub async fn summarize_csv(src: &Path) -> SummaryOutcome {
     );
     body.push_str(" |\n");
 
-    let mut count = 0usize;
-    for line in lines {
-        if count >= CSV_SUMMARY_MAX_ROWS {
-            break;
-        }
+    for line in lines.take(CSV_SUMMARY_MAX_ROWS) {
         let cells: Vec<&str> = line.split(',').collect();
         body.push_str("| ");
         body.push_str(&cells.join(" | "));
         body.push_str(" |\n");
-        count += 1;
     }
 
     let sidecar_path = match sidecar_path_for(src) {
@@ -184,10 +170,7 @@ pub async fn summarize_csv(src: &Path) -> SummaryOutcome {
                 .to_string(),
             bytes: body.len() as u64,
         },
-        Err(e) => SummaryOutcome::ExtractorFailed(format!(
-            "write sidecar {}: {e}",
-            sidecar_path.display()
-        )),
+        Err(e) => SummaryOutcome::ExtractorFailed(format!("write sidecar {}: {e}", sidecar_path.display())),
     }
 }
 
@@ -232,12 +215,14 @@ mod tests {
         let outcome = summarize_csv(&src).await;
         assert!(matches!(outcome, SummaryOutcome::Written { .. }));
 
-        let sidecar_body =
-            std::fs::read_to_string(src.parent().unwrap().join("big.summary.md")).unwrap();
+        let sidecar_body = std::fs::read_to_string(src.parent().unwrap().join("big.summary.md")).unwrap();
         // 50 data rows + header table line + table-divider line should
-        // be present; row 50 should appear, row 51+ should not.
-        assert!(sidecar_body.contains("row-49"));
-        assert!(!sidecar_body.contains("row-50\n"), "expected row-50 to be trimmed");
+        // be present; row 49 is the last included row.
+        assert!(sidecar_body.contains("| row-49 |"));
+        assert!(
+            !sidecar_body.contains("| row-50 |"),
+            "expected row-50 to be trimmed"
+        );
     }
 
     #[test]

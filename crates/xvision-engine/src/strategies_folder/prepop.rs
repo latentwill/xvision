@@ -42,8 +42,7 @@ use super::reader::{folder_root, SUBFOLDER_ALLOWLIST};
 /// Embedded `docs/strategies/` snapshot. Captures the templates tree
 /// and the freqtrade playlist at build time so the deployed image
 /// doesn't need the docs directory on disk.
-static EMBEDDED_DOCS_STRATEGIES: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/../../docs/strategies");
+static EMBEDDED_DOCS_STRATEGIES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../docs/strategies");
 
 /// Manifest filename, relative to `<root>/library/`. Hidden by leading
 /// dot so a casual `ls` of the library folder shows just the curated
@@ -130,16 +129,16 @@ pub async fn init(xvn_home: &Path, opts: InitOptions) -> ApiResult<InitReport> {
     // Step 1: create root + the five allowlisted subfolders. Track
     // which ones we materialize for the first time so the CLI can
     // surface a "wrote N subfolders" line.
-    tokio::fs::create_dir_all(&root).await.map_err(|e| {
-        ApiError::Internal(format!("create strategies root {}: {e}", root.display()))
-    })?;
+    tokio::fs::create_dir_all(&root)
+        .await
+        .map_err(|e| ApiError::Internal(format!("create strategies root {}: {e}", root.display())))?;
     for name in SUBFOLDER_ALLOWLIST {
         let sub = root.join(name);
         let existed = tokio::fs::try_exists(&sub).await.unwrap_or(false);
         if !existed {
-            tokio::fs::create_dir_all(&sub).await.map_err(|e| {
-                ApiError::Internal(format!("create subfolder {}: {e}", sub.display()))
-            })?;
+            tokio::fs::create_dir_all(&sub)
+                .await
+                .map_err(|e| ApiError::Internal(format!("create subfolder {}: {e}", sub.display())))?;
             report.created_subfolders.push((*name).to_string());
         }
     }
@@ -166,10 +165,7 @@ pub async fn init(xvn_home: &Path, opts: InitOptions) -> ApiResult<InitReport> {
         let source_hash = sha256_hex(bytes);
 
         // Find an existing manifest entry by rel_path.
-        let existing_idx = manifest
-            .entries
-            .iter()
-            .position(|e| e.rel_path == rel_path);
+        let existing_idx = manifest.entries.iter().position(|e| e.rel_path == rel_path);
 
         if let Some(idx) = existing_idx {
             keep_indices[idx] = true;
@@ -324,12 +320,8 @@ fn is_eligible_source(rel: &str) -> bool {
 
 async fn read_manifest(path: &Path) -> ApiResult<Manifest> {
     match tokio::fs::read_to_string(path).await {
-        Ok(text) => serde_json::from_str(&text).map_err(|e| {
-            ApiError::Internal(format!(
-                "parse manifest {}: {e}",
-                path.display()
-            ))
-        }),
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|e| ApiError::Internal(format!("parse manifest {}: {e}", path.display()))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Manifest::default()),
         Err(e) => Err(ApiError::Internal(format!(
             "read manifest {}: {e}",
@@ -340,29 +332,26 @@ async fn read_manifest(path: &Path) -> ApiResult<Manifest> {
 
 async fn write_manifest(path: &Path, manifest: &Manifest) -> ApiResult<()> {
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            ApiError::Internal(format!("create manifest parent {}: {e}", parent.display()))
-        })?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| ApiError::Internal(format!("create manifest parent {}: {e}", parent.display())))?;
     }
     let body = serde_json::to_string_pretty(manifest)
         .map_err(|e| ApiError::Internal(format!("serialize manifest: {e}")))?;
-    tokio::fs::write(path, body).await.map_err(|e| {
-        ApiError::Internal(format!("write manifest {}: {e}", path.display()))
-    })
+    tokio::fs::write(path, body)
+        .await
+        .map_err(|e| ApiError::Internal(format!("write manifest {}: {e}", path.display())))
 }
 
 async fn write_file(path: &Path, bytes: &[u8]) -> ApiResult<()> {
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            ApiError::Internal(format!(
-                "create library parent {}: {e}",
-                parent.display()
-            ))
-        })?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| ApiError::Internal(format!("create library parent {}: {e}", parent.display())))?;
     }
-    tokio::fs::write(path, bytes).await.map_err(|e| {
-        ApiError::Internal(format!("write library file {}: {e}", path.display()))
-    })
+    tokio::fs::write(path, bytes)
+        .await
+        .map_err(|e| ApiError::Internal(format!("write library file {}: {e}", path.display())))
 }
 
 /// Hash a file's bytes. Returns `Ok(None)` when the file does not
@@ -371,10 +360,7 @@ async fn read_file_hash(path: &Path) -> ApiResult<Option<String>> {
     match tokio::fs::read(path).await {
         Ok(bytes) => Ok(Some(sha256_hex(&bytes))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(ApiError::Internal(format!(
-            "hash {}: {e}",
-            path.display()
-        ))),
+        Err(e) => Err(ApiError::Internal(format!("hash {}: {e}", path.display()))),
     }
 }
 

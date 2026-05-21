@@ -48,7 +48,7 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .await
         .unwrap();
     // V2D: memory_mode column (migration 026).
-    sqlx::query(include_str!("../migrations/027_agent_slot_memory_mode.sql"))
+    sqlx::query(include_str!("../migrations/028_agent_slot_memory_mode.sql"))
         .execute(&pool)
         .await
         .unwrap();

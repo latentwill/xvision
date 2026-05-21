@@ -85,12 +85,20 @@ impl RunStore {
             .transpose()
             .context("serialize metrics")?;
 
+        let bars_manifest_json = run
+            .bars_manifest
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serialize bars_manifest")?;
+
         sqlx::query(
             "INSERT INTO eval_runs \
              (id, agent_id, agents_agent_id, scenario_id, params_override_json, mode, status, \
               started_at, completed_at, metrics_json, error, \
-              estimated_total_tokens, actual_input_tokens, actual_output_tokens) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
+              bars_content_hash, manifest_canonical, bars_manifest) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&run.id)
         .bind(&run.agent_id)
@@ -106,6 +114,9 @@ impl RunStore {
         .bind(run.estimated_total_tokens.map(|n| n as i64))
         .bind(run.actual_input_tokens.map(|n| n as i64))
         .bind(run.actual_output_tokens.map(|n| n as i64))
+        .bind(&run.bars_content_hash)
+        .bind(&run.manifest_canonical)
+        .bind(bars_manifest_json)
         .execute(&self.pool)
         .await
         .with_context(|| format!("insert eval_runs id={}", run.id))?;
@@ -170,6 +181,36 @@ impl RunStore {
         if res.rows_affected() == 0 {
             anyhow::bail!("update_token_usage: no run with id '{id}'");
         }
+        Ok(())
+    }
+
+    /// Persist `bars_content_hash`, `manifest_canonical`, and the full
+    /// `DataManifest` JSON blob for a run. Called once at scenario-start after
+    /// the Parquet fixture is loaded and the manifest is computed.
+    ///
+    /// This is a best-effort update — callers may also populate these fields
+    /// at `Run::new_queued` time; this method covers the case where the hash
+    /// is computed after the initial INSERT.
+    pub async fn set_bars_manifest(
+        &self,
+        id: &str,
+        bars_content_hash: &str,
+        manifest_canonical: &str,
+        bars_manifest: &serde_json::Value,
+    ) -> Result<()> {
+        let manifest_json = serde_json::to_string(bars_manifest).context("serialize bars_manifest")?;
+        sqlx::query(
+            "UPDATE eval_runs \
+             SET bars_content_hash = ?, manifest_canonical = ?, bars_manifest = ? \
+             WHERE id = ?",
+        )
+        .bind(bars_content_hash)
+        .bind(manifest_canonical)
+        .bind(manifest_json)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("set_bars_manifest: run '{id}'"))?;
         Ok(())
     }
 
@@ -250,6 +291,24 @@ impl RunStore {
         Ok(res.rows_affected())
     }
 
+    /// Overwrite `metrics_json` on a completed run. Called post-finalize when
+    /// additional aggregations (e.g. inference cost) are computed after the
+    /// executor writes the initial metrics blob. Unlike `finalize`, this does
+    /// NOT require the run to be in a non-terminal state — it patches the
+    /// JSON column unconditionally on the completed row.
+    ///
+    /// Returns `Ok(false)` when no row matched (unknown run id).
+    pub async fn patch_metrics(&self, id: &str, metrics: &MetricsSummary) -> Result<bool> {
+        let metrics_json = serde_json::to_string(metrics).context("serialize metrics for patch")?;
+        let res = sqlx::query("UPDATE eval_runs SET metrics_json = ? WHERE id = ?")
+            .bind(&metrics_json)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("patch eval_runs metrics_json")?;
+        Ok(res.rows_affected() > 0)
+    }
+
     /// Mark an active run completed: persist metrics_json, set completed_at =
     /// now, flip status to Completed. Terminal rows are never revived.
     pub async fn finalize(&self, id: &str, metrics: &MetricsSummary) -> Result<()> {
@@ -277,7 +336,8 @@ impl RunStore {
         let row = sqlx::query(
             "SELECT id, agent_id, agents_agent_id, scenario_id, params_override_json, \
                     mode, status, started_at, completed_at, metrics_json, error, \
-                    estimated_total_tokens, actual_input_tokens, actual_output_tokens \
+                    estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
+                    bars_content_hash, manifest_canonical, bars_manifest \
              FROM eval_runs WHERE id = ?",
         )
         .bind(id)
@@ -472,7 +532,8 @@ impl RunStore {
         let mut sql = String::from(
             "SELECT id, agent_id, agents_agent_id, scenario_id, params_override_json, \
                     mode, status, started_at, completed_at, metrics_json, error, \
-                    estimated_total_tokens, actual_input_tokens, actual_output_tokens \
+                    estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
+                    bars_content_hash, manifest_canonical, bars_manifest \
              FROM eval_runs",
         );
         let mut conditions: Vec<&'static str> = Vec::new();
@@ -1370,6 +1431,19 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         .map(|s| serde_json::from_str::<MetricsSummary>(&s).context("deserialize metrics"))
         .transpose()?;
 
+    // Migration-026 columns: fall back to None for pre-migration rows.
+    let bars_content_hash: Option<String> = row
+        .try_get::<Option<String>, _>("bars_content_hash")
+        .unwrap_or(None);
+    let manifest_canonical: Option<String> = row
+        .try_get::<Option<String>, _>("manifest_canonical")
+        .unwrap_or(None);
+    let bars_manifest: Option<serde_json::Value> = row
+        .try_get::<Option<String>, _>("bars_manifest")
+        .unwrap_or(None)
+        .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null))
+        .filter(|v| !v.is_null());
+
     Ok(Run {
         id: row.try_get("id").context("read id")?,
         agent_id: row.try_get("agent_id").context("read agent_id")?,
@@ -1396,6 +1470,9 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
             .try_get::<Option<i64>, _>("actual_output_tokens")
             .context("read actual_output_tokens")?
             .map(|n| n as u64),
+        bars_content_hash,
+        manifest_canonical,
+        bars_manifest,
     })
 }
 

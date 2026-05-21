@@ -518,6 +518,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         data_source: DataSource::AlpacaHistorical {
             feed: None,
@@ -1512,6 +1513,7 @@ pub mod select {
                     partial_fills: false,
                     volume_constraints: None,
                 },
+                overrides: Vec::new(),
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),

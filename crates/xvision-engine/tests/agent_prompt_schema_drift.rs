@@ -29,8 +29,8 @@ async fn fresh_pool() -> SqlitePool {
     let migration_025 = include_str!("../migrations/025_agent_slot_cache_and_window.sql");
     sqlx::query(migration_025).execute(&pool).await.unwrap();
     // V2D: memory_mode column.
-    let migration_026 = include_str!("../migrations/027_agent_slot_memory_mode.sql");
-    sqlx::query(migration_026).execute(&pool).await.unwrap();
+    let migration_028 = include_str!("../migrations/028_agent_slot_memory_mode.sql");
+    sqlx::query(migration_028).execute(&pool).await.unwrap();
     pool
 }
 

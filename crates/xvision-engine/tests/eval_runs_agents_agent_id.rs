@@ -147,6 +147,10 @@ async fn pool_with_022() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 

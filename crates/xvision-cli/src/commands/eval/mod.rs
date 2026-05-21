@@ -9,6 +9,7 @@
 
 pub mod batch;
 pub mod compare_format;
+pub mod probe_lookahead;
 pub mod review;
 
 use std::path::PathBuf;
@@ -90,6 +91,14 @@ pub enum Op {
     /// status. The verb hits the same `eval::cancel` engine API as
     /// `POST /api/eval/runs/:id/cancel`.
     Cancel(CancelArgs),
+    /// Run the two-pass lookahead-bias prober on a completed run.
+    ///
+    /// Detects indicator-based lookahead bias by running each baseline twice:
+    /// once with full bars, and once with bar `t` withheld. Any signal that
+    /// survives bar removal is flagged as `lookahead_suspected`.
+    ///
+    /// Performance: 2× the cost of a normal baseline run. Opt-in only.
+    ProbeLookahead(probe_lookahead::ProbeLookaheadArgs),
 }
 
 #[derive(Args, Debug)]
@@ -109,6 +118,30 @@ pub struct RunArgs {
     /// Output the final Run as JSON.
     #[arg(long)]
     pub json: bool,
+
+    // ===== Hard limits (cli-operator-safety-p0 slice 2/3) =====
+    /// Max decision cycles. Breach cancels the run with a stable
+    /// reason in the `error` field. Backtest mode only — paper mode
+    /// silently ignores the cap today.
+    #[arg(long)]
+    pub max_decisions: Option<u32>,
+    /// Max cumulative input tokens across all model calls in the run.
+    /// Requires `--cancel-on-token-limit` to actually cancel; without
+    /// the flag, the cap is advisory.
+    #[arg(long)]
+    pub max_input_tokens: Option<u64>,
+    /// Max cumulative output tokens across all model calls in the run.
+    /// Same advisory/strict semantics as `--max-input-tokens`.
+    #[arg(long)]
+    pub max_output_tokens: Option<u64>,
+    /// Max wall-clock seconds the run may take. Always a hard cap.
+    #[arg(long)]
+    pub max_wall_clock_secs: Option<u64>,
+    /// When set, breach of a token cap (`--max-input-tokens` or
+    /// `--max-output-tokens`) cancels the run. Without the flag, token
+    /// caps are advisory (logged but not enforced).
+    #[arg(long)]
+    pub cancel_on_token_limit: bool,
 }
 
 #[derive(Args, Debug)]
@@ -319,6 +352,7 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Review(args) => review::run_review_cmd(args).await,
         Op::Batch(args) => run_batch_cmd(args).await,
         Op::Cancel(args) => run_cancel(args).await,
+        Op::ProbeLookahead(args) => probe_lookahead::run_probe_lookahead(args).await,
     }
 }
 
@@ -365,11 +399,31 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         .await
         .exit_with(XvnExit::Upstream)?;
     let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
+
+    // Build `EvalLimits` from the CLI flags. If every cap is `None`
+    // and `cancel_on_token_limit` is false, leave `limits: None` so
+    // the engine's pre-limits codepath stays hot.
+    let limits = {
+        let l = xvision_engine::eval::limits::EvalLimits {
+            max_decisions: args.max_decisions,
+            max_input_tokens: args.max_input_tokens,
+            max_output_tokens: args.max_output_tokens,
+            max_wall_clock_secs: args.max_wall_clock_secs,
+            cancel_on_token_limit: args.cancel_on_token_limit,
+        };
+        if l.is_empty() && !l.cancel_on_token_limit {
+            None
+        } else {
+            Some(l)
+        }
+    };
+
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
         scenario_id: args.scenario.clone(),
         mode,
         params_override: None,
+        limits,
     };
 
     println!(
@@ -474,11 +528,9 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
 /// Parse a duration like `2h`, `30m`, `1d`, `45s` into a `chrono::Duration`.
 fn parse_older_than(s: &str) -> Result<chrono::Duration> {
     let trimmed = s.trim();
-    let (digits, unit) = trimmed.split_at(
-        trimmed
-            .find(|c: char| !c.is_ascii_digit())
-            .context(format!("--older-than '{s}' must be a digit followed by a unit (s, m, h, d)"))?,
-    );
+    let (digits, unit) = trimmed.split_at(trimmed.find(|c: char| !c.is_ascii_digit()).context(format!(
+        "--older-than '{s}' must be a digit followed by a unit (s, m, h, d)"
+    ))?);
     let n: i64 = digits
         .parse()
         .context(format!("--older-than '{s}' has a non-numeric prefix"))?;
@@ -487,9 +539,7 @@ fn parse_older_than(s: &str) -> Result<chrono::Duration> {
         "m" => chrono::Duration::minutes(n),
         "h" => chrono::Duration::hours(n),
         "d" => chrono::Duration::days(n),
-        other => anyhow::bail!(
-            "--older-than '{s}' has unknown unit '{other}'; expected one of: s, m, h, d"
-        ),
+        other => anyhow::bail!("--older-than '{s}' has unknown unit '{other}'; expected one of: s, m, h, d"),
     };
     Ok(dur)
 }
@@ -497,11 +547,7 @@ fn parse_older_than(s: &str) -> Result<chrono::Duration> {
 async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     // Require at least one selector. Calling `xvn eval cancel` with
     // no arguments would otherwise be a silent no-op.
-    if args.run_id.is_none()
-        && !args.running
-        && args.strategy.is_none()
-        && args.older_than.is_none()
-    {
+    if args.run_id.is_none() && !args.running && args.strategy.is_none() && args.older_than.is_none() {
         return Err(CliError {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!(
@@ -517,10 +563,7 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     // Resolve the older-than cutoff before we touch the DB so a bad
     // duration string fails fast with Usage rather than Upstream.
     let older_than_cutoff = match args.older_than.as_deref() {
-        Some(s) => Some(
-            chrono::Utc::now()
-                - parse_older_than(s).exit_with(XvnExit::Usage)?,
-        ),
+        Some(s) => Some(chrono::Utc::now() - parse_older_than(s).exit_with(XvnExit::Usage)?),
         None => None,
     };
 
@@ -685,7 +728,17 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     }
     if let Some(m) = run.metrics.as_ref() {
         println!("\nMetrics");
-        println!("  total_return  {:.2}%", m.total_return_pct);
+        println!("  gross_return  {:.2}%", m.total_return_pct);
+        if let Some(cost) = m.inference_cost_quote_total {
+            println!("  infer_cost    ${cost:.4}");
+        } else {
+            println!("  infer_cost    n/a");
+        }
+        if let Some(net) = m.net_return_pct {
+            println!("  net_return    {:.2}%", net);
+        } else {
+            println!("  net_return    n/a");
+        }
         println!("  sharpe        {:.3}", m.sharpe);
         println!("  max_drawdown  {:.2}%", m.max_drawdown_pct);
         println!("  win_rate      {:.2}", m.win_rate);
@@ -938,9 +991,15 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
         });
     }
 
-    let report = eval::compare(&ctx, CompareRunsRequest { run_ids })
-        .await
-        .map_err(|e| api_to_cli("eval compare", e))?;
+    let report = eval::compare(
+        &ctx,
+        CompareRunsRequest {
+            run_ids,
+            allow_manifest_mismatch: false,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("eval compare", e))?;
 
     if args.json {
         let report = build_compare_report(&ctx, report, &args.sort).await;
@@ -1149,5 +1208,71 @@ mod tests {
         };
         assert_eq!(args.run_ids.len(), 2);
         assert!(args.runs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // probe-lookahead CLI parser tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn probe_lookahead_parses_run_flag() {
+        let parsed = TestEval::try_parse_from(["x", "probe-lookahead", "--run", "01JABCDEF0000000000000"])
+            .expect("probe-lookahead --run must parse");
+        let Op::ProbeLookahead(args) = parsed.op else {
+            panic!("expected ProbeLookahead op");
+        };
+        assert_eq!(args.run, "01JABCDEF0000000000000");
+        assert_eq!(args.baseline, "all");
+        assert!(!args.skip_always_signal);
+        assert!(!args.json);
+    }
+
+    #[test]
+    fn probe_lookahead_baseline_flag_accepted() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "probe-lookahead",
+            "--run",
+            "01JABCDEF0000000000000",
+            "--baseline",
+            "ma_crossover",
+        ])
+        .expect("probe-lookahead --baseline must parse");
+        let Op::ProbeLookahead(args) = parsed.op else {
+            panic!("expected ProbeLookahead op");
+        };
+        assert_eq!(args.baseline, "ma_crossover");
+    }
+
+    #[test]
+    fn probe_lookahead_skip_always_signal_flag() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "probe-lookahead",
+            "--run",
+            "01JABCDEF0000000000000",
+            "--skip-always-signal",
+        ])
+        .expect("probe-lookahead --skip-always-signal must parse");
+        let Op::ProbeLookahead(args) = parsed.op else {
+            panic!("expected ProbeLookahead op");
+        };
+        assert!(args.skip_always_signal);
+    }
+
+    #[test]
+    fn probe_lookahead_json_flag_accepted() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "probe-lookahead",
+            "--run",
+            "01JABCDEF0000000000000",
+            "--json",
+        ])
+        .expect("probe-lookahead --json must parse");
+        let Op::ProbeLookahead(args) = parsed.op else {
+            panic!("expected ProbeLookahead op");
+        };
+        assert!(args.json);
     }
 }

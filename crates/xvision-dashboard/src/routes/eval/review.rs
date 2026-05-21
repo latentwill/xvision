@@ -439,6 +439,7 @@ mod tests {
                     n_trades: 4,
                     n_decisions: 3,
                     baselines: None,
+                    ..Default::default()
                 },
             )
             .await

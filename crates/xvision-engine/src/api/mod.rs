@@ -63,8 +63,9 @@ const MIGRATION_025_AGENT_SLOT_CACHE_AND_WINDOW: &str =
     include_str!("../../migrations/025_agent_slot_cache_and_window.sql");
 const MIGRATION_026_TRACE_SURFACE_FOUNDATION: &str =
     include_str!("../../migrations/026_trace_surface_foundation.sql");
-const MIGRATION_027_AGENT_SLOT_MEMORY_MODE: &str =
-    include_str!("../../migrations/027_agent_slot_memory_mode.sql");
+const MIGRATION_027_RUN_BARS_MANIFEST: &str = include_str!("../../migrations/027_run_bars_manifest.sql");
+const MIGRATION_028_AGENT_SLOT_MEMORY_MODE: &str =
+    include_str!("../../migrations/028_agent_slot_memory_mode.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -206,6 +207,7 @@ impl ApiContext {
         migrate_hypothesis_and_experiments(&pool).await?;
         migrate_agent_slot_cache_and_window(&pool).await?;
         migrate_trace_surface_foundation(&pool).await?;
+        migrate_run_bars_manifest(&pool).await?;
         migrate_agent_slot_memory_mode(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
@@ -379,9 +381,7 @@ impl ApiContext {
 /// config is present the recorder is still built (`new`, not
 /// `with_embedder`) so the dispatcher can emit
 /// `memory_disabled_no_embedder` for any non-Off slot.
-async fn build_memory_recorder()
-    -> anyhow::Result<Arc<crate::agent::memory_recorder::MemoryRecorder>>
-{
+async fn build_memory_recorder() -> anyhow::Result<Arc<crate::agent::memory_recorder::MemoryRecorder>> {
     let memory_db_path = std::env::var("XVN_MEMORY_DB")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
@@ -403,10 +403,7 @@ async fn build_memory_recorder()
 
     let embedder = build_default_embedder();
     let recorder = match embedder {
-        Some(e) => crate::agent::memory_recorder::MemoryRecorder::with_embedder(
-            Arc::clone(&store),
-            e,
-        ),
+        Some(e) => crate::agent::memory_recorder::MemoryRecorder::with_embedder(Arc::clone(&store), e),
         None => crate::agent::memory_recorder::MemoryRecorder::new(Arc::clone(&store)),
     };
     Ok(Arc::new(recorder))
@@ -422,9 +419,7 @@ async fn build_memory_recorder()
 /// minimal seam that satisfies the Phase 3 acceptance ("OpenAI
 /// embedder at engine startup") without dragging the providers crate
 /// into ApiContext::open.
-fn build_default_embedder()
-    -> Option<Arc<dyn xvision_memory::embedder::Embedder>>
-{
+fn build_default_embedder() -> Option<Arc<dyn xvision_memory::embedder::Embedder>> {
     let api_key = std::env::var("OPENAI_API_KEY").ok().filter(|s| !s.is_empty())?;
     let base_url = std::env::var("OPENAI_BASE_URL")
         .ok()
@@ -670,13 +665,27 @@ async fn migrate_trace_surface_foundation(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
-/// Apply the `agent_slots.memory_mode` column add from migration 027
+/// Apply migration 027: `bars_content_hash`, `manifest_canonical`,
+/// `bars_manifest` columns on `eval_runs`. Gated on `bars_content_hash`
+/// not yet existing so the migration is idempotent on already-upgraded
+/// databases. Wiring was missing on the PR #415 that introduced the
+/// migration file — `RunStore::create` references the columns and the
+/// insert otherwise fails on fresh databases. Fixed alongside
+/// cli-operator-safety-p0 slice 2/3.
+async fn migrate_run_bars_manifest(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "bars_content_hash").await? {
+        sqlx::query(MIGRATION_027_RUN_BARS_MANIFEST).execute(pool).await?;
+    }
+    Ok(())
+}
+
+/// Apply the `agent_slots.memory_mode` column add from migration 028
 /// (V2D per-slot cortex-memory toggle). Same probe-then-apply pattern
 /// as 019 / 020 / 025 so `ApiContext::open` is idempotent on an
 /// already-initialized home.
 async fn migrate_agent_slot_memory_mode(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agent_slots", "memory_mode").await? {
-        sqlx::query(MIGRATION_027_AGENT_SLOT_MEMORY_MODE)
+        sqlx::query(MIGRATION_028_AGENT_SLOT_MEMORY_MODE)
             .execute(pool)
             .await?;
     }

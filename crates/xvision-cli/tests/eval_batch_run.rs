@@ -364,6 +364,12 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/027_run_bars_manifest.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();

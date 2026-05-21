@@ -1,10 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 import { SettingsProvidersRoute } from "./providers";
 import * as settingsApi from "@/api/settings";
 import type { ProviderRow } from "@/api/types.gen";
+
+// `<ResponsiveListCard>` reads `useViewportMode()` which calls
+// `window.matchMedia`. jsdom doesn't provide it; install a desktop
+// stub so the route mounts. Same pattern as `routes/scenarios.test.tsx`.
+function stubMatchMediaDesktop() {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query.includes("min-width: 1280px"),
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
 
 vi.mock("@/api/settings", async () => {
   const actual = await vi.importActual<typeof import("@/api/settings")>(
@@ -44,12 +65,15 @@ function renderRoute() {
         })
       }
     >
-      <SettingsProvidersRoute />
+      <MemoryRouter>
+        <SettingsProvidersRoute />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 beforeEach(() => {
+  stubMatchMediaDesktop();
   vi.mocked(settingsApi.listProviders).mockResolvedValue({
     providers: [provider()],
   });
@@ -61,6 +85,29 @@ afterEach(() => {
 });
 
 describe("SettingsProvidersRoute", () => {
+  it("filters the list by name via the search box", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        provider({ name: "openai", kind: "openai-compat" }),
+        provider({ name: "anthropic", kind: "anthropic" }),
+        provider({ name: "openrouter", kind: "openai-compat" }),
+      ],
+    });
+
+    renderRoute();
+    await screen.findByText("openai");
+
+    const search = screen.getByPlaceholderText(/Search name or kind/i);
+    fireEvent.change(search, { target: { value: "anth" } });
+
+    // Each remaining row renders the name twice (in the name column
+    // <code> and the kind column for anthropic). Use queryAllByText and
+    // assert presence by length, with the unfiltered names absent.
+    expect(screen.queryAllByText("openai").length).toBe(0);
+    expect(screen.queryAllByText("openrouter").length).toBe(0);
+    expect(screen.queryAllByText("anthropic").length).toBeGreaterThan(0);
+  });
+
   it("does not expose API key env in the provider edit UI", async () => {
     renderRoute();
 

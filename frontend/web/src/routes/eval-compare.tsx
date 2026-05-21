@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
@@ -148,6 +148,69 @@ export function EvalCompareRoute() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+type CompareSortKey =
+  | "call_order"
+  | "gross_return"
+  | "net_return"
+  | "sharpe"
+  | "max_drawdown"
+  | "decisions";
+
+const COMPARE_SORT_OPTIONS: { value: CompareSortKey; label: string }[] = [
+  { value: "call_order", label: "Call order" },
+  { value: "gross_return", label: "Gross return % (high → low)" },
+  { value: "net_return", label: "Net return % (high → low)" },
+  { value: "sharpe", label: "Sharpe (high → low)" },
+  { value: "max_drawdown", label: "Max DD (low → high)" },
+  { value: "decisions", label: "Decisions (high → low)" },
+];
+
+function compareNumDesc(a: number | null | undefined, b: number | null | undefined): number {
+  // Push nulls to the bottom regardless of sort direction so they
+  // don't crowd the top of the operator's chosen sort.
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return b - a;
+}
+
+function compareNumAscMagnitude(
+  a: number | null | undefined,
+  b: number | null | undefined,
+): number {
+  // For Max DD: smaller magnitude is "better" (less loss). Sort by
+  // |value| ascending. Nulls bottom.
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return Math.abs(a) - Math.abs(b);
+}
+
+function sortedRuns(runs: ComparisonRunSummary[], key: CompareSortKey): ComparisonRunSummary[] {
+  if (key === "call_order") return runs;
+  const out = [...runs];
+  out.sort((a, b) => {
+    switch (key) {
+      case "gross_return":
+        return compareNumDesc(a.metrics?.total_return_pct, b.metrics?.total_return_pct);
+      case "net_return":
+        return compareNumDesc(
+          a.net_return_pct ?? a.metrics?.net_return_pct,
+          b.net_return_pct ?? b.metrics?.net_return_pct,
+        );
+      case "sharpe":
+        return compareNumDesc(a.metrics?.sharpe, b.metrics?.sharpe);
+      case "max_drawdown":
+        return compareNumAscMagnitude(a.metrics?.max_drawdown_pct, b.metrics?.max_drawdown_pct);
+      case "decisions":
+        return compareNumDesc(a.metrics?.n_decisions, b.metrics?.n_decisions);
+      default:
+        return 0;
+    }
+  });
+  return out;
+}
+
 function MetricsTable({
   runs,
   strategies,
@@ -157,15 +220,45 @@ function MetricsTable({
   strategies: { agent_id: string; display_name?: string | null }[];
   scenarios: { id: string; display_name?: string | null }[];
 }) {
+  // Sort is the highest-value ergonomic on compare — operator wants to
+  // rank N runs by a single metric. Search/filter are NOT added: the
+  // page typically shows 2-10 rows all visible at once, so substring-
+  // match has no real win. Documented in
+  // `docs/superpowers/audits/2026-05-21-list-surfaces-audit.md` row #5.
+  const [sortKey, setSortKey] = useState<CompareSortKey>("call_order");
+  const sortedRows = useMemo(() => sortedRuns(runs, sortKey), [runs, sortKey]);
+
   return (
     <Card>
+      <div className="flex items-center justify-between px-5 py-2.5 border-b border-border-soft">
+        <div className="text-text-3 text-[12px]">
+          {runs.length} {runs.length === 1 ? "run" : "runs"}
+        </div>
+        <label className="flex items-center gap-2 text-[12px] text-text-3">
+          Sort by
+          <select
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as CompareSortKey)}
+            className="bg-surface-elev border border-border-soft rounded-sm px-2 py-1 text-[12px] text-text focus:outline-none focus:border-gold/40"
+            data-testid="compare-sort"
+          >
+            {COMPARE_SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <table className="w-full">
         <thead>
           <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
             <th className="font-normal py-2.5 px-5">Run</th>
             <th className="font-normal py-2.5 px-3">Status</th>
             <th className="font-normal py-2.5 px-3">Scenario</th>
-            <th className="font-normal py-2.5 px-3 text-right">Total return</th>
+            <th className="font-normal py-2.5 px-3 text-right">Gross %</th>
+            <th className="font-normal py-2.5 px-3 text-right">Infer cost</th>
+            <th className="font-normal py-2.5 px-3 text-right">Net %</th>
             <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
             <th className="font-normal py-2.5 px-3 text-right">Max DD</th>
             <th className="font-normal py-2.5 px-3 text-right">Win rate</th>
@@ -174,9 +267,15 @@ function MetricsTable({
           </tr>
         </thead>
         <tbody>
-          {runs.map((r, i) => {
+          {sortedRows.map((r) => {
             const tone = STATUS_TONE[r.status] ?? "default";
-            const palette = CURVE_PALETTE[i % CURVE_PALETTE.length];
+            // Palette dot must match the equity-chart curve color for
+            // this run, so derive it from the ORIGINAL `runs` index —
+            // not the sorted index. Otherwise the chart legend and the
+            // table dot drift apart whenever the operator picks a
+            // non-default sort.
+            const originalIdx = runs.findIndex((x) => x.id === r.id);
+            const palette = CURVE_PALETTE[originalIdx % CURVE_PALETTE.length];
             return (
               <tr
                 key={r.id}
@@ -209,6 +308,11 @@ function MetricsTable({
                 <MetricCell
                   value={fmtPct(r.metrics?.total_return_pct)}
                   sign={signOf(r.metrics?.total_return_pct)}
+                />
+                <MetricCell value={fmtCostUsd(r.metrics?.inference_cost_quote_total)} />
+                <MetricCell
+                  value={fmtPct(r.net_return_pct ?? r.metrics?.net_return_pct)}
+                  sign={signOf(r.net_return_pct ?? r.metrics?.net_return_pct)}
                 />
                 <MetricCell value={fmtNumber(r.metrics?.sharpe, 3)} />
                 <MetricCell
@@ -469,4 +573,10 @@ function signOf(n: number | null | undefined): 1 | -1 | 0 | undefined {
   if (n > 0) return 1;
   if (n < 0) return -1;
   return 0;
+}
+
+/** Format inference cost in USD — compact form with 4 decimal places. */
+function fmtCostUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `$${n.toFixed(4)}`;
 }

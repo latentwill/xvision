@@ -45,6 +45,7 @@ fn valid_crypto_scenario(symbol: &str) -> Scenario {
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         replay_mode: ReplayMode::Continuous,
         bar_cache_policy: BarCachePolicy {
@@ -117,6 +118,7 @@ fn scenario_serde_roundtrip() {
                 partial_fills: false,
                 volume_constraints: None,
             },
+            overrides: Vec::new(),
         },
         replay_mode: ReplayMode::Continuous,
         bar_cache_policy: BarCachePolicy {

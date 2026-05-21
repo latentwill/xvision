@@ -10,9 +10,11 @@ pub mod attestation;
 pub mod bars;
 pub mod batch_store;
 pub mod behavior;
+pub mod broker_rules;
 pub mod compare;
 pub mod concurrency;
 pub mod cost;
+pub mod cost_arrays;
 pub mod cycle_features;
 pub mod determinism;
 pub mod early_stop;
@@ -22,7 +24,9 @@ pub mod export;
 pub mod finalize_writer;
 pub mod findings;
 pub mod guardrails;
+pub mod limits;
 pub mod metrics;
+pub mod orders;
 pub mod postprocess;
 pub mod progress;
 pub mod regime;
@@ -35,11 +39,20 @@ pub mod store;
 pub mod watchdog;
 
 pub use attestation::{EvalAttestation, TokensUsed};
-pub use compare::{
-    compare_runs, ComparisonEquityCurve, ComparisonEquitySample, ComparisonReport, ComparisonRunSummary,
+pub use broker_rules::{
+    rule_set_for_asset_class, AlpacaCryptoRules, AlpacaEquityRules, AlpacaEquityViolationKind, BrokerRuleSet,
+    BrokerRuleViolation, BrokerViolationSeverity, OrderKind, PendingOrder, TimeInForce,
 };
-pub use cost::{compute_token_cost_usd, compute_token_cost_usd_from_catalog};
+pub use compare::{
+    compare_runs, compare_runs_default, CompareOptions, ComparisonEquityCurve, ComparisonEquitySample,
+    ComparisonReport, ComparisonRunSummary, ManifestMismatch,
+};
+pub use cost::{
+    aggregate_eval_run_inference_cost, compute_token_cost_usd, compute_token_cost_usd_from_catalog,
+};
+pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};
+pub use orders::OrderState;
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
 pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 
@@ -48,8 +61,9 @@ pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 pub use scenario::canonical_scenarios;
 pub use scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
-    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
-    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, VolumeConstraint, WalkModel,
+    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource, FeeSource,
+    Fees, FillModel, FillProvenance, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency,
+    RefreshPolicy, ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueOverride,
+    VenueSettings, VolumeConstraint, WalkModel,
 };
 pub use store::{DecisionRow, ListFilter, RunStore};

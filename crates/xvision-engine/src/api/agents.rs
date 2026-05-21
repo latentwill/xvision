@@ -544,6 +544,9 @@ mod tests {
             estimated_total_tokens: None,
             actual_input_tokens: None,
             actual_output_tokens: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
+            bars_manifest: None,
         }
     }
 

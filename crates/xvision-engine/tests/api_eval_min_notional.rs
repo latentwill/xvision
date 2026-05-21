@@ -50,6 +50,10 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -180,6 +184,7 @@ async fn api_eval_paper_run_vetoes_below_paper_min_notional() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,
@@ -254,6 +259,7 @@ async fn api_eval_paper_run_without_risk_toml_does_not_veto() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Paper,
             params_override: None,
+            limits: None,
         },
         broker,
         dispatch,

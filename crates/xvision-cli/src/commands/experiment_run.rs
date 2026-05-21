@@ -400,6 +400,22 @@ pub struct RunArgs {
     /// Override the xvn home directory (default: $XVN_HOME or ~/.xvn).
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
+
+    // ── Scope guardrails (cli-operator-safety-p0 slice 3/3) ──────────────────
+    /// Hard cap on the number of eval runs the experiment will launch.
+    /// Applied AFTER scenario resolution — if more scenarios were selected
+    /// (via `--scenarios` or the selector), the list is truncated and the
+    /// dry-run plan prints the cap.
+    #[arg(long)]
+    pub max_runs: Option<usize>,
+
+    /// Skip the dry-run-confirm gate and launch immediately. Without this
+    /// flag the verb prints the plan and exits with a "rerun with --yes
+    /// to confirm" message — designed to prevent surprise token burns
+    /// when the operator forgot a `--max-runs` or `--max-output-tokens`.
+    /// Required for automation that intends to launch.
+    #[arg(long)]
+    pub yes: bool,
 }
 
 // ── CLI handler ───────────────────────────────────────────────────────────────
@@ -432,7 +448,7 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         .exit_with(XvnExit::Upstream)?;
 
     // Resolve scenario ids: explicit list OR selector.
-    let scenario_ids: Vec<String> = if !args.scenarios.is_empty() {
+    let mut scenario_ids: Vec<String> = if !args.scenarios.is_empty() {
         args.scenarios.clone()
     } else if !args.assets.is_empty() {
         resolve_scenarios_via_selector(
@@ -457,6 +473,65 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         return Err(CliError {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!("no scenarios resolved; check --assets / --timeframe / --count"),
+        });
+    }
+
+    // Scope-guardrail step: apply --max-runs cap, then print the dry-run plan.
+    // Without --yes the verb exits here with a confirmation hint, designed to
+    // prevent surprise token burns (Hermes Gemini-3.5-flash session, 2026-05-20).
+    let pre_cap_count = scenario_ids.len();
+    if let Some(cap) = args.max_runs {
+        if cap == 0 {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--max-runs must be > 0"),
+            });
+        }
+        scenario_ids.truncate(cap);
+    }
+
+    // Plan summary always prints. Lists what will be launched so the operator
+    // (or an automation policy) can sanity-check before commitment.
+    eprintln!("==== experiment-run plan ====");
+    eprintln!("  name:              {}", args.name);
+    if let Some(q) = args.question.as_deref() {
+        eprintln!("  question:          {q}");
+    }
+    eprintln!("  strategy:          {}", args.strategy);
+    eprintln!(
+        "  runs to launch:    {}{}",
+        scenario_ids.len(),
+        if let Some(cap) = args.max_runs {
+            if pre_cap_count > cap {
+                format!(" (capped from {pre_cap_count} by --max-runs={cap})")
+            } else {
+                format!(" (under --max-runs={cap})")
+            }
+        } else {
+            String::new()
+        },
+    );
+    eprintln!("  scenarios:");
+    for (i, sid) in scenario_ids.iter().enumerate() {
+        eprintln!("    {:>2}. {sid}", i + 1);
+    }
+    eprintln!("  mode:              backtest");
+    eprintln!("  execution order:   sequential (one eval at a time)");
+    if let Some(budget) = args.decision_budget {
+        eprintln!("  decision_budget:   {budget} (metadata — does not cap eval execution)");
+    }
+    if let Some(reviewer) = args.review_with.as_deref() {
+        eprintln!("  review_with:       {reviewer} (post-run reviews chained sequentially)");
+    }
+    eprintln!("===============================");
+
+    if !args.yes {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!(
+                "dry-run plan printed above. Re-run with --yes to launch ({} eval run(s))",
+                scenario_ids.len()
+            ),
         });
     }
 
@@ -634,7 +709,15 @@ async fn build_compare_markdown(ctx: &ApiContext, batch: &BatchResult, strategy_
         return out;
     }
 
-    match eval::compare(ctx, xvision_engine::api::eval::CompareRunsRequest { run_ids }).await {
+    match eval::compare(
+        ctx,
+        xvision_engine::api::eval::CompareRunsRequest {
+            run_ids,
+            allow_manifest_mismatch: false,
+        },
+    )
+    .await
+    {
         Ok(report) => compare_format::render_markdown(&report, strategy_label),
         Err(e) => format!("<!-- compare failed: {e} -->\n"),
     }

@@ -4,7 +4,7 @@
 
 **Goal:** Give each `AgentSlot` an optional persistent memory (off / global / agent-scoped) backed by an embedded SQLite vector store, with automatic recall before dispatch and automatic recording after each decision, and surface memory activity in eval review.
 
-**Architecture:** A new `xvision-memory` crate owns a SQLite-backed cosine-top-k store at `~/.xvn/memory.db`. `AgentSlot` gains a `memory_mode: MemoryMode` field (engine migration 027). The `execute_slot` dispatcher seam in `crates/xvision-engine/src/agent/execute.rs` recalls top-k matches and prepends them to `system_prompt` for non-off slots, then a post-dispatch recorder writes the decision back to the slot's namespace. Two new `events.jsonl` event kinds (`memory_recall` / `memory_write`) drive the eval-review UI. Sidecar / cortex-http boundary is deferred to v2 per `team/intake/2026-05-21-v2d-agent-memory.md` Decision 1.
+**Architecture:** A new `xvision-memory` crate owns a SQLite-backed cosine-top-k store at `~/.xvn/memory.db`. `AgentSlot` gains a `memory_mode: MemoryMode` field (engine migration 028). The `execute_slot` dispatcher seam in `crates/xvision-engine/src/agent/execute.rs` recalls top-k matches and prepends them to `system_prompt` for non-off slots, then a post-dispatch recorder writes the decision back to the slot's namespace. Two new `events.jsonl` event kinds (`memory_recall` / `memory_write`) drive the eval-review UI. Sidecar / cortex-http boundary is deferred to v2 per `team/intake/2026-05-21-v2d-agent-memory.md` Decision 1.
 
 **Cortex tier split (added 2026-05-21):** the store is two-tier — `tier=resource` (concrete observations, provenance-tagged with `run_id`/`scenario_id`/`cycle_idx`, never recalled at decision time) and `tier=skill` (abstracted patterns, no provenance, recalled at decision time). The auto-recorder writes Resources only; recall queries Skills only. This dissolves the look-ahead leakage problem identified in `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` — backtest replays cannot recall prior runs' decisions because the recall path is Skills-only and Skills is empty in v1. Skills are populated by an explicit distillation pass (V3 autoresearcher item 11a on the V2 board) or a manual seeding CLI (v1.1 follow-up).
 
@@ -19,7 +19,7 @@
 - Existing AgentSlot field pattern: `crates/xvision-engine/src/agents/model.rs:96` (struct), `crates/xvision-engine/migrations/025_agent_slot_cache_and_window.sql` (migration template that already follows the "NULL-default safe migration" pattern).
 - Dispatcher seam: `crates/xvision-engine/src/agent/execute.rs:1` — `execute_slot` builds and dispatches one `LlmRequest` per loop iteration. `LlmRequest.system_prompt` is at `crates/xvision-engine/src/agent/llm.rs:109`.
 - Frontend type surface: `frontend/web/src/api/types.gen/AgentSlot.ts` is ts-rs generated; the codegen runs via the existing `ts-export` feature on the engine crate. Hand edits there are overwritten.
-- Migration registry: `team/MANIFEST.md`; V2D claims engine migration **027** (renumbered from 026 after upstream collision with V2E trace-surface-foundation).
+- Migration registry: `team/MANIFEST.md`; V2D claims engine migration **028** (renumbered from 026 after upstream collision with V2E trace-surface-foundation).
 
 ## Phase 0: `v2d-cortex-memory-plan` (this document)
 
@@ -711,7 +711,7 @@ or a v1.1 manual seeding CLI.
 **Files:**
 - Modify: `crates/xvision-memory/migrations/0001_init.sql` (add `tier`,
   provenance columns, `training_window_end`; pre-Phase-2 schema only
-  — engine migration 027 is unaffected because the column lives on
+  — engine migration 028 is unaffected because the column lives on
   the memory crate's own table)
 - Modify: `crates/xvision-memory/src/types.rs` (add `Tier` enum,
   extend `MemoryItem` with `tier` + provenance +
@@ -1018,28 +1018,28 @@ until V3 distillation or v1.1 manual seeding ships.
 
 ## Phase 2: `v2d-agent-memory-mode` (engine schema + slot field)
 
-Adds `agent_slots.memory_mode` column, the `AgentSlot.memory_mode` field, and the store roundtrip. Engine-only. Claims migration **027**.
+Adds `agent_slots.memory_mode` column, the `AgentSlot.memory_mode` field, and the store roundtrip. Engine-only. Claims migration **028**.
 
 **Files:**
-- Create: `crates/xvision-engine/migrations/027_agent_slot_memory_mode.sql`
-- Create: `crates/xvision-engine/migrations/027_agent_slot_memory_mode.down.sql`
+- Create: `crates/xvision-engine/migrations/028_agent_slot_memory_mode.sql`
+- Create: `crates/xvision-engine/migrations/028_agent_slot_memory_mode.down.sql`
 - Modify: `crates/xvision-engine/src/agents/model.rs` (struct + default + tests)
 - Modify: `crates/xvision-engine/src/agents/store.rs` (column read/write)
 - Modify: `crates/xvision-engine/Cargo.toml` (add `xvision-memory` dep)
 - Modify: `team/MANIFEST.md` (claim 026)
 
-### Task 2.1: Reserve migration 027 in the manifest
+### Task 2.1: Reserve migration 028 in the manifest
 
 - [ ] **Step 2.1.1: Edit `team/MANIFEST.md`**
 
-Add a row to the migration table (after row 025), and bump the "next available number" paragraph from 026 to 027:
+Add a row to the migration table (after row 027), and bump the "next available number" paragraph from 028 to 029:
 
 ```markdown
-| 026 | agent-slot-memory-mode (V2D)             | in flight     |
+| 028 | agent-slot-memory-mode (V2D)             | in flight     |
 ```
 
 ```markdown
-The next available number is **027**. The conductor must approve and
+The next available number is **029**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 ```
@@ -1053,7 +1053,7 @@ Expected: PASS.
 
 ```bash
 git add team/MANIFEST.md
-git commit -m "v2d: reserve migration 027 for agent_slot_memory_mode"
+git commit -m "v2d: reserve migration 028 for agent_slot_memory_mode"
 ```
 
 ### Task 2.2: Add `xvision-memory` as a dependency of `xvision-engine`
@@ -1078,14 +1078,14 @@ git add crates/xvision-engine/Cargo.toml Cargo.lock
 git commit -m "v2d: engine depends on xvision-memory"
 ```
 
-### Task 2.3: Migration 027
+### Task 2.3: Migration 028
 
 - [ ] **Step 2.3.1: Write the up migration**
 
-Create `crates/xvision-engine/migrations/027_agent_slot_memory_mode.sql`:
+Create `crates/xvision-engine/migrations/028_agent_slot_memory_mode.sql`:
 
 ```sql
--- 027_agent_slot_memory_mode.sql — V2D per-slot memory toggle.
+-- 028_agent_slot_memory_mode.sql — V2D per-slot memory toggle.
 --
 -- Adds a `memory_mode` text column to `agent_slots`. Values:
 --   * 'off'           — no recall, no record. Default for existing rows.
@@ -1095,7 +1095,7 @@ Create `crates/xvision-engine/migrations/027_agent_slot_memory_mode.sql`:
 -- Stored as TEXT (not INTEGER) so the column is self-documenting in
 -- `sqlite3` shells and round-trips through `MemoryMode::as_str` /
 -- `MemoryMode::parse_or_off` without an enum table. The DEFAULT 'off'
--- guarantees pre-026 rows read back as the safe value with no backfill
+-- guarantees pre-028 rows read back as the safe value with no backfill
 -- pass — matching the migration 020 (`inputs_policy`) and 025
 -- (`bar_history_limit`) precedent.
 
@@ -1104,7 +1104,7 @@ ALTER TABLE agent_slots ADD COLUMN memory_mode TEXT NOT NULL DEFAULT 'off';
 
 - [ ] **Step 2.3.2: Write the down migration**
 
-Create `crates/xvision-engine/migrations/027_agent_slot_memory_mode.down.sql`:
+Create `crates/xvision-engine/migrations/028_agent_slot_memory_mode.down.sql`:
 
 ```sql
 -- SQLite cannot DROP a column via ALTER TABLE before 3.35. We rebuild
@@ -1126,9 +1126,9 @@ ALTER TABLE agent_slots_new RENAME TO agent_slots;
 - [ ] **Step 2.3.3: Commit**
 
 ```bash
-git add crates/xvision-engine/migrations/027_agent_slot_memory_mode.sql \
-        crates/xvision-engine/migrations/027_agent_slot_memory_mode.down.sql
-git commit -m "v2d: migration 027 — agent_slots.memory_mode column"
+git add crates/xvision-engine/migrations/028_agent_slot_memory_mode.sql \
+        crates/xvision-engine/migrations/028_agent_slot_memory_mode.down.sql
+git commit -m "v2d: migration 028 — agent_slots.memory_mode column"
 ```
 
 ### Task 2.4: Add `memory_mode` to the `AgentSlot` struct
@@ -1151,7 +1151,7 @@ Add a test to `crates/xvision-engine/src/agents/model.rs` inside the existing `#
 
     #[test]
     fn slot_serde_default_memory_mode_is_off() {
-        // A JSON payload omitting `memory_mode` (the pre-026 client shape)
+        // A JSON payload omitting `memory_mode` (the pre-028 client shape)
         // must deserialize to MemoryMode::Off.
         let json = r#"{
             "name":"main","provider":"anthropic","model":"claude-sonnet-4-6",
@@ -1173,7 +1173,7 @@ In `crates/xvision-engine/src/agents/model.rs`, after the `bar_history_limit` fi
 
 ```rust
     /// Per-slot memory toggle (V2D). `Off` is the migration default and
-    /// the value pre-026 rows read back as. `Global` shares memory
+    /// the value pre-028 rows read back as. `Global` shares memory
     /// across every slot in the workspace that picks `Global`;
     /// `AgentScoped` isolates memory by `agent_id` (multiple slots in
     /// the same Agent share the bucket — slot name is a label, not an
@@ -1182,7 +1182,7 @@ In `crates/xvision-engine/src/agents/model.rs`, after the `bar_history_limit` fi
     /// and `team/intake/2026-05-21-v2d-agent-memory.md` Decision 4.
     ///
     /// Persisted as a TEXT column on `agent_slots.memory_mode`
-    /// (migration 027). The store layer maps unknown values to `Off`
+    /// (migration 028). The store layer maps unknown values to `Off`
     /// so a corrupted row can never crash the read path.
     #[serde(default)]
     pub memory_mode: xvision_memory::types::MemoryMode,
@@ -2197,6 +2197,6 @@ Per the intake's "Out of this intake" section: the `cortex-http` sidecar (deferr
 
 | #   | Owner                                | Status        |
 |-----|--------------------------------------|---------------|
-| 027 | agent-slot-memory-mode (V2D)         | in flight → merged |
+| 028 | agent-slot-memory-mode (V2D)         | in flight → merged |
 
-The conductor flips status to `merged` when Phase 2 (the migration phase) ships its PR. (Originally reserved as 026; renumbered to 027 after upstream landed `eval-trace-surface-foundation` against 026.)
+The conductor flips status to `merged` when Phase 2 (the migration phase) ships its PR. (Originally reserved as 026; renumbered to 028 after upstream landed `eval-trace-surface-foundation` against 026 and `run_bars_manifest` against 027.)

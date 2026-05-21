@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 pub use xvision_core::Capital;
 pub use xvision_data::alpaca::BarGranularity;
 use xvision_data::asset_whitelist::{alpaca_crypto_asset, alpaca_crypto_history_start_for};
+use xvision_data::manifest::{AdjustmentKind, DataManifest, FeedKind, SessionFilter};
+use xvision_data::validate::CalendarHint;
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -213,6 +215,7 @@ mod warmup_bars_tests {
                     partial_fills: false,
                     volume_constraints: None,
                 },
+                overrides: Vec::new(),
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),
@@ -306,6 +309,51 @@ impl Scenario {
             ));
         }
         Ok(())
+    }
+
+    /// Build a `DataManifest` from this scenario's data-source and calendar
+    /// settings. Used by the eval engine at run-start to produce the
+    /// `manifest_canonical` hash persisted on `eval_runs` (migration 027).
+    pub fn data_manifest(&self) -> DataManifest {
+        let (feed, adjustment) = match &self.data_source {
+            DataSource::AlpacaHistorical { feed, adjustment } => {
+                let feed_kind = match feed.as_deref() {
+                    Some("iex") => FeedKind::Iex,
+                    Some("sip") => FeedKind::Sip,
+                    Some("crypto") | None => FeedKind::Crypto,
+                    Some(other) => FeedKind::Other(other.to_string()),
+                };
+                let adj_kind = match adjustment {
+                    AdjustmentMode::Raw => AdjustmentKind::Raw,
+                    AdjustmentMode::SplitAdjusted => AdjustmentKind::SplitAdjusted,
+                    AdjustmentMode::SplitDividendAdjusted => AdjustmentKind::SplitDividendAdjusted,
+                };
+                (feed_kind, adj_kind)
+            }
+            DataSource::SyntheticWalk { .. } => (FeedKind::Synthetic, AdjustmentKind::Raw),
+        };
+        let calendar_str = match &self.calendar {
+            CalendarRef::Continuous24x7 => "Continuous24x7".to_string(),
+            CalendarRef::UsEquities => "UsEquities".to_string(),
+            CalendarRef::Custom(s) => s.clone(),
+        };
+        DataManifest {
+            feed,
+            adjustment,
+            timeframe: format!("{:?}", self.granularity),
+            session_filter: SessionFilter::All,
+            calendar: calendar_str,
+            timezone: self.timezone.clone(),
+        }
+    }
+
+    /// Returns the `CalendarHint` for use by the OHLCV validator's gap
+    /// detection logic.
+    pub fn calendar_hint(&self) -> CalendarHint {
+        match &self.calendar {
+            CalendarRef::UsEquities => CalendarHint::UsEquities,
+            CalendarRef::Continuous24x7 | CalendarRef::Custom(_) => CalendarHint::Continuous24x7,
+        }
     }
 }
 
@@ -458,6 +506,95 @@ pub struct VenueSettings {
     pub slippage: SlippageModel,
     pub latency: LatencyModel,
     pub fill_model: FillModel,
+    /// Per-symbol-pattern (glob) cost overrides. First matching pattern wins.
+    /// Falls through to the scenario defaults when no pattern matches.
+    /// Added in V2E eval-cost-model-per-bar-and-volume-share.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<VenueOverride>,
+}
+
+/// Per-asset cost override matched by a glob pattern on the venue symbol
+/// (e.g. `"BTC/USD"`, `"*USD"`, `"NVDA*"`).
+///
+/// Override precedence (highest wins): per-bar array → per-asset override →
+/// scenario default.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VenueOverride {
+    /// Glob pattern matched against the asset's `venue_symbol` (e.g. `"BTC/USD"`).
+    pub symbol_pattern: String,
+    /// Override fee schedule. `None` means fall through to scenario default.
+    pub fees: Option<Fees>,
+    /// Override slippage model. `None` means fall through to scenario default.
+    pub slippage: Option<SlippageModel>,
+}
+
+impl VenueOverride {
+    /// Return `true` when `symbol` matches this override's glob pattern.
+    pub fn matches(&self, symbol: &str) -> bool {
+        glob_match(&self.symbol_pattern, symbol)
+    }
+}
+
+/// Provenance tag describing which source provided the fee/slippage for a fill.
+///
+/// Populated on `FillProvenance` so the trace surface can distinguish how
+/// cost was resolved at each bar.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeeSource {
+    /// Scenario-level default (no override applied).
+    Default,
+    /// Scenario-level override on `VenueSettings` (not currently a distinct
+    /// path, but reserved for future "scenario-wide override" semantics).
+    ScenarioOverride,
+    /// `VenueOverride` matched on the asset's `symbol_pattern`.
+    PerAssetOverride,
+    /// Optional `fee_bps` column from the per-bar Parquet arrays.
+    PerBarArray,
+}
+
+/// Fill provenance — written per-fill by `simulate_fill` so downstream
+/// traces can attribute every cost component.
+///
+/// These fields correspond to the placeholder columns landed by
+/// `eval-trace-surface-foundation`. This track populates them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FillProvenance {
+    /// Slippage in bps actually applied at this fill.
+    pub slip_bps_applied: f64,
+    /// Half-spread in bps actually applied (0.0 when no spread column present).
+    pub spread_bps_applied: f64,
+    /// Fee in bps actually applied at this fill.
+    pub fee_bps_applied: f64,
+    /// Source of the fee value.
+    pub fee_source: FeeSource,
+    /// `order_qty / bar_volume` fraction (0.0 for `Linear`/`None` models).
+    pub volume_share: f64,
+    /// Whether the volume cap bound; `true` when `order_qty / bar_volume > volume_limit`.
+    pub volume_cap_bound: bool,
+}
+
+impl Default for FillProvenance {
+    fn default() -> Self {
+        Self {
+            slip_bps_applied: 0.0,
+            spread_bps_applied: 0.0,
+            fee_bps_applied: 0.0,
+            fee_source: FeeSource::Default,
+            volume_share: 0.0,
+            volume_cap_bound: false,
+        }
+    }
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -489,8 +626,70 @@ pub struct Fees {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "model", rename_all = "snake_case")]
 pub enum SlippageModel {
+    /// Flat basis-point slippage applied to every fill regardless of size.
     Linear { bps: u32 },
+    /// No slippage (fills at next-bar open).
     None,
+    /// Zipline-canonical quadratic volume-share model.
+    ///
+    /// `volume_share = min(order_qty / bar_volume, volume_limit)`
+    /// `fill_price   = mid * (1 ± price_impact * volume_share²)`
+    ///
+    /// Defaults: `price_impact = 0.1`, `volume_limit = 0.025`.
+    ///
+    /// Falls back to the scenario default `Linear` when bar volume is missing
+    /// or zero; emits a `tracing::debug` per `(symbol, bar_ts)` pair.
+    VolumeShare {
+        /// Quadratic price-impact coefficient (dimensionless, default 0.1).
+        #[serde(default = "default_price_impact")]
+        price_impact: f64,
+        /// Maximum fraction of bar volume that can be filled. Cap binding
+        /// emits a `volume_share_excess` finding (default 0.025 = 2.5%).
+        #[serde(default = "default_volume_limit")]
+        volume_limit: f64,
+    },
+}
+
+/// Default price-impact coefficient for `VolumeShare` (zipline canonical).
+fn default_price_impact() -> f64 {
+    0.1
+}
+
+/// Default volume limit for `VolumeShare` (zipline canonical).
+fn default_volume_limit() -> f64 {
+    0.025
+}
+
+/// Minimal glob-pattern matcher used for `VenueOverride.symbol_pattern`.
+///
+/// Supports `*` (any sequence, including empty) and `?` (any single char).
+/// This avoids an additional crate dependency while covering the patterns the
+/// contract calls out (`BTC/USD`, `*USD`, `NVDA*`).
+pub fn glob_match(pattern: &str, text: &str) -> bool {
+    // Convert to byte slices is fine for ASCII venue symbols; utf-8 chars work
+    // identically when both pattern and text are ASCII.
+    glob_match_bytes(pattern.as_bytes(), text.as_bytes())
+}
+
+fn glob_match_bytes(pat: &[u8], txt: &[u8]) -> bool {
+    match (pat.first(), txt.first()) {
+        // Both exhausted — match.
+        (None, None) => true,
+        // Pattern exhausted but text remains — no match.
+        (None, Some(_)) => false,
+        // `*` at head of pattern: try skipping zero chars OR consuming one.
+        (Some(b'*'), _) => {
+            glob_match_bytes(&pat[1..], txt) || (!txt.is_empty() && glob_match_bytes(pat, &txt[1..]))
+        }
+        // Text exhausted but pattern not (and not `*`) — no match.
+        (Some(_), None) => false,
+        // `?` matches any single character.
+        (Some(b'?'), Some(_)) => glob_match_bytes(&pat[1..], &txt[1..]),
+        // Literal match.
+        (Some(p), Some(t)) if p == t => glob_match_bytes(&pat[1..], &txt[1..]),
+        // Mismatch.
+        _ => false,
+    }
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -675,6 +874,7 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
                     decision_to_fill_ms: latency_ms,
                 },
                 fill_model: default_fill_model(),
+                overrides: Vec::new(),
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),

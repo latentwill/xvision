@@ -22,6 +22,9 @@ xvision-risk          = { path = "../xvision-risk" }
 
 reqwest     = { workspace = true }
 
+arrow-array  = { workspace = true }
+parquet      = { workspace = true }
+
 serde       = { workspace = true }
 toml        = { workspace = true }
 toml_edit   = "0.22"
@@ -44,9 +47,7 @@ sha2        = "0.10"
 include_dir = "0.7"
 dirs        = "5"
 rand_core   = { version = "0.6", features = ["getrandom"] }
-arrow-array  = { workspace = true }
 arrow-schema = { workspace = true }
-parquet      = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -59,4 +60,9 @@ default   = []
 # Emit TypeScript types for every API request/response to
 # `frontend/web/src/api/types.gen/`. Run via `cargo xtask gen-types` (Plan 1
 # Task 4) or directly with `cargo test --features ts-export --tests`.
-ts-export = ["dep:ts-rs", "xvision-core/ts-export", "xvision-memory/ts-export"]
+ts-export = [
+    "dep:ts-rs",
+    "xvision-core/ts-export",
+    "xvision-data/ts-export",
+    "xvision-memory/ts-export",
+]

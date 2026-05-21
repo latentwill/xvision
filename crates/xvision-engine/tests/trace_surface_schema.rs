@@ -49,6 +49,10 @@ async fn engine_pool_with_026() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -103,6 +107,9 @@ fn completed_run() -> Run {
         RunMode::Backtest,
     );
     r.status = RunStatus::Queued;
+    // Updated because eval-net-of-inference-cost-metric added
+    // `inference_cost_quote_total` and `net_return_pct` to MetricsSummary.
+    // Use ..Default::default() to keep the literal stable across future field additions.
     r.metrics = Some(MetricsSummary {
         total_return_pct: 2.5,
         sharpe: 0.9,
@@ -111,6 +118,7 @@ fn completed_run() -> Run {
         n_trades: 8,
         n_decisions: 20,
         baselines: None,
+        ..Default::default()
     });
     r
 }

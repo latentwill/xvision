@@ -109,6 +109,22 @@ pub struct Run {
     pub estimated_total_tokens: Option<u64>,
     pub actual_input_tokens: Option<u64>,
     pub actual_output_tokens: Option<u64>,
+
+    // ── Candle integrity + manifest (migration 027) ────────────────────────
+    /// SHA-256 hex digest of the raw Parquet bytes loaded for this run.
+    /// `None` for runs created before migration 027 or for paper-mode runs
+    /// where bars are not pinned to a Parquet snapshot.
+    #[serde(default)]
+    pub bars_content_hash: Option<String>,
+    /// SHA-256 hex digest of the JSON-canonical `DataManifest` for this run.
+    /// Used by `ComparisonReport::build` to refuse mismatched-manifest compares.
+    /// `None` for pre-migration rows; populated at run-start for new runs.
+    #[serde(default)]
+    pub manifest_canonical: Option<String>,
+    /// Full JSON-serialized `DataManifest` for this run.
+    /// `None` for pre-migration rows.
+    #[serde(default)]
+    pub bars_manifest: Option<serde_json::Value>,
 }
 
 impl Run {
@@ -129,6 +145,9 @@ impl Run {
             estimated_total_tokens: None,
             actual_input_tokens: None,
             actual_output_tokens: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
+            bars_manifest: None,
         }
     }
 }
@@ -194,22 +213,58 @@ pub struct BaselinesReport {
 /// The `baselines` field is optional and backward-compatible: old rows that
 /// were finalized before baselines were introduced deserialize with
 /// `baselines: None`. New runs always populate it.
+///
+/// Net-of-inference-cost fields (V2E item 25):
+/// - `gross_return_pct` is a method alias for `total_return_pct` (the stored
+///   field name). `total_return_pct` continues to serialize under that name
+///   for one release (backward compat); V2F will rename it on the wire.
+/// - `inference_cost_quote_total` — sum of all per-decision inference cost
+///   quotes (USD). `None` when pricing data is unavailable for the model.
+/// - `net_return_pct` — `gross_return_pct − (inference_cost_quote_total /
+///   capital_initial × 100)`. `None` when `inference_cost_quote_total` is
+///   unavailable.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MetricsSummary {
+    /// Gross trading return as a percentage of starting capital.
+    /// Deprecated wire name: `total_return_pct` (kept for one release).
+    /// Use `MetricsSummary::gross_return_pct()` as the forward-looking accessor.
+    /// Deserialization accepts `gross_return_pct` as an alias so JSON written
+    /// by future code that uses the new name can still round-trip.
+    #[serde(alias = "gross_return_pct")]
     pub total_return_pct: f64,
     pub sharpe: f64,
     pub max_drawdown_pct: f64,
     pub win_rate: f64,
     pub n_trades: u32,
     pub n_decisions: u32,
+    /// Total LLM inference cost for all decisions in this run (USD).
+    /// `None` when the model's pricing isn't in the catalog — in that case
+    /// `net_return_pct` is also `None` and a `MissingPricingData` finding
+    /// fires at run-finalize time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inference_cost_quote_total: Option<f64>,
+    /// Net return after subtracting LLM inference cost from gross return.
+    /// Math: `total_return_pct − (inference_cost_quote_total / capital_initial × 100)`.
+    /// `None` when `inference_cost_quote_total` is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net_return_pct: Option<f64>,
     /// Automatic baseline comparison computed over the same bar slice the
     /// strategy saw. `None` for old runs that predate baselines support or
     /// for paper-mode runs where bars are not available post-hoc.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baselines: Option<BaselinesReport>,
+}
+
+impl MetricsSummary {
+    /// Returns gross trading return (= `total_return_pct`). Canonical forward-
+    /// looking accessor name; the underlying field is still serialized as
+    /// `total_return_pct` for one release.
+    pub fn gross_return_pct(&self) -> f64 {
+        self.total_return_pct
+    }
 }

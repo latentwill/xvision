@@ -36,8 +36,13 @@ use crate::api::scenario as api_scenario;
 use crate::api::settings::brokers as api_brokers;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{self, EvalAttestation};
-use crate::eval::compare::{compare_runs, ComparisonReport};
+use crate::eval::compare::{compare_runs, CompareOptions, ComparisonReport, ManifestMismatch};
+use crate::eval::cost::aggregate_eval_run_inference_cost;
 use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
+use crate::eval::findings::{Finding, InferenceCostDominatesReturnPayload, Severity};
+use crate::eval::metrics::{
+    compute_net_return_pct, inference_cost_dominates, INFERENCE_COST_DOMINANCE_THRESHOLD,
+};
 use crate::eval::run::{Run, RunMode, RunStatus};
 #[allow(deprecated)]
 use crate::eval::scenario::canonical_scenarios;
@@ -108,6 +113,14 @@ pub struct RunSummary {
     pub error: Option<String>,
     pub actual_input_tokens: Option<u64>,
     pub actual_output_tokens: Option<u64>,
+    /// LLM inference cost aggregated over all model calls for this run (in USD / quote currency).
+    /// `None` for old runs without pricing data or when the model isn't in the pricing catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inference_cost_quote_total: Option<f64>,
+    /// Net return after deducting LLM inference cost from gross trading return.
+    /// `None` for old runs without pricing data or when the model isn't in the pricing catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net_return_pct: Option<f64>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -569,6 +582,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         scenario_id: source.scenario_id.clone(),
         mode: source.mode,
         params_override: source.params_override.clone(),
+        limits: None,
     };
     let detail = start_run(ctx, req).await?;
     Ok(RetryOutcome {
@@ -583,6 +597,12 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
 pub struct CompareRunsRequest {
     /// Two-or-more run ids to fold into a single `ComparisonReport`.
     pub run_ids: Vec<String>,
+    /// When `true`, skip the manifest-canonical consistency check and render
+    /// the comparison even when runs have different data manifests. Default
+    /// `false`. Pass `true` only when you explicitly want to compare runs
+    /// that used different feeds, adjustment modes, or session filters.
+    #[serde(default)]
+    pub allow_manifest_mismatch: bool,
 }
 
 /// Run-set comparison. Loads each run + equity curve + findings from the
@@ -634,7 +654,10 @@ async fn compare_inner(ctx: &ApiContext, req: &CompareRunsRequest) -> ApiResult<
         ));
     }
     let store = RunStore::new(ctx.db.clone());
-    compare_runs(&req.run_ids, &store).await.map_err(|e| {
+    let options = CompareOptions {
+        allow_manifest_mismatch: req.allow_manifest_mismatch,
+    };
+    compare_runs(&req.run_ids, &store, &options).await.map_err(|e| {
         // anyhow's alternate formatter walks the entire context chain so
         // the underlying "run not found: <id>" surfaces even though
         // `compare_runs` wraps it with `with_context`.
@@ -645,6 +668,8 @@ async fn compare_inner(ctx: &ApiContext, req: &CompareRunsRequest) -> ApiResult<
                 .map(|(_, tail)| tail.trim().trim_end_matches(['\'', '"']).to_string())
                 .unwrap_or_else(|| "<unknown>".into());
             ApiError::NotFound(format!("eval run '{missing}'"))
+        } else if e.downcast_ref::<ManifestMismatch>().is_some() {
+            ApiError::Validation(chain)
         } else {
             ApiError::Internal(chain)
         }
@@ -771,6 +796,12 @@ pub struct EvalRunRequest {
     /// `eval_runs.params_override_json`.
     #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
+    /// Optional per-run hard caps (decisions / token totals / wall-clock).
+    /// Breach lands the run as `Cancelled` with a stable reason string in
+    /// `error`. See `crate::eval::limits::EvalLimits` for shape + semantics.
+    /// `None` (or every field None) is the pre-limits behavior.
+    #[serde(default)]
+    pub limits: Option<crate::eval::limits::EvalLimits>,
 }
 
 /// Public env-bound entry point: constructs broker (paper mode only) /
@@ -1283,9 +1314,19 @@ async fn run_inner(
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.ok_or_else(|| ApiError::Validation("paper mode requires a broker".into()))?;
-            build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
+            build_paper_executor(
+                ctx,
+                &scenario,
+                from_db,
+                b,
+                obs_emitter.clone(),
+                req.limits.as_ref(),
+            )
+            .await?
         }
-        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?,
+        RunMode::Backtest => {
+            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref()).await?
+        }
     };
 
     let store = RunStore::new(ctx.db.clone());
@@ -1365,10 +1406,19 @@ async fn run_inner(
     // Re-read from the store so the returned Run reflects the canonical
     // post-finalize state — completed_at + metrics_json are set inside
     // RunStore::finalize and we want callers to see them.
-    let finalized = store
+    let mut finalized = store
         .get(&run.id)
         .await
         .map_err(|e| ApiError::Internal(format!("re-read finalized run: {e}")))?;
+
+    // V2E item 25: enrich the finalized metrics with inference cost aggregate.
+    // Best-effort — enrichment failures never surface to the caller (the run
+    // already completed; we don't want a DB join failure to retroactively
+    // fail it). Capital initial comes from the scenario; we read it here to
+    // denominate the net_return_pct in the same "% of starting capital" units
+    // as gross_return_pct.
+    enrich_with_inference_cost(ctx, &store, &mut finalized, &scenario).await;
+
     api_search::upsert_run(ctx, &finalized).await;
 
     // Postprocess: drive the findings extractor against the finalized run,
@@ -1391,6 +1441,107 @@ async fn run_inner(
     crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
 
     Ok(finalized)
+}
+
+/// Enrich a completed run's `MetricsSummary` with inference cost aggregate and
+/// `net_return_pct` (V2E item 25). Best-effort — any failure is logged and
+/// swallowed; the run keeps its existing metrics unchanged.
+///
+/// Emits `inference_cost_dominates_return` finding when the cost-dominance
+/// threshold is exceeded (annotate-only, does not block the run).
+async fn enrich_with_inference_cost(
+    ctx: &ApiContext,
+    store: &RunStore,
+    run: &mut Run,
+    scenario: &crate::eval::scenario::Scenario,
+) {
+    let Some(mut metrics) = run.metrics.clone() else {
+        return; // run failed before finalize
+    };
+
+    // Aggregate per-call cost_usd. Returns None when the observability tables
+    // aren't available or all calls have NULL cost (model not in catalog).
+    let inference_cost = aggregate_eval_run_inference_cost(&ctx.db, &run.id).await;
+
+    // Capital initial from the scenario's capital spec.
+    let capital_initial = scenario.capital.initial;
+
+    // net_return_pct = gross_return_pct − (inference_cost / capital × 100)
+    let net = compute_net_return_pct(metrics.total_return_pct, inference_cost, capital_initial);
+
+    metrics.inference_cost_quote_total = inference_cost;
+    metrics.net_return_pct = net;
+
+    // Persist the enriched metrics to the DB.
+    if let Err(e) = store.patch_metrics(&run.id, &metrics).await {
+        tracing::warn!(
+            run_id = %run.id,
+            error = %e,
+            "enrich_with_inference_cost: patch_metrics failed (best-effort; run keeps existing metrics)",
+        );
+        return;
+    }
+    run.metrics = Some(metrics.clone());
+
+    // Emit inference_cost_dominates_return finding when threshold is crossed.
+    if let Some(cost) = inference_cost {
+        let gross_return_quote = capital_initial * metrics.total_return_pct / 100.0;
+        if inference_cost_dominates(gross_return_quote, cost, INFERENCE_COST_DOMINANCE_THRESHOLD) {
+            let ratio = if gross_return_quote.abs() > f64::EPSILON {
+                cost.abs() / gross_return_quote.abs()
+            } else {
+                f64::INFINITY
+            };
+            let payload = InferenceCostDominatesReturnPayload {
+                ratio,
+                threshold: INFERENCE_COST_DOMINANCE_THRESHOLD,
+                gross_return_quote,
+                inference_cost_quote_total: cost,
+            };
+            let evidence = match serde_json::to_value(&payload) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(run_id = %run.id, error = %e, "failed to serialize inference_cost finding payload");
+                    return;
+                }
+            };
+            let finding = Finding {
+                id: ulid::Ulid::new().to_string(),
+                run_id: run.id.clone(),
+                kind: "inference_cost_dominates_return".into(),
+                severity: Severity::Warning,
+                summary: format!(
+                    "LLM inference cost (${cost:.4}) exceeds {:.0}% of gross trading return (${:.4}); net return may be negative.",
+                    INFERENCE_COST_DOMINANCE_THRESHOLD * 100.0,
+                    gross_return_quote.abs(),
+                ),
+                evidence,
+                extracted_at: chrono::Utc::now(),
+                schema_version: crate::eval::findings::FINDING_SCHEMA_VERSION.to_string(),
+                evidence_cycle_ids: Some(vec![]),
+                produced_by_check: Some("metrics:cost_dominance".to_string()),
+                eval_review_id: None,
+                review_type: None,
+                confidence: None,
+                title: Some("Inference cost dominates return".into()),
+                description: Some(format!(
+                    "produced_by_check=metrics:cost_dominance ratio={ratio:.3} threshold={t}",
+                    t = INFERENCE_COST_DOMINANCE_THRESHOLD,
+                )),
+                recommendation: Some(
+                    "Consider using a cheaper model for this strategy, or increase capital to dilute the per-decision cost.".into(),
+                ),
+                created_at: Some(chrono::Utc::now()),
+            };
+            if let Err(e) = store.record_finding(&finding).await {
+                tracing::warn!(
+                    run_id = %run.id,
+                    error = %e,
+                    "enrich_with_inference_cost: record finding failed (best-effort)",
+                );
+            }
+        }
+    }
 }
 
 /// Resolve a scenario id to a `Scenario`. Tries the DB-backed registry
@@ -1539,6 +1690,7 @@ async fn build_paper_executor(
     from_db: bool,
     broker: Arc<dyn BrokerSurface>,
     obs: Option<crate::agent::observability::ObsEmitter>,
+    limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
     let bars = load_ohlcv_for_scenario(ctx, scenario, from_db).await?;
     let warmup = if from_db {
@@ -1564,6 +1716,9 @@ async fn build_paper_executor(
     // recorder treats `Off` as a no-op, so legacy strategies are unaffected.
     if let Some(recorder) = ctx.memory_recorder.clone() {
         paper = paper.with_memory_recorder(recorder);
+    }
+    if let Some(l) = limits {
+        paper = paper.with_limits(l.clone());
     }
     Ok(Box::new(paper))
 }
@@ -1612,6 +1767,7 @@ async fn build_backtest_executor(
     scenario: &Scenario,
     from_db: bool,
     obs: Option<crate::agent::observability::ObsEmitter>,
+    limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
     if from_db {
         match load_bars_for_scenario(ctx, scenario).await {
@@ -1641,6 +1797,9 @@ async fn build_backtest_executor(
                 if let Some(recorder) = ctx.memory_recorder.clone() {
                     bt = bt.with_memory_recorder(recorder);
                 }
+                if let Some(l) = limits {
+                    bt = bt.with_limits(l.clone());
+                }
                 return Ok(Box::new(bt));
             }
             Err(e) => {
@@ -1665,6 +1824,9 @@ async fn build_backtest_executor(
     // V2D: thread the server-built recorder onto the executor.
     if let Some(recorder) = ctx.memory_recorder.clone() {
         bt = bt.with_memory_recorder(recorder);
+    }
+    if let Some(l) = limits {
+        bt = bt.with_limits(l.clone());
     }
     Ok(Box::new(bt))
 }
@@ -1764,9 +1926,19 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.expect("paper mode broker built above");
-            build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
+            build_paper_executor(
+                ctx,
+                &scenario,
+                from_db,
+                b,
+                obs_emitter.clone(),
+                req.limits.as_ref(),
+            )
+            .await?
         }
-        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?,
+        RunMode::Backtest => {
+            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref()).await?
+        }
     };
 
     run.params_override = req.params_override.clone();
@@ -1988,7 +2160,7 @@ async fn execute_in_background(
     // "stuck running" state. PR #345 (eval-run-watchdog-and-stuck-running,
     // F-3) already touches this path — add write batching there to avoid a
     // merge conflict here.
-    let finalized = match store.get(&run.id).await {
+    let mut finalized = match store.get(&run.id).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(
@@ -2007,6 +2179,10 @@ async fn execute_in_background(
             return;
         }
     };
+
+    // V2E item 25: enrich with inference cost aggregate (best-effort).
+    enrich_with_inference_cost(&ctx, &store, &mut finalized, &scenario).await;
+
     api_search::upsert_run(&ctx, &finalized).await;
     if let Some(em) = obs_emitter.as_ref() {
         em.emit_run_finished(xvision_observability::RunStatus::Completed, None)
@@ -2225,9 +2401,15 @@ pub fn summarise_run(run: Run) -> RunSummary {
 }
 
 fn summarise(run: Run) -> RunSummary {
-    let (sharpe, max_dd, total_return) = match &run.metrics {
-        Some(m) => (Some(m.sharpe), Some(m.max_drawdown_pct), Some(m.total_return_pct)),
-        None => (None, None, None),
+    let (sharpe, max_dd, total_return, inference_cost, net_return) = match &run.metrics {
+        Some(m) => (
+            Some(m.sharpe),
+            Some(m.max_drawdown_pct),
+            Some(m.total_return_pct),
+            m.inference_cost_quote_total,
+            m.net_return_pct,
+        ),
+        None => (None, None, None, None, None),
     };
     RunSummary {
         id: run.id,
@@ -2246,6 +2428,8 @@ fn summarise(run: Run) -> RunSummary {
         error: run.error,
         actual_input_tokens: run.actual_input_tokens,
         actual_output_tokens: run.actual_output_tokens,
+        inference_cost_quote_total: inference_cost,
+        net_return_pct: net_return,
     }
 }
 

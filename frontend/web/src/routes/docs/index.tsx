@@ -81,17 +81,30 @@ export function DocsRoute() {
   return (
     <>
       <Topbar title="Docs" sub="In-app reference" />
-      <div className="grid grid-cols-[240px_1fr] gap-4">
-        <aside className="space-y-2" aria-label="Docs navigation">
+      {/*
+        Two-pane reader on tablet/desktop, stacked single-column on
+        phone. Sidebar uses the folio-dark prototype's treatment (see
+        `docs/design/xvnwiki/docs/docs.css`): hairline right border,
+        sticky inside the scroll container, muted uppercase section
+        eyebrows (10.5px / 0.14em tracking), and a left-edge accent on
+        the active item (`inset 2px 0 0 var(--accent)`). Main pane caps
+        the reader measure at ~880px so long lines stay scannable per
+        the prototype's `.main { max-width: 880px }` block.
+      */}
+      <div className="md:grid md:grid-cols-[240px_1fr] md:gap-8 flex flex-col gap-4">
+        <aside
+          className="md:border-r md:border-border-soft md:pr-6 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-48px)] md:overflow-y-auto"
+          aria-label="Docs navigation"
+        >
           <input
             type="search"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter docs…"
             aria-label="Filter docs"
-            className="w-full bg-surface-elev border border-border rounded px-2 py-1 text-[13px] text-text placeholder:text-text-3"
+            className="w-full bg-surface-elev border border-border-soft rounded-sm px-2.5 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-gold/40 mb-3"
           />
-          <nav className="flex flex-col gap-1" data-testid="docs-index">
+          <nav className="flex flex-col gap-0.5" data-testid="docs-index">
             {index.isPending ? (
               <div className="text-[12px] text-text-3 py-2">Loading…</div>
             ) : index.isError ? (
@@ -107,14 +120,14 @@ export function DocsRoute() {
                 No pages match "{filter}".
               </div>
             ) : (
-              grouped.map((group) => (
+              grouped.map((group, gi) => (
                 <div
                   key={group.section}
-                  className="flex flex-col gap-1"
+                  className={`flex flex-col gap-0.5 ${gi > 0 ? "mt-5" : ""}`}
                   data-testid={`docs-section-${group.section.toLowerCase().replace(/\s+/g, "-")}`}
                 >
                   <h3
-                    className="text-[10px] uppercase tracking-wider text-text-3 px-2 pt-2 pb-0.5 font-medium"
+                    className="text-[10.5px] uppercase text-text-3 font-semibold tracking-[0.14em] px-2 pb-1.5"
                     data-testid="docs-section-header"
                   >
                     {group.section}
@@ -128,10 +141,10 @@ export function DocsRoute() {
                         onClick={() => setSearchParams({ slug: p.slug })}
                         aria-current={isActive ? "page" : undefined}
                         data-testid={`docs-index-item-${p.slug}`}
-                        className={`text-left text-[13px] rounded px-2 py-1.5 border transition-colors ${
+                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] transition-colors leading-snug ${
                           isActive
-                            ? "border-gold/40 text-text bg-gold/5"
-                            : "border-border-soft text-text-2 hover:text-text"
+                            ? "text-text bg-gold/10 shadow-[inset_2px_0_0_theme(colors.gold.DEFAULT)]"
+                            : "text-text-2 hover:text-text hover:bg-surface-elev"
                         }`}
                       >
                         {p.title}
@@ -144,8 +157,8 @@ export function DocsRoute() {
           </nav>
         </aside>
 
-        <main className="min-w-0">
-          <Card className="p-6">
+        <main className="min-w-0 md:max-w-[880px]">
+          <Card className="p-6 md:p-10">
             {!activeSlug ? (
               <div className="text-text-3 text-[13px]">
                 Select a page from the index.

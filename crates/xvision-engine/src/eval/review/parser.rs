@@ -352,6 +352,7 @@ mod tests {
             n_trades: 4,
             n_decisions: 10,
             baselines: None,
+            ..Default::default()
         });
         let t0 = Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap();
         let decisions: Vec<DecisionRow> = (0..3)
