@@ -25,7 +25,7 @@
 //! observed. This module is internally 1-based (counts of bars
 //! consumed); the runtime translates to/from bar indices as needed.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::types::{IndicatorName, IndicatorRef};
 
@@ -53,7 +53,7 @@ impl Bar {
 
 /// Key uniquely identifying an indicator instance fed by the engine.
 /// Two refs with the same `(name, period)` share state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IndicatorKey {
     pub name: IndicatorName,
     pub period: u32,
@@ -74,7 +74,7 @@ impl IndicatorKey {
 /// every `push` updates every instance.
 #[derive(Debug)]
 pub struct IndicatorEngine {
-    instances: BTreeMap<IndicatorKey, Instance>,
+    instances: HashMap<IndicatorKey, Instance>,
     bars_seen: u64,
     /// Last close — held outside the per-instance state because every
     /// `IndicatorKey { Close, 0 }` query returns the same value, and
@@ -101,7 +101,7 @@ impl IndicatorEngine {
     where
         I: IntoIterator<Item = &'a IndicatorRef>,
     {
-        let mut instances: BTreeMap<IndicatorKey, Instance> = BTreeMap::new();
+        let mut instances: HashMap<IndicatorKey, Instance> = HashMap::new();
         for r in refs {
             let key = IndicatorKey::from_ref(r);
             if instances.contains_key(&key) {
@@ -132,9 +132,7 @@ impl IndicatorEngine {
                 Instance::Sma(s) => s.push(bar.close),
                 Instance::Ema(s) => s.push(bar.close),
                 Instance::Rsi(s) => s.push(bar.close),
-                Instance::Atr(s) | Instance::AtrPct(s) => {
-                    s.push(bar.high, bar.low, bar.close, prev_close)
-                }
+                Instance::Atr(s) | Instance::AtrPct(s) => s.push(bar.high, bar.low, bar.close, prev_close),
             }
         }
         self.last_close = Some(bar.close);
@@ -155,9 +153,7 @@ impl IndicatorEngine {
             Instance::Rsi(s) => s.value(),
             Instance::Atr(s) => s.value(),
             Instance::AtrPct(s) => match (s.value(), self.last_close) {
-                (Some(atr), Some(close)) if close.abs() > f64::EPSILON => {
-                    Some(100.0 * atr / close)
-                }
+                (Some(atr), Some(close)) if close.abs() > f64::EPSILON => Some(100.0 * atr / close),
                 _ => None,
             },
         }
@@ -407,10 +403,7 @@ mod tests {
     fn close_seq(closes: &[f64]) -> Vec<Bar> {
         // Synthesize OHLC where high = close + 0.5, low = close - 0.5 so
         // true range is well defined.
-        closes
-            .iter()
-            .map(|&c| bar(c, c + 0.5, c - 0.5, c))
-            .collect()
+        closes.iter().map(|&c| bar(c, c + 0.5, c - 0.5, c)).collect()
     }
 
     #[test]
@@ -451,8 +444,8 @@ mod tests {
         // Hand-computed expected ≈ 62.48 (sum_gains=2.93, sum_losses=1.76,
         // RS=1.6648, RSI=100 - 100/2.6648).
         let closes = [
-            46.13, 46.26, 46.50, 46.38, 46.25, 46.65, 46.42, 46.92, 46.30, 46.07, 46.03, 46.83,
-            47.69, 47.54, 47.30,
+            46.13, 46.26, 46.50, 46.38, 46.25, 46.65, 46.42, 46.92, 46.30, 46.07, 46.03, 46.83, 47.69, 47.54,
+            47.30,
         ];
         let r = IndicatorRef::periodic(IndicatorName::Rsi, 14);
         let mut e = IndicatorEngine::new([&r]);

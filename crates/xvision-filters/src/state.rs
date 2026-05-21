@@ -19,7 +19,7 @@ use crate::types::{Condition, ConditionTree, Filter, IndicatorRef, Operand};
 
 /// Internal record of one UTC day for the daily-wakeup cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct UtcDay {
+pub(crate) struct UtcDay {
     year: i32,
     ordinal: u32, // 1..=366
 }
@@ -61,7 +61,7 @@ impl FilterState {
         let indicators = IndicatorEngine::new(refs.iter());
         let n_conditions = filter.conditions.conditions().len();
         Self {
-            indicators: indicators,
+            indicators,
             prev_conditions: vec![None; n_conditions],
             prev_tree: None,
             cooldown_left: 0,
@@ -156,7 +156,9 @@ fn collect_from_operand(o: &Operand, out: &mut Vec<IndicatorRef>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Condition, ConditionTree, FilterId, IndicatorName, Operator, StrategyId, Symbol, Timeframe};
+    use crate::types::{
+        Condition, ConditionTree, FilterId, IndicatorName, Operator, StrategyId, Symbol, Timeframe,
+    };
     use chrono::TimeZone;
 
     fn mk_filter(tree: ConditionTree, cooldown: u32, max_wake: Option<u32>) -> Filter {
@@ -166,15 +168,15 @@ mod tests {
             display_name: "t".into(),
             description: None,
             status: crate::types::FilterStatus::Draft,
-            asset_scope: vec![Symbol::new("BTC/USD".into())],
-            timeframe: Timeframe::new("1h".into()),
+            asset_scope: vec![Symbol::new("BTC/USD")],
+            timeframe: Timeframe::new("1h"),
             scan_cadence: crate::types::ScanCadence::BarClose,
             conditions: tree,
             cooldown_bars: cooldown,
             max_wakeups_per_day: max_wake,
             wake_when_in_position: crate::types::WakeInPosition::Always,
             agent_context_template: crate::types::AgentContextTemplateId::new(
-                crate::DEFAULT_AGENT_CONTEXT_TEMPLATE.into(),
+                crate::DEFAULT_AGENT_CONTEXT_TEMPLATE,
             ),
         }
     }
