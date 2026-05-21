@@ -56,7 +56,7 @@ strictly sequential (compile dependencies) and Phases 4+5 share the
 event surface that Phase 3 introduces — splitting the wave into five
 contracts would add coordination overhead with no parallelism payoff.
 
-- [v2d-agent-memory](contracts/v2d-agent-memory.md) — foundation · claimed · single-contract wave · claims migration **028**
+- [v2d-agent-memory](contracts/v2d-agent-memory.md) — foundation · claimed · single-contract wave · claims migration **029**
 
 Implementation plan:
 `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`.

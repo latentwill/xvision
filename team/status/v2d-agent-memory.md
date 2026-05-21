@@ -20,7 +20,7 @@ Per `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`:
 - [ ] **Phase 1.5** — cortex tier split (Resources / Skills); **added
       2026-05-21** after `/grill-me` design pass — see
       `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`.
-- [x] **Phase 2** — engine migration 028 + `AgentSlot.memory_mode` +
+- [x] **Phase 2** — engine migration 029 + `AgentSlot.memory_mode` +
       AgentStore roundtrip.
 - [x] **Phase 3** — `MemoryRecorder` + `execute_slot` recall/record
       wiring + OpenAI embedder + pipeline + executor end-to-end

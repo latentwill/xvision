@@ -111,7 +111,7 @@ async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     // V2D: memory_mode column.
-    sqlx::query(include_str!("../migrations/028_agent_slot_memory_mode.sql"))
+    sqlx::query(include_str!("../migrations/029_agent_slot_memory_mode.sql"))
         .execute(&ctx.db)
         .await
         .unwrap();

@@ -1,4 +1,4 @@
--- 028_agent_slot_memory_mode.sql — V2D agent memory wave.
+-- 029_agent_slot_memory_mode.sql — V2D agent memory wave.
 --
 -- Adds a per-slot `memory_mode` knob so an operator can opt an agent
 -- into the cortex-memory layer (`xvision-memory` crate). The field is
@@ -9,7 +9,7 @@
 --   * `off`           — today's behavior. The dispatcher does not
 --                       consult or write the cortex-memory store for
 --                       this slot. This is the migration default so
---                       every pre-028 row keeps its current behavior
+--                       every pre-029 row keeps its current behavior
 --                       with no operator action required.
 --   * `global`        — the slot reads/writes against the shared
 --                       `global` namespace; entries persisted by any

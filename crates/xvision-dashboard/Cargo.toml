@@ -33,6 +33,11 @@ ulid            = { version = "1", features = ["serde"] }
 # The dashboard owns server-startup migration runs; the engine crate only
 # defines them.
 sqlx            = { workspace = true, features = ["migrate"] }
+# sysinfo: PID-liveness check in the startup orphan-recovery sweep.
+# The `"system"` feature is not needed; we only need `Process` + `Pid`.
+sysinfo         = { version = "0.32", default-features = false, features = ["system"] }
+# nix: SIGTERM delivery on Unix. Feature-gated in source via #[cfg(unix)].
+nix             = { version = "0.29", default-features = false, features = ["signal", "process"] }
 
 [dev-dependencies]
 axum-test = "16"
@@ -43,3 +48,4 @@ chrono    = { workspace = true }
 reqwest   = { workspace = true, features = ["stream"] }
 futures-util = "0.3"
 tower = { version = "0.5", features = ["util"] }
+sqlx      = { workspace = true }

@@ -323,8 +323,8 @@ impl AgentStore {
                 Some(n) if n > 0 => Some(n as u32),
                 _ => None,
             };
-            // V2D: `memory_mode` was added in migration 028 with DEFAULT
-            // 'off'; pre-028 rows read back as `Off`. Unknown values
+            // V2D: `memory_mode` was added in migration 029 with DEFAULT
+            // 'off'; pre-029 rows read back as `Off`. Unknown values
             // also fall back to `Off` via `parse_or_off`.
             let memory_mode_s: String = row.try_get("memory_mode").unwrap_or_default();
             let memory_mode = xvision_memory::types::MemoryMode::parse_or_off(&memory_mode_s);
@@ -389,7 +389,7 @@ async fn insert_slot(
     // SQL NULL → `None` on read, preserving pre-022 behavior.
     .bind(bar_history_limit_db)
     // V2D: persisted as one of `off` | `global` | `agent_scoped`.
-    // Column DEFAULT is 'off' (migration 028); we still bind the
+    // Column DEFAULT is 'off' (migration 029); we still bind the
     // explicit value here so the row is byte-stable across writes.
     .bind(slot.memory_mode.as_str())
     .execute(&mut **tx)
@@ -441,10 +441,10 @@ mod tests {
         // writes this column on every save.
         let migration_025 = include_str!("../../migrations/025_agent_slot_cache_and_window.sql");
         sqlx::query(migration_025).execute(&pool).await.unwrap();
-        // 028 adds agent_slots.memory_mode (V2D per-slot cortex-memory
+        // 029 adds agent_slots.memory_mode (V2D per-slot cortex-memory
         // toggle). AgentStore::insert_slot writes the column on every
-        // save; the read path falls back to `Off` for pre-028 rows.
-        let migration_028 = include_str!("../../migrations/028_agent_slot_memory_mode.sql");
+        // save; the read path falls back to `Off` for pre-029 rows.
+        let migration_028 = include_str!("../../migrations/029_agent_slot_memory_mode.sql");
         sqlx::query(migration_028).execute(&pool).await.unwrap();
         pool
     }

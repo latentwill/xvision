@@ -35,8 +35,8 @@ const MIGRATION_020_UP: &str = include_str!("../migrations/020_agent_slot_inputs
 const MIGRATION_020_DOWN: &str = include_str!("../migrations/020_agent_slot_inputs_policy.down.sql");
 const MIGRATION_025: &str = include_str!("../migrations/025_agent_slot_cache_and_window.sql");
 // V2D: memory_mode column. AgentStore::insert_slot binds memory_mode on
-// every save, so the test pool must apply 028 before any insert path runs.
-const MIGRATION_028: &str = include_str!("../migrations/028_agent_slot_memory_mode.sql");
+// every save, so the test pool must apply 029 before any insert path runs.
+const MIGRATION_028: &str = include_str!("../migrations/029_agent_slot_memory_mode.sql");
 
 /// In-memory pool with the agents table and migrations 005 + 019 +
 /// 020 + 025 applied. Mirrors the runtime boot path.
