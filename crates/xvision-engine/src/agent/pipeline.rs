@@ -91,6 +91,9 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             max_tokens,
             temperature: None,
             obs: input.obs.clone(),
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         })
         .await?;
         total_in += out.input_tokens;
@@ -112,6 +115,9 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             max_tokens,
             temperature: None,
             obs: input.obs.clone(),
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         })
         .await?;
         total_in += out.input_tokens;
@@ -133,6 +139,9 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             max_tokens,
             temperature: None,
             obs: input.obs.clone(),
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         })
         .await?;
         total_in += out.input_tokens;
@@ -185,6 +194,9 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             max_tokens: resolved.max_tokens,
             temperature: resolved.temperature,
             obs: input.obs.clone(),
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
         })
         .await?;
         total_in += out.input_tokens;

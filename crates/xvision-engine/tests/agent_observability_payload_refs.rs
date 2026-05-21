@@ -116,6 +116,9 @@ async fn full_debug_execute_slot_writes_prompt_and_response_blobs() {
         max_tokens: None,
         temperature: None,
         obs: Some(emitter),
+        memory: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
     })
     .await
     .expect("execute_slot must succeed with CannedDispatch");
@@ -191,6 +194,9 @@ async fn hash_only_execute_slot_leaves_payload_refs_none() {
         max_tokens: None,
         temperature: None,
         obs: Some(emitter),
+        memory: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
     })
     .await
     .expect("execute_slot must succeed with CannedDispatch");

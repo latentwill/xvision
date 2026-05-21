@@ -179,6 +179,9 @@ async fn failing_dispatch_emits_error_span_with_message() {
         max_tokens: None,
         temperature: None,
         obs: Some(emitter.clone()),
+        memory: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
     })
     .await;
     assert!(result.is_err(), "failing dispatch must propagate Err");
@@ -232,6 +235,9 @@ async fn execute_slot_with_no_emitter_does_not_touch_bus() {
         max_tokens: None,
         temperature: None,
         obs: None,
+        memory: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
     })
     .await;
     assert!(result.is_err());
