@@ -1107,8 +1107,7 @@ impl WizardLoop {
                         .and_then(|v| v.as_u64())
                         .map(|n| n.min(u32::MAX as u64) as u32),
                 };
-                let ideas =
-                    strategies_folder::ideas::list_ideas(&self.api_context, filter).await?;
+                let ideas = strategies_folder::ideas::list_ideas(&self.api_context, filter).await?;
                 Ok(serde_json::to_value(ideas)?)
             }
             other => anyhow::bail!("unknown authoring verb: {other}"),
@@ -2594,12 +2593,8 @@ mod tests {
                 output_tokens: 1,
             },
         ]));
-        let (mut wl, _pool, td, _sid) = loop_with_session(
-            mock,
-            "give me three EMA strategy ideas",
-            ContextScope::Workspace,
-        )
-        .await;
+        let (mut wl, _pool, td, _sid) =
+            loop_with_session(mock, "give me three EMA strategy ideas", ContextScope::Workspace).await;
 
         // Populate the library the same way `xvn strategies init` does
         // in production. This proves the V2F closer integrates with the

@@ -77,10 +77,12 @@ fn strategies_init_happy_path_against_tempdir() {
     let manifest = root.join("library").join(".from-docs.json");
     assert!(manifest.is_file(), "manifest missing at {}", manifest.display());
     let body = std::fs::read_to_string(&manifest).unwrap();
-    assert!(body.contains("\"version\""), "manifest missing version field: {body}");
     assert!(
-        body.contains("library/freqtrade_strategies_playlist.md")
-            || body.contains("library/templates/"),
+        body.contains("\"version\""),
+        "manifest missing version field: {body}"
+    );
+    assert!(
+        body.contains("library/freqtrade_strategies_playlist.md") || body.contains("library/templates/"),
         "manifest looks empty: {body}"
     );
 

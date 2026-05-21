@@ -20,11 +20,7 @@ fn xvn(args: &[&str], home: &std::path::Path) -> std::process::Output {
         .expect("xvn invocation")
 }
 
-async fn seed_run_with_status(
-    home: &std::path::Path,
-    agent_id: &str,
-    status: RunStatus,
-) -> String {
+async fn seed_run_with_status(home: &std::path::Path, agent_id: &str, status: RunStatus) -> String {
     let ctx = ApiContext::open(
         home,
         Actor::Cli {
@@ -82,9 +78,7 @@ fn cancel_by_explicit_id_marks_run_cancelled() {
         .build()
         .unwrap();
 
-    let run_id = rt.block_on(async {
-        seed_run_with_status(dir.path(), "agent-X", RunStatus::Running).await
-    });
+    let run_id = rt.block_on(async { seed_run_with_status(dir.path(), "agent-X", RunStatus::Running).await });
 
     let out = xvn(&["eval", "cancel", &run_id, "--json"], dir.path());
     assert!(
@@ -93,8 +87,7 @@ fn cancel_by_explicit_id_marks_run_cancelled() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let body: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
     let cancelled_ids = body["cancelled_ids"].as_array().expect("cancelled_ids array");
     assert_eq!(cancelled_ids.len(), 1);
     assert_eq!(cancelled_ids[0].as_str(), Some(run_id.as_str()));
@@ -114,15 +107,11 @@ fn cancel_running_filters_to_active_runs_only() {
 
     // Two active runs (queued + running) — both should be cancelled.
     // One completed run — must be left alone.
-    let queued = rt.block_on(async {
-        seed_run_with_status(dir.path(), "agent-Y", RunStatus::Queued).await
-    });
-    let running = rt.block_on(async {
-        seed_run_with_status(dir.path(), "agent-Z", RunStatus::Running).await
-    });
-    let completed = rt.block_on(async {
-        seed_run_with_status(dir.path(), "agent-W", RunStatus::Completed).await
-    });
+    let queued = rt.block_on(async { seed_run_with_status(dir.path(), "agent-Y", RunStatus::Queued).await });
+    let running =
+        rt.block_on(async { seed_run_with_status(dir.path(), "agent-Z", RunStatus::Running).await });
+    let completed =
+        rt.block_on(async { seed_run_with_status(dir.path(), "agent-W", RunStatus::Completed).await });
 
     let out = xvn(&["eval", "cancel", "--running", "--json"], dir.path());
     assert!(
@@ -131,8 +120,7 @@ fn cancel_running_filters_to_active_runs_only() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let body: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
     let cancelled_ids: Vec<&str> = body["cancelled_ids"]
         .as_array()
         .expect("cancelled_ids array")
@@ -165,12 +153,10 @@ fn cancel_by_strategy_filters_to_that_agent() {
         .build()
         .unwrap();
 
-    let mine = rt.block_on(async {
-        seed_run_with_status(dir.path(), "agent-target", RunStatus::Running).await
-    });
-    let theirs = rt.block_on(async {
-        seed_run_with_status(dir.path(), "agent-other", RunStatus::Running).await
-    });
+    let mine =
+        rt.block_on(async { seed_run_with_status(dir.path(), "agent-target", RunStatus::Running).await });
+    let theirs =
+        rt.block_on(async { seed_run_with_status(dir.path(), "agent-other", RunStatus::Running).await });
 
     let out = xvn(
         &["eval", "cancel", "--strategy", "agent-target", "--json"],
@@ -182,8 +168,7 @@ fn cancel_by_strategy_filters_to_that_agent() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let body: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
     let cancelled_ids: Vec<&str> = body["cancelled_ids"]
         .as_array()
         .expect("cancelled_ids array")
@@ -204,9 +189,8 @@ fn cancel_already_terminal_reports_outcome_without_failing() {
         .build()
         .unwrap();
 
-    let completed = rt.block_on(async {
-        seed_run_with_status(dir.path(), "agent-done", RunStatus::Completed).await
-    });
+    let completed =
+        rt.block_on(async { seed_run_with_status(dir.path(), "agent-done", RunStatus::Completed).await });
 
     let out = xvn(&["eval", "cancel", &completed, "--json"], dir.path());
     assert!(
@@ -215,8 +199,7 @@ fn cancel_already_terminal_reports_outcome_without_failing() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let body: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
     assert!(body["cancelled_ids"].as_array().unwrap().is_empty());
     // Engine maps "is already" → Validation error → we map to
     // "already_terminal".

@@ -23,8 +23,8 @@ fn fresh_home() -> TempDir {
 
 fn read_manifest_from_disk(xvn_home: &Path) -> Manifest {
     let path = prepop::manifest_path(xvn_home);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read manifest {}: {e}", path.display()));
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read manifest {}: {e}", path.display()));
     serde_json::from_str(&text).expect("parse manifest")
 }
 
@@ -58,7 +58,8 @@ async fn happy_path_init_creates_all_subfolders_and_manifest() {
 
     let rels: Vec<&str> = manifest.entries.iter().map(|e| e.rel_path.as_str()).collect();
     assert!(
-        rels.iter().any(|r| r == &"library/freqtrade_strategies_playlist.md"),
+        rels.iter()
+            .any(|r| r == &"library/freqtrade_strategies_playlist.md"),
         "manifest missing freqtrade playlist; got {rels:?}"
     );
     assert!(
@@ -86,8 +87,14 @@ async fn happy_path_init_creates_all_subfolders_and_manifest() {
     }
 
     // First run reports the entries as new, with no drift or stale.
-    assert!(!report.new_files.is_empty(), "new_files should include first-run copies");
-    assert!(report.refreshed_files.is_empty(), "no refreshed entries on first run");
+    assert!(
+        !report.new_files.is_empty(),
+        "new_files should include first-run copies"
+    );
+    assert!(
+        report.refreshed_files.is_empty(),
+        "no refreshed entries on first run"
+    );
     assert!(report.drift.is_empty(), "no drift on first run");
     assert!(report.stale_source.is_empty(), "no stale source on first run");
 }

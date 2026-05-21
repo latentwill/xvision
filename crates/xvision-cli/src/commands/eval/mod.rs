@@ -528,11 +528,9 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
 /// Parse a duration like `2h`, `30m`, `1d`, `45s` into a `chrono::Duration`.
 fn parse_older_than(s: &str) -> Result<chrono::Duration> {
     let trimmed = s.trim();
-    let (digits, unit) = trimmed.split_at(
-        trimmed
-            .find(|c: char| !c.is_ascii_digit())
-            .context(format!("--older-than '{s}' must be a digit followed by a unit (s, m, h, d)"))?,
-    );
+    let (digits, unit) = trimmed.split_at(trimmed.find(|c: char| !c.is_ascii_digit()).context(format!(
+        "--older-than '{s}' must be a digit followed by a unit (s, m, h, d)"
+    ))?);
     let n: i64 = digits
         .parse()
         .context(format!("--older-than '{s}' has a non-numeric prefix"))?;
@@ -541,9 +539,7 @@ fn parse_older_than(s: &str) -> Result<chrono::Duration> {
         "m" => chrono::Duration::minutes(n),
         "h" => chrono::Duration::hours(n),
         "d" => chrono::Duration::days(n),
-        other => anyhow::bail!(
-            "--older-than '{s}' has unknown unit '{other}'; expected one of: s, m, h, d"
-        ),
+        other => anyhow::bail!("--older-than '{s}' has unknown unit '{other}'; expected one of: s, m, h, d"),
     };
     Ok(dur)
 }
@@ -551,11 +547,7 @@ fn parse_older_than(s: &str) -> Result<chrono::Duration> {
 async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     // Require at least one selector. Calling `xvn eval cancel` with
     // no arguments would otherwise be a silent no-op.
-    if args.run_id.is_none()
-        && !args.running
-        && args.strategy.is_none()
-        && args.older_than.is_none()
-    {
+    if args.run_id.is_none() && !args.running && args.strategy.is_none() && args.older_than.is_none() {
         return Err(CliError {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!(
@@ -571,10 +563,7 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     // Resolve the older-than cutoff before we touch the DB so a bad
     // duration string fails fast with Usage rather than Upstream.
     let older_than_cutoff = match args.older_than.as_deref() {
-        Some(s) => Some(
-            chrono::Utc::now()
-                - parse_older_than(s).exit_with(XvnExit::Usage)?,
-        ),
+        Some(s) => Some(chrono::Utc::now() - parse_older_than(s).exit_with(XvnExit::Usage)?),
         None => None,
     };
 

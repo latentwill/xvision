@@ -26,6 +26,7 @@ pub mod findings;
 pub mod guardrails;
 pub mod limits;
 pub mod metrics;
+pub mod orders;
 pub mod postprocess;
 pub mod progress;
 pub mod regime;
@@ -51,6 +52,7 @@ pub use cost::{
 };
 pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};
+pub use orders::OrderState;
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
 pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 

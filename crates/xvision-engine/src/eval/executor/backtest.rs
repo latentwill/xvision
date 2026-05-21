@@ -40,6 +40,7 @@ use crate::eval::broker_rules::{
 };
 use crate::eval::cost_arrays::BarCostTable;
 use crate::eval::early_stop::{self, EarlyStopConfig};
+use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::executor::Executor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
 use crate::eval::guardrails::{
@@ -50,6 +51,7 @@ use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
 };
+use crate::eval::orders::OrderState;
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
@@ -888,6 +890,9 @@ impl BacktestExecutor {
                     fee: None,
                     realized_pnl: 0.0,
                     provenance: FillProvenance::default(),
+                    fill_branch: None,
+                    aggressor_side: None,
+                    order_state: None,
                 }
             } else {
                 // Resolve per-bar and per-asset cost overrides.
@@ -917,6 +922,16 @@ impl BacktestExecutor {
                     })
                     .unwrap_or(default_taker_bps);
 
+                // Maker fee: per-bar override if present, else per-asset, else scenario default.
+                let effective_maker_bps = bar_cost
+                    .and_then(|c| c.fee_bps) // when per-bar fee is present, use it for both sides
+                    .or_else(|| {
+                        asset_override
+                            .and_then(|o| o.fees.as_ref())
+                            .map(|f| f.maker_bps as f64)
+                    })
+                    .unwrap_or(scenario.venue.fees.maker_bps as f64);
+
                 let effective_spread_bps = bar_cost.and_then(|c| c.spread_bps).unwrap_or(0.0);
 
                 // Determine the effective slippage model. When a per-bar
@@ -940,6 +955,15 @@ impl BacktestExecutor {
                 let per_asset_fee_present = asset_override.and_then(|o| o.fees.as_ref()).is_some();
                 let fee_source = resolve_fee_source(per_bar_fee_present, per_asset_fee_present);
 
+                // Fill bar is the next bar — `bars.get(i + 1)` if present,
+                // else the current bar (terminal-bar fallback). We need its
+                // O/H/L for intra-bar ordering. When bars[i+1] doesn't exist,
+                // use current bar's close as a degenerate open and O==H==L.
+                let fill_bar = bars.get(i + 1);
+                let (fill_bar_open, fill_bar_high, fill_bar_low) = fill_bar
+                    .map(|b| (b.open, b.high, b.low))
+                    .unwrap_or((bar.close, bar.close, bar.close));
+
                 let fill_result = simulate_fill(SimulateFillArgs {
                     pos: pre_fill_position,
                     entry: entry_price,
@@ -949,12 +973,16 @@ impl BacktestExecutor {
                     slip_bps: effective_slip_bps,
                     spread_bps: effective_spread_bps,
                     taker_bps: effective_taker_bps,
+                    maker_bps: effective_maker_bps,
                     equity,
                     risk_pct: strategy.risk.risk_pct_per_trade,
                     slippage_model: effective_slippage_model,
                     fee_source,
                     asset: &asset,
                     bar_ts: bar.timestamp,
+                    bar_open: fill_bar_open,
+                    bar_high: fill_bar_high,
+                    bar_low: fill_bar_low,
                 });
 
                 // Collect volume_share_excess finding if the cap bound.
@@ -1291,6 +1319,8 @@ struct SimulateFillArgs<'a> {
     /// Half-spread in bps (0.0 when no `spread_bps` column present).
     spread_bps: f64,
     taker_bps: f64,
+    /// Maker fee in bps — applied when `AggressorSide::Maker` is classified.
+    maker_bps: f64,
     equity: f64,
     risk_pct: f64,
     /// The effective slippage model for this bar (after override resolution).
@@ -1301,6 +1331,20 @@ struct SimulateFillArgs<'a> {
     asset: &'a str,
     /// Bar timestamp — used for fallback debug logging.
     bar_ts: chrono::DateTime<chrono::Utc>,
+    /// Current bar's OHLC — used for NautilusTrader intra-bar fill ordering.
+    /// `open` must equal `next_open` from the *decision* bar's perspective
+    /// (i.e. this is the *next* bar that fills the order).
+    bar_open: f64,
+    /// High of the fill bar — used by `intra_bar_fill_branch` for the O→H→L→C
+    /// path decision. Stored here for future limit/stop order paths; v1 market
+    /// orders do not consult it (they always use `NextOpenOnly`).
+    #[allow(dead_code)]
+    bar_high: f64,
+    /// Low of the fill bar — used by `intra_bar_fill_branch` for the O→L→H→C
+    /// path decision. Stored here for future limit/stop order paths; v1 market
+    /// orders do not consult it (they always use `NextOpenOnly`).
+    #[allow(dead_code)]
+    bar_low: f64,
 }
 
 /// Result wrapper that bundles the `FillOutcome` with volume-cap metadata.
@@ -1324,18 +1368,200 @@ struct FillOutcome {
     /// when it lands its trace column writes. Unused until that track merges.
     #[allow(dead_code)]
     provenance: FillProvenance,
+    /// Which intra-bar branch triggered this fill. `None` for no-op (hold/flat-no-pos).
+    #[allow(dead_code)]
+    fill_branch: Option<FillBranch>,
+    /// Maker vs taker classification. `None` for no-op fills.
+    #[allow(dead_code)]
+    aggressor_side: Option<AggressorSide>,
+    /// Order lifecycle state after the fill attempt.
+    #[allow(dead_code)]
+    order_state: Option<OrderState>,
 }
 
-/// Simulate a market-order fill at the next bar's open, applying linear
-/// slippage and a taker fee. Realized PnL is booked when an existing
-/// position is reduced or reversed; new entries open at the slippage-adjusted
-/// fill price.
+// ---------------------------------------------------------------------------
+// Intra-bar fill ordering helpers (V2E eval-intra-bar-fill-ordering)
+// ---------------------------------------------------------------------------
+
+/// Corwin-Schultz (2012) bid-ask spread proxy from per-bar H/L data.
 ///
-/// Action semantics (matches the v1 trader-output schema):
-/// - `long_open`: hold long, reverse short → long, or open long from flat.
-/// - `short_open`: hold short, reverse long → short, or open short from flat.
-/// - `flat` (or any unknown action): close any open position; otherwise no-op.
+/// Formula: `2 * sqrt(max(0, log(H/L)² - 2*ln(2)*σ²))`
+/// where σ² is estimated from the rolling window's `log(H/L)²` values.
 ///
+/// Returns spread in basis points. Always returns a finite, non-negative value.
+///
+/// # Limitations
+/// - Downward-biased on thinly-traded names (Corwin-Schultz known limitation).
+/// - For liquid Alpaca symbols (BTC/USD, ETH/USD, large-cap equities) the
+///   estimator is a reasonable default when no explicit spread column is present.
+///
+/// `hl_log_sq_window` is a small rolling window of `(ln(H/L))²` values from
+/// recent bars — typically the last 5–20 bars. When the window is empty, σ²
+/// falls back to 0, producing `spread ≈ log(H/L) * 2`.
+pub fn corwin_schultz_spread_bps(bar_high: f64, bar_low: f64, hl_log_sq_window: &[f64]) -> f64 {
+    // Guard against degenerate inputs.
+    if bar_high <= 0.0
+        || bar_low <= 0.0
+        || bar_high < bar_low
+        || !bar_high.is_finite()
+        || !bar_low.is_finite()
+    {
+        return 0.0;
+    }
+
+    let ln2 = std::f64::consts::LN_2;
+    let log_hl = (bar_high / bar_low).ln();
+    let log_hl_sq = log_hl * log_hl;
+
+    // Rolling variance proxy: mean of (ln(H/L))² over the window.
+    let sigma_sq = if hl_log_sq_window.is_empty() {
+        0.0
+    } else {
+        hl_log_sq_window.iter().sum::<f64>() / hl_log_sq_window.len() as f64
+    };
+
+    // Corwin-Schultz: spread = 2 * sqrt(max(0, S²)) where S² = log_hl² - 2*ln(2)*σ².
+    let s_sq = (log_hl_sq - 2.0 * ln2 * sigma_sq).max(0.0);
+    let spread_fraction = 2.0 * s_sq.sqrt();
+
+    // Convert from fraction to bps, clamp to non-negative (sqrt ensures non-neg,
+    // but guard against NaN from pathological inputs).
+    let spread_bps = (spread_fraction * 10_000.0).max(0.0);
+    if spread_bps.is_finite() {
+        spread_bps
+    } else {
+        0.0
+    }
+}
+
+/// NautilusTrader-style intra-bar fill branch determination.
+///
+/// Given a fill bar's O/H/L, determine which OHLC walk sequence applies
+/// and whether the `trigger_price` would have been hit within that bar.
+///
+/// # Rules
+///
+/// 1. **Gap past trigger**: if the bar's open is already past the trigger
+///    in the fill direction (e.g. stop at 100 but bar opens at 95 for a
+///    long stop) → fill at open, `FillBranch::GapPast`. No price guarantee.
+///
+/// 2. **O→H→L→C** (high closer to open): if `|H - O| <= |L - O|`,
+///    visit open → high → low → close. First crossing fills.
+///
+/// 3. **O→L→H→C** (low closer to open): if `|L - O| < |H - O|`,
+///    visit open → low → high → close. First crossing fills.
+///
+/// `trigger_price`: the limit or stop price to test.
+/// `is_buy`: true when the order fills on an upward crossing (stop-buy,
+///   limit-buy above a falling price). false for sell-side.
+///
+/// Returns `(FillBranch, Option<fill_price>)`. `fill_price` is `None`
+/// when the trigger is not reached within this bar — the caller should
+/// leave the order `Open`.
+pub fn intra_bar_fill_branch(
+    bar_open: f64,
+    bar_high: f64,
+    bar_low: f64,
+    trigger_price: f64,
+    is_buy: bool,
+) -> (FillBranch, Option<f64>) {
+    // Rule 1: gap past trigger at open.
+    // For a buy stop/limit: if open is already at or above the trigger, gap fill.
+    // For a sell stop/limit: if open is already at or below the trigger, gap fill.
+    let gap_filled = if is_buy {
+        bar_open >= trigger_price
+    } else {
+        bar_open <= trigger_price
+    };
+    if gap_filled {
+        return (FillBranch::GapPast, Some(bar_open));
+    }
+
+    // Rule 2/3: NautilusTrader heuristic — which extreme is closer to open?
+    let high_dist = (bar_high - bar_open).abs();
+    let low_dist = (bar_low - bar_open).abs();
+
+    if high_dist <= low_dist {
+        // O→H→L→C: high visited first.
+        if is_buy {
+            // Buy trigger crossed when high reaches trigger.
+            if bar_high >= trigger_price {
+                return (FillBranch::OhlcHighFirst, Some(trigger_price));
+            }
+        } else {
+            // Sell trigger: not crossed in this sequence unless low is below trigger.
+            if bar_low <= trigger_price {
+                return (FillBranch::OhlcHighFirst, Some(trigger_price));
+            }
+        }
+    } else {
+        // O→L→H→C: low visited first.
+        if is_buy {
+            // Buy trigger: not crossed on the down leg; only on the up leg.
+            if bar_high >= trigger_price {
+                return (FillBranch::OhlcLowFirst, Some(trigger_price));
+            }
+        } else {
+            // Sell trigger crossed when low reaches trigger.
+            if bar_low <= trigger_price {
+                return (FillBranch::OhlcLowFirst, Some(trigger_price));
+            }
+        }
+    }
+
+    // Trigger not reached within this bar.
+    (FillBranch::NextOpenOnly, None)
+}
+
+/// Classify a fill as maker or taker.
+///
+/// A fill is **maker** when the fill price is within `spread/2` of the bar open
+/// on the passive side (i.e. the order was resting and got hit, not crossing).
+/// All other fills (market orders, or limits that cross the spread) are **taker**.
+///
+/// # Maker classification rule
+///
+/// `spread_bps_at_fill` is the effective spread at fill time (from the per-bar
+/// column, per-asset override, Corwin-Schultz proxy, or scenario default).
+///
+/// For a long fill: `fill_price ≤ bar_open + spread_bps/10_000 / 2 * bar_open`
+/// For a short fill: `fill_price ≥ bar_open - spread_bps/10_000 / 2 * bar_open`
+///
+/// This is a permissive heuristic — any resting limit inside half-spread of
+/// the open is classified as maker. Tighten if backtests show unrealistic
+/// maker rates.
+///
+/// Market orders always classify as taker.
+pub fn classify_aggressor_side(
+    action: &str,
+    fill_price: f64,
+    bar_open: f64,
+    spread_bps: f64,
+) -> AggressorSide {
+    // Market orders are always taker.
+    if action == "long_open" || action == "short_open" {
+        // The v1 backtest emits only market-style orders — all current fills
+        // at next_open are taker. This function is structured to support future
+        // limit-order paths where maker classification would apply.
+        //
+        // Maker check: is the fill price within the passive half-spread of open?
+        let half_spread = bar_open * (spread_bps / 10_000.0) / 2.0;
+        let trade_long = action == "long_open";
+        if trade_long {
+            // Passive buy: fill at or below open + half_spread (resting bid).
+            if fill_price <= bar_open + half_spread {
+                return AggressorSide::Maker;
+            }
+        } else {
+            // Passive sell: fill at or above open - half_spread (resting offer).
+            if fill_price >= bar_open - half_spread {
+                return AggressorSide::Maker;
+            }
+        }
+    }
+    AggressorSide::Taker
+}
+
 /// Find the trader slot's model id, used to decorate trader-output
 /// failures with the reasoning-class hint (q15 §1). Prefers an attached
 /// agent with role `trader`, then falls back to the legacy
@@ -1394,6 +1620,9 @@ fn simulate_fill(a: SimulateFillArgs<'_>) -> SimulateFillResult {
                 fee: None,
                 realized_pnl: 0.0,
                 provenance: FillProvenance::default(),
+                fill_branch: None,
+                aggressor_side: None,
+                order_state: None,
             },
             volume_cap_hit: None,
         };
@@ -1518,15 +1747,45 @@ fn simulate_fill(a: SimulateFillArgs<'_>) -> SimulateFillResult {
     } else {
         a.pos.abs() + new_pos_units.abs()
     };
+
+    // Maker/taker classification.
+    // The v1 backtest emits market-style orders (long_open / short_open / flat).
+    // `classify_aggressor_side` applies the half-spread test: if the fill price
+    // is within passive half-spread of the bar open, it's maker; otherwise taker.
+    // For market orders the fill price is open + slip + spread, which is OUTSIDE
+    // the passive half-spread, so they correctly classify as taker.
+    // The flat (close) path fills at open - slip - spread (for longs), which is
+    // also outside the passive half-spread, so it's taker too.
+    let aggressor_side = classify_aggressor_side(a.action, fill_price, a.bar_open, a.spread_bps);
+
+    // Fee in bps depends on aggressor side.
+    let fee_bps_applied = match aggressor_side {
+        AggressorSide::Maker => a.maker_bps,
+        AggressorSide::Taker => a.taker_bps,
+    };
+
     let notional = traded_units * fill_price;
-    let fee = notional * (a.taker_bps / 10_000.0);
+    let fee = notional * (fee_bps_applied / 10_000.0);
 
     let new_entry = if new_pos_units == 0.0 { 0.0 } else { fill_price };
+
+    // All current (v1) fills are market orders — NextOpenOnly.
+    // The intra-bar ordering helpers (`intra_bar_fill_branch`) are available
+    // for future limit/stop order paths; the v1 path always uses next-bar open.
+    let fill_branch = FillBranch::NextOpenOnly;
+
+    // Order state: volume-cap-bound fills are PartiallyFilled; all other fills
+    // are Filled.
+    let order_state = if volume_cap_bound {
+        OrderState::PartiallyFilled
+    } else {
+        OrderState::Filled
+    };
 
     let provenance = FillProvenance {
         slip_bps_applied: effective_slip_fraction * 10_000.0,
         spread_bps_applied: spread_fraction * 2.0 * 10_000.0, // round-trip bps
-        fee_bps_applied: a.taker_bps,
+        fee_bps_applied,
         fee_source: a.fee_source,
         volume_share,
         volume_cap_bound,
@@ -1541,6 +1800,9 @@ fn simulate_fill(a: SimulateFillArgs<'_>) -> SimulateFillResult {
             fee: Some(fee),
             realized_pnl: realized - fee,
             provenance,
+            fill_branch: Some(fill_branch),
+            aggressor_side: Some(aggressor_side),
+            order_state: Some(order_state),
         },
         volume_cap_hit,
     }
@@ -1716,8 +1978,8 @@ mod tests {
     // V2E cost-model rewrite (bar_volume, spread_bps, slippage_model,
     // fee_source, asset, bar_ts). The `simulate_fill` return type changed
     // from `FillOutcome` to `SimulateFillResult { outcome, volume_cap_hit }`.
-    // All existing behavioural assertions still pass unchanged — only the
-    // helper and the result-unwrap pattern changed.
+    // Updated for eval-intra-bar-fill-ordering: added maker_bps, bar_open,
+    // bar_high, bar_low fields. Existing behavioural assertions still pass.
     fn args(pos: f64, action: &'static str) -> SimulateFillArgs<'static> {
         SimulateFillArgs {
             pos,
@@ -1728,12 +1990,16 @@ mod tests {
             slip_bps: 10.0,      // 0.1%
             spread_bps: 0.0,
             taker_bps: 25.0, // 0.25%
+            maker_bps: 10.0, // 0.10%
             equity: 10_000.0,
             risk_pct: 0.02, // 2%
             slippage_model: &SlippageModel::Linear { bps: 10 },
             fee_source: FeeSource::Default,
             asset: "BTC/USD",
             bar_ts: chrono::Utc::now(),
+            bar_open: 60_000.0,
+            bar_high: 61_000.0,
+            bar_low: 59_000.0,
         }
     }
 

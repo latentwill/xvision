@@ -56,7 +56,10 @@ fn lookahead_finding_evidence_has_required_fields() {
 #[test]
 fn lookahead_finding_evidence_cycle_ids_is_stub() {
     let f = Finding::lookahead_suspected("run_01", "cycle_abc", None, "buy", Some("buy"), 0);
-    let ids = f.evidence_cycle_ids.as_ref().expect("evidence_cycle_ids must be Some");
+    let ids = f
+        .evidence_cycle_ids
+        .as_ref()
+        .expect("evidence_cycle_ids must be Some");
     assert_eq!(ids.len(), 1);
     assert_eq!(ids[0], "cycle_abc");
 }
@@ -106,7 +109,10 @@ fn lookahead_finding_optional_fields_are_set() {
 #[test]
 fn lookahead_finding_schema_version() {
     let f = Finding::lookahead_suspected("run_01", "cycle_abc", None, "buy", Some("buy"), 0);
-    assert_eq!(f.schema_version, xvision_engine::eval::findings::FINDING_SCHEMA_VERSION);
+    assert_eq!(
+        f.schema_version,
+        xvision_engine::eval::findings::FINDING_SCHEMA_VERSION
+    );
 }
 
 /// Positive: round-trip through JSON preserves all fields.
