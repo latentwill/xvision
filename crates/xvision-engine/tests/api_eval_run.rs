@@ -8,14 +8,13 @@
 
 use std::sync::Arc;
 
-use sqlx::sqlite::SqlitePoolOptions;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::agents::{AgentSlot, AgentStore, NewAgent};
 use xvision_engine::api::eval::{self, EvalRunRequest};
-use xvision_engine::api::{Actor, ApiContext, ApiError};
+use xvision_engine::api::{ApiContext, ApiError};
 use xvision_engine::eval::canonical_scenarios;
-use xvision_engine::eval::run::{RunMode, RunStatus};
+use xvision_engine::eval::run::{Run, RunMode, RunStatus};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
@@ -23,7 +22,13 @@ use xvision_engine::strategies::{AgentRef, PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
+mod support;
+use support::{
+    api_eval_run_context as ctx_with_tables, api_eval_run_context_with_agents as ctx_with_agents_table,
+};
+
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+const FLASH_SCENARIO_ID: &str = "flash-crash-2024-08";
 
 struct EnvGuard {
     key: &'static str,
@@ -43,84 +48,6 @@ fn scoped_unset(key: &'static str) -> EnvGuard {
     let prev = std::env::var(key).ok();
     std::env::remove_var(key);
     EnvGuard { key, prev }
-}
-
-async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/001_api_audit.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    // Agent store tables — `resolve_agent_slots` reads
-    // `agents`/`agent_slots` via `AgentStore::get`; every fixture in
-    // this file builds a `Strategy` with an attached `AgentRef`, so
-    // both the schema and a seeded row are required.
-    sqlx::query(include_str!("../migrations/005_agents.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/019_agent_slot_prompt_version.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/020_agent_slot_inputs_policy.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/025_agent_slot_cache_and_window.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    // 027 added `bars_content_hash`, `manifest_canonical`, `bars_manifest`
-    // columns referenced by `RunStore::create`. Without this migration the
-    // insert fails with "insert eval_runs id=..." for every test in this
-    // file. Pre-existing scaffold gap introduced by PR #415.
-    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    // V2D: memory_mode column on agent_slots.
-    sqlx::query(include_str!("../migrations/029_agent_slot_memory_mode.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
-    let ctx = ApiContext::new(
-        pool,
-        Actor::Cli {
-            user: "operator".into(),
-        },
-        dir.path().to_path_buf(),
-    );
-    (ctx, dir)
-}
-
-// Retained as an alias to keep call sites that explicitly opted into
-// the legacy "agents table only" setup. Now that `ctx_with_tables`
-// applies the full agents-table chain itself, this just forwards.
-async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
-    ctx_with_tables().await
 }
 
 async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
@@ -247,6 +174,90 @@ fn ensure_flash_fixture() {
     ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
 }
 
+fn eval_request(agent_id: &str, mode: RunMode) -> EvalRunRequest {
+    eval_request_for_scenario(agent_id, FLASH_SCENARIO_ID, mode)
+}
+
+fn eval_request_for_scenario(agent_id: &str, scenario_id: &str, mode: RunMode) -> EvalRunRequest {
+    EvalRunRequest {
+        agent_id: agent_id.into(),
+        scenario_id: scenario_id.into(),
+        mode,
+        params_override: None,
+        limits: None,
+        skip_preflight: false,
+    }
+}
+
+async fn run_with_mock_deps(
+    ctx: &ApiContext,
+    request: EvalRunRequest,
+    broker: Option<Arc<dyn BrokerSurface>>,
+    dispatch: Arc<dyn LlmDispatch>,
+) -> Result<Run, ApiError> {
+    eval::run_with_deps(
+        ctx,
+        request,
+        broker,
+        dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
+        Arc::new(ToolRegistry::empty()),
+    )
+    .await
+}
+
+async fn assert_max_decisions_cancel(
+    ctx: &ApiContext,
+    agent_id: &str,
+    mode: RunMode,
+    broker: Option<Arc<dyn BrokerSurface>>,
+    dispatch: Arc<dyn LlmDispatch>,
+) {
+    let mut request = eval_request(agent_id, mode);
+    request.limits = Some(xvision_engine::eval::limits::EvalLimits {
+        max_decisions: Some(1),
+        ..Default::default()
+    });
+
+    let err = run_with_mock_deps(ctx, request, broker, dispatch)
+        .await
+        .expect_err("max_decisions=1 must cause the executor to bail");
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("max_decisions=1"),
+        "the error message should name the cap that fired: got {err_msg:?}",
+    );
+
+    let runs = eval::list(
+        ctx,
+        eval::ListRunsRequest {
+            agent_id: Some(agent_id.into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("list runs");
+    let run = runs.first().expect("at least one run was created");
+    assert_eq!(
+        run.status,
+        RunStatus::Cancelled,
+        "max_decisions=1 must land the persisted run as Cancelled, got {:?}",
+        run.status,
+    );
+    let error = run
+        .error
+        .as_deref()
+        .expect("a limit-cancel must write a reason into Run.error");
+    assert!(
+        error.starts_with("cancelled by limit:"),
+        "Run.error should start with the limit-cancel prefix so the dashboard can distinguish operator cancels: got {error:?}",
+    );
+    assert!(
+        error.contains("max_decisions=1"),
+        "Run.error should name the breach reason: got {error:?}",
+    );
+}
+
 #[tokio::test]
 async fn run_with_deps_completes_paper_run_with_mocks() {
     let (ctx, _d) = ctx_with_tables().await;
@@ -263,22 +274,12 @@ async fn run_with_deps_completes_paper_run_with_mocks() {
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker.clone());
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
 
-    let run = eval::run_with_deps(
+    let run = run_with_mock_deps(
         &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: scenario_id.into(),
-            mode: RunMode::Paper,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
+        eval_request_for_scenario(agent_id, scenario_id, RunMode::Paper),
         broker,
         dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
     )
     .await
     .expect("run_with_deps must succeed");
@@ -299,22 +300,12 @@ async fn run_returns_not_found_for_unknown_strategy() {
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
 
-    let r = eval::run_with_deps(
+    let r = run_with_mock_deps(
         &ctx,
-        EvalRunRequest {
-            agent_id: "does-not-exist".into(),
-            scenario_id: canonical_scenarios()[0].id.clone(),
-            mode: RunMode::Paper,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
+        eval_request_for_scenario("does-not-exist", &canonical_scenarios()[0].id, RunMode::Paper),
         broker,
         dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
     )
     .await;
     assert!(
@@ -332,22 +323,12 @@ async fn run_returns_not_found_for_unknown_scenario() {
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
 
-    let r = eval::run_with_deps(
+    let r = run_with_mock_deps(
         &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "no-such-scenario".into(),
-            mode: RunMode::Paper,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
+        eval_request_for_scenario(agent_id, "no-such-scenario", RunMode::Paper),
         broker,
         dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
     )
     .await;
     assert!(
@@ -379,22 +360,12 @@ async fn run_with_deps_completes_backtest_run_with_mocks() {
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
         r#"{"action":"long_open","conviction":0.5,"justification":"test"}"#,
     ));
-    let tools = Arc::new(ToolRegistry::empty());
 
-    let run = eval::run_with_deps(
+    let run = run_with_mock_deps(
         &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Backtest,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
+        eval_request(agent_id, RunMode::Backtest),
         None, // backtest mode doesn't need a broker
         dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
     )
     .await
     .expect("backtest run should succeed against the synthetic fixture");
@@ -430,68 +401,12 @@ async fn backtest_run_cancels_when_max_decisions_breaches() {
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
         r#"{"action":"long_open","conviction":0.5,"justification":"limit-test"}"#,
     ));
-    let tools = Arc::new(ToolRegistry::empty());
-
-    let result = eval::run_with_deps(
-        &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Backtest,
-            params_override: None,
-            limits: Some(xvision_engine::eval::limits::EvalLimits {
-                max_decisions: Some(1),
-                ..Default::default()
-            }),
-            skip_preflight: false,
-        },
-        None,
-        dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-    )
-    .await;
 
     // The executor `anyhow::bail!`s with the breach reason when the
     // limit fires, which propagates up as `ApiError::Internal`. The
     // RUN ROW in the DB carries the truth: status = Cancelled, error
     // = the stable "cancelled by limit:" prefix.
-    let err = result.expect_err("max_decisions=1 must cause the executor to bail");
-    let err_msg = err.to_string();
-    assert!(
-        err_msg.contains("max_decisions=1"),
-        "the error message should name the cap that fired: got {err_msg:?}",
-    );
-
-    // Find the latest run for this agent and assert the persisted state.
-    let runs = eval::list(
-        &ctx,
-        eval::ListRunsRequest {
-            agent_id: Some(agent_id.into()),
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("list runs");
-    let run = runs.first().expect("at least one run was created");
-    assert_eq!(
-        run.status,
-        RunStatus::Cancelled,
-        "max_decisions=1 must land the persisted run as Cancelled, got {:?}",
-        run.status,
-    );
-    let error = run
-        .error
-        .as_deref()
-        .expect("a limit-cancel must write a reason into Run.error");
-    assert!(
-        error.contains("max_decisions=1"),
-        "Run.error should name the breach reason: got {error:?}",
-    );
-    assert!(
-        error.starts_with("cancelled by limit:"),
-        "Run.error should start with the limit-cancel prefix so the dashboard can distinguish operator cancels: got {error:?}",
-    );
+    assert_max_decisions_cancel(&ctx, agent_id, RunMode::Backtest, None, dispatch).await;
 }
 
 #[tokio::test]
@@ -509,63 +424,7 @@ async fn paper_run_cancels_when_max_decisions_breaches() {
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.5,"justification":"paper-limit-test"}"#,
     ));
-    let tools = Arc::new(ToolRegistry::empty());
-
-    let result = eval::run_with_deps(
-        &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Paper,
-            params_override: None,
-            limits: Some(xvision_engine::eval::limits::EvalLimits {
-                max_decisions: Some(1),
-                ..Default::default()
-            }),
-            skip_preflight: false,
-        },
-        Some(mock_broker),
-        dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-    )
-    .await;
-
-    let err = result.expect_err("paper max_decisions=1 must cause the executor to bail");
-    let err_msg = err.to_string();
-    assert!(
-        err_msg.contains("max_decisions=1"),
-        "the error message should name the cap that fired: got {err_msg:?}",
-    );
-
-    let runs = eval::list(
-        &ctx,
-        eval::ListRunsRequest {
-            agent_id: Some(agent_id.into()),
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("list runs");
-    let run = runs.first().expect("at least one run was created");
-    assert_eq!(
-        run.status,
-        RunStatus::Cancelled,
-        "paper max_decisions=1 must persist the run as Cancelled, got {:?}",
-        run.status,
-    );
-    let error = run
-        .error
-        .as_deref()
-        .expect("a paper limit-cancel must write a reason into Run.error");
-    assert!(
-        error.starts_with("cancelled by limit:"),
-        "Run.error should start with the limit-cancel prefix: got {error:?}",
-    );
-    assert!(
-        error.contains("max_decisions=1"),
-        "Run.error should name the breach reason: got {error:?}",
-    );
+    assert_max_decisions_cancel(&ctx, agent_id, RunMode::Paper, Some(mock_broker), dispatch).await;
 }
 
 #[tokio::test]
@@ -575,24 +434,8 @@ async fn run_rejects_paper_mode_without_broker() {
     save_test_strategy(&ctx, agent_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
 
-    let r = eval::run_with_deps(
-        &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Paper,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
-        None,
-        dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-    )
-    .await;
+    let r = run_with_mock_deps(&ctx, eval_request(agent_id, RunMode::Paper), None, dispatch).await;
     assert!(
         matches!(r, Err(ApiError::Validation(_))),
         "paper mode without a broker must reject as Validation, got {r:?}",
@@ -609,25 +452,10 @@ async fn run_writes_audit_row_on_completion() {
     let mock_broker = Arc::new(MockBrokerSurface::new(50_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
 
-    let run = eval::run_with_deps(
-        &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Paper,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
-        broker,
-        dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-    )
-    .await
-    .unwrap();
+    let run = run_with_mock_deps(&ctx, eval_request(agent_id, RunMode::Paper), broker, dispatch)
+        .await
+        .unwrap();
 
     let (domain, op, target, outcome): (String, String, Option<String>, String) =
         sqlx::query_as("SELECT domain, operation, target, outcome FROM api_audit WHERE operation = 'run'")
@@ -650,25 +478,10 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
 
-    let run = eval::run_with_deps(
-        &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Paper,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
-        broker,
-        dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-    )
-    .await
-    .unwrap();
+    let run = run_with_mock_deps(&ctx, eval_request(agent_id, RunMode::Paper), broker, dispatch)
+        .await
+        .unwrap();
 
     // The same Run id must be retrievable via api::eval::get.
     let back = eval::get(&ctx, &run.id).await.expect("get must succeed");

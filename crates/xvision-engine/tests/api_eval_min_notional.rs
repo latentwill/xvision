@@ -17,14 +17,14 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::agents::{store::NewAgent, AgentSlot, AgentStore, InputsPolicy};
 use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::run::{RunMode, RunStatus};
+use xvision_engine::eval::run::{Run, RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::eval::{canonical_scenarios, scenario_store};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
@@ -33,64 +33,16 @@ use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::query(include_str!("../migrations/001_api_audit.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    // Agent store tables — `resolve_agent_slots` reads the
-    // `agents`/`agent_slots` tables via `AgentStore::get`, so any test
-    // that drives an eval against an attached `AgentRef` must have
-    // both the schema and the seeded row available.
-    sqlx::query(include_str!("../migrations/005_agents.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/019_agent_slot_prompt_version.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/020_agent_slot_inputs_policy.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/025_agent_slot_cache_and_window.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/029_agent_slot_memory_mode.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
-    let ctx = ApiContext::new(
-        pool,
+    let ctx = ApiContext::open(
+        dir.path(),
         Actor::Cli {
             user: "operator".into(),
         },
-        dir.path().to_path_buf(),
-    );
+    )
+    .await
+    .unwrap();
+    seed_legacy_flash_scenario(&ctx).await;
     (ctx, dir)
 }
 
@@ -123,8 +75,55 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
         .expect("seed trader agent")
 }
 
-/// Mirror of `config/risk.toml`'s `[venues.paper] min_notional_usd = 10.0`
-/// from PR #324, dropped into the test's `$XVN_HOME/config/`.
+async fn seed_legacy_flash_scenario(ctx: &ApiContext) {
+    let mut scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("legacy flash-crash scenario must exist");
+    scenario.warmup_bars = 0;
+    scenario_store::insert_scenario(ctx, &scenario).await.unwrap();
+
+    let start = scenario.time_window.start;
+    let count = 36usize;
+    let mut blob = Vec::new();
+    for i in 0..count {
+        let ts = start + chrono::Duration::hours(i as i64);
+        let base = 42_000.0 - i as f64 * 25.0;
+        let line = serde_json::json!({
+            "t": ts.to_rfc3339(),
+            "o": base,
+            "h": base + 100.0,
+            "l": base - 100.0,
+            "c": base + 25.0,
+            "v": 1_000.0 + i as f64,
+        });
+        blob.extend(serde_json::to_vec(&line).unwrap());
+        blob.push(b'\n');
+    }
+
+    sqlx::query(
+        "INSERT OR REPLACE INTO bars_cache \
+         (cache_key, asset, granularity, window_start, window_end, \
+          data_source, fetched_at, bar_count, bars_blob, compression) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&scenario.bar_cache_policy.cache_key)
+    .bind("BTC/USD")
+    .bind("1Hour")
+    .bind(start.to_rfc3339())
+    .bind((start + chrono::Duration::hours(count as i64)).to_rfc3339())
+    .bind("alpaca-historical-v1")
+    .bind("2026-05-21T00:00:00Z")
+    .bind(count as i64)
+    .bind(blob)
+    .bind("none")
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+}
+
+/// Minimal valid `risk.toml` for this test: the schema-required risk sections
+/// plus the one venue value under test.
 fn write_paper_min_notional_risk_toml(xvn_home: &std::path::Path) {
     let config_dir = xvn_home.join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
@@ -148,9 +147,6 @@ take_profit_min_rr          = 1.5
 
 [venues.paper]
 min_notional_usd = 10.0
-
-[venues.live]
-min_notional_usd = 1.0
 "#,
     )
     .unwrap();
@@ -207,17 +203,9 @@ fn ensure_flash_fixture() {
     ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
 }
 
-/// End-to-end: a paper-eval run whose order would be ~$0.10 notional
-/// (well below the $10 paper-venue minimum from `config/risk.toml`)
-/// is vetoed pre-submit at the risk layer. The broker mock is never
-/// called; every decision row carries `[below_venue_min_notional]`.
-#[tokio::test]
-async fn api_eval_paper_run_vetoes_below_paper_min_notional() {
-    let (ctx, _d) = ctx_with_tables().await;
-    write_paper_min_notional_risk_toml(&ctx.xvn_home);
+async fn run_tiny_paper_eval(ctx: &ApiContext, agent_id: &str) -> (Run, Arc<MockBrokerSurface>) {
     ensure_flash_fixture();
-    let agent_id = "01TESTSTRATEGYAPIMINNOTIONAL";
-    save_tiny_risk_strategy(&ctx, agent_id).await;
+    save_tiny_risk_strategy(ctx, agent_id).await;
 
     // Tiny buying power so sizing × tiny risk_pct produces a clearly
     // sub-$10 notional even at BTC ~$42k from the synthetic fixture.
@@ -228,7 +216,7 @@ async fn api_eval_paper_run_vetoes_below_paper_min_notional() {
     let tools = Arc::new(ToolRegistry::empty());
 
     let run = eval::run_with_deps(
-        &ctx,
+        ctx,
         EvalRunRequest {
             agent_id: agent_id.into(),
             scenario_id: "flash-crash-2024-08".into(),
@@ -243,7 +231,21 @@ async fn api_eval_paper_run_vetoes_below_paper_min_notional() {
         tools,
     )
     .await
-    .expect("run_with_deps must complete when MinNotional gate fires");
+    .expect("run_with_deps must complete");
+
+    (run, mock_broker)
+}
+
+/// End-to-end: a paper-eval run whose order would be ~$0.10 notional
+/// (well below the $10 paper-venue minimum from `config/risk.toml`)
+/// is vetoed pre-submit at the risk layer. The broker mock is never
+/// called; every decision row carries `[below_venue_min_notional]`.
+#[tokio::test]
+async fn api_eval_paper_run_vetoes_below_paper_min_notional() {
+    let (ctx, _d) = ctx_with_tables().await;
+    write_paper_min_notional_risk_toml(&ctx.xvn_home);
+    let agent_id = "01TESTSTRATEGYAPIMINNOTIONAL";
+    let (run, mock_broker) = run_tiny_paper_eval(&ctx, agent_id).await;
 
     // Acceptance #1: broker NEVER called — the whole point of the gate.
     let submitted = mock_broker.submitted();
@@ -294,32 +296,8 @@ async fn api_eval_paper_run_vetoes_below_paper_min_notional() {
 async fn api_eval_paper_run_without_risk_toml_does_not_veto() {
     let (ctx, _d) = ctx_with_tables().await;
     // NOTE: no `write_paper_min_notional_risk_toml` — the file is absent.
-    ensure_flash_fixture();
     let agent_id = "01TESTSTRATEGYAPIMINNOTIONA2";
-    save_tiny_risk_strategy(&ctx, agent_id).await;
-
-    let mock_broker = Arc::new(MockBrokerSurface::new(100.0));
-    let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker.clone());
-    let dispatch = long_open_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
-
-    let run = eval::run_with_deps(
-        &ctx,
-        EvalRunRequest {
-            agent_id: agent_id.into(),
-            scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Paper,
-            params_override: None,
-            limits: None,
-            skip_preflight: false,
-        },
-        broker,
-        dispatch,
-        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-    )
-    .await
-    .expect("run_with_deps must complete");
+    let (run, mock_broker) = run_tiny_paper_eval(&ctx, agent_id).await;
 
     assert_eq!(run.status, RunStatus::Completed);
     // Without `risk.toml`, the MinNotional gate is disabled (default 0.0)
