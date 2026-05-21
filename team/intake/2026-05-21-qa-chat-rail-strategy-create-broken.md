@@ -347,15 +347,34 @@ Acceptance:
 
 ## Wave shape recommendation
 
-- **`templates-elimination`** is the wave's foundation. It ships
-  first as a single contract that crosses `crates/xvision-engine/src/authoring.rs`,
-  `crates/xvision-engine/src/api/strategy.rs`,
-  `crates/xvision-engine/src/strategies/manifest.rs`,
-  `crates/xvision-engine/src/agents/templates.rs` (deletion),
-  `crates/xvision-engine/src/strategies_folder/prepop/**` (content
-  migration), `crates/xvision-dashboard/src/wizard_loop.rs`, and
-  `crates/xvision-dashboard/prompts/wizard.md`. Includes the
-  defensive fix for the chained `create_strategy_agent` write.
+- **`templates-elimination`** is the wave's foundation. **Split
+  2026-05-21 into two contracts** after the worker stopped on a
+  scope mismatch (the original contract conflated the strategy
+  `template_registry` at `crates/xvision-engine/src/templates/`
+  with the distinct `AgentTemplate` agent-picker at
+  `crates/xvision-engine/src/agents/templates.rs`, and missed
+  that `manifest.template` is the load-bearing discriminator for
+  `MechanicalParams::from_value` typed dispatch). The split:
+  - **`templates-elimination`** (this contract, descoped to
+    wizard-only) — removes `WIZARD_BLANK_TEMPLATE`, the wizard's
+    `list_templates` tool, `WizardCreateStrategyInput::template`,
+    `authoring::list_templates`; adds a blank-draft creation path
+    in `authoring.rs` that the wizard exclusively uses; rewrites
+    the wizard prompt to point at the folder only; lands the
+    defensive fix for the chained-write. Scope confined to
+    `authoring.rs`, `wizard_loop.rs`, and `prompts/wizard.md`.
+  - **`strategy-template-registry-removal`** (follow-up; status
+    `deferred` until parent merges) — deletes
+    `crates/xvision-engine/src/templates/`, removes
+    `manifest.template`, refactors `MechanicalParams::from_value`
+    dispatch, migrates the 8 strategy starter shapes to operator-
+    readable prepop seeds under `docs/strategies/templates/`,
+    updates the `xvn strategy create --template` CLI surface and
+    the MCP `create_strategy` tool schema.
+  - **`agents/templates.rs` (AgentTemplate)** is preserved by both
+    contracts — distinct concept (per-agent profile picker for
+    `/agents/new`), not part of the "templates" the operator
+    asked to eliminate.
 - **`chat-messages-insert-failing`** is a parallel P1 track
   scoped to `crates/xvision-engine/src/chat_session/`. Start
   with an audit pass that surfaces the swallowed SQLx error
