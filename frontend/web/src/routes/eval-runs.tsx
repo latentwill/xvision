@@ -49,6 +49,7 @@ import {
   type StrategyListItem,
 } from "@/api/strategies";
 import { isInflightRunStatus } from "@/lib/run-status";
+import { drawdownToneClass } from "@/lib/metric-tone";
 import {
   displayScenarioName,
   displayStrategyName,
@@ -1064,13 +1065,6 @@ function fmtPct(n: number | null | undefined): string {
 function signedToneClass(n: number | null | undefined): string {
   if (n == null || n === 0) return "text-text";
   return n > 0 ? "text-gold" : "text-danger";
-}
-
-function drawdownToneClass(n: number | null | undefined): string {
-  if (n == null || n === 0) return "text-text";
-  const magnitude = Math.abs(n);
-  if (magnitude >= 10) return "text-danger";
-  return "text-warn";
 }
 
 function isInflight(row: RunSummary): boolean {

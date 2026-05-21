@@ -31,6 +31,7 @@ import { getStrategy, listStrategies, strategyKeys } from "@/api/strategies";
 import { agentKeys, listAgents, type Agent } from "@/api/agents";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
+import { drawdownMetricTone } from "@/lib/metric-tone";
 import type {
   DecisionRowDto,
   RunDetail,
@@ -602,7 +603,11 @@ function SummaryCard({
 
       <div className="grid grid-cols-3 gap-x-8 gap-y-3">
         <Metric label="Sharpe" value={fmtNumber(summary.sharpe)} />
-        <Metric label="Max DD" value={fmtPct(summary.max_drawdown_pct)} />
+        <Metric
+          label="Max DD"
+          value={fmtPct(summary.max_drawdown_pct)}
+          tone={drawdownMetricTone(summary.max_drawdown_pct)}
+        />
         <Metric label="Total return" value={fmtPct(summary.total_return_pct)} />
         <Metric
           label="Total PnL"
