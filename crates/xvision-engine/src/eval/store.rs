@@ -8,10 +8,13 @@
 //! (`api::audit::record(ctx, ...)` reads `ctx.db`) and lets multiple sql
 //! consumers share a single pool.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
+use xvision_filters::{FilterEventV1, FilterId, FilterSummary};
 
 use crate::eval::attestation::EvalAttestation;
 use crate::eval::findings::{Finding, Severity};
@@ -510,6 +513,11 @@ impl RunStore {
             .execute(&mut *tx)
             .await
             .context("delete eval_equity_samples")?;
+        sqlx::query("DELETE FROM eval_filter_evaluations WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_filter_evaluations")?;
         sqlx::query("DELETE FROM eval_findings WHERE run_id = ?")
             .bind(id)
             .execute(&mut *tx)
@@ -750,6 +758,53 @@ impl RunStore {
         .await
         .context("list eval_decisions")?;
         rows.iter().map(row_to_decision).collect()
+    }
+
+    pub async fn read_filter_events(&self, run_id: &str) -> Result<Vec<FilterEventV1>> {
+        let rows = match sqlx::query(
+            "SELECT filter_event_json FROM eval_filter_evaluations \
+             WHERE run_id = ? ORDER BY bar_index ASC",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) if is_missing_table_error(&e) => return Ok(Vec::new()),
+            Err(e) => return Err(e).context("read eval_filter_evaluations"),
+        };
+
+        rows.iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let raw: Option<String> = r
+                    .try_get("filter_event_json")
+                    .with_context(|| format!("read filter_event_json row {i}"))?;
+                let Some(raw) = raw else {
+                    return Ok(None);
+                };
+                serde_json::from_str(&raw)
+                    .map(Some)
+                    .with_context(|| format!("parse filter_event_json row {i} for run {run_id}"))
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(|events| events.into_iter().flatten().collect())
+    }
+
+    pub async fn read_filter_summaries(&self, run_id: &str) -> Result<Vec<FilterSummary>> {
+        let events = self.read_filter_events(run_id).await?;
+        let mut by_filter: BTreeMap<String, Vec<FilterEventV1>> = BTreeMap::new();
+        for event in events {
+            by_filter
+                .entry(event.filter_id.as_str().to_string())
+                .or_default()
+                .push(event);
+        }
+
+        Ok(by_filter
+            .into_iter()
+            .map(|(filter_id, events)| FilterSummary::from_events(FilterId::new(filter_id), &events))
+            .collect())
     }
 
     pub async fn record_equity(&self, run_id: &str, timestamp: DateTime<Utc>, equity_usd: f64) -> Result<()> {
@@ -1506,4 +1561,11 @@ fn row_to_decision(row: &sqlx::sqlite::SqliteRow) -> Result<DecisionRow> {
         fee: row.try_get("fee").context("read fee")?,
         pnl_realized: row.try_get("pnl_realized").context("read pnl_realized")?,
     })
+}
+
+fn is_missing_table_error(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(db) => db.message().contains("no such table"),
+        _ => false,
+    }
 }

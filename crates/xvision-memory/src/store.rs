@@ -14,7 +14,9 @@ pub struct MemoryStore {
 
 fn embedding_to_blob(v: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 4);
-    for f in v { out.extend_from_slice(&f.to_le_bytes()); }
+    for f in v {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
     out
 }
 
@@ -30,11 +32,15 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     let mut nb = 0.0f32;
     for (x, y) in a.iter().zip(b.iter()) {
         dot += x * y;
-        na  += x * x;
-        nb  += y * y;
+        na += x * x;
+        nb += y * y;
     }
     let denom = na.sqrt() * nb.sqrt();
-    if denom == 0.0 { 0.0 } else { dot / denom }
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot / denom
+    }
 }
 
 impl MemoryStore {
@@ -42,15 +48,16 @@ impl MemoryStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).context("memory: create parent dir")?;
         }
-        let opts = SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true);
+        let opts = SqliteConnectOptions::new().filename(path).create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
             .connect_with(opts)
             .await
             .context("memory: open sqlite pool")?;
-        sqlx::migrate!("./migrations").run(&pool).await.context("memory: migrate")?;
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .context("memory: migrate")?;
         Ok(Self { pool })
     }
 
@@ -66,7 +73,9 @@ impl MemoryStore {
         Ok(Self { pool })
     }
 
-    pub fn pool(&self) -> &SqlitePool { &self.pool }
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
 }
 
 impl MemoryStore {
@@ -76,11 +85,7 @@ impl MemoryStore {
     /// - `tier == Observation`
     /// - `run_id`, `scenario_id`, `cycle_idx` are all `Some(_)`
     /// - `training_window_end` is `None`
-    pub async fn upsert_observation(
-        &self,
-        item: &MemoryItem,
-        embedder_id: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn upsert_observation(&self, item: &MemoryItem, embedder_id: &str) -> anyhow::Result<()> {
         if item.tier != Tier::Observation {
             anyhow::bail!("upsert_observation requires tier=Observation");
         }
@@ -100,11 +105,7 @@ impl MemoryStore {
     /// - `run_id`, `scenario_id`, `cycle_idx` are all `None`
     /// - `training_window_end` may be `Some(date)` (autoresearcher)
     ///   or `None` (operator wisdom)
-    pub async fn upsert_pattern(
-        &self,
-        item: &MemoryItem,
-        embedder_id: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn upsert_pattern(&self, item: &MemoryItem, embedder_id: &str) -> anyhow::Result<()> {
         if item.tier != Tier::Pattern {
             anyhow::bail!("upsert_pattern requires tier=Pattern");
         }

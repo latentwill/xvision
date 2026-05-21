@@ -19,6 +19,7 @@ afterEach(() => {
 
 function makeEvent(overrides: Partial<FilterEventV1> = {}): FilterEventV1 {
   return {
+    schema_version: 1,
     bar_timestamp: "2026-05-21T00:00:00Z",
     filter_id: "f_01JX9TEST",
     triggered: false,

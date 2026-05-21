@@ -583,10 +583,10 @@ impl BacktestExecutor {
             // would have considered.
             if let Some(hook) = filter_hook.as_mut() {
                 let in_position = position.abs() > f64::EPSILON;
-                let outcome = hook.evaluate(bar, in_position);
-                hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &outcome)
+                let evaluation = hook.evaluate(bar, in_position);
+                hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &evaluation)
                     .await?;
-                if !outcome.decision.is_active() {
+                if !evaluation.outcome.decision.is_active() {
                     equity = initial + realized_total + position * (next_bar_open - entry_price);
                     store.record_equity(&run.id, bar.timestamp, equity).await?;
                     self.emit_chart(

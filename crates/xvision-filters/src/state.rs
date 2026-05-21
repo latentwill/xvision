@@ -12,6 +12,8 @@
 //! * Daily wakeup counter, with the day the count belongs to (UTC).
 //! * Whether the filter has ever fired at all.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Datelike, Utc};
 
 use crate::indicators::IndicatorEngine;
@@ -96,6 +98,16 @@ impl FilterState {
             Some(held) if held == d => self.wakeups_today,
             _ => 0,
         }
+    }
+
+    /// Current sparse indicator values for every indicator referenced
+    /// by `filter`, keyed by the stable DSL string (`ema_20`, `close`,
+    /// etc.). Indicators still in warmup are omitted.
+    pub fn indicator_snapshot(&self, filter: &Filter) -> BTreeMap<String, f64> {
+        collect_indicator_refs(&filter.conditions)
+            .into_iter()
+            .filter_map(|r| self.indicators.value(&r).map(|v| (r.to_string(), v)))
+            .collect()
     }
 
     /// Update the wakeup counter for `day`, rolling over if the day

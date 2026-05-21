@@ -43,10 +43,11 @@ fn workspace_root() -> Result<PathBuf> {
 }
 
 fn gen_types(sh: &Shell) -> Result<()> {
+    let workspace = workspace_root()?;
     let final_out_dir = Path::new("frontend/web/src/api/types.gen");
     let final_barrel = Path::new("frontend/web/src/api/types.gen.ts");
-    let stage_root = PathBuf::from(format!(".clawpatch/types-stage-{}", std::process::id()));
-    let export_base = stage_root.join("crates/xvision-engine");
+    let stage_root = workspace.join(format!(".clawpatch/types-stage-{}", std::process::id()));
+    let export_base = stage_root.join("workspace/crates/xvision-engine");
     let staged_out_dir = stage_root.join("frontend/web/src/api/types.gen");
 
     remove_dir_if_exists(&stage_root)?;

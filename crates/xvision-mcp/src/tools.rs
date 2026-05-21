@@ -1879,9 +1879,8 @@ mod tests {
             "name": "x",
             "creator": null,
         });
-        let req: CreateStrategyReq = serde_json::from_value(raw).expect(
-            "legacy template field must be silently ignored at MCP boundary",
-        );
+        let req: CreateStrategyReq = serde_json::from_value(raw)
+            .expect("legacy template field must be silently ignored at MCP boundary");
         assert_eq!(req.name, "x");
     }
 
@@ -1907,7 +1906,10 @@ mod tests {
         assert_eq!(strategy["manifest"]["id"], id);
         // Blank draft uses "custom" as the (now free-text) label.
         assert_eq!(strategy["manifest"]["template"], "custom");
-        assert!(strategy["trader_slot"].is_null(), "blank draft has no trader slot");
+        assert!(
+            strategy["trader_slot"].is_null(),
+            "blank draft has no trader slot"
+        );
     }
 
     #[tokio::test]

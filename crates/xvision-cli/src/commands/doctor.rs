@@ -66,9 +66,7 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
         println!("config_exists         {}", report.config_exists);
         println!("provider_secrets      {}", report.provider_secrets_exists);
         println!("broker_secrets        {}", report.broker_secrets_exists);
-        println!(
-            "templates             (registry removed; see $XVN_HOME/strategies/library)"
-        );
+        println!("templates             (registry removed; see $XVN_HOME/strategies/library)");
     }
 
     Ok(())

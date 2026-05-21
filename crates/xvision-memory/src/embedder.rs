@@ -21,7 +21,10 @@ pub struct StaticEmbedder {
 
 impl StaticEmbedder {
     pub fn new(id: impl Into<String>, vector: Vec<f32>) -> Self {
-        Self { id: id.into(), vector }
+        Self {
+            id: id.into(),
+            vector,
+        }
     }
 }
 
@@ -30,6 +33,10 @@ impl Embedder for StaticEmbedder {
     async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
         Ok(self.vector.clone())
     }
-    fn id(&self) -> &str { &self.id }
-    fn dim(&self) -> usize { self.vector.len() }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn dim(&self) -> usize {
+        self.vector.len()
+    }
 }

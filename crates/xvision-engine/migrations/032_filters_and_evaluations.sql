@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS eval_filter_evaluations (
     in_warmup           INTEGER NOT NULL DEFAULT 0,
     in_cooldown         INTEGER NOT NULL DEFAULT 0,
     wakeups_today       INTEGER NOT NULL DEFAULT 0,
+    -- Full FilterEventV1 JSON emitted for this bar. This is the public
+    -- event-stream shape used by run detail, export, and golden fixtures;
+    -- the scalar columns above remain query-friendly diagnostics.
+    filter_event_json   TEXT NOT NULL,
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (run_id, bar_index)
 );

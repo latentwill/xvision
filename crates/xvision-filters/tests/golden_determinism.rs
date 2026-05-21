@@ -15,23 +15,26 @@
 //!   1's `parse_toml` + `validate` surface — same DSL shape Stage 2's
 //!   runtime will consume.
 //!
-//! ## What this file will gate once Stages 2/3 ship
+//! ## Filter event gate
 //!
-//! `golden_filter_events_match_recorded_jsonl` is `#[ignore]`d below
-//! with a sketch of the byte-exact `FilterEventV1` /
-//! `FilterSummary` comparison. The placeholder lands here (not in a
-//! follow-up test file) so the determinism-lock for Stage 5 lives in
-//! one place — Stage 3 fills it in without renaming or moving files.
+//! `golden_filter_events_match_recorded_jsonl` runs the deterministic
+//! scenario through the runtime and locks the byte-exact `FilterEventV1`
+//! JSONL plus the aggregate `FilterSummary`.
 //!
 //! See `tests/fixtures/README.md` for the regeneration procedure.
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use pretty_assertions::assert_eq;
 use serde::{Deserialize, Serialize};
-use xvision_filters::{parse_toml, validate};
+use xvision_filters::{
+    parse_toml, validate, Bar as RuntimeBar, EvalContext, FilterEventV1, FilterState, FilterSummary,
+    RuntimeFilter,
+};
 
 const SCENARIO_JSON: &str = include_str!("fixtures/scenario_btc_1h_300bars.json");
 const FILTER_TOML: &str = include_str!("fixtures/filter_trend_pullback.toml");
+const EXPECTED_EVENTS_JSONL: &str = include_str!("fixtures/expected_events.jsonl");
+const EXPECTED_SUMMARY_JSON: &str = include_str!("fixtures/expected_summary.json");
 
 const SEED: u64 = 0x0F11_7E12_5EED_0001;
 const WARMUP_BARS: usize = 200;
@@ -143,38 +146,15 @@ fn filter_trend_pullback_parses_and_validates() {
     validate(&f).expect("trend_pullback filter must validate");
 }
 
-/// Lands when Stage 2 (runtime) and Stage 3 (events) ship.
-///
-/// Sketch:
-/// ```ignore
-/// let filter = parse_toml(FILTER_TOML).unwrap();
-/// let scenario: FixtureScenario = serde_json::from_str(SCENARIO_JSON).unwrap();
-/// let mut state = xvision_filters::runtime::FilterRuntimeState::new(&filter);
-/// let mut events: Vec<xvision_filters::events::FilterEventV1> = Vec::new();
-/// for bar in &scenario.bars {
-///     events.push(xvision_filters::runtime::evaluate(&filter, bar, &mut state));
-/// }
-/// let actual_jsonl = events
-///     .iter()
-///     .map(|e| serde_json::to_string(e).unwrap())
-///     .collect::<Vec<_>>()
-///     .join("\n");
-/// assert_eq!(actual_jsonl, include_str!("fixtures/expected_events.jsonl"));
-///
-/// let summary = xvision_filters::events::FilterSummary::from_events(&events);
-/// assert_eq!(
-///     serde_json::to_string_pretty(&summary).unwrap(),
-///     include_str!("fixtures/expected_summary.json"),
-/// );
-/// ```
 #[test]
-#[ignore = "Stage 5 byte-exact gate — wires up once Stages 2 (runtime) and 3 (events) land"]
 fn golden_filter_events_match_recorded_jsonl() {
-    // Intentional no-op until xvision_filters::runtime::evaluate and
-    // xvision_filters::events::FilterEventV1 exist. The fixtures this
-    // would compare against (`expected_events.jsonl`,
-    // `expected_summary.json`) are deliberately not committed yet —
-    // they're produced by Stage 3 from the inputs this PR locks.
+    let (events, summary) = build_golden_filter_events();
+    let actual_jsonl = events_to_jsonl(&events);
+    assert_eq!(actual_jsonl, EXPECTED_EVENTS_JSONL);
+
+    let mut actual_summary = serde_json::to_string_pretty(&summary).expect("serialise golden filter summary");
+    actual_summary.push('\n');
+    assert_eq!(actual_summary, EXPECTED_SUMMARY_JSON);
 }
 
 /// Regenerate `tests/fixtures/scenario_btc_1h_300bars.json` from the
@@ -196,6 +176,76 @@ fn regenerate_scenario() {
         "/tests/fixtures/scenario_btc_1h_300bars.json"
     );
     std::fs::write(path, json).expect("write fixture");
+}
+
+/// Regenerate `tests/fixtures/expected_events.jsonl` and
+/// `tests/fixtures/expected_summary.json` after an intentional runtime
+/// or event-shape change:
+///
+/// ```bash
+/// cargo test -p xvision-filters --test golden_determinism -- \
+///   --ignored regenerate_filter_event_fixtures
+/// ```
+#[test]
+#[ignore = "writes expected filter event fixtures; run with --ignored"]
+fn regenerate_filter_event_fixtures() {
+    let (events, summary) = build_golden_filter_events();
+    let events_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/expected_events.jsonl"
+    );
+    std::fs::write(events_path, events_to_jsonl(&events)).expect("write expected_events.jsonl");
+
+    let mut summary_json = serde_json::to_string_pretty(&summary).expect("serialise summary");
+    summary_json.push('\n');
+    let summary_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/expected_summary.json"
+    );
+    std::fs::write(summary_path, summary_json).expect("write expected_summary.json");
+}
+
+fn build_golden_filter_events() -> (Vec<FilterEventV1>, FilterSummary) {
+    let filter = parse_toml(FILTER_TOML).expect("trend_pullback filter must parse");
+    validate(&filter).expect("trend_pullback filter must validate");
+    let scenario: FixtureScenario = serde_json::from_str(SCENARIO_JSON).unwrap();
+    let runtime = RuntimeFilter::from_validated(&filter);
+    let mut state = FilterState::new(&filter);
+    let mut events = Vec::with_capacity(scenario.bars.len());
+
+    for bar in &scenario.bars {
+        let ts = DateTime::parse_from_rfc3339(&bar.ts)
+            .expect("bar ts must be RFC3339")
+            .with_timezone(&Utc);
+        let runtime_bar = RuntimeBar::new(bar.open, bar.high, bar.low, bar.close);
+        let outcome = runtime.evaluate(
+            &mut state,
+            &runtime_bar,
+            EvalContext {
+                ts,
+                in_position: false,
+            },
+        );
+        events.push(FilterEventV1::from_outcome(
+            filter.id.clone(),
+            ts,
+            &outcome,
+            state.indicator_snapshot(&filter),
+        ));
+    }
+
+    let summary = FilterSummary::from_events(filter.id.clone(), &events);
+    (events, summary)
+}
+
+fn events_to_jsonl(events: &[FilterEventV1]) -> String {
+    let mut jsonl = events
+        .iter()
+        .map(|event| serde_json::to_string(event).expect("serialise filter event"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    jsonl.push('\n');
+    jsonl
 }
 
 // ---------------------------------------------------------------------------
