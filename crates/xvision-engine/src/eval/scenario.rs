@@ -260,9 +260,9 @@ impl Scenario {
     /// request types. This keeps DB-loaded and seed-built scenarios subject
     /// to the same walls as API-created scenarios.
     pub fn validate_v1(&self) -> Result<(), ScenarioValidationError> {
-        if self.asset.len() != 1 {
+        if self.asset.is_empty() {
             return Err(ScenarioValidationError::new(
-                "v1 scenarios support a single asset",
+                "v1 scenarios require at least one asset",
             ));
         }
         if self.asset_class != AssetClass::Crypto {
@@ -291,38 +291,48 @@ impl Scenario {
             ));
         }
 
-        let asset = &self.asset[0];
-        if asset.class != AssetClass::Crypto {
-            return Err(ScenarioValidationError::new("v1 scenario asset must be crypto"));
-        }
-        let Some(whitelisted) = alpaca_crypto_asset(&asset.symbol) else {
-            return Err(ScenarioValidationError::new(format!(
-                "asset '{}' is not in the Alpaca crypto whitelist",
-                asset.symbol
-            )));
-        };
-        let Some(venue_asset) = alpaca_crypto_asset(&asset.venue_symbol) else {
-            return Err(ScenarioValidationError::new(format!(
-                "asset '{}' venue_symbol must be '{}'",
-                asset.symbol, whitelisted.venue_symbol
-            )));
-        };
-        if venue_asset.symbol != whitelisted.symbol {
-            return Err(ScenarioValidationError::new(format!(
-                "asset '{}' venue_symbol must be '{}'",
-                asset.symbol, whitelisted.venue_symbol
-            )));
-        }
-        let Some(history_start) = alpaca_crypto_history_start_for(&asset.symbol) else {
-            return Err(ScenarioValidationError::new(format!(
-                "asset '{}' is not in the Alpaca crypto whitelist",
-                asset.symbol
-            )));
-        };
-        if self.time_window.start < history_start {
-            return Err(ScenarioValidationError::new(
-                "time_window.start is before Alpaca crypto history",
-            ));
+        // Every declared asset must be on the Alpaca crypto whitelist with a
+        // matching venue_symbol and a history floor compatible with the
+        // scenario's start. Downstream executors still consume `asset[0]`
+        // (cross-asset allocation lands with the portfolio allocator track),
+        // but the validator no longer pins scenarios to a single asset.
+        for asset in &self.asset {
+            if asset.class != AssetClass::Crypto {
+                return Err(ScenarioValidationError::new(format!(
+                    "asset '{}' must be crypto in a v1 scenario",
+                    asset.symbol
+                )));
+            }
+            let Some(whitelisted) = alpaca_crypto_asset(&asset.symbol) else {
+                return Err(ScenarioValidationError::new(format!(
+                    "asset '{}' is not in the Alpaca crypto whitelist",
+                    asset.symbol
+                )));
+            };
+            let Some(venue_asset) = alpaca_crypto_asset(&asset.venue_symbol) else {
+                return Err(ScenarioValidationError::new(format!(
+                    "asset '{}' venue_symbol must be '{}'",
+                    asset.symbol, whitelisted.venue_symbol
+                )));
+            };
+            if venue_asset.symbol != whitelisted.symbol {
+                return Err(ScenarioValidationError::new(format!(
+                    "asset '{}' venue_symbol must be '{}'",
+                    asset.symbol, whitelisted.venue_symbol
+                )));
+            }
+            let Some(history_start) = alpaca_crypto_history_start_for(&asset.symbol) else {
+                return Err(ScenarioValidationError::new(format!(
+                    "asset '{}' is not in the Alpaca crypto whitelist",
+                    asset.symbol
+                )));
+            };
+            if self.time_window.start < history_start {
+                return Err(ScenarioValidationError::new(format!(
+                    "time_window.start is before Alpaca crypto history for asset '{}'",
+                    asset.symbol
+                )));
+            }
         }
         Ok(())
     }

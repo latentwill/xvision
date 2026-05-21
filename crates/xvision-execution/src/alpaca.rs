@@ -5,9 +5,11 @@
 //! `xvision_core::AssetSymbol`). Symbol mapping is delegated to
 //! `AssetSymbol::as_alpaca_pair()` / `AssetSymbol::from_str`.
 //!
-//! Each `AlpacaExecutor` instance is configured with a `default_asset` that
-//! drives `submit()` and `Action::Close` until `TraderDecision` carries an
-//! explicit `asset` field (F18 — tracked in the scenario-eval plan).
+//! Each `AlpacaExecutor` instance carries a `default_asset` used when a
+//! `TraderDecision` doesn't name its own asset (Flat/Close paths, legacy
+//! seeds). When `TraderDecision.asset` is set, `submit()` honors it and the
+//! executor instance can trade any whitelisted asset within a single
+//! process.
 //!
 //! # Idempotency
 //! Every `submit` call sets `client_order_id = td.cycle_id.to_string()`.
@@ -340,11 +342,11 @@ fn apca_position_to_plain(pos: &apca::api::v2::position::Position) -> AlpacaPosi
 /// a mock without hitting the network.
 pub struct AlpacaExecutor<A = ApacClientApi> {
     api: A,
-    /// Asset this executor instance trades. Drives `submit()` and the
-    /// `Action::Close` path until `TraderDecision` carries an explicit asset
-    /// field (F18 / scenario-eval Task 11). Default constructors set this to
+    /// Fallback asset for `submit()` calls whose `TraderDecision` does not
+    /// carry an explicit `asset`, and for the `Action::Close` path (which
+    /// doesn't see a `TraderDecision`). Default constructors set this to
     /// `AssetSymbol::Btc` for back-compat; use [`AlpacaExecutor::with_asset`]
-    /// to target a different asset.
+    /// to change the fallback.
     default_asset: AssetSymbol,
 }
 
@@ -383,9 +385,9 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
         }
     }
 
-    /// Override the default asset this executor trades. Useful for callers
-    /// that want a non-BTC instance (e.g. an ETH-only paper executor) before
-    /// `TraderDecision.asset` lands in Task 11.
+    /// Override the fallback asset this executor uses when a
+    /// `TraderDecision` doesn't carry its own `asset` (and for the
+    /// `Action::Close` path, which has no decision in hand).
     pub fn with_asset(mut self, asset: AssetSymbol) -> Self {
         self.default_asset = asset;
         self
@@ -465,18 +467,19 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
                 ));
             }
             Action::Close => {
-                // Delegate — close_position works by asset from the decision.
-                // TraderDecision doesn't yet carry the asset directly (F18 /
-                // scenario-eval Task 11), so we fall back to this executor's
+                // `Close` on a `TraderDecision` carrying its own asset closes
+                // that asset; otherwise fall back to the executor's
                 // configured `default_asset`.
-                return self.close_position(self.default_asset).await;
+                let close_asset = td.asset.unwrap_or(self.default_asset);
+                return self.close_position(close_asset).await;
             }
             Action::Buy | Action::Sell => {} // fall through
         }
 
-        // 3. Determine Alpaca symbol from the executor's configured asset
-        //    (TraderDecision.asset wiring lands in Task 11).
-        let asset = self.default_asset;
+        // 3. Determine Alpaca symbol. Prefer the trader's choice when it
+        //    carries an explicit asset; otherwise use the executor's
+        //    fallback.
+        let asset = td.asset.unwrap_or(self.default_asset);
         let symbol = alpaca_symbol_for(asset);
 
         // 4. Compute notional from live equity.
@@ -834,6 +837,51 @@ mod tests {
         assert_eq!(receipt.cycle_id, cycle_id);
         assert_eq!(receipt.venue, "alpaca");
         assert!(receipt.filled_size_bps > 0, "filled_size_bps must be > 0");
+    }
+
+    // ── submit_honors_trader_decision_asset (multi-asset unlock) ─────────────
+
+    /// When `TraderDecision.asset` is set, `submit()` routes the order to
+    /// that asset's Alpaca pair instead of the executor's `default_asset`.
+    /// This is the wire-level half of the multi-asset Alpaca unlock; the
+    /// validator half lives in `xvision_engine::eval::scenario::validate_v1`.
+    #[tokio::test]
+    async fn submit_honors_trader_decision_asset() {
+        let cycle_id = Uuid::new_v4();
+        let pending = fixture_pending_order();
+        let pending_id = pending.id.clone();
+        let filled = fixture_filled_order(&pending_id, &cycle_id.to_string());
+
+        let api = MockAlpacaApi::new(
+            fixture_account(),
+            vec![fixture_position("ETH/USD", "long")],
+            Some(pending),
+            Some(filled),
+        );
+        let captured_request = Arc::clone(&api.captured_request);
+
+        // default_asset stays BTC; the decision explicitly asks for ETH.
+        let executor = AlpacaExecutor::with_api(api);
+        let decision = RiskDecision::Approved {
+            decision: TraderDecision {
+                cycle_id,
+                action: Action::Buy,
+                size_bps: 1000,
+                direction: Direction::Long,
+                stop_loss_pct: 2.5,
+                take_profit_pct: 5.0,
+                trader_summary:
+                    "Long ETH on confirmed range break with 2:1 R:R; default_asset is BTC.".into(),
+                asset: Some(AssetSymbol::Eth),
+            },
+        };
+        executor.submit(&decision).await.expect("submit should succeed");
+
+        let req = captured_request.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            req.symbol, "ETH/USD",
+            "submit must route to the asset named on the TraderDecision, not default_asset"
+        );
     }
 
     // ── Test 2: submit_vetoed_decision_returns_not_actionable ─────────────────
