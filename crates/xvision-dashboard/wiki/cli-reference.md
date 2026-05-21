@@ -112,6 +112,27 @@ pretty-printed) or `json-compact` (single-line, suitable for piping). Alias:
 
 ---
 
+### `xvn memory …`
+
+Operator surface for V2D memory items. Reads default to Patterns because those
+are the operator-managed tier; Observations can be listed for audit.
+
+| Verb | Effect |
+|---|---|
+| `ls [--tier pattern\|observation] [--namespace <ns>] [--agent <id>] [--scenario <id>] [--run <id>] [--limit <n>] [--offset <n>] [--json]` | List memory items. `--agent <id>` is shorthand for `namespace=agent:<id>`. |
+| `show <id> [--json]` | Print one item with tier, namespace, provenance, training window, and text. |
+| `add-pattern "<text>" --namespace <ns> [--training-end <date>] [--force] [--json]` | Seed an operator Pattern. `--agent <id>` may be used instead of `--namespace`. Without an embedder configured, exits non-zero unless `--force` is set. |
+| `rm <id> [--json]` | Delete one memory item by id. |
+| `forget --namespace <ns> [--json]` | Bulk-delete every item in a namespace. |
+| `forget --agent <id> [--json]` | Bulk-delete one agent's private namespace (`agent:<id>`). |
+
+`--training-end YYYY-MM-DD` normalizes to end-of-day UTC so the Pattern is
+excluded from scenarios that overlap that date and recalled only by scenarios
+starting afterward. Leaving it blank makes the Pattern operator-attested wisdom
+that can be recalled in every scenario.
+
+---
+
 ### `xvn ab-compare`
 
 N-arm backtest workhorse. Each arm carries a strategy + optional

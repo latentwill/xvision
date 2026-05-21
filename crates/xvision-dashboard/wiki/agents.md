@@ -65,6 +65,39 @@ expected; the design behind it (and the reason backtest replays
 don't leak future knowledge) is covered in the full memory
 overview at `docs/v2d-memory-overview.md` in the repo.
 
+### Managing memory in the dashboard
+
+Two surfaces exist for browsing and seeding memory:
+
+- **Memory tab on this page.** Sits between **Configuration** and the
+  tail of the agent detail. Patterns + Observations sub-tabs scoped
+  to this agent's namespace.
+  - Patterns sub-tab — list, add (`+ Add Pattern` modal), delete one
+    by one, or **Forget all** at the bottom.
+  - Observations sub-tab — read-only, filterable by scenario and
+    run. Bulk-forget only; no per-row delete.
+- **Workspace `/memory` page.** Sidebar entry between `/scenarios`
+  and `/eval-runs`. Same Patterns + Observations split, scoped to the
+  shared `global` namespace — the pool every Global-mode slot reads
+  from.
+
+The MemoryPanel on the eval-review page has an overflow menu (`⋯`)
+on each recall row with **Open Pattern** — clicks deep-link into
+whichever of the two pages owns the Pattern, with the row highlighted
+and scrolled into view. The resulting URL is shareable.
+
+### Scripted alternative — `xvn memory add-pattern`
+
+For automation and one-shot seeding:
+
+```
+xvn memory add-pattern "BTC ranges before FOMC" --namespace global --training-end 2024-09-01
+```
+
+See the full memory overview at `docs/v2d-memory-overview.md` for the
+other `xvn memory` verbs (`ls`, `show`, `rm`, `forget`) and the
+`training_window_end` semantics.
+
 ---
 
 ## Read an agent from the CLI

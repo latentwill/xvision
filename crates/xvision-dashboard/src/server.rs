@@ -134,16 +134,16 @@ use axum::{
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use xvision_engine::strategies_folder::MAX_IMPORT_BYTES;
 
-use crate::auth::{auth_middleware, AuthState};
 use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
+use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, bars, chat_rail, cli, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
     health::health,
-    safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, wizard,
+    memory as memory_route, safety as safety_route, scenarios, search as search_route, settings, skills,
+    static_files, strategies, strategies_folder as strategies_folder_route, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -170,7 +170,10 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/templates", get(strategies::list_templates))
         .route("/api/strategy/:id", get(strategies::get))
         .route("/api/strategies/:id/chart", get(strategies::chart))
-        .route("/api/strategies-folder/list", get(strategies_folder_route::get_list))
+        .route(
+            "/api/strategies-folder/list",
+            get(strategies_folder_route::get_list),
+        )
         .route("/api/scenarios", get(scenarios::list))
         .route("/api/scenarios/preview", get(scenarios::preview))
         .route("/api/scenarios/:id", get(scenarios::get))
@@ -192,6 +195,8 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/eval/reviews/:id", get(eval_review::get))
         .route("/api/eval/agent-profiles", get(eval_agent_profiles::list))
         .route("/api/eval/agent-profiles/:id", get(eval_agent_profiles::get))
+        .route("/api/memory", get(memory_route::list))
+        .route("/api/memory/:id", get(memory_route::get))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
         .route("/api/cli/jobs/:id/output", get(cli::output))
@@ -203,8 +208,14 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/settings/observability", get(settings::observability::get))
         .route("/api/settings/providers", get(settings::providers::list))
         .route("/api/settings/providers/:name", get(settings::providers::show))
-        .route("/api/settings/providers/:name/models", get(settings::providers::list_models))
-        .route("/api/settings/providers/:name/catalog", get(settings::providers::get_catalog))
+        .route(
+            "/api/settings/providers/:name/models",
+            get(settings::providers::list_models),
+        )
+        .route(
+            "/api/settings/providers/:name/catalog",
+            get(settings::providers::get_catalog),
+        )
         .route("/api/chat-rail/sessions/:id/history", get(chat_rail::history))
         .route("/api/chat-rail/sessions", get(chat_rail::list_sessions))
         .with_state(state)
@@ -267,6 +278,10 @@ fn mutating_router(state: AppState) -> Router {
         // ── Eval review ───────────────────────────────────────────────────
         .route("/api/eval/runs/:id/review", post(eval_review::generate))
         .route("/api/eval/agent-profiles/:id", patch(eval_agent_profiles::patch))
+        // ── Memory ────────────────────────────────────────────────────────
+        .route("/api/memory", delete(memory_route::forget))
+        .route("/api/memory/patterns", post(memory_route::create_pattern))
+        .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── CLI jobs ──────────────────────────────────────────────────────
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", delete(cli::delete))
@@ -427,9 +442,7 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     // Non-loopback bind: print a loud warning to stderr so operators
     // are aware they're exposing the dashboard. Terminal only — no UI popup.
     if !addr.ip().is_loopback() {
-        eprintln!(
-            "WARNING: dashboard bound to {addr}; ensure firewall/Tailscale ACL restricts access"
-        );
+        eprintln!("WARNING: dashboard bound to {addr}; ensure firewall/Tailscale ACL restricts access");
     }
 
     // Resolve auth posture from bind address + env. Refuses to start

@@ -271,6 +271,10 @@ pub enum Command {
     /// Agent-run inspection — materialize `xvn_run.json` + `xvn_report.md`
     /// for a finished run by reading the SQLite ledger.
     Run(commands::run::RunCmd),
+    /// V2D Memory operations — list / show / add-pattern / rm / forget
+    /// over the operator memory store (`$XVN_MEMORY_DB` or
+    /// `~/.xvn/memory.db`).
+    Memory(commands::memory::MemoryCmd),
 }
 
 impl Cli {
@@ -380,6 +384,7 @@ impl Cli {
             Command::Obs(cmd) => commands::obs::run(cmd).await.map_err(Into::into),
             Command::Run(cmd) => commands::run::run(cmd).await,
             Command::Experiment(cmd) => commands::experiment::run(cmd).await,
+            Command::Memory(cmd) => commands::memory::run(cmd).await,
         }
     }
 }
