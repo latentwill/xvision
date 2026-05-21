@@ -5,7 +5,7 @@ wave: qa-chat-rail-2026-05-21
 worktree: .worktrees/strategy-template-registry-removal
 branch: task/strategy-template-registry-removal
 base: origin/task/templates-elimination
-status: claimed
+status: merged
 depends_on:
   - templates-elimination
 blocks: []

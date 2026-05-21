@@ -5,7 +5,7 @@ wave: qa-chat-rail-2026-05-21
 worktree: .worktrees/wizard-folder-recall-honesty
 branch: task/wizard-folder-recall-honesty
 base: origin/task/templates-elimination
-status: claimed
+status: merged
 depends_on:
   - templates-elimination
 blocks: []

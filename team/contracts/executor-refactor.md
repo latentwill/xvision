@@ -5,7 +5,7 @@ wave: alpaca-live-eval-2026-05-21
 worktree: .worktrees/executor-refactor
 branch: task/executor-refactor
 base: origin/main
-status: scope-violation
+status: archived
 depends_on: []
 blocks:
   - agent-graph-composition
@@ -16,41 +16,7 @@ superseded_by:
   - executor-collapse-paper-mode
   - executor-live-shell
 stacking: none
-allowed_paths:
-  - crates/xvision-engine/src/eval/executor/**
-  - crates/xvision-engine/src/eval/run.rs
-  - crates/xvision-engine/src/eval/mod.rs
-  - crates/xvision-engine/src/eval/live_config.rs
-  - crates/xvision-engine/src/api/eval.rs
-  - crates/xvision-engine/src/api/agents.rs
-  - crates/xvision-engine/src/api/search.rs
-  - crates/xvision-engine/src/safety/gate.rs
-  - crates/xvision-engine/src/safety/venue.rs
-  - crates/xvision-engine/src/safety/mod.rs
-  - crates/xvision-engine/tests/eval_executor_*.rs
-  - crates/xvision-engine/tests/eval_paper_*.rs
-  - crates/xvision-engine/tests/eval_progress*.rs
-  - crates/xvision-engine/tests/eval_run_*.rs
-  - crates/xvision-engine/tests/eval_broker_circuit_breaker.rs
-  - crates/xvision-engine/tests/eval_causal_input_sanitization.rs
-  - crates/xvision-engine/tests/api_eval*.rs
-  - crates/xvision-engine/tests/risk_min_notional.rs
-  - crates/xvision-engine/tests/decisions_count.rs
-  - crates/xvision-engine/tests/chart_hold_markers.rs
-  - crates/xvision-engine/tests/safety_gate*.rs
-  - crates/xvision-core/src/config.rs
-  - crates/xvision-core/tests/**
-  - crates/xvision-dashboard/src/wizard_loop.rs
-  - crates/xvision-dashboard/src/cli_jobs/eval_run_bridge.rs
-  - crates/xvision-dashboard/src/sse/mod.rs
-  - crates/xvision-dashboard/src/server.rs
-  - crates/xvision-dashboard/src/state.rs
-  - crates/xvision-dashboard/tests/eval_runs_*.rs
-  - crates/xvision-dashboard/tests/cli_jobs_eval_run_bridge.rs
-  - crates/xvision-cli/src/commands/eval.rs
-  - crates/xvision-cli/tests/eval_cli.rs
-  - crates/xvision-mcp/src/tools.rs
-  - crates/xvision-observability/**
+allowed_paths: []
 forbidden_paths:
   - frontend/web/**
   - crates/xvision-engine/migrations/**
@@ -516,4 +482,3 @@ Worktree `.worktrees/executor-refactor` and branch
 `task/executor-trait-extraction` on a new worktree.
 
 — Conductor, 2026-05-21
-

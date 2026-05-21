@@ -31,9 +31,9 @@ placeholder-deadlock on `create_strategy`, and migrates the
 existing template starter library into folder seed entries.
 
 - [templates-elimination](contracts/templates-elimination.md) — **P0 foundation** · pr-open #481 · wizard-side only (descoped 2026-05-21)
-- [strategy-template-registry-removal](contracts/strategy-template-registry-removal.md) — engine-side follow-up · claimed · stacked on `task/templates-elimination`
+- [strategy-template-registry-removal](contracts/strategy-template-registry-removal.md) — engine-side follow-up · merged #486
 - [chat-messages-insert-failing](contracts/chat-messages-insert-failing.md) — P1 engine leaf · pr-open #480
-- [wizard-folder-recall-honesty](contracts/wizard-folder-recall-honesty.md) — P2 leaf · claimed · stacked on `task/templates-elimination`
+- [wizard-folder-recall-honesty](contracts/wizard-folder-recall-honesty.md) — P2 leaf · merged #488
 - [strategies-folder-into-view-toggle](contracts/strategies-folder-into-view-toggle.md) — P2 frontend leaf · pr-open #479
 - [memory-into-agents-section](contracts/memory-into-agents-section.md) — P2 frontend leaf · pr-open #478
 
