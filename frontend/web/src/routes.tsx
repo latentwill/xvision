@@ -30,6 +30,7 @@ const SettingsDangerRoute = lazy(() => import("./routes/settings").then((m) => (
 const SettingsGeneralRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsGeneralRoute })));
 const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsProvidersRoute })));
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
+const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -92,6 +93,7 @@ export const router = createBrowserRouter([
       { path: "eval-runs/compare", element: page(<EvalCompareRoute />) },
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
+      { path: "safety", element: page(<SafetyRoute />) },
       { path: "docs", element: page(<DocsRoute />) },
       {
         path: "settings",

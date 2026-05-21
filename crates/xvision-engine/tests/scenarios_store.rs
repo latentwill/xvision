@@ -12,6 +12,7 @@ use xvision_engine::eval::scenario::{
     ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use xvision_engine::eval::scenario_store as store;
+use xvision_engine::safety::VenueLabel;
 
 struct TestCtx {
     ctx: ApiContext,
@@ -86,6 +87,8 @@ fn make_test_scenario(id: &str) -> Scenario {
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "test".into(),
         archived_at: None,
+        venue_label: VenueLabel::Paper,
+        safety_limits: None,
     }
 }
 

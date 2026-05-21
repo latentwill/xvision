@@ -25,6 +25,7 @@ use crate::eval::scenario::{
     LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
     ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
+use crate::safety::VenueLabel;
 use crate::strategies::manifest::{PublicManifest, RegimeFit};
 use crate::strategies::risk::RiskPreset;
 use crate::strategies::slot::LLMSlot;
@@ -340,6 +341,8 @@ fn build_example_scenario(
         created_at: Utc.with_ymd_and_hms(2026, 5, 17, 0, 0, 0).unwrap(),
         created_by: "system:examples".into(),
         archived_at: None,
+        venue_label: VenueLabel::Paper,
+        safety_limits: None,
     }
 }
 

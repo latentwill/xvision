@@ -21,6 +21,8 @@ use xvision_data::asset_whitelist::{alpaca_crypto_asset, alpaca_crypto_history_s
 use xvision_data::manifest::{AdjustmentKind, DataManifest, FeedKind, SessionFilter};
 use xvision_data::validate::CalendarHint;
 
+use crate::safety::{SafetyLimits, VenueLabel};
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -97,6 +99,18 @@ pub struct Scenario {
     pub created_by: String,
     #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub archived_at: Option<DateTime<Utc>>,
+
+    // ── Safety fields (migration 030-031, v2b-broker-wallet-kill-switch) ──────
+    /// Coarse venue classification. Drives the UI badge (green/amber/red) and
+    /// the confused-deputy gate (Paper scenario must not hit a Live broker).
+    /// Defaults to `Paper` for all existing scenarios via `serde(default)`.
+    #[serde(default)]
+    pub venue_label: VenueLabel,
+
+    /// Optional per-run safety limits. When set, the gate checks these at
+    /// every broker submit and aborts the run on breach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety_limits: Option<SafetyLimits>,
 }
 
 /// Default warmup-bar count for new scenarios. Matches the value of the
@@ -232,6 +246,8 @@ mod warmup_bars_tests {
             created_at: Utc::now(),
             created_by: "t".into(),
             archived_at: None,
+            venue_label: VenueLabel::Paper,
+            safety_limits: None,
         };
         let json = serde_json::to_string(&scenario).unwrap();
         let parsed: Scenario = serde_json::from_str(&json).unwrap();
@@ -891,6 +907,8 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
             created_at,
             created_by: creator.clone(),
             archived_at: None,
+            venue_label: VenueLabel::Paper,
+            safety_limits: None,
         }
     };
 

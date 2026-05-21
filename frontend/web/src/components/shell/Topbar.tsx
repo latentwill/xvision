@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 
 import { HealthPill } from "./HealthPill";
+import { SafetyPauseBadge } from "./SafetyPauseBadge";
 import { useUi } from "@/stores/ui";
 import { modKeyLabel } from "@/lib/platform";
 
@@ -47,6 +48,7 @@ export function Topbar({
       </div>
 
       <div className="flex items-center gap-3 min-w-0 w-full xl:w-auto">
+        <SafetyPauseBadge />
         <HealthPill />
 
         <button

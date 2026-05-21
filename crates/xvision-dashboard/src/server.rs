@@ -142,7 +142,7 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
     health::health,
-    scenarios, search as search_route, settings, skills, static_files, strategies,
+    safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
     strategies_folder as strategies_folder_route, wizard,
 };
 use crate::state::AppState;
@@ -321,6 +321,11 @@ fn mutating_router(state: AppState) -> Router {
             "/api/settings/danger/factory-reset",
             post(settings::danger::factory_reset),
         )
+        // Safety API: pause gate + audit log (v2b-broker-wallet-kill-switch).
+        .route("/api/safety/state", get(safety_route::get_state_handler))
+        .route("/api/safety/pause", post(safety_route::pause_handler))
+        .route("/api/safety/resume", post(safety_route::resume_handler))
+        .route("/api/safety/audit", get(safety_route::audit_handler))
         // ── Wizard ────────────────────────────────────────────────────────
         .route("/api/wizard/chat", post(wizard::chat))
         // ── Chat rail ─────────────────────────────────────────────────────

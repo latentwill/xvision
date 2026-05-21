@@ -6,6 +6,46 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+/// Reason a run was aborted by the safety subsystem. Persisted to the
+/// `eval_runs.error` column so the dashboard can render a human-readable
+/// reason alongside the `Cancelled` terminal status.
+///
+/// Extend with new variants rather than adding a parallel error type (per
+/// the v2b-broker-wallet-kill-switch contract Notes section).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunAbort {
+    /// Global pause was active when the submit was attempted.
+    SafetyPaused { reason: String },
+    /// A per-run safety limit was breached at submit time.
+    SafetyLimit { kind: String, value: f64, limit: f64 },
+    /// A Paper-labelled scenario tried to submit to a Live-configured broker.
+    VenueLabelMismatch {
+        scenario_label: String,
+        broker_label: String,
+    },
+}
+
+impl RunAbort {
+    /// Stable reason string written to the run's `error` column.
+    /// Format: `"aborted: <tag> <detail>"`.
+    pub fn reason(&self) -> String {
+        match self {
+            RunAbort::SafetyPaused { reason } => {
+                format!("aborted: safety_paused — {reason}")
+            }
+            RunAbort::SafetyLimit { kind, value, limit } => {
+                format!("aborted: safety_limit — {kind} value={value:.4} limit={limit:.4}")
+            }
+            RunAbort::VenueLabelMismatch {
+                scenario_label,
+                broker_label,
+            } => {
+                format!("aborted: venue_label_mismatch — scenario={scenario_label} broker={broker_label}")
+            }
+        }
+    }
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",

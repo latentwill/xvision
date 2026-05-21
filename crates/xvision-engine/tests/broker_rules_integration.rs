@@ -41,6 +41,7 @@ use xvision_engine::eval::scenario::{
     Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::safety::VenueLabel;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
@@ -170,6 +171,8 @@ fn crypto_scenario(asset_class: AssetClass, symbol: &str, venue_symbol: &str) ->
         created_at: Utc::now(),
         created_by: "test".into(),
         archived_at: None,
+        venue_label: VenueLabel::Paper,
+        safety_limits: None,
     }
 }
 

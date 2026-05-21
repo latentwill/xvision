@@ -15,6 +15,7 @@ use xvision_engine::api::chart::RunEventBus;
 use xvision_engine::api::eval::RunDetail;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::safety::SafetyManager;
 use xvision_observability::{
     AgentRunRecorder, BroadcastSubscriber, RunEventBus as ObsRunEventBus, SqliteRecorder,
 };
@@ -80,6 +81,9 @@ pub struct AppState {
     eval_run_cache: Arc<Mutex<HashMap<String, CachedRunDetail>>>,
     cli_command: PathBuf,
     cli_runner: Arc<CliJobRunner>,
+    /// Global safety pause-gate singleton. Bootstrapped at server startup from
+    /// `safety_state` table (migration 030). Clone-cheap — inner `Arc<RwLock<>>`.
+    safety_manager: SafetyManager,
 }
 
 impl AppState {
@@ -148,6 +152,15 @@ impl AppState {
             }
         };
 
+        // Bootstrap the safety manager. Constructs from the already-open pool,
+        // then loads / seeds the safety_state row. For v1 we treat any non-paper
+        // venue as absent (live surfaces are all stubbed), so `live_venue_present`
+        // is always false here. A follow-on PR wires broker-config inspection.
+        let safety_manager = SafetyManager::new(pool.clone());
+        if let Err(e) = safety_manager.bootstrap(false).await {
+            tracing::warn!(error = %e, "safety_manager bootstrap failed; using default (unpaused) state");
+        }
+
         Ok(Self {
             pool,
             xvn_home,
@@ -159,7 +172,13 @@ impl AppState {
             eval_run_cache: Arc::new(Mutex::new(HashMap::new())),
             cli_command,
             cli_runner,
+            safety_manager,
         })
+    }
+
+    /// Shared safety manager reference for route handlers.
+    pub fn safety_manager(&self) -> &SafetyManager {
+        &self.safety_manager
     }
 
     /// Build an `ApiContext` for one HTTP request. The dashboard always

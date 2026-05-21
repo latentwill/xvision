@@ -333,6 +333,7 @@ mod preflight_tests {
         LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
         ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
+    use crate::safety::VenueLabel;
     use crate::strategies::{manifest::PublicManifest, risk::RiskPreset, AgentRef, PipelineDef, Strategy};
     use chrono::{TimeZone, Utc};
     use xvision_data::alpaca::BarGranularity;
@@ -428,6 +429,8 @@ mod preflight_tests {
             created_at: Utc::now(),
             created_by: "t".into(),
             archived_at: None,
+            venue_label: VenueLabel::Paper,
+            safety_limits: None,
         }
     }
 

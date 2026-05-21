@@ -534,6 +534,7 @@ fn scenario_data_manifest_derives_from_data_source() {
         LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
         ScenarioSource, TimeWindow, Venue, VenueSettings,
     };
+    use xvision_engine::safety::VenueLabel;
 
     let s = Scenario {
         id: "sc-test".into(),
@@ -594,6 +595,8 @@ fn scenario_data_manifest_derives_from_data_source() {
         created_at: Utc::now(),
         created_by: "t".into(),
         archived_at: None,
+        venue_label: VenueLabel::Paper,
+        safety_limits: None,
     };
 
     let manifest = s.data_manifest();

@@ -4,6 +4,7 @@ use chrono::{TimeZone, Utc};
 use serde_json::json;
 use xvision_core::Capital;
 use xvision_engine::eval::scenario::*;
+use xvision_engine::safety::VenueLabel;
 
 fn valid_crypto_scenario(symbol: &str) -> Scenario {
     Scenario {
@@ -62,6 +63,8 @@ fn valid_crypto_scenario(symbol: &str) -> Scenario {
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "edkenne@gmail.com".into(),
         archived_at: None,
+        venue_label: VenueLabel::Paper,
+        safety_limits: None,
     }
 }
 
@@ -135,6 +138,8 @@ fn scenario_serde_roundtrip() {
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "edkenne@gmail.com".into(),
         archived_at: None,
+        venue_label: VenueLabel::Paper,
+        safety_limits: None,
     };
     let expected = json!({
         "id": "sc_test",
@@ -206,7 +211,8 @@ fn scenario_serde_roundtrip() {
         "regime_derived": false,
         "created_at": "2026-05-11T00:00:00Z",
         "created_by": "edkenne@gmail.com",
-        "archived_at": null
+        "archived_at": null,
+        "venue_label": "paper"
     });
 
     assert_eq!(serde_json::to_value(&s).unwrap(), expected);
