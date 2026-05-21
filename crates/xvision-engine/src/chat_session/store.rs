@@ -16,6 +16,39 @@ use ulid::Ulid;
 
 use super::context::ContextScope;
 
+/// Classify a SQLx error into a short, operator-readable label naming the
+/// SQLite error class. This makes the `append` error visible to operators
+/// instead of the swallowed "insert chat_messages row" wrapper that was the
+/// original bug (2026-05-21 session: three sequential stream errors with no
+/// indication of the underlying cause).
+///
+/// Known classes that can appear here:
+/// - `UNIQUE constraint failed` — (session_id, seq) collision; impossible in
+///   normal serial execution but possible if the pool returns a stale
+///   connection whose in-flight transaction was already rolled back.
+/// - `FOREIGN KEY constraint failed` — session_id references a chat_sessions
+///   row that does not exist (e.g. session was deleted between resolve() and
+///   append(); sqlx 0.8 enables FK enforcement by default).
+/// - `database is locked` — SQLITE_BUSY: another connection (e.g. a
+///   concurrent strategy-write transaction) holds the write lock. Root cause
+///   of the 2026-05-21 cluster: the default SQLite pool has up to 10
+///   connections and no WAL mode; a failed strategy-write that held a
+///   connection mid-transaction blocked all subsequent chat-message writes.
+fn sqlite_error_label(e: &sqlx::Error) -> &'static str {
+    let msg = e.to_string();
+    if msg.contains("UNIQUE constraint failed") {
+        "UNIQUE constraint failed"
+    } else if msg.contains("FOREIGN KEY constraint failed") {
+        "FOREIGN KEY constraint failed (session_id → chat_sessions)"
+    } else if msg.contains("database is locked") || msg.contains("SQLITE_BUSY") {
+        "database is locked (SQLITE_BUSY)"
+    } else if msg.contains("no such table") {
+        "no such table (schema not migrated)"
+    } else {
+        "SQLite error (see tracing log for details)"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
     pub id: String,
@@ -95,7 +128,16 @@ impl ChatSessionStore {
         .bind(&now_rfc)
         .execute(&mut *tx)
         .await
-        .context("insert chat_messages row")?;
+        .map_err(|e| {
+            let label = sqlite_error_label(&e);
+            tracing::error!(
+                session_id = session_id,
+                seq = next_seq,
+                db_error = %e,
+                "insert chat_messages row failed: {label}",
+            );
+            anyhow::anyhow!("insert chat_messages row: {label} — {e}")
+        })?;
 
         sqlx::query("UPDATE chat_sessions SET last_activity_at = ?2 WHERE id = ?1")
             .bind(session_id)
