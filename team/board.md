@@ -34,6 +34,15 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
   Wave 2 (after foundation): `strategies-folder-prepopulation` + `strategies-folder-import` (parallel).
   Wave 3: `strategy-ideas-tool-surface` (after prepopulation).
 
+- **CLI operator safety — 2026-05-20** (P0 bundle merged 2026-05-21 via
+  3 slices: #425 (`xvn eval cancel`), #428 (engine hard limits + flags),
+  #429 (`xvn experiment run` scope guardrails). P0 closed. P1 #12
+  (`remote-cli-safe-eval-allowlist`) folded into
+  `team/contracts/v2b-remote-cli-job-safety.md` (V2B). Remaining P1
+  (#4–#11) and P2 (#13–#15) items from
+  `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`
+  remain Reserved.
+
 - **Docs user+agent wiki — outstanding gaps** (1 track; 15 of 16
   intake tracks already shipped — see
   `team/intake/2026-05-20-docs-user-and-agent-wiki.md` §"Status

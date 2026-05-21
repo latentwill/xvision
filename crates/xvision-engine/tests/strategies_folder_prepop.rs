@@ -8,14 +8,17 @@
 //! - `--force` mode (drift suppressed, copy overwritten).
 //! - Stale-source manifest entries trigger the right finding.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
+use xvision_engine::strategies_folder::folder_root;
 use xvision_engine::strategies_folder::prepop::{
     self, InitOptions, Manifest, ManifestEntry, MANIFEST_FILENAME,
 };
-use xvision_engine::strategies_folder::{folder_root, SUBFOLDER_ALLOWLIST};
+
+const EXPECTED_SUBFOLDERS: &[&str] = &["notes", "docs", "strategy-files", "evals", "library"];
 
 fn fresh_home() -> TempDir {
     tempfile::tempdir().unwrap()
@@ -30,7 +33,7 @@ fn read_manifest_from_disk(xvn_home: &Path) -> Manifest {
 
 fn assert_all_subfolders_exist(xvn_home: &Path) {
     let root = folder_root(xvn_home);
-    for name in SUBFOLDER_ALLOWLIST {
+    for name in EXPECTED_SUBFOLDERS {
         let sub = root.join(name);
         assert!(sub.is_dir(), "expected {} to be a directory", sub.display());
     }
@@ -45,26 +48,20 @@ async fn happy_path_init_creates_all_subfolders_and_manifest() {
     assert_all_subfolders_exist(td.path());
     let mut created = report.created_subfolders.clone();
     created.sort();
-    let mut expected: Vec<String> = SUBFOLDER_ALLOWLIST.iter().map(|s| (*s).to_string()).collect();
+    let mut expected: Vec<String> = EXPECTED_SUBFOLDERS.iter().map(|s| (*s).to_string()).collect();
     expected.sort();
     assert_eq!(created, expected);
 
-    // Manifest exists and has at least the curated EMA templates +
-    // the freqtrade playlist. We don't pin the exact count so adding
-    // a template upstream doesn't break this test.
+    // Manifest exactly matches the eligible docs/strategies source set.
     let manifest = read_manifest_from_disk(td.path());
     assert_eq!(manifest.version, prepop::MANIFEST_VERSION);
     assert!(!manifest.entries.is_empty(), "manifest must not be empty");
 
-    let rels: Vec<&str> = manifest.entries.iter().map(|e| e.rel_path.as_str()).collect();
-    assert!(
-        rels.iter()
-            .any(|r| r == &"library/freqtrade_strategies_playlist.md"),
-        "manifest missing freqtrade playlist; got {rels:?}"
-    );
-    assert!(
-        rels.iter().any(|r| r.starts_with("library/templates/")),
-        "manifest missing any template entry; got {rels:?}"
+    let rels: BTreeSet<String> = manifest.entries.iter().map(|e| e.rel_path.clone()).collect();
+    let expected_rels = expected_prepop_rel_paths();
+    assert_eq!(
+        rels, expected_rels,
+        "manifest rel_path set must exactly match eligible docs/strategies sources"
     );
 
     // Every manifest entry points at an actual file on disk and the
@@ -341,4 +338,38 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     hex::encode(h.finalize())
+}
+
+fn expected_prepop_rel_paths() -> BTreeSet<String> {
+    let docs_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/strategies");
+    let mut out = BTreeSet::new();
+    collect_expected_prepop_rel_paths(&docs_root, &docs_root, &mut out);
+    out
+}
+
+fn collect_expected_prepop_rel_paths(root: &Path, dir: &Path, out: &mut BTreeSet<String>) {
+    for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display())) {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            collect_expected_prepop_rel_paths(root, &path, out);
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(root)
+            .unwrap()
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(s) => s.to_str().map(|s| s.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        if rel == "freqtrade_strategies_playlist.md" || rel.starts_with("templates/") {
+            out.insert(format!("library/{rel}"));
+        }
+    }
 }

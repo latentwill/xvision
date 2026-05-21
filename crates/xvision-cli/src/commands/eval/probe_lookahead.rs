@@ -348,8 +348,8 @@ mod tests {
     #[test]
     fn bars_to_snapshots_window_is_capped() {
         // 5 bars, context_window=3 → snapshot[4] has recent_bars of length 3
-        let bars: Vec<xvision_data::alpaca::MarketBar> = (0..5)
-            .map(|i| xvision_data::alpaca::MarketBar {
+        let bars: Vec<Ohlcv> = (0..5)
+            .map(|i| Ohlcv {
                 timestamp: chrono::Utc::now() + chrono::Duration::hours(i),
                 open: 50_000.0,
                 high: 50_100.0,

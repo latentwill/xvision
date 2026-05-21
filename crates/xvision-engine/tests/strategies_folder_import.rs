@@ -5,20 +5,24 @@
 //! Coverage:
 //! - Happy-path: `.md` imported into `notes/`, file lands with correct content.
 //! - `.csv` imported, sidecar generated with header + first 50 rows.
-//! - `.pdf` imported with `pdftotext` available (cfg-gated to environments
-//!   where the binary is on PATH).
+//! - `.pdf` import behavior for both unavailable and controlled-success
+//!   `pdftotext` paths.
 //! - Path-escape rejected (filename containing `..` or directory separators).
 //! - Size limit rejected (write a 26 MB temp file and confirm validation).
 //! - Type allowlist rejected (`.exe`).
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
+use tokio::sync::Mutex;
 
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::strategies_folder::{self, FileKind, ImportOptions, MAX_IMPORT_BYTES};
+
+static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 async fn build_pool(td: &TempDir) -> SqlitePool {
     let db_path = td.path().join("xvn.db");
@@ -40,6 +44,30 @@ fn touch(path: &PathBuf, body: &[u8]) {
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(path, body).unwrap();
+}
+
+struct PathRestore {
+    old_path: Option<std::ffi::OsString>,
+}
+
+impl Drop for PathRestore {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(old_path) = self.old_path.take() {
+                std::env::set_var("PATH", old_path);
+            } else {
+                std::env::remove_var("PATH");
+            }
+        }
+    }
+}
+
+fn set_path_for_test(path: &std::path::Path) -> PathRestore {
+    let old_path = std::env::var_os("PATH");
+    unsafe {
+        std::env::set_var("PATH", path);
+    }
+    PathRestore { old_path }
 }
 
 #[tokio::test]
@@ -85,9 +113,12 @@ async fn import_csv_writes_sidecar_with_header_and_rows() {
         .unwrap();
     assert!(body.contains("| a | b | c |"));
     // First and 49th rows show; 50th-onward should be trimmed.
-    assert!(body.contains("v0"));
-    assert!(body.contains("v49"));
-    assert!(!body.contains("v50,"), "expected row 50 to be trimmed");
+    assert!(body.contains("| v0 | x0 | y0 |"));
+    assert!(body.contains("| v49 | x49 | y49 |"));
+    assert!(
+        !body.contains("| v50 | x50 | y50 |"),
+        "expected row 50 to be trimmed from markdown table"
+    );
 }
 
 #[tokio::test]
@@ -244,11 +275,9 @@ async fn import_rejects_existing_destination_symlink() {
 
 #[tokio::test]
 async fn import_pdf_emits_finding_when_pdftotext_missing() {
-    // We can't easily uninstall the binary inside the test, so this case
-    // only meaningfully exercises the unavailable branch on hosts that
-    // genuinely lack `pdftotext`. When it's installed, we assert the
-    // summary sidecar lands or the extractor reports a clean failure on
-    // the synthetic non-PDF body.
+    let _guard = ENV_LOCK.lock().await;
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _path_restore = set_path_for_test(bin_dir.path());
     let (ctx, td) = build_ctx().await;
     let src = td.path().join("manual.pdf");
     touch(&src, b"%PDF-1.4\nnot a real pdf body\n");
@@ -257,24 +286,54 @@ async fn import_pdf_emits_finding_when_pdftotext_missing() {
         .await
         .unwrap();
     assert_eq!(outcome.entry.rel_path, "docs/manual.pdf");
+    assert!(
+        outcome
+            .findings
+            .iter()
+            .any(|f| f.code == "summary_extractor_unavailable"),
+        "expected summary_extractor_unavailable finding when pdftotext is missing; got {:?}",
+        outcome.findings
+    );
+    assert!(
+        outcome.summary.is_none(),
+        "missing extractor should not report a summary sidecar"
+    );
+}
 
-    let pdftotext_available = std::process::Command::new("pdftotext")
-        .arg("-v")
-        .output()
-        .map(|o| o.status.success() || !o.stderr.is_empty())
-        .unwrap_or(false);
-    if !pdftotext_available {
-        // No binary on PATH → the importer must surface a finding.
-        assert!(
-            outcome
-                .findings
-                .iter()
-                .any(|f| f.code == "summary_extractor_unavailable"),
-            "expected summary_extractor_unavailable finding when pdftotext is missing; got {:?}",
-            outcome.findings
-        );
-    }
-    // When the binary is available, either a sidecar lands (true PDF) or
-    // pdftotext fails on the synthetic body — both cases keep the import
-    // itself successful, which we already asserted via the entry above.
+#[cfg(unix)]
+#[tokio::test]
+async fn import_pdf_writes_sidecar_with_controlled_pdftotext() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = ENV_LOCK.lock().await;
+    let bin_dir = tempfile::tempdir().unwrap();
+    let fake = bin_dir.path().join("pdftotext");
+    std::fs::write(&fake, "#!/bin/sh\nprintf '%s\\n' 'controlled extractor text'\n").unwrap();
+    let mut perms = std::fs::metadata(&fake).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&fake, perms).unwrap();
+    let _path_restore = set_path_for_test(bin_dir.path());
+
+    let (ctx, td) = build_ctx().await;
+    let src = td.path().join("manual.pdf");
+    touch(&src, b"%PDF-1.4\nsynthetic body\n");
+
+    let outcome = strategies_folder::import_from_path(&ctx, &src, ImportOptions::default())
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.entry.rel_path, "docs/manual.pdf");
+    assert!(
+        outcome.findings.is_empty(),
+        "unexpected findings: {:?}",
+        outcome.findings
+    );
+    let summary = outcome
+        .summary
+        .expect("controlled extractor should write a sidecar");
+    assert_eq!(summary.rel_path, "docs/manual.summary.md");
+    let summary_body =
+        std::fs::read_to_string(strategies_folder::folder_root(&ctx.xvn_home).join(&summary.rel_path))
+            .unwrap();
+    assert!(summary_body.contains("controlled extractor text"));
 }

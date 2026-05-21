@@ -308,9 +308,9 @@ async fn list_ideas_skips_symlinked_json_templates() {
 #[tokio::test]
 async fn list_ideas_clamps_limit_to_max() {
     let (ctx, td) = fresh_ctx().await;
-    // Drop 5 valid templates so we can verify both default and clamp
-    // behavior without needing 100+ files on disk.
-    for i in 0..5u32 {
+    // Seed enough valid templates to prove the over-cap request clamps at
+    // MAX_LIMIT instead of just returning every available row.
+    for i in 0..=(MAX_LIMIT as u32) {
         let body = format!(
             r#"{{
   "name": "ema_test_{i}",
@@ -329,9 +329,8 @@ async fn list_ideas_clamps_limit_to_max() {
         write_template(td.path(), "EMA", &format!("ema_test_{i}.json"), &body).await;
     }
 
-    // Request 500 → must clamp at MAX_LIMIT (100). We only have 5
-    // ideas on disk so we get 5 back, but the call must succeed
-    // without error (i.e., didn't bail on the over-cap value).
+    // Request 500 → must clamp at MAX_LIMIT (100), leaving the extra
+    // on-disk idea out of the response.
     let huge = list_ideas(
         &ctx,
         IdeaFilter {
@@ -341,7 +340,7 @@ async fn list_ideas_clamps_limit_to_max() {
     )
     .await
     .unwrap();
-    assert_eq!(huge.len(), 5);
+    assert_eq!(huge.len(), MAX_LIMIT as usize);
 
     // Request 2 → clamp doesn't kick in but limit is honored.
     let two = list_ideas(

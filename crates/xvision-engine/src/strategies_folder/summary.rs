@@ -217,10 +217,10 @@ mod tests {
 
         let sidecar_body = std::fs::read_to_string(src.parent().unwrap().join("big.summary.md")).unwrap();
         // 50 data rows + header table line + table-divider line should
-        // be present; row 50 should appear, row 51+ should not.
-        assert!(sidecar_body.contains("row-49"));
+        // be present; row 49 is the last included row.
+        assert!(sidecar_body.contains("| row-49 |"));
         assert!(
-            !sidecar_body.contains("row-50\n"),
+            !sidecar_body.contains("| row-50 |"),
             "expected row-50 to be trimmed"
         );
     }

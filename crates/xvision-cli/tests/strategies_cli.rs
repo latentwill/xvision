@@ -77,14 +77,50 @@ fn strategies_init_happy_path_against_tempdir() {
     let manifest = root.join("library").join(".from-docs.json");
     assert!(manifest.is_file(), "manifest missing at {}", manifest.display());
     let body = std::fs::read_to_string(&manifest).unwrap();
+    let manifest_json: serde_json::Value = serde_json::from_str(&body).expect("manifest must be valid JSON");
+    assert_eq!(
+        manifest_json.get("version").and_then(|v| v.as_u64()),
+        Some(1),
+        "manifest version mismatch: {manifest_json:#}"
+    );
+    let entries = manifest_json
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .expect("manifest entries must be an array");
+    let rel_paths: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.get("rel_path").and_then(|v| v.as_str()))
+        .collect();
     assert!(
-        body.contains("\"version\""),
-        "manifest missing version field: {body}"
+        rel_paths.contains(&"library/freqtrade_strategies_playlist.md"),
+        "manifest missing freqtrade playlist entry: {manifest_json:#}"
     );
     assert!(
-        body.contains("library/freqtrade_strategies_playlist.md") || body.contains("library/templates/"),
-        "manifest looks empty: {body}"
+        rel_paths.iter().any(|rel| rel.starts_with("library/templates/")),
+        "manifest missing template entries: {manifest_json:#}"
     );
+    for entry in entries {
+        let rel_path = entry
+            .get("rel_path")
+            .and_then(|v| v.as_str())
+            .expect("entry rel_path must be a string");
+        let source = entry
+            .get("source")
+            .and_then(|v| v.as_str())
+            .expect("entry source must be a string");
+        let sha = entry
+            .get("sha256")
+            .and_then(|v| v.as_str())
+            .expect("entry sha256 must be a string");
+        assert!(rel_path.starts_with("library/"), "bad rel_path: {entry:#}");
+        assert!(source.starts_with("docs/strategies/"), "bad source: {entry:#}");
+        assert_eq!(sha.len(), 64, "sha256 must be lowercase hex length 64: {entry:#}");
+        assert!(
+            sha.chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()),
+            "sha256 must be lowercase hex: {entry:#}"
+        );
+    }
 
     // Second run is a clean no-op (idempotent — no findings on stderr).
     let out2 = xvn(&["strategies", "init"], dir.path());

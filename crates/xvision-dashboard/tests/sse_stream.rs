@@ -148,6 +148,9 @@ async fn sse_stream_late_subscriber_gets_immediate_close_for_completed_run() {
         estimated_total_tokens: None,
         actual_input_tokens: None,
         actual_output_tokens: None,
+        bars_content_hash: None,
+        manifest_canonical: None,
+        bars_manifest: None,
     };
     store.create(&run).await.expect("insert test run");
     store

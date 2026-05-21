@@ -168,6 +168,8 @@ mod tests {
             }),
             error: None,
             behavior,
+            bars_content_hash: None,
+            manifest_canonical: None,
             net_return_pct: None,
         }
     }
@@ -270,6 +272,8 @@ mod tests {
             metrics: None,
             error: Some("timeout".into()),
             behavior: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
             net_return_pct: None,
         };
         let report = make_report(vec![run]);
