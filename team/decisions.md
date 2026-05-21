@@ -49,6 +49,15 @@ date range, one bar granularity). Operator floated multi-asset scenarios
   first?
 - Backwards-compat: does the current `Scenario` shape extend, or does
   this need a v2 type?
+- **Cross-symbol Pattern recall policy** (added 2026-05-21, folded in
+  from the V2D memory triage). The cortex-memory plan defaults to
+  refusing cross-symbol Pattern recall — a Pattern learned while
+  trading BTC stays on BTC. Multi-asset enablement forces the question:
+  do we keep that conservative default, or expose a per-slot
+  "cross-symbol blend" toggle? Default position is *keep conservative*
+  until an operator can articulate a concrete pair where blending
+  helps. Track decisions made on this sub-question here, not in V2D
+  intake.
 
 **Discussion:** —
 **Resolution:** unresolved.
@@ -103,9 +112,94 @@ can diagnose.
 **Discussion:** —
 **Resolution:** unresolved.
 
+### D5 — Memory scope: items the platform will not build
+
+**Raised:** 2026-05-21 (operator triage of the V2D deferred list).
+**Status:** **resolved at intake** — recorded here so the items stop
+resurfacing in design discussions.
+
+The V2D intake at `team/intake/2026-05-21-v2d-agent-memory.md` lists
+several "Out of this intake" items as *deferred to v1.1* (build later if
+operator data asks for them). Operator pass 2026-05-21 hardened a
+subset of those from *deferred* to *not building, ever, absent a
+specific complaint*. The rule of restraint: the absence of these
+features is enforcing useful constraints; building them invites scope
+creep and confused product framing.
+
+**Will not build (default-no):**
+
+- **Cross-namespace recall blending** (a slot in `agent_scoped` mode
+  also surfacing `global` matches). The V2D intake parks this as "v1.1
+  if operators ask." Operator position: scoping by `(agent, slot)` is a
+  *feature*, not a limitation. Blending leaks pattern signal across
+  strategies that should not share it (the cross-symbol case in D2 is
+  the same shape). No track, no follow-up — if a future operator wants
+  this, they reopen here.
+- **Embedder configuration UI** (a UI surface dedicated to embedder
+  selection independent of the slot's provider/model). The current
+  implicit shape — embedder follows the slot's `provider` + `model`
+  with a single `default_embedder` fallback in `memory.toml` — is
+  defensible. No UI track until a real complaint.
+- **Memory diff CLI** (`xvn memory diff --before <date> --after
+  <date>`). Build on demand if QA hits a case that needs it; trivial
+  when needed, premature otherwise.
+- **mem0 / Honcho / mempalace adapters.** The store API is intentionally
+  narrow (open / upsert / query / forget) so a future adapter could
+  wrap any of these — but the operator's stated direction is Rust-native
+  in-process. Wrapping a third-party memory backend would dilute that
+  contract without solving a real workflow gap.
+- **`cortex-http` sidecar** + **cross-host memory sharing.** V2D intake
+  defers both behind F28 plugin architecture. Hardened here: the
+  in-process crate is the contract; revisit only if a multi-deployment
+  customer materialises (probably never for the operator workflow this
+  platform targets).
+- **Embedding model swap migration CLI.** V2D intake calls this a "v1.1
+  chore." Hardened: build only when an operator actually swaps
+  embedders. Until then, the absence of this tool is enforcing "pick
+  one embedder, stick with it" — which is the right default.
+
+**V3 candidates (deferred *to autoresearcher*, not killed):**
+
+- **Tool-driven memory** (`memory_recall` / `memory_write` exposed as
+  agent tools). V2D ships auto-recall + auto-write as Decision 5. Tool
+  surface is the autoresearcher's natural consumer; let V3 shape the
+  tool contract based on actual mutation-loop needs, not pre-build it
+  now.
+- **TTL / time decay / LRU eviction.** V2D ships operator-driven
+  forget. V3 autoresearcher is when memory volume becomes
+  load-bearing; that's where the janitor design earns its keep.
+
+**Kept as small v1.2 tracks** (see
+`team/intake/2026-05-21-memory-safety-and-observability.md`):
+
+- Memory forget undo / soft-delete with grace period.
+- Memory-aware findings in eval review.
+- Per-decision memory provenance in the trace.
+
+**Memory across strategy versions** is recorded as a resolved D-row in
+this file (resolution: memory follows `agent_id`, not strategy hash —
+matches V2D Decision 4). Republishing a strategy without changing its
+agent keeps memory; republishing with a new agent does not.
+
+**Discussion:** —
+**Resolution:** resolved 2026-05-21. Items above will not appear as
+follow-ups on `FOLLOWUPS.md` or in future intakes unless a specific
+operator complaint reopens them via a new D-row.
+
 ## Resolved
 
-(none yet)
+### D6 — Memory across strategy versions
+
+**Raised:** 2026-05-21 (operator triage).
+**Question:** Does a republished strategy carry forward its
+agent-scoped memory?
+
+**Resolution:** Memory follows `agent_id`, not strategy hash. V2D
+Decision 4 names `agent:<agent_id>` as the scope key. Republishing a
+strategy without changing its agent keeps the memory bucket;
+republishing with a new agent does not. This matches the locked V2D
+slot-level toggle design. Revisit only if marketplace publishing
+introduces a clean-slate guarantee that conflicts with carry-forward.
 
 ## Lifecycle
 

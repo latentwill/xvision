@@ -325,6 +325,23 @@ decomposition (preliminary, conductor refines on intake):
 4. `v2d-memory-mode-ui` (leaf) — Memory selector in agent edit window.
 5. `v2d-eval-review-memory-surface` (leaf) — show memory usage in eval review.
 
+**V2D landed as `team/intake/2026-05-21-v2d-agent-memory.md`** with
+ten locked decisions. The open questions above are subsumed:
+sidecar→in-process (Dec 1), SQLite-embedded (Dec 2), embedder follows
+slot provider (Dec 3), forget is explicit + no TTL in v1 (Dec 7),
+privacy posture 127.0.0.1 (Dec 8).
+
+**Memory scope is bounded by `team/decisions.md` D5** (resolved
+2026-05-21). The kill bucket — cross-namespace recall blending,
+embedder config UI, memory diff CLI, mem0/Honcho/mempalace adapters,
+cortex-http sidecar, cross-host sharing, embedding model swap CLI —
+is closed. Do not re-open these as tracks without a new D-row.
+
+**Follow-on intake** for V2D safety + observability:
+`team/intake/2026-05-21-memory-safety-and-observability.md` — three
+small tracks (forget-undo, per-decision provenance, memory-aware
+findings) that layer on V2D once it lands.
+
 ## V2E notes — eval accuracy & trace surface
 
 Source research doc (do not re-derive): `docs/superpowers/research/2026-05-19-eval-data-and-execution-accuracy.md`.
