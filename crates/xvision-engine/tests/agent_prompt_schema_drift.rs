@@ -13,13 +13,17 @@
 //!     gate (one finding per offending slot, with agent_id +
 //!     slot_index + a one-line explanation).
 
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::agents::{
     lint_agents, AgentSlot, AgentStore, NewAgent, PromptSchemaDriftError, UpdateAgent,
 };
 
 async fn fresh_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     let migration_005 = include_str!("../migrations/005_agents.sql");
     sqlx::query(migration_005).execute(&pool).await.unwrap();
     let migration_019 = include_str!("../migrations/019_agent_slot_prompt_version.sql");

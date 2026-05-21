@@ -30,7 +30,7 @@
 use std::sync::Arc;
 
 use chrono::{Duration, TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
@@ -46,7 +46,11 @@ use xvision_engine::tools::ToolRegistry;
 const MIGRATION_018: &str = include_str!("../migrations/018_agent_run_observability.sql");
 
 async fn fresh_store() -> RunStore {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     // FK enforcement OFF: `supervisor_notes.run_id` FKs `agent_runs(id)`,
     // and the eval-only test harness doesn't insert agent_runs rows. The
     // executor uses the eval run id directly when writing supervisor

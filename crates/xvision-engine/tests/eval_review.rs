@@ -590,8 +590,11 @@ async fn row_to_review_fails_on_corrupted_score_overflow() {
     // a pool without the migration's CHECK and exercise just the read
     // logic. We need a fresh table without the CHECK to plant the bad
     // row.
-    use sqlx::SqlitePool;
-    let raw_pool = SqlitePool::connect(":memory:").await.unwrap();
+    let raw_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     sqlx::query(
         "CREATE TABLE eval_reviews (
             id TEXT PRIMARY KEY,

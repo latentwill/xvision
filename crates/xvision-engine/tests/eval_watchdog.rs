@@ -13,12 +13,16 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::eval::watchdog::{self, WatchdogConfig, DEFAULT_MAX_RUN_DURATION, TIMEOUT_REASON};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
 
 async fn pool_with_migration() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/002_eval.sql"))
         .execute(&pool)
         .await

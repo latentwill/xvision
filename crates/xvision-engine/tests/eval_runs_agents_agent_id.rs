@@ -11,7 +11,7 @@
 //!    inserted directly with `agents_agent_id = NULL`. No regex fallback.
 
 use chrono::Utc;
-use sqlx::{Row, SqlitePool};
+use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
 use xvision_engine::api::eval::lookup_agent_for_eval_run;
 use xvision_engine::api::{Actor, ApiContext};
@@ -21,7 +21,11 @@ use xvision_engine::eval::store::RunStore;
 // ── helpers ───────────────────────────────────────────────────────────
 
 async fn pool_with_eval_baseline() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/002_eval.sql"))
         .execute(&pool)
         .await

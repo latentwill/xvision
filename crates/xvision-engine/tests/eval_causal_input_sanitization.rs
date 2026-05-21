@@ -26,7 +26,7 @@
 //! tests are co-located in `agents::store::tests` (run with
 //! `cargo test -p xvision-engine agents::store`).
 
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
 
 const MIGRATION_005: &str = include_str!("../migrations/005_agents.sql");
@@ -41,7 +41,11 @@ const MIGRATION_028: &str = include_str!("../migrations/029_agent_slot_memory_mo
 /// In-memory pool with the agents table and migrations 005 + 019 +
 /// 020 + 025 applied. Mirrors the runtime boot path.
 async fn fresh_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_005).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_019).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_020_UP).execute(&pool).await.unwrap();
@@ -77,7 +81,11 @@ async fn migration_020_up_down_up_preserves_rows() {
     // are untouched). The `inputs_policy` value itself is NOT
     // preserved across a down (the column ceases to exist) but the
     // re-up materializes the DEFAULT, which is the expected behavior.
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_005).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_019).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_020_UP).execute(&pool).await.unwrap();

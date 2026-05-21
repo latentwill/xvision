@@ -6,7 +6,7 @@
 //!   (d) WrongIdNamespace: strategy.get with an agent id returns a typed
 //!       Validation error rather than NotFound.
 
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use xvision_engine::{
     agents::{store::NewAgent, AgentSlot, AgentStore, InputsPolicy},
@@ -30,7 +30,11 @@ fn ensure_gate_active() {
 
 async fn fresh_agent_store() -> (AgentStore, TempDir) {
     ensure_gate_active();
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/005_agents.sql"))
         .execute(&pool)
         .await

@@ -36,7 +36,11 @@ async fn seed_flash_scenario(ctx: &ApiContext) {
 /// tests do not each curate their own schema list.
 #[allow(dead_code)]
 pub async fn eval_review_pool_with_migrations() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     for sql in [
         include_str!("../../migrations/002_eval.sql"),
         include_str!("../../migrations/014_eval_agent_id.sql"),

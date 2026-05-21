@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::attestation::{EvalAttestation, TokensUsed};
 use xvision_engine::eval::run::MetricsSummary;
@@ -7,7 +7,11 @@ use xvision_engine::eval::store::RunStore;
 
 #[tokio::test]
 async fn api_context_constructs_with_actor() {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::new(
         pool,
