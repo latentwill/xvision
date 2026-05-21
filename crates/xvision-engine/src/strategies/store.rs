@@ -148,22 +148,21 @@ pub fn apply_metadata_patch(
 }
 
 /// Pre-persist validation seam used by every [`StrategyStore`]
-/// implementation. Today it runs the F-6 typed parse of
-/// `mechanical_params` against `manifest.template` (catching
-/// `deny_unknown_fields` violations that bypassed the deserialize
-/// boundary via direct struct construction). The field-level garde
-/// checks on `Strategy.risk` already happen elsewhere (`xvision-risk`
-/// validates per-decision); the F-6 cross-field invariants on
-/// `xvision_core::config::RiskStops` apply to the TOML-loaded risk
-/// config, which is a different type from `Strategy.risk` today.
+/// implementation.
+///
+/// Before the 2026-05-21 template-registry removal this ran an F-6
+/// typed parse of `mechanical_params` against `manifest.template` to
+/// catch `deny_unknown_fields` violations that bypassed the
+/// deserialize boundary via direct struct construction. With the
+/// template registry gone there is no per-strategy schema to dispatch
+/// against, so the seam is currently a no-op. Kept as a seam so the
+/// V2F per-strategy schema work (declared per seed in
+/// `docs/strategies/templates/`) has a fixed place to slot in.
 ///
 /// Public so alternative `StrategyStore` impls (in-memory stubs,
 /// future remote stores) can call the same seam instead of
 /// re-deriving the checks.
-pub fn validate_strategy_for_persist(strategy: &Strategy) -> anyhow::Result<()> {
-    strategy
-        .validate_typed()
-        .map_err(|e| anyhow::anyhow!("strategy.mechanical_params failed typed validation: {e}"))?;
+pub fn validate_strategy_for_persist(_strategy: &Strategy) -> anyhow::Result<()> {
     Ok(())
 }
 
@@ -389,46 +388,27 @@ mod tests {
         assert!(err.downcast_ref::<StrategyIdError>().is_none());
     }
 
-    // ── F-6: pre-persist validate seam ─────────────────────────────
+    // ── post-template-registry-removal: validate seam is a no-op ──
+    //
+    // Before the 2026-05-21 template-registry removal this seam ran
+    // typed `MechanicalParams::from_value(template, value)` dispatch
+    // and rejected unknown keys for canonical templates. With the
+    // registry gone every strategy is treated as operator-authored;
+    // arbitrary JSON in `mechanical_params` is preserved verbatim
+    // through save/load.
 
     #[tokio::test]
-    async fn save_rejects_strategy_with_unknown_mechanical_param_key() {
-        let (store, td) = store_in_tmp();
-        // Construct a Strategy that bypassed the deserialize-time
-        // validation by setting mechanical_params directly to a bogus
-        // payload for a canonical template.
-        let mut s = strategy_with_id("01HZSTRATEGYBAD0000000000A");
-        // trend_follower template doesn't define `bogus_param`; the
-        // typed enum's deny_unknown_fields should reject it pre-persist.
-        s.mechanical_params = serde_json::json!({"bogus_param": 99});
-        let err = store
-            .save(&s)
-            .await
-            .expect_err("pre-persist seam must reject unknown mechanical_params key");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("typed validation"),
-            "expected typed-validation error, got: {msg}"
-        );
-        // Confirm nothing landed on disk.
-        let mut rd = tokio::fs::read_dir(td.path()).await.unwrap();
-        assert!(
-            rd.next_entry().await.unwrap().is_none(),
-            "store root must stay empty when validation rejects",
-        );
-    }
-
-    #[tokio::test]
-    async fn save_accepts_strategy_with_unknown_template_via_custom_arm() {
+    async fn save_accepts_arbitrary_mechanical_params_keys() {
         let (store, _td) = store_in_tmp();
-        let mut s = strategy_with_id("01HZSTRATEGYCUSTOM00000000");
-        s.manifest.template = "my-experimental-template".into();
-        // Custom arm accepts arbitrary JSON without rejection.
+        let mut s = strategy_with_id("01HZSTRATEGYANY00000000000");
+        s.manifest.template = "my-experimental-label".into();
         s.mechanical_params = serde_json::json!({"weird": "shape", "n": 42});
         store
             .save(&s)
             .await
-            .expect("Custom arm preserves operator templates without rejection");
+            .expect("arbitrary mechanical_params keys preserved post-registry-removal");
+        let loaded = store.load("01HZSTRATEGYANY00000000000").await.unwrap();
+        assert_eq!(loaded.mechanical_params, serde_json::json!({"weird": "shape", "n": 42}));
     }
 
     // ── strategy-edit-top-level-fields — metadata patch ─────────────

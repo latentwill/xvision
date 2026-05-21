@@ -12,10 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use crate::strategies::manifest::PublicManifest;
-pub use crate::strategies::mechanical::{
-    BreakoutParams, MeanReversionParams, MechanicalParams, MomentumParams, NewsTraderParams,
-    RangeTradeParams, ScalpingParams, TrendFollowerParams,
-};
+pub use crate::strategies::mechanical::MechanicalParams;
 use crate::strategies::risk::RiskConfig;
 use crate::strategies::slot::LLMSlot;
 
@@ -146,11 +143,13 @@ impl Strategy {
     ///
     /// Resolution order:
     /// 1. `manifest.min_warmup_bars`, if set.
-    /// 2. Typed-variant dispatch via [`Strategy::typed_params`]; each
-    ///    variant computes the largest period-like field × 2. The
-    ///    `Custom` variant falls back to a JSON walker that preserves
-    ///    the pre-F-6 heuristic for operator-authored templates.
+    /// 2. JSON walker over `mechanical_params` — picks the largest
+    ///    period-like field × 2.
     /// 3. [`FALLBACK_MIN_WARMUP_BARS`].
+    ///
+    /// Post-template-registry-removal there is no per-template typed
+    /// dispatch; every strategy is treated as operator-authored and
+    /// the period-key walker is the single derivation path.
     pub fn min_warmup_bars(&self) -> u32 {
         if let Some(explicit) = self.manifest.min_warmup_bars {
             return explicit;
@@ -163,38 +162,29 @@ impl Strategy {
         }
     }
 
-    /// Typed view of `mechanical_params` keyed on `manifest.template`.
-    /// Always succeeds — unknown templates yield
-    /// [`MechanicalParams::Custom`]; known templates that fail strict
-    /// parsing (e.g. via a directly-constructed `Strategy` that bypassed
-    /// the deserialize-time validation) also fall back to `Custom` so
-    /// callers like [`Strategy::min_warmup_bars`] stay infallible.
-    /// To assert strict typing, use [`Strategy::validate_typed`].
+    /// View of `mechanical_params` wrapped as [`MechanicalParams`].
+    /// Always succeeds — the enum has a single `Custom` arm that
+    /// preserves arbitrary JSON. Kept as `typed_params()` for
+    /// call-site compatibility with the pre-registry-removal API.
     pub fn typed_params(&self) -> MechanicalParams {
-        MechanicalParams::from_value(&self.manifest.template, self.mechanical_params.clone())
-            .unwrap_or_else(|_| MechanicalParams::Custom(self.mechanical_params.clone()))
-    }
-
-    /// Strict typed parse of `mechanical_params`. Returns
-    /// `serde_json::Error` if the value does not match the typed
-    /// variant for `manifest.template` (e.g. unknown field, wrong
-    /// type). Used by the pre-persist validate seam in
-    /// [`crate::strategies::store::StrategyStore::save`].
-    pub fn validate_typed(&self) -> Result<MechanicalParams, serde_json::Error> {
-        MechanicalParams::from_value(&self.manifest.template, self.mechanical_params.clone())
+        MechanicalParams::Custom(self.mechanical_params.clone())
     }
 }
 
-// ── Custom Deserialize: validate mechanical_params against typed variant ──
+// ── Custom Deserialize ───────────────────────────────────────────────
 //
-// Plain `#[derive(Deserialize)]` would accept any JSON in the
-// `mechanical_params` field. To enforce `deny_unknown_fields` per
-// template, we two-step: deserialize a private mirror struct
-// (`StrategyRaw`) that has the same shape but keeps the field as
-// `serde_json::Value`, then run `MechanicalParams::from_value` against
-// it. Validation errors are surfaced as deserialize errors so a bad
-// strategy JSON fails fast at the API/store boundary, not later in
-// the engine.
+// Before the 2026-05-21 template-registry removal this seam ran
+// `MechanicalParams::from_value(template, value)` to surface
+// `deny_unknown_fields` violations on canonical templates as
+// structured deserialize errors. Post-removal there is no per-template
+// dispatch, so the custom impl is a thin pass-through that lets
+// `#[derive(Deserialize)]`-equivalent default field handling proceed
+// against the same private `StrategyRaw` mirror struct.
+//
+// The mirror struct is kept (rather than reverting to a plain derive)
+// so the `serde(default)` semantics on agents/pipeline/slots stay
+// explicit and so adding back per-strategy schema validation in a
+// future change has a fixed seam to slot into.
 
 #[derive(Deserialize)]
 struct StrategyRaw {
@@ -221,11 +211,6 @@ impl<'de> Deserialize<'de> for Strategy {
         D: serde::Deserializer<'de>,
     {
         let raw = StrategyRaw::deserialize(deserializer)?;
-        // Validate mechanical_params against the typed enum for the
-        // active template. `Custom` is fine; unknown fields on a
-        // canonical template fail here with a structured error.
-        MechanicalParams::from_value(&raw.manifest.template, raw.mechanical_params.clone())
-            .map_err(serde::de::Error::custom)?;
         Ok(Strategy {
             manifest: raw.manifest,
             hypothesis: raw.hypothesis,

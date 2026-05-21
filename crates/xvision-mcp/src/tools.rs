@@ -119,15 +119,21 @@ pub struct FibReq {
 
 // ---------------------------------------------------------------------------
 // authoring request shapes — one per stateful tool. Each verb takes a
-// strategy `id` (ULID); `xvn_list_templates` and `xvn_create_strategy`
-// don't need an existing one.
+// strategy `id` (ULID); `xvn_create_strategy` doesn't need an existing
+// one (it produces a blank draft post 2026-05-21 template-registry
+// removal).
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateStrategyReq {
-    /// Template name. Use `xvn_list_templates` to enumerate options.
-    pub template: String,
-    /// Human-readable name (e.g., `btc-momentum-v1`).
+    /// Human-readable name (e.g., `btc-momentum-v1`). Post 2026-05-21
+    /// the request no longer takes a `template` discriminator —
+    /// `xvn_create_strategy` produces a blank draft and the agent
+    /// (`xvn_create_strategy_agent`) and slot/mechanical-param tool
+    /// calls populate the draft. Unknown fields (including legacy
+    /// `template` payloads from pre-migration callers) are silently
+    /// ignored on the MCP boundary so the wizard tool-use loop
+    /// doesn't break mid-conversation.
     pub name: String,
     /// Optional `@handle` of the author. Defaults to `@anonymous`.
     #[serde(default)]
@@ -568,22 +574,35 @@ impl XvisionTools {
 
     // -----------------------------------------------------------------------
     // authoring tools — operate on `$XVN_HOME/strategies/<id>.json` via
-    // xvision_engine's strategy store + template registry + validator.
+    // xvision_engine's strategy store + validator. Post-2026-05-21 the
+    // strategy template_registry was removed; `xvn_list_templates`
+    // returns an empty array (stub) and `xvn_create_strategy` produces
+    // a blank draft. Operator-readable starters live as prepop seeds
+    // under `$XVN_HOME/strategies/library/`.
     // -----------------------------------------------------------------------
 
-    /// List strategy templates available to `xvn_create_strategy`. Returns an
-    /// array of `{ name, display_name, plain_summary }`.
+    /// Deprecated stub. The strategy `template_registry` was removed
+    /// on 2026-05-21; this tool now returns an empty array. Operators
+    /// browse the prepop library at
+    /// `$XVN_HOME/strategies/library/` (populated by `xvn strategies
+    /// init`) for starter content.
     #[tool(
-        description = "List the strategy templates available for xvn_create_strategy. Returns array of {name, display_name, plain_summary}."
+        description = "Deprecated. The strategy template_registry was removed; returns an empty array. Operator-readable starters live under $XVN_HOME/strategies/library/."
     )]
     async fn xvn_list_templates(&self) -> Result<String, rmcp::ErrorData> {
         json_or_err(&authoring::list_templates())
     }
 
-    /// Create a new strategy draft from a template. Persists to
+    /// Create a new blank strategy draft. Persists to
     /// `$XVN_HOME/strategies/<id>.json`. Returns `{ id }`.
+    ///
+    /// Post-2026-05-21 the request no longer takes a `template`
+    /// discriminator (the strategy template_registry was removed).
+    /// Callers fill in agents / slots / mechanical params via the
+    /// follow-up `xvn_create_strategy_agent`, `xvn_update_slot`,
+    /// `xvn_set_mechanical_param`, … verbs.
     #[tool(
-        description = "Create a new strategy draft from a template. Persists the strategy and returns { id } (ULID)."
+        description = "Create a new blank strategy draft. Persists the strategy and returns { id } (ULID). Follow up with xvn_create_strategy_agent / xvn_update_slot / xvn_set_mechanical_param to populate it."
     )]
     async fn xvn_create_strategy(
         &self,
@@ -592,7 +611,6 @@ impl XvisionTools {
         let out = authoring::create_strategy(
             &self.store(),
             authoring::CreateStrategyReq {
-                template: req.template,
                 name: req.name,
                 creator: req.creator,
             },
@@ -1811,19 +1829,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_templates_returns_known_set() {
+    async fn list_templates_returns_empty_post_registry_removal() {
+        // Post-2026-05-21: the strategy template_registry was removed.
+        // xvn_list_templates is retained as a deprecation stub that
+        // returns an empty array. Operator-readable starters live
+        // under $XVN_HOME/strategies/library/ via `xvn strategies init`.
         let tools = XvisionTools::default();
         let s = tools.xvn_list_templates().await.unwrap();
         let v = parsed(&s);
-        let names: Vec<_> = v
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
-        assert!(names.contains(&"trend_follower"), "names: {names:?}");
-        assert!(names.contains(&"breakout"));
-        assert!(names.contains(&"mean_reversion"));
+        assert!(
+            v.as_array().is_some_and(|arr| arr.is_empty()),
+            "post-registry-removal list must be empty, got: {s}"
+        );
     }
 
     #[tokio::test]
@@ -1831,7 +1848,6 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "btc-mom-1".into(),
                 creator: Some("@test".into()),
             }))
@@ -1845,22 +1861,53 @@ mod tests {
             .unwrap();
         let strategy = parsed(&g);
         assert_eq!(strategy["manifest"]["id"], id);
-        assert_eq!(strategy["manifest"]["template"], "trend_follower");
+        // Post-template-registry-removal: blank draft stamps `template`
+        // as the free-text label `"custom"`.
+        assert_eq!(strategy["manifest"]["template"], "custom");
     }
 
     #[tokio::test]
-    async fn create_rejects_unknown_template() {
+    async fn create_strategy_legacy_template_field_is_silently_ignored() {
+        // Post-2026-05-21: the `template` field was removed from
+        // CreateStrategyReq. The MCP boundary silently ignores unknown
+        // fields so the wizard tool-use loop's pre-migration JSON
+        // payloads still parse (no breaking change on the LLM-side
+        // surface). The legacy field has no effect — the resulting
+        // strategy is a blank draft with `manifest.template = "custom"`.
+        let raw = serde_json::json!({
+            "template": "trend_follower",
+            "name": "x",
+            "creator": null,
+        });
+        let req: CreateStrategyReq = serde_json::from_value(raw).expect(
+            "legacy template field must be silently ignored at MCP boundary",
+        );
+        assert_eq!(req.name, "x");
+    }
+
+    #[tokio::test]
+    async fn create_strategy_with_legacy_template_yields_blank_draft() {
+        // End-to-end: callers passing the legacy field through the
+        // tool boundary still get a saved draft. The template field
+        // is dropped; the resulting strategy is the blank shape.
         let (tools, _td) = tools_with_tmp();
-        let err = tools
-            .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "nope".into(),
-                name: "x".into(),
-                creator: None,
-            }))
+        let raw = serde_json::json!({
+            "template": "trend_follower",
+            "name": "legacy-caller",
+            "creator": "@legacy",
+        });
+        let req: CreateStrategyReq = serde_json::from_value(raw).unwrap();
+        let s = tools.xvn_create_strategy(Parameters(req)).await.unwrap();
+        let id = id_of(&s);
+        let g = tools
+            .xvn_get_strategy(Parameters(StrategyId { id: id.clone() }))
             .await
-            .unwrap_err();
-        let msg = err.to_string().to_lowercase();
-        assert!(msg.contains("unknown template"), "msg: {msg}");
+            .unwrap();
+        let strategy = parsed(&g);
+        assert_eq!(strategy["manifest"]["id"], id);
+        // Blank draft uses "custom" as the (now free-text) label.
+        assert_eq!(strategy["manifest"]["template"], "custom");
+        assert!(strategy["trader_slot"].is_null(), "blank draft has no trader slot");
     }
 
     #[tokio::test]
@@ -1868,7 +1915,6 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             }))
@@ -1904,7 +1950,6 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             }))
@@ -1931,7 +1976,6 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             }))
@@ -1961,7 +2005,6 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             }))
@@ -1993,7 +2036,6 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             }))
@@ -2023,7 +2065,6 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "x".into(),
                 creator: None,
             }))
@@ -2301,7 +2342,6 @@ mod tests {
         // Create a strategy via the existing authoring surface so we have a valid id.
         let s = tools
             .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
                 name: "preflight-smoke".into(),
                 creator: None,
             }))
@@ -2715,6 +2755,15 @@ mod tests {
             volatility_label: None,
             trend_direction: None,
             regime_derived: false,
+            // Pre-existing baseline fix: the `safety_limits` and
+            // `venue_label` fields were added to `Scenario` upstream
+            // but this make_test_scenario helper wasn't updated,
+            // breaking `cargo test --workspace --no-run` on the
+            // parent branch. Adding the defaults here unblocks the
+            // strategy-template-registry-removal contract's
+            // workspace-test verification step.
+            venue_label: xvision_engine::safety::VenueLabel::Paper,
+            safety_limits: None,
         }
     }
 

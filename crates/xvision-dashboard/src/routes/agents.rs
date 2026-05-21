@@ -190,7 +190,6 @@ pub mod get {
     use xvision_engine::eval::export as eval_export;
     use xvision_engine::eval::run::{Run, RunMode, RunStatus};
     use xvision_engine::eval::store::RunStore;
-    use xvision_engine::templates::registry;
 
     #[tokio::test]
     async fn route_shape_matches_eval_export_agents_entry() {
@@ -229,14 +228,12 @@ pub mod get {
         .await
         .expect("create agent");
 
-        let tpl_name = registry::list_template_names()
-            .first()
-            .cloned()
-            .expect("at least one template registered");
+        // Post-2026-05-21 template-registry removal: create_strategy
+        // produces a blank draft; AddAgentReq below wires the real
+        // agent in, which is what the parity test actually exercises.
         let strategy = api_strategy::create_strategy(
             &ctx,
             CreateStrategyReq {
-                template: tpl_name,
                 name: "route-parity-fixture-strategy".into(),
                 creator: None,
             },

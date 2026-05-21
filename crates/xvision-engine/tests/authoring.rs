@@ -1,8 +1,5 @@
-//! Integration tests for the wizard-side blank-draft path added by the
-//! `templates-elimination` contract (2026-05-21) and a regression test
-//! for the existing template-named `api_strategy::create_strategy` path
-//! the wizard no longer consumes but other callers (MCP, CLI, dashboard
-//! routes) still do.
+//! Integration tests for the wizard-side blank-draft path and the
+//! post-template-registry-removal `create_strategy` shape.
 
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
@@ -32,8 +29,9 @@ async fn fresh_api_context() -> (ApiContext, TempDir) {
 
 #[tokio::test]
 async fn create_blank_strategy_produces_no_agents_and_no_placeholder_slot() {
-    // Wizard-side blank-draft path: agents = vec![], trader_slot = None,
-    // template = "custom", mechanical_params = {}.
+    // agents = vec![], trader_slot = None, template = "custom"
+    // (free-text label, no longer a registry key),
+    // mechanical_params = {}.
     let (ctx, _td) = fresh_api_context().await;
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let out = authoring::create_blank_strategy(&store, "Blank Draft".into(), Some("@op".into()))
@@ -68,66 +66,46 @@ async fn create_blank_strategy_defaults_creator_to_anonymous() {
 }
 
 #[tokio::test]
-async fn create_strategy_with_named_template_still_seeds_a_real_strategy() {
-    // Save-gate regression: the wizard no longer dispatches on template,
-    // but direct callers (MCP, CLI, dashboard `/api/strategies` route)
-    // still construct via the named-template path. The existing
-    // template-backed `authoring::create_strategy` must still produce a
-    // ready-to-save strategy with expected trend_follower content, not an
-    // arbitrary non-empty placeholder.
+async fn create_strategy_produces_a_blank_draft_post_registry_removal() {
+    // Post-2026-05-21 the strategy template_registry was removed.
+    // `authoring::create_strategy` no longer scaffolds from a named
+    // template; it produces a blank draft identical to the wizard
+    // path. The non-wizard callers (MCP, CLI, dashboard route) get
+    // the same blank shape and fill in agents / slots / mechanical
+    // params via follow-up calls.
     let (ctx, _td) = fresh_api_context().await;
     let out = api_strategy::create_strategy(
         &ctx,
         authoring::CreateStrategyReq {
-            template: "trend_follower".into(),
             name: "TF1".into(),
             creator: Some("@op".into()),
         },
     )
     .await
-    .expect("named-template path must still seed a real strategy");
+    .expect("create_strategy must produce a blank draft");
 
     let strategy = api_strategy::get(&ctx, &out.id).await.expect("get");
-    assert_eq!(strategy.manifest.template, "trend_follower");
-    let trader = strategy
-        .trader_slot
-        .as_ref()
-        .expect("template seeds a trader slot");
+    assert_eq!(strategy.manifest.template, "custom");
     assert!(
-        trader.prompt.contains("EMA(12) > EMA(26) > EMA(50)"),
-        "template-seeded trader prompt must include trend_follower EMA logic; got: {}",
-        trader.prompt
+        strategy.trader_slot.is_none(),
+        "blank draft must not carry a placeholder trader slot",
     );
-    assert_eq!(
-        trader.allowed_tools,
-        vec!["ohlcv".to_string(), "indicator_panel".to_string()]
-    );
-    assert_eq!(trader.model_requirement, "anthropic.claude-sonnet-4.6");
-    assert_eq!(strategy.mechanical_params["ema_fast"], 12);
-    assert_eq!(strategy.mechanical_params["ema_mid"], 26);
-    assert_eq!(strategy.mechanical_params["ema_slow"], 50);
+    assert!(strategy.regime_slot.is_none());
+    assert!(strategy.intern_slot.is_none());
+    assert!(strategy.agents.is_empty());
+    assert_eq!(strategy.manifest.creator, "@op");
 }
 
 #[tokio::test]
-async fn create_strategy_with_unknown_template_surfaces_engine_error_verbatim() {
-    // Defensive: failing template lookup must surface the engine error
-    // verbatim. The wizard relies on this path returning Err so its
-    // `?` propagation prevents chaining `create_strategy_agent` against
-    // a phantom id.
-    let (ctx, _td) = fresh_api_context().await;
-    let err = api_strategy::create_strategy(
-        &ctx,
-        authoring::CreateStrategyReq {
-            template: "no_such_template".into(),
-            name: "x".into(),
-            creator: None,
-        },
-    )
-    .await
-    .expect_err("unknown template must error");
+async fn legacy_create_strategy_request_with_template_field_is_rejected_at_serde() {
+    // The `template` field was removed from `CreateStrategyReq`.
+    // Callers that haven't migrated their JSON payloads see a
+    // structured serde error on deserialize. This pins the upgrade
+    // contract for downstream callers (MCP / CLI / dashboard).
+    let raw = r#"{"template":"trend_follower","name":"x","creator":null}"#;
+    let err = serde_json::from_str::<authoring::CreateStrategyReq>(raw)
+        .expect_err("legacy template field must be rejected post-registry-removal");
     let msg = err.to_string();
-    assert!(
-        msg.contains("no_such_template"),
-        "error must name the failing template, got: {msg}"
-    );
+    assert!(msg.contains("unknown field"), "got: {msg}");
+    assert!(msg.contains("template"), "got: {msg}");
 }

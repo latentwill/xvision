@@ -16,7 +16,6 @@ pub mod search;
 pub mod skills;
 pub mod strategies;
 pub mod strategies_folder;
-pub mod templates;
 pub mod tokens;
 pub mod tools;
 

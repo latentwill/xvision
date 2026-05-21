@@ -394,17 +394,15 @@ pub mod get {
     use xvision_engine::eval::export as eval_export;
     use xvision_engine::eval::run::{Run, RunMode, RunStatus};
     use xvision_engine::eval::store::RunStore;
-    use xvision_engine::templates::registry;
 
     async fn seed_strategy_and_completed_run(ctx: &ApiContext) -> (String, String) {
-        let tpl_name = registry::list_template_names()
-            .first()
-            .cloned()
-            .expect("at least one template registered");
+        // Post-2026-05-21 template-registry removal: `create_strategy`
+        // produces a blank draft. The route shape under test below
+        // depends only on the Strategy struct shape, not on any
+        // particular template starter content.
         let out = api_strategy::create_strategy(
             ctx,
             CreateStrategyReq {
-                template: tpl_name,
                 name: "object-shape-fixture".into(),
                 creator: None,
             },

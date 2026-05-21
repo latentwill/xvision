@@ -27,11 +27,7 @@ async fn mock_dispatch_sequence_drives_tool_use_loop() {
     // First call: model wants to call `xvn_create_strategy`.
     // Second call: model emits final text response.
     let mock = MockDispatch::sequence(vec![
-        MockDispatch::tool_use(
-            "tu_1",
-            "xvn_create_strategy",
-            serde_json::json!({"template":"trend_follower","name":"x"}),
-        ),
+        MockDispatch::tool_use("tu_1", "xvn_create_strategy", serde_json::json!({"name":"x"})),
         xvision_engine::agent::llm::LlmResponse {
             content: vec![ContentBlock::Text {
                 text: "Created. Want me to validate?".into(),
@@ -255,6 +251,9 @@ mod openai_retry {
             retry_count: 2,
         };
         assert_eq!(rate.class_tag(), "provider_rate_limited");
+        let err: anyhow::Error = anyhow::Error::new(rate).context("review dispatch failed after retries");
+        let class = xvision_engine::eval::executor::classify_run_failure(&err);
+        assert_eq!(class, "provider_rate_limited");
 
         let missing = OpenAiCompatError::MissingChoicesArray {
             url: "https://example.invalid/v1/chat/completions".into(),

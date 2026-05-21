@@ -22,7 +22,6 @@ use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::store::{
     strategy_store_dir, FilesystemStore, MetadataPatchError, StrategyMetadataPatch, StrategyStore,
 };
-use xvision_engine::templates::registry;
 
 async fn open_ctx() -> (ApiContext, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -38,23 +37,26 @@ async fn open_ctx() -> (ApiContext, tempfile::TempDir) {
 }
 
 async fn seed_strategy(ctx: &ApiContext) -> String {
-    // Use any registered template so the resulting strategy round-trips
-    // through `validate_strategy_for_persist` (which the FilesystemStore
-    // runs on every save).
-    let template = registry::list_template_names()
-        .first()
-        .cloned()
-        .expect("at least one strategy template registered");
+    // Post-2026-05-21 template-registry removal: `create_strategy`
+    // produces a blank draft. Subsequent edits flesh it out; the
+    // patch surface tested below only mutates the in-scope manifest
+    // fields, so a blank starter is sufficient.
     let out = api_strategy::create_strategy(
         ctx,
         CreateStrategyReq {
-            template,
             name: "Pre-Edit Title".into(),
             creator: Some("@op".into()),
         },
     )
     .await
     .expect("create strategy");
+    // Seed an asset_universe so the metadata patch tests have something
+    // to compare against on the "preserve out-of-scope fields" check.
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let mut strategy = store.load(&out.id).await.unwrap();
+    strategy.manifest.asset_universe = vec!["BTC/USD".into()];
+    strategy.manifest.plain_summary = "seed summary".into();
+    store.save(&strategy).await.unwrap();
     out.id
 }
 

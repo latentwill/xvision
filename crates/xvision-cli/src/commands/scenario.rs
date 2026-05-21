@@ -1530,6 +1530,12 @@ pub mod select {
             created_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             created_by: "test".to_string(),
             archived_at: None,
+            // Pre-existing baseline fix: `venue_label`/`safety_limits`
+            // were added upstream but this helper wasn't updated.
+            // Unblocks workspace-test verification for the
+            // strategy-template-registry-removal contract.
+            venue_label: xvision_engine::safety::VenueLabel::Paper,
+            safety_limits: None,
         }
     }
 

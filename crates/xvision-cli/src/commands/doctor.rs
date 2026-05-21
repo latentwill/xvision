@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use clap::Args;
 use serde::Serialize;
-use xvision_engine::templates::registry;
 
 #[derive(Args, Debug)]
 pub struct DoctorCmd {
@@ -22,6 +21,12 @@ struct DoctorReport {
     provider_secrets_path: String,
     broker_secrets_path: String,
     strategies_dir: String,
+    /// Post-2026-05-21 the strategy `template_registry` was removed.
+    /// The doctor report's `templates` field is preserved on the wire
+    /// (always an empty array) so external consumers keep parsing the
+    /// JSON shape. Operator-readable strategy starters now live under
+    /// `$XVN_HOME/strategies/library/` (initialized via
+    /// `xvn strategies init`).
     templates: Vec<String>,
     config_exists: bool,
     provider_secrets_exists: bool,
@@ -41,7 +46,7 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
         provider_secrets_path: provider_secrets_path.display().to_string(),
         broker_secrets_path: broker_secrets_path.display().to_string(),
         strategies_dir: xvn_home.join("strategies").display().to_string(),
-        templates: registry::list_template_names(),
+        templates: Vec::new(),
         config_exists: config_path.exists(),
         provider_secrets_exists: provider_secrets_path.exists(),
         broker_secrets_exists: broker_secrets_path.exists(),
@@ -61,7 +66,9 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
         println!("config_exists         {}", report.config_exists);
         println!("provider_secrets      {}", report.provider_secrets_exists);
         println!("broker_secrets        {}", report.broker_secrets_exists);
-        println!("templates             {}", report.templates.join(", "));
+        println!(
+            "templates             (registry removed; see $XVN_HOME/strategies/library)"
+        );
     }
 
     Ok(())

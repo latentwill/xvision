@@ -66,7 +66,6 @@ async fn search_finds_strategy_after_create() {
     let created = create_strategy(
         &state.api_context(),
         CreateStrategyReq {
-            template: "trend_follower".into(),
             name: "btc-momentum-search-test".into(),
             creator: Some("@tester".into()),
         },
@@ -75,8 +74,10 @@ async fn search_finds_strategy_after_create() {
     .expect("create draft");
 
     // The create_strategy hook upserts into the index; query for a token
-    // that lives in the strategy summary.
-    let response = server.get("/api/search?q=trend_follower").await;
+    // that appears in the blank-draft summary. Post-2026-05-21 the
+    // strategy template_registry was removed; the `template` label on
+    // a blank draft is "custom".
+    let response = server.get("/api/search?q=custom").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     let hits = body["hits"].as_array().expect("hits is an array");
@@ -89,7 +90,7 @@ async fn search_finds_strategy_after_create() {
     assert!(strategy["summary"]
         .as_str()
         .expect("summary is a string")
-        .contains("trend_follower"));
+        .contains("custom"));
     assert_eq!(strategy["href"], format!("/authoring/{}", created.id));
 }
 

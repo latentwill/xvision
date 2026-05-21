@@ -13,6 +13,16 @@ async fn boot() -> (TestServer, TempDir) {
     (server, tmp)
 }
 
+fn assert_body_omits_secrets(label: &str, value: &serde_json::Value, forbidden: &[&str]) {
+    let body = serde_json::to_string(value).expect("json body serializes");
+    for needle in forbidden {
+        assert!(
+            !body.contains(needle),
+            "{label} leaked forbidden value {needle:?}: {body}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn health_endpoint_reports_probes() {
     let (server, _tmp) = boot().await;
@@ -156,10 +166,13 @@ async fn strategies_list_returns_seeded_strategy() {
 async fn post_create_strategy_is_visible_in_public_strategies_list() {
     let (server, _tmp) = boot().await;
 
+    // Post-2026-05-21 template-registry removal: the `template`
+    // field is no longer accepted on the create-strategy payload.
+    // Callers send `{ name, creator }`; the resulting draft carries
+    // `manifest.template = "custom"` (free-text label).
     let response = server
         .post("/api/strategies")
         .json(&serde_json::json!({
-            "template": "mean_reversion",
             "name": "Wizard Visible",
             "creator": "@wizard"
         }))
@@ -178,7 +191,7 @@ async fn post_create_strategy_is_visible_in_public_strategies_list() {
         .expect("created strategy present in list");
 
     assert_eq!(created["display_name"], "Wizard Visible");
-    assert_eq!(created["template"], "mean_reversion");
+    assert_eq!(created["template"], "custom");
 }
 
 #[tokio::test]
@@ -331,6 +344,12 @@ async fn settings_brokers_replaces_stored_alpaca_credentials() {
         }))
         .await;
     first.assert_status(axum::http::StatusCode::CREATED);
+    let first_body: serde_json::Value = first.json();
+    assert_body_omits_secrets(
+        "broker create response",
+        &first_body,
+        &["first-secret", "api_secret_key", "\"value\""],
+    );
 
     let second = server
         .post("/api/settings/brokers/alpaca")
@@ -343,12 +362,22 @@ async fn settings_brokers_replaces_stored_alpaca_credentials() {
     second.assert_status(axum::http::StatusCode::CREATED);
     let replaced: serde_json::Value = second.json();
     assert_eq!(replaced["stored_key_id_suffix"], "2222");
+    assert_body_omits_secrets(
+        "broker replace response",
+        &replaced,
+        &["first-secret", "second-secret", "api_secret_key", "\"value\""],
+    );
 
     let response = server.get("/api/settings/brokers").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["alpaca"]["stored"], true);
     assert_eq!(body["alpaca"]["stored_key_id_suffix"], "2222");
+    assert_body_omits_secrets(
+        "broker list response",
+        &body,
+        &["first-secret", "second-secret", "api_secret_key", "\"value\""],
+    );
 }
 
 #[tokio::test]
@@ -936,6 +965,7 @@ async fn providers_add_creates_and_persists_row() {
     assert_eq!(row["name"], "openai");
     assert_eq!(row["kind"], "openai-compat");
     assert_eq!(row["is_default"], false);
+    assert_body_omits_secrets("provider create response", &row, &["sk-test", "\"api_key\""]);
 
     // Round-trip: GET list reflects the addition.
     let list = server.get("/api/settings/providers").await;
@@ -943,10 +973,19 @@ async fn providers_add_creates_and_persists_row() {
     let items = body["providers"].as_array().unwrap();
     assert_eq!(items.len(), 2);
     assert!(items.iter().any(|p| p["name"] == "openai"));
+    assert_body_omits_secrets(
+        "provider list response after create",
+        &body,
+        &["sk-test", "\"api_key\""],
+    );
 
     // File on disk still parses.
     let raw = std::fs::read_to_string(&cfg).unwrap();
     assert!(raw.contains("name = \"openai\""));
+    assert!(
+        !raw.contains("sk-test"),
+        "provider config leaked submitted API key: {raw}"
+    );
 }
 
 #[tokio::test]
@@ -1032,6 +1071,12 @@ async fn providers_update_edits_row() {
     assert_eq!(body["base_url"], "https://proxy.example/v1");
     assert_eq!(body["api_key_env"], "ANTHROPIC_PROXY_KEY");
     assert_eq!(body["is_default"], true);
+    assert_body_omits_secrets("provider update response", &body, &["sk-updated", "\"api_key\""]);
+    let raw = std::fs::read_to_string(&cfg).unwrap();
+    assert!(
+        !raw.contains("sk-updated"),
+        "provider config leaked updated API key: {raw}"
+    );
 }
 
 #[tokio::test]

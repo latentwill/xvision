@@ -54,11 +54,21 @@ async fn audit_row_exists(ctx: &ApiContext, op: &str, target: &str) -> bool {
     n > 0
 }
 
+async fn latest_audit_outcome(ctx: &ApiContext, op: &str, target: &str) -> String {
+    sqlx::query_scalar(
+        "SELECT outcome FROM api_audit WHERE operation = ?1 AND target = ?2 ORDER BY rowid DESC LIMIT 1",
+    )
+    .bind(op)
+    .bind(target)
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap()
+}
+
 async fn create_sample_strategy(ctx: &ApiContext) -> Strategy {
     let out = strategy::create_strategy(
         ctx,
         xvision_engine::authoring::CreateStrategyReq {
-            template: "trend_follower".into(),
             name: "sample-strategy".into(),
             creator: Some("@tester".into()),
         },
@@ -615,6 +625,11 @@ async fn update_metadata_failed_validation_records_error_outcome_and_skips_index
     assert!(
         audit_row_exists(&ctx, "update_metadata", &id).await,
         "audit row must be recorded even on validation failure",
+    );
+    assert_eq!(
+        latest_audit_outcome(&ctx, "update_metadata", &id).await,
+        "error",
+        "failed validation must write an error audit outcome",
     );
 
     // Strategy on disk unchanged — display_name is still the create-time value.
