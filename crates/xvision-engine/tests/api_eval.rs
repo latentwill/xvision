@@ -1,53 +1,12 @@
 //! Phase 3.D read-only api::eval surface tests — list, get, scenarios.
 //! The `run` dispatch is deferred to a follow-up PR.
 
-use sqlx::sqlite::SqlitePoolOptions;
-use xvision_engine::api::eval::{self, ListRunsRequest, ScenarioSummary};
-use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
+mod common;
 
-async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("api_eval.sqlite");
-    let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&db_url)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/001_api_audit.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    let ctx = ApiContext::new(
-        pool,
-        Actor::Cli {
-            user: "operator".into(),
-        },
-        dir.path().to_path_buf(),
-    );
-    (ctx, dir)
-}
+use common::{open_api_context as ctx_with_eval_tables, seeded_scenario_id};
+use xvision_engine::api::eval::{self, ListRunsRequest, ScenarioSummary};
+use xvision_engine::api::ApiContext;
+use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
 
 #[tokio::test]
 async fn list_returns_empty_for_fresh_pool() {
@@ -60,8 +19,9 @@ async fn list_returns_empty_for_fresh_pool() {
 async fn list_returns_persisted_runs() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let r1 = Run::new_queued("h-A".into(), "scen-A".into(), RunMode::Backtest);
-    let r2 = Run::new_queued("h-B".into(), "scen-B".into(), RunMode::Paper);
+    let scenario_id = seeded_scenario_id(&ctx).await;
+    let r1 = Run::new_queued("h-A".into(), scenario_id.clone(), RunMode::Backtest);
+    let r2 = Run::new_queued("h-B".into(), scenario_id, RunMode::Paper);
     store.create(&r1).await.unwrap();
     store.create(&r2).await.unwrap();
 
@@ -73,9 +33,10 @@ async fn list_returns_persisted_runs() {
 async fn list_filters_by_agent_id() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let mut a = Run::new_queued("h-A".into(), "s".into(), RunMode::Backtest);
-    let mut b = Run::new_queued("h-A".into(), "s".into(), RunMode::Paper);
-    let mut c = Run::new_queued("h-B".into(), "s".into(), RunMode::Backtest);
+    let scenario_id = seeded_scenario_id(&ctx).await;
+    let mut a = Run::new_queued("h-A".into(), scenario_id.clone(), RunMode::Backtest);
+    let mut b = Run::new_queued("h-A".into(), scenario_id.clone(), RunMode::Paper);
+    let mut c = Run::new_queued("h-B".into(), scenario_id, RunMode::Backtest);
     a.agent_id = "h-A".into();
     b.agent_id = "h-A".into();
     c.agent_id = "h-B".into();
@@ -98,8 +59,9 @@ async fn list_filters_by_agent_id() {
 async fn list_filters_by_status() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let r1 = Run::new_queued("h".into(), "s".into(), RunMode::Backtest);
-    let r2 = Run::new_queued("h".into(), "s".into(), RunMode::Backtest);
+    let scenario_id = seeded_scenario_id(&ctx).await;
+    let r1 = Run::new_queued("h".into(), scenario_id.clone(), RunMode::Backtest);
+    let r2 = Run::new_queued("h".into(), scenario_id, RunMode::Backtest);
     store.create(&r1).await.unwrap();
     store.create(&r2).await.unwrap();
     store
@@ -120,13 +82,14 @@ async fn list_filters_by_status() {
 async fn get_returns_persisted_run() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let run = Run::new_queued("h".into(), "scen-x".into(), RunMode::Paper);
+    let scenario_id = seeded_scenario_id(&ctx).await;
+    let run = Run::new_queued("h".into(), scenario_id.clone(), RunMode::Paper);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
     let back = eval::get(&ctx, &id).await.unwrap();
     assert_eq!(back.id, id);
-    assert_eq!(back.scenario_id, "scen-x");
+    assert_eq!(back.scenario_id, scenario_id);
     assert_eq!(back.mode, RunMode::Paper);
 }
 
@@ -141,7 +104,7 @@ async fn get_returns_not_found_for_unknown_id() {
 async fn cancel_is_idempotent_after_run_is_cancelled() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let run = Run::new_queued("h".into(), "s".into(), RunMode::Paper);
+    let run = Run::new_queued("h".into(), seeded_scenario_id(&ctx).await, RunMode::Paper);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -189,7 +152,7 @@ async fn list_writes_audit_row() {
 async fn get_writes_audit_row() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let run = Run::new_queued("h".into(), "s".into(), RunMode::Paper);
+    let run = Run::new_queued("h".into(), seeded_scenario_id(&ctx).await, RunMode::Paper);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
     let _ = eval::get(&ctx, &id).await.unwrap();
@@ -224,7 +187,7 @@ use xvision_engine::api::ApiError;
 
 async fn seed_run(ctx: &ApiContext, status: RunStatus) -> Run {
     let store = RunStore::new(ctx.db.clone());
-    let run = Run::new_queued("agent-x".into(), "scenario-x".into(), RunMode::Backtest);
+    let run = Run::new_queued("agent-x".into(), seeded_scenario_id(ctx).await, RunMode::Backtest);
     store.create(&run).await.unwrap();
     if status != RunStatus::Queued {
         let err = if status == RunStatus::Failed {
