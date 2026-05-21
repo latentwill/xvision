@@ -13,7 +13,15 @@ sha2 = "0.10"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "macros", "chrono"] }
 thiserror = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+ts-rs = { version = "9", optional = true }
 ulid = { version = "1", features = ["serde"] }
+
+[features]
+# Enable to emit `#[derive(ts_rs::TS)]` for types in this crate reachable
+# from the dashboard API surface (currently just `MemoryMode`). Driven
+# by `xtask gen-types` (`cargo test --features ts-export --lib`) — the
+# engine's `ts-export` feature propagates here.
+ts-export = ["dep:ts-rs"]
 
 [dev-dependencies]
 tempfile = "3"

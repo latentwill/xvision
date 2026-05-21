@@ -59,4 +59,4 @@ default   = []
 # Emit TypeScript types for every API request/response to
 # `frontend/web/src/api/types.gen/`. Run via `cargo xtask gen-types` (Plan 1
 # Task 4) or directly with `cargo test --features ts-export --tests`.
-ts-export = ["dep:ts-rs", "xvision-core/ts-export"]
+ts-export = ["dep:ts-rs", "xvision-core/ts-export", "xvision-memory/ts-export"]
