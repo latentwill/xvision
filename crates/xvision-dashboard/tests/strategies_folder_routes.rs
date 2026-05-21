@@ -8,8 +8,8 @@
 //! - `POST /api/strategies-folder/import` rejects a `.exe` upload with
 //!   400 + `type_not_allowed`.
 
-use axum_test::TestServer;
 use axum_test::multipart::{MultipartForm, Part};
+use axum_test::TestServer;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -42,15 +42,28 @@ async fn import_markdown_lands_in_notes() {
         .file_name("hello.md")
         .mime_type("text/markdown");
     let form = MultipartForm::new().add_part("file", part);
-    let res = server
-        .post("/api/strategies-folder/import")
-        .multipart(form)
-        .await;
+    let res = server.post("/api/strategies-folder/import").multipart(form).await;
     res.assert_status_ok();
     let body: Value = res.json();
     assert_eq!(body["entry"]["rel_path"], "notes/hello.md");
     assert_eq!(body["entry"]["kind"], "markdown");
     assert!(body["summary"].is_null(), "md should not have a sidecar");
+}
+
+#[tokio::test]
+async fn import_accepts_upload_above_default_multipart_limit() {
+    let (server, _tmp) = boot().await;
+    let body = vec![b'a'; 3 * 1024 * 1024];
+    let part = Part::bytes(body)
+        .file_name("large-note.md")
+        .mime_type("text/markdown");
+    let form = MultipartForm::new().add_part("file", part);
+
+    let res = server.post("/api/strategies-folder/import").multipart(form).await;
+
+    res.assert_status_ok();
+    let body: Value = res.json();
+    assert_eq!(body["entry"]["rel_path"], "notes/large-note.md");
 }
 
 #[tokio::test]
@@ -60,10 +73,7 @@ async fn import_rejects_disallowed_type() {
         .file_name("nope.exe")
         .mime_type("application/octet-stream");
     let form = MultipartForm::new().add_part("file", part);
-    let res = server
-        .post("/api/strategies-folder/import")
-        .multipart(form)
-        .await;
+    let res = server.post("/api/strategies-folder/import").multipart(form).await;
     assert_eq!(res.status_code(), 400);
     let body: Value = res.json();
     assert!(
@@ -103,10 +113,7 @@ async fn import_csv_generates_sidecar() {
         .file_name("rows.csv")
         .mime_type("text/csv");
     let form = MultipartForm::new().add_part("file", part);
-    let res = server
-        .post("/api/strategies-folder/import")
-        .multipart(form)
-        .await;
+    let res = server.post("/api/strategies-folder/import").multipart(form).await;
     res.assert_status_ok();
     let body: Value = res.json();
     assert_eq!(body["entry"]["rel_path"], "docs/rows.csv");
@@ -119,13 +126,8 @@ async fn import_respects_explicit_to_subfolder() {
     let part = Part::bytes(b"# note\n".to_vec())
         .file_name("note.md")
         .mime_type("text/markdown");
-    let form = MultipartForm::new()
-        .add_part("file", part)
-        .add_text("to", "docs");
-    let res = server
-        .post("/api/strategies-folder/import")
-        .multipart(form)
-        .await;
+    let form = MultipartForm::new().add_part("file", part).add_text("to", "docs");
+    let res = server.post("/api/strategies-folder/import").multipart(form).await;
     res.assert_status_ok();
     let body: Value = res.json();
     assert_eq!(body["entry"]["rel_path"], "docs/note.md");
@@ -135,9 +137,6 @@ async fn import_respects_explicit_to_subfolder() {
 async fn import_missing_file_part_returns_400() {
     let (server, _tmp) = boot().await;
     let form = MultipartForm::new().add_text("to", "notes");
-    let res = server
-        .post("/api/strategies-folder/import")
-        .multipart(form)
-        .await;
+    let res = server.post("/api/strategies-folder/import").multipart(form).await;
     assert_eq!(res.status_code(), 400);
 }

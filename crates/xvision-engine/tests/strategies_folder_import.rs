@@ -18,9 +18,7 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 use xvision_engine::api::{Actor, ApiContext, ApiError};
-use xvision_engine::strategies_folder::{
-    self, FileKind, ImportOptions, MAX_IMPORT_BYTES,
-};
+use xvision_engine::strategies_folder::{self, FileKind, ImportOptions, MAX_IMPORT_BYTES};
 
 async fn build_pool(td: &TempDir) -> SqlitePool {
     let db_path = td.path().join("xvn.db");
@@ -33,13 +31,7 @@ async fn build_pool(td: &TempDir) -> SqlitePool {
 async fn build_ctx() -> (ApiContext, TempDir) {
     let td = tempfile::tempdir().unwrap();
     let pool = build_pool(&td).await;
-    let ctx = ApiContext::new(
-        pool,
-        Actor::Cli {
-            user: "test".into(),
-        },
-        td.path().to_path_buf(),
-    );
+    let ctx = ApiContext::new(pool, Actor::Cli { user: "test".into() }, td.path().to_path_buf());
     (ctx, td)
 }
 
@@ -89,10 +81,8 @@ async fn import_csv_writes_sidecar_with_header_and_rows() {
     let summary = outcome.summary.expect("csv import should write a sidecar");
     assert_eq!(summary.rel_path, "docs/rows.summary.md");
 
-    let body = std::fs::read_to_string(
-        strategies_folder::folder_root(&ctx.xvn_home).join(&summary.rel_path),
-    )
-    .unwrap();
+    let body = std::fs::read_to_string(strategies_folder::folder_root(&ctx.xvn_home).join(&summary.rel_path))
+        .unwrap();
     assert!(body.contains("| a | b | c |"));
     // First and 49th rows show; 50th-onward should be trimmed.
     assert!(body.contains("v0"));
@@ -156,19 +146,11 @@ async fn import_rejects_oversize_file() {
 #[tokio::test]
 async fn import_bytes_rejects_traversal_in_filename() {
     let (ctx, _td) = build_ctx().await;
-    let err = strategies_folder::import_bytes(
-        &ctx,
-        "../etc/passwd",
-        b"root:x:0",
-        ImportOptions::default(),
-    )
-    .await
-    .unwrap_err();
+    let err = strategies_folder::import_bytes(&ctx, "../etc/passwd", b"root:x:0", ImportOptions::default())
+        .await
+        .unwrap_err();
     match err {
-        ApiError::Validation(msg) => assert!(
-            msg.contains("path_escape"),
-            "expected path_escape, got: {msg}"
-        ),
+        ApiError::Validation(msg) => assert!(msg.contains("path_escape"), "expected path_escape, got: {msg}"),
         other => panic!("expected Validation, got {other:?}"),
     }
 }
@@ -228,11 +210,36 @@ async fn import_default_overwrites_existing() {
         .unwrap();
     assert_eq!(again.entry.rel_path, "notes/dup.md");
 
-    let landed_body = std::fs::read_to_string(
-        strategies_folder::folder_root(&ctx.xvn_home).join("notes/dup.md"),
-    )
-    .unwrap();
+    let landed_body =
+        std::fs::read_to_string(strategies_folder::folder_root(&ctx.xvn_home).join("notes/dup.md")).unwrap();
     assert_eq!(landed_body, "# second pass");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn import_rejects_existing_destination_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let (ctx, td) = build_ctx().await;
+    let outside = td.path().join("outside.csv");
+    touch(&outside, b"keep,me\n");
+
+    let docs = strategies_folder::folder_root(&ctx.xvn_home).join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    symlink(&outside, docs.join("foo.csv")).unwrap();
+
+    let err = strategies_folder::import_bytes(&ctx, "foo.csv", b"new,content\n", ImportOptions::default())
+        .await
+        .unwrap_err();
+
+    match err {
+        ApiError::Validation(msg) => assert!(
+            msg.contains("symlink_target_not_allowed"),
+            "expected symlink_target_not_allowed, got: {msg}"
+        ),
+        other => panic!("expected Validation, got {other:?}"),
+    }
+    assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep,me\n");
 }
 
 #[tokio::test]
