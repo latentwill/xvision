@@ -80,6 +80,7 @@ export const router = createBrowserRouter([
       { path: "strategies/new", element: page(<StrategiesNewRoute />) },
       { path: "strategies/:id", element: page(<StrategyDetailRoute />) },
       { path: "agents", element: page(<AgentsRoute />) },
+      { path: "agents/memory", element: page(<MemoryPage />) },
       { path: "agents/skills", element: page(<SettingsSkillsRoute />) },
       { path: "agents/new", element: page(<AgentsEditRoute />) },
       { path: "agents/:id", element: page(<AgentsEditRoute />) },
@@ -92,7 +93,8 @@ export const router = createBrowserRouter([
       { path: "eval-runs/:runId", element: page(<EvalRunDetailRoute />) },
       { path: "agent-runs/:runId", element: page(<AgentRunDetailRoute />) },
       { path: "eval-runs/compare", element: page(<EvalCompareRoute />) },
-      { path: "memory", element: page(<MemoryPage />) },
+      // Backward-compat alias: deep links to /memory continue to work.
+      { path: "memory", element: <Navigate to="/agents/memory" replace /> },
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
       { path: "safety", element: page(<SafetyRoute />) },
