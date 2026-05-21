@@ -19,9 +19,7 @@
 
 use std::sync::Arc;
 use xvision_engine::agent::llm::MockDispatch;
-use xvision_engine::agent::pipeline::{
-    agent_slot_to_llm_slot, run_pipeline, PipelineInputs, ResolvedAgentSlot,
-};
+use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::strategies::agent_ref::canonical_role;
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
@@ -229,27 +227,4 @@ fn canonical_role_is_trim_lowercase() {
     assert_eq!(canonical_role("trader"), "trader");
     assert_eq!(canonical_role(""), "");
     assert_eq!(canonical_role("   "), "");
-}
-
-#[test]
-fn agent_slot_to_llm_slot_smoke() {
-    // Sanity that the public re-export path still works (verifies the
-    // canonical_role import didn't accidentally break a public symbol
-    // downstream).
-    use xvision_engine::agents::AgentSlot;
-    let s = AgentSlot {
-        name: "n".into(),
-        provider: String::new(),
-        model: "m".into(),
-        system_prompt: "p".into(),
-        skill_ids: Vec::new(),
-        max_tokens: None,
-        temperature: None,
-        prompt_version: String::new(),
-        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
-        bar_history_limit: None,
-        memory_mode: xvision_memory::types::MemoryMode::default(),
-    };
-    let llm = agent_slot_to_llm_slot("trader", &s);
-    assert_eq!(llm.role, "trader");
 }

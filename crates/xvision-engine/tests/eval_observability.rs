@@ -224,8 +224,6 @@ async fn failing_dispatch_emits_error_span_with_message() {
 #[tokio::test]
 async fn execute_slot_with_no_emitter_does_not_touch_bus() {
     let pool = setup_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.pool.clone()));
-    let _bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let slot = slot();
     let dispatch = Arc::new(FailingDispatch);

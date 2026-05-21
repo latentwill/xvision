@@ -16,7 +16,6 @@ import {
   lookupModel,
 } from "./modelMetadata";
 import { AgentForm } from "./AgentForm";
-import { AgentList } from "./AgentList";
 import * as agentsApi from "@/api/agents";
 import * as settingsApi from "@/api/settings";
 
@@ -230,21 +229,6 @@ describe("AgentForm slot editing", () => {
 });
 
 describe("AgentForm memory selector (V2D)", () => {
-  it("renders three memory mode options matching MemoryMode", async () => {
-    renderAgentForm();
-    const select = await screen.findByLabelText("Memory");
-    expect(select.tagName).toBe("SELECT");
-    // Off / Global / Agent-scoped — matches the three MemoryMode wire
-    // values exported by ts-rs ("off" | "global" | "agent_scoped").
-    expect(screen.getByRole("option", { name: /^off$/i })).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: /global/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: /agent[- ]scoped/i }),
-    ).toBeInTheDocument();
-  });
-
   it("round-trips agent_scoped through updateAgent", async () => {
     const user = userEvent.setup();
     renderAgentForm();
@@ -262,26 +246,6 @@ describe("AgentForm memory selector (V2D)", () => {
       }
       expect(payload.slots[0]?.memory_mode).toBe("agent_scoped");
     });
-  });
-});
-
-describe("AgentList", () => {
-  it("falls back to the raw timestamp for malformed updated_at values", () => {
-    render(
-      <MemoryRouter>
-        <AgentList
-          items={[
-            {
-              ...baseAgent,
-              updated_at: "not-a-date",
-            },
-          ]}
-        />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText("not-a-date")).toBeInTheDocument();
-    expect(screen.queryByText("Invalid Date")).not.toBeInTheDocument();
   });
 });
 

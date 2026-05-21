@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::TimeZone;
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
-use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason};
+use xvision_engine::agent::llm::{
+    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
+};
 use xvision_engine::agent::memory_recorder::{MemoryRecorder, RecallResult};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
@@ -56,11 +58,8 @@ async fn recall_returns_top_k_for_agent_scoped() {
             .await
             .unwrap();
     }
-    let recorder = MemoryRecorder::with_static_embedder(
-        std::sync::Arc::new(store),
-        "test-embedder",
-        vec![1.0, 0.0],
-    );
+    let recorder =
+        MemoryRecorder::with_static_embedder(std::sync::Arc::new(store), "test-embedder", vec![1.0, 0.0]);
     let r = recorder
         .recall(MemoryMode::AgentScoped, "agent-1", "query", 5, None)
         .await
@@ -96,13 +95,12 @@ async fn record_writes_observation_into_correct_namespace() {
         .unwrap();
     // Observations are not visible via recall; assert via a direct
     // SQL probe so we can prove the write landed.
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM memory_items WHERE namespace = ? AND tier = 'observation'",
-    )
-    .bind("agent:agent-1")
-    .fetch_one(store_arc.pool())
-    .await
-    .unwrap();
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM memory_items WHERE namespace = ? AND tier = 'observation'")
+            .bind("agent:agent-1")
+            .fetch_one(store_arc.pool())
+            .await
+            .unwrap();
     assert_eq!(row.0, 1);
 }
 
@@ -253,7 +251,12 @@ async fn recall_wraps_each_pattern_in_caselaw_framing() {
     let store_arc = Arc::new(store);
     store_arc
         .upsert_pattern(
-            &pattern_item("p1", "agent:agent-caselaw", "RANGE_BOUND_FADES_BREAKOUTS", vec![1.0, 0.0]),
+            &pattern_item(
+                "p1",
+                "agent:agent-caselaw",
+                "RANGE_BOUND_FADES_BREAKOUTS",
+                vec![1.0, 0.0],
+            ),
             "test-embedder",
         )
         .await
@@ -477,10 +480,9 @@ fn pipeline_fixture_strategy() -> Strategy {
 /// contain exactly one new Observation in the agent-scoped namespace —
 /// proving the recall+write seam fired through the pipeline call site.
 ///
-/// Under F+L+T this test pre-seeds nothing (a pre-seed Observation
-/// would never surface to recall, and a pre-seed Pattern would change
-/// the assertion shape from the original test); instead it just
-/// asserts the count goes from 0 → 1.
+/// Under F+L+T the test pre-seeds one Pattern so recall has a legal
+/// tier to surface, then asserts the recorder writes exactly one new
+/// Observation for the executed slot.
 #[tokio::test]
 async fn pipeline_threads_memory_recorder_to_execute_slot() {
     let store = MemoryStore::open_in_memory().await.unwrap();
@@ -583,12 +585,11 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
 
     // And the preseed Pattern must still be there (recorder must not
     // blow away namespace contents).
-    let pattern_row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM memory_items WHERE namespace = ? AND tier = 'pattern'",
-    )
-    .bind("agent:agent-pipeline-fixture")
-    .fetch_one(store_arc.pool())
-    .await
-    .unwrap();
+    let pattern_row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM memory_items WHERE namespace = ? AND tier = 'pattern'")
+            .bind("agent:agent-pipeline-fixture")
+            .fetch_one(store_arc.pool())
+            .await
+            .unwrap();
     assert_eq!(pattern_row.0, 1, "preseed pattern must survive");
 }

@@ -48,12 +48,10 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .await
         .unwrap();
     // V2D: memory_mode column (migration 026).
-    sqlx::query(include_str!(
-        "../migrations/027_agent_slot_memory_mode.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../migrations/027_agent_slot_memory_mode.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = TempDir::new().unwrap();
     (AgentStore::new(pool), dir)
 }
@@ -75,17 +73,21 @@ async fn full_test_context() -> (ApiContext, TempDir) {
 /// Build a slot with a system_prompt long enough to pass the length gate and
 /// mentioning an asset by name. `asset` should be e.g. "BTC".
 fn rich_slot(asset: &str) -> AgentSlot {
+    slot_with_prompt(format!(
+        "You are a {asset}/USD 4-hour swing trader. Enter long positions when the \
+         20-period EMA crosses above the 50-period EMA with above-average volume. \
+         Set stop-loss 1 ATR below the entry candle and take-profit at 2 ATR. \
+         Risk no more than 1 % of notional per trade. Close all positions at \
+         session end. Respond with a JSON object: action, size_pct, reason.",
+    ))
+}
+
+fn slot_with_prompt(system_prompt: impl Into<String>) -> AgentSlot {
     AgentSlot {
         name: "main".into(),
         provider: "anthropic".into(),
         model: "claude-sonnet-4-6".into(),
-        system_prompt: format!(
-            "You are a {asset}/USD 4-hour swing trader. Enter long positions when the \
-             20-period EMA crosses above the 50-period EMA with above-average volume. \
-             Set stop-loss 1 ATR below the entry candle and take-profit at 2 ATR. \
-             Risk no more than 1 % of notional per trade. Close all positions at \
-             session end. Respond with a JSON object: action, size_pct, reason.",
-        ),
+        system_prompt: system_prompt.into(),
         skill_ids: vec![],
         max_tokens: Some(4096),
         temperature: None,
@@ -177,17 +179,9 @@ async fn reject_short_prompt() {
             description: String::new(),
             tags: vec![],
             slots: vec![AgentSlot {
-                name: "main".into(),
-                provider: "anthropic".into(),
-                model: "claude-sonnet-4-6".into(),
                 system_prompt: "Trade carefully.".into(), // far below 200 chars
-                skill_ids: vec![],
                 max_tokens: None,
-                temperature: None,
-                prompt_version: String::new(),
-                inputs_policy: InputsPolicy::Raw,
-                bar_history_limit: None,
-                memory_mode: xvision_memory::types::MemoryMode::default(),
+                ..slot_with_prompt("")
             }],
         })
         .await;
@@ -216,17 +210,9 @@ async fn reject_default_placeholder_prompt() {
             description: String::new(),
             tags: vec![],
             slots: vec![AgentSlot {
-                name: "main".into(),
-                provider: "anthropic".into(),
-                model: "claude-sonnet-4-6".into(),
                 system_prompt: placeholder,
-                skill_ids: vec![],
                 max_tokens: None,
-                temperature: None,
-                prompt_version: String::new(),
-                inputs_policy: InputsPolicy::Raw,
-                bar_history_limit: None,
-                memory_mode: xvision_memory::types::MemoryMode::default(),
+                ..slot_with_prompt("")
             }],
         })
         .await;
@@ -260,25 +246,13 @@ async fn wrong_id_namespace_strategy_get_with_agent_id() {
             name: "generic-quant-v1".into(),
             description: "A well-formed agent.".into(),
             tags: vec![],
-            slots: vec![AgentSlot {
-                name: "main".into(),
-                provider: "anthropic".into(),
-                model: "claude-sonnet-4-6".into(),
-                system_prompt: format!(
-                    "You are a quantitative trading assistant. Analyse the provided OHLCV data \
+            slots: vec![slot_with_prompt(format!(
+                "You are a quantitative trading assistant. Analyse the provided OHLCV data \
                      and generate a JSON decision with fields: action (buy/sell/hold), \
                      size_pct (0-100), and reason (string). Use the 20/50 EMA crossover \
                      as your primary signal. {}",
-                    "Apply strict risk controls: never risk more than 1% of notional per trade. ".repeat(4),
-                ),
-                skill_ids: vec![],
-                max_tokens: Some(4096),
-                temperature: None,
-                prompt_version: String::new(),
-                inputs_policy: InputsPolicy::Raw,
-                bar_history_limit: None,
-                memory_mode: xvision_memory::types::MemoryMode::default(),
-            }],
+                "Apply strict risk controls: never risk more than 1% of notional per trade. ".repeat(4),
+            ))],
         })
         .await
         .expect("agent create should succeed");

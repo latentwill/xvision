@@ -361,7 +361,7 @@ fn migrate_agents_converts_legacy_slots_to_agent_refs() {
 }
 
 #[test]
-fn run_inline_seeds_with_real_ohlcv_and_indicators() {
+fn run_inline_with_mock_dispatch_seeds_real_ohlcv_and_reports_usage() {
     let dir = tempdir().unwrap();
 
     let out = xvn(
@@ -386,7 +386,7 @@ fn run_inline_seeds_with_real_ohlcv_and_indicators() {
             "--fixture",
             "test-fixture-btc-2024-01",
             "--decisions",
-            "1",
+            "3",
             "--mock",
         ],
         dir.path(),
@@ -403,48 +403,7 @@ fn run_inline_seeds_with_real_ohlcv_and_indicators() {
     // bars, not the placeholder strings.
     assert!(stdout.contains("seed_summary:"), "stdout: {stdout}");
     assert!(stdout.contains("bars="), "stdout: {stdout}");
-    assert!(stdout.contains("decision[0]:"));
-}
-
-#[test]
-fn run_inline_with_mock_dispatch_succeeds() {
-    let dir = tempdir().unwrap();
-
-    // Create a draft.
-    let out = xvn(
-        &[
-            "strategy",
-            "new",
-            "--template",
-            "mean_reversion",
-            "--name",
-            "run-test",
-        ],
-        dir.path(),
-    );
-    assert!(out.status.success());
-    let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
-
-    // Run inline against the test fixture, using the mock LLM dispatch (--mock).
-    let out = xvn(
-        &[
-            "strategy",
-            "run",
-            &id,
-            "--fixture",
-            "test-fixture-btc-2024-01",
-            "--decisions",
-            "3",
-            "--mock",
-        ],
-        dir.path(),
-    );
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("decision[0]:"), "stdout: {stdout}");
     assert!(stdout.contains("decisions:"));
     assert!(stdout.contains("input_tokens:"));
     assert!(stdout.contains("output_tokens:"));

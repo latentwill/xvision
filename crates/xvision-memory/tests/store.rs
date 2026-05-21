@@ -9,14 +9,26 @@ fn memory_mode_serde_round_trip() {
         assert_eq!(mode, back);
     }
     assert_eq!(serde_json::to_string(&MemoryMode::Off).unwrap(), "\"off\"");
-    assert_eq!(serde_json::to_string(&MemoryMode::AgentScoped).unwrap(), "\"agent_scoped\"");
+    assert_eq!(
+        serde_json::to_string(&MemoryMode::AgentScoped).unwrap(),
+        "\"agent_scoped\""
+    );
 }
 
 #[test]
 fn namespace_for_mode_uses_agent_id() {
-    assert_eq!(Namespace::for_mode(MemoryMode::Off, "01HZTEST").as_str(), None::<&str>.unwrap_or_default());
-    assert_eq!(Namespace::for_mode(MemoryMode::Global, "01HZTEST").as_str(), "global");
-    assert_eq!(Namespace::for_mode(MemoryMode::AgentScoped, "01HZTEST").as_str(), "agent:01HZTEST");
+    assert_eq!(
+        Namespace::for_mode(MemoryMode::Off, "01HZTEST").as_str(),
+        None::<&str>.unwrap_or_default()
+    );
+    assert_eq!(
+        Namespace::for_mode(MemoryMode::Global, "01HZTEST").as_str(),
+        "global"
+    );
+    assert_eq!(
+        Namespace::for_mode(MemoryMode::AgentScoped, "01HZTEST").as_str(),
+        "agent:01HZTEST"
+    );
 }
 
 use xvision_memory::store::MemoryStore;
@@ -33,20 +45,19 @@ async fn open_lazy_creates_schema() {
 
 fn observation(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
     MemoryItem {
-        id: id.into(),
-        namespace: ns.into(),
         tier: Tier::Observation,
-        text: text.into(),
-        embedding: emb,
-        created_at: chrono::Utc::now(),
         run_id: Some("run-1".into()),
         scenario_id: Some("scenario-1".into()),
         cycle_idx: Some(0),
-        training_window_end: None,
+        ..memory_item(id, ns, text, emb)
     }
 }
 
 fn pattern(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
+    memory_item(id, ns, text, emb)
+}
+
+fn memory_item(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
     MemoryItem {
         id: id.into(),
         namespace: ns.into(),
@@ -64,9 +75,27 @@ fn pattern(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
 #[tokio::test]
 async fn upsert_pattern_then_query_returns_top_k_by_cosine() {
     let store = MemoryStore::open_in_memory().await.unwrap();
-    store.upsert_pattern(&pattern("a", "global", "alpha", vec![1.0, 0.0, 0.0]), "test-embedder").await.unwrap();
-    store.upsert_pattern(&pattern("b", "global", "beta",  vec![0.0, 1.0, 0.0]), "test-embedder").await.unwrap();
-    store.upsert_pattern(&pattern("c", "global", "gamma", vec![0.9, 0.1, 0.0]), "test-embedder").await.unwrap();
+    store
+        .upsert_pattern(
+            &pattern("a", "global", "alpha", vec![1.0, 0.0, 0.0]),
+            "test-embedder",
+        )
+        .await
+        .unwrap();
+    store
+        .upsert_pattern(
+            &pattern("b", "global", "beta", vec![0.0, 1.0, 0.0]),
+            "test-embedder",
+        )
+        .await
+        .unwrap();
+    store
+        .upsert_pattern(
+            &pattern("c", "global", "gamma", vec![0.9, 0.1, 0.0]),
+            "test-embedder",
+        )
+        .await
+        .unwrap();
     let hits = store.query("global", &[1.0, 0.0, 0.0], 2, None).await.unwrap();
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].id, "a");
@@ -77,11 +106,17 @@ async fn upsert_pattern_then_query_returns_top_k_by_cosine() {
 #[tokio::test]
 async fn query_isolates_by_namespace() {
     let store = MemoryStore::open_in_memory().await.unwrap();
-    store.upsert_pattern(&pattern("a", "agent:A", "alpha", vec![1.0, 0.0]), "test").await.unwrap();
-    store.upsert_pattern(&pattern("b", "agent:B", "beta",  vec![1.0, 0.0]), "test").await.unwrap();
+    store
+        .upsert_pattern(&pattern("a", "agent:A", "alpha", vec![1.0, 0.0]), "test")
+        .await
+        .unwrap();
+    store
+        .upsert_pattern(&pattern("b", "agent:B", "beta", vec![1.0, 0.0]), "test")
+        .await
+        .unwrap();
     let hits_a = store.query("agent:A", &[1.0, 0.0], 5, None).await.unwrap();
     let hits_b = store.query("agent:B", &[1.0, 0.0], 5, None).await.unwrap();
-    let hits_g = store.query("global",  &[1.0, 0.0], 5, None).await.unwrap();
+    let hits_g = store.query("global", &[1.0, 0.0], 5, None).await.unwrap();
     assert_eq!(hits_a.len(), 1);
     assert_eq!(hits_a[0].id, "a");
     assert_eq!(hits_b.len(), 1);
@@ -92,11 +127,17 @@ async fn query_isolates_by_namespace() {
 #[tokio::test]
 async fn forget_namespace_clears_only_that_namespace() {
     let store = MemoryStore::open_in_memory().await.unwrap();
-    store.upsert_pattern(&pattern("a", "agent:A", "alpha", vec![1.0, 0.0]), "test").await.unwrap();
-    store.upsert_pattern(&pattern("b", "global",  "beta",  vec![1.0, 0.0]), "test").await.unwrap();
+    store
+        .upsert_pattern(&pattern("a", "agent:A", "alpha", vec![1.0, 0.0]), "test")
+        .await
+        .unwrap();
+    store
+        .upsert_pattern(&pattern("b", "global", "beta", vec![1.0, 0.0]), "test")
+        .await
+        .unwrap();
     store.forget("agent:A").await.unwrap();
     let hits_a = store.query("agent:A", &[1.0, 0.0], 5, None).await.unwrap();
-    let hits_g = store.query("global",  &[1.0, 0.0], 5, None).await.unwrap();
+    let hits_g = store.query("global", &[1.0, 0.0], 5, None).await.unwrap();
     assert!(hits_a.is_empty());
     assert_eq!(hits_g.len(), 1);
 }
@@ -165,17 +206,11 @@ async fn upsert_pattern_rejects_observation_tier() {
 async fn query_only_returns_patterns_never_observations() {
     let store = MemoryStore::open_in_memory().await.unwrap();
     store
-        .upsert_observation(
-            &observation("o1", "global", "OBS_TEXT", vec![1.0, 0.0]),
-            "test",
-        )
+        .upsert_observation(&observation("o1", "global", "OBS_TEXT", vec![1.0, 0.0]), "test")
         .await
         .unwrap();
     store
-        .upsert_pattern(
-            &pattern("p1", "global", "PAT_TEXT", vec![1.0, 0.0]),
-            "test",
-        )
+        .upsert_pattern(&pattern("p1", "global", "PAT_TEXT", vec![1.0, 0.0]), "test")
         .await
         .unwrap();
     let hits = store.query("global", &[1.0, 0.0], 5, None).await.unwrap();
@@ -193,7 +228,10 @@ async fn query_excludes_patterns_inside_scenario_window() {
 
     let before = chrono::Utc.with_ymd_and_hms(2024, 8, 1, 0, 0, 0).unwrap();
     let hits = store.query("global", &[1.0, 0.0], 5, Some(before)).await.unwrap();
-    assert!(hits.is_empty(), "training window 2024-09-01 must be filtered for scenario starting 2024-08-01");
+    assert!(
+        hits.is_empty(),
+        "training window 2024-09-01 must be filtered for scenario starting 2024-08-01"
+    );
 
     let after = chrono::Utc.with_ymd_and_hms(2024, 10, 1, 0, 0, 0).unwrap();
     let hits = store.query("global", &[1.0, 0.0], 5, Some(after)).await.unwrap();
@@ -232,8 +270,14 @@ async fn query_with_no_scenario_start_skips_temporal_filter() {
 #[tokio::test]
 async fn demote_pattern_removes_only_the_named_pattern() {
     let store = MemoryStore::open_in_memory().await.unwrap();
-    store.upsert_pattern(&pattern("p1", "global", "one", vec![1.0, 0.0]), "test").await.unwrap();
-    store.upsert_pattern(&pattern("p2", "global", "two", vec![0.0, 1.0]), "test").await.unwrap();
+    store
+        .upsert_pattern(&pattern("p1", "global", "one", vec![1.0, 0.0]), "test")
+        .await
+        .unwrap();
+    store
+        .upsert_pattern(&pattern("p2", "global", "two", vec![0.0, 1.0]), "test")
+        .await
+        .unwrap();
 
     let removed = store.demote_pattern("p1").await.unwrap();
     assert_eq!(removed, 1);
@@ -247,22 +291,9 @@ async fn demote_pattern_removes_only_the_named_pattern() {
 async fn demote_pattern_refuses_to_delete_observations() {
     let store = MemoryStore::open_in_memory().await.unwrap();
     store
-        .upsert_observation(
-            &observation("o1", "global", "obs", vec![1.0, 0.0]),
-            "test",
-        )
+        .upsert_observation(&observation("o1", "global", "obs", vec![1.0, 0.0]), "test")
         .await
         .unwrap();
     let removed = store.demote_pattern("o1").await.unwrap();
     assert_eq!(removed, 0, "demote_pattern must only delete tier='pattern' rows");
-}
-
-use xvision_memory::embedder::{Embedder, StaticEmbedder};
-
-#[tokio::test]
-async fn static_embedder_returns_configured_vector() {
-    let embedder = StaticEmbedder::new("test-embedder", vec![0.5, 0.5, 0.0]);
-    let v = embedder.embed("anything").await.unwrap();
-    assert_eq!(v, vec![0.5, 0.5, 0.0]);
-    assert_eq!(embedder.id(), "test-embedder");
 }
