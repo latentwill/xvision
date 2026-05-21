@@ -20,15 +20,15 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+use xvision_engine::agents::{store::NewAgent, AgentSlot, AgentStore, InputsPolicy};
 use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
-use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
-use xvision_engine::strategies::Strategy;
+use xvision_engine::strategies::{AgentRef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
@@ -42,11 +42,31 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // Agent store tables — `resolve_agent_slots` reads the
+    // `agents`/`agent_slots` tables via `AgentStore::get`, so any test
+    // that drives an eval against an attached `AgentRef` must have
+    // both the schema and the seeded row available.
+    sqlx::query(include_str!("../migrations/005_agents.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/019_agent_slot_prompt_version.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/020_agent_slot_inputs_policy.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/025_agent_slot_cache_and_window.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -55,6 +75,10 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/029_agent_slot_memory_mode.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -68,6 +92,35 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         dir.path().to_path_buf(),
     );
     (ctx, dir)
+}
+
+/// Seed a trader-role `Agent` in the test's agent store and return its
+/// `agent_id`. The returned id is plumbed into the strategy's
+/// `AgentRef { agent_id, role: "trader" }` so `resolve_agent_slots`
+/// loads a real row instead of erroring with `NotFound`.
+async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
+    let store = AgentStore::new(ctx.db.clone());
+    store
+        .create(NewAgent {
+            name: format!("{label}-trader"),
+            description: "min-notional fixture trader".into(),
+            tags: vec!["fixture".into(), "trader".into()],
+            slots: vec![AgentSlot {
+                name: "main".into(),
+                provider: "anthropic".into(),
+                model: "claude-sonnet-4.6".into(),
+                system_prompt: "Decide.".into(),
+                skill_ids: vec![],
+                max_tokens: Some(4096),
+                temperature: None,
+                prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
+            }],
+        })
+        .await
+        .expect("seed trader agent")
 }
 
 /// Mirror of `config/risk.toml`'s `[venues.paper] min_notional_usd = 10.0`
@@ -107,12 +160,13 @@ min_notional_usd = 1.0
 /// every long_open below the $10 paper minimum. Mirrors
 /// `risk_min_notional.rs::tiny_risk_strategy` so the failure shape is
 /// the same — just exercised through the api/eval.rs production path.
-async fn save_tiny_risk_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
+async fn save_tiny_risk_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
     let mut risk = RiskPreset::Balanced.expand();
     risk.risk_pct_per_trade = 0.001; // 0.1% of $100 = $0.10 notional << $10
+    let agent_id = seed_trader_agent(ctx, strategy_id).await;
     let strategy = Strategy {
         manifest: PublicManifest {
-            id: agent_id.to_string(),
+            id: strategy_id.to_string(),
             display_name: "Tiny-notional regression (api-level)".into(),
             plain_summary: "Repros 2026-05-19 ETH ~$6 failure via api::eval".into(),
             creator: "@tester".into(),
@@ -127,18 +181,14 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
+        agents: vec![AgentRef {
+            agent_id,
+            role: "trader".into(),
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "Decide.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
-            allowed_tools: vec![],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: None,
         risk,
         mechanical_params: serde_json::json!({}),
     };
