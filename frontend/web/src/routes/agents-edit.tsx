@@ -13,7 +13,7 @@ import {
 } from "@/api/agents";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
-import { AgentForm } from "@/components/agent/AgentForm";
+import { AgentDetailTabs } from "@/components/agent/AgentDetailTabs";
 
 export function AgentsEditRoute() {
   const params = useParams<{ id?: string }>();
@@ -46,7 +46,10 @@ export function AgentsEditRoute() {
           onSkip={() => setPickedTemplateId("__blank__")}
         />
       ) : (
-        <AgentForm agentId={agentId} initialSlots={seededSlots ?? undefined} />
+        <AgentDetailTabs
+          agentId={agentId}
+          initialSlots={seededSlots ?? undefined}
+        />
       )}
     </>
   );
