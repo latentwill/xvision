@@ -280,14 +280,13 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     let mut last_stop_reason: StopReason = StopReason::EndTurn;
     // F-5 (`harness-recovery-state-machine`): per-slot block-list for
     // repeated `(tool_name, input_hash)` failures. The first
-    // [`crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR`] failures of
-    // a given pair pass through (the model gets the `is_error: true`
-    // tool_result and self-heals via the
-    // `agent-error-feedback-self-healing` path). The next attempt of
-    // the same pair is short-circuited with a typed
+    // two failures of a given pair pass through (the model gets the
+    // `is_error: true` tool_result and self-heals via the
+    // `agent-error-feedback-self-healing` path). The third failure
+    // trips the block and emits `recovery.failed`; later attempts of
+    // the same pair are short-circuited with a typed
     // `repeated_tool_failure` error injected as the tool_result so the
-    // model sees the block instead of looping; we also emit a
-    // `recovery.attempt` span so the trace dock surfaces the gate.
+    // model sees the block instead of looping.
     let mut repeated_failures = crate::agent::recovery::RepeatedToolFailureTracker::new();
 
     loop {
@@ -526,63 +525,55 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                     .await;
             }
             // F-5: short-circuit if the block-list says this exact
-            // (tool_name, input_hash) pair has already failed
-            // MAX_TOOL_RETRIES_PER_PAIR times. The model receives a
-            // structured `repeated_tool_failure` tool_result and a
-            // `recovery.attempt` span is emitted so the gate is
-            // visible in the trace.
+            // (tool_name, input_hash) pair has already tripped the
+            // repeated-failure block. The model receives a structured
+            // `repeated_tool_failure` tool_result.
             let blocked = repeated_failures.is_blocked(&tu_name, &tu_input);
             let (content, is_error) = if blocked {
-                let input_hash =
-                    crate::agent::recovery::RepeatedToolFailureTracker::input_hash(&tu_input);
-                if let Some(obs) = input.obs.as_ref() {
-                    obs.emit_recovery_failed(
-                        &fresh_span_id(),
-                        None,
-                        "repeated_tool_failure",
-                        crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR as u32,
-                        &format!(
-                            "tool '{tu_name}' input_hash={input_hash} exceeded \
-                             {} retries; further calls with this exact input are blocked",
-                            crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR
-                        ),
-                    )
-                    .await;
-                }
-                (
-                    format!(
-                        "repeated_tool_failure: tool '{tu_name}' with this exact \
-                         input has failed {} times in this slot execution. The \
-                         input is blocked for the remainder of this run. Retry \
-                         with a different input or choose a different tool.",
-                        crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR
-                    ),
-                    Some(true),
-                )
+                (repeated_tool_failure_result(&tu_name), Some(true))
             } else {
                 match tool_call::invoke(&tu_name, tu_input.clone(), input.tools.clone()).await {
                     Ok(s) => (s, None),
                     Err(e) => {
                         let count = repeated_failures.record_failure(&tu_name, &tu_input);
-                        // First failure of a pair is normal self-healing
-                        // territory (the agent gets `is_error: true` and
-                        // re-decides). Second-and-later failures of the
-                        // same exact pair are the recovery seam — emit a
-                        // `recovery.attempt` span so the trace dock
-                        // surfaces the building retry pressure before
-                        // the block fires on attempt N=MAX.
-                        if count >= 2 {
+                        if count >= crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR {
+                            let input_hash =
+                                crate::agent::recovery::RepeatedToolFailureTracker::input_hash(&tu_input);
                             if let Some(obs) = input.obs.as_ref() {
-                                obs.emit_recovery_attempt(
+                                obs.emit_recovery_failed(
                                     &fresh_span_id(),
                                     None,
                                     "repeated_tool_failure",
-                                    (count - 1) as u32,
+                                    count as u32,
+                                    &format!(
+                                        "tool '{tu_name}' input_hash={input_hash} failed {count} \
+                                         times; further calls with this exact input are blocked"
+                                    ),
                                 )
                                 .await;
                             }
+                            (repeated_tool_failure_result(&tu_name), Some(true))
+                        } else {
+                            // First failure of a pair is normal
+                            // self-healing territory (the agent gets
+                            // `is_error: true` and re-decides). The
+                            // second failure is the recovery seam —
+                            // emit `recovery.attempt` so the trace dock
+                            // surfaces the retry pressure before the
+                            // third failure trips the block.
+                            if count >= 2 {
+                                if let Some(obs) = input.obs.as_ref() {
+                                    obs.emit_recovery_attempt(
+                                        &fresh_span_id(),
+                                        None,
+                                        "repeated_tool_failure",
+                                        (count - 1) as u32,
+                                    )
+                                    .await;
+                                }
+                            }
+                            (format!("tool error: {e}"), Some(true))
                         }
-                        (format!("tool error: {e}"), Some(true))
                     }
                 }
             };
@@ -603,6 +594,16 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
 
         iterations += 1;
     }
+}
+
+fn repeated_tool_failure_result(tool_name: &str) -> String {
+    format!(
+        "repeated_tool_failure: tool '{tool_name}' with this exact \
+         input has failed {} times in this slot execution. The \
+         input is blocked for the remainder of this run. Retry \
+         with a different input or choose a different tool.",
+        crate::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR
+    )
 }
 
 pub(crate) fn response_schema_for_slot(slot: &LLMSlot) -> Option<ResponseSchema> {

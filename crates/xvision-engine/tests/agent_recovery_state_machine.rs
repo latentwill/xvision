@@ -8,11 +8,11 @@
 //!   the existing self-healing path handles it.
 //! - Second-and-later failures of the same pair emit
 //!   `recovery.attempt` spans with monotonically rising `retry_count`.
-//! - The N-th failure (where N == `MAX_TOOL_RETRIES_PER_PAIR`) trips the
-//!   block — subsequent attempts of the same pair emit
-//!   `recovery.attempt` with `SpanStatus::Error` and never call into
-//!   the tool. The model receives a structured `repeated_tool_failure`
-//!   tool_result so it can re-decide with a different input.
+//! - The N-th failure (where N == `MAX_TOOL_RETRIES_PER_PAIR`) emits
+//!   `recovery.attempt` with `SpanStatus::Error` and trips the block.
+//!   Subsequent attempts of the same pair never call into the tool. The
+//!   model receives a structured `repeated_tool_failure` tool_result so
+//!   it can re-decide with a different input.
 //!
 //! Recovery-class typed dispatcher coverage lives in unit tests at
 //! `crates/xvision-engine/src/agent/recovery.rs` (13 tests, every
@@ -20,6 +20,7 @@
 //! tracker wired into `execute_slot` — end-to-end through the
 //! observability bus.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -30,9 +31,7 @@ use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::agent::recovery::MAX_TOOL_RETRIES_PER_PAIR;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::{Tool, ToolName, ToolRegistry};
-use xvision_observability::{
-    AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, SpanKind, SpanStatus,
-};
+use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, SpanKind, SpanStatus};
 
 fn slot() -> LLMSlot {
     LLMSlot {
@@ -60,6 +59,24 @@ impl Tool for AlwaysFailsTool {
         "test-only tool that always errors with a stable message"
     }
     async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("test-deterministic failure")
+    }
+}
+
+struct CountingAlwaysFailsTool {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for CountingAlwaysFailsTool {
+    fn name(&self) -> ToolName {
+        ToolName::new("always_fails")
+    }
+    fn description(&self) -> &'static str {
+        "test-only tool that always errors and counts invocations"
+    }
+    async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         anyhow::bail!("test-deterministic failure")
     }
 }
@@ -240,11 +257,14 @@ async fn third_failure_trips_block_and_emits_recovery_failed() {
     ]));
     let emitter = ObsEmitter::new(bus.clone(), "run-f5-third-fail");
 
+    let calls = Arc::new(AtomicUsize::new(0));
     let mut tools = ToolRegistry::empty();
-    tools.register(Arc::new(AlwaysFailsTool));
+    tools.register(Arc::new(CountingAlwaysFailsTool { calls: calls.clone() }));
     let s = slot();
-    // MAX_TOOL_RETRIES_PER_PAIR=3: drive the loop to 4 iterations so we
-    // see the block fire on the 4th invocation.
+    // MAX_TOOL_RETRIES_PER_PAIR=3: the 3rd actual failure trips the
+    // block and emits `recovery.failed`. Drive one extra model
+    // iteration to prove subsequent identical attempts short-circuit
+    // and do not invoke the tool again.
     let total_iterations = (MAX_TOOL_RETRIES_PER_PAIR + 1) as usize;
     let input = build_input(
         &s,
@@ -257,6 +277,11 @@ async fn third_failure_trips_block_and_emits_recovery_failed() {
     drain(&bus).await;
 
     let events = recorder.snapshot().await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        MAX_TOOL_RETRIES_PER_PAIR as usize,
+        "the attempt after the block trip must not invoke the failing tool"
+    );
 
     // Pair every SpanStarted(RecoveryAttempt) with its SpanFinished
     // (same span_id) so we can read the SpanStatus.
@@ -277,10 +302,9 @@ async fn third_failure_trips_block_and_emits_recovery_failed() {
     }
     assert_eq!(
         started.len(),
-        MAX_TOOL_RETRIES_PER_PAIR as usize,
-        "exactly {} recovery.attempt spans across failures 2..=N+1 \
-         (N-1 retry rises + 1 block). started count = {}, span_ids = {:?}",
-        MAX_TOOL_RETRIES_PER_PAIR,
+        2,
+        "exactly two recovery.attempt spans across failures 2..=3 \
+         (one retry rise + one block). started count = {}, span_ids = {:?}",
         started.len(),
         started.keys().collect::<Vec<_>>(),
     );
@@ -302,9 +326,8 @@ async fn third_failure_trips_block_and_emits_recovery_failed() {
         "exactly one recovery span ends in Error (the block trip)"
     );
     assert_eq!(
-        ok_count,
-        (MAX_TOOL_RETRIES_PER_PAIR - 1) as usize,
-        "N-1 recovery spans end in Ok (the rising retries before the block)"
+        ok_count, 1,
+        "only the second failure ends in Ok (the rising retry before the block)"
     );
 
     // The blocked invocation never calls into the tool — the model's
@@ -316,8 +339,7 @@ async fn third_failure_trips_block_and_emits_recovery_failed() {
         .find(|f| matches!(f.status, SpanStatus::Error))
         .expect("blocked recovery span");
     let err_json: serde_json::Value =
-        serde_json::from_str(blocked_fin.error_json.as_ref().expect("error_json"))
-            .expect("error_json parse");
+        serde_json::from_str(blocked_fin.error_json.as_ref().expect("error_json")).expect("error_json parse");
     assert_eq!(
         err_json.get("class_tag").and_then(|v| v.as_str()),
         Some("repeated_tool_failure"),
@@ -331,10 +353,7 @@ async fn third_failure_trips_block_and_emits_recovery_failed() {
         msg.contains("always_fails"),
         "error_json.message names the blocked tool: {msg}"
     );
-    assert!(
-        msg.contains("blocked"),
-        "error_json.message says blocked: {msg}"
-    );
+    assert!(msg.contains("blocked"), "error_json.message says blocked: {msg}");
 }
 
 #[tokio::test]
@@ -359,7 +378,10 @@ async fn classify_run_failure_adapter_preserves_wire_tags() {
             "broker_insufficient_funds",
         ),
         ("alpaca order 01H... rejected", "broker_rejected"),
-        ("alpaca order 01H... did not fill within 5 polls", "broker_timeout"),
+        (
+            "alpaca order 01H... did not fill within 5 polls",
+            "broker_timeout",
+        ),
         // Provider classes
         ("openrouter request timed out after 60s", "provider_timeout"),
         ("tcp connect: connection refused", "provider_connect"),

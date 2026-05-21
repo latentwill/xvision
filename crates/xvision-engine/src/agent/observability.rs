@@ -502,7 +502,7 @@ impl ObsEmitter {
 
     /// Emit a `recovery.attempt` span carrying a failed-recovery
     /// outcome. Same shape as [`Self::emit_recovery_attempt`] but with
-    /// `SpanStatus::Failed` and a `final_error` recorded so operators
+    /// `SpanStatus::Error` and a `final_error` recorded so operators
     /// can read the typed reason in the trace dock without
     /// reconstructing it from prose.
     ///
@@ -583,10 +583,7 @@ impl ObsEmitter {
         let (status, error_json) = match final_error {
             Some(err) => (
                 SpanStatus::Error,
-                Some(
-                    serde_json::json!({ "class_tag": class_tag, "message": err })
-                        .to_string(),
-                ),
+                Some(serde_json::json!({ "class_tag": class_tag, "message": err }).to_string()),
             ),
             None => (SpanStatus::Ok, None),
         };

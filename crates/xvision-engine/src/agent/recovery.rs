@@ -215,9 +215,7 @@ pub fn classify(err: &anyhow::Error) -> FailureClass {
         if let Some(typed) = cause.downcast_ref::<OpenAiCompatError>() {
             return match typed {
                 OpenAiCompatError::RateLimited { .. } => FailureClass::ProviderRateLimited,
-                OpenAiCompatError::MissingChoicesArray { .. } => {
-                    FailureClass::ProviderMissingChoices
-                }
+                OpenAiCompatError::MissingChoicesArray { .. } => FailureClass::ProviderMissingChoices,
             };
         }
     }
@@ -319,10 +317,12 @@ fn classify_from_string(s: &str) -> FailureClass {
 
 // ─── Repeated-tool-failure tracker ─────────────────────────────────────────
 
-/// Per-slot retry budget on the exact `(tool_name, input_hash)` pair.
-/// Three attempts total: 1 initial + 2 retries. Picked from the
-/// audit's "block the pair for the rest of the run" guidance plus a
-/// small head-room for transient failures the agent can self-correct.
+/// Per-slot failure budget on the exact `(tool_name, input_hash)` pair.
+/// The third failure trips the block: 1 initial failure, 1 retry with a
+/// `recovery.attempt` span, then 1 terminal failure with
+/// `recovery.failed`. Picked from the audit's "block the pair for the
+/// rest of the run" guidance plus a small head-room for transient
+/// failures the agent can self-correct.
 pub const MAX_TOOL_RETRIES_PER_PAIR: u8 = 3;
 
 /// Tracks repeated failures of the same `(tool_name, input)` pair
@@ -349,7 +349,8 @@ impl RepeatedToolFailureTracker {
 
     /// Record a failed invocation of `(tool_name, input)`. Returns the
     /// new failure count for the pair. Callers compare against
-    /// [`MAX_TOOL_RETRIES_PER_PAIR`] to decide whether to block.
+    /// [`MAX_TOOL_RETRIES_PER_PAIR`] to decide whether this failure
+    /// trips the block.
     pub fn record_failure(&mut self, tool_name: &str, input: &serde_json::Value) -> u8 {
         let key = (tool_name.to_string(), hash_input(input));
         let entry = self.counts.entry(key).or_insert(0);
@@ -357,8 +358,8 @@ impl RepeatedToolFailureTracker {
         *entry
     }
 
-    /// `true` when the next invocation of `(tool_name, input)` should
-    /// be blocked because the pair has already failed
+    /// `true` when an invocation of `(tool_name, input)` should be
+    /// blocked because the pair has already failed
     /// [`MAX_TOOL_RETRIES_PER_PAIR`] times.
     pub fn is_blocked(&self, tool_name: &str, input: &serde_json::Value) -> bool {
         let key = (tool_name.to_string(), hash_input(input));
@@ -447,8 +448,7 @@ mod tests {
     fn classify_walks_context_chain() {
         // Outer wrapper has no class hint; inner cause does.
         let inner = anyhow("alpaca create_order: bracket orders not supported for this asset class");
-        let wrapped: anyhow::Error =
-            anyhow::Error::msg("paper eval submit_order failed").context(inner);
+        let wrapped: anyhow::Error = anyhow::Error::msg("paper eval submit_order failed").context(inner);
         // anyhow Context inverts the wrap direction — re-build the
         // chain explicitly to mirror the executor's `with_context`
         // pattern.
@@ -467,9 +467,7 @@ mod tests {
     fn classify_repeated_broker_error_before_inner_class() {
         // The circuit-breaker tag must match before the embedded
         // broker_min_order_size class.
-        let e = anyhow(
-            "[repeated_broker_error] N=3 consecutive broker_min_order_size rejections",
-        );
+        let e = anyhow("[repeated_broker_error] N=3 consecutive broker_min_order_size rejections");
         assert_eq!(classify(&e), FailureClass::RepeatedBrokerError);
         assert_eq!(classify(&e).family(), RecoveryFamily::RepeatedToolFailure);
     }
@@ -549,10 +547,7 @@ mod tests {
             (FailureClass::ProviderMissingChoices, "provider_missing_choices"),
             (FailureClass::BrokerAuth, "broker_auth"),
             (FailureClass::BrokerUnsupported, "broker_unsupported"),
-            (
-                FailureClass::BrokerInsufficientFunds,
-                "broker_insufficient_funds",
-            ),
+            (FailureClass::BrokerInsufficientFunds, "broker_insufficient_funds"),
             (FailureClass::BrokerTimeout, "broker_timeout"),
             (FailureClass::BrokerRejected, "broker_rejected"),
             (FailureClass::RepeatedBrokerError, "repeated_broker_error"),
