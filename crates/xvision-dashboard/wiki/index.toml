@@ -12,6 +12,13 @@
 # groups pages under a header in the sidebar; pages with the same
 # `section` value are kept together and the section label is preserved
 # in the order it first appears.
+#
+# `last_reviewed` convention: bump whenever you edit the page's content.
+# The `docs-freshness` CI lint (`scripts/docs-freshness-lint.sh`) fails
+# a PR when any page's `last_reviewed` is more than 90 days old, and
+# when a new top-level CLI verb lands under
+# `crates/xvision-cli/src/commands/` without a same-PR edit to
+# `cli-reference.md`.
 
 [[page]]
 slug = "quickstart"

@@ -1,0 +1,50 @@
+name: docs freshness
+
+# Two checks, both via `scripts/docs-freshness-lint.sh`:
+#   - every wiki page's `last_reviewed` is within 90 days
+#   - any PR that adds a new top-level CLI verb under
+#     `crates/xvision-cli/src/commands/` also modifies the wiki's
+#     `cli-reference.md` (and bumps its `last_reviewed`).
+#
+# Path-scoped to keep Actions minutes low: only runs on PRs that touch
+# the wiki, the manifest, the CLI commands tree, or this workflow.
+#
+# Source: team/contracts/docs-freshness-staleness-guard.md.
+
+on:
+  pull_request:
+    paths:
+      - "crates/xvision-dashboard/wiki/**"
+      - "crates/xvision-cli/src/commands/**"
+      - "scripts/docs-freshness-lint.sh"
+      - ".github/workflows/docs-freshness.yml"
+
+concurrency:
+  group: docs-freshness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # We diff against the PR base, so we need that branch fetched
+          # and a non-shallow history. depth=0 is the simplest knob; the
+          # checkout is fast even on the full repo.
+          fetch-depth: 0
+      - name: Configure git to see origin/main
+        run: |
+          git fetch origin "${GITHUB_BASE_REF:-main}" --depth=1 || true
+      - name: Run docs-freshness lint
+        env:
+          # Use the PR's HEAD commit date so the staleness window is
+          # deterministic relative to when the PR was authored, not the
+          # build agent's wall clock.
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: |
+          head_date="$(git log -1 --format=%cs HEAD)"
+          bash scripts/docs-freshness-lint.sh \
+            --check-staleness \
+            --check-recent-verbs \
+            --head-date "$head_date"
