@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{Duration, TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
@@ -31,8 +31,30 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 
+/// Serializes both tests in this binary so the `pin_early_stop_defaults`
+/// env-var writes can't race with the executor's `env::var` reads on the
+/// other test's thread. `std::env::set_var` is process-global and
+/// fundamentally unsafe to call concurrently with `env::var` reads
+/// (Rust 1.79+ marks it `unsafe` for that reason); even when both tests
+/// set the same values, an interleaved getenv during a setenv can return
+/// a partially-updated string. Pattern mirrors `tests/api_eval_run.rs`.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 async fn fresh_store() -> RunStore {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    // `max_connections(1)` pins the pool to a single connection. Default
+    // sqlx pools open multiple connections, and `sqlite::memory:` gives
+    // each connection its OWN in-memory database — so writes on one
+    // connection are invisible to reads on another. The early-stop test
+    // writes two supervisor notes (one per skip window) and then reads
+    // them back via `read_supervisor_notes`; without the cap, the read
+    // can land on a connection that only saw one of the inserts and the
+    // count flakes between 1 and 2. See `tests/api_eval.rs` etc. for the
+    // same single-connection pattern.
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     // FK off so we can apply migration 018 (supervisor_notes) without
     // pulling in the full agent_runs chain — the eval store never
     // enables FK enforcement at runtime either, so the eval `run_id`
@@ -150,6 +172,7 @@ fn synthetic_bars(n: usize) -> Vec<Ohlcv> {
 
 #[tokio::test]
 async fn flat_degeneracy_triggers_inherited_skip_window() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     pin_early_stop_defaults();
 
     // 12 bars at 1-day cadence; default policy fires after 8 flats
@@ -245,6 +268,7 @@ async fn flat_degeneracy_triggers_inherited_skip_window() {
 
 #[tokio::test]
 async fn second_skip_window_only_triggers_after_counter_resets() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     pin_early_stop_defaults();
 
     // 28 bars to fit two complete windows with the documented 8/4
