@@ -22,52 +22,60 @@ afterEach(() => {
 });
 
 describe("MobileDrawer", () => {
-  it("acts as a modal dialog and restores focus on close", async () => {
+  it("renders as a non-modal nav landmark when open", async () => {
+    renderDrawer();
+
+    expect(screen.queryByRole("navigation", { name: "Navigation" })).toBeNull();
+
+    act(() => {
+      useUi.setState({ mobileDrawerOpen: true });
+    });
+
+    const nav = await screen.findByRole("navigation", { name: "Navigation" });
+    expect(nav).not.toHaveAttribute("role", "dialog");
+    expect(nav).not.toHaveAttribute("aria-modal");
+  });
+
+  it("closes via the Close navigation button and is removed from the DOM", async () => {
     const user = userEvent.setup();
+    renderDrawer();
+    act(() => {
+      useUi.setState({ mobileDrawerOpen: true });
+    });
+
+    const close = await screen.findByRole("button", { name: "Close navigation" });
+    await user.click(close);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("navigation", { name: "Navigation" })).toBeNull();
+    });
+  });
+
+  it("does not steal focus when it opens", async () => {
     renderDrawer();
 
     const opener = screen.getByRole("button", { name: "Open navigation" });
     opener.focus();
+    expect(opener).toHaveFocus();
+
     act(() => {
       useUi.setState({ mobileDrawerOpen: true });
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole("dialog", { name: "Navigation" })).toHaveAttribute(
-        "aria-modal",
-        "true",
-      );
-    });
-    await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "Close navigation" })[1])
-        .toHaveFocus();
-    });
-
-    await user.keyboard("{Escape}");
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Navigation" })).toBeNull();
-    });
+    await screen.findByRole("navigation", { name: "Navigation" });
     expect(opener).toHaveFocus();
   });
 
-  it("traps tab focus within the drawer", async () => {
-    const user = userEvent.setup();
+  it("does not render a backdrop element", async () => {
     renderDrawer();
     act(() => {
       useUi.setState({ mobileDrawerOpen: true });
     });
 
-    await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "Close navigation" }))
-        .toHaveLength(2);
+    await screen.findByRole("navigation", { name: "Navigation" });
+    const closeButtons = screen.getAllByRole("button", {
+      name: "Close navigation",
     });
-    const close = screen.getAllByRole("button", { name: "Close navigation" })[1];
-    await waitFor(() => expect(close).toHaveFocus());
-
-    await user.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(screen.getByRole("button", { name: "View history" })).toHaveFocus();
-
-    await user.tab();
-    expect(close).toHaveFocus();
+    expect(closeButtons).toHaveLength(1);
   });
 });

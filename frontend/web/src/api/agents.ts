@@ -4,6 +4,7 @@
 //   docs/superpowers/plans/2026-05-11-agents-page-v1.md
 
 import { apiFetch } from "./client";
+import type { MemoryMode } from "./types.gen/MemoryMode";
 
 export type AgentSlot = {
   name: string;
@@ -20,6 +21,12 @@ export type AgentSlot = {
   /// metadata table (q15 §1). A number is honored verbatim, clamped to
   /// the model's per-request ceiling server-side.
   max_tokens: number | null;
+  /// V2D: cortex-memory mode for this slot. `"off"` (the default)
+  /// keeps the dispatcher's memory seam dormant. `"global"` and
+  /// `"agent_scoped"` opt this slot into recall + write through
+  /// `xvision-memory`. Optional on the wire — the server's
+  /// `#[serde(default)]` collapses missing values to `"off"`.
+  memory_mode?: MemoryMode;
 };
 
 export type Agent = {

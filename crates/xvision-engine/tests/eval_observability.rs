@@ -179,6 +179,13 @@ async fn failing_dispatch_emits_error_span_with_message() {
         max_tokens: None,
         temperature: None,
         obs: Some(emitter.clone()),
+        memory: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
     })
     .await;
     assert!(result.is_err(), "failing dispatch must propagate Err");
@@ -217,8 +224,6 @@ async fn failing_dispatch_emits_error_span_with_message() {
 #[tokio::test]
 async fn execute_slot_with_no_emitter_does_not_touch_bus() {
     let pool = setup_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.pool.clone()));
-    let _bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let slot = slot();
     let dispatch = Arc::new(FailingDispatch);
@@ -232,6 +237,13 @@ async fn execute_slot_with_no_emitter_does_not_touch_bus() {
         max_tokens: None,
         temperature: None,
         obs: None,
+        memory: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
     })
     .await;
     assert!(result.is_err());

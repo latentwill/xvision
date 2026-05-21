@@ -100,6 +100,13 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
         max_tokens: None,
         temperature: None,
         obs: Some(emitter),
+        memory: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
     };
 
     // Drive one tool-use iteration. The tool itself fails (registry

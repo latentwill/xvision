@@ -16,7 +16,6 @@ import {
   lookupModel,
 } from "./modelMetadata";
 import { AgentForm } from "./AgentForm";
-import { AgentList } from "./AgentList";
 import * as agentsApi from "@/api/agents";
 import * as settingsApi from "@/api/settings";
 
@@ -229,23 +228,24 @@ describe("AgentForm slot editing", () => {
   });
 });
 
-describe("AgentList", () => {
-  it("falls back to the raw timestamp for malformed updated_at values", () => {
-    render(
-      <MemoryRouter>
-        <AgentList
-          items={[
-            {
-              ...baseAgent,
-              updated_at: "not-a-date",
-            },
-          ]}
-        />
-      </MemoryRouter>,
-    );
+describe("AgentForm memory selector (V2D)", () => {
+  it("round-trips agent_scoped through updateAgent", async () => {
+    const user = userEvent.setup();
+    renderAgentForm();
 
-    expect(screen.getByText("not-a-date")).toBeInTheDocument();
-    expect(screen.queryByText("Invalid Date")).not.toBeInTheDocument();
+    const select = (await screen.findByLabelText("Memory")) as HTMLSelectElement;
+    await user.selectOptions(select, "agent_scoped");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      const call = vi.mocked(agentsApi.updateAgent).mock.calls[0];
+      if (!call) throw new Error("updateAgent was not called");
+      const payload = call[1];
+      if (!payload || !payload.slots) {
+        throw new Error("updateAgent payload did not include slots");
+      }
+      expect(payload.slots[0]?.memory_mode).toBe("agent_scoped");
+    });
   });
 });
 

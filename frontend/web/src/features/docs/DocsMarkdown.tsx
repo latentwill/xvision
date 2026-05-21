@@ -1,6 +1,7 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeSlug from "rehype-slug";
 
 /** Extract the language token from a `language-X` className */
 function langFromClass(className?: string): string | null {
@@ -66,6 +67,7 @@ export function DocsMarkdown({ body }: { body: string }) {
     <div className="docs-markdown text-text text-[14px] leading-[1.65]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSlug]}
         components={{
           h1: (p) => (
             <h1

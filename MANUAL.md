@@ -12,6 +12,12 @@ Sorted by which milestone they unblock. Keep this file in sync with
 `FOLLOWUPS.md` — that file tracks engineering follow-ups; this one tracks
 operator-side prerequisites.
 
+Cross-references for operator-facing concepts that have their own docs:
+
+- **Agent memory** — see `docs/v2d-memory-overview.md` for how the
+  per-slot memory toggle works and why backtest replays don't leak
+  future knowledge.
+
 ---
 
 ## Live-node remote control

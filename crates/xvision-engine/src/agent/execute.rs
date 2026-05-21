@@ -12,10 +12,12 @@ use std::sync::Arc;
 use crate::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, ResponseSchema, StopReason,
 };
+use crate::agent::memory_recorder::{render_recalled_patterns, RecallResult};
 use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
+use xvision_memory::types::Namespace;
 
 /// Hard cap on the number of tool-use round-trips inside `execute_slot`.
 /// A pathological model that always emits `ToolUse` (no `EndTurn`) would
@@ -99,6 +101,38 @@ pub struct SlotInput<'a> {
     /// existing call sites (legacy pipeline, unit tests) opt out
     /// trivially and the emit code becomes a no-op.
     pub obs: Option<ObsEmitter>,
+    /// Optional V2D memory recorder. `Some` enables auto-recall before
+    /// the first dispatch iteration and auto-write after the final
+    /// `EndTurn`. `None` (or a recorder whose mode is Off) is a no-op.
+    pub memory: Option<Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    /// The slot's resolved memory mode (snapshotted from
+    /// `AgentSlot.memory_mode` at dispatch time). Combined with
+    /// `agent_id`, the recorder derives the namespace at recall/record
+    /// time. Two scalars instead of one because `execute_slot` is one
+    /// level below where the slot + agent are joined and we don't want
+    /// to plumb the Agent through.
+    pub memory_mode: xvision_memory::types::MemoryMode,
+    /// Owning agent id for memory namespacing. Empty string when the
+    /// slot has no associated agent (legacy `LLMSlot` pipeline, unit
+    /// tests). With `memory: None` or `memory_mode: Off` this is
+    /// ignored.
+    pub agent_id: String,
+    /// V2D Phase 1.5 — current scenario start. Forwarded to
+    /// `MemoryRecorder::recall` so the store can exclude Patterns
+    /// whose `training_window_end` overlaps the scenario. `None` is
+    /// the safe default for live/paper mode (no replay risk) and for
+    /// every non-eval call site (unit tests, legacy `LLMSlot` pipeline).
+    pub scenario_start: Option<chrono::DateTime<chrono::Utc>>,
+    /// V2D Phase 1.5 — current run id. Plumbed into Observation
+    /// provenance on write. Empty string when memory is off / the
+    /// slot has no associated run (the recorder will no-op).
+    pub run_id: String,
+    /// V2D Phase 1.5 — current scenario id. Plumbed into Observation
+    /// provenance on write. Empty string when memory is off.
+    pub scenario_id: String,
+    /// V2D Phase 1.5 — current decision-cycle index. Plumbed into
+    /// Observation provenance on write. `0` when memory is off.
+    pub cycle_idx: i64,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
@@ -167,6 +201,58 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         content: vec![ContentBlock::Text { text: initial_user }],
     });
 
+    // V2D: recall before dispatch. The recall is bounded by the slot's
+    // `memory_mode` (Off => Skipped) and the engine's configured
+    // embedder (`NoEmbedder` => log + no-op). When hits land, prepend
+    // a `<prior_observations>` block to the system prompt so the model
+    // sees a stable summary of related earlier decisions.
+    let prior_block = if let Some(recorder) = &input.memory {
+        let query_text = serde_json::to_string(&input.upstream_inputs).unwrap_or_default();
+        match recorder
+            .recall(
+                input.memory_mode,
+                &input.agent_id,
+                &query_text,
+                5,
+                input.scenario_start,
+            )
+            .await?
+        {
+            RecallResult::Skipped => None,
+            RecallResult::NoEmbedder { namespace } => {
+                tracing::info!(
+                    event = "memory_disabled_no_embedder",
+                    namespace = %namespace,
+                    "V2D memory recall skipped: no embedder configured",
+                );
+                None
+            }
+            RecallResult::Hits { namespace, matches } => {
+                tracing::info!(
+                    event = "memory_recall",
+                    namespace = %namespace,
+                    k = matches.len(),
+                    "V2D memory recall hits",
+                );
+                // Zero hits → no block. An empty `<prior_observations>`
+                // shell would just waste tokens and trip the leakage
+                // T-filter tests that assert absence on suppression.
+                if matches.is_empty() {
+                    None
+                } else {
+                    Some(render_recalled_patterns(&matches))
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    let assembled_system_prompt = match prior_block {
+        Some(block) => format!("{block}\n\n{}", input.slot.prompt),
+        None => input.slot.prompt.clone(),
+    };
+
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
 
@@ -218,7 +304,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
 
         let req = LlmRequest {
             model: input.slot.effective_model(),
-            system_prompt: input.slot.prompt.clone(),
+            system_prompt: assembled_system_prompt.clone(),
             messages: messages.clone(),
             max_tokens: dispatcher_max_tokens,
             tools: tool_defs.clone(),
@@ -348,6 +434,41 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // those stop reasons, but we trust the stop_reason as the
         // authoritative signal).
         if uses.is_empty() || matches!(resp.stop_reason, StopReason::EndTurn | StopReason::MaxTokens) {
+            // V2D: record the final decision text into the slot's
+            // namespace. No-op when memory is None / Off / no embedder.
+            if let Some(recorder) = &input.memory {
+                if !assistant_text.is_empty() {
+                    match recorder
+                        .record(
+                            input.memory_mode,
+                            &input.agent_id,
+                            &assistant_text,
+                            input.run_id.clone(),
+                            input.scenario_id.clone(),
+                            input.cycle_idx,
+                        )
+                        .await
+                    {
+                        Ok(Some(id)) => {
+                            let ns = Namespace::for_mode(input.memory_mode, &input.agent_id);
+                            tracing::info!(
+                                event = "memory_write",
+                                namespace = %ns.as_str(),
+                                id = %id,
+                                "V2D memory write",
+                            );
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                event = "memory_write_error",
+                                error = %e,
+                                "V2D memory write failed; continuing",
+                            );
+                        }
+                    }
+                }
+            }
             return Ok(LlmResponse {
                 content: resp.content,
                 stop_reason: resp.stop_reason,
@@ -531,6 +652,13 @@ mod tests {
             max_tokens: Some(4096),
             temperature: Some(0.2),
             obs: None,
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await
         .unwrap();
@@ -578,6 +706,13 @@ mod tests {
             max_tokens: None,
             temperature: None,
             obs: None,
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await
         .unwrap();

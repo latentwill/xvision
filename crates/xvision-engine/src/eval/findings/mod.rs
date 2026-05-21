@@ -43,6 +43,9 @@
 //! | `tail_risk` | LLM extractor | warning |
 //! | `lookahead_suspected` | `prober:lookahead` (eval-lookahead-bias-prober) | critical |
 //! | `inference_cost_dominates_return` | `metrics:cost_dominance` (eval-net-of-inference-cost-metric) | warning |
+//! | `uniform_justification` | `smell:uniformity` (eval-honesty-smell-tests) | critical |
+//! | `uniform_decision` | `smell:uniformity` (eval-honesty-smell-tests) | critical |
+//! | `near_uniform_justification` | `smell:uniformity` (eval-honesty-smell-tests) | warning |
 //!
 //! ## V2E item 25: `inference_cost_dominates_return`
 //!
@@ -53,6 +56,7 @@
 //! because this is a per-run aggregate finding, not per-cycle.
 
 pub mod extractor;
+pub mod uniformity;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

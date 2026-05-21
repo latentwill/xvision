@@ -3,28 +3,6 @@ import { render, screen } from "@testing-library/react";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { __INTERNAL } from "@/lib/chunk-reload";
 
-class MemorySessionStorage {
-  private data = new Map<string, string>();
-  get length() {
-    return this.data.size;
-  }
-  clear() {
-    this.data.clear();
-  }
-  getItem(key: string) {
-    return this.data.has(key) ? this.data.get(key)! : null;
-  }
-  setItem(key: string, value: string) {
-    this.data.set(key, String(value));
-  }
-  removeItem(key: string) {
-    this.data.delete(key);
-  }
-  key(index: number) {
-    return Array.from(this.data.keys())[index] ?? null;
-  }
-}
-
 let reloadSpy: ReturnType<typeof vi.fn>;
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -33,12 +11,7 @@ function Boom({ error }: { error: unknown }): JSX.Element {
 }
 
 beforeEach(() => {
-  const storage = new MemorySessionStorage();
-  Object.defineProperty(window, "sessionStorage", {
-    value: storage,
-    writable: true,
-    configurable: true,
-  });
+  window.sessionStorage.clear();
 
   reloadSpy = vi.fn();
   Object.defineProperty(window, "location", {

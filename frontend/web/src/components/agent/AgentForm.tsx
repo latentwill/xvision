@@ -7,7 +7,13 @@
 //   3. On success, run validate() and surface diagnostics inline
 //   4. Errors (Validation/Conflict) surface as inline messages above Save
 
-import { useEffect, useMemo, useState, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
@@ -20,7 +26,9 @@ import {
   recentRuns,
   updateAgent,
   validateAgent,
+  type RunRef,
   type AgentSlot,
+  type StrategyRef,
   type ValidationDiagnostic,
 } from "@/api/agents";
 import { ApiError } from "@/api/client";
@@ -369,66 +377,86 @@ function CrossRefs({ agentId }: { agentId: string }) {
     <Card>
       <CardHeader title="Where this agent is used" />
       <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div>
-          <h4 className="text-[12px] uppercase tracking-wide text-text-3 mb-2 font-medium">
-            Deployed in strategies
-          </h4>
-          {deployedQ.isPending ? (
-            <p className="text-text-3 text-[12.5px] m-0 leading-snug">
-              Loading deployed strategies…
-            </p>
-          ) : deployedQ.isError ? (
-            <p className="text-danger text-[12.5px] m-0 leading-snug">
-              Couldn't load deployed strategies: {errorMessage(deployedQ.error)}
-            </p>
-          ) : deployedQ.data && deployedQ.data.length > 0 ? (
-            <ul className="space-y-1.5">
-              {deployedQ.data.map((s) => (
-                <li key={s.strategy_id} className="text-[13px] text-text-2">
-                  {s.name}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-text-3 text-[12.5px] m-0 leading-snug">
+        <CrossRefPanel
+          title="Deployed in strategies"
+          query={deployedQ}
+          loading="Loading deployed strategies…"
+          errorPrefix="Couldn't load deployed strategies"
+          empty={
+            <>
               Not deployed in any strategy yet. Reference this agent from a
               strategy's authoring page to link it.
-            </p>
+            </>
+          }
+          renderItem={(s) => (
+            <li key={s.strategy_id} className="text-[13px] text-text-2">
+              {s.name}
+            </li>
           )}
-        </div>
-
-        <div>
-          <h4 className="text-[12px] uppercase tracking-wide text-text-3 mb-2 font-medium">
-            Recent runs
-          </h4>
-          {runsQ.isPending ? (
-            <p className="text-text-3 text-[12.5px] m-0 leading-snug">
-              Loading recent runs…
-            </p>
-          ) : runsQ.isError ? (
-            <p className="text-danger text-[12.5px] m-0 leading-snug">
-              Couldn't load recent runs: {errorMessage(runsQ.error)}
-            </p>
-          ) : runsQ.data && runsQ.data.length > 0 ? (
-            <ul className="space-y-1.5">
-              {runsQ.data.map((r) => (
-                <li
-                  key={r.run_id}
-                  className="text-[13px] text-text-2 font-mono"
-                >
-                  {r.run_id.slice(0, 12)}… — {r.status}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-text-3 text-[12.5px] m-0 leading-snug">
+        />
+        <CrossRefPanel
+          title="Recent runs"
+          query={runsQ}
+          loading="Loading recent runs…"
+          errorPrefix="Couldn't load recent runs"
+          empty={
+            <>
               No runs yet. Eval-run attribution lands when strategies start
               referencing agents.
-            </p>
+            </>
+          }
+          renderItem={(r) => (
+            <li key={r.run_id} className="text-[13px] text-text-2 font-mono">
+              {r.run_id.slice(0, 12)}… — {r.status}
+            </li>
           )}
-        </div>
+        />
       </div>
     </Card>
+  );
+}
+
+type CrossRefQuery<T> = {
+  isPending: boolean;
+  isError: boolean;
+  error: unknown;
+  data?: T[];
+};
+
+function CrossRefPanel<T extends StrategyRef | RunRef>({
+  title,
+  query,
+  loading,
+  errorPrefix,
+  empty,
+  renderItem,
+}: {
+  title: string;
+  query: CrossRefQuery<T>;
+  loading: string;
+  errorPrefix: string;
+  empty: ReactNode;
+  renderItem: (item: T) => ReactNode;
+}) {
+  return (
+    <div>
+      <h4 className="text-[12px] uppercase tracking-wide text-text-3 mb-2 font-medium">
+        {title}
+      </h4>
+      {query.isPending ? (
+        <p className="text-text-3 text-[12.5px] m-0 leading-snug">
+          {loading}
+        </p>
+      ) : query.isError ? (
+        <p className="text-danger text-[12.5px] m-0 leading-snug">
+          {errorPrefix}: {errorMessage(query.error)}
+        </p>
+      ) : query.data && query.data.length > 0 ? (
+        <ul className="space-y-1.5">{query.data.map(renderItem)}</ul>
+      ) : (
+        <p className="text-text-3 text-[12.5px] m-0 leading-snug">{empty}</p>
+      )}
+    </div>
   );
 }
 
