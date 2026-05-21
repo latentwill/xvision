@@ -1312,11 +1312,18 @@ async fn run_inner(
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.ok_or_else(|| ApiError::Validation("paper mode requires a broker".into()))?;
-            build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
+            build_paper_executor(
+                ctx,
+                &scenario,
+                from_db,
+                b,
+                obs_emitter.clone(),
+                req.limits.as_ref(),
+            )
+            .await?
         }
         RunMode::Backtest => {
-            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref())
-                .await?
+            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref()).await?
         }
     };
 
@@ -1681,6 +1688,7 @@ async fn build_paper_executor(
     from_db: bool,
     broker: Arc<dyn BrokerSurface>,
     obs: Option<crate::agent::observability::ObsEmitter>,
+    limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
     let bars = load_ohlcv_for_scenario(ctx, scenario, from_db).await?;
     let warmup = if from_db {
@@ -1700,6 +1708,9 @@ async fn build_paper_executor(
         .with_min_notional_usd(min_notional);
     if let Some(emitter) = obs {
         paper = paper.with_observability(emitter);
+    }
+    if let Some(l) = limits {
+        paper = paper.with_limits(l.clone());
     }
     Ok(Box::new(paper))
 }
@@ -1899,11 +1910,18 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.expect("paper mode broker built above");
-            build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
+            build_paper_executor(
+                ctx,
+                &scenario,
+                from_db,
+                b,
+                obs_emitter.clone(),
+                req.limits.as_ref(),
+            )
+            .await?
         }
         RunMode::Backtest => {
-            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref())
-                .await?
+            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref()).await?
         }
     };
 
