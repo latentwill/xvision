@@ -667,33 +667,64 @@ End of Phase 1. The `xvision-memory` crate is complete. No engine touch. Ready f
 
 ---
 
-## Phase 1.5: cortex tier split (`xvision-memory` refactor)
+## Phase 1.5: cortex tier split + leakage protection (`xvision-memory` refactor)
 
-**Added 2026-05-21** after the `/grill-me` design pass surfaced a
+**Added 2026-05-21** after a `/grill-me` design pass surfaced a
 look-ahead leakage problem in the single-tier shape — see
-`docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`.
+`docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`
+for the full design discussion. This phase implements **F + L + T**:
 
-This phase converts the single-tier store from Phase 1 into a two-tier
-cortex shape:
+- **F (structural):** two-tier store. **Observations** carry
+  concrete provenance, written by the auto-recorder, **never
+  recalled** at decision time. **Patterns** are abstracted,
+  provenance-stripped, **recalled** by the dispatcher.
+- **L (rhetorical):** recall wraps each retrieved Pattern in
+  case-law framing ("a prior decision noted X. Consider whether this
+  situation matches the present cycle") before prepending to
+  `system_prompt`.
+- **T (temporal):** Patterns carry `training_window_end` (latest
+  bar timestamp across contributing Observations). Recall filters
+  Patterns whose training window overlaps the current scenario's
+  start date.
 
-- **Resources** tier — concrete observations with mandatory provenance
-  (`run_id`, `scenario_id`, `cycle_idx`). Written by the auto-recorder
-  (Phase 3). **Never recalled at decision time.**
-- **Skills** tier — abstracted patterns, no provenance. Recalled by the
-  dispatcher at decision time. Populated by an explicit distillation
-  pass (V3 autoresearcher item 11a on the V2 board) or a manual seeding
-  CLI (v1.1 follow-up).
+### Terminology lock
 
-In v1, the Skills tier ships empty. The auto-recorder writes Resources
-(building the autoresearcher's input substrate). Recall returns empty
-for every query because Skills has nothing in it. No leakage is
-possible because the read path the LLM sees cannot surface Resources.
+The cortex literature uses "Resources / Skills". We use **Observations /
+Patterns** in every operator-facing surface (UI, CLI, docs) and reserve
+`Tier::Observation` / `Tier::Pattern` for the Rust enum so the codebase
+stays self-documenting. The legacy `skill_ids` field on `AgentSlot` is
+unrelated to memory; the rename avoids ambiguity for vibecoders /
+vibetraders.
+
+### V1 behavior
+
+- Auto-recorder writes Observations as runs proceed.
+- Recall returns Patterns. **Patterns tier ships empty in v1.**
+- Every recall returns zero hits. The Memory panel renders empty
+  states. The agent sees nothing in `<prior_observations>`.
+- No leakage is possible because the read path the LLM sees is
+  Patterns-only, and Patterns has no rows.
+
+Patterns populate via V3 autoresearcher (item 11a on the V2 board)
+or a v1.1 manual seeding CLI.
 
 **Files:**
-- Modify: `crates/xvision-memory/migrations/0001_init.sql` (add `tier` + provenance columns; pre-Phase-2 schema only — engine migration 027 is unaffected because the column lives on the memory crate's own table)
-- Modify: `crates/xvision-memory/src/types.rs` (add `Tier` enum, extend `MemoryItem` with `tier` + `run_id` / `scenario_id` / `cycle_idx`)
-- Modify: `crates/xvision-memory/src/store.rs` (`upsert` rejects Skills; new `upsert_skill`; new `demote_skill`; `query` filters `WHERE tier='skill'`)
-- Modify: `crates/xvision-memory/tests/store.rs` (extend coverage to enforce Resource/Skill separation)
+- Modify: `crates/xvision-memory/migrations/0001_init.sql` (add `tier`,
+  provenance columns, `training_window_end`; pre-Phase-2 schema only
+  — engine migration 027 is unaffected because the column lives on
+  the memory crate's own table)
+- Modify: `crates/xvision-memory/src/types.rs` (add `Tier` enum,
+  extend `MemoryItem` with `tier` + provenance +
+  `training_window_end`)
+- Modify: `crates/xvision-memory/src/store.rs` (`upsert` removed; new
+  `upsert_observation` / `upsert_pattern` / `demote_pattern`; `query`
+  filters `WHERE tier='pattern' AND training-window OK`)
+- Modify: `crates/xvision-memory/tests/store.rs` (extend coverage to
+  enforce Observation/Pattern separation + time-window filter)
+- Modify: `crates/xvision-engine/src/agent/memory_recorder.rs`
+  (`record` → calls `upsert_observation`; `recall` passes
+  `current_scenario_start`; `render_prior_observations` renamed to
+  `render_recalled_patterns` and wraps each in case-law framing)
 
 ### Task 1.5.1: `Tier` enum + extended `MemoryItem`
 
@@ -705,21 +736,24 @@ possible because the read path the LLM sees cannot surface Resources.
 pub enum Tier {
     /// Episodic — concrete observation with mandatory provenance.
     /// Never recalled at decision time.
-    Resource,
-    /// Semantic — abstracted pattern, no provenance. Recalled at
-    /// decision time.
-    Skill,
+    Observation,
+    /// Semantic — abstracted pattern. Recalled at decision time
+    /// (subject to the time-window filter).
+    Pattern,
 }
 
 impl Tier {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Tier::Resource => "resource",
-            Tier::Skill => "skill",
+            Tier::Observation => "observation",
+            Tier::Pattern => "pattern",
         }
     }
-    pub fn parse_or_resource(s: &str) -> Self {
-        match s { "skill" => Tier::Skill, _ => Tier::Resource }
+    pub fn parse_or_observation(s: &str) -> Self {
+        match s {
+            "pattern" => Tier::Pattern,
+            _ => Tier::Observation,
+        }
     }
 }
 ```
@@ -735,103 +769,250 @@ pub struct MemoryItem {
     pub text: String,
     pub embedding: Vec<f32>,
     pub created_at: chrono::DateTime<chrono::Utc>,
-    /// Resource provenance — REQUIRED on Resources, MUST be `None` on
-    /// Skills. The store enforces this at write time.
+    /// Provenance — REQUIRED on Observations, MUST be `None` on
+    /// Patterns. The store enforces this at write time.
     pub run_id: Option<String>,
     pub scenario_id: Option<String>,
     pub cycle_idx: Option<i64>,
+    /// Latest bar timestamp across the Observations that contributed
+    /// to this Pattern. REQUIRED on autoresearcher-distilled
+    /// Patterns; MAY be `None` on operator-attested manual seeds
+    /// (recalled in every scenario, operator owns the safety
+    /// guarantee). MUST be `None` on Observations.
+    pub training_window_end: Option<chrono::DateTime<chrono::Utc>>,
 }
 ```
 
 Remove the old `source_run_id` / `source_cycle_id` fields (they're
 replaced by the tier-aware provenance).
 
+Also add the `MemoryMatch` wrapping helper used by L:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryMatch {
+    pub id: String,
+    pub text: String,
+    pub score: f32,
+}
+```
+
+(Already exists from Phase 1 — keep as-is.)
+
 ### Task 1.5.2: Schema bump on `memory_items`
 
-- [ ] **Step 1.5.2.1: Rewrite `crates/xvision-memory/migrations/0001_init.sql`** (it's not yet on the merged main, so a rewrite is safe — bump the table definition rather than ALTER):
+- [ ] **Step 1.5.2.1: Rewrite `crates/xvision-memory/migrations/0001_init.sql`** (not yet on merged main — rewrite the table definition rather than ALTER):
 
 ```sql
 CREATE TABLE memory_items (
-    id            TEXT PRIMARY KEY,
-    namespace     TEXT NOT NULL,
-    tier          TEXT NOT NULL,
-    text          TEXT NOT NULL,
-    embedding     BLOB NOT NULL,
-    embedding_dim INTEGER NOT NULL,
-    embedder_id   TEXT NOT NULL,
-    created_at    TEXT NOT NULL,
-    run_id        TEXT,
-    scenario_id   TEXT,
-    cycle_idx     INTEGER
+    id                    TEXT PRIMARY KEY,
+    namespace             TEXT NOT NULL,
+    tier                  TEXT NOT NULL,
+    text                  TEXT NOT NULL,
+    embedding             BLOB NOT NULL,
+    embedding_dim         INTEGER NOT NULL,
+    embedder_id           TEXT NOT NULL,
+    created_at            TEXT NOT NULL,
+    -- Observation provenance; NULL on Patterns.
+    run_id                TEXT,
+    scenario_id           TEXT,
+    cycle_idx             INTEGER,
+    -- Pattern temporal-safety field; NULL on Observations.
+    training_window_end   TEXT
 );
 
 CREATE INDEX idx_memory_items_tier_namespace ON memory_items(tier, namespace);
-CREATE INDEX idx_memory_items_created        ON memory_items(created_at);
+CREATE INDEX idx_memory_items_training_window ON memory_items(training_window_end);
+CREATE INDEX idx_memory_items_created ON memory_items(created_at);
 ```
 
 ### Task 1.5.3: Tier-discriminated store API
 
-- [ ] **Step 1.5.3.1: Split `upsert` into `upsert_resource` + `upsert_skill`**
-
-`MemoryStore::upsert_resource` — accepts a `MemoryItem` where
-`tier == Resource`. Asserts the three provenance fields are `Some`.
-Inserts.
-
-`MemoryStore::upsert_skill` — accepts a `MemoryItem` where `tier ==
-Skill`. Asserts the three provenance fields are `None`. INSERT OR
-REPLACE.
-
-`MemoryStore::demote_skill(id: &str)` — DELETE FROM memory_items
-WHERE id = ? AND tier = 'skill'.
-
-The old `upsert` is removed — callers must pick a tier. The
-recorder (Phase 3) calls `upsert_resource`; the autoresearcher (V3)
-will call `upsert_skill` / `demote_skill`.
-
-- [ ] **Step 1.5.3.2: `query` filters `tier='skill'`**
+- [ ] **Step 1.5.3.1: Replace `upsert` with tier-explicit methods**
 
 ```rust
-pub async fn query(&self, namespace: &str, query_embedding: &[f32], k: usize) -> anyhow::Result<Vec<MemoryMatch>> {
-    let rows: Vec<(String, String, Vec<u8>)> = sqlx::query_as(
-        "SELECT id, text, embedding FROM memory_items \
-         WHERE namespace = ? AND tier = 'skill'",
-    )
-    /* ... */
+impl MemoryStore {
+    /// Episodic write — auto-recorder calls this.
+    /// Asserts:
+    ///   - tier == Observation
+    ///   - run_id, scenario_id, cycle_idx all Some(_)
+    ///   - training_window_end is None
+    pub async fn upsert_observation(
+        &self,
+        item: &MemoryItem,
+        embedder_id: &str,
+    ) -> anyhow::Result<()> {
+        if item.tier != Tier::Observation {
+            anyhow::bail!("upsert_observation requires tier=Observation");
+        }
+        if item.run_id.is_none() || item.scenario_id.is_none() || item.cycle_idx.is_none() {
+            anyhow::bail!("Observation requires run_id, scenario_id, cycle_idx");
+        }
+        if item.training_window_end.is_some() {
+            anyhow::bail!("Observation must not carry training_window_end");
+        }
+        // ... INSERT
+    }
+
+    /// Semantic write — distillation pass / manual seed calls this.
+    /// Asserts:
+    ///   - tier == Pattern
+    ///   - run_id, scenario_id, cycle_idx all None
+    ///   - training_window_end may be Some(date) (autoresearcher) or
+    ///     None (operator wisdom)
+    pub async fn upsert_pattern(
+        &self,
+        item: &MemoryItem,
+        embedder_id: &str,
+    ) -> anyhow::Result<()> {
+        if item.tier != Tier::Pattern {
+            anyhow::bail!("upsert_pattern requires tier=Pattern");
+        }
+        if item.run_id.is_some() || item.scenario_id.is_some() || item.cycle_idx.is_some() {
+            anyhow::bail!("Pattern must not carry run/scenario/cycle provenance");
+        }
+        // ... INSERT OR REPLACE
+    }
+
+    /// Autoresearcher Pattern retirement.
+    pub async fn demote_pattern(&self, id: &str) -> anyhow::Result<u64> {
+        // ... DELETE WHERE id = ? AND tier = 'pattern'
+    }
 }
 ```
 
-Add a new internal `query_resources_for_run` that the autoresearcher
-will call later — *not* exposed to the dispatcher.
+The legacy `upsert` method is removed. Callers must pick a tier.
 
-### Task 1.5.4: Update Phase 1 tests
+- [ ] **Step 1.5.3.2: `query` filters tier + time window**
 
-- [ ] **Step 1.5.4.1: Extend test fixtures with `tier` + provenance**
+```rust
+pub async fn query(
+    &self,
+    namespace: &str,
+    query_embedding: &[f32],
+    k: usize,
+    /// Current scenario start. `None` skips the temporal filter
+    /// (live/paper mode; no replay risk). Backtest dispatchers
+    /// pass `Some(scenario.start)`.
+    current_scenario_start: Option<chrono::DateTime<chrono::Utc>>,
+) -> anyhow::Result<Vec<MemoryMatch>> {
+    let sql = match current_scenario_start {
+        Some(_) => "SELECT id, text, embedding FROM memory_items \
+                    WHERE namespace = ? \
+                      AND tier = 'pattern' \
+                      AND (training_window_end IS NULL \
+                           OR training_window_end < ?)",
+        None => "SELECT id, text, embedding FROM memory_items \
+                 WHERE namespace = ? AND tier = 'pattern'",
+    };
 
-The Phase 1 tests build `MemoryItem` literals. Update them to set
-`tier: Tier::Resource` + provenance for the seeded items in the
-upsert/query tests. Add new tests:
-
-- `upsert_resource_requires_provenance` — rejects when any of
-  `run_id` / `scenario_id` / `cycle_idx` is `None`.
-- `upsert_skill_requires_no_provenance` — rejects when any provenance
-  field is `Some`.
-- `query_only_returns_skills_never_resources` — seed one Resource and
-  one Skill in the same namespace; query returns the Skill, never
-  the Resource.
-- `demote_skill_removes_only_the_named_skill` — uses `demote_skill`
-  to remove one row; other rows untouched.
-
-### Task 1.5.5: Commit
-
-```bash
-git add crates/xvision-memory/migrations crates/xvision-memory/src crates/xvision-memory/tests
-git commit -m "v2d(1.5): cortex tier split — Resources + Skills with tier-discriminated API"
+    let mut q = sqlx::query_as::<_, (String, String, Vec<u8>)>(sql)
+        .bind(namespace);
+    if let Some(start) = current_scenario_start {
+        q = q.bind(start.to_rfc3339());
+    }
+    let rows = q.fetch_all(&self.pool).await?;
+    // ... cosine-score the rows, sort, truncate to k, return as MemoryMatch
+}
 ```
 
-End of Phase 1.5. The memory crate is now cortex-shaped. Resources
-are write-only-from-recorder; Skills are read-by-dispatcher only.
-Recall in v1 returns empty (Skills tier is empty) until distillation
-ships.
+### Task 1.5.4: Recorder updates (L wrapper + observation/pattern split)
+
+- [ ] **Step 1.5.4.1: Recorder writes Observations**
+
+In `crates/xvision-engine/src/agent/memory_recorder.rs`,
+`MemoryRecorder::record` constructs a `MemoryItem` with
+`tier = Observation` and full provenance (already plumbed in
+`SlotInput`). Call `upsert_observation`.
+
+- [ ] **Step 1.5.4.2: Recall passes scenario start + Patterns only**
+
+`MemoryRecorder::recall` looks up the scenario's start date (the
+dispatcher passes it in from `SlotInput`) and forwards it to
+`MemoryStore::query`. The result is a `Vec<MemoryMatch>` of
+Patterns only.
+
+- [ ] **Step 1.5.4.3: Rename + rewrite the prompt wrapper (L)**
+
+Rename `render_prior_observations` → `render_recalled_patterns`.
+The new template wraps each match in case-law framing:
+
+```rust
+fn render_recalled_patterns(matches: &[MemoryMatch]) -> String {
+    let mut out = String::from("<prior_observations>\n");
+    for m in matches {
+        out.push_str(&format!(
+            "A prior decision noted: \"{}\". Consider whether this \
+             situation matches the present cycle.\n\n",
+            preview(&m.text),
+        ));
+    }
+    out.push_str("</prior_observations>");
+    out
+}
+```
+
+The tag stays `<prior_observations>` for back-compat with the Phase
+5 UI MemoryPanel; the *content* becomes case-law framed.
+
+### Task 1.5.5: Tests
+
+- [ ] **Step 1.5.5.1: Extend `crates/xvision-memory/tests/store.rs`**
+
+Update existing tests' `MemoryItem` literals (set `tier: Tier::Observation`
+or `tier: Tier::Pattern` + appropriate provenance / training-window
+fields). Add new tests:
+
+- `upsert_observation_requires_provenance` — rejects when any of
+  `run_id` / `scenario_id` / `cycle_idx` is `None`.
+- `upsert_observation_rejects_training_window_end` — rejects when
+  `training_window_end` is set on an Observation.
+- `upsert_pattern_rejects_provenance` — rejects when any provenance
+  field is set on a Pattern.
+- `query_only_returns_patterns_never_observations` — seed one of
+  each in the same namespace; query returns only the Pattern.
+- `query_excludes_patterns_inside_scenario_window` — seed a Pattern
+  with `training_window_end = 2024-09-01`; query with
+  `current_scenario_start = 2024-08-01` returns empty. Query with
+  `current_scenario_start = 2024-10-01` returns the Pattern.
+- `query_includes_null_training_window_patterns` — seed a Pattern
+  with `training_window_end = None`. Any query returns it.
+- `query_with_no_scenario_start_skips_temporal_filter` — seed a
+  Pattern with `training_window_end = 2024-09-01`; query with
+  `current_scenario_start = None` returns it (live/paper mode).
+- `demote_pattern_removes_only_the_named_pattern` — uses
+  `demote_pattern` to remove one row; other rows untouched.
+
+- [ ] **Step 1.5.5.2: Extend `crates/xvision-engine/tests/agent_memory_dispatch.rs`**
+
+Add tests covering the L wrapper and end-to-end T filter:
+
+- `recall_wraps_each_pattern_in_caselaw_framing` — pre-seed a
+  Pattern, run recall, assert the assembled `system_prompt`
+  contains `"A prior decision noted:"` and `"Consider whether this
+  situation matches the present cycle."`.
+- `recall_excludes_pattern_when_training_window_overlaps_scenario` —
+  pre-seed a Pattern with `training_window_end = 2024-09-01`. Run
+  the dispatcher pipeline with a scenario starting `2024-08-01` —
+  assert recall returns empty and the `system_prompt` does not
+  contain the prior-observations block.
+
+### Task 1.5.6: Commit
+
+```bash
+git add crates/xvision-memory/migrations crates/xvision-memory/src \
+        crates/xvision-memory/tests \
+        crates/xvision-engine/src/agent/memory_recorder.rs \
+        crates/xvision-engine/tests/agent_memory_dispatch.rs
+git commit -m "v2d(1.5): cortex F+L+T — Observations/Patterns tier split + case-law wrapper + training-window filter"
+```
+
+End of Phase 1.5. The memory crate is now cortex-shaped with three
+layers of leakage protection. Observations are write-only-from-recorder;
+Patterns are read-by-dispatcher only, framed as precedents, and
+filtered out when their training overlaps the current scenario.
+Recall in v1 returns empty for every query (Patterns tier is empty)
+until V3 distillation or v1.1 manual seeding ships.
 
 ---
 
