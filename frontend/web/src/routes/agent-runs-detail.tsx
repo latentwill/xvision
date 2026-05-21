@@ -56,6 +56,11 @@ export function AgentRunDetailRoute() {
     [advancedView, filter.filtered, SIMPLE_HIDDEN_KINDS],
   );
 
+  const simpleHiddenCount = useMemo(
+    () => filter.filtered.filter((s) => SIMPLE_HIDDEN_KINDS.has(s.kind)).length,
+    [filter.filtered, SIMPLE_HIDDEN_KINDS],
+  );
+
   const selectedSpan = useMemo(
     () => filter.filtered.find((s) => s.span_id === selectedSpanId) ?? displaySpans[0] ?? null,
     [filter.filtered, displaySpans, selectedSpanId],
@@ -194,8 +199,12 @@ export function AgentRunDetailRoute() {
               type="button"
               aria-pressed={!advancedView}
               onClick={() => setAdvancedView(false)}
-              title="Simple — hide instrumentation spans, collapse attribute bag"
-              className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+              title={
+                simpleHiddenCount > 0
+                  ? `Simple — hide ${simpleHiddenCount} instrumentation span${simpleHiddenCount === 1 ? "" : "s"}, collapse attribute bag`
+                  : "Simple — hide instrumentation spans, collapse attribute bag"
+              }
+              className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center gap-1"
               style={{
                 background: !advancedView ? "var(--surface-card)" : "transparent",
                 border: `1px solid ${!advancedView ? "var(--text-2)" : "var(--border)"}`,
@@ -204,6 +213,11 @@ export function AgentRunDetailRoute() {
               }}
             >
               SIMPLE
+              {simpleHiddenCount > 0 ? (
+                <span className="text-text-3" style={{ fontVariantNumeric: "tabular-nums" }}>
+                  −{simpleHiddenCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
