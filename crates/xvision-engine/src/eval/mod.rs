@@ -25,6 +25,7 @@ pub mod finalize_writer;
 pub mod findings;
 pub mod guardrails;
 pub mod limits;
+pub mod preflight;
 pub mod metrics;
 pub mod orders;
 pub mod postprocess;

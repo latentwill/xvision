@@ -583,6 +583,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         mode: source.mode,
         params_override: source.params_override.clone(),
         limits: None,
+        skip_preflight: false,
     };
     let detail = start_run(ctx, req).await?;
     Ok(RetryOutcome {
@@ -802,6 +803,16 @@ pub struct EvalRunRequest {
     /// `None` (or every field None) is the pre-limits behavior.
     #[serde(default)]
     pub limits: Option<crate::eval::limits::EvalLimits>,
+    /// When `true`, skip the provider reachability preflight and launch the
+    /// run regardless of provider state. For offline-development scenarios
+    /// and CI replay only — the default (`false`) is "preflight on" and
+    /// is the safe production default.
+    ///
+    /// CLI: `--skip-preflight`. Dashboard: `skip_preflight: Option<bool>`.
+    /// When skipped, a `warn`-severity `supervisor_notes` row is written
+    /// immediately after run creation so the audit trail is honest.
+    #[serde(default)]
+    pub skip_preflight: bool,
 }
 
 /// Public env-bound entry point: constructs broker (paper mode only) /
@@ -830,6 +841,31 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+
+    // ── Provider preflight (eval-provider-preflight, 2026-05-21) ────────────
+    let provider_names = collect_provider_names_for_strategy(ctx, &strategy, &agent_slots).await;
+    if !req.skip_preflight && !provider_names.is_empty() {
+        let preflight_results =
+            crate::eval::preflight::preflight_providers(ctx, &provider_names).await;
+        let failing: Vec<_> = preflight_results.iter().filter(|r| !r.reachable).collect();
+        if !failing.is_empty() {
+            let error_body = crate::eval::preflight::format_preflight_error(&preflight_results);
+            tracing::warn!(
+                strategy_id = %req.agent_id,
+                scenario_id = %req.scenario_id,
+                failing_providers = %failing.iter().map(|r| r.provider_name.as_str()).collect::<Vec<_>>().join(", "),
+                "eval launch blocked by provider preflight: {error_body}",
+            );
+            return Err(ApiError::Validation(error_body));
+        }
+    } else if req.skip_preflight {
+        tracing::warn!(
+            strategy_id = %req.agent_id,
+            scenario_id = %req.scenario_id,
+            "provider preflight bypassed via skip_preflight — run will proceed regardless of provider state",
+        );
+    }
+
     let (dispatch_arc, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
     run_with_deps(ctx, req, broker, dispatch_arc, findings_model, tools_arc).await
@@ -937,6 +973,114 @@ async fn select_eval_provider(
          Re-create with `xvn strategy new --provider <name> --model <id>`, set the provider/model on the AgentSlot, or attach an agent that has them configured.",
         strategy.manifest.id,
     )))
+}
+
+/// Collect the distinct set of provider names referenced by every slot (legacy
+/// and attached-agent) in the strategy. This is the preflight candidate set:
+/// every name returned here will be probed by `preflight_providers` before
+/// the run is queued.
+///
+/// Returns an empty `Vec` when the strategy has no slots (misconfigured;
+/// `validate_eval_trader_source` will reject it later) or when every slot
+/// omits the provider field. Callers must not fail on an empty return — the
+/// preflight gate simply skips the probe.
+async fn collect_provider_names_for_strategy(
+    ctx: &ApiContext,
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+
+    // 1. Legacy inline slots on the strategy (trader / intern / regime).
+    for slot in [
+        strategy.trader_slot.as_ref(),
+        strategy.intern_slot.as_ref(),
+        strategy.regime_slot.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(p) = slot.provider.as_deref() {
+            let p = p.trim();
+            if !p.is_empty() && !names.contains(&p.to_string()) {
+                names.push(p.to_string());
+            }
+        }
+    }
+
+    // 2. Resolved agent slots (post-refactor strategies — these include the
+    //    slot configs loaded from the agent library rows at start_run time).
+    for resolved in agent_slots {
+        if let Some(p) = resolved.slot.provider.as_deref() {
+            let p = p.trim();
+            if !p.is_empty() && !names.contains(&p.to_string()) {
+                names.push(p.to_string());
+            }
+        }
+    }
+
+    // 3. AgentRef rows that didn't resolve into `agent_slots` (e.g., because
+    //    the agent-store lookup was skipped or failed). Load each referenced
+    //    agent's slots directly as a belt-and-suspenders safety net.
+    if !strategy.agents.is_empty() {
+        let agent_store = AgentStore::new(ctx.db.clone());
+        for agent_ref in &strategy.agents {
+            // If we already covered this via resolved slots, skip the DB hit.
+            if let Ok(Some(agent)) = agent_store.get(&agent_ref.agent_id).await {
+                for slot in &agent.slots {
+                    let p = slot.provider.trim();
+                    if !p.is_empty() && !names.contains(&p.to_string()) {
+                        names.push(p.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    names
+}
+
+/// Persist one `supervisor_notes` row per probed provider, and an additional
+/// `warn`-severity row when `skip_preflight` is true. Best-effort — write
+/// failures are logged but do not abort the run.
+async fn write_preflight_supervisor_notes(
+    store: &RunStore,
+    run_id: &str,
+    provider_names: &[String],
+    skip_preflight: bool,
+) {
+    if skip_preflight {
+        if let Err(e) = store
+            .record_supervisor_note(
+                run_id,
+                "preflight",
+                "warn",
+                "provider preflight was bypassed via skip_preflight; provider reachability was NOT verified before this run",
+            )
+            .await
+        {
+            tracing::warn!(run_id, err = %e, "failed to write skip_preflight supervisor note");
+        }
+        return;
+    }
+
+    // When preflight ran and passed (we only reach here for non-failing
+    // results — failures return early from start_run), write an `info`
+    // note naming every provider that was verified reachable.
+    if provider_names.is_empty() {
+        return;
+    }
+    let summary = format!(
+        "provider preflight passed: {} provider(s) verified reachable before launch ({})",
+        provider_names.len(),
+        provider_names.join(", "),
+    );
+    if let Err(e) = store
+        .record_supervisor_note(run_id, "preflight", "info", &summary)
+        .await
+    {
+        tracing::warn!(run_id, err = %e, "failed to write preflight-pass supervisor note");
+    }
 }
 
 fn runtime_slots<'a>(
@@ -1873,6 +2017,38 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
 
+    // ── Provider preflight (eval-provider-preflight, 2026-05-21) ────────────
+    // Probe every provider the strategy's agents reference before queuing the
+    // run. A failed probe returns `ApiError::Validation` with an actionable
+    // error message so the operator can fix the endpoint before wasting time
+    // on a run that would fail or (worse) return fixture data silently.
+    //
+    // `skip_preflight = true` bypasses the check for offline-development and
+    // CI replay scenarios. A `warn`-severity `supervisor_notes` row is written
+    // after run creation when this opt-out is used.
+    let provider_names = collect_provider_names_for_strategy(ctx, &strategy, &agent_slots).await;
+    if !req.skip_preflight && !provider_names.is_empty() {
+        let preflight_results =
+            crate::eval::preflight::preflight_providers(ctx, &provider_names).await;
+        let failing: Vec<_> = preflight_results.iter().filter(|r| !r.reachable).collect();
+        if !failing.is_empty() {
+            let error_body = crate::eval::preflight::format_preflight_error(&preflight_results);
+            tracing::warn!(
+                strategy_id = %req.agent_id,
+                scenario_id = %req.scenario_id,
+                failing_providers = %failing.iter().map(|r| r.provider_name.as_str()).collect::<Vec<_>>().join(", "),
+                "eval launch blocked by provider preflight: {error_body}",
+            );
+            return Err(ApiError::Validation(error_body));
+        }
+    } else if req.skip_preflight {
+        tracing::warn!(
+            strategy_id = %req.agent_id,
+            scenario_id = %req.scenario_id,
+            "provider preflight bypassed via skip_preflight — run will proceed regardless of provider state",
+        );
+    }
+
     let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
@@ -1931,6 +2107,17 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         .create(&run)
         .await
         .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+
+    // Persist preflight results as supervisor_notes immediately after the run
+    // row exists. Uses `info` severity for reachable providers and `warn` for
+    // skip_preflight. Best-effort: a failed note write does NOT abort the run.
+    write_preflight_supervisor_notes(
+        &store,
+        &run.id,
+        &provider_names,
+        req.skip_preflight,
+    )
+    .await;
 
     if let Some(em) = obs_emitter.as_ref() {
         let objective = format!(
