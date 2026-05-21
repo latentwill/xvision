@@ -1,6 +1,6 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum_test::TestServer;
 use tempfile::TempDir;
@@ -66,7 +66,7 @@ case \"$1\" in
   eval)
     case \"$2\" in
       watch)
-        sleep 2
+        sleep 30
         echo 'slow done'
         exit 0
         ;;
@@ -108,6 +108,28 @@ async fn wait_for_terminal_status(server: &TestServer, job_id: &str) -> serde_js
     }
 
     panic!("job {job_id} did not reach terminal status");
+}
+
+async fn wait_for_running_status(server: &TestServer, job_id: &str) -> serde_json::Value {
+    for _ in 0..160 {
+        let path = format!("/api/cli/jobs/{job_id}");
+        let meta = server.get(&path).await;
+        meta.assert_status_ok();
+        let body: serde_json::Value = meta.json();
+        if body["status"] == "running" {
+            return body;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    panic!("job {job_id} did not reach running status");
+}
+
+async fn job_output(server: &TestServer, job_id: &str) -> serde_json::Value {
+    let output_path = format!("/api/cli/jobs/{job_id}/output");
+    let out = server.get(&output_path).await;
+    out.assert_status_ok();
+    out.json()
 }
 
 #[tokio::test]
@@ -193,6 +215,7 @@ async fn create_job_runs_xvn_and_captures_output() {
 #[tokio::test]
 async fn job_timeout_marks_timed_out_status() {
     let (server, _tmp) = boot().await;
+    let start = Instant::now();
     let create = server
         .post("/api/cli/jobs")
         .json(&serde_json::json!({
@@ -205,8 +228,21 @@ async fn job_timeout_marks_timed_out_status() {
     let job_id = body["job_id"].as_str().unwrap();
 
     let meta = wait_for_terminal_status(&server, job_id).await;
+    let elapsed = start.elapsed();
     assert_eq!(meta["status"], "timed_out");
     assert_eq!(meta["timed_out"], true);
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "timeout should terminate the fake CLI before normal completion; took {elapsed:?}",
+    );
+    let output = job_output(&server, job_id).await;
+    assert!(
+        !output["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("slow done"),
+        "timed-out job must not reach the fake CLI normal completion marker",
+    );
 }
 
 #[tokio::test]
@@ -223,13 +259,33 @@ async fn cancel_job_marks_cancelled_status() {
     let body: serde_json::Value = create.json();
     let job_id = body["job_id"].as_str().unwrap();
 
+    let running = wait_for_running_status(&server, job_id).await;
+    assert!(
+        running["pid"].as_i64().is_some(),
+        "POST cancel test must target a running child process: {running:?}",
+    );
+
+    let start = Instant::now();
     let cancel_path = format!("/api/cli/jobs/{job_id}/cancel");
     let cancel = server.post(&cancel_path).await;
     cancel.assert_status_ok();
 
     let meta = wait_for_terminal_status(&server, job_id).await;
+    let elapsed = start.elapsed();
     assert_eq!(meta["status"], "cancelled");
     assert_eq!(meta["cancel_requested"], true);
+    assert!(
+        elapsed < Duration::from_secs(7),
+        "POST cancel should terminate the fake CLI before normal completion; took {elapsed:?}",
+    );
+    let output = job_output(&server, job_id).await;
+    assert!(
+        !output["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("slow done"),
+        "cancelled job must not reach the fake CLI normal completion marker",
+    );
 }
 
 #[tokio::test]

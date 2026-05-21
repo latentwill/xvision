@@ -8,6 +8,8 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::process::Command as StdCommand;
 use std::time::{Duration, Instant};
 
 use axum_test::TestServer;
@@ -121,6 +123,42 @@ fn make_executable(path: &std::path::Path) {
     let mut perms = fs::metadata(path).unwrap().permissions();
     perms.set_mode(0o755);
     fs::set_permissions(path, perms).unwrap();
+}
+
+async fn wait_for_running_job(server: &TestServer, job_id: &str) -> serde_json::Value {
+    for _ in 0..100 {
+        let meta: serde_json::Value = server.get(&format!("/api/cli/jobs/{job_id}")).await.json();
+        if meta["status"] == "running" {
+            return meta;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("job {job_id} did not reach running status");
+}
+
+#[cfg(unix)]
+fn process_group_has_members(pgid: i64) -> bool {
+    StdCommand::new("pgrep")
+        .arg("-g")
+        .arg(pgid.to_string())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn process_group_has_members(_pgid: i64) -> bool {
+    false
+}
+
+async fn assert_process_group_exits(pgid: i64) {
+    for _ in 0..100 {
+        if !process_group_has_members(pgid) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("process group {pgid} still had live members after job termination");
 }
 
 async fn wait_for_terminal_status(server: &TestServer, job_id: &str) -> serde_json::Value {
@@ -288,14 +326,11 @@ async fn delete_endpoint_cancels_job_within_6_seconds() {
     let body: serde_json::Value = create.json();
     let job_id = body["job_id"].as_str().unwrap();
 
-    // Wait until the job is running.
-    for _ in 0..80 {
-        let meta: serde_json::Value = server.get(&format!("/api/cli/jobs/{job_id}")).await.json();
-        if meta["status"] == "running" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let running = wait_for_running_job(&server, job_id).await;
+    assert!(
+        running["pid"].as_i64().is_some(),
+        "running job must have a persisted pid: {running:?}",
+    );
 
     let start = Instant::now();
     let delete = server.delete(&format!("/api/cli/jobs/{job_id}")).await;
@@ -311,10 +346,14 @@ async fn delete_endpoint_cancels_job_within_6_seconds() {
         meta
     );
     assert!(
-        elapsed < Duration::from_secs(10),
-        "cancellation should complete within 10 seconds; took {elapsed:?}",
+        elapsed < Duration::from_secs(6),
+        "cancellation should complete within 6 seconds; took {elapsed:?}",
     );
     assert_eq!(meta["cancel_requested"], true);
+    assert!(
+        matches!(meta["cancel_signal"].as_str(), Some("SIGTERM" | "SIGKILL")),
+        "cancel_signal should record the delivered cancellation signal: {meta:?}",
+    );
 }
 
 // ─── Allowlist rejection ──────────────────────────────────────────────────────
@@ -409,6 +448,14 @@ async fn completed_job_has_command_class_set() {
     assert_eq!(
         meta["command_class"], "eval",
         "command_class should be the first argv element",
+    );
+    assert_eq!(
+        meta["user"], "unknown:dashboard",
+        "HTTP-created jobs should persist the current AuthContext fallback user",
+    );
+    assert_eq!(
+        meta["source"], "unknown",
+        "HTTP-created jobs should persist the current AuthContext fallback source",
     );
     // output_bytes should be the sum of stdout_bytes + stderr_bytes.
     let output_bytes = meta["output_bytes"].as_u64().unwrap_or(0);
@@ -514,7 +561,8 @@ async fn runtime_cap_exceeded_kills_slow_process() {
     use xvision_dashboard::cli_jobs::store::CreateJobParams;
 
     let tmp = TempDir::new().unwrap();
-    // A job that sleeps 60 seconds; our cap is 2 seconds.
+    // A shell job that sleeps 60 seconds; our cap is 2 seconds. The shell waits
+    // on a descendant `sleep`, so process-group cleanup is observable.
     let cli = write_slow_cli(tmp.path(), 60);
     let state = AppState::new(tmp.path().to_path_buf())
         .await
@@ -585,6 +633,9 @@ async fn runtime_cap_exceeded_kills_slow_process() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
     let elapsed = start.elapsed();
+    let pgid = result
+        .pid
+        .expect("running job should persist a child pid for process-group cleanup");
 
     assert_eq!(
         result.status,
@@ -601,6 +652,7 @@ async fn runtime_cap_exceeded_kills_slow_process() {
         elapsed < Duration::from_secs(15),
         "runtime cap should be enforced within 15 seconds; took {elapsed:?}",
     );
+    assert_process_group_exits(pgid).await;
 }
 
 // ─── DELETE endpoint wiring ───────────────────────────────────────────────────
