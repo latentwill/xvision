@@ -127,6 +127,19 @@ pub struct ApiContext {
     /// so cross-request finalizes batch together (followup wiring;
     /// see the F-2 acceptance note).
     pub finalize_writer: Arc<crate::eval::finalize_writer::FinalizeWriter>,
+    /// V2D auto-recall + auto-write recorder. `Some` when the engine
+    /// was opened via `ApiContext::open` (which always builds a
+    /// `MemoryStore` against `$XVN_MEMORY_DB` or `~/.xvn/memory.db`).
+    /// The wrapped recorder carries an `Embedder` when one was
+    /// configurable at startup, otherwise it carries the store alone
+    /// and the dispatcher emits `memory_disabled_no_embedder` for any
+    /// non-Off slot.
+    ///
+    /// `ApiContext::new` (the in-memory test constructor) leaves this
+    /// `None` so unit tests don't need an on-disk memory DB. The
+    /// dispatcher treats `None` the same as a slot whose
+    /// `memory_mode == Off` — no recall, no write, no events.
+    pub memory_recorder: Option<Arc<crate::agent::memory_recorder::MemoryRecorder>>,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -195,7 +208,26 @@ impl ApiContext {
         migrate_trace_surface_foundation(&pool).await?;
         migrate_agent_slot_memory_mode(&pool).await?;
 
-        let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
+        // V2D Phase 3.3: open the memory store + (optionally) the
+        // default OpenAI embedder. Failures here are NON-fatal — the
+        // engine continues without a recorder so existing CLI / dash
+        // boot paths don't regress when the operator hasn't configured
+        // OpenAI yet. A `None` recorder turns every per-slot recall
+        // / write into a no-op at the dispatcher boundary.
+        let memory_recorder = match build_memory_recorder().await {
+            Ok(r) => Some(r),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "V2D: failed to open memory store; continuing without recorder",
+                );
+                None
+            }
+        };
+
+        let mut ctx = Self::new(pool, actor, xvn_home.to_path_buf());
+        ctx.memory_recorder = memory_recorder;
+        let ctx = ctx;
 
         // First-run seed: 4 canonical scenarios. Idempotent — short-circuits
         // when canonical rows already exist, so re-opening the same `xvn_home`
@@ -229,7 +261,20 @@ impl ApiContext {
             obs_config: Arc::new(xvision_observability::ObservabilityConfig::default()),
             launch_gate: Arc::new(crate::eval::concurrency::LaunchConcurrencyGate::from_env()),
             finalize_writer,
+            memory_recorder: None,
         }
+    }
+
+    /// Builder override for the V2D memory recorder. Production paths
+    /// pick this up from `ApiContext::open`; tests that exercise
+    /// recall/write end-to-end via the dispatcher inject a recorder
+    /// here.
+    pub fn with_memory_recorder(
+        mut self,
+        recorder: Arc<crate::agent::memory_recorder::MemoryRecorder>,
+    ) -> Self {
+        self.memory_recorder = Some(recorder);
+        self
     }
 
     /// Builder override for the eval launch-concurrency gate. Tests use
@@ -324,6 +369,70 @@ impl ApiContext {
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
+}
+
+/// V2D Phase 3.3: assemble the `MemoryRecorder` ApiContext uses for
+/// auto-recall / auto-write. Opens (or creates) the memory SQLite DB
+/// under `$XVN_MEMORY_DB` (overridable) or `~/.xvn/memory.db`, then
+/// tries to build the default OpenAI embedder from the operator's
+/// `OPENAI_API_KEY` + optional `OPENAI_BASE_URL`. When no embedder
+/// config is present the recorder is still built (`new`, not
+/// `with_embedder`) so the dispatcher can emit
+/// `memory_disabled_no_embedder` for any non-Off slot.
+async fn build_memory_recorder()
+    -> anyhow::Result<Arc<crate::agent::memory_recorder::MemoryRecorder>>
+{
+    let memory_db_path = std::env::var("XVN_MEMORY_DB")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            // Fallback to the operator's home dir. If that's
+            // unavailable (CI containers, sandboxed runs), drop the
+            // memory DB next to the cwd so we never crash startup.
+            dirs::home_dir()
+                .map(|h| h.join(".xvn").join("memory.db"))
+                .unwrap_or_else(|| std::path::PathBuf::from(".xvn-memory.db"))
+        });
+
+    if let Some(parent) = memory_db_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
+    }
+
+    let store = Arc::new(xvision_memory::store::MemoryStore::open(&memory_db_path).await?);
+
+    let embedder = build_default_embedder();
+    let recorder = match embedder {
+        Some(e) => crate::agent::memory_recorder::MemoryRecorder::with_embedder(
+            Arc::clone(&store),
+            e,
+        ),
+        None => crate::agent::memory_recorder::MemoryRecorder::new(Arc::clone(&store)),
+    };
+    Ok(Arc::new(recorder))
+}
+
+/// Build the default OpenAI embedder from environment-resolved
+/// provider credentials. Returns `None` when no `OPENAI_API_KEY` is
+/// available so the engine boots without embeddings; the dispatcher
+/// then emits `memory_disabled_no_embedder` for any non-Off slot.
+///
+/// The full provider-config lookup (read from `secrets/providers.toml`,
+/// honour brokers, etc.) is a follow-up — for now the env path is the
+/// minimal seam that satisfies the Phase 3 acceptance ("OpenAI
+/// embedder at engine startup") without dragging the providers crate
+/// into ApiContext::open.
+fn build_default_embedder()
+    -> Option<Arc<dyn xvision_memory::embedder::Embedder>>
+{
+    let api_key = std::env::var("OPENAI_API_KEY").ok().filter(|s| !s.is_empty())?;
+    let base_url = std::env::var("OPENAI_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+    Some(Arc::new(crate::agent::openai_embedder::OpenAiEmbedder::new(
+        base_url, api_key,
+    )))
 }
 
 async fn table_exists(pool: &SqlitePool, table: &str) -> ApiResult<bool> {

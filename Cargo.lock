@@ -8016,6 +8016,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "chrono",
+ "dirs",
  "ed25519-dalek",
  "flate2",
  "hex",
