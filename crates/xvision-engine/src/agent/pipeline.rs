@@ -46,6 +46,18 @@ pub struct ResolvedAgentSlot {
     /// prefix stays stable across many decisions and provider prompt
     /// caching (Anthropic) can land a hit on the static portion.
     pub bar_history_limit: Option<u32>,
+    /// V2D: snapshotted memory mode for this slot. Threaded into
+    /// `SlotInput.memory_mode` so the dispatcher's recall/write seam
+    /// can derive the namespace via `xvision_memory::Namespace::for_mode`.
+    /// `Off` (the default) keeps the recorder dormant — legacy callers
+    /// that don't set this opt out trivially.
+    pub memory_mode: xvision_memory::types::MemoryMode,
+    /// V2D: the owning agent's id, populated from the parent `Agent`
+    /// row at strategy-resolution time so the recorder can scope memory
+    /// per agent (`agent:<agent_id>`). Empty string when the slot has
+    /// no associated agent (legacy regime/intern/trader `LLMSlot` path,
+    /// unit tests). With `memory_mode = Off` this field is ignored.
+    pub agent_id: String,
 }
 
 pub struct PipelineInputs<'a> {
@@ -60,6 +72,33 @@ pub struct PipelineInputs<'a> {
     /// inherits the no-op path without code changes, and the eval
     /// executors opt in via `BacktestExecutor::with_observability_bus`.
     pub obs: Option<ObsEmitter>,
+    /// V2D: optional cortex-memory recorder. Threaded into every
+    /// `execute_slot` call so per-slot `memory_mode = AgentScoped`
+    /// (or future modes) triggers a recall before dispatch and a
+    /// write after the final EndTurn. `None` is the safe default —
+    /// legacy callers (unit tests, CLI rehearsal, non-eval paths)
+    /// stay on the no-op recall path. The eval executors thread
+    /// `ApiContext.memory_recorder` here when the server has a
+    /// store + embedder configured.
+    pub memory_recorder:
+        Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    /// V2D Phase 1.5 — current scenario start, forwarded into
+    /// `SlotInput.scenario_start` so the recorder's recall path can
+    /// exclude Patterns whose `training_window_end` overlaps the
+    /// scenario. `None` is the safe default (live/paper mode or
+    /// non-eval call sites — no temporal filter applied).
+    pub scenario_start: Option<chrono::DateTime<chrono::Utc>>,
+    /// V2D Phase 1.5 — current run id, forwarded into Observation
+    /// provenance on memory write. Empty string when no run is
+    /// associated.
+    pub run_id: String,
+    /// V2D Phase 1.5 — current scenario id, forwarded into Observation
+    /// provenance on memory write. Empty string when no scenario is
+    /// associated.
+    pub scenario_id: String,
+    /// V2D Phase 1.5 — current decision-cycle index, forwarded into
+    /// Observation provenance on memory write. `0` is the safe default.
+    pub cycle_idx: i64,
 }
 
 #[derive(Debug)]
@@ -82,6 +121,9 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
 
     let regime = if let Some(slot) = &input.strategy.regime_slot {
         let max_tokens = default_max_tokens_for(slot);
+        // Legacy `LLMSlot` path has no associated `AgentSlot.memory_mode`
+        // or owning `Agent.agent_id`, so the recorder stays off here even
+        // if a recorder was provided. Only the agent-slot path opts in.
         let out = execute_slot(SlotInput {
             slot,
             upstream_inputs: accumulated.clone(),
@@ -91,6 +133,13 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             max_tokens,
             temperature: None,
             obs: input.obs.clone(),
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await?;
         total_in += out.input_tokens;
@@ -112,6 +161,13 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             max_tokens,
             temperature: None,
             obs: input.obs.clone(),
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await?;
         total_in += out.input_tokens;
@@ -133,6 +189,13 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             max_tokens,
             temperature: None,
             obs: input.obs.clone(),
+            memory: None,
+            memory_mode: xvision_memory::types::MemoryMode::Off,
+            agent_id: String::new(),
+            scenario_start: None,
+            run_id: String::new(),
+            scenario_id: String::new(),
+            cycle_idx: 0,
         })
         .await?;
         total_in += out.input_tokens;
@@ -172,6 +235,10 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         // right schema and then silently dropped its result (QA #5).
         let role_key = canonical_role(&resolved.role);
         let is_trader_output = role_key == "trader";
+        // V2D: thread the per-slot memory snapshot + the executor's
+        // recorder into `execute_slot`. The recorder treats `Off` /
+        // empty-namespace as a no-op, so non-eval call sites that don't
+        // pass a recorder stay on the legacy path.
         let out = execute_slot(SlotInput {
             slot: &resolved.slot,
             upstream_inputs: accumulated.clone(),
@@ -185,6 +252,13 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             max_tokens: resolved.max_tokens,
             temperature: resolved.temperature,
             obs: input.obs.clone(),
+            memory: input.memory_recorder.clone(),
+            memory_mode: resolved.memory_mode,
+            agent_id: resolved.agent_id.clone(),
+            scenario_start: input.scenario_start,
+            run_id: input.run_id.clone(),
+            scenario_id: input.scenario_id.clone(),
+            cycle_idx: input.cycle_idx,
         })
         .await?;
         total_in += out.input_tokens;
@@ -235,7 +309,12 @@ pub fn agent_slot_to_llm_slot(role: &str, slot: &AgentSlot) -> LLMSlot {
 /// effective `max_tokens` once at strategy-construction time. Callers in
 /// `api/eval.rs` use this so the eval executor never has to look at
 /// `AgentSlot` directly.
-pub fn resolve_agent_slot(role: &str, slot: &AgentSlot) -> ResolvedAgentSlot {
+///
+/// `agent_id` is the owning `Agent.agent_id` from the parent row; it is
+/// propagated onto the resolved slot so the V2D memory recorder can
+/// scope recall/write to `agent:<agent_id>`. Pass an empty string when
+/// no agent is associated (legacy tests).
+pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> ResolvedAgentSlot {
     ResolvedAgentSlot {
         role: role.to_string(),
         slot: agent_slot_to_llm_slot(role, slot),
@@ -243,6 +322,8 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot) -> ResolvedAgentSlot {
         temperature: slot.temperature,
         inputs_policy: slot.inputs_policy,
         bar_history_limit: slot.bar_history_limit,
+        memory_mode: slot.memory_mode,
+        agent_id: agent_id.to_string(),
     }
 }
 

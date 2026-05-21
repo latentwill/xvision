@@ -46,12 +46,13 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ulid::Ulid;
 
 use crate::agents::{Agent, AgentStore};
 use crate::api::{self, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{EvalAttestation, TokensUsed};
 use crate::eval::cost::compute_token_cost_usd_from_catalog;
-use crate::eval::findings::Finding;
+use crate::eval::findings::{Finding, Severity, FINDING_SCHEMA_VERSION};
 use crate::eval::review::EvalReview;
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::Scenario;
@@ -159,6 +160,15 @@ pub struct ReviewExportRow {
     pub findings: Vec<Finding>,
 }
 
+/// A single `(provider, model)` pair observed across the run's model calls,
+/// with a count of how many calls used that pair.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderModel {
+    pub provider: String,
+    pub model: String,
+    pub call_count: u64,
+}
+
 /// Provider-side diagnostics persisted alongside the run.
 ///
 /// `attestation` is only present when the run was attested (a separate
@@ -193,6 +203,12 @@ pub struct ProviderDiagnostics {
     /// missing catalog, or mixed executable models in the same run).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_usd: Option<f64>,
+    /// Distinct `(provider, model)` pairs observed across the run's model
+    /// calls. Populated from the `model_calls` rows for this run id. Empty
+    /// when no model calls were recorded (e.g. all decisions came from a
+    /// non-LLM baseline arm).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub providers_used: Vec<ProviderModel>,
 }
 
 /// Build the export for a *terminal* run id (`completed` / `failed` /
@@ -267,7 +283,17 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
 
     let attestation = store.get_attestation(&run.id).await.ok().flatten();
     let cost_usd = compute_export_cost_usd(ctx, &run, strategy.as_ref(), &agents).await;
-    let provider_diagnostics = build_provider_diagnostics(&run, attestation, cost_usd);
+    let providers_used = load_providers_used(&ctx.db, &run.id).await;
+    let provider_diagnostics = build_provider_diagnostics(&run, attestation, cost_usd, providers_used);
+
+    // Emit the provider-mismatch finding (best-effort, idempotent). We
+    // do this at export-build time because the export is the moment we
+    // materialise both `providers_used` and the strategy's
+    // `model_requirement` together. Failures are swallowed so an
+    // unavailable DB row doesn't block the export.
+    if let (Some(ref s), Some(ref diag)) = (strategy.as_ref(), provider_diagnostics.as_ref()) {
+        emit_provider_mismatch_finding_if_needed(&store, &run.id, s, diag).await;
+    }
 
     let errors = match run.error.as_deref() {
         Some(msg) if !msg.trim().is_empty() => vec![RunErrorEntry {
@@ -311,6 +337,7 @@ fn build_provider_diagnostics(
     run: &Run,
     attestation: Option<EvalAttestation>,
     cost_usd: Option<f64>,
+    providers_used: Vec<ProviderModel>,
 ) -> Option<ProviderDiagnostics> {
     // Attestation wins when present — its `tokens_used` is part of the
     // signed payload, so the export must mirror it exactly. Falling
@@ -353,6 +380,7 @@ fn build_provider_diagnostics(
         && run.actual_output_tokens.is_none()
         && trader_output_failure.is_none()
         && cost_usd.is_none()
+        && providers_used.is_empty()
     {
         return None;
     }
@@ -363,7 +391,148 @@ fn build_provider_diagnostics(
         attestation,
         trader_output_failure,
         cost_usd,
+        providers_used,
     })
+}
+
+/// Query the `model_calls` table (via the observability span join) for all
+/// calls belonging to this eval run, then group by `(provider, model)` and
+/// return the distinct pairs with call counts.
+///
+/// Uses the same join path as `eval::cost::aggregate_eval_run_inference_cost`:
+///   `eval_runs.id → agent_runs.eval_run_id → spans.run_id → model_calls.span_id`
+///
+/// Returns an empty vec on any error (tables may not exist in old test
+/// contexts, or the run may have had no agent involved).
+///
+/// This is `pub` so the CLI `xvn eval show` can surface the pairs in its
+/// text output without going through the heavier `build_export` path.
+pub async fn load_providers_used(pool: &sqlx::SqlitePool, eval_run_id: &str) -> Vec<ProviderModel> {
+    let rows: Result<Vec<(String, String, i64)>, _> = sqlx::query_as(
+        "SELECT mc.provider, mc.model, COUNT(*) AS call_count \
+         FROM model_calls mc \
+         JOIN spans s ON s.id = mc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.eval_run_id = ? \
+         GROUP BY mc.provider, mc.model \
+         ORDER BY call_count DESC, mc.provider ASC, mc.model ASC",
+    )
+    .bind(eval_run_id)
+    .fetch_all(pool)
+    .await;
+
+    match rows {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|(provider, model, call_count)| ProviderModel {
+                provider,
+                model,
+                call_count: call_count as u64,
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Emit a `provider_mismatch` warning finding when the strategy's
+/// `trader_slot.model_requirement` names a model that is not present in
+/// `providers_used`. Best-effort and idempotent: a pre-existing finding of
+/// the same kind for this run is detected by scanning existing findings, and
+/// a second emission is skipped.
+///
+/// `model_requirement` uses the dot-separated form `"provider.model"` (e.g.
+/// `"anthropic.claude-sonnet-4.6"`). The check compares
+/// `format!("{}.{}", pm.provider, pm.model)` against the requirement string
+/// after trimming.
+async fn emit_provider_mismatch_finding_if_needed(
+    store: &RunStore,
+    run_id: &str,
+    strategy: &Strategy,
+    diag: &ProviderDiagnostics,
+) {
+    let required = match strategy
+        .trader_slot
+        .as_ref()
+        .map(|s| s.model_requirement.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        Some(r) => r,
+        None => return, // no model_requirement set — nothing to compare
+    };
+
+    if diag.providers_used.is_empty() {
+        return; // no model calls observed — cannot make the comparison
+    }
+
+    // Check if the required model was actually used.
+    let matched = diag
+        .providers_used
+        .iter()
+        .any(|pm| format!("{}.{}", pm.provider, pm.model) == required);
+    if matched {
+        return; // requirement satisfied — no finding needed
+    }
+
+    // Idempotency: skip if a provider_mismatch finding already exists for this run.
+    let existing = store.read_findings(run_id).await.unwrap_or_default();
+    if existing.iter().any(|f| f.kind == "provider_mismatch") {
+        return;
+    }
+
+    let actual_list = diag
+        .providers_used
+        .iter()
+        .map(|pm| format!("{}/{} ({}x)", pm.provider, pm.model, pm.call_count))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let body = format!(
+        "The strategy's trader_slot.model_requirement is \"{required}\" but the run's model calls \
+         used: {actual_list}. \
+         model_requirement is advisory — the operator may rebind the agent to the intended \
+         provider/model or update the strategy manifest's model_requirement to reflect the \
+         provider actually in use.",
+    );
+
+    let finding = Finding {
+        id: Ulid::new().to_string(),
+        run_id: run_id.to_string(),
+        kind: "provider_mismatch".to_string(),
+        severity: Severity::Warning,
+        summary: format!("strategy requested {required}, run used {actual_list}"),
+        evidence: serde_json::json!({
+            "model_requirement": required,
+            "providers_used": diag.providers_used.iter().map(|pm| serde_json::json!({
+                "provider": pm.provider,
+                "model": pm.model,
+                "call_count": pm.call_count,
+            })).collect::<Vec<_>>(),
+        }),
+        extracted_at: Utc::now(),
+        schema_version: FINDING_SCHEMA_VERSION.to_string(),
+        evidence_cycle_ids: Some(vec![]),
+        produced_by_check: Some("export:provider_attestation".to_string()),
+        eval_review_id: None,
+        review_type: None,
+        confidence: None,
+        title: Some(format!("strategy requested {required}, run used {actual_list}")),
+        description: Some(body),
+        recommendation: Some(
+            "Rebind the agent slot to the intended provider/model, or update \
+             trader_slot.model_requirement in the strategy manifest to reflect the \
+             provider actually in use."
+                .to_string(),
+        ),
+        created_at: Some(Utc::now()),
+    };
+
+    if let Err(e) = store.record_finding(&finding).await {
+        tracing::warn!(
+            run_id,
+            error = %e,
+            "provider_mismatch finding write failed (export still ok)"
+        );
+    }
 }
 
 async fn compute_export_cost_usd(
@@ -501,6 +670,7 @@ mod roundtrip {
         for migration in [
             include_str!("../../migrations/001_api_audit.sql"),
             include_str!("../../migrations/002_eval.sql"),
+            include_str!("../../migrations/013_cli_jobs.sql"),
             include_str!("../../migrations/014_eval_agent_id.sql"),
             include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
             include_str!("../../migrations/022_eval_runs_agents_agent_id.sql"),
@@ -891,5 +1061,467 @@ mod roundtrip {
         assert_eq!(diag.tokens_used.input, 10_000);
         assert_eq!(diag.tokens_used.output, 2_000);
         assert_eq!(diag.cost_usd, Some(0.30));
+    }
+}
+
+// ─── Provider-attestation tests ──────────────────────────────────────────────
+//
+// Unit + integration tests for eval-provider-attestation track:
+//   - `providers_used` populator
+//   - provider-mismatch finding emitter (match, mismatch, empty requirement,
+//     empty providers_used)
+//   - Integration: export JSON contains providers_used for a seeded run
+#[cfg(test)]
+mod provider_attestation {
+    use super::*;
+    use crate::api::{Actor, ApiContext};
+    use crate::eval::run::{Run, RunMode, RunStatus};
+    use crate::eval::store::RunStore;
+    use crate::strategies::manifest::{PublicManifest, RegimeFit};
+    use crate::strategies::risk::RiskPreset;
+    use crate::strategies::slot::LLMSlot;
+    use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+    use crate::strategies::{PipelineDef, Strategy};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("provider_attestation.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&db_url)
+            .await
+            .unwrap();
+        for migration in [
+            include_str!("../../migrations/001_api_audit.sql"),
+            include_str!("../../migrations/002_eval.sql"),
+            include_str!("../../migrations/013_cli_jobs.sql"),
+            include_str!("../../migrations/014_eval_agent_id.sql"),
+            include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
+            // 016 seeds agent_profiles (needed by eval_reviews FK)
+            include_str!("../../migrations/016_eval_reviews.sql"),
+            // 017 adds review-linked columns to eval_findings
+            include_str!("../../migrations/017_eval_findings_review_columns.sql"),
+            include_str!("../../migrations/018_agent_run_observability.sql"),
+            include_str!("../../migrations/022_eval_runs_agents_agent_id.sql"),
+            // 026 adds evidence_cycle_ids_json + produced_by_check columns to
+            // eval_findings which record_finding requires
+            include_str!("../../migrations/026_trace_surface_foundation.sql"),
+            include_str!("../../migrations/027_run_bars_manifest.sql"),
+        ] {
+            sqlx::query(migration).execute(&pool).await.unwrap();
+        }
+        let ctx = ApiContext::new(
+            pool,
+            Actor::Cli {
+                user: "operator".into(),
+            },
+            dir.path().to_path_buf(),
+        );
+        (ctx, dir)
+    }
+
+    /// Seed fake `agent_runs`, `spans`, and `model_calls` rows so that
+    /// `load_providers_used` can join through them.
+    async fn seed_model_calls(
+        pool: &sqlx::SqlitePool,
+        eval_run_id: &str,
+        calls: &[(&str, &str)], // (provider, model) list
+    ) {
+        // agent_runs row
+        let agent_run_id = format!("ar-{eval_run_id}");
+        sqlx::query(
+            "INSERT OR IGNORE INTO agent_runs \
+             (id, eval_run_id, objective, status, started_at, retention_mode) \
+             VALUES (?, ?, 'test', 'completed', '2026-01-01T00:00:00Z', 'hash_only')",
+        )
+        .bind(&agent_run_id)
+        .bind(eval_run_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        for (i, (provider, model)) in calls.iter().enumerate() {
+            let span_id = format!("sp-{eval_run_id}-{i}");
+            sqlx::query(
+                "INSERT OR IGNORE INTO spans \
+                 (id, run_id, kind, name, status, started_at, ended_at) \
+                 VALUES (?, ?, 'model.call', 'llm', 'ok', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z')",
+            )
+            .bind(&span_id)
+            .bind(&agent_run_id)
+            .execute(pool)
+            .await
+            .unwrap();
+
+            sqlx::query(
+                "INSERT OR IGNORE INTO model_calls \
+                 (span_id, provider, model, input_token_count, output_token_count, prompt_hash) \
+                 VALUES (?, ?, ?, 10, 20, 'testhash')",
+            )
+            .bind(&span_id)
+            .bind(provider)
+            .bind(model)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    // ── Unit: providers_used populator ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn providers_used_groups_two_distinct_providers() {
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        // 3 calls to anthropic, 2 calls to gemini-local
+        seed_model_calls(
+            &ctx.db,
+            &run.id,
+            &[
+                ("anthropic", "claude-sonnet-4.6"),
+                ("anthropic", "claude-sonnet-4.6"),
+                ("anthropic", "claude-sonnet-4.6"),
+                ("gemini-local", "gemini-3.1-flash"),
+                ("gemini-local", "gemini-3.1-flash"),
+            ],
+        )
+        .await;
+
+        let used = load_providers_used(&ctx.db, &run.id).await;
+        assert_eq!(used.len(), 2, "two distinct (provider, model) pairs");
+
+        // Ordered by call_count DESC
+        assert_eq!(used[0].provider, "anthropic");
+        assert_eq!(used[0].model, "claude-sonnet-4.6");
+        assert_eq!(used[0].call_count, 3);
+
+        assert_eq!(used[1].provider, "gemini-local");
+        assert_eq!(used[1].model, "gemini-3.1-flash");
+        assert_eq!(used[1].call_count, 2);
+    }
+
+    #[tokio::test]
+    async fn providers_used_empty_when_no_model_calls() {
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let used = load_providers_used(&ctx.db, &run.id).await;
+        assert!(used.is_empty(), "no model calls → empty providers_used");
+    }
+
+    // ── Unit: provider-mismatch finding emitter ─────────────────────────────
+
+    fn make_diag_with_providers(providers: Vec<ProviderModel>) -> ProviderDiagnostics {
+        ProviderDiagnostics {
+            tokens_used: TokensUsed {
+                input: 0,
+                output: 0,
+                total: 0,
+            },
+            ran_at: Utc::now(),
+            attestation: None,
+            trader_output_failure: None,
+            cost_usd: None,
+            providers_used: providers,
+        }
+    }
+
+    fn strategy_with_requirement(model_requirement: &str) -> Strategy {
+        Strategy {
+            manifest: PublicManifest {
+                id: "test-strategy".into(),
+                display_name: "Test".into(),
+                plain_summary: "x".into(),
+                creator: "@test".into(),
+                template: "mean_reversion".into(),
+                regime_fit: vec![RegimeFit::RangeBound],
+                asset_universe: vec!["BTC/USD".into()],
+                decision_cadence_minutes: 15,
+                required_models: vec![model_requirement.into()],
+                required_tools: Vec::new(),
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+                min_warmup_bars: None,
+            },
+            hypothesis: None,
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: Some(LLMSlot {
+                role: "trader".into(),
+                prompt: "decide".into(),
+                model_requirement: model_requirement.into(),
+                allowed_tools: Vec::new(),
+                provider: None,
+                model: None,
+            }),
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        }
+    }
+
+    #[tokio::test]
+    async fn mismatch_finding_emitted_when_required_model_not_used() {
+        // The xvnej-app reproducer: strategy requests anthropic.claude-sonnet-4.6
+        // but the run used gemini-local/gemini-3.1-flash.
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let strategy = strategy_with_requirement("anthropic.claude-sonnet-4.6");
+        let diag = make_diag_with_providers(vec![ProviderModel {
+            provider: "gemini-local".into(),
+            model: "gemini-3.1-flash".into(),
+            call_count: 217,
+        }]);
+
+        emit_provider_mismatch_finding_if_needed(&store, &run.id, &strategy, &diag).await;
+
+        let findings = store.read_findings(&run.id).await.unwrap();
+        assert_eq!(findings.len(), 1, "exactly one finding emitted");
+        let f = &findings[0];
+        assert_eq!(f.kind, "provider_mismatch");
+        assert_eq!(f.severity, Severity::Warning);
+        assert!(
+            f.summary.contains("anthropic.claude-sonnet-4.6"),
+            "summary mentions required model"
+        );
+        assert!(
+            f.summary.contains("gemini-local"),
+            "summary mentions actual provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_finding_when_required_model_is_used() {
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let strategy = strategy_with_requirement("anthropic.claude-sonnet-4.6");
+        let diag = make_diag_with_providers(vec![ProviderModel {
+            provider: "anthropic".into(),
+            model: "claude-sonnet-4.6".into(),
+            call_count: 100,
+        }]);
+
+        emit_provider_mismatch_finding_if_needed(&store, &run.id, &strategy, &diag).await;
+
+        let findings = store.read_findings(&run.id).await.unwrap();
+        assert!(findings.is_empty(), "no finding when requirement is satisfied");
+    }
+
+    #[tokio::test]
+    async fn no_finding_when_model_requirement_is_empty() {
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let strategy = strategy_with_requirement(""); // empty = no requirement
+        let diag = make_diag_with_providers(vec![ProviderModel {
+            provider: "gemini-local".into(),
+            model: "gemini-3.1-flash".into(),
+            call_count: 50,
+        }]);
+
+        emit_provider_mismatch_finding_if_needed(&store, &run.id, &strategy, &diag).await;
+
+        let findings = store.read_findings(&run.id).await.unwrap();
+        assert!(findings.is_empty(), "no finding when model_requirement is empty");
+    }
+
+    #[tokio::test]
+    async fn no_finding_when_providers_used_is_empty() {
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let strategy = strategy_with_requirement("anthropic.claude-sonnet-4.6");
+        let diag = make_diag_with_providers(vec![]); // no model calls
+
+        emit_provider_mismatch_finding_if_needed(&store, &run.id, &strategy, &diag).await;
+
+        let findings = store.read_findings(&run.id).await.unwrap();
+        assert!(
+            findings.is_empty(),
+            "no finding when providers_used is empty (non-LLM baseline run)"
+        );
+    }
+
+    #[tokio::test]
+    async fn mismatch_finding_is_idempotent() {
+        // Calling emit twice (e.g. two export requests) must not create
+        // duplicate findings.
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let strategy = strategy_with_requirement("anthropic.claude-sonnet-4.6");
+        let diag = make_diag_with_providers(vec![ProviderModel {
+            provider: "gemini-local".into(),
+            model: "gemini-3.1-flash".into(),
+            call_count: 5,
+        }]);
+
+        emit_provider_mismatch_finding_if_needed(&store, &run.id, &strategy, &diag).await;
+        emit_provider_mismatch_finding_if_needed(&store, &run.id, &strategy, &diag).await;
+
+        let findings = store.read_findings(&run.id).await.unwrap();
+        assert_eq!(
+            findings.iter().filter(|f| f.kind == "provider_mismatch").count(),
+            1,
+            "idempotency: second call must not create a duplicate finding"
+        );
+    }
+
+    // ── Integration: export JSON contains providers_used for a seeded run ───
+
+    #[tokio::test]
+    async fn export_json_contains_providers_used_when_model_calls_exist() {
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let mut run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        run.actual_input_tokens = Some(100);
+        run.actual_output_tokens = Some(200);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        // Seed two distinct model call providers
+        seed_model_calls(
+            &ctx.db,
+            &run.id,
+            &[
+                ("anthropic", "claude-sonnet-4.6"),
+                ("openrouter", "anthropic/claude-haiku-4.5"),
+                ("openrouter", "anthropic/claude-haiku-4.5"),
+            ],
+        )
+        .await;
+
+        let export = build_export(&ctx, &run.id).await.expect("build_export");
+        let diag = export
+            .provider_diagnostics
+            .as_ref()
+            .expect("provider_diagnostics must be present");
+        assert_eq!(diag.providers_used.len(), 2, "two distinct pairs");
+
+        // Verify the JSON shape
+        let json = serde_json::to_string(&export).expect("serialize");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        let pu = &parsed["provider_diagnostics"]["providers_used"];
+        assert!(pu.is_array(), "providers_used must be a JSON array in the export");
+        let arr = pu.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        // Each entry has provider, model, call_count
+        for entry in arr {
+            assert!(entry.get("provider").is_some());
+            assert!(entry.get("model").is_some());
+            assert!(entry.get("call_count").is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn build_export_emits_provider_mismatch_finding_for_saved_strategy() {
+        let (ctx, _dir) = ctx_with_tables().await;
+        let strategy = strategy_with_requirement("anthropic.claude-sonnet-4.6");
+        let strategy_id = strategy.manifest.id.clone();
+        let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        strategy_store.save(&strategy).await.unwrap();
+
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued(strategy_id, "sc".into(), RunMode::Backtest);
+        run.actual_input_tokens = Some(100);
+        run.actual_output_tokens = Some(200);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        seed_model_calls(&ctx.db, &run.id, &[("gemini-local", "gemini-3.1-flash")]).await;
+
+        build_export(&ctx, &run.id).await.expect("build_export");
+
+        let findings = store.read_findings(&run.id).await.unwrap();
+        assert_eq!(
+            findings.iter().filter(|f| f.kind == "provider_mismatch").count(),
+            1,
+            "build_export should persist one provider_mismatch finding"
+        );
+    }
+
+    #[tokio::test]
+    async fn export_json_omits_providers_used_when_no_model_calls() {
+        // `skip_serializing_if = "Vec::is_empty"` must keep the JSON clean
+        let (ctx, _dir) = ctx_with_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        let mut run = Run::new_queued("s".into(), "sc".into(), RunMode::Backtest);
+        run.actual_input_tokens = Some(10);
+        run.actual_output_tokens = Some(20);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let export = build_export(&ctx, &run.id).await.expect("build_export");
+        let json = serde_json::to_string(&export).expect("serialize");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        // providers_used must be absent when empty (skip_serializing_if)
+        let pu = parsed["provider_diagnostics"].get("providers_used");
+        assert!(pu.is_none(), "providers_used must be absent from JSON when empty");
     }
 }

@@ -291,7 +291,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit, memory_mode \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -323,6 +323,11 @@ impl AgentStore {
                 Some(n) if n > 0 => Some(n as u32),
                 _ => None,
             };
+            // V2D: `memory_mode` was added in migration 029 with DEFAULT
+            // 'off'; pre-029 rows read back as `Off`. Unknown values
+            // also fall back to `Off` via `parse_or_off`.
+            let memory_mode_s: String = row.try_get("memory_mode").unwrap_or_default();
+            let memory_mode = xvision_memory::types::MemoryMode::parse_or_off(&memory_mode_s);
             out.push(AgentSlot {
                 name: row.try_get("name")?,
                 provider: row.try_get("provider")?,
@@ -334,6 +339,7 @@ impl AgentStore {
                 prompt_version: row.try_get("prompt_version").unwrap_or_default(),
                 inputs_policy,
                 bar_history_limit,
+                memory_mode,
             });
         }
         Ok(out)
@@ -360,8 +366,8 @@ async fn insert_slot(
             .and_then(|n| if n == 0 { None } else { Some(n as i64) });
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit, memory_mode) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
     .bind(idx)
@@ -382,6 +388,10 @@ async fn insert_slot(
     // F-8: explicit NULLable INTEGER. Operators leaving it unset get
     // SQL NULL → `None` on read, preserving pre-022 behavior.
     .bind(bar_history_limit_db)
+    // V2D: persisted as one of `off` | `global` | `agent_scoped`.
+    // Column DEFAULT is 'off' (migration 029); we still bind the
+    // explicit value here so the row is byte-stable across writes.
+    .bind(slot.memory_mode.as_str())
     .execute(&mut **tx)
     .await
     .with_context(|| format!("insert slot {} for agent {}", slot.name, agent_id))?;
@@ -431,6 +441,11 @@ mod tests {
         // writes this column on every save.
         let migration_025 = include_str!("../../migrations/025_agent_slot_cache_and_window.sql");
         sqlx::query(migration_025).execute(&pool).await.unwrap();
+        // 029 adds agent_slots.memory_mode (V2D per-slot cortex-memory
+        // toggle). AgentStore::insert_slot writes the column on every
+        // save; the read path falls back to `Off` for pre-029 rows.
+        let migration_028 = include_str!("../../migrations/029_agent_slot_memory_mode.sql");
+        sqlx::query(migration_028).execute(&pool).await.unwrap();
         pool
     }
 
@@ -455,6 +470,7 @@ mod tests {
             prompt_version: String::new(),
             inputs_policy: InputsPolicy::Raw,
             bar_history_limit: None,
+            memory_mode: xvision_memory::types::MemoryMode::default(),
         }
     }
 
@@ -674,6 +690,7 @@ mod tests {
                 tags: vec![],
                 slots: vec![AgentSlot {
                     bar_history_limit: None,
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
             })
@@ -690,6 +707,7 @@ mod tests {
                 tags: vec![],
                 slots: vec![AgentSlot {
                     bar_history_limit: Some(50),
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
             })
@@ -707,6 +725,7 @@ mod tests {
                 tags: vec![],
                 slots: vec![AgentSlot {
                     bar_history_limit: Some(0),
+                    memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
             })
@@ -731,6 +750,7 @@ mod tests {
                 UpdateAgent {
                     slots: Some(vec![AgentSlot {
                         bar_history_limit: Some(10),
+                        memory_mode: xvision_memory::types::MemoryMode::default(),
                         ..sample_slot()
                     }]),
                     ..Default::default()
@@ -740,6 +760,90 @@ mod tests {
             .unwrap()
             .expect("exists");
         assert_eq!(updated.slots[0].bar_history_limit, Some(10));
+    }
+
+    #[tokio::test]
+    async fn memory_mode_round_trips_through_create_and_update() {
+        // V2D: AgentStore must round-trip `memory_mode` through both
+        // `create` and `update`. The default (`Off`) preserves today's
+        // behavior; `AgentScoped` is the canonical "per-agent bucket"
+        // value the dispatcher seam uses.
+        use xvision_memory::types::MemoryMode;
+        let store = AgentStore::new(fresh_pool().await);
+
+        // Off (the default) round-trips.
+        let id = store
+            .create(NewAgent {
+                name: "mem-off".into(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    memory_mode: MemoryMode::Off,
+                    ..sample_slot()
+                }],
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].memory_mode, MemoryMode::Off);
+
+        // Global round-trips verbatim.
+        let id = store
+            .create(NewAgent {
+                name: "mem-global".into(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    memory_mode: MemoryMode::Global,
+                    ..sample_slot()
+                }],
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].memory_mode, MemoryMode::Global);
+
+        // AgentScoped round-trips verbatim.
+        let id = store
+            .create(NewAgent {
+                name: "mem-agent-scoped".into(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    memory_mode: MemoryMode::AgentScoped,
+                    ..sample_slot()
+                }],
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].memory_mode, MemoryMode::AgentScoped);
+
+        // Update path: flip Off → AgentScoped.
+        let id = store
+            .create(NewAgent {
+                name: "flip-mem".into(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![sample_slot()],
+            })
+            .await
+            .unwrap();
+        let updated = store
+            .update(
+                &id,
+                UpdateAgent {
+                    slots: Some(vec![AgentSlot {
+                        memory_mode: MemoryMode::AgentScoped,
+                        ..sample_slot()
+                    }]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .expect("exists");
+        assert_eq!(updated.slots[0].memory_mode, MemoryMode::AgentScoped);
     }
 
     #[tokio::test]

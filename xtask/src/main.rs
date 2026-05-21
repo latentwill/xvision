@@ -78,6 +78,7 @@ fn gen_types(sh: &Shell) -> Result<()> {
     // emits nothing fails the task loudly instead of leaving the barrel
     // silently incomplete.
     run_ts_export(sh, "xvision-core", &export_base, &staged_out_dir)?;
+    run_ts_export(sh, "xvision-memory", &export_base, &staged_out_dir)?;
     run_ts_export(sh, "xvision-engine", &export_base, &staged_out_dir)?;
 
     let entries: Vec<_> = std::fs::read_dir(&staged_out_dir)

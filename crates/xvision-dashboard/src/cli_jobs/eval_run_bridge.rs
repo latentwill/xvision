@@ -79,6 +79,21 @@ pub async fn get_synthetic_job(pool: &sqlx::SqlitePool, job_id: &str) -> Result<
         stdout_truncated: false,
         stderr_truncated: false,
         error_message: run.error.clone(),
+        // Synthetic jobs have no backing cli_jobs row — audit fields are not
+        // applicable. The orphan-recovery sweep skips eval_run_* prefixed IDs
+        // because they have no entry in the cli_jobs table.
+        pid: None,
+        job_user: None,
+        job_source: None,
+        command_class: Some("eval".to_string()),
+        cancelled_at: None,
+        cancel_signal: None,
+        recovered_at: None,
+        recovery_reason: None,
+        max_runtime_seconds: 0,
+        max_output_bytes: 0,
+        output_cap_exceeded: false,
+        runtime_cap_exceeded: false,
     }))
 }
 

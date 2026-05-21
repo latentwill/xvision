@@ -25,7 +25,7 @@ use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use xvision_engine::eval::compare::ComparisonEquityCurve;
-use xvision_engine::eval::export as eval_export;
+use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
 use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
@@ -765,6 +765,15 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         println!("  exits_on_invalidation    {}", bsummary.exits_on_invalidation);
         println!("  primary_failure_mode     {}", bsummary.primary_failure_mode);
     }
+    // Providers used — query model_calls via the observability join.
+    let providers_used = eval_export::load_providers_used(&ctx.db, &run.id).await;
+    if !providers_used.is_empty() {
+        println!("\nproviders_used");
+        for pm in &providers_used {
+            println!("  {}/{:<30}  {}", pm.provider, pm.model, pm.call_count);
+        }
+    }
+
     if let Some(e) = run.error.as_deref() {
         println!("\nerror: {e}");
     }

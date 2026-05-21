@@ -50,27 +50,23 @@ pub async fn get(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, DashboardError> {
+    // Check for synthetic eval-run bridge IDs first.
+    if job_id.starts_with(crate::cli_jobs::eval_run_bridge::EVAL_RUN_PREFIX) {
+        if let Some(job) = crate::cli_jobs::eval_run_bridge::get_synthetic_job(&state.pool, &job_id)
+            .await
+            .map_err(DashboardError::Internal)?
+        {
+            return Ok(Json(job_to_json(&job)));
+        }
+        return Err(DashboardError::NotFound(format!("cli job '{job_id}'")));
+    }
+
     let store = CliJobStore::new(state.pool.clone());
     let Some(job) = store.get(&job_id).await.map_err(DashboardError::Internal)? else {
         return Err(DashboardError::NotFound(format!("cli job '{job_id}'")));
     };
 
-    Ok(Json(serde_json::json!({
-        "job_id": job.job_id,
-        "argv": job.argv,
-        "status": job.status.as_str(),
-        "created_at": job.created_at,
-        "started_at": job.started_at,
-        "finished_at": job.finished_at,
-        "exit_code": job.exit_code,
-        "timed_out": job.timed_out,
-        "cancel_requested": job.cancel_requested,
-        "stdout_bytes": job.stdout_bytes,
-        "stderr_bytes": job.stderr_bytes,
-        "stdout_truncated": job.stdout_truncated,
-        "stderr_truncated": job.stderr_truncated,
-        "error_message": job.error_message
-    })))
+    Ok(Json(job_to_json(&job)))
 }
 
 pub async fn output(
@@ -95,20 +91,65 @@ pub async fn output(
     })))
 }
 
+/// `POST /api/cli/jobs/:id/cancel` — request cancellation (existing endpoint,
+/// kept for backwards compatibility with callers using POST).
+///
+/// Marks the DB row as cancel-requested and notifies the runner to send
+/// SIGTERM → SIGKILL (with 5-second grace period).
 pub async fn cancel(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, DashboardError> {
+    cancel_job(&state, &job_id).await
+}
+
+/// `DELETE /api/cli/jobs/:id` — cancel a running job and kill the backing
+/// process with SIGTERM → SIGKILL (5-second grace period).
+///
+/// This is the preferred cancellation surface for `xvn eval cancel` and
+/// other verbs that call through to the dashboard. The `xvn eval cancel`
+/// verb marks the eval-run row (PR #425); this endpoint closes the gap by
+/// also killing the backing dashboard child process.
+///
+/// Idempotent: calling it on a job that is already terminal returns the
+/// current status without erroring.
+pub async fn delete(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+) -> Result<Json<serde_json::Value>, DashboardError> {
+    cancel_job(&state, &job_id).await
+}
+
+/// Shared implementation for `cancel` and `delete`.
+async fn cancel_job(state: &AppState, job_id: &str) -> Result<Json<serde_json::Value>, DashboardError> {
     let store = CliJobStore::new(state.pool.clone());
+
+    // If the job is already terminal, return its current state — idempotent.
+    let existing = store
+        .get(job_id)
+        .await
+        .map_err(DashboardError::Internal)?
+        .ok_or_else(|| DashboardError::NotFound(format!("cli job '{job_id}'")))?;
+
+    if existing.status.is_terminal() {
+        return Ok(Json(serde_json::json!({
+            "job_id": existing.job_id,
+            "status": existing.status.as_str(),
+            "cancel_requested": existing.cancel_requested,
+        })));
+    }
+
+    // Mark cancel-requested in the DB.
     let Some(job) = store
-        .request_cancel(&job_id)
+        .request_cancel(job_id)
         .await
         .map_err(DashboardError::Internal)?
     else {
         return Err(DashboardError::NotFound(format!("cli job '{job_id}'")));
     };
 
-    state.cli_runner().cancel(&job_id).await;
+    // Signal the runner: SIGTERM → (5-second grace) → SIGKILL.
+    state.cli_runner().cancel(job_id).await;
 
     Ok(Json(serde_json::json!({
         "job_id": job.job_id,
@@ -218,4 +259,39 @@ fn to_sse_event(event: CliJobEvent) -> Option<Event> {
     serde_json::to_string(&event)
         .ok()
         .map(|payload| Event::default().event(name).data(payload))
+}
+
+/// Serialize a `CliJob` to the JSON shape returned by `GET /api/cli/jobs/:id`.
+/// Includes all audit fields added in migration 028.
+fn job_to_json(job: &crate::cli_jobs::model::CliJob) -> serde_json::Value {
+    serde_json::json!({
+        "job_id": job.job_id,
+        "argv": job.argv,
+        "status": job.status.as_str(),
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "exit_code": job.exit_code,
+        "timed_out": job.timed_out,
+        "cancel_requested": job.cancel_requested,
+        "stdout_bytes": job.stdout_bytes,
+        "stderr_bytes": job.stderr_bytes,
+        "stdout_truncated": job.stdout_truncated,
+        "stderr_truncated": job.stderr_truncated,
+        "error_message": job.error_message,
+        // --- Audit fields (migration 028) ---
+        "pid": job.pid,
+        "user": job.job_user,
+        "source": job.job_source,
+        "command_class": job.command_class,
+        "cancelled_at": job.cancelled_at,
+        "cancel_signal": job.cancel_signal,
+        "recovered_at": job.recovered_at,
+        "recovery_reason": job.recovery_reason,
+        "max_runtime_seconds": job.max_runtime_seconds,
+        "max_output_bytes": job.max_output_bytes,
+        "output_cap_exceeded": job.output_cap_exceeded,
+        "runtime_cap_exceeded": job.runtime_cap_exceeded,
+        "output_bytes": job.stdout_bytes.saturating_add(job.stderr_bytes),
+    })
 }

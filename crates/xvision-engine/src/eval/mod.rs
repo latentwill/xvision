@@ -23,6 +23,7 @@ pub mod experiment_store;
 pub mod export;
 pub mod finalize_writer;
 pub mod findings;
+pub mod guardrail_summary;
 pub mod guardrails;
 pub mod limits;
 pub mod preflight;
