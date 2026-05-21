@@ -388,6 +388,20 @@ function AddPatternDialog(props: AddPatternDialogProps) {
             </p>
           </div>
 
+          <div
+            role="note"
+            aria-label="Embedder requirement"
+            className="px-3 py-2 rounded-sm border border-amber-500/40 bg-amber-500/5 text-[11.5px] text-amber-900 dark:text-amber-200 leading-snug"
+          >
+            <strong className="font-medium">Requires an embedder.</strong>{" "}
+            Patterns are matched to decision context via vector similarity, so
+            an agent's provider (or a configured default) must support
+            embeddings. Without one, this Pattern is stored but never recalled —
+            check Settings → Providers, or watch eval-review for a{" "}
+            <code className="font-mono">memory_disabled_no_embedder</code>{" "}
+            event after the next run.
+          </div>
+
           <label className="block">
             <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
               Text
@@ -410,12 +424,24 @@ function AddPatternDialog(props: AddPatternDialogProps) {
               type="date"
               value={trainingEnd}
               onChange={(e) => setTrainingEnd(e.target.value)}
+              title="The latest date your training data covers. Normalized to end-of-day UTC at submit. Scenarios with start_date <= this date will EXCLUDE this Pattern (look-ahead protection); scenarios starting after will recall it."
               className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
             />
-            <span className="block mt-1 text-[11px] text-text-3">
-              Optional. Leave blank for operator-attested wisdom recalled in
-              every scenario.
-            </span>
+            <div className="mt-1 space-y-0.5 text-[11px] text-text-3 leading-snug">
+              <p className="m-0">
+                Optional. The date your training data ends (end-of-day UTC at
+                submit).
+              </p>
+              <p className="m-0">
+                Scenarios starting <em>after</em> this date will recall this
+                Pattern; scenarios overlapping or earlier exclude it
+                (look-ahead protection).
+              </p>
+              <p className="m-0">
+                Leave blank for operator wisdom recalled in <em>every</em>{" "}
+                scenario.
+              </p>
+            </div>
           </label>
 
           <label className="block">
