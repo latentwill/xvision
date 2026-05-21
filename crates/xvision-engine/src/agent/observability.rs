@@ -470,6 +470,133 @@ impl ObsEmitter {
             .await;
     }
 
+    /// Emit a `recovery.attempt` span recording the harness's decision
+    /// to retry around a typed failure. Instantaneous (open + close in
+    /// the same tick) so the trace dock renders it as a point event
+    /// rather than a duration. `class_tag` is the
+    /// [`crate::agent::recovery::FailureClass::tag`] string (e.g.
+    /// `invalid_json`, `repeated_tool_failure`) — the same wire tag
+    /// persisted on `eval_runs.error`. `retry_count` is the attempt
+    /// number (1 = first retry).
+    ///
+    /// Added by F-5 (`harness-recovery-state-machine`). The
+    /// `SpanKind::RecoveryAttempt` variant was reserved by F-4 — F-5
+    /// adds the emit method and the call sites.
+    pub async fn emit_recovery_attempt(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        class_tag: &str,
+        retry_count: u32,
+    ) {
+        self.emit_recovery_point_span(
+            SpanKind::RecoveryAttempt,
+            span_id,
+            parent_span_id,
+            class_tag,
+            retry_count,
+            None,
+        )
+        .await;
+    }
+
+    /// Emit a `recovery.attempt` span carrying a failed-recovery
+    /// outcome. Same shape as [`Self::emit_recovery_attempt`] but with
+    /// `SpanStatus::Error` and a `final_error` recorded so operators
+    /// can read the typed reason in the trace dock without
+    /// reconstructing it from prose.
+    ///
+    /// Convention: a single recovery cycle emits at most one
+    /// `recovery.attempt` per try; on the terminal attempt that
+    /// exhausts the budget, the caller uses this method instead so
+    /// the trace marks the last attempt as the failure point.
+    pub async fn emit_recovery_failed(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        class_tag: &str,
+        retry_count: u32,
+        final_error: &str,
+    ) {
+        self.emit_recovery_point_span(
+            SpanKind::RecoveryAttempt,
+            span_id,
+            parent_span_id,
+            class_tag,
+            retry_count,
+            Some(final_error),
+        )
+        .await;
+    }
+
+    /// Internal shared body for the recovery span emitters. Both emit
+    /// a single `recovery.attempt` SpanKind — the `final_error`
+    /// presence distinguishes attempted-vs-failed at the data layer
+    /// (also reflected in `SpanStatus`).
+    async fn emit_recovery_point_span(
+        &self,
+        kind: SpanKind,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        class_tag: &str,
+        retry_count: u32,
+        final_error: Option<&str>,
+    ) {
+        debug_assert!(
+            matches!(kind, SpanKind::RecoveryAttempt),
+            "emit_recovery_point_span called with non-recovery kind: {kind:?}"
+        );
+        // `retry_count` rendered into the typed bag as i32 (the
+        // SpanAttributes wire shape). Clamp at i32::MAX defensively;
+        // in practice retry counts here are <10.
+        let typed_attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            retry_count: Some(retry_count.min(i32::MAX as u32) as i32),
+            ..SpanAttributes::default()
+        };
+        let mut base = serde_json::Map::new();
+        base.insert(
+            "class_tag".to_string(),
+            serde_json::Value::String(class_tag.to_string()),
+        );
+        if let Some(err) = final_error {
+            base.insert(
+                "final_error".to_string(),
+                serde_json::Value::String(err.to_string()),
+            );
+        }
+        let merged: String = typed_attrs.merge_into_object(base);
+        let now = Utc::now();
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind,
+                name: format!("recovery:{class_tag}#{retry_count}"),
+                started_at: now,
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: Some(merged),
+            }))
+            .await;
+        let (status, error_json) = match final_error {
+            Some(err) => (
+                SpanStatus::Error,
+                Some(serde_json::json!({ "class_tag": class_tag, "message": err }).to_string()),
+            ),
+            None => (SpanStatus::Ok, None),
+        };
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: now,
+                status,
+                error_json,
+            }))
+            .await;
+    }
+
     /// Emit an instantaneous `tool.validate_input` span recording the
     /// pre-condition of a tool call. The body is a no-op today — F-6
     /// (`harness-typed-mechanical-params`) will replace the no-op with
