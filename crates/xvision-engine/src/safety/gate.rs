@@ -43,7 +43,7 @@
 //! acquires a read-lock (already in memory) and returns immediately.
 
 use crate::safety::audit::{AuditAction, AuditResult, SafetyAuditWriter};
-use crate::safety::auth_stub::AuthContext;
+use crate::safety::AuthContext;
 use crate::safety::limits::{SafetyLimitCheck, SafetyLimits};
 use crate::safety::state::SafetyManager;
 use crate::safety::venue::VenueLabel;

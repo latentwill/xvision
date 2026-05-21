@@ -450,12 +450,12 @@ async fn completed_job_has_command_class_set() {
         "command_class should be the first argv element",
     );
     assert_eq!(
-        meta["user"], "unknown:dashboard",
-        "HTTP-created jobs should persist the current AuthContext fallback user",
+        meta["user"], "unknown",
+        "HTTP-created jobs should persist the canonical AuthContext::unknown() user",
     );
     assert_eq!(
         meta["source"], "unknown",
-        "HTTP-created jobs should persist the current AuthContext fallback source",
+        "HTTP-created jobs should persist the canonical AuthContext::unknown() source",
     );
     // output_bytes should be the sum of stdout_bytes + stderr_bytes.
     let output_bytes = meta["output_bytes"].as_u64().unwrap_or(0);
@@ -481,7 +481,7 @@ async fn completed_job_has_command_class_set() {
 /// with the polling loop in the test's current task.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn output_cap_exceeded_kills_chatty_process() {
-    use xvision_dashboard::cli_jobs::auth_stub::AuthContext;
+    use xvision_dashboard::auth::AuthContext;
     use xvision_dashboard::cli_jobs::store::CreateJobParams;
 
     let tmp = TempDir::new().unwrap();
@@ -557,7 +557,7 @@ async fn output_cap_exceeded_kills_chatty_process() {
 /// with the polling loop in the test's current task.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn runtime_cap_exceeded_kills_slow_process() {
-    use xvision_dashboard::cli_jobs::auth_stub::AuthContext;
+    use xvision_dashboard::auth::AuthContext;
     use xvision_dashboard::cli_jobs::store::CreateJobParams;
 
     let tmp = TempDir::new().unwrap();

@@ -7,17 +7,17 @@
 //!   write paths call `gate.check_broker_submit(...)`.
 //! - [`VenueLabel`] — enum on `Scenario.venue_label`. Paper/Testnet/Live.
 //! - [`SafetyLimits`] — optional field on `Scenario`. Per-run caps.
-//! - [`AuthContext`] stub — local placeholder until `v2b-dashboard-auth-boundary` merges.
+//! - [`AuthContext`] — caller identity captured at the safety boundary.
 
 pub mod audit;
-pub mod auth_stub;
+pub mod auth;
 pub mod gate;
 pub mod limits;
 pub mod state;
 pub mod venue;
 
 pub use audit::{AuditAction, AuditResult, SafetyAuditRow, SafetyAuditWriter};
-pub use auth_stub::AuthContext;
+pub use auth::AuthContext;
 pub use gate::{SafetyGate, SafetyGateError};
 pub use limits::{LimitBreach, SafetyLimitCheck, SafetyLimits};
 pub use state::{SafetyManager, SafetyState};

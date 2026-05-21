@@ -5,9 +5,9 @@
 //! `POST /api/safety/resume`  — resume after pause
 //! `GET  /api/safety/audit`   — recent audit log rows
 //!
-//! Auth note: in v2b this uses the local `AuthContext` stub.
-//! When `v2b-dashboard-auth-boundary` merges, the import swaps to
-//! `xvision_dashboard::auth::AuthContext` per the contract Notes.
+//! Auth note: takes engine-side `AuthContext` (a smaller shape). When per-user
+//! identity is plumbed in here, build it from the canonical dashboard
+//! `crate::auth::AuthContext` and convert at this boundary.
 
 use axum::{
     extract::{Query, State},
@@ -19,7 +19,7 @@ use xvision_engine::api::safety::routes::{
     get_audit, get_state, pause, resume, PauseRequest, SafetyStateResponse,
 };
 use xvision_engine::safety::audit::SafetyAuditRow;
-use xvision_engine::safety::auth_stub::AuthContext;
+use xvision_engine::safety::AuthContext;
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -45,8 +45,6 @@ pub async fn pause_handler(
 ) -> Result<Json<SafetyStateResponse>, DashboardError> {
     let manager = state.safety_manager();
     let req = body.map(|b| b.0).unwrap_or_default();
-    // Use the anonymous stub auth context — swapped for real AuthContext
-    // when v2b-dashboard-auth-boundary merges.
     let auth = AuthContext::api_anonymous();
     let resp = pause(manager, req, &auth)
         .await

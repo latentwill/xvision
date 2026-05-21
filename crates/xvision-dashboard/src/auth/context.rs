@@ -1,10 +1,9 @@
 //! Canonical `AuthContext` — per-request caller identity.
 //!
-//! This is the single, authoritative definition consumed by every route that
-//! needs to know who is making the request. The `cli_jobs` stub
-//! (`crates/xvision-dashboard/src/cli_jobs/auth_stub.rs`) mirrors this shape
-//! and will be replaced by an import of this type in a small follow-up PR
-//! (noted in the v2b-dashboard-auth-boundary PR body).
+//! This is the single, authoritative dashboard-side identity type consumed by
+//! every route that needs to know who is making the request. The engine has
+//! its own smaller `xvision_engine::safety::AuthContext` (kept separate to
+//! avoid a circular crate dep — see that type's doc).
 //!
 //! # Shape contract
 //!
