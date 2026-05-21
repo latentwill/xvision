@@ -1,10 +1,12 @@
 use std::net::SocketAddr;
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{delete, get, post, put},
     Router,
 };
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
+use xvision_engine::strategies_folder::MAX_IMPORT_BYTES;
 
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
@@ -20,6 +22,8 @@ use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::search as api_search;
 
 pub fn build_router(state: AppState) -> Router {
+    let import_body_limit = (MAX_IMPORT_BYTES + 1024 * 1024) as usize;
+
     Router::new()
         .route("/api/health", get(health))
         .route("/api/docs/index", get(docs::index))
@@ -81,7 +85,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/strategies-folder/import",
-            post(strategies_folder_route::post_import),
+            post(strategies_folder_route::post_import)
+                .route_layer(DefaultBodyLimit::max(import_body_limit)),
         )
         // NOTE: /api/scenarios/preview MUST be before /api/scenarios/:id —
         // axum's router matches in registration order for overlapping patterns.

@@ -15,9 +15,7 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::strategies_folder::folder_root;
-use xvision_engine::strategies_folder::ideas::{
-    list_ideas, IdeaFilter, MAX_LIMIT,
-};
+use xvision_engine::strategies_folder::ideas::{list_ideas, IdeaFilter, MAX_LIMIT};
 
 /// Build a fresh `ApiContext` backed by an empty sqlite file and a
 /// fresh tempdir for `xvn_home`. The ideas surface only touches the
@@ -99,7 +97,13 @@ fn rsi_capitulation_template() -> &'static str {
 #[tokio::test]
 async fn list_ideas_filters_by_category() {
     let (ctx, td) = fresh_ctx().await;
-    write_template(td.path(), "EMA", "ema_pullback_bounce.json", ema_pullback_template()).await;
+    write_template(
+        td.path(),
+        "EMA",
+        "ema_pullback_bounce.json",
+        ema_pullback_template(),
+    )
+    .await;
     write_template(
         td.path(),
         "EMA",
@@ -150,7 +154,13 @@ async fn list_ideas_filters_by_category() {
 #[tokio::test]
 async fn list_ideas_filters_by_indicator_substring() {
     let (ctx, td) = fresh_ctx().await;
-    write_template(td.path(), "EMA", "ema_pullback_bounce.json", ema_pullback_template()).await;
+    write_template(
+        td.path(),
+        "EMA",
+        "ema_pullback_bounce.json",
+        ema_pullback_template(),
+    )
+    .await;
     write_template(
         td.path(),
         "EMA",
@@ -224,7 +234,13 @@ async fn list_ideas_returns_empty_when_library_missing() {
 #[tokio::test]
 async fn list_ideas_skips_malformed_json_but_returns_valid_entries() {
     let (ctx, td) = fresh_ctx().await;
-    write_template(td.path(), "EMA", "ema_pullback_bounce.json", ema_pullback_template()).await;
+    write_template(
+        td.path(),
+        "EMA",
+        "ema_pullback_bounce.json",
+        ema_pullback_template(),
+    )
+    .await;
     write_template(
         td.path(),
         "EMA",
@@ -263,6 +279,29 @@ async fn list_ideas_skips_malformed_json_but_returns_valid_entries() {
         ideas.len(),
         2,
         "exactly the two valid entries should come back, got {ideas:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn list_ideas_skips_symlinked_json_templates() {
+    use std::os::unix::fs::symlink;
+
+    let (ctx, td) = fresh_ctx().await;
+    let outside = td.path().join("outside-template.json");
+    tokio::fs::write(&outside, ema_pullback_template()).await.unwrap();
+
+    let templates_dir = folder_root(td.path())
+        .join("library")
+        .join("templates")
+        .join("EMA");
+    tokio::fs::create_dir_all(&templates_dir).await.unwrap();
+    symlink(&outside, templates_dir.join("leaked.json")).unwrap();
+
+    let ideas = list_ideas(&ctx, IdeaFilter::default()).await.unwrap();
+    assert!(
+        ideas.is_empty(),
+        "symlinked templates must be skipped, got {ideas:?}"
     );
 }
 
