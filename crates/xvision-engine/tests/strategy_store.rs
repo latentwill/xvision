@@ -3,7 +3,7 @@ use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
-use xvision_engine::strategies::Strategy;
+use xvision_engine::strategies::{AgentRef, Strategy};
 
 fn sample_strategy(id: &str) -> Strategy {
     Strategy {
@@ -24,18 +24,14 @@ fn sample_strategy(id: &str) -> Strategy {
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
+        agents: vec![AgentRef {
+            agent_id: "01TESTAGENT00000000000000".into(),
+            role: "trader".into(),
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "decide".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
-            allowed_tools: vec!["ohlcv".into()],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     }
