@@ -5,12 +5,14 @@
 > `team/CONDUCTOR.md`.
 >
 > Last updated: 2026-05-22 (sweep 4) — `strategy-slot-prompt-resolution`
-> (#515) merged 04:57 UTC and is archived this pass. Wave-2 dispatch is
-> in flight: `memory-provenance-in-decisions-trace` (#523) and
-> `indicator-tool-wiring` (#521) opened as PRs; `eval-token-efficiency-tail`
-> and `trace-dock-emitters` still ready but unclaimed. F-5 harness
-> recovery state machine, capability-first spec (#518), and the Phase A
-> schema contract remain in the picture from sweep 3.
+> (#515) and `trace-dock-emitters` (#524, F43) both merged this morning
+> and are archived this pass. Wave-2 dispatch is in flight:
+> `memory-provenance-in-decisions-trace` (#523) and
+> `indicator-tool-wiring` (#521) opened as PRs. Only
+> `eval-token-efficiency-tail` remains ready but unclaimed in the F41
+> tail. F-5 harness recovery state machine, capability-first spec
+> (#518), and the Phase A schema contract remain in the picture from
+> sweep 3.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
@@ -28,10 +30,6 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 ### eval-honesty-tail-2026-05-22 — F41 remaining sub-tracks
 
 - [eval-token-efficiency-tail](contracts/eval-token-efficiency-tail.md) — **P2 leaf** · ready · per-provider `max_tokens` defaults + optional delta-briefing mode
-
-### trace-dock-emitters-2026-05-22 — F43
-
-- [trace-dock-emitters](contracts/trace-dock-emitters.md) — **P2 integration** · ready · 5 sub-items: tool_calls emitters, events writer + lifecycle events, supervisor_notes broadening, per-decision spans, design call on checkpoints/approvals/sandbox_results
 
 ### cli-test-tech-debt-2026-05-22
 
@@ -61,9 +59,10 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 ### Merged 2026-05-22 (post-cascade) — archived under `team/archive/2026-05-22-conductor-pass-4/`
 
-1 contract archived this pass:
+2 contracts archived this pass:
 
 - `strategy-slot-prompt-resolution` (#515 — removed `LLMSlot.prompt`; agent-side `system_prompt` is the source of truth post-2026-05-12 refactor)
+- `trace-dock-emitters` (#524, F43 — filled in `tool_calls`, `events`, `spans`, `supervisor_notes` emitters across the eval/agent loop)
 
 ### Merged 2026-05-22 (~04:46–04:51 UTC cascade) — archived under `team/archive/2026-05-22-conductor-pass-3/`
 
