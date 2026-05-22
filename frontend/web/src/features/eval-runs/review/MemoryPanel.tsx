@@ -29,12 +29,33 @@
 //
 // The destination pages read `?pattern=<id>` and highlight + scroll
 // the matching row. "Demote" is deferred to V3 (see TODO below).
+//
+// `memory-provenance-in-decisions-trace` (2026-05-22): recall payloads
+// may now carry a `decision_id` from the dispatcher (the engine's
+// `cycle_idx` for the slot invocation). When present, recall rows
+// surface a "Decision N" header so operators can attribute the recalled
+// items to the specific decision they fed into. Payloads without
+// `decision_id` (older traces, non-eval call sites) still render
+// cleanly — the header is conditional.
 
 import { useState, type FC } from "react";
 import { Link } from "react-router-dom";
 
 type RecallItem = { id: string; score: number; text_preview: string };
-type RecallPayload = { namespace: string; k: number; items: RecallItem[] };
+type RecallPayload = {
+  namespace: string;
+  k: number;
+  items: RecallItem[];
+  /**
+   * Per-decision identifier the recall fed into. Threaded from the
+   * V2D dispatcher (`SlotInput.cycle_idx`) onto the observability
+   * `memory_recall` event payload. Optional for back-compat: older
+   * traces persisted before `memory-provenance-in-decisions-trace`
+   * landed don't carry it, and CLI/unit-test call sites that don't
+   * thread a decision loop also omit it.
+   */
+  decision_id?: number;
+};
 type WritePayload = { namespace: string; id: string; text_preview: string };
 type DisabledPayload = { namespace: string };
 
@@ -78,10 +99,20 @@ export const MemoryPanel: FC<{ events: MemoryPanelEvent[] }> = ({ events }) => {
       <ul className="space-y-2">
         {memEvents.map((e, i) => {
           if (e.kind === "memory_recall") {
+            // memory-provenance-in-decisions-trace: when the payload
+            // carries a decision_id, surface a "Decision N" prefix so
+            // operators can attribute recalled items to the specific
+            // decision they fed into. Older traces (and CLI/unit-test
+            // call sites) emit recall events without decision_id; in
+            // that case the prefix is suppressed.
+            const decisionLabel =
+              typeof e.payload.decision_id === "number"
+                ? `Decision ${e.payload.decision_id} · `
+                : "";
             return (
               <li key={i} className="text-[12px]">
                 <div className="text-text-3">
-                  recall · <code className="font-mono">{e.payload.namespace}</code> ·
+                  {decisionLabel}recall · <code className="font-mono">{e.payload.namespace}</code> ·
                   {" "}k={e.payload.k}
                 </div>
                 <ul className="mt-1 space-y-1">

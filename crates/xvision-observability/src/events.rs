@@ -56,6 +56,20 @@ pub enum RunEvent {
 
     SidecarError(SidecarErrorEvent),
     BackpressureDropped(BackpressureDroppedEvent),
+
+    /// V2D auto-recall hit set, bound to the per-decision identifier the
+    /// recall fed into. `memory-provenance-in-decisions-trace`: ledger
+    /// events were previously run-level only (`tracing::info!` logs that
+    /// landed nowhere persistent). This variant threads `decision_id`
+    /// through so the eval-review surface can answer "which memories
+    /// drove decision N." Persisted into the `events` table by
+    /// `SqliteRecorder` (no schema migration — the `events` table
+    /// already accepts arbitrary `(kind, payload_json)` rows).
+    ///
+    /// Disjoint from `trace-dock-emitters` event-kinds — that wave adds
+    /// new orthogonal event variants for the trace dock; this one is
+    /// scoped to memory provenance.
+    MemoryRecall(MemoryRecallEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +249,52 @@ pub struct BackpressureDroppedEvent {
     pub note: String,
 }
 
+/// One V2D `memory_recall` hit set, scoped to a single decision inside a
+/// run. The recorder persists it into the `events` table as
+/// `kind = "memory_recall"` with the full payload serialized into
+/// `payload_json`; `run_id`/`decision_id`/`memory_item_ids[]` are
+/// reconstructable for the eval-review join.
+///
+/// Item shape mirrors `xvision_memory::types::MemoryMatch` without
+/// pulling the dep into observability — the event payload carries plain
+/// primitives so consumers don't need the memory crate to deserialize.
+/// Embeddings are intentionally NOT carried; the operator surfaces use
+/// the `id` to deep-link back to the memory store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRecallEvent {
+    pub run_id: String,
+    /// Per-decision identifier the recall fed into. Encoded as the
+    /// engine's `cycle_idx: i64` (the per-decision integer carried on
+    /// `SlotInput` and threaded through `MemoryRecorder::recall`). The
+    /// tuple `(run_id, decision_id)` uniquely keys the recall to its
+    /// owning decision; consumers can also denormalize against
+    /// `scenario_id` via the run's surrounding context if needed.
+    pub decision_id: i64,
+    /// Memory namespace queried (e.g. `agent:<id>` or `global`). Lets
+    /// the dashboard render namespace-scoped deep links without
+    /// re-deriving the namespace.
+    pub namespace: String,
+    /// Per-item recall payload. Ordered by the recall score the store
+    /// returned; consumers can re-sort if they want. Empty when recall
+    /// completed but returned zero hits — the event is still emitted so
+    /// the timeline records the attempt.
+    pub items: Vec<MemoryRecallItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRecallItem {
+    /// Memory store id of the recalled item. Used by the dashboard to
+    /// build the "Open Pattern" deep link.
+    pub id: String,
+    /// Cosine similarity (or whatever scoring fn the store applied)
+    /// between the query and the item. Higher is more relevant.
+    pub score: f32,
+    /// First ~160 chars of the item's text. The recorder DOES NOT carry
+    /// the full body — that lives in `memory_items.text`. Operators who
+    /// want the full text follow the `id` deep link.
+    pub text_preview: String,
+}
+
 /// Side of a broker submit. Mirrors `xvision_execution::Side`, plus
 /// the higher-level `CloseFlat` / `ShortOpen` intents the executor
 /// derives from the trader's action. Operators look at this column in
@@ -338,6 +398,7 @@ impl RunEvent {
             Self::ArtifactWritten(e) => &e.run_id,
             Self::SidecarError(e) => &e.run_id,
             Self::BackpressureDropped(e) => &e.run_id,
+            Self::MemoryRecall(e) => &e.run_id,
         }
     }
 
@@ -363,7 +424,8 @@ impl RunEvent {
             | Self::SupervisorNote(_)
             | Self::ArtifactWritten(_)
             | Self::SidecarError(_)
-            | Self::BackpressureDropped(_) => None,
+            | Self::BackpressureDropped(_)
+            | Self::MemoryRecall(_) => None,
         }
     }
 

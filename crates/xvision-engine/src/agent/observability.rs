@@ -28,8 +28,9 @@ use crate::eval::cost::compute_token_cost_usd_from_catalog;
 use xvision_core::providers::Catalog;
 use xvision_observability::{
     AssistantTextDeltaEvent, BlobStore, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
-    BrokerSide, ModelCallFinishedEvent, Redactor, RetentionMode, RunEvent, RunEventBus, RunFinishedEvent,
-    RunStartedEvent, RunStatus, SpanAttributes, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
+    BrokerSide, MemoryRecallEvent, MemoryRecallItem, ModelCallFinishedEvent, Redactor, RetentionMode,
+    RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent, RunStatus, SpanAttributes, SpanFinishedEvent,
+    SpanKind, SpanStartedEvent, SpanStatus,
 };
 
 /// Serializable digest input for `compute_prompt_hash`. Private —
@@ -949,6 +950,41 @@ impl ObsEmitter {
     /// any non-FullDebug policy suppresses the raw text but still
     /// publishes the event so the dashboard's span counts stay
     /// accurate.
+    /// memory-provenance-in-decisions-trace: publish a V2D
+    /// `memory_recall` event bound to the per-decision identifier this
+    /// recall fed into. The recorder persists it into the `events`
+    /// table (no schema migration — the table already accepts arbitrary
+    /// `(kind, payload_json)` rows) so the dashboard's per-decision
+    /// recall list can answer "which memories drove decision N."
+    ///
+    /// `matches` mirrors `xvision_memory::types::MemoryMatch`. The full
+    /// item text body is NOT carried on the event — only the first ~160
+    /// chars as `text_preview` — so the bus payload stays small. The
+    /// `id` lets the dashboard deep-link back to the memory store.
+    pub async fn emit_memory_recall(
+        &self,
+        decision_id: i64,
+        namespace: &str,
+        matches: &[xvision_memory::types::MemoryMatch],
+    ) {
+        let items: Vec<MemoryRecallItem> = matches
+            .iter()
+            .map(|m| MemoryRecallItem {
+                id: m.id.clone(),
+                score: m.score,
+                text_preview: preview_text(&m.text),
+            })
+            .collect();
+        self.bus
+            .publish(RunEvent::MemoryRecall(MemoryRecallEvent {
+                run_id: self.run_id.clone(),
+                decision_id,
+                namespace: namespace.to_string(),
+                items,
+            }))
+            .await;
+    }
+
     pub async fn emit_assistant_text_delta(&self, span_id: &str, delta_text: &str) {
         let bounded = self.retention.apply_to_body(delta_text);
         self.bus
@@ -1130,6 +1166,19 @@ fn log_unpriced_once(provider: &str, model: &str) {
 /// the emitter so callers don't grow an extra `ulid` import.
 pub fn fresh_span_id() -> String {
     ulid::Ulid::new().to_string()
+}
+
+/// memory-provenance-in-decisions-trace: truncate to ~160 chars with an
+/// ellipsis when trimmed. Mirrors `memory_recorder::preview` so the
+/// `text_preview` carried on `memory_recall` events matches what the
+/// `<prior_observations>` system-prompt block already shows the model.
+/// Local copy keeps `observability.rs` free of cross-module re-exports.
+fn preview_text(text: &str) -> String {
+    let mut s: String = text.chars().take(160).collect();
+    if text.chars().count() > 160 {
+        s.push('…');
+    }
+    s
 }
 
 #[cfg(test)]

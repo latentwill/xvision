@@ -9,6 +9,7 @@ use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
 };
 use xvision_engine::agent::memory_recorder::{MemoryRecorder, RecallResult};
+use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
@@ -17,6 +18,7 @@ use xvision_engine::strategies::{PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_memory::store::MemoryStore;
 use xvision_memory::types::{MemoryItem, MemoryMode, Tier};
+use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus};
 
 fn pattern_item(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
     MemoryItem {
@@ -39,7 +41,7 @@ async fn recall_returns_empty_when_mode_is_off() {
     let store = MemoryStore::open_in_memory().await.unwrap();
     let recorder = MemoryRecorder::new(std::sync::Arc::new(store));
     let r = recorder
-        .recall(MemoryMode::Off, "agent-1", "any query text", 5, None)
+        .recall(MemoryMode::Off, "agent-1", "any query text", 5, None, 0)
         .await
         .unwrap();
     assert!(matches!(r, RecallResult::Skipped));
@@ -61,14 +63,22 @@ async fn recall_returns_top_k_for_agent_scoped() {
     }
     let recorder =
         MemoryRecorder::with_static_embedder(std::sync::Arc::new(store), "test-embedder", vec![1.0, 0.0]);
+    // memory-provenance-in-decisions-trace: thread a non-zero
+    // decision_id so the test exercises the new echo-back field on
+    // `RecallResult::Hits`. The recall feeds into decision-cycle 42.
     let r = recorder
-        .recall(MemoryMode::AgentScoped, "agent-1", "query", 5, None)
+        .recall(MemoryMode::AgentScoped, "agent-1", "query", 5, None, 42)
         .await
         .unwrap();
     match r {
-        RecallResult::Hits { matches, namespace } => {
+        RecallResult::Hits {
+            matches,
+            namespace,
+            decision_id,
+        } => {
             assert_eq!(namespace, "agent:agent-1");
             assert_eq!(matches.len(), 2);
+            assert_eq!(decision_id, 42, "recall must echo decision_id verbatim");
         }
         other => panic!("expected Hits, got {other:?}"),
     }
@@ -601,4 +611,136 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
             .await
             .unwrap();
     assert_eq!(pattern_row.0, 1, "preseed pattern must survive");
+}
+
+/// Drain events from the bus by quiescing + yielding briefly so the
+/// `NoopRecorder`'s internal consumer task has time to process them.
+async fn drain_events(bus: &RunEventBus, recorder: &NoopRecorder) -> Vec<RunEvent> {
+    for _ in 0..50 {
+        bus.quiesce().await;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+    recorder.snapshot().await
+}
+
+/// memory-provenance-in-decisions-trace: when `execute_slot` runs with
+/// an `ObsEmitter` wired + V2D memory mode + recall hits, the emitter
+/// must publish a `RunEvent::MemoryRecall` carrying:
+///   - `decision_id` matching the `SlotInput.cycle_idx` argument
+///   - the recall set's item ids
+///   - the namespace the recall resolved
+///
+/// Anything less leaves the eval-review surface unable to answer
+/// "which memories drove decision N" — the foundation finding this
+/// contract unblocks (`memory-aware-eval-findings`) depends on the
+/// `(run_id, decision_id, memory_item_id)` tuple landing on the bus.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn execute_slot_emits_memory_recall_event_with_decision_id() {
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    let store_arc = Arc::new(store);
+    for (id, text) in [
+        ("recall_m1", "FIRST_RECALL_FIXTURE"),
+        ("recall_m2", "SECOND_RECALL_FIXTURE"),
+    ] {
+        store_arc
+            .upsert_pattern(
+                &pattern_item(id, "agent:agent-prov", text, vec![1.0, 0.0]),
+                "test-embedder",
+            )
+            .await
+            .unwrap();
+    }
+    let recorder_memory = Arc::new(MemoryRecorder::with_static_embedder(
+        Arc::clone(&store_arc),
+        "test-embedder",
+        vec![1.0, 0.0],
+    ));
+
+    let recorder_obs = Arc::new(NoopRecorder::new());
+    let bus = Arc::new(RunEventBus::new(vec![
+        recorder_obs.clone() as Arc<dyn AgentRunRecorder>
+    ]));
+    let emitter = ObsEmitter::new(bus.clone(), "run-prov-fixture");
+
+    let slot = LLMSlot {
+        role: "trader".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
+        allowed_tools: Vec::new(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4-6".into()),
+    };
+    let dispatch = Arc::new(CapturingDispatch::new(
+        r#"{"action":"hold","conviction":0.1,"justification":"prov"}"#,
+    ));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    // Drive cycle_idx=7 — the emitted MemoryRecall.decision_id must
+    // echo this back. Empty cycle_idx (0) would still pass the type
+    // check but would let a silent off-by-one in the threading bypass
+    // the test, so we pick a non-zero number.
+    execute_slot(SlotInput {
+        slot: &slot,
+        system_prompt: "BASE".into(),
+        upstream_inputs: serde_json::json!({"ohlcv_history": []}),
+        dispatch: dispatch.clone(),
+        tools,
+        response_schema: None,
+        max_tokens: None,
+        temperature: None,
+        obs: Some(emitter),
+        memory: Some(recorder_memory),
+        memory_mode: MemoryMode::AgentScoped,
+        agent_id: "agent-prov".into(),
+        scenario_start: None,
+        run_id: "run-prov-fixture".into(),
+        scenario_id: "scenario-prov".into(),
+        cycle_idx: 7,
+        catalog: None,
+    })
+    .await
+    .expect("execute_slot must succeed");
+
+    let events = drain_events(&bus, &recorder_obs).await;
+    let recall = events
+        .iter()
+        .find_map(|e| match e {
+            RunEvent::MemoryRecall(m) => Some(m),
+            _ => None,
+        })
+        .expect(
+            "execute_slot must publish a MemoryRecall event when ObsEmitter is wired \
+             + memory mode is non-Off + recall returns hits",
+        );
+
+    assert_eq!(recall.run_id, "run-prov-fixture");
+    assert_eq!(
+        recall.decision_id, 7,
+        "MemoryRecall.decision_id must match SlotInput.cycle_idx — \
+         this is the per-decision provenance the contract installs",
+    );
+    assert_eq!(recall.namespace, "agent:agent-prov");
+
+    let item_ids: Vec<String> = recall.items.iter().map(|it| it.id.clone()).collect();
+    assert!(
+        item_ids.contains(&"recall_m1".to_string()),
+        "MemoryRecall.items must carry the recall set; got: {item_ids:?}",
+    );
+    assert!(
+        item_ids.contains(&"recall_m2".to_string()),
+        "MemoryRecall.items must carry the recall set; got: {item_ids:?}",
+    );
+
+    // Each item must carry a non-empty score + preview so the dashboard
+    // has enough to render without re-querying the memory store.
+    for item in &recall.items {
+        assert!(
+            item.score.is_finite() && item.score > 0.0,
+            "recall item must carry a finite positive score; got: {}",
+            item.score,
+        );
+        assert!(
+            !item.text_preview.is_empty(),
+            "recall item must carry a non-empty text_preview",
+        );
+    }
 }
