@@ -31,7 +31,7 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 ### cli-test-tech-debt-2026-05-22
 
-- [cli-test-fixture-completion-tail](contracts/cli-test-fixture-completion-tail.md) — **P2 leaf** · **ready (unblocked 2026-05-22 by #520 merge)** · migrate 9 failing CLI test fixtures to post-template-registry, post-strategy-fixture-migration shape.
+- [cli-test-fixture-completion-tail](contracts/cli-test-fixture-completion-tail.md) — **P2 leaf** · **in flight (PR #541)** · migrate 9 failing CLI test fixtures to post-template-registry, post-strategy-fixture-migration shape. Worker reports all 4 suites 0 failures.
 
 ### cli-operator-safety-wave-b-2026-05-22 — model-bakeoff cluster
 
@@ -44,6 +44,7 @@ Leaves #4 + #5 are in flight; #6 depends on both.
 
 ## Open PRs (in-flight, not yet merged)
 
+- **#541** — `cli-test-fixture-completion-tail` — 9 fixtures migrated; full `cargo test -p xvision-cli` clean.
 - **#540** — `task/orderly-multi-asset-expansion` — F18 follow-on; drops BTC-only guard, routes per `td.asset`.
 - **#538** — `cli-eval-model-override` (Wave B #5).
 - **#537** — `cli-model-bakeoff` (Wave B #6, absorbs #7).
