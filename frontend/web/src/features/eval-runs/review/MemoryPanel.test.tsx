@@ -150,3 +150,64 @@ describe("MemoryPanel — recall row overflow menu (Phase 4 deep-link)", () => {
       .toBeInTheDocument();
   });
 });
+
+describe("MemoryPanel — per-decision provenance (memory-provenance-in-decisions-trace)", () => {
+  it("renders a 'Decision N' prefix when recall payload carries decision_id", () => {
+    const recallWithDecision = {
+      kind: "memory_recall",
+      payload: {
+        namespace: "agent:01HZTEST",
+        k: 1,
+        decision_id: 7,
+        items: [
+          { id: "m1", score: 0.5, text_preview: "preview body" },
+        ],
+      },
+    };
+    renderPanel([recallWithDecision]);
+    // Header row must mention the decision id so operators can
+    // attribute the recall set to the specific decision it fed into.
+    expect(screen.getByText(/Decision 7/)).toBeInTheDocument();
+    expect(screen.getByText(/recall/)).toBeInTheDocument();
+  });
+
+  it("omits the 'Decision N' prefix when recall payload has no decision_id", () => {
+    // Back-compat: traces emitted before this contract landed don't
+    // carry decision_id. The recall row must still render cleanly.
+    renderPanel([recall]);
+    // recall fixture has no decision_id — assert no "Decision N" text.
+    expect(screen.queryByText(/Decision \d+/)).not.toBeInTheDocument();
+  });
+
+  it("renders separate Decision headers for multiple recall events on the same run", () => {
+    // Eval-review surface: one run can emit multiple memory_recall
+    // events across different decisions. Each event must surface its
+    // own decision id so the operator can scan the per-decision
+    // attribution at a glance.
+    const events = [
+      {
+        kind: "memory_recall",
+        payload: {
+          namespace: "agent:01HZTEST",
+          k: 1,
+          decision_id: 1,
+          items: [{ id: "m1", score: 0.5, text_preview: "first decision recall" }],
+        },
+      },
+      {
+        kind: "memory_recall",
+        payload: {
+          namespace: "agent:01HZTEST",
+          k: 1,
+          decision_id: 2,
+          items: [{ id: "m2", score: 0.5, text_preview: "second decision recall" }],
+        },
+      },
+    ];
+    renderPanel(events);
+    expect(screen.getByText(/Decision 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Decision 2/)).toBeInTheDocument();
+    expect(screen.getByText(/first decision recall/)).toBeInTheDocument();
+    expect(screen.getByText(/second decision recall/)).toBeInTheDocument();
+  });
+});

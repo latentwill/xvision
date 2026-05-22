@@ -53,6 +53,11 @@ fn event_name(ev: &RunEvent) -> &'static str {
         RunEvent::ArtifactWritten(_) => "artifact_written",
         RunEvent::SidecarError(_) => "sidecar_error",
         RunEvent::BackpressureDropped(_) => "backpressure_dropped",
+        // memory-provenance-in-decisions-trace: new variant carrying
+        // per-decision recall provenance. Mechanical exhaustive-match
+        // registration only — the SSE forwarder treats it like any
+        // other run-scoped event.
+        RunEvent::MemoryRecall(_) => "memory_recall",
         // Carryover build-fix (2026-05-22): `EngineEvent` was added to
         // `xvision_observability::RunEvent` upstream and this match
         // wasn't extended, breaking every `cargo build` against

@@ -30,6 +30,16 @@ pub enum RecallResult {
     Hits {
         namespace: String,
         matches: Vec<MemoryMatch>,
+        /// V2D provenance — the per-decision identifier this recall fed
+        /// into. Mirrors the caller's `decision_id` argument verbatim so
+        /// downstream consumers (observability emit, eval-review join)
+        /// can answer "which memories influenced decision N." The engine
+        /// convention is `(run_id, scenario_id, cycle_idx)` as the
+        /// decision tuple; `cycle_idx` is the per-decision integer and
+        /// is carried here as `i64`. `0` is the safe default for
+        /// non-eval call sites (CLI rehearsal, unit tests) where there's
+        /// no surrounding decision loop.
+        decision_id: i64,
     },
     /// Mode was non-off but no embedder is available for the slot's
     /// provider. Dispatcher emits a `memory_disabled_no_embedder`
@@ -68,6 +78,15 @@ impl MemoryRecorder {
     /// Pattern-tier recall. `current_scenario_start` is forwarded to the
     /// store so backtest dispatchers can exclude Patterns trained inside
     /// the scenario window (`None` = live/paper, no temporal filter).
+    ///
+    /// `decision_id` is the per-decision identifier the recall feeds
+    /// into; the V2D dispatcher passes `SlotInput.cycle_idx`. The value
+    /// is echoed back in [`RecallResult::Hits::decision_id`] so the
+    /// caller can surface it on the `memory_recall` observability event
+    /// without re-plumbing scope. `0` is the safe default for non-eval
+    /// callers (legacy `LLMSlot` pipeline, unit tests) — no per-decision
+    /// loop exists to id, and the recorder is typically `None` or
+    /// `mode = Off` on those paths anyway.
     pub async fn recall(
         &self,
         mode: MemoryMode,
@@ -75,6 +94,7 @@ impl MemoryRecorder {
         query_text: &str,
         k: usize,
         current_scenario_start: Option<DateTime<Utc>>,
+        decision_id: i64,
     ) -> anyhow::Result<RecallResult> {
         let ns = Namespace::for_mode(mode, agent_id);
         if !ns.is_active() {
@@ -93,6 +113,7 @@ impl MemoryRecorder {
         Ok(RecallResult::Hits {
             namespace: ns.as_str().to_string(),
             matches: hits,
+            decision_id,
         })
     }
 

@@ -37,7 +37,7 @@ use serde_json::json;
 
 use xvision_observability::{
     build_export, build_report, find_blob_owner, AgentRunExport, BlobRef, BlobStore, BlobStoreError,
-    ExportError,
+    ExportError, MemoryRecallEvent,
 };
 
 use crate::error::DashboardError;
@@ -136,6 +136,77 @@ fn map_err(e: ExportError) -> DashboardError {
         ExportError::NotFound(m) => DashboardError::NotFound(m),
         other => DashboardError::Internal(anyhow::anyhow!(other)),
     }
+}
+
+/// memory-provenance-in-decisions-trace: per-decision recall list for
+/// `run_id`. The `SqliteRecorder` writes each `RunEvent::MemoryRecall`
+/// into the `events` table as `kind = "memory_recall"` with the full
+/// `MemoryRecallEvent` payload serialized into `payload_json`. This
+/// handler decodes those rows back into the typed shape and groups by
+/// `decision_id` so the eval-review surface can render
+/// "Decision N → [memory items]" rows.
+///
+/// Note (route wiring): not yet attached to the dashboard router — the
+/// route table lives in `server.rs`, outside this contract's allowed
+/// paths. A follow-up will wire `GET /api/agent-runs/:id/memory-recalls`
+/// once the contract author re-scopes. Until then the handler stays
+/// callable from tests + provides the projection logic for downstream
+/// consumers that query the events table directly.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryRecallListResponse {
+    pub run_id: String,
+    /// One entry per emitted recall event, ordered by `decision_id`
+    /// ascending then by event row insertion order. Same decision_id
+    /// can appear more than once when a run's pipeline includes
+    /// multiple memory-enabled slots — each slot's recall lands as its
+    /// own event.
+    pub recalls: Vec<MemoryRecallEvent>,
+}
+
+/// Project `memory_recall` events for `run_id` out of the `events`
+/// table, decoding each `payload_json` back into a typed
+/// `MemoryRecallEvent`. Rows whose payload fails to parse are skipped
+/// (the recorder always writes a serializable payload, so a parse
+/// failure indicates a schema drift bug worth catching in tests). The
+/// SQL-level projection orders by decision_id so the response is
+/// renderable without client-side sorting.
+pub async fn list_memory_recalls(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<MemoryRecallListResponse>, DashboardError> {
+    let rows: Vec<(Option<String>,)> = sqlx::query_as(
+        "SELECT payload_json FROM events \
+         WHERE run_id = ? AND kind = 'memory_recall' \
+         ORDER BY CAST(json_extract(payload_json, '$.decision_id') AS INTEGER) ASC, \
+                  created_at ASC",
+    )
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("list_memory_recalls: {e}")))?;
+
+    let mut recalls: Vec<MemoryRecallEvent> = Vec::with_capacity(rows.len());
+    for (payload_opt,) in rows {
+        let Some(payload_json) = payload_opt else {
+            // NULL payload should never happen — recorder writes the
+            // serialized event verbatim — but tolerate it rather than
+            // failing the whole request.
+            continue;
+        };
+        match serde_json::from_str::<MemoryRecallEvent>(&payload_json) {
+            Ok(ev) => recalls.push(ev),
+            Err(e) => {
+                tracing::warn!(
+                    run_id = %id,
+                    error = %e,
+                    "list_memory_recalls: skipping unparseable payload_json — \
+                     schema drift suspected",
+                );
+            }
+        }
+    }
+
+    Ok(Json(MemoryRecallListResponse { run_id: id, recalls }))
 }
 
 /// Match `^[0-9a-f]{64}$` without pulling in a regex dep. Refuses
