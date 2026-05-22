@@ -88,6 +88,10 @@ contracts in `team/contracts/` right now.
 | `crates/xvision-engine/src/agent/llm.rs` | held: indicator-tool-wiring, eval-token-efficiency-tail | Disjoint regions. |
 | `crates/xvision-engine/src/agent/pipeline.rs` | held: indicator-tool-wiring (tool-call dispatch), trace-dock-emitters (tool_calls emit) | Disjoint regions. |
 | `crates/xvision-observability/src/{events,types,sqlite,lib}.rs` | held: trace-dock-emitters (broad), memory-provenance-in-decisions-trace (narrow — decision_id on memory_recall) | Disjoint event-kinds. trace-dock-emitters lands first preferred. |
+| `crates/xvision-engine/src/agent/dispatch_capability.rs` | held: agent-graph-capability-dispatch (Phase B, NEW file), agent-graph-filter-capability (Phase C — wires Filter handler into dispatch_capability) | Sequential: Phase B authors the seam; Phase C replaces the Filter stub with the real handler. Phase C MUST rebase on Phase B's merged version. |
+| `crates/xvision-engine/src/strategies/validate.rs` | held: agent-graph-capability-dispatch (Phase B — predicate signal-source check), agent-graph-filter-capability (Phase C — signal_field warning extension) | Sequential. Phase C extends the validator after Phase B's base validator lands. |
+| `crates/xvision-engine/src/agent/pipeline.rs` | held: indicator-tool-wiring (#521), trace-dock-emitters (#524, merged), agent-graph-capability-dispatch (Phase B — full rewrite), agent-graph-filter-capability (Phase C — granularity_runtime + signal cache lookup) | Phase B is a full rewrite; Phase C adds granularity hooks to the rewritten version. Wave-2 #521 lands first (smallest delta) so Phase B rebases on the post-wave-2 main. |
+| `crates/xvision-engine/src/eval/executor/{paper,backtest}.rs` | held: trace-dock-emitters (#524, merged), agent-graph-capability-dispatch (Phase B — lift onto seam), agent-graph-filter-capability (Phase C — construct SignalCache + pass into dispatch) | Sequential. Phase B lifts both executors onto the new seam; Phase C threads the SignalCache through. |
 
 ## Out of Scope
 
