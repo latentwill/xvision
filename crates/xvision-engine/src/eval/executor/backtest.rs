@@ -15,6 +15,7 @@
 //!   `MetricsSummary.win_rate` is left at 0.0 the same way PaperExecutor
 //!   leaves it — Phase 3.C work).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -23,6 +24,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use ulid::Ulid;
 use xvision_core::market::Ohlcv;
+use xvision_core::providers::Catalog;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
 use xvision_eval::baselines::bar_baselines;
@@ -111,6 +113,11 @@ pub struct BacktestExecutor {
     /// can pass it down into `execute_slot` for recall/write. `None`
     /// keeps the dispatcher's memory seam dormant.
     memory_recorder: Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    /// Cached provider catalogs for context-overflow recovery. The
+    /// pipeline uses the slot provider to pick the matching catalog and
+    /// select a cheap summarizer model. Empty by default for tests and
+    /// legacy callers.
+    provider_catalogs: HashMap<String, Arc<Catalog>>,
     /// Optional per-run hard caps. When set, the per-bar loop checks
     /// `EvalLimits::check_for_cancel` after each decision's tokens are
     /// counted; on breach the run is marked Cancelled with a stable
@@ -139,6 +146,7 @@ impl BacktestExecutor {
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
+            provider_catalogs: HashMap::new(),
             limits: None,
         }
     }
@@ -158,6 +166,7 @@ impl BacktestExecutor {
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
+            provider_catalogs: HashMap::new(),
             limits: None,
         }
     }
@@ -171,6 +180,7 @@ impl BacktestExecutor {
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
+            provider_catalogs: HashMap::new(),
             limits: None,
         }
     }
@@ -200,6 +210,12 @@ impl BacktestExecutor {
         recorder: std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>,
     ) -> Self {
         self.memory_recorder = Some(recorder);
+        self
+    }
+
+    /// Attach cached provider catalogs for context-overflow recovery.
+    pub fn with_provider_catalogs(mut self, catalogs: HashMap<String, Arc<Catalog>>) -> Self {
+        self.provider_catalogs = catalogs;
         self
     }
 
@@ -825,6 +841,7 @@ impl BacktestExecutor {
                 run_id: run.id.clone(),
                 scenario_id: scenario.id.clone(),
                 cycle_idx: decision_idx as i64,
+                provider_catalogs: self.provider_catalogs.clone(),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;

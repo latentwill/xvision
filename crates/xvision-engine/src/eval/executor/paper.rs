@@ -7,11 +7,13 @@
 //! broker is `AlpacaPaperSurface::from_env()` (PR #5). In tests the
 //! broker is `MockBrokerSurface` (PR #5) so no network is required.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
+use xvision_core::providers::Catalog;
 use xvision_execution::broker_surface::{
     classify_broker_error_message, extract_requested_available, is_alpaca_crypto, BrokerErrorClass,
     BrokerSurface, OrderRequest, Side,
@@ -79,6 +81,11 @@ pub struct PaperExecutor {
     /// already a no-op for `MemoryMode::Off`, but this also covers
     /// tests / CLI rehearsal that never built one).
     memory_recorder: Option<std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    /// Cached provider catalogs for context-overflow recovery. The
+    /// pipeline uses the slot provider to pick the matching catalog and
+    /// select a cheap summarizer model. Empty by default for tests and
+    /// legacy callers.
+    provider_catalogs: HashMap<String, Arc<Catalog>>,
     /// Pre-submit minimum-notional gate (`risk-gate-min-notional`).
     /// When `Some(min)` and `min > 0.0`, orders with notional (size ×
     /// reference price) strictly less than `min` are vetoed before
@@ -105,6 +112,7 @@ impl PaperExecutor {
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
+            provider_catalogs: HashMap::new(),
             min_notional_usd: None,
             limits: None,
         }
@@ -119,6 +127,7 @@ impl PaperExecutor {
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
+            provider_catalogs: HashMap::new(),
             min_notional_usd: None,
             limits: None,
         }
@@ -136,6 +145,7 @@ impl PaperExecutor {
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
+            provider_catalogs: HashMap::new(),
             min_notional_usd: None,
             limits: None,
         }
@@ -154,6 +164,7 @@ impl PaperExecutor {
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
+            provider_catalogs: HashMap::new(),
             min_notional_usd: None,
             limits: None,
         }
@@ -179,6 +190,12 @@ impl PaperExecutor {
         recorder: std::sync::Arc<crate::agent::memory_recorder::MemoryRecorder>,
     ) -> Self {
         self.memory_recorder = Some(recorder);
+        self
+    }
+
+    /// Attach cached provider catalogs for context-overflow recovery.
+    pub fn with_provider_catalogs(mut self, catalogs: HashMap<String, Arc<Catalog>>) -> Self {
+        self.provider_catalogs = catalogs;
         self
     }
 
@@ -939,6 +956,7 @@ impl PaperExecutor {
                 run_id: run.id.clone(),
                 scenario_id: scenario.id.clone(),
                 cycle_idx: decision_idx as i64,
+                provider_catalogs: self.provider_catalogs.clone(),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;

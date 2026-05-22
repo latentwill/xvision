@@ -1336,14 +1336,13 @@ fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
     ctx.xvn_home.join("config").join("default.toml")
 }
 
-/// Load every configured provider's cached catalog so `ObsEmitter`
-/// can compute `model_calls.cost_usd` at span-close time. Missing /
-/// never-fetched catalogs are skipped silently — the emitter handles
-/// "no pricing" by leaving `cost_usd = None` and emitting one debug
-/// line per unique unpriced `(provider, model)` pair. We deliberately
-/// do NOT trigger a network refresh here: eval runs must not hang on
-/// catalog fetches.
-async fn load_provider_catalogs_for_emitter(
+/// Load every configured provider's cached catalog once per eval run.
+/// The observability emitter uses these for `model_calls.cost_usd`, and
+/// context-overflow recovery uses them to choose a cheap summarizer
+/// model. Missing / never-fetched catalogs are skipped silently. We
+/// deliberately do NOT trigger a network refresh here: eval runs must
+/// not hang on catalog fetches.
+async fn load_provider_catalogs(
     ctx: &ApiContext,
 ) -> std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>> {
     use std::collections::HashMap;
@@ -1452,14 +1451,13 @@ async fn run_inner(
     // executor preflight has succeeded — so the recorder's
     // `agent_runs.eval_run_id` FK is valid and a preflight failure can't
     // leave a phantom observability run behind.
-    // Load provider catalogs ONCE for the emitter so every
-    // `emit_model_call_finished*` call site can compute
-    // `cost_usd` from cached pricing — fixes the audit-time
-    // observation that 2,757/2,757 `model_calls.cost_usd` rows were
-    // NULL. Best-effort: providers without a cached catalog are
-    // skipped and the emitter falls back to publishing `None`.
+    // Load provider catalogs ONCE so observability can compute token
+    // cost and context-overflow recovery can choose a cheap summarizer
+    // model. Best-effort: providers without a cached catalog are
+    // skipped and both consumers fall back to None/no-recovery.
+    let provider_catalogs = load_provider_catalogs(ctx).await;
     let obs_catalogs = if ctx.obs_event_bus.is_some() {
-        load_provider_catalogs_for_emitter(ctx).await
+        provider_catalogs.clone()
     } else {
         std::collections::HashMap::new()
     };
@@ -1494,12 +1492,21 @@ async fn run_inner(
                 from_db,
                 b,
                 obs_emitter.clone(),
+                provider_catalogs.clone(),
                 req.limits.as_ref(),
             )
             .await?
         }
         RunMode::Backtest => {
-            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref()).await?
+            build_backtest_executor(
+                ctx,
+                &scenario,
+                from_db,
+                obs_emitter.clone(),
+                provider_catalogs.clone(),
+                req.limits.as_ref(),
+            )
+            .await?
         }
     };
 
@@ -1870,6 +1877,7 @@ async fn build_paper_executor(
     from_db: bool,
     broker: Arc<dyn BrokerSurface>,
     obs: Option<crate::agent::observability::ObsEmitter>,
+    provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
     let bars = load_ohlcv_for_scenario(ctx, scenario, from_db).await?;
@@ -1887,6 +1895,7 @@ async fn build_paper_executor(
     let mut paper = PaperExecutor::with_bars(broker, bars)
         .with_warmup(warmup)
         .with_event_bus(ctx.event_bus.clone())
+        .with_provider_catalogs(provider_catalogs)
         .with_min_notional_usd(min_notional);
     if let Some(emitter) = obs {
         paper = paper.with_observability(emitter);
@@ -1947,6 +1956,7 @@ async fn build_backtest_executor(
     scenario: &Scenario,
     from_db: bool,
     obs: Option<crate::agent::observability::ObsEmitter>,
+    provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
     if from_db {
@@ -1969,7 +1979,8 @@ async fn build_backtest_executor(
                 let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?);
                 let mut bt = BacktestExecutor::with_bars(ohlcv)
                     .with_warmup(warmup)
-                    .with_event_bus(ctx.event_bus.clone());
+                    .with_event_bus(ctx.event_bus.clone())
+                    .with_provider_catalogs(provider_catalogs);
                 if let Some(emitter) = obs {
                     bt = bt.with_observability(emitter);
                 }
@@ -1997,7 +2008,9 @@ async fn build_backtest_executor(
         return Err(missing_bars_validation(scenario, None));
     }
 
-    let mut bt = BacktestExecutor::new().with_event_bus(ctx.event_bus.clone());
+    let mut bt = BacktestExecutor::new()
+        .with_event_bus(ctx.event_bus.clone())
+        .with_provider_catalogs(provider_catalogs);
     if let Some(emitter) = obs {
         bt = bt.with_observability(emitter);
     }
@@ -2085,10 +2098,11 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     // F-11: see comment in `run_inner` above — same reasoning here.
     run.agents_agent_id = pick_agents_agent_id(&strategy);
-    // Same catalog-wiring as the `start_run` path above; see the
+    // Same catalog-wiring as the synchronous run path above; see the
     // comment there for the rationale.
+    let provider_catalogs = load_provider_catalogs(ctx).await;
     let obs_catalogs = if ctx.obs_event_bus.is_some() {
-        load_provider_catalogs_for_emitter(ctx).await
+        provider_catalogs.clone()
     } else {
         std::collections::HashMap::new()
     };
@@ -2114,12 +2128,21 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 from_db,
                 b,
                 obs_emitter.clone(),
+                provider_catalogs.clone(),
                 req.limits.as_ref(),
             )
             .await?
         }
         RunMode::Backtest => {
-            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone(), req.limits.as_ref()).await?
+            build_backtest_executor(
+                ctx,
+                &scenario,
+                from_db,
+                obs_emitter.clone(),
+                provider_catalogs.clone(),
+                req.limits.as_ref(),
+            )
+            .await?
         }
     };
 
