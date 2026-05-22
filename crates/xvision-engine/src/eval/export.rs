@@ -765,7 +765,6 @@ mod roundtrip {
     fn openrouter_strategy(id: &str, model: &str) -> Strategy {
         let slot = LLMSlot {
             role: "trader".into(),
-            prompt: "decide".into(),
             attested_with: format!("openrouter.{model}"),
             allowed_tools: Vec::new(),
             provider: Some("openrouter".into()),
@@ -1291,7 +1290,6 @@ mod provider_attestation {
             intern_slot: None,
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
-                prompt: "decide".into(),
                 attested_with: attested_with.into(),
                 allowed_tools: Vec::new(),
                 provider: None,

@@ -138,8 +138,6 @@ pub async fn delete(
 #[derive(Deserialize)]
 pub struct UpdateSlotBody {
     #[serde(default)]
-    pub prompt: Option<String>,
-    #[serde(default)]
     pub attested_with: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
@@ -159,7 +157,6 @@ pub async fn put_slot(
     let req = UpdateSlotReq {
         id,
         slot: role,
-        prompt: body.prompt,
         attested_with: body.attested_with,
         provider: body.provider,
         model: body.model,

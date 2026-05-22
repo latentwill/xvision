@@ -42,48 +42,6 @@ pub const EXAMPLE_STRATEGY_CREATOR: &str = "@xvision-examples";
 /// surface examples without depending on the id prefix.
 pub const EXAMPLE_SOURCE_TAG: &str = "source:example";
 
-const EXAMPLE_TREND_FOLLOWER_PROMPT: &str = r#"You are a trend-following crypto trader. Inputs:
-- ohlcv_history: last 200 bars
-- indicator_panel: EMA(12), EMA(26), EMA(50), ATR(14)
-- portfolio_state: open positions, available capital
-
-Decide ONE of: long_open | short_open | flat | hold.
-Trend logic:
-  enter long  when EMA(12) > EMA(26) > EMA(50) AND price > EMA(12);
-  enter short when EMA(12) < EMA(26) < EMA(50) AND price < EMA(12);
-  otherwise flat or hold.
-Output JSON: {action, conviction (0-1), justification (one line)}.
-"#;
-
-const EXAMPLE_MEAN_REVERSION_TRADER_PROMPT: &str = r#"You are a mean-reversion crypto trader. Inputs:
-- ohlcv_history: last 200 bars
-- indicator_panel: RSI(14), Bollinger(20, 2), ATR(14)
-- portfolio_state: open positions, available capital
-
-Decide ONE of: long_open | short_open | flat | hold.
-Mean-reversion logic: enter long when RSI < 30 AND price < lower_bollinger;
-enter short when RSI > 70 AND price > upper_bollinger; otherwise flat or hold.
-Output JSON: {action, conviction (0-1), justification (one line)}.
-"#;
-
-const EXAMPLE_MEAN_REVERSION_REGIME_PROMPT: &str = r#"Classify the current crypto market regime as one of:
-trending_bull | trending_bear | range_bound | chop.
-Use indicator_panel + recent ohlcv_history. Return JSON: {regime, confidence (0-1)}.
-"#;
-
-const EXAMPLE_BREAKOUT_PROMPT: &str = r#"You are a breakout crypto trader. Inputs:
-- ohlcv_history: last 200 bars
-- indicator_panel: Donchian(20), ATR(14)
-- portfolio_state: open positions, available capital
-
-Decide ONE of: long_open | short_open | flat | hold.
-Breakout logic:
-  enter long  when close > donchian_upper(20);
-  enter short when close < donchian_lower(20);
-  otherwise flat or hold (avoid trading inside the channel).
-Output JSON: {action, conviction (0-1), justification (one line)}.
-"#;
-
 /// Stable example strategy ids surfaced by [`example_strategies`]. Exported
 /// so the Driver.js tour (V2A item 1) and CLI tests can reference them
 /// without hardcoding the strings.
@@ -131,7 +89,6 @@ pub fn example_strategies() -> Vec<Strategy> {
             intern_slot: None,
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
-                prompt: EXAMPLE_TREND_FOLLOWER_PROMPT.into(),
                 attested_with: "anthropic.claude-sonnet-4.6".into(),
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
                 provider: None,
@@ -171,7 +128,6 @@ pub fn example_strategies() -> Vec<Strategy> {
             pipeline: PipelineDef::default(),
             regime_slot: Some(LLMSlot {
                 role: "regime".into(),
-                prompt: EXAMPLE_MEAN_REVERSION_REGIME_PROMPT.into(),
                 attested_with: "anthropic.claude-sonnet-4.6".into(),
                 allowed_tools: vec!["indicator_panel".into()],
                 provider: None,
@@ -180,7 +136,6 @@ pub fn example_strategies() -> Vec<Strategy> {
             intern_slot: None,
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
-                prompt: EXAMPLE_MEAN_REVERSION_TRADER_PROMPT.into(),
                 attested_with: "anthropic.claude-sonnet-4.6".into(),
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
                 provider: None,
@@ -223,7 +178,6 @@ pub fn example_strategies() -> Vec<Strategy> {
             intern_slot: None,
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
-                prompt: EXAMPLE_BREAKOUT_PROMPT.into(),
                 attested_with: "anthropic.claude-sonnet-4.6".into(),
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
                 provider: None,

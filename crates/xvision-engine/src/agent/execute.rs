@@ -65,6 +65,13 @@ pub enum ExecuteSlotError {
 
 pub struct SlotInput<'a> {
     pub slot: &'a LLMSlot,
+    /// The system prompt fed to the LLM for this slot.
+    ///
+    /// Sourced from the bound agent's `AgentSlot.system_prompt` on the
+    /// agent-loop path. Legacy `LLMSlot`-only pipelines (no `agents`)
+    /// pass an empty string — the slot itself no longer carries prompt
+    /// text after the 2026-05-22 `LLMSlot.prompt` removal.
+    pub system_prompt: String,
     pub upstream_inputs: serde_json::Value,
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
@@ -262,8 +269,8 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     };
 
     let assembled_system_prompt = match prior_block {
-        Some(block) => format!("{block}\n\n{}", input.slot.prompt),
-        None => input.slot.prompt.clone(),
+        Some(block) => format!("{block}\n\n{}", input.system_prompt),
+        None => input.system_prompt.clone(),
     };
 
     let mut total_input_tokens = 0u32;
@@ -826,7 +833,6 @@ mod tests {
     fn slot(role: &str) -> LLMSlot {
         LLMSlot {
             role: role.to_string(),
-            prompt: "system".into(),
             attested_with: "test.model".into(),
             allowed_tools: Vec::new(),
             provider: Some("test".into()),
@@ -902,7 +908,6 @@ mod tests {
     async fn execute_slot_forwards_persisted_max_tokens_to_dispatcher() {
         let slot = LLMSlot {
             role: "trader".into(),
-            prompt: "decide".into(),
             attested_with: "anthropic.claude-sonnet-4-6".into(),
             allowed_tools: Vec::new(),
             provider: Some("anthropic".into()),
@@ -915,6 +920,7 @@ mod tests {
 
         let out = execute_slot(SlotInput {
             slot: &slot,
+            system_prompt: "decide".into(),
             upstream_inputs: serde_json::json!({}),
             dispatch: dispatch.clone(),
             tools,
@@ -957,7 +963,6 @@ mod tests {
     async fn execute_slot_with_unset_max_tokens_hands_dispatcher_none() {
         let slot = LLMSlot {
             role: "trader".into(),
-            prompt: "decide".into(),
             attested_with: "anthropic.claude-sonnet-4-6".into(),
             allowed_tools: Vec::new(),
             provider: Some("anthropic".into()),
@@ -970,6 +975,7 @@ mod tests {
 
         execute_slot(SlotInput {
             slot: &slot,
+            system_prompt: "decide".into(),
             upstream_inputs: serde_json::json!({}),
             dispatch: dispatch.clone(),
             tools,

@@ -53,7 +53,6 @@ impl LlmDispatch for CannedDispatch {
 fn trader_slot() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
-        prompt: "You are a deterministic test trader.".into(),
         attested_with: "anthropic.claude-sonnet-4-6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
@@ -109,6 +108,7 @@ async fn full_debug_execute_slot_writes_prompt_and_response_blobs() {
     let slot = trader_slot();
     let result = execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: "You are a deterministic test trader.".into(),
         upstream_inputs: serde_json::json!({ "price": 100.0 }),
         dispatch: Arc::new(CannedDispatch),
         tools: Arc::new(ToolRegistry::default_with_builtins()),
@@ -192,6 +192,7 @@ async fn hash_only_execute_slot_leaves_payload_refs_none() {
     let slot = trader_slot();
     execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: "You are a deterministic test trader.".into(),
         upstream_inputs: serde_json::json!({ "price": 100.0 }),
         dispatch: Arc::new(CannedDispatch),
         tools: Arc::new(ToolRegistry::default_with_builtins()),

@@ -1352,8 +1352,7 @@ mod tests {
             UpdateSlotReq {
                 id: created.id.clone(),
                 slot: "trader".into(),
-                prompt: Some("New prompt.".into()),
-                attested_with: None,
+                attested_with: Some("anthropic.claude-sonnet-4.6".into()),
                 provider: None,
                 model: None,
                 allowed_tools: None,
@@ -1361,7 +1360,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(out.updated, vec!["prompt".to_string()]);
+        assert_eq!(out.updated, vec!["attested_with".to_string()]);
         assert!(audit_row_exists(&ctx, "update_slot", &created.id).await);
     }
 
@@ -1382,8 +1381,7 @@ mod tests {
             UpdateSlotReq {
                 id: created.id,
                 slot: "no-such-role".into(),
-                prompt: Some("p".into()),
-                attested_with: None,
+                attested_with: Some("anthropic.claude-sonnet-4.6".into()),
                 provider: None,
                 model: None,
                 allowed_tools: None,
@@ -1401,8 +1399,7 @@ mod tests {
             UpdateSlotReq {
                 id: "01TOTALLYMISSINGAGENTID000".into(),
                 slot: "trader".into(),
-                prompt: Some("p".into()),
-                attested_with: None,
+                attested_with: Some("anthropic.claude-sonnet-4.6".into()),
                 provider: None,
                 model: None,
                 allowed_tools: None,
@@ -1517,52 +1514,6 @@ mod tests {
             out.errors,
         );
         assert!(audit_row_exists(&ctx, "validate", &created.id).await);
-    }
-
-    #[tokio::test]
-    async fn validate_draft_reports_manifest_slot_prompt_drift() {
-        let (ctx, _d) = ctx_with_audit().await;
-        let created = create_strategy(
-            &ctx,
-            CreateStrategyReq {
-                name: "x".into(),
-                creator: None,
-            },
-        )
-        .await
-        .unwrap();
-        update_slot(
-            &ctx,
-            UpdateSlotReq {
-                id: created.id.clone(),
-                slot: "trader".into(),
-                // Use ETH/USD here so the prompt asset drifts from
-                // create_blank_strategy's default asset_universe of
-                // ["BTC/USD"]. (Pre-2026-05-21 templates seeded ETH/USD
-                // and the test used BTC/USD for the same purpose.)
-                prompt: Some("Trade ETH/USD on a 6h candle schedule.".into()),
-                attested_with: None,
-                provider: None,
-                model: None,
-                allowed_tools: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        let out = validate_draft(&ctx, &created.id).await.unwrap();
-
-        assert!(!out.ok);
-        assert!(
-            out.errors.iter().any(|e| e.contains("ETH/USD")),
-            "expected asset drift error, got {:?}",
-            out.errors,
-        );
-        assert!(
-            out.errors.iter().any(|e| e.contains("6h")),
-            "expected cadence drift error, got {:?}",
-            out.errors,
-        );
     }
 
     #[tokio::test]

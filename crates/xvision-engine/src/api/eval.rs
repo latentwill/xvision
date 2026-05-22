@@ -1286,6 +1286,7 @@ async fn resolve_agent_slots(
         out.push(ResolvedAgentSlot {
             role: agent_ref.role.clone(),
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
+            system_prompt: slot.system_prompt.clone(),
             max_tokens: slot.resolve_max_tokens(),
             temperature: slot.temperature,
             inputs_policy: slot.inputs_policy,
@@ -2880,7 +2881,6 @@ mod tests {
     fn slot(provider: Option<&str>, model: Option<&str>, attested_with: &str) -> LLMSlot {
         LLMSlot {
             role: "trader".into(),
-            prompt: "Trade.".into(),
             attested_with: attested_with.into(),
             allowed_tools: Vec::new(),
             provider: provider.map(str::to_string),
@@ -2962,6 +2962,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
+            system_prompt: String::new(),
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
@@ -3004,6 +3005,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
+            system_prompt: String::new(),
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
@@ -3037,6 +3039,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
+            system_prompt: String::new(),
             max_tokens: Some(4096),
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,

@@ -1844,46 +1844,22 @@ pub fn classify_aggressor_side(
 
 /// Find the trader slot's repair context — system prompt, model id,
 /// max_tokens, temperature — for the F-5 phase-2a MalformedJson repair
-/// path (`harness-recovery-malformed-json`). Prefers an attached agent
-/// with role `trader`, then falls back to the legacy
-/// `strategy.trader_slot`. Returns `None` when neither path can supply a
-/// system prompt — the repair attempt is then skipped and the original
-/// parse error is propagated unchanged.
+/// path (`harness-recovery-malformed-json`). After `LLMSlot.prompt`
+/// removal, only attached agent slots can supply this context; legacy
+/// `strategy.trader_slot` entries have no prompt source and skip repair.
 ///
-/// The two paths derive `max_tokens` differently:
-///   - Agent path: the operator's explicit `ResolvedAgentSlot.max_tokens`
-///     (may be `None`, which lets the provider apply its own default).
-///   - Legacy path: the model's auto-derived budget, matching what
-///     `pipeline::default_max_tokens_for` produces for the original
-///     trader call so the repair turn uses the same budget.
 fn trader_repair_context<'a>(
     agent_slots: &'a [ResolvedAgentSlot],
-    strategy: &'a Strategy,
+    _strategy: &'a Strategy,
 ) -> Option<TraderRepairContext<'a>> {
     if let Some(resolved) = agent_slots.iter().find(|r| canonical_role(&r.role) == "trader") {
         let model = resolved.slot.effective_model();
-        if !resolved.slot.prompt.trim().is_empty() && !model.trim().is_empty() {
+        if !resolved.system_prompt.trim().is_empty() && !model.trim().is_empty() {
             return Some(TraderRepairContext {
-                system_prompt: &resolved.slot.prompt,
+                system_prompt: &resolved.system_prompt,
                 model,
                 max_tokens: resolved.max_tokens,
                 temperature: resolved.temperature,
-            });
-        }
-    }
-    if let Some(slot) = strategy.trader_slot.as_ref() {
-        let model = slot.effective_model();
-        if !slot.prompt.trim().is_empty() && !model.trim().is_empty() {
-            // Mirror `pipeline::default_max_tokens_for` so the repair
-            // dispatch uses the same per-model auto budget as the
-            // original trader call. Legacy strategies have no
-            // operator-side `max_tokens` knob.
-            let auto = xvision_core::providers::lookup_model(&model).auto_max_tokens();
-            return Some(TraderRepairContext {
-                system_prompt: &slot.prompt,
-                model,
-                max_tokens: Some(auto),
-                temperature: None,
             });
         }
     }
@@ -2440,12 +2416,12 @@ mod tests {
             role: role.into(),
             slot: LLMSlot {
                 role: role.into(),
-                prompt: "p".into(),
                 attested_with: model.into(),
                 allowed_tools: Vec::new(),
                 provider: None,
                 model: Some(model.into()),
             },
+            system_prompt: "p".into(),
             max_tokens: None,
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,

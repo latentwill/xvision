@@ -359,7 +359,6 @@ mod tests {
             "manifest": make_manifest(),
             "trader_slot": {
                 "role": "trader",
-                "prompt": "you are a trader",
                 "attested_with": "anthropic.claude-sonnet-4.6+",
                 "allowed_tools": []
             },
@@ -411,7 +410,6 @@ mod tests {
             "pipeline": { "kind": "single" },
             "trader_slot": {
                 "role": "trader",
-                "prompt": "you are a trader",
                 "attested_with": "anthropic.claude-sonnet-4.6+",
                 "allowed_tools": []
             },

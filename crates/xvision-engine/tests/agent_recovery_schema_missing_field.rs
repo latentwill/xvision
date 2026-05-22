@@ -47,12 +47,14 @@ use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::observability::ObsEmitter;
+use xvision_engine::agent::pipeline::ResolvedAgentSlot;
+use xvision_engine::agents::InputsPolicy;
 use xvision_engine::eval::executor::{classify_run_failure, BacktestExecutor, Executor, PaperExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::Strategy;
+use xvision_engine::strategies::{AgentRef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, SpanKind, SpanStatus};
@@ -156,22 +158,39 @@ fn minimal_strategy() -> Strategy {
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
+        agents: vec![AgentRef {
+            agent_id: "agent-schema-patch-trader".into(),
+            role: "trader".into(),
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "Decide.".into(),
-            attested_with: "openai.gpt-4o-mini+".into(),
-            allowed_tools: vec![],
-            provider: Some("openai".into()),
-            model: Some("gpt-4o-mini".into()),
-        }),
+        trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    }
+}
+
+fn resolved_trader_slot() -> ResolvedAgentSlot {
+    ResolvedAgentSlot {
+        role: "trader".into(),
+        slot: LLMSlot {
+            role: "trader".into(),
+            attested_with: "openai.gpt-4o-mini+".into(),
+            allowed_tools: vec![],
+            provider: Some("openai".into()),
+            model: Some("gpt-4o-mini".into()),
+        },
+        system_prompt: "Decide.".into(),
+        max_tokens: None,
+        temperature: None,
+        inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: "agent-schema-patch-trader".into(),
+        noop_skip: true,
     }
 }
 
@@ -283,6 +302,7 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
     let mock = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
+    let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
     let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
     let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
@@ -291,7 +311,15 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch_dyn, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &agent_slots,
+            dispatch_dyn,
+            tools,
+            &store,
+        )
         .await;
     assert!(
         res.is_ok(),
@@ -426,6 +454,7 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
     let mock = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
+    let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
     let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
     let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
@@ -434,7 +463,15 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch_dyn, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &agent_slots,
+            dispatch_dyn,
+            tools,
+            &store,
+        )
         .await;
     assert!(
         res.is_ok(),
@@ -506,6 +543,7 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
     let mock = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
+    let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
     let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
     let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
@@ -514,7 +552,15 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let err = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch_dyn, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &agent_slots,
+            dispatch_dyn,
+            tools,
+            &store,
+        )
         .await
         .expect_err("second-attempt patch failure must surface the original error");
 
@@ -593,6 +639,7 @@ async fn backtest_executor_repairs_missing_field_on_single_patch_retry() {
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
     let strategy = minimal_strategy();
+    let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
     let executor = BacktestExecutor::with_bars(short_bars(&scenario)).with_observability(emitter);
     let mut run = Run::new_queued(
@@ -605,7 +652,15 @@ async fn backtest_executor_repairs_missing_field_on_single_patch_retry() {
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch_dyn, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &agent_slots,
+            dispatch_dyn,
+            tools,
+            &store,
+        )
         .await;
     assert!(
         res.is_ok(),
