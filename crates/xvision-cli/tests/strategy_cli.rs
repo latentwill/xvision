@@ -11,7 +11,7 @@
 use std::process::Command;
 use tempfile::tempdir;
 use xvision_engine::{
-    agents::AgentSlot,
+    agents::{AgentSlot, Capability},
     api::{
         agents::{self as agents_api, CreateAgentRequest},
         Actor, ApiContext,
@@ -20,8 +20,43 @@ use xvision_engine::{
     strategies::risk::RiskPreset,
     strategies::slot::LLMSlot,
     strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore},
-    strategies::{ActivationMode, PipelineDef, Strategy},
+    strategies::{ActivationMode, AgentRef, PipelineDef, Strategy},
 };
+
+const OPENROUTER_TEST_CONFIG: &str = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "openrouter"
+kind = "openai-compat"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "XVN_STRATEGY_CLONE_TEST_KEY"
+enabled_models = ["deepseek/deepseek-v4-flash"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
 
 fn xvn(args: &[&str], home: &std::path::Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_xvn"))
@@ -144,6 +179,55 @@ fn create_legacy_strategy(home: &std::path::Path, id: &str, name: &str) {
         let store = FilesystemStore::new(strategy_store_dir(home));
         store.save(&strategy).await.unwrap();
     });
+}
+
+fn create_agent_strategy(home: &std::path::Path, id: &str, name: &str, agent_id: &str) {
+    let mut strategy = build_mean_reversion(id, name);
+    strategy.agents = vec![AgentRef {
+        agent_id: agent_id.into(),
+        role: "trader".into(),
+        activates: Some(Capability::Trader),
+    }];
+    strategy.regime_slot = None;
+    strategy.trader_slot = None;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let store = FilesystemStore::new(strategy_store_dir(home));
+        store.save(&strategy).await.unwrap();
+    });
+}
+
+fn load_agent_slot(home: &std::path::Path, agent_id: &str) -> AgentSlot {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let ctx = ApiContext::open(
+            home,
+            Actor::Cli {
+                user: "strategy-cli-test".into(),
+            },
+        )
+        .await
+        .unwrap();
+        agents_api::get(&ctx, agent_id)
+            .await
+            .unwrap()
+            .slots
+            .into_iter()
+            .next()
+            .expect("agent slot")
+    })
+}
+
+fn write_provider_config(home: &std::path::Path) {
+    let config_dir = home.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(config_dir.join("default.toml"), OPENROUTER_TEST_CONFIG).unwrap();
 }
 
 #[test]
@@ -355,6 +439,113 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
         !agents.iter().any(|agent| agent["role"] == "scout"),
         "scout agent must be absent after remove-agent: {json:#}"
     );
+}
+
+#[test]
+fn clone_strategy_json_clones_agent_and_records_source_metadata() {
+    let dir = tempdir().unwrap();
+    let source_strategy_id = "01H8N7ZCLICLONESOURCE0001";
+    let source_agent_id = create_agent(dir.path(), "Clone Source Trader");
+    create_agent_strategy(dir.path(), source_strategy_id, "clone-source", &source_agent_id);
+
+    let out = xvn(
+        &[
+            "strategy",
+            "clone",
+            source_strategy_id,
+            "--name",
+            "clone-target",
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let cloned_strategy_id = body["strategy_id"].as_str().expect("strategy_id");
+    let cloned_agent_id = body["agent_id"].as_str().expect("agent_id");
+    assert_ne!(cloned_strategy_id, source_strategy_id);
+    assert_ne!(cloned_agent_id, source_agent_id);
+    assert_eq!(body["source_strategy_id"], source_strategy_id);
+    assert_eq!(body["name"], "clone-target");
+    assert!(body["override"].is_null());
+
+    let out = xvn(&["strategy", "show", cloned_strategy_id], dir.path());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cloned: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(cloned["manifest"]["id"], cloned_strategy_id);
+    assert_eq!(cloned["manifest"]["display_name"], "clone-target");
+    assert_eq!(
+        cloned["mechanical_params"]["metadata"]["cloned_from"],
+        source_strategy_id
+    );
+    assert_eq!(cloned["agents"][0]["agent_id"], cloned_agent_id);
+    assert_eq!(cloned["agents"][0]["role"], "trader");
+    assert_eq!(cloned["agents"][0]["activates"], "trader");
+
+    let source_slot = load_agent_slot(dir.path(), &source_agent_id);
+    let cloned_slot = load_agent_slot(dir.path(), cloned_agent_id);
+    assert_eq!(cloned_slot.provider, source_slot.provider);
+    assert_eq!(cloned_slot.model, source_slot.model);
+}
+
+#[test]
+fn clone_strategy_with_provider_model_override_rewrites_cloned_agent_only() {
+    let dir = tempdir().unwrap();
+    write_provider_config(dir.path());
+    std::env::set_var("XVN_STRATEGY_CLONE_TEST_KEY", "sk-test-clone");
+
+    let source_strategy_id = "01H8N7ZCLICLONEOVERRIDE01";
+    let source_agent_id = create_agent(dir.path(), "Override Source Trader");
+    create_agent_strategy(
+        dir.path(),
+        source_strategy_id,
+        "override-source",
+        &source_agent_id,
+    );
+
+    let out = xvn(
+        &[
+            "strategy",
+            "clone",
+            source_strategy_id,
+            "--name",
+            "override-target",
+            "--provider",
+            "openrouter",
+            "--model",
+            "deepseek/deepseek-v4-flash",
+            "--json",
+        ],
+        dir.path(),
+    );
+    std::env::remove_var("XVN_STRATEGY_CLONE_TEST_KEY");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["override"]["provider"], "openrouter");
+    assert_eq!(body["override"]["model"], "deepseek/deepseek-v4-flash");
+
+    let cloned_agent_id = body["agent_id"].as_str().expect("agent_id");
+    let source_slot = load_agent_slot(dir.path(), &source_agent_id);
+    let cloned_slot = load_agent_slot(dir.path(), cloned_agent_id);
+
+    assert_eq!(source_slot.provider, "openai");
+    assert_eq!(source_slot.model, "gpt-4.1-mini");
+    assert_eq!(cloned_slot.provider, "openrouter");
+    assert_eq!(cloned_slot.model, "deepseek/deepseek-v4-flash");
 }
 
 #[test]
