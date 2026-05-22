@@ -340,6 +340,11 @@ impl AgentStore {
                 inputs_policy,
                 bar_history_limit,
                 memory_mode,
+                // Not yet persisted to SQLite (a follow-up migration will
+                // add the column). Rows loaded from the store always come
+                // back as `None` (equivalent to `Some(true)` — skip
+                // enabled) until the operator re-saves with an explicit value.
+                noop_skip: None,
             });
         }
         Ok(out)

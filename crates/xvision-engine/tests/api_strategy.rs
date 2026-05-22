@@ -98,6 +98,7 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
             }],
         },
     )

@@ -68,6 +68,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 inputs_policy: InputsPolicy::Raw,
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
             }],
         },
         AgentTemplate {
@@ -93,6 +94,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -110,6 +112,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
             ],
         },
@@ -136,6 +139,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "risk_check".into(),
@@ -152,6 +156,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -169,6 +174,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
             ],
         },
@@ -200,6 +206,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 inputs_policy: InputsPolicy::Raw,
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
             }],
         },
         AgentTemplate {
@@ -229,6 +236,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 inputs_policy: InputsPolicy::Raw,
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
             }],
         },
         AgentTemplate {
@@ -258,6 +266,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "equities_trader".into(),
@@ -276,6 +285,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "crypto_trader".into(),
@@ -295,6 +305,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "fx_trader".into(),
@@ -313,6 +324,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
             ],
         },
@@ -341,6 +353,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "trader".into(),
@@ -362,6 +375,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
             ],
         },
@@ -392,6 +406,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "trader".into(),
@@ -413,6 +428,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
             ],
         },
@@ -444,6 +460,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -466,6 +483,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
+                    noop_skip: None,
                 },
             ],
         },

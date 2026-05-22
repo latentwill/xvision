@@ -99,6 +99,7 @@ fn slot_with_prompt(system_prompt: impl Into<String>) -> AgentSlot {
         inputs_policy: InputsPolicy::Raw,
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
+        noop_skip: None,
     }
 }
 
