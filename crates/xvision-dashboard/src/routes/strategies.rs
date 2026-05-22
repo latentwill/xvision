@@ -92,9 +92,9 @@ pub async fn list_templates() -> Json<TemplatesListResponse> {
     })
 }
 
-/// `POST /api/strategies` — create a new draft strategy from a template.
-/// Body: `{ template, name, creator? }`. Returns `{ id }` (the new
-/// agent_id); the frontend redirects to `/authoring/:id`.
+/// `POST /api/strategies` — create a new blank draft strategy.
+/// Body: `{ name, creator? }`. Returns `{ id }` (the new agent_id);
+/// the frontend redirects to `/authoring/:id`.
 pub async fn post_create(
     State(state): State<AppState>,
     Json(body): Json<CreateStrategyReq>,

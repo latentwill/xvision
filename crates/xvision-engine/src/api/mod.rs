@@ -23,6 +23,13 @@ pub mod agents;
 pub mod audit;
 pub mod chart;
 pub mod eval;
+/// `xvn model bakeoff` orchestrator. File lives at
+/// `api/eval/bakeoff.rs` per contract `cli-model-bakeoff`; routed here
+/// with `#[path]` so the public module path stays `api::bakeoff`
+/// without forcing a refactor of `api/eval.rs` (owned in parallel by
+/// `cli-eval-model-override`).
+#[path = "eval/bakeoff.rs"]
+pub mod bakeoff;
 pub mod experiment;
 pub mod health;
 pub mod memory;
@@ -77,6 +84,7 @@ const MIGRATION_031_EVAL_RUNS_VENUE_LABEL: &str =
     include_str!("../../migrations/031_eval_runs_venue_label.sql");
 const MIGRATION_032_FILTERS_AND_EVALUATIONS: &str =
     include_str!("../../migrations/032_filters_and_evaluations.sql");
+const MIGRATION_035_EVAL_BAKEOFFS: &str = include_str!("../../migrations/035_eval_bakeoffs.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -241,6 +249,7 @@ impl ApiContext {
         migrate_safety_state_and_audit(&pool).await?;
         migrate_eval_runs_venue_label(&pool).await?;
         migrate_filters_and_evaluations(&pool).await?;
+        migrate_eval_bakeoffs(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -821,6 +830,16 @@ async fn migrate_eval_runs_venue_label(pool: &SqlitePool) -> ApiResult<()> {
         sqlx::query(MIGRATION_031_EVAL_RUNS_VENUE_LABEL)
             .execute(pool)
             .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 035 (cli-model-bakeoff): `eval_bakeoffs` +
+/// `eval_bakeoff_runs` tables. Gated on table absence so the migration
+/// is idempotent on already-upgraded databases.
+async fn migrate_eval_bakeoffs(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "eval_bakeoffs").await? {
+        sqlx::query(MIGRATION_035_EVAL_BAKEOFFS).execute(pool).await?;
     }
     Ok(())
 }

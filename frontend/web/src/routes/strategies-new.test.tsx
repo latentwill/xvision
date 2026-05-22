@@ -1,11 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -31,7 +25,6 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     createStrategy: vi.fn(),
-    listTemplates: vi.fn(),
   };
 });
 
@@ -53,13 +46,6 @@ function renderRoute() {
 
 beforeEach(() => {
   navigate.mockReset();
-  vi.mocked(strategyApi.listTemplates).mockResolvedValue([
-    {
-      name: "trend_follower",
-      display_name: "Trend follower",
-      plain_summary: "Trend starter",
-    },
-  ]);
   vi.mocked(strategyApi.createStrategy).mockResolvedValue({ id: "st_1" });
 });
 
@@ -69,69 +55,32 @@ afterEach(() => {
 });
 
 describe("StrategiesNewRoute", () => {
-  it("starts from a name-first open form using the custom template by default", async () => {
+  it("creates a blank strategy immediately and opens authoring", async () => {
     renderRoute();
 
-    const name = screen.getByLabelText("Name");
-    expect(name).toHaveValue("");
-
-    fireEvent.change(name, { target: { value: "Funding Fade Agent" } });
-    expect(
-      screen.getByText(
-        "xvn strategy create --template custom --name 'Funding Fade Agent' --json",
-      ),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Create strategy" }));
+    expect(screen.getByText("Creating strategy...")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(strategyApi.createStrategy).toHaveBeenCalledWith({
-        template: "custom",
-        name: "Funding Fade Agent",
+        name: "Untitled strategy",
         creator: null,
       });
     });
-    expect(navigate).toHaveBeenCalledWith("/authoring/st_1");
+    expect(navigate).toHaveBeenCalledWith("/authoring/st_1", { replace: true });
   });
 
-  it("autofills the blank form when a template is selected", async () => {
+  it("shows the creation error with a back link", async () => {
+    vi.mocked(strategyApi.createStrategy).mockRejectedValue(
+      new Error("network down"),
+    );
+
     renderRoute();
 
-    const template = await screen.findByLabelText("Template");
-    await screen.findByRole("option", { name: "Trend follower" });
-    fireEvent.change(template, { target: { value: "trend_follower" } });
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Name")).toHaveValue("Trend follower");
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Create strategy" }));
-
-    await waitFor(() => {
-      expect(strategyApi.createStrategy).toHaveBeenCalledWith({
-        template: "trend_follower",
-        name: "Trend follower",
-        creator: null,
-      });
-    });
-  });
-
-  it("shows the agent readiness checklist before creating a strategy", () => {
-    renderRoute();
-
-    expect(screen.getByText("Strategy-agent checklist")).toBeInTheDocument();
     expect(
-      screen.getByText("Create or attach a reusable agent"),
+      await screen.findByText("couldn't create strategy"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Pick a configured provider/model"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Add a system prompt and risk-capable role"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "A new strategy draft is not eval-ready until this checklist is complete.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText("network down")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Back to strategies/i }))
+      .toHaveAttribute("href", "/strategies");
   });
 });

@@ -4,13 +4,14 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-22 (sweep 5b) — reconciles with #535 (Wave B
-> promotion) and #536 (multi-asset archive). #528 (eval-token-efficiency)
-> merged and archived this pass. #520 (build-fix) + #522 (WAL pool) +
-> #525 (Node 24) + #532 (Wave A #11) merged in the cascade.
-> `cli-test-fixture-completion-tail` is now unblocked (#520 cleared the
-> build error). Phase B of agent-graph (`agent-graph-capability-dispatch`)
-> contract authored as deferred behind Phase A (#527).
+> Last updated: 2026-05-22 (sweep 6 + sweep-5 rebase) —
+> `indicator-tool-wiring` (#521), Orderly multi-asset expansion (#540),
+> CLI test fixture tail (#541), eval model override (#538), and model
+> bakeoff (#537) merged in the cascade. Sweep 5 archives
+> `eval-token-efficiency-tail` (#528) and consolidates the
+> `multi-asset-alpaca-unlock` (#533/#536) archive. Agent-graph Phase B-E
+> contracts are authored and deferred behind Phase A (#527). Remaining
+> live owned PRs: #527 and #523.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
@@ -29,30 +30,19 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 - [memory-aware-eval-findings](contracts/memory-aware-eval-findings.md) — **P2 leaf** · deferred (depends on `memory-provenance-in-decisions-trace`) · per-decision finding extractor.
 
-### cli-test-tech-debt-2026-05-22
-
-- [cli-test-fixture-completion-tail](contracts/cli-test-fixture-completion-tail.md) — **P2 leaf** · **in flight (PR #541)** · migrate 9 failing CLI test fixtures to post-template-registry, post-strategy-fixture-migration shape. Worker reports all 4 suites 0 failures.
-
 ### cli-operator-safety-wave-b-2026-05-22 — model-bakeoff cluster
 
-Wave A (#530/#531/#532) merged 2026-05-22. Wave B promoted via #535.
-Leaves #4 + #5 are in flight; #6 depends on both.
+Wave A (#530/#531/#532) and Wave B #5/#6 (#538/#537) merged
+2026-05-22. The clone helper remains as the one unshipped Wave B leaf.
 
-- [cli-eval-model-override](contracts/cli-eval-model-override.md) — **P1 leaf** · in flight (PR #538) · `xvn eval run --provider X --model Y`.
 - [cli-strategy-clone-model-override](contracts/cli-strategy-clone-model-override.md) — **P1 leaf** · ready · `xvn strategy clone <id> --provider X --model Y --name N`.
-- [cli-model-bakeoff](contracts/cli-model-bakeoff.md) — **P1 integration** · in flight (PR #537) · the headline verb; absorbs intake #7. New migration 035.
 
 ## Open PRs (in-flight, not yet merged)
 
-- **#541** — `cli-test-fixture-completion-tail` — 9 fixtures migrated; full `cargo test -p xvision-cli` clean.
-- **#540** — `task/orderly-multi-asset-expansion` — F18 follow-on; drops BTC-only guard, routes per `td.asset`.
-- **#538** — `cli-eval-model-override` (Wave B #5).
-- **#537** — `cli-model-bakeoff` (Wave B #6, absorbs #7).
-- **#534** — sweep-5 (this branch — Phase B contract + #528/#533 archives). Rebased to clear conflict with #536.
 - **#527** — Phase A schema (`agent-graph-capability-schema`).
 - **#523** — `memory-provenance-in-decisions-trace` (wave-2 dispatch).
-- **#521** — `indicator-tool-wiring` (wave-2 dispatch).
-- **#512** — `[codex] streamline strategy creation and docs layout` — draft, external.
+- **#512** — `[codex] streamline strategy creation and docs layout` — CLEAN, external.
+- **#498** — `fix(trace-dock): hide state.transition stub in Advanced view` — CLEAN, older.
 
 ## Reserved (need spec authoring)
 
@@ -66,12 +56,31 @@ Leaves #4 + #5 are in flight; #6 depends on both.
 
 ## Recently Closed
 
-### Merged 2026-05-22 (sweep 5b) — archived under `team/archive/2026-05-22-conductor-pass-5/`
+### Merged 2026-05-22 (post sweep-6 cascade)
 
-2 contracts archived this pass:
+3 owned tracks closed after sweep 6:
+
+- `cli-test-fixture-completion-tail` (#541 — migrated the remaining 9 CLI fixtures; full `cargo test -p xvision-cli` clean)
+- `cli-eval-model-override` (#538 — per-launch provider/model override + provider-diagnostics receipt)
+- `cli-model-bakeoff` (#537 — `xvn model bakeoff`, migration 035, compare/status support)
+
+### Merged 2026-05-22 (sweep 6) — archived under `team/archive/2026-05-22-conductor-pass-6/`
+
+1 contract archived this pass + 4 contract-less merges noted:
+
+- `indicator-tool-wiring` (#521 — wires `indicator_panel` tool through to the trader slot's LLM dispatch; F41 sub-track)
+- **#520** `fix/unbreak-main-provider-catalogs` — build fix, no contract
+- **#522** `fix/sqlite-busy-wal-busy-timeout` — DB pool WAL + busy_timeout, no contract
+- **#525** `chore/gha-node-24-bump` — F26 GHA Node 24 cutover, no contract
+- **#539** `plan: Orderly multi-asset expansion` — plan-only doc, no contract
+- **#540** `feat(orderly): multi-asset expansion` — implemented directly from #539's plan, no contract; FOLLOWUPS F44 filed for the market-info refresh follow-on
+
+### Merged 2026-05-22 (sweep 5) — archived under `team/archive/2026-05-22-conductor-pass-5/`
+
+2 contracts archived/consolidated this pass:
 
 - `eval-token-efficiency-tail` (#528 — per-provider `max_tokens` defaults + delta-briefing mode)
-- `multi-asset-alpaca-unlock` (#533, F18 — pre-archived by #536; consolidated here)
+- `multi-asset-alpaca-unlock` (#533, F18 — complete cascade: `TraderDecision.asset` required, risk drops asset param, `BacktestConfig::instrument` removed, Alpaca/Orderly route per decision)
 
 ### Merged 2026-05-22 (post-cascade) — archived under `team/archive/2026-05-22-conductor-pass-4/`
 

@@ -268,6 +268,7 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
             params_override: None,
             limits: None,
             skip_preflight: false,
+            provider_override: None,
         };
 
         let entry = match eval::run_with_deps(
@@ -607,6 +608,7 @@ pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> 
             params_override: None,
             limits: None,
             skip_preflight: false,
+            provider_override: None,
         };
 
         let entry = match eval::run(ctx, run_req).await {

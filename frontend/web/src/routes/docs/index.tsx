@@ -4,17 +4,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { DocsMarkdown } from "@/features/docs/DocsMarkdown";
-import { DocsToc } from "@/features/docs/DocsToc";
-import { extractToc } from "@/features/docs/extractToc";
 import { useDocsPrefs } from "@/features/docs/useDocsPrefs";
 import { docsKeys, getDocsIndex, getDocsPage } from "@/api/docs";
 
 /**
  * `/docs` — in-app documentation surface.
  *
- * Three-pane layout (sidebar / article / right-rail TOC), matching the
- * folio-dark prototype in `docs/design/xvnwiki/docs/`. The right-rail
- * TOC tracks H2/H3 headings on the current page with scrollspy.
+ * Two-pane layout (sidebar / article), matching the folio-dark prototype
+ * density while giving the article the full remaining width.
  *
  * `?slug=<slug>` deep-links to a specific page. Display preferences
  * (density, TOC visibility) persist in localStorage. `⌘K` / `Ctrl+K`
@@ -36,7 +33,7 @@ export function DocsRoute() {
   const [showOptions, setShowOptions] = useState(false);
   const [copied, setCopied] = useState(false);
   const filterRef = useRef<HTMLInputElement>(null);
-  const { prefs, setDensity, setToc } = useDocsPrefs();
+  const { prefs, setDensity } = useDocsPrefs();
 
   const pages = index.data ?? [];
 
@@ -74,11 +71,6 @@ export function DocsRoute() {
     staleTime: 60_000,
   });
 
-  const tocItems = useMemo(
-    () => (page.data ? extractToc(page.data) : []),
-    [page.data],
-  );
-
   // ⌘K / Ctrl+K focuses the page filter. Mirrors the prototype's
   // keyboard hint without yet implementing full-text search.
   useEffect(() => {
@@ -111,18 +103,10 @@ export function DocsRoute() {
       ? "leading-[1.65] text-[14.5px]"
       : "leading-[1.55] text-[13.5px]";
 
-  const showTocRail = prefs.toc === "shown";
-
   return (
     <>
       <Topbar title="Docs" sub="In-app reference" />
-      <div
-        className={
-          showTocRail
-            ? "lg:grid lg:grid-cols-[240px_minmax(0,1fr)_200px] md:grid md:grid-cols-[240px_1fr] md:gap-8 flex flex-col gap-4 lg:gap-8"
-            : "md:grid md:grid-cols-[240px_1fr] md:gap-8 flex flex-col gap-4"
-        }
-      >
+      <div className="md:grid md:grid-cols-[240px_minmax(0,1fr)] md:gap-8 flex flex-col gap-4">
         <aside
           className="md:border-r md:border-border-soft md:pr-6 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-48px)] md:overflow-y-auto"
           aria-label="Docs navigation"
@@ -223,22 +207,12 @@ export function DocsRoute() {
                   onChange={(v) => setDensity(v as "compact" | "comfortable")}
                   testId="docs-pref-density"
                 />
-                <DocsPrefRow
-                  label="On-page TOC"
-                  value={prefs.toc}
-                  options={[
-                    { value: "shown", label: "On" },
-                    { value: "hidden", label: "Off" },
-                  ]}
-                  onChange={(v) => setToc(v as "shown" | "hidden")}
-                  testId="docs-pref-toc"
-                />
               </div>
             )}
           </div>
         </aside>
 
-        <main className="min-w-0 md:max-w-[880px]">
+        <main className="min-w-0 md:max-w-[1120px]">
           <div className="flex items-center justify-end mb-2">
             <button
               type="button"
@@ -276,8 +250,6 @@ export function DocsRoute() {
             )}
           </Card>
         </main>
-
-        {showTocRail && <DocsToc items={tocItems} />}
       </div>
     </>
   );

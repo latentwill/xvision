@@ -17,7 +17,7 @@ export function runInlineAction(action: InlineAction, navigate: NavigateFunction
       navigate("/eval-runs?start=1");
       return;
     case "create_strategy":
-      navigate("/setup");
+      navigate("/strategies/new");
       return;
     case "compare_runs":
       navigate("/eval-runs");
