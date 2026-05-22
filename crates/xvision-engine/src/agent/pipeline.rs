@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::agent::dispatch_capability::{dispatch_capability, resolve_activates, AgentOutput, DispatchInput};
+use crate::agent::edge_predicate::evaluate_predicate;
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, ResponseSchema, StopReason};
 use crate::agent::observability::ObsEmitter;
-use crate::agents::{AgentSlot, InputsPolicy};
+use crate::agents::model::default_capabilities;
+use crate::agents::{AgentSlot, Capability, InputsPolicy};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
@@ -294,55 +297,59 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
     let mut intern = None;
     let mut trader = None;
 
-    // `indicator-tool-wiring` (2026-05-22): the agent-loop path
-    // historically lost the strategy's tool surface because
-    // `agent_slot_to_llm_slot` hard-coded `allowed_tools: Vec::new()`
-    // (AgentSlot has no per-slot tool list yet; the strategy manifest
-    // is the source of truth). The eval LLM blob therefore shipped
-    // `"tools": []` and the trader could not request `indicator_panel`
-    // on demand, even though every example template declares
-    // `required_tools: ["ohlcv", "indicator_panel"]`. We now derive
-    // the slot's wire-level `allowed_tools` from
-    // `strategy.manifest.required_tools` and bridge it through a
-    // per-iteration LLMSlot clone. The fix is conservative on purpose:
-    // (a) only entries the local `ToolRegistry` actually knows survive
-    //     `definitions_for_slot`'s filter, so unknown declarations are
-    //     silently dropped (strategy validation catches misspellings at
-    //     draft time), and
-    // (b) `resolved.slot.allowed_tools` is preserved if non-empty so a
-    //     future per-AgentSlot override can land without revisiting
-    //     this seam.
+    // `indicator-tool-wiring` (2026-05-22): see the long comment kept
+    // here for historical context — strategy-level required_tools must
+    // bridge into each per-iteration `LLMSlot.allowed_tools` because
+    // `AgentSlot` itself has no tool list yet. We continue to apply
+    // this fallback to every dispatch under the Phase B seam.
     let strategy_tools: Vec<String> = input.strategy.manifest.required_tools.clone();
 
-    for resolved in input.agent_slots.iter() {
+    // Phase B: track the previous capability output so edge predicates
+    // can read it via `evaluate_predicate(predicate, &prev_output)`. The
+    // first iteration has nothing upstream — predicates that fire then
+    // simply don't match. Suppressing the lint here because the `None`
+    // is the intentional starting state read by `next_index` on the
+    // first iteration's tail.
+    let mut prev_output: Option<AgentOutput> = None;
+    let _ = &prev_output;
+
+    // Index-driven loop so Router's `RouteSelection.target_agent_ref_index`
+    // can jump forward, and so DAG-strict acceptance of `target > current`
+    // is enforced at runtime. Sequential pipelines never set `activates =
+    // Router` so the loop walks 0..n exactly as it did pre-Phase-B.
+    let n = input.agent_slots.len();
+    let mut i: usize = 0;
+    while i < n {
+        let resolved = &input.agent_slots[i];
+
         // Single canonical comparison key (trim + lowercase) so the
         // trader-output schema selection and the output-assignment
-        // match arm can never disagree. Pre-canonicalization, the
-        // schema check was case-insensitive but the match was
-        // case-sensitive — so an attached `Trader` slot ran with the
-        // right schema and then silently dropped its result (QA #5).
+        // match arm never disagree (QA #5).
         let role_key = canonical_role(&resolved.role);
-        let is_trader_output = role_key == "trader";
 
-        // trader-noop-skip: before paying the LLM tax, check whether this
-        // is a trader slot with noop_skip enabled AND the current seed has
-        // zero legal open actions (position already held). If so, return a
-        // synthesized hold decision with `noop_skip` provenance in the
-        // justification so the trace shows the skip. We still record the
-        // output key so downstream slots (if any) see a `trader_output`
-        // field — matching the normal pipeline shape.
-        if is_trader_output && resolved.noop_skip && seed_has_zero_legal_opens(&accumulated) {
+        // Resolve which capability this `AgentRef` activates. Spec
+        // Decision 1: prefer `AgentRef.activates`; fall back to the
+        // slot's first capability in `BTreeSet` iteration order. Phase A
+        // only persists `{Trader}` for every existing slot, so the
+        // fallback is byte-identical to the pre-Phase-B path. Phase E
+        // will plumb the actual `AgentSlot.capabilities` set through
+        // `ResolvedAgentSlot` when starter templates start advertising
+        // richer sets — for now the default-capabilities Trader fallback
+        // gives every legacy strategy the correct dispatch path.
+        let activates_field = input.strategy.agents.get(i).and_then(|a| a.activates);
+        let capability = resolve_activates(activates_field, &default_capabilities());
+
+        // trader-noop-skip: only fires on Trader-capable agents AND
+        // when the seed has zero legal open actions. Keeping the gate
+        // here (above `dispatch_capability`) so the synthesized
+        // `noop_skip` LlmResponse is byte-identical to the pre-Phase-B
+        // path — the dispatch seam never sees the skipped call.
+        if capability == Capability::Trader && resolved.noop_skip && seed_has_zero_legal_opens(&accumulated) {
             tracing::debug!(
                 event = "noop_skip",
                 role = %resolved.role,
                 "trader-noop-skip: portfolio already carries a position — skipping LLM call",
             );
-            // F43 (`trace-dock-emitters`): emit a `flat_skip_fired`
-            // engine event + supervisor_notes row so the trace dock
-            // can show the LLM-skip cause-and-effect without diffing
-            // decision rows. The skip is otherwise invisible on the
-            // dock today because no span / model_call / tool_call row
-            // is written for the skipped iteration.
             if let Some(obs) = input.obs.as_ref() {
                 let payload = serde_json::json!({
                     "role": resolved.role,
@@ -365,36 +372,29 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             }
             let skip_out = noop_skip_response();
             accumulated[format!("{role_key}_output")] = serde_json::Value::String(skip_out.text());
-            trader = Some(skip_out);
+            trader = Some(skip_out.clone());
+            prev_output = Some(AgentOutput::Trader(
+                crate::agent::dispatch_capability::TraderDecision { response: skip_out },
+            ));
+            i = next_index(input.strategy, &prev_output, i);
             continue;
         }
 
-        // V2D: thread the per-slot memory snapshot + the executor's
-        // recorder into `execute_slot`. The recorder treats `Off` /
-        // empty-namespace as a no-op, so non-eval call sites that don't
-        // pass a recorder stay on the legacy path.
-
-        // `indicator-tool-wiring`: build the per-iteration LLMSlot
-        // with the strategy's tool surface stamped in. If the resolved
-        // slot already carries an explicit list (a future per-slot
-        // override path), honour it verbatim — strategy_tools is the
-        // fallback, not an override.
+        // `indicator-tool-wiring`: stamp the strategy's tool surface
+        // onto a per-iteration clone of the resolved slot when the slot
+        // itself carries no explicit tool list.
         let mut slot_for_exec = resolved.slot.clone();
         if slot_for_exec.allowed_tools.is_empty() && !strategy_tools.is_empty() {
             slot_for_exec.allowed_tools = strategy_tools.clone();
         }
 
-        let out = execute_slot(SlotInput {
+        let outcome = dispatch_capability(DispatchInput {
+            resolved,
             slot: &slot_for_exec,
             system_prompt: resolved.system_prompt.clone(),
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
-            response_schema: if is_trader_output {
-                Some(ResponseSchema::trader_output())
-            } else {
-                None
-            },
             max_tokens: resolved.max_tokens,
             temperature: resolved.temperature,
             obs: input.obs.clone(),
@@ -408,18 +408,51 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
             delta_briefing: false,
             prev_briefing: None,
+            current_index: i,
+            total_agents: n,
+            activates: capability,
         })
         .await?;
-        total_in += out.input_tokens;
-        total_out += out.output_tokens;
-        accumulated[format!("{role_key}_output")] = serde_json::Value::String(out.text());
 
-        match role_key.as_str() {
-            "regime" => regime = Some(out.clone()),
-            "intern" => intern = Some(out.clone()),
-            "trader" => trader = Some(out.clone()),
-            _ => {}
+        total_in += outcome.input_tokens;
+        total_out += outcome.output_tokens;
+
+        // Materialise the role's text output into the accumulated
+        // briefing JSON. For Trader / Router (real LLM calls), use the
+        // raw response text. For stub capabilities (Filter / Critic /
+        // Intern), serialize the typed output so downstream agents see
+        // a predictable shape.
+        let text_for_briefing = match outcome.raw_response.as_ref() {
+            Some(r) => r.text(),
+            None => match &outcome.output {
+                AgentOutput::Filter(s) => serde_json::to_string(s).unwrap_or_default(),
+                AgentOutput::Critic(c) => serde_json::to_string(c).unwrap_or_default(),
+                AgentOutput::Intern(o) => serde_json::to_string(o).unwrap_or_default(),
+                _ => String::new(),
+            },
+        };
+        accumulated[format!("{role_key}_output")] = serde_json::Value::String(text_for_briefing);
+
+        // Legacy harness shape: surface regime / intern / trader by
+        // role name into the `PipelineOutputs` struct for back-compat.
+        // Future Phase D refactor will replace the named slots with a
+        // typed `Vec<AgentOutput>`, but Phase B keeps the shape stable.
+        if let Some(raw) = outcome.raw_response.clone() {
+            match role_key.as_str() {
+                "regime" => regime = Some(raw),
+                "intern" => intern = Some(raw),
+                "trader" => trader = Some(raw),
+                _ => {}
+            }
         }
+
+        prev_output = Some(outcome.output);
+
+        // Decide which index to visit next: Router output jumps
+        // directly; any matching predicate fires its `to_role` target;
+        // otherwise fall through to `i + 1` (Sequential / Single
+        // semantics — spec Decision 6).
+        i = next_index(input.strategy, &prev_output, i);
     }
 
     Ok(PipelineOutputs {
@@ -429,6 +462,64 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         total_input_tokens: total_in,
         total_output_tokens: total_out,
     })
+}
+
+/// Pick the next `Strategy.agents` index to dispatch.
+///
+/// Resolution order (spec Decision 6):
+/// 1. Router output → `RouteSelection.target_agent_ref_index`. The
+///    dispatcher already validated this is `> current_index` and
+///    `< total_agents`.
+/// 2. The first outgoing edge with a matching predicate (when
+///    `PipelineKind::Graph` — Sequential/Single carry no edges). The
+///    edge's `to_role` is looked up against `strategy.agents`. Backward
+///    targets are not honoured here (Phase B is DAG-strict); they would
+///    have failed `validate_strategy` already.
+/// 3. Plain fall-through to `current_index + 1`.
+fn next_index(strategy: &Strategy, prev_output: &Option<AgentOutput>, current_index: usize) -> usize {
+    if let Some(AgentOutput::Router(sel)) = prev_output.as_ref() {
+        return sel.target_agent_ref_index;
+    }
+
+    if strategy.pipeline.kind == PipelineKind::Graph {
+        if let (Some(prev), Some(prev_role)) = (
+            prev_output.as_ref(),
+            strategy
+                .agents
+                .get(current_index)
+                .map(|a| canonical_role(&a.role)),
+        ) {
+            for edge in &strategy.pipeline.edges {
+                if canonical_role(&edge.from_role) != prev_role {
+                    continue;
+                }
+                let condition_matches = match &edge.condition {
+                    None => true,
+                    Some(p) => evaluate_predicate(p, prev),
+                };
+                if !condition_matches {
+                    continue;
+                }
+                let to_role = canonical_role(&edge.to_role);
+                if let Some((target_idx, _)) = strategy
+                    .agents
+                    .iter()
+                    .enumerate()
+                    .find(|(_, a)| canonical_role(&a.role) == to_role)
+                {
+                    // DAG-strict: only honour forward edges at runtime.
+                    // Backward edges are rejected by `validate_strategy`
+                    // so they should never reach here, but the guard
+                    // makes the runtime invariant explicit.
+                    if target_idx > current_index {
+                        return target_idx;
+                    }
+                }
+            }
+        }
+    }
+
+    current_index + 1
 }
 
 fn catalog_for_slot(slot: &LLMSlot, catalogs: &HashMap<String, Arc<Catalog>>) -> Option<Arc<Catalog>> {

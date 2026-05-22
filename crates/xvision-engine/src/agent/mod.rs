@@ -1,4 +1,6 @@
 pub mod briefing;
+pub mod dispatch_capability;
+pub mod edge_predicate;
 pub mod execute;
 pub mod llm;
 pub mod memory_recorder;
