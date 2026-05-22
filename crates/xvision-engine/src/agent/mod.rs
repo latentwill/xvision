@@ -5,4 +5,5 @@ pub mod observability;
 pub mod openai_embedder;
 pub mod pipeline;
 pub mod recovery;
+pub mod summarize;
 pub mod tool_call;

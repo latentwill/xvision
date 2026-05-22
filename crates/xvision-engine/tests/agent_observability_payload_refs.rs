@@ -123,6 +123,7 @@ async fn full_debug_execute_slot_writes_prompt_and_response_blobs() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .expect("execute_slot must succeed with CannedDispatch");
@@ -205,6 +206,7 @@ async fn hash_only_execute_slot_leaves_payload_refs_none() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .expect("execute_slot must succeed with CannedDispatch");

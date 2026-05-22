@@ -207,6 +207,7 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
         run_id: "run-fixture".into(),
         scenario_id: "scenario-fixture".into(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .expect("execute_slot must succeed with CapturingDispatch");
@@ -296,6 +297,7 @@ async fn recall_wraps_each_pattern_in_caselaw_framing() {
         run_id: "r".into(),
         scenario_id: "s".into(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .unwrap();
@@ -366,6 +368,7 @@ async fn recall_excludes_pattern_when_training_window_overlaps_scenario() {
         run_id: "r".into(),
         scenario_id: "s".into(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .unwrap();
@@ -421,6 +424,7 @@ async fn execute_slot_writes_final_decision_into_namespace() {
         run_id: "run-fixture".into(),
         scenario_id: "scenario-fixture".into(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .unwrap();

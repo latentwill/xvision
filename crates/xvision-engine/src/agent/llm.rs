@@ -218,6 +218,20 @@ pub enum OpenAiCompatError {
         body_excerpt: String,
         retry_count: u32,
     },
+    /// Provider returned 400 Bad Request with a body indicating the
+    /// prompt + history exceeded the model's context window. Surfaces
+    /// from both Anthropic (`prompt is too long`,
+    /// `context_length_exceeded`) and OpenAI-compat
+    /// (`context_length_exceeded`) wire shapes. This is the F-5 phase-2c
+    /// recovery seam: the harness summarizes prior history through a
+    /// cheap-model dispatch and re-calls once. See
+    /// [`crate::agent::recovery::FailureClass::ContextOverflow`] and
+    /// [`crate::agent::summarize::summarize_history`].
+    ContextOverflow {
+        provider: String,
+        url: String,
+        body: String,
+    },
 }
 
 impl OpenAiCompatError {
@@ -227,6 +241,7 @@ impl OpenAiCompatError {
         match self {
             Self::RateLimited { .. } => "provider_rate_limited",
             Self::MissingChoicesArray { .. } => "provider_missing_choices",
+            Self::ContextOverflow { .. } => "context_overflow",
         }
     }
 }
@@ -251,6 +266,10 @@ impl fmt::Display for OpenAiCompatError {
             } => write!(
                 f,
                 "OpenAI-compat response missing `choices` array at {url} (retried {retry_count} times); body excerpt: {body_excerpt}"
+            ),
+            Self::ContextOverflow { provider, url, body } => write!(
+                f,
+                "{provider} API context_overflow at {url}: {body}"
             ),
         }
     }
@@ -320,6 +339,22 @@ fn parse_rate_limit_reset(reset_header: Option<&str>, retry_after_header: Option
 /// attempt 0 → 500ms, attempt 1 → 1000ms.
 fn missing_choices_backoff(attempt: u32) -> Duration {
     OPENAI_MISSING_CHOICES_BACKOFF_BASE * (1u32 << attempt)
+}
+
+/// Pattern-match a provider error body for the markers that indicate
+/// the request exceeded the model's context window. Both Anthropic
+/// (`prompt is too long`, `context_length_exceeded`) and OpenAI-compat
+/// (`context_length_exceeded`) wire shapes are covered; the match is
+/// case-insensitive on the body. Returns `true` when the body looks
+/// like a context-overflow 400; callers should only consult it after
+/// verifying the status is 400.
+pub(crate) fn body_indicates_context_overflow(body: &str) -> bool {
+    let lower = body.to_lowercase();
+    lower.contains("context_length_exceeded")
+        || lower.contains("prompt is too long")
+        || lower.contains("context window")
+        || lower.contains("max_tokens exceeded")
+        || lower.contains("context length exceeded")
 }
 
 /// Truncate a body string for log output without panicking on multi-byte
@@ -777,6 +812,17 @@ impl LlmDispatch for AnthropicDispatch {
                     body = %text,
                     "Anthropic API returned non-success"
                 );
+                // F-5 phase-2c: detect provider-side context-overflow
+                // 400s and surface them as a typed
+                // `OpenAiCompatError::ContextOverflow` so the harness
+                // recovery layer can summarize history + retry.
+                if status.as_u16() == 400 && body_indicates_context_overflow(&text) {
+                    return Err(anyhow::Error::new(OpenAiCompatError::ContextOverflow {
+                        provider: "anthropic".to_string(),
+                        url: "https://api.anthropic.com/v1/messages".to_string(),
+                        body: text,
+                    }));
+                }
                 anyhow::bail!("Anthropic API error {}: {}", status, text);
             }
 
@@ -1072,6 +1118,17 @@ impl OpenaiCompatDispatch {
                     body = %text,
                     "OpenAI-compat API returned non-success"
                 );
+                // F-5 phase-2c: detect provider-side context-overflow
+                // 400s and surface them as a typed
+                // `OpenAiCompatError::ContextOverflow` so the harness
+                // recovery layer can summarize history + retry.
+                if status.as_u16() == 400 && body_indicates_context_overflow(&text) {
+                    return OpenAiAttempt::Fatal(anyhow::Error::new(OpenAiCompatError::ContextOverflow {
+                        provider: "openai-compat".to_string(),
+                        url: url.to_string(),
+                        body: text,
+                    }));
+                }
                 return OpenAiAttempt::Fatal(anyhow::anyhow!(
                     "OpenAI-compat API error {} at {}: {}",
                     status,

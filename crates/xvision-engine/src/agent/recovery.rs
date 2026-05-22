@@ -69,6 +69,21 @@ pub enum FailureClass {
     BrokerTimeout,
     BrokerRejected,
 
+    // ─── Provider context overflow (F-5 phase-2c) ────────────────────────
+    /// F-5 phase-2c introduces this. The provider returned a 400 with a
+    /// body indicating the conversation history exceeded the model's
+    /// context window (Anthropic: `prompt is too long` /
+    /// `context_length_exceeded`; OpenAI-compat: `context_length_exceeded`).
+    /// `crate::agent::execute::execute_slot` consumes this via
+    /// [`crate::agent::summarize::summarize_history`] to compress the
+    /// transcript and retry once. The `message` and `provider` fields
+    /// are surfaced on the `recovery.attempt` span so operators can
+    /// debug overflow patterns without re-parsing prose.
+    ContextOverflow {
+        message: String,
+        provider: String,
+    },
+
     // ─── Loop control ────────────────────────────────────────────────────
     RepeatedBrokerError,
     /// F-5 introduces this. The agent tool-use loop in
@@ -104,6 +119,7 @@ impl FailureClass {
             Self::ProviderDecode => "provider_decode",
             Self::ProviderRateLimited => "provider_rate_limited",
             Self::ProviderMissingChoices => "provider_missing_choices",
+            Self::ContextOverflow { .. } => "context_overflow",
             Self::BrokerAuth => "broker_auth",
             Self::BrokerUnsupported => "broker_unsupported",
             Self::BrokerInsufficientFunds => "broker_insufficient_funds",
@@ -140,6 +156,12 @@ impl FailureClass {
             // already attempts retries; F-5 reserves the family so a
             // future policy can promote it to a re-call with backoff.
             Self::ProviderTimeout | Self::ProviderConnect => RecoveryFamily::ToolTimeout,
+
+            // ContextOverflow family (F-5 phase-2c): provider 400 with a
+            // body indicating the conversation history exceeded the
+            // model's context window. Policy: summarize prior history
+            // through a cheap-model dispatch and retry once.
+            Self::ContextOverflow { .. } => RecoveryFamily::ContextOverflow,
 
             // RepeatedToolFailure family: deterministic loop-control.
             Self::RepeatedBrokerError | Self::RepeatedToolFailure { .. } => {
@@ -221,6 +243,10 @@ pub fn classify(err: &anyhow::Error) -> FailureClass {
             return match typed {
                 OpenAiCompatError::RateLimited { .. } => FailureClass::ProviderRateLimited,
                 OpenAiCompatError::MissingChoicesArray { .. } => FailureClass::ProviderMissingChoices,
+                OpenAiCompatError::ContextOverflow { body, provider, .. } => FailureClass::ContextOverflow {
+                    message: body.clone(),
+                    provider: provider.clone(),
+                },
             };
         }
     }
@@ -275,6 +301,21 @@ fn classify_from_string(s: &str) -> FailureClass {
     // re-classified.
     if s.contains("repeated_broker_error") {
         return FailureClass::RepeatedBrokerError;
+    }
+    // Context-overflow (F-5 phase-2c). Check before the broker / generic
+    // provider patterns so an embedded provider-name phrase doesn't
+    // shadow the more specific overflow class. The matchers mirror
+    // `body_indicates_context_overflow` in `llm.rs`.
+    if s.contains("context_length_exceeded")
+        || s.contains("context length exceeded")
+        || s.contains("context window")
+        || s.contains("prompt is too long")
+        || s.contains("max_tokens exceeded")
+    {
+        return FailureClass::ContextOverflow {
+            message: s.to_string(),
+            provider: "unknown".to_string(),
+        };
     }
     // Broker classes — match before the generic `timeout` fallback so a
     // broker-side fill timeout doesn't get tagged `provider_timeout`.
@@ -1067,6 +1108,13 @@ mod tests {
             (FailureClass::ProviderDecode, "provider_decode"),
             (FailureClass::ProviderRateLimited, "provider_rate_limited"),
             (FailureClass::ProviderMissingChoices, "provider_missing_choices"),
+            (
+                FailureClass::ContextOverflow {
+                    message: "ctx".into(),
+                    provider: "anthropic".into(),
+                },
+                "context_overflow",
+            ),
             (FailureClass::BrokerAuth, "broker_auth"),
             (FailureClass::BrokerUnsupported, "broker_unsupported"),
             (FailureClass::BrokerInsufficientFunds, "broker_insufficient_funds"),

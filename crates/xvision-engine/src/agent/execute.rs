@@ -14,9 +14,12 @@ use crate::agent::llm::{
 };
 use crate::agent::memory_recorder::{render_recalled_patterns, RecallResult};
 use crate::agent::observability::{fresh_span_id, ObsEmitter};
+use crate::agent::recovery::{classify, FailureClass};
+use crate::agent::summarize;
 use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
+use xvision_core::providers::Catalog;
 use xvision_memory::types::Namespace;
 
 /// Hard cap on the number of tool-use round-trips inside `execute_slot`.
@@ -133,6 +136,16 @@ pub struct SlotInput<'a> {
     /// V2D Phase 1.5 — current decision-cycle index. Plumbed into
     /// Observation provenance on write. `0` when memory is off.
     pub cycle_idx: i64,
+    /// F-5 phase-2c (`harness-recovery-context-overflow`): provider
+    /// catalog for cheap-model lookup. When the dispatcher returns a
+    /// `FailureClass::ContextOverflow`, the recovery path calls
+    /// [`crate::agent::summarize::summarize_history`] with the cheapest
+    /// model from this catalog. `None` (the default for unit tests and
+    /// legacy callers) short-circuits the recovery — the original
+    /// error propagates unchanged. The cycle_id / cache key are
+    /// preserved across the recovery retry: this is the same slot
+    /// invocation, not a new one.
+    pub catalog: Option<Arc<Catalog>>,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
@@ -372,7 +385,47 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                     let msg = format!("{e:#}");
                     obs.emit_span_finished_error(&span_id, &msg).await;
                 }
-                return Err(e);
+                // F-5 phase-2c (`harness-recovery-context-overflow`):
+                // when the dispatcher's error classifies as
+                // ContextOverflow AND a catalog is wired AND the
+                // catalog has a model with pricing, summarize the
+                // history through a cheap-model dispatch and retry
+                // ONCE. Recovery is bounded — second failure is
+                // terminal and surfaces the second error, NOT the
+                // summarize error. The same dispatch + model are used
+                // on the retry (cycle_id stays; cache key is
+                // implicitly recomputed because messages changed).
+                let class = classify(&e);
+                if matches!(class, FailureClass::ContextOverflow { .. }) {
+                    match try_context_overflow_recovery(
+                        &input,
+                        &assembled_system_prompt,
+                        &tool_defs,
+                        &messages,
+                        dispatcher_max_tokens,
+                        dispatcher_temperature,
+                    )
+                    .await?
+                    {
+                        Some(recovered) => {
+                            // Recovery succeeded — flow the response
+                            // back into the normal loop body. Tokens
+                            // and stop_reason are accumulated below
+                            // alongside the success-path bookkeeping.
+                            // The retry's ModelCall span is already
+                            // emitted inside
+                            // `try_context_overflow_recovery`.
+                            recovered
+                        }
+                        None => {
+                            // Catalog absent / no cheap model — surface
+                            // original error.
+                            return Err(e);
+                        }
+                    }
+                } else {
+                    return Err(e);
+                }
             }
         };
         // Accumulate assistant text once; reused for the streaming
@@ -596,6 +649,154 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     }
 }
 
+/// F-5 phase-2c recovery seam: summarize the conversation history
+/// through a cheap-model dispatch and re-call the original dispatcher
+/// once with the compressed transcript.
+///
+/// Returns `Ok(Some(response))` when the retry succeeded, `Ok(None)`
+/// when recovery short-circuited (no catalog, no priced model — the
+/// caller should surface the original error), and `Err(_)` when the
+/// retry itself failed (the caller surfaces the SECOND error, not the
+/// first, per the contract).
+async fn try_context_overflow_recovery<'a>(
+    input: &SlotInput<'a>,
+    system_prompt: &str,
+    tool_defs: &[crate::agent::llm::ToolDefinition],
+    messages: &[Message],
+    max_tokens: Option<u32>,
+    temperature: Option<f64>,
+) -> anyhow::Result<Option<LlmResponse>> {
+    // Catalog absent → no cheap-model dispatch possible. Short-circuit.
+    let Some(catalog) = input.catalog.as_ref() else {
+        return Ok(None);
+    };
+    // No model with pricing → can't pick "cheapest". Short-circuit.
+    let Some(cheap) = summarize::pick_cheap_model(catalog) else {
+        return Ok(None);
+    };
+    let cheap_model_id = cheap.id.clone();
+
+    // Emit recovery.attempt BEFORE the summarize dispatch so the trace
+    // dock shows cause-effect ordering. retry_count=1 because the
+    // contract bounds this to a single retry.
+    let recovery_span_id = fresh_span_id();
+    if let Some(obs) = input.obs.as_ref() {
+        obs.emit_recovery_attempt(&recovery_span_id, None, "context_overflow", 1)
+            .await;
+    }
+
+    // Summarize. The cheap-model dispatch itself emits a normal
+    // model.call span via the shared LlmDispatch -> ObsEmitter path
+    // only when callers set obs; for now we route through the same
+    // dispatch (the cheap-model id is what changes, not the
+    // transport). Future contracts can switch to a separate dispatch
+    // when providers differ.
+    let summary = match summarize::summarize_history(messages, input.dispatch.clone(), &cheap_model_id).await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            // Summarize failed → emit recovery.failed and surface
+            // ORIGINAL error (we return None so the caller does it).
+            if let Some(obs) = input.obs.as_ref() {
+                obs.emit_recovery_failed(
+                    &fresh_span_id(),
+                    None,
+                    "context_overflow",
+                    1,
+                    &format!("summarize dispatch failed: {e:#}"),
+                )
+                .await;
+            }
+            return Ok(None);
+        }
+    };
+
+    // Build the compressed transcript: synthetic summary message +
+    // recent verbatim tail. The system prompt is preserved verbatim
+    // because the caller hands it in unchanged on every dispatch.
+    let summarized = summarize::build_summarized_messages(messages, &summary);
+    let req = LlmRequest {
+        model: input.slot.effective_model(),
+        system_prompt: system_prompt.to_string(),
+        messages: summarized,
+        max_tokens,
+        tools: tool_defs.to_vec(),
+        temperature,
+        response_schema: input
+            .response_schema
+            .clone()
+            .or_else(|| response_schema_for_slot(input.slot)),
+        cache_control: None,
+    };
+
+    // Open a fresh ModelCall span for the retry dispatch so the
+    // trace shows the second attempt distinctly.
+    let retry_span_id = fresh_span_id();
+    let provider_str = input
+        .slot
+        .provider
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
+    let model_str = req.model.clone();
+    if let Some(obs) = input.obs.as_ref() {
+        obs.emit_model_call_started(
+            &retry_span_id,
+            None,
+            &provider_str,
+            &model_str,
+            Some(&input.slot.role),
+        )
+        .await;
+    }
+    // Compute the prompt hash for the retry span BEFORE moving req.
+    let retry_prompt_hash = crate::agent::observability::compute_prompt_hash(&req);
+    match input.dispatch.complete(req).await {
+        Ok(resp) => {
+            if let Some(obs) = input.obs.as_ref() {
+                let assistant_text: String = resp
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                let response_hash = if assistant_text.is_empty() {
+                    None
+                } else {
+                    Some(crate::agent::observability::compute_response_hash(
+                        &assistant_text,
+                    ))
+                };
+                obs.emit_model_call_finished(
+                    &retry_span_id,
+                    &provider_str,
+                    &model_str,
+                    Some(resp.input_tokens),
+                    Some(resp.output_tokens),
+                    None,
+                    retry_prompt_hash,
+                    response_hash,
+                )
+                .await;
+                obs.emit_span_finished_ok(&retry_span_id).await;
+            }
+            Ok(Some(resp))
+        }
+        Err(e) => {
+            if let Some(obs) = input.obs.as_ref() {
+                let msg = format!("{e:#}");
+                obs.emit_span_finished_error(&retry_span_id, &msg).await;
+                obs.emit_recovery_failed(&fresh_span_id(), None, "context_overflow", 1, &msg)
+                    .await;
+            }
+            // Surface the SECOND error per the contract.
+            Err(e)
+        }
+    }
+}
+
 fn repeated_tool_failure_result(tool_name: &str) -> String {
     format!(
         "repeated_tool_failure: tool '{tool_name}' with this exact \
@@ -728,6 +929,7 @@ mod tests {
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            catalog: None,
         })
         .await
         .unwrap();
@@ -782,6 +984,7 @@ mod tests {
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            catalog: None,
         })
         .await
         .unwrap();

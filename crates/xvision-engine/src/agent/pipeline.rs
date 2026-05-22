@@ -145,6 +145,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            catalog: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -173,6 +174,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            catalog: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -201,6 +203,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            catalog: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -324,6 +327,7 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             run_id: input.run_id.clone(),
             scenario_id: input.scenario_id.clone(),
             cycle_idx: input.cycle_idx,
+            catalog: None,
         })
         .await?;
         total_in += out.input_tokens;

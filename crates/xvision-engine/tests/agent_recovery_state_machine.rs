@@ -155,6 +155,7 @@ fn build_input<'a>(
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        catalog: None,
     }
 }
 
@@ -393,6 +394,15 @@ async fn classify_run_failure_adapter_preserves_wire_tags() {
         (
             "[repeated_broker_error] N=3 consecutive broker_min_order_size rejections",
             "repeated_broker_error",
+        ),
+        // F-5 phase-2c context-overflow (string fallback)
+        (
+            "anthropic api error: 400 prompt is too long: 250000 tokens > 200000 limit",
+            "context_overflow",
+        ),
+        (
+            "openai-compat 400: context_length_exceeded for model x",
+            "context_overflow",
         ),
         // Unknown fallback
         ("some completely unrecognized error", "unclassified"),
