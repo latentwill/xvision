@@ -226,7 +226,10 @@ export function AgentForm({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    // pb-20 gives the sticky save bar (sticky bottom-4) breathing room at
+    // the bottom of the page — without it, the bar visually merges with
+    // the last card. See team/contracts/agent-firing-filter-form-and-docs.md.
+    <div className="flex flex-col gap-5 pb-20">
       {/* Identity */}
       <Card>
         <CardHeader title="Identity" />
