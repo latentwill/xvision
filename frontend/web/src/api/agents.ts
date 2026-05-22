@@ -21,6 +21,18 @@ export type AgentSlot = {
   /// metadata table (q15 §1). A number is honored verbatim, clamped to
   /// the model's per-request ceiling server-side.
   max_tokens: number | null;
+  /// Optional cap on the number of `bar_history` entries the eval
+  /// executor surfaces to the trader LLM at each decision. `null`
+  /// preserves today's behavior — the full `warmup_bars`-sized history
+  /// slice is sent through. A positive integer trims the slice to its
+  /// most-recent N entries before the trader sees it, which keeps the
+  /// prompt prefix stable across many decisions so provider prompt-
+  /// caching (Anthropic) can land a hit on the static portion.
+  ///
+  /// Server enforces non-positive → null at persist time (migration 025
+  /// + store layer) so a stray `0` can't silently drop every bar.
+  /// Shipped runner-side via PR #372 (eval-prompt-cache-and-rolling-window).
+  bar_history_limit?: number | null;
   /// V2D: cortex-memory mode for this slot. `"off"` (the default)
   /// keeps the dispatcher's memory seam dormant. `"global"` and
   /// `"agent_scoped"` opt this slot into recall + write through
