@@ -113,6 +113,7 @@ async fn pipeline_output_assigned_for_role_variants() {
             scenario_id: String::new(),
 
             cycle_idx: 0,
+            provider_catalogs: std::collections::HashMap::new(),
         })
         .await
         .expect("pipeline runs");

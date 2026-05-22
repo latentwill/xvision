@@ -35,6 +35,7 @@ async fn execute_slot_returns_parsed_output() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .unwrap();
@@ -90,6 +91,7 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .unwrap();
@@ -154,6 +156,7 @@ async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await
     .unwrap();
@@ -192,6 +195,7 @@ async fn execute_slot_succeeds_even_when_caller_passes_extra_inputs() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        catalog: None,
     })
     .await;
     assert!(result.is_ok());

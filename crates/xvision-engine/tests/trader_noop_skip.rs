@@ -158,6 +158,7 @@ async fn noop_skip_fires_when_portfolio_long_and_skip_enabled() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        provider_catalogs: std::collections::HashMap::new(),
     })
     .await
     .expect("run_pipeline must succeed");
@@ -224,6 +225,7 @@ async fn noop_skip_disabled_calls_llm_even_when_portfolio_long() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        provider_catalogs: std::collections::HashMap::new(),
     })
     .await
     .expect("run_pipeline must succeed");
@@ -264,6 +266,7 @@ async fn noop_skip_does_not_fire_when_portfolio_flat() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        provider_catalogs: std::collections::HashMap::new(),
     })
     .await
     .expect("run_pipeline must succeed");

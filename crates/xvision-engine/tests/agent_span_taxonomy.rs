@@ -106,6 +106,7 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,
+        catalog: None,
     };
 
     // Drive one tool-use iteration. The tool itself fails (registry

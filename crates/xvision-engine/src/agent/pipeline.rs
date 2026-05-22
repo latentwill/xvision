@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::agent::execute::{execute_slot, SlotInput};
@@ -8,7 +9,7 @@ use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
-use xvision_core::providers::lookup_model;
+use xvision_core::providers::{lookup_model, Catalog};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedAgentSlot {
@@ -104,6 +105,11 @@ pub struct PipelineInputs<'a> {
     /// V2D Phase 1.5 — current decision-cycle index, forwarded into
     /// Observation provenance on memory write. `0` is the safe default.
     pub cycle_idx: i64,
+    /// Provider catalogs loaded for this eval run. Used by the
+    /// context-overflow recovery path to select the cheapest model for
+    /// history summarization. Empty map preserves the legacy no-recovery
+    /// behavior for tests and non-eval callers.
+    pub provider_catalogs: HashMap<String, Arc<Catalog>>,
 }
 
 #[derive(Debug)]
@@ -145,6 +151,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            catalog: catalog_for_slot(slot, &input.provider_catalogs),
         })
         .await?;
         total_in += out.input_tokens;
@@ -173,6 +180,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            catalog: catalog_for_slot(slot, &input.provider_catalogs),
         })
         .await?;
         total_in += out.input_tokens;
@@ -201,6 +209,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            catalog: catalog_for_slot(slot, &input.provider_catalogs),
         })
         .await?;
         total_in += out.input_tokens;
@@ -324,6 +333,7 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             run_id: input.run_id.clone(),
             scenario_id: input.scenario_id.clone(),
             cycle_idx: input.cycle_idx,
+            catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
         })
         .await?;
         total_in += out.input_tokens;
@@ -345,6 +355,15 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         total_input_tokens: total_in,
         total_output_tokens: total_out,
     })
+}
+
+fn catalog_for_slot(slot: &LLMSlot, catalogs: &HashMap<String, Arc<Catalog>>) -> Option<Arc<Catalog>> {
+    let provider = slot.provider.as_deref()?.trim();
+    if provider.is_empty() {
+        None
+    } else {
+        catalogs.get(provider).cloned()
+    }
 }
 
 pub fn agent_slot_to_llm_slot(role: &str, slot: &AgentSlot) -> LLMSlot {
