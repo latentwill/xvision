@@ -279,6 +279,9 @@ pub enum Command {
     /// over the operator memory store (`$XVN_MEMORY_DB` or
     /// `~/.xvn/memory.db`).
     Memory(commands::memory::MemoryCmd),
+    /// Bounded (strategy × model) bakeoff verb. See
+    /// `team/contracts/cli-model-bakeoff.md`.
+    Model(commands::model::ModelCmd),
 }
 
 impl Cli {
@@ -390,6 +393,7 @@ impl Cli {
             Command::Run(cmd) => commands::run::run(cmd).await,
             Command::Experiment(cmd) => commands::experiment::run(cmd).await,
             Command::Memory(cmd) => commands::memory::run(cmd).await,
+            Command::Model(cmd) => commands::model::run(cmd).await,
         }
     }
 }
