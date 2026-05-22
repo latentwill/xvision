@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use serde::Serialize;
+use xvision_engine::api::settings::providers::{self, EffectiveProvider};
 
 #[derive(Args, Debug)]
 pub struct DoctorCmd {
@@ -32,6 +33,13 @@ struct DoctorReport {
     provider_secrets_exists: bool,
     broker_secrets_exists: bool,
     remote_target: String,
+    /// Canonical provider rollup — same shape as
+    /// `xvn provider list --effective --json`. Sourced from
+    /// `xvision_engine::api::settings::providers::effective_providers`
+    /// so the doctor report can't drift from the CLI / dashboard verdict.
+    /// Empty when the config file is missing (`config_exists == false`).
+    #[serde(default)]
+    providers: Vec<EffectiveProvider>,
 }
 
 pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
@@ -39,6 +47,19 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
     let config_path = runtime_config_path(&xvn_home);
     let provider_secrets_path = xvn_home.join("secrets").join("providers.toml");
     let broker_secrets_path = xvn_home.join("secrets").join("brokers.toml");
+    let config_exists = config_path.exists();
+    // Doctor is a diagnostic verb — a missing config or audit migration is
+    // *what doctor exists to surface*, so any failure here degrades to an
+    // empty `providers` block rather than aborting the report.
+    let providers: Vec<EffectiveProvider> = if config_exists {
+        match load_effective_providers(&xvn_home, &config_path).await {
+            Ok(rows) => rows,
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
     let report = DoctorReport {
         xvn_home: xvn_home.display().to_string(),
         db_path: xvn_home.join("xvn.db").display().to_string(),
@@ -47,10 +68,11 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
         broker_secrets_path: broker_secrets_path.display().to_string(),
         strategies_dir: xvn_home.join("strategies").display().to_string(),
         templates: Vec::new(),
-        config_exists: config_path.exists(),
+        config_exists,
         provider_secrets_exists: provider_secrets_path.exists(),
         broker_secrets_exists: broker_secrets_path.exists(),
         remote_target: std::env::var("XVN_REMOTE_URL").unwrap_or_else(|_| "local".to_string()),
+        providers,
     };
 
     if cmd.json {
@@ -67,9 +89,37 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
         println!("provider_secrets      {}", report.provider_secrets_exists);
         println!("broker_secrets        {}", report.broker_secrets_exists);
         println!("templates             (registry removed; see $XVN_HOME/strategies/library)");
+        if report.providers.is_empty() {
+            println!("providers             (none configured)");
+        } else {
+            println!("providers");
+            for p in &report.providers {
+                println!(
+                    "  {:<16} enabled={}, key={}, {} models, launchable={}",
+                    p.provider,
+                    if p.enabled { "true" } else { "false" },
+                    if p.has_key { "present" } else { "missing" },
+                    p.models.len(),
+                    if p.launchable { "true" } else { "false" },
+                );
+            }
+        }
     }
 
     Ok(())
+}
+
+async fn load_effective_providers(
+    xvn_home: &std::path::Path,
+    config_path: &std::path::Path,
+) -> anyhow::Result<Vec<EffectiveProvider>> {
+    // Avoid `ApiContext::open` — opening the audit pool side-effects
+    // tracing on stdout (the "memory: migrate" WARN) which would corrupt
+    // `xvn doctor --json` output. The path-only variant returns the same
+    // rollup.
+    providers::effective_providers_with_paths(xvn_home, config_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("effective_providers: {e}"))
 }
 
 fn runtime_config_path(xvn_home: &std::path::Path) -> PathBuf {

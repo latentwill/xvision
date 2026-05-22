@@ -917,24 +917,59 @@ async fn build_eval_dispatch(
     agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<(Arc<dyn LlmDispatch>, String)> {
     let provider_name = select_eval_provider(ctx, strategy, agent_slots).await?;
-    let cfg_path = runtime_config_path(ctx);
-    let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
-        .await
-        .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
-        .map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
-    let entry = cfg
-        .providers
-        .iter()
-        .find(|p| p.name == provider_name)
-        .ok_or_else(|| {
-            ApiError::Validation(format!(
-                "provider `{provider_name}` is not configured. Pick a configured provider/model for the strategy agent before running eval."
-            ))
-        })?;
+    // Route through the canonical helper so the CLI, dashboard, and
+    // eval-launch all agree on what "configured + launchable" means.
     let runtime_slots = runtime_slots(strategy, agent_slots);
-    validate_eval_provider_models(entry, &runtime_slots)?;
-    let findings_model = crate::eval::postprocess::findings_model_for_provider(entry);
-    let dispatch = dispatch_from_provider(entry).await?;
+    // Find the model that will be used for this provider — needed so
+    // `resolve_provider` can verify the model is enabled. Strategies are
+    // single-provider today (validated by `validate_eval_provider_models`
+    // below) so the first non-empty model on a matching slot wins.
+    let requested_model: Option<String> = runtime_slots
+        .iter()
+        .filter(|slot| {
+            slot.provider
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(|p| p == provider_name)
+                .unwrap_or(false)
+        })
+        .filter_map(|slot| {
+            slot.model
+                .as_deref()
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(str::to_string)
+        })
+        .next();
+    let cfg_path = runtime_config_path(ctx);
+    let entry = match crate::api::settings::providers::resolve_provider(
+        ctx,
+        &cfg_path,
+        &provider_name,
+        requested_model.as_deref(),
+    )
+    .await
+    {
+        Ok(e) => e,
+        Err(unavailable) => {
+            let model_clause = unavailable
+                .model
+                .as_ref()
+                .map(|m| format!(" model `{m}`,"))
+                .unwrap_or_default();
+            return Err(ApiError::Validation(format!(
+                "provider `{}`{} is not launchable (reason={}): {}",
+                unavailable.provider,
+                model_clause,
+                unavailable.reason.as_str(),
+                unavailable.hint,
+            )));
+        }
+    };
+    validate_eval_provider_models(&entry, &runtime_slots)?;
+    let findings_model = crate::eval::postprocess::findings_model_for_provider(&entry);
+    let dispatch = dispatch_from_provider(&entry).await?;
     Ok((dispatch, findings_model))
 }
 
