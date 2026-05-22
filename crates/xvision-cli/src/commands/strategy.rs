@@ -388,6 +388,7 @@ fn parse_edge(raw: &str) -> CliResult<PipelineEdge> {
     Ok(PipelineEdge {
         from_role: from.to_string(),
         to_role: to.to_string(),
+        condition: None,
     })
 }
 
@@ -607,6 +608,7 @@ async fn new_atomic(
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
+                capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
         },
@@ -638,6 +640,7 @@ async fn new_atomic(
         agents: vec![AgentRef {
             agent_id: agent_id.clone(),
             role: role.clone(),
+            activates: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
@@ -1338,6 +1341,7 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
             agent_refs.push(AgentRef {
                 agent_id: agent.agent_id,
                 role,
+                activates: None,
             });
         }
 
@@ -1399,6 +1403,7 @@ fn slot_to_agent_slot(
         bar_history_limit: None,
         memory_mode: Default::default(),
         noop_skip: None,
+        capabilities: xvision_engine::agents::default_capabilities(),
         delta_briefing: None,
     }
 }

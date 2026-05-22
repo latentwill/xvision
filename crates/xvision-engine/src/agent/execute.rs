@@ -276,6 +276,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 &query_text,
                 5,
                 input.scenario_start,
+                input.cycle_idx,
             )
             .await?
         {
@@ -288,13 +289,30 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 );
                 None
             }
-            RecallResult::Hits { namespace, matches } => {
+            RecallResult::Hits {
+                namespace,
+                matches,
+                decision_id,
+            } => {
                 tracing::info!(
                     event = "memory_recall",
                     namespace = %namespace,
+                    decision_id,
                     k = matches.len(),
                     "V2D memory recall hits",
                 );
+                // memory-provenance-in-decisions-trace: structured
+                // observability emit so the dashboard's per-decision
+                // memory join can answer "which memories drove decision
+                // N." Carries `decision_id` (the engine's `cycle_idx`
+                // for this slot invocation) plus the recall set's item
+                // ids/scores/previews. Persisted into the `events`
+                // table by `SqliteRecorder`; the dashboard's
+                // `agent_runs::list_memory_recalls` projects per-
+                // decision rows from there.
+                if let Some(obs) = input.obs.as_ref() {
+                    obs.emit_memory_recall(decision_id, &namespace, &matches).await;
+                }
                 // Zero hits → no block. An empty `<prior_observations>`
                 // shell would just waste tokens and trip the leakage
                 // T-filter tests that assert absence on suppression.

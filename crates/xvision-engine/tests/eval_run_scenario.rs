@@ -41,6 +41,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
         })
@@ -159,6 +160,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
         agents: vec![AgentRef {
             agent_id: trader_agent_id,
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,
@@ -249,6 +251,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
         agents: vec![AgentRef {
             agent_id: trader_agent_id,
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,
@@ -371,6 +374,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
         agents: vec![AgentRef {
             agent_id: trader_agent_id,
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,
@@ -469,6 +473,7 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
         agents: vec![AgentRef {
             agent_id: trader_agent_id,
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,

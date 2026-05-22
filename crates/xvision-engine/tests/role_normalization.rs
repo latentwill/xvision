@@ -88,6 +88,7 @@ async fn pipeline_output_assigned_for_role_variants() {
             vec![AgentRef {
                 agent_id: "01HZAGENT".into(),
                 role: variant.into(),
+                activates: None,
             }],
             PipelineDef {
                 kind: PipelineKind::Single,
@@ -138,10 +139,12 @@ fn graph_edge_validation_uses_canonical_form() {
             AgentRef {
                 agent_id: "01HZSCOUT".into(),
                 role: "Scout".into(),
+                activates: None,
             },
             AgentRef {
                 agent_id: "01HZTRADER".into(),
                 role: " trader ".into(),
+                activates: None,
             },
         ],
         PipelineDef {
@@ -149,6 +152,7 @@ fn graph_edge_validation_uses_canonical_form() {
             edges: vec![PipelineEdge {
                 from_role: " SCOUT ".into(),
                 to_role: " trader ".into(),
+                condition: None,
             }],
         },
     );
@@ -167,6 +171,7 @@ fn whitespace_only_role_is_rejected() {
         vec![AgentRef {
             agent_id: "01HZBLANK".into(),
             role: "   ".into(),
+            activates: None,
         }],
         PipelineDef {
             kind: PipelineKind::Single,
@@ -188,10 +193,12 @@ fn duplicate_role_detected_across_variants() {
             AgentRef {
                 agent_id: "01HZA".into(),
                 role: "Trader".into(),
+                activates: None,
             },
             AgentRef {
                 agent_id: "01HZB".into(),
                 role: " TRADER ".into(),
+                activates: None,
             },
         ],
         PipelineDef {

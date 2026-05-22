@@ -411,6 +411,30 @@ impl AgentRunRecorder for SqliteRecorder {
                 .await?;
             }
 
+            RunEvent::MemoryRecall(e) => {
+                // memory-provenance-in-decisions-trace: persist as an
+                // `events` row so the dashboard's per-decision join can
+                // project `(run_id, decision_id, memory_item_id)` tuples
+                // back out via SQL. No migration — the `events` table
+                // accepts arbitrary `(kind, payload_json)` rows by
+                // design (migration 018). `payload_json` is the
+                // canonical wire shape of `MemoryRecallEvent`; the
+                // dashboard handler decodes via the same struct.
+                let id = format!("memrecall_{}", uuid::Uuid::new_v4());
+                let payload_json = serde_json::to_string(e).unwrap_or_else(|_| "{}".to_string());
+                sqlx::query(
+                    "INSERT INTO events (\
+                        id, run_id, span_id, kind, payload_json, created_at) \
+                     VALUES (?, ?, NULL, 'memory_recall', ?, ?)",
+                )
+                .bind(id)
+                .bind(&e.run_id)
+                .bind(payload_json)
+                .bind(ts(&Utc::now()))
+                .execute(&self.pool)
+                .await?;
+            }
+
             RunEvent::EngineEvent(e) => {
                 // F43 (`trace-dock-emitters`): the migration-018 `events`
                 // table previously had zero writers; this is the writer.

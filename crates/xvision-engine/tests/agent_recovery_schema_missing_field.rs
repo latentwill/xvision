@@ -161,6 +161,7 @@ fn minimal_strategy() -> Strategy {
         agents: vec![AgentRef {
             agent_id: "agent-schema-patch-trader".into(),
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,

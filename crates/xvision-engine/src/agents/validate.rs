@@ -397,6 +397,7 @@ mod tests {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: crate::agents::default_capabilities(),
                 delta_briefing: None,
             },
             AgentSlot {
@@ -412,6 +413,7 @@ mod tests {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: crate::agents::default_capabilities(),
                 delta_briefing: None,
             },
         ];

@@ -86,6 +86,26 @@ then pass `--batch <batch_id>` to `eval compare` to resolve run ids automaticall
 
 ---
 
+### `xvn model …`
+
+Bounded `(strategy × model)` matrix evals for model-quality bakeoffs. The
+orchestrator persists a `eval_bakeoffs` row with run ids per arm; per-arm hard
+limits route through `EvalLimits` (PR #428) so a single chatty model can't
+blow out the cap. Two materialization modes: `override` (default — per-launch
+provider/model swap via `cli-eval-model-override`) and `clone` (deferred —
+will materialize one cloned strategy per arm via
+`cli-strategy-clone-model-override`).
+
+| Verb | Effect |
+|---|---|
+| `bakeoff --strategies <ids,…> --scenario <id> --provider <p> --models <ids,…> [--mode override\|clone] [--clone-name-template <tpl>] [--max-runs <n>] [--sequential\|--parallel] [--max-decisions <n>] [--max-input-tokens <n>] [--max-output-tokens <n>] [--max-wall-clock <n>] [--cancel-on-token-limit] [--run-mode paper\|backtest] [--compare [--markdown]] [--name <name>] [--yes] [--json]` | Launch an N×M bakeoff. Without `--yes` the verb prints a dry-run plan (per-arm `(strategy, provider, model)`, caps, expected ceiling) and exits with a `--yes` reminder. With `--yes` the dry-run still prints to stderr; arms launch sequentially by default. With `--compare`, emits a `ComparisonReport` over all arm run-ids once terminal; pair with `--markdown` for the table form. `--use-strategy-models` (mutually exclusive with `--models`) keeps each strategy's natively-bound model. |
+| `status <bakeoff-id> [--json]` | Read the bakeoff record + joined run rows. Same shape as `xvn eval batch status`. |
+
+`--strategy` is accepted as an alias for `--strategies` (singular form is what
+the remote-CLI allowlist passes). Compare chunks at 10 arms per markdown table.
+
+---
+
 ### `xvn experiment …`
 
 Experiments group a research question across a set of strategies and scenarios.

@@ -16,6 +16,7 @@ pub mod intern;
 pub mod memory;
 pub mod metrics;
 pub mod migrate;
+pub mod model;
 pub mod obs;
 pub mod provider;
 pub mod report;

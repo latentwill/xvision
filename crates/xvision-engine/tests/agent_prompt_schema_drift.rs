@@ -35,6 +35,8 @@ async fn fresh_pool() -> SqlitePool {
     // V2D: memory_mode column.
     let migration_028 = include_str!("../migrations/029_agent_slot_memory_mode.sql");
     sqlx::query(migration_028).execute(&pool).await.unwrap();
+    let migration_033 = include_str!("../migrations/033_agent_slot_capabilities.sql");
+    sqlx::query(migration_033).execute(&pool).await.unwrap();
     pool
 }
 
@@ -61,6 +63,7 @@ fn slot(name: &str, prompt: impl Into<String>, skill_ids: Vec<&str>) -> AgentSlo
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
+        capabilities: xvision_engine::agents::default_capabilities(),
         delta_briefing: None,
     }
 }

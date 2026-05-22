@@ -93,14 +93,35 @@ const STRICT_TEMPLATES: &[Template] = &[
     Template {
         head: &["model", "bakeoff"],
         permitted_flags: &[
+            // Selection
             "--strategy",
+            "--strategies",
             "--scenario",
+            "--provider",
+            "--models",
+            "--use-strategy-models",
+            // Materialization
             "--mode",
+            "--clone-name-template",
+            "--name",
+            // Execution shape (sequential default; parallel opt-in)
+            "--max-runs",
+            "--sequential",
+            "--parallel",
+            "--wait",
+            "--run-mode",
+            // Hard limits (PR #428)
             "--max-decisions",
             "--max-input-tokens",
             "--max-output-tokens",
             "--max-wall-clock",
             "--cancel-on-token-limit",
+            // Output
+            "--compare",
+            "--markdown",
+            "--json",
+            "--yes",
+            // Legacy / forward-compat keys from V2B remote-cli-job-safety
             "--arm",
             "--cycles",
             "--tag",

@@ -8,6 +8,7 @@
 //! Distinct from `xvision_engine::agent` (singular) which handles agent
 //! *execution* during a cycle. This module handles agent *records*.
 
+pub mod capability;
 pub mod model;
 pub mod store;
 pub mod templates;
@@ -17,7 +18,8 @@ pub mod validator;
 #[cfg(test)]
 mod max_tokens_resolution;
 
-pub use model::{Agent, AgentSlot, InputsPolicy};
+pub use capability::Capability;
+pub use model::{default_capabilities, Agent, AgentSlot, InputsPolicy};
 // Canonical per-model metadata table lives in `xvision-core::providers`
 // so non-engine crates (CLI, dashboard) can resolve auto-tokens without
 // linking the engine. The engine re-exports the names it consumes.

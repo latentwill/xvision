@@ -447,6 +447,7 @@ mod tests {
             agents: vec![AgentRef {
                 agent_id: "x".into(),
                 role: "main".into(),
+                activates: None,
             }],
             pipeline: PipelineDef::sequential(),
             ..strategy

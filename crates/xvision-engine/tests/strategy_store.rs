@@ -26,6 +26,7 @@ fn sample_strategy(id: &str) -> Strategy {
         agents: vec![AgentRef {
             agent_id: "01TESTAGENT00000000000000".into(),
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,
