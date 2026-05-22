@@ -1071,9 +1071,7 @@ async fn clone(
     json: bool,
 ) -> CliResult<()> {
     if new_name.trim().is_empty() {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "--name must be non-empty"
-        )));
+        return Err(CliError::usage(anyhow::anyhow!("--name must be non-empty")));
     }
 
     // Validate the override pair: both or neither. A half-set override
@@ -1090,29 +1088,18 @@ async fn clone(
             Some((p.to_string(), m.to_string()))
         }
         (None, None) => None,
-        (Some(_), None) => {
-            return Err(CliError::usage(anyhow::anyhow!(
-                "--provider requires --model"
-            )))
-        }
-        (None, Some(_)) => {
-            return Err(CliError::usage(anyhow::anyhow!(
-                "--model requires --provider"
-            )))
-        }
+        (Some(_), None) => return Err(CliError::usage(anyhow::anyhow!("--provider requires --model"))),
+        (None, Some(_)) => return Err(CliError::usage(anyhow::anyhow!("--model requires --provider"))),
     };
 
     let ctx = open_ctx().await?;
 
     // 1. Load the source strategy. NotFound short-circuits without any
     //    writes downstream.
-    let source = store()
-        .load(source_strategy_id)
-        .await
-        .map_err(|e| CliError {
-            exit: XvnExit::NotFound,
-            source: anyhow::anyhow!("strategy `{source_strategy_id}` not found: {e}"),
-        })?;
+    let source = store().load(source_strategy_id).await.map_err(|e| CliError {
+        exit: XvnExit::NotFound,
+        source: anyhow::anyhow!("strategy `{source_strategy_id}` not found: {e}"),
+    })?;
 
     // 2. If an override is supplied, validate it against the providers
     //    catalog BEFORE doing any DB writes. Same refusal shape eval
@@ -1127,10 +1114,7 @@ async fn clone(
                 source: anyhow::anyhow!(
                     "--provider/--model override `{} / {}` is not launchable (reason={}): {}",
                     unavailable.provider,
-                    unavailable
-                        .model
-                        .as_deref()
-                        .unwrap_or("?"),
+                    unavailable.model.as_deref().unwrap_or("?"),
                     unavailable.reason.as_str(),
                     unavailable.hint,
                 ),
@@ -1171,7 +1155,10 @@ async fn clone(
         let new_agent = api_agents::create(
             &ctx,
             api_agents::CreateAgentRequest {
-                name: format!("{} (clone of {})", source_agent.name, source.manifest.display_name),
+                name: format!(
+                    "{} (clone of {})",
+                    source_agent.name, source.manifest.display_name
+                ),
                 description: format!(
                     "Cloned from agent {} via `xvn strategy clone {}`",
                     agent_ref.agent_id, source_strategy_id
@@ -1191,6 +1178,7 @@ async fn clone(
         cloned_agent_refs.push(AgentRef {
             agent_id: new_agent.agent_id,
             role: agent_ref.role.clone(),
+            activates: agent_ref.activates.clone(),
         });
     }
 
@@ -1253,10 +1241,7 @@ async fn clone(
 
     // 6. Persist the cloned strategy. Source is untouched; agents we
     //    created above already exist in the library.
-    store()
-        .save(&new_strategy)
-        .await
-        .exit_with(XvnExit::Upstream)?;
+    store().save(&new_strategy).await.exit_with(XvnExit::Upstream)?;
 
     // 7. Emit output. Contract shape:
     //    `{ strategy_id, agent_id, source_strategy_id, ... }`. For
@@ -1287,7 +1272,10 @@ async fn clone(
             new_strategy_id,
             created_agent_ids.len()
         );
-        println!("{}", serde_json::to_string_pretty(&json_out).exit_with(XvnExit::Upstream)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json_out).exit_with(XvnExit::Upstream)?
+        );
     }
 
     Ok(())
