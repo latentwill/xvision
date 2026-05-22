@@ -33,10 +33,10 @@ pub use config::{
 };
 pub use events::{
     ArtifactWrittenEvent, AssistantTextDeltaEvent, BackpressureDroppedEvent, BrokerCallFinishedEvent,
-    BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide, CheckpointWrittenEvent, ModelCallFinishedEvent,
-    RunEvent, RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent,
-    SpanStartedEvent, SupervisorNoteEvent, ToolCallCancelledEvent, ToolCallFailedEvent,
-    ToolCallFinishedEvent, ToolCallStartedEvent,
+    BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide, CheckpointWrittenEvent, EngineEvent,
+    ModelCallFinishedEvent, RunEvent, RunFinishedEvent, RunInterruptedEvent, RunStartedEvent,
+    SidecarErrorEvent, SpanFinishedEvent, SpanStartedEvent, SupervisorNoteEvent, ToolCallCancelledEvent,
+    ToolCallFailedEvent, ToolCallFinishedEvent, ToolCallStartedEvent,
 };
 pub use export::{
     build_export, build_report, find_blob_owner, render_report, AgentRunExport, AgentRunReport, ExportError,

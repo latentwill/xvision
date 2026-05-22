@@ -21,6 +21,7 @@ use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
 use xvision_core::providers::Catalog;
 use xvision_memory::types::Namespace;
+use xvision_observability::Redactor;
 
 /// Hard cap on the number of tool-use round-trips inside `execute_slot`.
 /// A pathological model that always emits `ToolUse` (no `EndTurn`) would
@@ -584,6 +585,21 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 obs.emit_tool_validate_input(&fresh_span_id(), None, &tu_name)
                     .await;
             }
+            // F43 (`trace-dock-emitters`): open a `tool.call` span +
+            // `tool_calls` row around every tool invocation. The
+            // arguments JSON is serialized then run through the
+            // observability `Redactor` so any provider tokens or
+            // broker keys the agent embedded in a tool argument get
+            // scrubbed before the row is persisted. Closed on the
+            // matching `emit_tool_call_finished` / `_failed` below.
+            let tool_span_id = fresh_span_id();
+            let tool_started_at = std::time::Instant::now();
+            if let Some(obs) = input.obs.as_ref() {
+                let raw_args = serde_json::to_string(&tu_input).unwrap_or_default();
+                let redacted = Redactor::new().redact(&raw_args).text;
+                obs.emit_tool_call_started(&tool_span_id, None, &tu_name, &redacted)
+                    .await;
+            }
             // F-5: short-circuit if the block-list says this exact
             // (tool_name, input_hash) pair has already tripped the
             // repeated-failure block. The model receives a structured
@@ -640,6 +656,38 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             if let Some(obs) = input.obs.as_ref() {
                 obs.emit_tool_validate_output(&fresh_span_id(), None, &tu_name)
                     .await;
+                // F43: close the matching `tool.call` span + write
+                // output_hash onto the `tool_calls` row. Outputs are
+                // redacted before hashing so any tokens that appeared
+                // in the tool result don't leak through the hash
+                // input.
+                let latency_ms = tool_started_at.elapsed().as_millis() as i64;
+                match is_error {
+                    Some(true) => {
+                        let redacted_error = Redactor::new().redact(&content).text;
+                        obs.emit_tool_call_failed(&tool_span_id, &redacted_error).await;
+                    }
+                    _ => {
+                        let redacted_out = Redactor::new().redact(&content).text;
+                        obs.emit_tool_call_finished(&tool_span_id, &redacted_out).await;
+                    }
+                }
+                // Emit a `fill_attempted`-style engine event for the
+                // tool dispatch so the trace dock surfaces per-tool
+                // latency without joining spans manually. parent
+                // decision index isn't known here (slot-scoped path);
+                // the field is omitted.
+                let payload = serde_json::json!({
+                    "tool_name": tu_name,
+                    "latency_ms": latency_ms,
+                    "error": is_error.unwrap_or(false),
+                });
+                obs.emit_engine_event(
+                    "tool_call_completed",
+                    Some(tool_span_id.clone()),
+                    Some(payload.to_string()),
+                )
+                .await;
             }
             results.push(ContentBlock::ToolResult {
                 tool_use_id: tu_id,

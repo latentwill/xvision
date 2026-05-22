@@ -739,6 +739,17 @@ impl BacktestExecutor {
                 store
                     .record_supervisor_note(&run.id, "guard", "info", &plan.reason)
                     .await?;
+                // F43: also expose the policy fire as an engine event
+                // so the trace dock has a discrete bar tick to render.
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    let payload = serde_json::json!({
+                        "decision_index": decision_idx,
+                        "skip_count": plan.skip_count,
+                        "reason": plan.reason,
+                    });
+                    obs.emit_engine_event("early_stop_triggered", None, Some(payload.to_string()))
+                        .await;
+                }
                 inherit_remaining = plan.skip_count;
                 // Flush the rolling buffer so the policy can't re-fire
                 // on the next bar without a fresh streak rebuilding.
@@ -818,6 +829,38 @@ impl BacktestExecutor {
                 continue;
             }
 
+            // F43 (`trace-dock-emitters`): open a per-decision span so
+            // child model.call / tool.call / broker.call rows have a
+            // visible decision parent on the trace dock. Closed at the
+            // bottom of the iteration with span_finished_ok (or
+            // _error on early bail). Also emits the `decision_started`
+            // engine event so the dashboard timeline shows a per-bar
+            // tick without diffing decision rows.
+            let decision_span_id = crate::agent::observability::fresh_span_id();
+            if let Some(obs) = self.obs_emitter.as_ref() {
+                obs.emit_decision_span_started(&decision_span_id, None, decision_idx as i64, Some(&asset))
+                    .await;
+                let payload = serde_json::json!({
+                    "decision_index": decision_idx,
+                    "asset": asset,
+                    "bar_ts": bar.timestamp.to_rfc3339(),
+                });
+                obs.emit_engine_event(
+                    "decision_started",
+                    Some(decision_span_id.clone()),
+                    Some(payload.to_string()),
+                )
+                .await;
+            }
+            macro_rules! finish_decision_span_error {
+                ($message:expr) => {
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        obs.emit_span_finished_error(&decision_span_id, $message)
+                            .await;
+                    }
+                };
+            }
+
             // F-5 phase 2a: keep a copy of the seed so the
             // malformed-json repair path (below) can rebuild the
             // original user prompt byte-for-byte. The pipeline consumes
@@ -867,19 +910,23 @@ impl BacktestExecutor {
                     ) {
                         let reason = breach.reason();
                         let _ = store.cancel_active(&run.id, &reason).await;
+                        finish_decision_span_error!(reason.as_str());
                         anyhow::bail!(reason);
                     }
                 }
             }
 
             if store.is_terminal(&run.id).await? {
+                finish_decision_span_error!("eval run stopped");
                 anyhow::bail!("eval run stopped");
             }
 
             let trader = match outs.trader.as_ref() {
                 Some(t) => t,
                 None => {
-                    return Err(TraderOutput::missing_response_error(&run.id, decision_idx).into());
+                    let err = TraderOutput::missing_response_error(&run.id, decision_idx);
+                    finish_decision_span_error!(&err.to_string());
+                    return Err(err.into());
                 }
             };
             let trader_model_id = trader_model_id(agent_slots, strategy);
@@ -917,11 +964,15 @@ impl BacktestExecutor {
                             {
                                 Ok(repaired) => repaired,
                                 Err(original) => {
-                                    return Err(original.with_model_hint(trader_model_id.as_deref()).into());
+                                    let err = original.with_model_hint(trader_model_id.as_deref());
+                                    finish_decision_span_error!(&err.to_string());
+                                    return Err(err.into());
                                 }
                             }
                         } else {
-                            return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                            let err = e.with_model_hint(trader_model_id.as_deref());
+                            finish_decision_span_error!(&err.to_string());
+                            return Err(err.into());
                         }
                     } else if is_malformed_json_recoverable(&e) {
                         if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
@@ -939,19 +990,26 @@ impl BacktestExecutor {
                             {
                                 Ok(repaired) => repaired,
                                 Err(original) => {
-                                    return Err(original.with_model_hint(trader_model_id.as_deref()).into());
+                                    let err = original.with_model_hint(trader_model_id.as_deref());
+                                    finish_decision_span_error!(&err.to_string());
+                                    return Err(err.into());
                                 }
                             }
                         } else {
-                            return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                            let err = e.with_model_hint(trader_model_id.as_deref());
+                            finish_decision_span_error!(&err.to_string());
+                            return Err(err.into());
                         }
                     } else {
-                        return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                        let err = e.with_model_hint(trader_model_id.as_deref());
+                        finish_decision_span_error!(&err.to_string());
+                        return Err(err.into());
                     }
                 }
             };
 
             if store.is_terminal(&run.id).await? {
+                finish_decision_span_error!("eval run stopped");
                 anyhow::bail!("eval run stopped");
             }
 
@@ -975,6 +1033,25 @@ impl BacktestExecutor {
                     store
                         .record_supervisor_note(&run.id, "guard", "warn", &note)
                         .await?;
+                    // F43: also emit a `guardrail_fired` engine event
+                    // so the trace dock shows the rewrite as a
+                    // discrete bar-level tick, not just a
+                    // supervisor_notes entry.
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        let payload = serde_json::json!({
+                            "decision_index": decision_idx,
+                            "asset": asset,
+                            "reason": reason.as_str(),
+                            "original": original_action.as_str(),
+                            "applied": action.as_str(),
+                        });
+                        obs.emit_engine_event(
+                            "guardrail_fired",
+                            Some(decision_span_id.clone()),
+                            Some(payload.to_string()),
+                        )
+                        .await;
+                    }
                     // Per-decision warn demoted to debug (eval-guardrail-log-collapse):
                     // the supervisor_notes row is the durable record; a per-run
                     // summary warn is emitted at finalize by guardrail_summary::fire_guardrail_summary.
@@ -1114,6 +1191,35 @@ impl BacktestExecutor {
                                 error = %e,
                                 "failed to record broker_rule_violation finding",
                             );
+                        }
+                        // F43 (`trace-dock-emitters`): broker rule
+                        // violations also surface as supervisor_notes +
+                        // an engine event so the trace dock's notes /
+                        // events tabs both reflect the broker push-back
+                        // (the `findings` table is operator-facing only,
+                        // not on the trace dock).
+                        if let Some(obs) = self.obs_emitter.as_ref() {
+                            let severity = if is_blocking { "error" } else { "warn" };
+                            let note_msg = format!(
+                                "broker rule {} `{}` at decision {decision_idx} ({asset}): {}",
+                                if is_blocking { "rejected order" } else { "warning" },
+                                violation.specific_rule,
+                                violation.message,
+                            );
+                            obs.emit_supervisor_note("guard", severity, &note_msg).await;
+                            let payload = serde_json::json!({
+                                "decision_index": decision_idx,
+                                "asset": asset,
+                                "specific_rule": violation.specific_rule,
+                                "severity": if is_blocking { "critical" } else { "warning" },
+                                "action": applied_action,
+                            });
+                            obs.emit_engine_event(
+                                "broker_rule_violation",
+                                Some(decision_span_id.clone()),
+                                Some(payload.to_string()),
+                            )
+                            .await;
                         }
                         is_blocking // Critical → skip simulate_fill; Warning → fill proceeds
                     }
@@ -1285,6 +1391,29 @@ impl BacktestExecutor {
                 });
             }
 
+            // F43 (`trace-dock-emitters`): emit `fill_attempted` per
+            // decision regardless of whether the fill crossed the book.
+            // The payload distinguishes hold/no-op iterations
+            // (`filled: false`) from real fills so the trace dock can
+            // render a per-bar tick density indicator without joining
+            // `eval_decisions`.
+            if let Some(obs) = self.obs_emitter.as_ref() {
+                let payload = serde_json::json!({
+                    "decision_index": decision_idx,
+                    "asset": asset,
+                    "applied_action": applied_action,
+                    "filled": fill_happened,
+                    "fill_price": fill.fill_price,
+                    "fill_size": fill.fill_size,
+                });
+                obs.emit_engine_event(
+                    "fill_attempted",
+                    Some(decision_span_id.clone()),
+                    Some(payload.to_string()),
+                )
+                .await;
+            }
+
             // DecisionEmitted fires for every cycle so subscribers see
             // flat/hold decisions too. Carries the ORIGINAL trader
             // action — subscribers correlate the emitted intent with the
@@ -1444,6 +1573,24 @@ impl BacktestExecutor {
                 }
             }
             prev_position = position;
+
+            // F43 (`trace-dock-emitters`): close the per-decision span
+            // + emit the `decision_completed` engine event so the
+            // trace dock can compute decision-scoped duration.
+            if let Some(obs) = self.obs_emitter.as_ref() {
+                obs.emit_span_finished_ok(&decision_span_id).await;
+                let payload = serde_json::json!({
+                    "decision_index": decision_idx,
+                    "asset": asset,
+                    "applied_action": applied_action,
+                });
+                obs.emit_engine_event(
+                    "decision_completed",
+                    Some(decision_span_id.clone()),
+                    Some(payload.to_string()),
+                )
+                .await;
+            }
 
             decision_idx += 1;
             i += 1;

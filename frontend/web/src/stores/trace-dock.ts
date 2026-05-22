@@ -352,6 +352,17 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
         return;
       }
       // Lifecycle / informational arms — no streaming-state side effect.
+      //
+      // F43 (`trace-dock-emitters`) note: the engine eval executor now
+      // emits bar-level lifecycle events (`decision_started`,
+      // `decision_completed`, `fill_attempted`, `guardrail_fired`,
+      // `early_stop_triggered`, `flat_skip_fired`, `broker_rule_violation`,
+      // `tool_call_completed`) as `EngineEvent` rows in the migration-018
+      // `events` table. These are surfaced through the post-hoc
+      // `/api/agent-runs/<id>` projection, not the live SSE stream —
+      // the dock's live streaming slice doesn't need a switch arm for
+      // them. When the SSE wire is later extended to forward
+      // `engine_event` frames (separate contract), add the arm here.
       case "run_started":
       case "tool_call_started":
       case "broker_call_started":
