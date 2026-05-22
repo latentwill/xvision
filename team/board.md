@@ -4,18 +4,15 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-22 (sweep 5) — `multi-asset-alpaca-unlock`
-> (#533, F18) merged and archived this pass. The F18 cascade closes
-> the post-F30-M1 remainder: `TraderDecision.asset` is now a required
-> `AssetSymbol`, risk drops the separate asset param, `BacktestConfig::instrument`
-> + `BacktestRunConfig::instrument` are gone, executors route per
-> decision, and Orderly rejects non-BTC with `NotActionable`.
-> Wave-2 dispatch still in flight: `memory-provenance-in-decisions-trace`
-> (#523) and `indicator-tool-wiring` (#521). Only
-> `eval-token-efficiency-tail` remains ready but unclaimed in the F41
-> tail. F-5 harness recovery state machine, capability-first spec
-> (#518), and the Phase A schema contract remain in the picture from
-> sweep 3.
+> Last updated: 2026-05-22 (sweep 6) — `indicator-tool-wiring`
+> (#521) merged + archived; Orderly multi-asset expansion (#540) shipped
+> as a follow-on to F18 cascade (no contract — implemented directly
+> from `docs/superpowers/plans/2026-05-22-orderly-multi-asset-expansion.md`
+> #539). #520 / #522 / #525 also merged in this window (no contracts).
+> Only `eval-token-efficiency-tail`, the agent-graph Phase A schema,
+> Wave B model bakeoff cluster, and `memory-aware-eval-findings`
+> (deferred behind #523) remain in Active. Memory provenance #523 is
+> the lone live wave-2 PR.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
@@ -49,10 +46,6 @@ Wave A (#530/#531/#532) merged 2026-05-22 — see intake `team/intake/2026-05-20
 ## Open PRs (in-flight, not yet merged)
 
 - **#523** — `memory-provenance-in-decisions-trace` — wave-2 dispatch; threads `decision_id` through `MemoryRecorder::recall`. Contract still in `team/contracts/`; archive on merge.
-- **#521** — `indicator-tool-wiring` — wave-2 dispatch; wires `indicator_panel` tool through to trader slot. Contract still in `team/contracts/`; archive on merge.
-- **#525** — `chore/gha-node-24-bump` — F26: GHA Node 20 → 24 ahead of 2026-06-02 cutover. No contract (CI housekeeping).
-- **#520** — `fix/unbreak-main-provider-catalogs` — build fix for `xvn strategy run-inline`. No contract.
-- **#522** — `fix/sqlite-busy-wal-busy-timeout` — `xvn.db` pool WAL + busy_timeout. No contract.
 - **#512** — `[codex] streamline strategy creation and docs layout` — CLEAN, external.
 - **#498** — `fix(trace-dock): hide state.transition stub in Advanced view` — CLEAN, older.
 
@@ -67,6 +60,17 @@ Wave A (#530/#531/#532) merged 2026-05-22 — see intake `team/intake/2026-05-20
 - [docs-search-list-component-adoption](contracts/docs-search-list-component-adoption.md) — only opens if docs-sidebar audit confirms list-component fit.
 
 ## Recently Closed
+
+### Merged 2026-05-22 (sweep 6) — archived under `team/archive/2026-05-22-conductor-pass-6/`
+
+1 contract archived this pass + 4 contract-less merges noted:
+
+- `indicator-tool-wiring` (#521 — wires `indicator_panel` tool through to the trader slot's LLM dispatch; F41 sub-track)
+- **#520** `fix/unbreak-main-provider-catalogs` — build fix, no contract
+- **#522** `fix/sqlite-busy-wal-busy-timeout` — DB pool WAL + busy_timeout, no contract
+- **#525** `chore/gha-node-24-bump` — F26 GHA Node 24 cutover, no contract
+- **#539** `plan: Orderly multi-asset expansion` — plan-only doc, no contract
+- **#540** `feat(orderly): multi-asset expansion` — implemented directly from #539's plan, no contract; FOLLOWUPS F44 filed for the market-info refresh follow-on
 
 ### Merged 2026-05-22 (sweep 5) — archived under `team/archive/2026-05-22-conductor-pass-5/`
 
