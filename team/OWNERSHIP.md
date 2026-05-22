@@ -62,6 +62,22 @@ contracts in `team/contracts/` right now.
 | `frontend/web/src/features/docs/DocsSidebar.tsx` | `docs-search-list-component-adoption` (deferred) | docs-followup |
 | `frontend/web/src/features/docs/DocsSidebar.test.tsx` | `docs-search-list-component-adoption` (deferred) | docs-followup |
 | `frontend/web/src/routes/docs/index.tsx` | `docs-search-list-component-adoption` (deferred) | docs-followup |
+| `crates/xvision-cli/src/commands/eval/mod.rs` | `cli-eval-model-override` + `cli-model-bakeoff` — disjoint regions (override: extend RunArgs with --provider/--model; bakeoff: dispatch wiring only via new commands/model.rs) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/src/api/eval.rs` | `cli-eval-model-override` (narrow: EvalRunRequest gets provider_override field; resolve_provider honors it) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/src/eval/run.rs` | `cli-eval-model-override` (propagate override into agent dispatch) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-cli/src/commands/strategy.rs` | `cli-strategy-clone-model-override` (add `clone` subcommand) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/src/api/strategy.rs` | `cli-strategy-clone-model-override` (clone endpoint, thin wrapper on existing create path) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/src/strategies/store.rs` | `cli-strategy-clone-model-override` (mint new ULID on clone) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/src/agents/store.rs` | `cli-strategy-clone-model-override` (paired Agent clone) + `agent-graph-capability-schema` — disjoint regions (clone-model: clone helper for new model; capability-schema: capabilities column round-trip) | multiple |
+| `crates/xvision-cli/src/commands/model.rs` | `cli-model-bakeoff` (NEW file: `xvn model bakeoff` subcommand) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-cli/src/commands/mod.rs` | `cli-model-bakeoff` (register new `model` subcommand) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-cli/src/main.rs` | `cli-model-bakeoff` (one-line dispatch wiring) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/src/api/eval/bakeoff.rs` | `cli-model-bakeoff` (NEW file: bakeoff orchestrator) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/migrations/034_eval_model_override.sql` | `cli-eval-model-override` (NEW migration — only if override receipt persists as column rather than JSON; see contract Notes) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/migrations/034_eval_model_override.down.sql` | `cli-eval-model-override` (NEW down) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/migrations/035_eval_bakeoffs.sql` | `cli-model-bakeoff` (NEW migration: eval_bakeoffs + eval_bakeoff_runs) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/migrations/035_eval_bakeoffs.down.sql` | `cli-model-bakeoff` (NEW down) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-dashboard/src/cli_jobs/allowlist.rs` | `cli-model-bakeoff` (extend `["model", "bakeoff"]` permitted_flags) + `cli-eval-model-override` (extend `["eval", "run"]` permitted_flags) — disjoint regions | cli-operator-safety-wave-b-2026-05-22 |
 
 ## Multi-owner Exemptions
 

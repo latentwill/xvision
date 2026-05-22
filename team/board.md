@@ -35,6 +35,14 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 - [cli-test-fixture-completion-tail](contracts/cli-test-fixture-completion-tail.md) — **P2 leaf** · ready · migrate 9 failing CLI test fixtures to post-template-registry, post-strategy-fixture-migration shape
 
+### cli-operator-safety-wave-b-2026-05-22 — model-bakeoff cluster
+
+Wave A (#530/#531/#532) merged 2026-05-22 — see intake `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`. Wave B promotes three contracts that together ship `xvn model bakeoff`. #5 + #4 are leaf parallel-safe; #6 depends on both but can be dispatched in its own worktree off main with rebase-on-merge.
+
+- [cli-eval-model-override](contracts/cli-eval-model-override.md) — **P1 leaf** · ready · `xvn eval run --provider X --model Y` per-launch override + receipt. Blocks `cli-model-bakeoff`.
+- [cli-strategy-clone-model-override](contracts/cli-strategy-clone-model-override.md) — **P1 leaf** · ready · `xvn strategy clone <id> --provider X --model Y --name N`. Blocks `cli-model-bakeoff`.
+- [cli-model-bakeoff](contracts/cli-model-bakeoff.md) — **P1 integration** · ready (depends on both leaves) · the headline verb; absorbs intake #7 (`cli-two-run-rerun-workflow`). New migration 035.
+
 ## Open PRs (in-flight, not yet merged)
 
 - **#523** — `memory-provenance-in-decisions-trace` — wave-2 dispatch; threads `decision_id` through `MemoryRecorder::recall`. Contract still in `team/contracts/`; archive on merge.
@@ -49,7 +57,7 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 - **`team/intake/2026-05-19-compare-ab-evaluations.md`** — 10 product asks for AB-compare. Gated by F33 chart rework.
 - **`team/intake/2026-05-20-canonical-template-needs-trader.md`** — folded into capability-first refactor; closes in Phase E.
-- **`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`** — P0 shipped; P1/P2 tracks Reserved pending operator confirmation.
+- **`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`** — P0 + Wave A shipped; Wave B promoted 2026-05-22 (listed in Active above); #12 already shipped via V2B remote-cli-job-safety; P2 (#13–#15) Reserved indefinitely.
 
 ## Deferred — operator-gated
 
