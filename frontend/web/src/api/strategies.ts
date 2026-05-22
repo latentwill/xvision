@@ -140,7 +140,6 @@ type TemplatesListResponse = {
 };
 
 export type CreateStrategyReq = {
-  template: string;
   name: string;
   creator?: string | null;
 };
@@ -318,14 +317,12 @@ export function listTemplates(): Promise<TemplateInfo[]> {
   );
 }
 
-/// Create a new draft strategy from a template. Returns the new
-/// agent_id; the picker UI redirects to /authoring/:id after this
-/// resolves.
+/// Create a new blank draft strategy. Returns the new agent_id; the UI
+/// redirects to /authoring/:id after this resolves.
 export function createStrategy(
   body: CreateStrategyReq,
 ): Promise<CreateStrategyOut> {
   const trace = createTrace("strategy", {
-    template: body.template,
     display_name_len: body.name.length,
   });
   const started = performance.now();
