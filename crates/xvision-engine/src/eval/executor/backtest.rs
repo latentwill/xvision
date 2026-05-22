@@ -30,6 +30,7 @@ use xvision_eval::baselines::bar_baselines;
 use crate::agent::llm::LlmDispatch;
 use crate::agent::observability::ObsEmitter;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use crate::agent::recovery::{is_malformed_json_recoverable, try_repair_malformed_json, TraderRepairContext};
 use crate::agents::InputsPolicy;
 use crate::api::chart::{
     ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus, TradeMarker,
@@ -798,6 +799,13 @@ impl BacktestExecutor {
                 continue;
             }
 
+            // F-5 phase 2a: keep a copy of the seed so the
+            // malformed-json repair path (below) can rebuild the
+            // original user prompt byte-for-byte. The pipeline consumes
+            // `seed_inputs` by value; cloning here is cheap relative to
+            // the LLM dispatch and keeps the repair turn deterministic
+            // for the A/B-cache pairing acceptance criterion.
+            let seed_for_repair = seed.clone();
             let outs = run_pipeline(PipelineInputs {
                 strategy,
                 agent_slots,
@@ -855,8 +863,46 @@ impl BacktestExecutor {
                 }
             };
             let trader_model_id = trader_model_id(agent_slots, strategy);
-            let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)
-                .map_err(|e| e.with_model_hint(trader_model_id.as_deref()))?;
+            let parsed = match TraderOutput::parse_response(trader, &run.id, decision_idx) {
+                Ok(p) => p,
+                Err(e) => {
+                    // F-5 phase 2a (`harness-recovery-malformed-json`):
+                    // single-shot repair attempt for the MalformedJson
+                    // family (`InvalidJson` / `Truncated`). All other
+                    // kinds bypass the repair and surface as today (their
+                    // recovery families belong to sibling phase-2
+                    // contracts or are intentionally non-recoverable per
+                    // the audit). The repair propagates the ORIGINAL
+                    // error on second-attempt failure so
+                    // `eval_runs.error` keeps its wire-stable
+                    // `[invalid_json]` / `[truncated]` prefix.
+                    if is_malformed_json_recoverable(&e) {
+                        if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
+                            match try_repair_malformed_json(
+                                trader,
+                                e,
+                                ctx,
+                                &seed_for_repair,
+                                dispatch.clone(),
+                                self.obs_emitter.as_ref(),
+                                &run.id,
+                                decision_idx,
+                            )
+                            .await
+                            {
+                                Ok(repaired) => repaired,
+                                Err(original) => {
+                                    return Err(original.with_model_hint(trader_model_id.as_deref()).into());
+                                }
+                            }
+                        } else {
+                            return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                        }
+                    } else {
+                        return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                    }
+                }
+            };
 
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
@@ -1747,6 +1793,54 @@ pub fn classify_aggressor_side(
         }
     }
     AggressorSide::Taker
+}
+
+/// Find the trader slot's repair context — system prompt, model id,
+/// max_tokens, temperature — for the F-5 phase-2a MalformedJson repair
+/// path (`harness-recovery-malformed-json`). Prefers an attached agent
+/// with role `trader`, then falls back to the legacy
+/// `strategy.trader_slot`. Returns `None` when neither path can supply a
+/// system prompt — the repair attempt is then skipped and the original
+/// parse error is propagated unchanged.
+///
+/// The two paths derive `max_tokens` differently:
+///   - Agent path: the operator's explicit `ResolvedAgentSlot.max_tokens`
+///     (may be `None`, which lets the provider apply its own default).
+///   - Legacy path: the model's auto-derived budget, matching what
+///     `pipeline::default_max_tokens_for` produces for the original
+///     trader call so the repair turn uses the same budget.
+fn trader_repair_context<'a>(
+    agent_slots: &'a [ResolvedAgentSlot],
+    strategy: &'a Strategy,
+) -> Option<TraderRepairContext<'a>> {
+    if let Some(resolved) = agent_slots.iter().find(|r| canonical_role(&r.role) == "trader") {
+        let model = resolved.slot.effective_model();
+        if !resolved.slot.prompt.trim().is_empty() && !model.trim().is_empty() {
+            return Some(TraderRepairContext {
+                system_prompt: &resolved.slot.prompt,
+                model,
+                max_tokens: resolved.max_tokens,
+                temperature: resolved.temperature,
+            });
+        }
+    }
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        let model = slot.effective_model();
+        if !slot.prompt.trim().is_empty() && !model.trim().is_empty() {
+            // Mirror `pipeline::default_max_tokens_for` so the repair
+            // dispatch uses the same per-model auto budget as the
+            // original trader call. Legacy strategies have no
+            // operator-side `max_tokens` knob.
+            let auto = xvision_core::providers::lookup_model(&model).auto_max_tokens();
+            return Some(TraderRepairContext {
+                system_prompt: &slot.prompt,
+                model,
+                max_tokens: Some(auto),
+                temperature: None,
+            });
+        }
+    }
+    None
 }
 
 /// Find the trader slot's model id, used to decorate trader-output

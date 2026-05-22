@@ -21,10 +21,15 @@
 //! re-touching this surface.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use crate::agent::llm::OpenAiCompatError;
+use crate::agent::llm::{
+    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, OpenAiCompatError, ResponseSchema,
+};
+use crate::agent::observability::{fresh_span_id, ObsEmitter};
+use crate::eval::executor::trader_output::TraderOutput;
 use crate::eval::executor::{TraderFailureKind, TraderOutputError};
 
 /// Stable failure class. Each variant maps to exactly one of the wire
@@ -378,6 +383,296 @@ fn hash_input(input: &serde_json::Value) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(&bytes)))
 }
 
+// ─── MalformedJson repair-prompt builder ───────────────────────────────────
+//
+// F-5 phase 2a (`harness-recovery-malformed-json`): when the trader's text
+// fails to parse as the canonical `TraderOutput` JSON shape, the eval
+// executor invokes a single-shot repair attempt before propagating the
+// original error. The conversation log appended on that retry carries
+// the parse diagnostic + the response schema descriptor + a no-prose
+// instruction so the model has every piece of information it needs to
+// emit a clean JSON object on the second try.
+//
+// The body construction lives here so the call site in
+// `eval::executor::recovery` stays minimal — paper.rs and backtest.rs
+// dispatch through the same helper, which keeps the wire-shape of the
+// repair turn identical across executors.
+
+/// Build the user-message body for a malformed-json repair attempt. The
+/// returned string carries:
+///
+///   1. The verbatim parse error from `TraderOutputError.detail` so the
+///      model sees exactly which key, type, or token tripped the
+///      deserializer.
+///   2. The response-schema descriptor (name + serialized schema) so the
+///      model is reminded what it should have emitted.
+///   3. A one-line instruction forbidding prose, code fences, or further
+///      tool calls — the second attempt must emit a single JSON object.
+///
+/// The text is deterministic for a given `(parse_error, schema)` pair so
+/// the engine's prompt-hashing seam (A/B cache pairing across re-runs
+/// with the same `cycle_id`) produces a stable digest. Operators
+/// inspecting the trace dock see the same repair message every time a
+/// strategy's trader emits the same unparseable response.
+pub fn build_malformed_json_repair_message(parse_error: &str, schema: &ResponseSchema) -> String {
+    // Render the schema body deterministically — `serde_json::to_string`
+    // is field-order-stable for a `serde_json::Value` built from a
+    // literal `json!` macro, but `to_string_pretty` is what callers
+    // typically see in the trace dock, so we use that for human
+    // readability. The schema descriptor is the same object the
+    // dispatcher would have stamped on the original outbound request,
+    // so quoting it here only restates known context.
+    let schema_body = serde_json::to_string_pretty(&schema.schema)
+        .unwrap_or_else(|_| "<schema-serialize-error>".to_string());
+    format!(
+        "Your previous response failed to parse: {parse_error}\n\
+         \n\
+         Emit a single JSON object matching the `{schema_name}` schema below. \
+         Do not include prose, code fences, or tool calls. Return ONLY the JSON object.\n\
+         \n\
+         Schema:\n{schema_body}",
+        schema_name = schema.name,
+    )
+}
+
+// ─── MalformedJson repair-prompt dispatch ──────────────────────────────────
+//
+// The dispatch side of the repair path lives here (rather than in
+// `eval::executor`) so both `paper.rs` and `backtest.rs` converge on the
+// same helper and the wire shape of the repair turn is byte-stable
+// across executors. The call sites in those modules only own the
+// classification check + a thin projection into [`TraderRepairContext`];
+// every step that touches the LlmDispatch / parses the second response /
+// emits the `recovery.*` spans is centralised here.
+
+/// Slot fields required to re-dispatch the trader for a repair attempt.
+/// Both the legacy `Strategy.trader_slot` path and the agent-slot path
+/// project into this shape before calling [`try_repair_malformed_json`]
+/// so the helper stays oblivious to which path produced the original
+/// failure.
+///
+/// Field-by-field semantics match the equivalent shape constructed inside
+/// `execute_slot`:
+/// - `system_prompt`: the slot's free-form prompt body (no preamble
+///   added; the dispatcher's response-schema preamble is re-applied via
+///   `response_schema` below).
+/// - `model`: the effective model id — `LLMSlot::effective_model()` for
+///   the legacy path, `ResolvedAgentSlot::slot.effective_model()` for
+///   the agent path.
+/// - `max_tokens`: the operator's per-request budget; `None` lets the
+///   provider decide. Mirrors the value the original trader call used.
+/// - `temperature`: same — pass-through verbatim.
+pub struct TraderRepairContext<'a> {
+    pub system_prompt: &'a str,
+    pub model: String,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f64>,
+}
+
+/// Convenience predicate: returns `true` when the `TraderOutputError`
+/// falls into the MalformedJson family and is therefore eligible for the
+/// repair path. Callers in paper.rs / backtest.rs check this before
+/// invoking [`try_repair_malformed_json`] so the helper isn't invoked for
+/// `MissingField` / `InvalidField` / `EmptyText` failures (those are
+/// owned by sibling phase-2 contracts).
+pub fn is_malformed_json_recoverable(err: &TraderOutputError) -> bool {
+    matches!(
+        err.kind,
+        TraderFailureKind::InvalidJson | TraderFailureKind::Truncated
+    )
+}
+
+/// Single-shot repair attempt for `MalformedJson` family failures
+/// (`InvalidJson` / `Truncated`). Returns `Ok(parsed)` on success and
+/// emits a `recovery.attempt` span. Returns the ORIGINAL
+/// [`TraderOutputError`] on second-attempt failure and emits
+/// `recovery.failed` carrying the second-attempt error as `final_error`.
+/// Callers propagate the returned error verbatim — the wire-stable
+/// `[<tag>]` prefix on `eval_runs.error` stays exactly as today's path
+/// produces it.
+///
+/// The dispatched repair LlmRequest carries:
+///
+///   1. The same `system_prompt` + `model` + `max_tokens` + `temperature`
+///      the original trader call used, so the model has identical
+///      context.
+///   2. The same `response_schema` so OpenAI-compat providers re-emit
+///      the strict json_schema response_format and Anthropic re-injects
+///      the schema preamble.
+///   3. A three-turn conversation log: the original user prompt (derived
+///      from `seed_inputs` in the same shape `execute_slot` would have
+///      produced), an assistant turn carrying the verbatim raw text the
+///      model just emitted, and a user turn with the repair message
+///      built by [`build_malformed_json_repair_message`].
+///
+/// The repair dispatch does NOT pass any tools — the model must emit a
+/// single JSON object, not a tool_use. This is intentional: the contract
+/// says "do not include prose, code fences, or tool calls" and removing
+/// the tool definitions removes the temptation to emit one.
+///
+/// ## A/B cache pairing
+///
+/// The repair message body is deterministic for a given
+/// `(parse_error, schema)` pair (see
+/// [`build_malformed_json_repair_message`]). The seed-derived user prompt
+/// is also deterministic because the eval executor's seed is
+/// reconstructed from the scenario + bar history every cycle. Together
+/// these mean the repair dispatch's prompt hash is reproducible across
+/// re-runs of the same strategy/cycle, so a strategy that hits the
+/// repair path once will hit the same repair path on every replay —
+/// matching the existing A/B-compare deterministic-recovery expectation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn try_repair_malformed_json(
+    failed_response: &LlmResponse,
+    original_error: TraderOutputError,
+    repair_ctx: TraderRepairContext<'_>,
+    seed_inputs: &serde_json::Value,
+    dispatch: Arc<dyn LlmDispatch>,
+    obs: Option<&ObsEmitter>,
+    run_id: &str,
+    decision_index: u32,
+) -> Result<TraderOutput, TraderOutputError> {
+    // Only the MalformedJson family is eligible for the repair path.
+    // The contract reserves Truncated + InvalidJson; SchemaMissingField /
+    // EmptyData / Tool* are owned by sibling contracts (or already
+    // surfaced as today). The check is defensive — paper.rs and
+    // backtest.rs only call this helper after they've matched on the
+    // kind via `is_malformed_json_recoverable`.
+    let class_tag = match original_error.kind {
+        TraderFailureKind::InvalidJson => "invalid_json",
+        TraderFailureKind::Truncated => "truncated",
+        _ => return Err(original_error),
+    };
+
+    let schema = ResponseSchema::trader_output();
+
+    // Reconstruct the original user prompt body in the same shape
+    // `execute_slot` would have produced. The wording is identical so
+    // the model sees byte-stable context across the original + repair
+    // call. We deliberately drop the `agent_error_feedback` hoist that
+    // `execute_slot` applies (it isn't relevant on the repair path —
+    // the broker self-healing seam belongs to the first attempt).
+    let initial_user_body = format!(
+        "Inputs:\n{inputs}\n\nFollow the slot's instructions. You may call tools \
+         to fetch additional data; emit your final decision as JSON.",
+        inputs = serde_json::to_string_pretty(seed_inputs)
+            .unwrap_or_else(|_| "<seed-serialize-error>".to_string()),
+    );
+
+    // The verbatim raw text the model just emitted. Anthropic / OpenAI
+    // both accept an assistant turn with a single Text block, so we
+    // re-build from `LlmResponse.text()` to keep the shape minimal.
+    // Including only the text (no tool_use blocks) is the right call
+    // because the malformed-json failure is text-side; any tool_use
+    // blocks the model emitted before the parse failure are not part
+    // of the response under repair.
+    let assistant_raw = failed_response.text();
+
+    let repair_user_body = build_malformed_json_repair_message(&original_error.detail, &schema);
+
+    let messages = vec![
+        Message {
+            role: "user".into(),
+            content: vec![ContentBlock::Text {
+                text: initial_user_body,
+            }],
+        },
+        Message {
+            role: "assistant".into(),
+            content: vec![ContentBlock::Text { text: assistant_raw }],
+        },
+        Message {
+            role: "user".into(),
+            content: vec![ContentBlock::Text {
+                text: repair_user_body,
+            }],
+        },
+    ];
+
+    let req = LlmRequest {
+        model: repair_ctx.model,
+        system_prompt: repair_ctx.system_prompt.to_string(),
+        messages,
+        max_tokens: repair_ctx.max_tokens,
+        // No tools on the repair turn — the model must emit a single
+        // JSON object. Stripping the tool definitions removes the
+        // temptation to emit one (and matches the repair-message
+        // "do not include tool calls" instruction).
+        tools: Vec::new(),
+        temperature: repair_ctx.temperature,
+        response_schema: Some(schema),
+        cache_control: None,
+    };
+
+    let repair_resp = match dispatch.complete(req).await {
+        Ok(r) => r,
+        Err(e) => {
+            // Dispatcher-level transport failure during the repair
+            // attempt — emit `recovery.failed` and surface the original
+            // parse error as the contract requires.
+            if let Some(emitter) = obs {
+                emitter
+                    .emit_recovery_failed(
+                        &fresh_span_id(),
+                        None,
+                        class_tag,
+                        1,
+                        &format!("repair dispatch failed: {e:#}"),
+                    )
+                    .await;
+            }
+            return Err(original_error);
+        }
+    };
+
+    match TraderOutput::parse_response(&repair_resp, run_id, decision_index) {
+        Ok(parsed) => {
+            // Repair landed — emit a `recovery.attempt` span with
+            // retry_count=1 because exactly one repair attempt was made.
+            if let Some(emitter) = obs {
+                emitter
+                    .emit_recovery_attempt(&fresh_span_id(), None, class_tag, 1)
+                    .await;
+            }
+            tracing::info!(
+                event = "trader_output_repair_recovered",
+                run_id = %run_id,
+                decision_index,
+                class_tag,
+                original_detail = %original_error.detail,
+                "F-5 MalformedJson repair succeeded on retry 1",
+            );
+            Ok(parsed)
+        }
+        Err(second_err) => {
+            if let Some(emitter) = obs {
+                emitter
+                    .emit_recovery_failed(
+                        &fresh_span_id(),
+                        None,
+                        class_tag,
+                        1,
+                        &format!("second attempt also failed to parse: {second_err}"),
+                    )
+                    .await;
+            }
+            tracing::warn!(
+                event = "trader_output_repair_failed",
+                run_id = %run_id,
+                decision_index,
+                class_tag,
+                original_detail = %original_error.detail,
+                second_detail = %second_err.detail,
+                "F-5 MalformedJson repair exhausted (1 retry); surfacing original error",
+            );
+            // Contract: propagate the ORIGINAL error (not the second
+            // attempt's) so `eval_runs.error` carries `[invalid_json]` /
+            // `[truncated]` exactly as it did pre-F-5.
+            Err(original_error)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,5 +858,47 @@ mod tests {
         for (variant, tag) in expected {
             assert_eq!(variant.tag(), *tag, "tag drift for variant: {variant:?}");
         }
+    }
+
+    #[test]
+    fn build_malformed_json_repair_message_carries_parse_error_schema_and_instruction() {
+        // F-5 phase 2a contract acceptance: the repair body must contain
+        // (1) the verbatim parse-error detail, (2) the schema name hint,
+        // and (3) the no-prose-no-fences instruction. The trader-output
+        // canonical schema name is `trader_output`.
+        let schema = ResponseSchema::trader_output();
+        let parse_error = "expected value at line 1 column 1";
+        let body = build_malformed_json_repair_message(parse_error, &schema);
+
+        assert!(
+            body.contains(parse_error),
+            "repair message must include the verbatim parse error, got: {body}"
+        );
+        assert!(
+            body.contains("trader_output"),
+            "repair message must reference the schema name, got: {body}"
+        );
+        assert!(
+            body.contains("Do not include prose, code fences, or tool calls"),
+            "repair message must carry the no-prose instruction, got: {body}"
+        );
+        assert!(
+            body.contains("Return ONLY the JSON object"),
+            "repair message must instruct returning JSON only, got: {body}"
+        );
+    }
+
+    #[test]
+    fn build_malformed_json_repair_message_is_deterministic_for_ab_cache_pairing() {
+        // A/B cache pairing acceptance: the repair body must be
+        // byte-stable for the same `(parse_error, schema)` pair so the
+        // prompt-hash digest is reproducible across re-runs of the same
+        // strategy/cycle. Two calls with identical inputs must produce
+        // identical strings.
+        let schema = ResponseSchema::trader_output();
+        let parse_error = "missing field `action` at line 2 column 8";
+        let a = build_malformed_json_repair_message(parse_error, &schema);
+        let b = build_malformed_json_repair_message(parse_error, &schema);
+        assert_eq!(a, b, "repair message must be deterministic for cache pairing");
     }
 }
