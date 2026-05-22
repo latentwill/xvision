@@ -54,7 +54,8 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
     };
 
     if cmd.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        crate::io::print_json(&report)
+            .map_err(|e| anyhow::anyhow!("emit doctor json: {}", e.source))?;
     } else {
         println!("xvn_home              {}", report.xvn_home);
         println!("db_path               {}", report.db_path);

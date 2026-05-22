@@ -7,6 +7,7 @@
 
 pub mod commands;
 pub mod exit;
+pub mod io;
 pub mod json;
 
 use std::path::PathBuf;

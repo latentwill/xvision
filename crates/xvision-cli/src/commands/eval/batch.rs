@@ -663,10 +663,7 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
     let result = run_batch_via_env(&ctx, &args).await?;
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&result)?;
         return Ok(());
     }
 
@@ -720,10 +717,7 @@ pub async fn run_batch_status_cmd(args: BatchStatusArgs) -> CliResult<()> {
         .map_err(|e| api_to_cli("eval batch status", e))?;
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&detail).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&detail)?;
         return Ok(());
     }
 

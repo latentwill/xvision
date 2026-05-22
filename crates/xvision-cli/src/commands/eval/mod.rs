@@ -432,7 +432,10 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         skip_preflight: args.skip_preflight,
     };
 
-    println!(
+    // Banner — operator-facing progress, never on stdout. Stays visible
+    // when --json is set so an operator running interactively still sees
+    // the run kicking off.
+    crate::progress!(
         "Starting eval run — strategy={} scenario={} mode={}",
         req.agent_id,
         req.scenario_id,
@@ -444,10 +447,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         .map_err(|e| api_to_cli("eval run", e))?;
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&run)?;
         return Ok(());
     }
 
@@ -506,10 +506,7 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("eval list", e))?;
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&runs).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&runs)?;
         return Ok(());
     }
     if runs.is_empty() {
@@ -662,10 +659,7 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
             "cancelled_ids": cancelled_ids,
             "outcomes": outcomes,
         });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&body).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&body)?;
         return Ok(());
     }
 
@@ -710,15 +704,9 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
                 "run": run,
                 "behavior_summary": bsummary,
             });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&wrapped).exit_with(XvnExit::Upstream)?
-            );
+            crate::io::print_json(&wrapped)?;
         } else {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
-            );
+            crate::io::print_json(&run)?;
         }
         return Ok(());
     }
@@ -791,10 +779,14 @@ async fn run_watch(args: WatchArgs) -> CliResult<()> {
             .await
             .map_err(|e| api_to_cli("eval watch", e))?;
         if args.json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
-            );
+            // Note: `xvn eval watch --json` is one-shot only — passing
+            // `--once` (or having the run already terminal) emits a
+            // single JSON value to stdout, conforming to the
+            // cli-json-stdout-contract. Streaming-mode `--json` without
+            // `--once` writes one JSON object per poll which is
+            // intentionally not a single-value channel today; an NDJSON
+            // follow-up contract will redesign that surface.
+            crate::io::print_json(&run)?;
         } else {
             print_run_status_line(&run);
         }
@@ -1018,10 +1010,7 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
 
     if args.json {
         let report = build_compare_report(&ctx, report, &args.sort).await;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&report)?;
         return Ok(());
     }
 
@@ -1104,16 +1093,13 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         .map_err(|e| api_to_cli("eval validate scenario", e))?;
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "ok": true,
-                "strategy": args.strategy,
-                "scenario": args.scenario,
-                "mode": mode.as_str(),
-            }))
-            .exit_with(XvnExit::Upstream)?
-        );
+        let body = serde_json::json!({
+            "ok": true,
+            "strategy": args.strategy,
+            "scenario": args.scenario,
+            "mode": mode.as_str(),
+        });
+        crate::io::print_json(&body)?;
     } else {
         println!("ok");
     }
@@ -1149,10 +1135,7 @@ async fn run_attest(args: AttestArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("eval attest", e))?;
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&att).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&att)?;
         return Ok(());
     }
     let sig_prefix: String = att.signature_hex.chars().take(16).collect();

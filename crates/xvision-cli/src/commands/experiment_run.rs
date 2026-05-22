@@ -621,10 +621,7 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
     }
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&output)?;
         return Ok(());
     }
 
