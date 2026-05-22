@@ -59,8 +59,7 @@ A strategy gates a Trader on a Filter signal by:
 You can wire multiple Filter agents and multiple predicates. A Trader
 with two incoming Filter edges only fires when both predicates pass.
 
-## Why firing conditions are a strategy-level concern, not an
-## agent-level one
+## Why firing conditions are a strategy-level concern, not an agent-level one
 
 The agent editor (`/agents/new` and `/agents/:id`) does not author
 firing conditions. An agent is a reusable template — the same Trader

@@ -59,7 +59,7 @@ These are the load-bearing calls. Operator should accept or reject at review.
 
    The `--when` predicate value is a JSON-serialized `EdgePredicate` matching the typed form from Phase A. No DSL parser at the CLI; the SPA editor produces the JSON.
 
-7. **The `AgentForm` bottom save bar inherits the same spacing as other long forms.** The user's screenshot flagged a margin issue at the bottom of the form. The save bar currently uses `sticky bottom-4` (1rem). Audit: the bottom-most card under the save bar should have `pb-4` so the sticky bar floats over visible content, not flush against the last card. Fix included in Phase 1 of this spec.
+7. **The `AgentForm` bottom save bar inherits the same spacing as other long forms.** The user's screenshot flagged a margin issue at the bottom of the form. The save bar currently uses `sticky bottom-4` (1rem). Audit: the form wrapper should include enough bottom padding (`pb-20`) so the sticky bar floats over visible content, not flush against the last card. Fix included in Phase 1 of this spec.
 
 8. **No new engine schema.** This spec is operator-surface only. All gating runs through Phase A's `PipelineEdge.condition` and Phase C's Filter-capability dispatcher. If the spec proposes a schema field that doesn't already exist in the cascade, it's wrong.
 
@@ -90,7 +90,7 @@ The spec decomposes into three sequential phases. All three depend on the agent-
 ### Phase 1 — AgentForm awareness + margin fix
 - Surface: `frontend/web/src/components/agent/AgentForm.tsx`, `SlotForm.tsx`.
 - Add the "Firing conditions" explainer card under the Behavior section.
-- Fix the bottom-margin so the sticky save bar doesn't visually merge with the last card.
+- Add bottom padding to the form wrapper so the sticky save bar doesn't visually merge with the last card.
 - Acceptance: visual check on `/agents/new` matches the spec; e2e snapshot updated.
 
 ### Phase 2 — `xvn agent create` + `xvn strategy add-filter` / `remove-filter`
