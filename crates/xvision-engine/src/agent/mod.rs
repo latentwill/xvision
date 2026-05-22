@@ -1,3 +1,4 @@
+pub mod briefing;
 pub mod execute;
 pub mod llm;
 pub mod memory_recorder;

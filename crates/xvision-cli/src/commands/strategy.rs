@@ -566,6 +566,7 @@ async fn new_atomic(
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
+                delta_briefing: None,
             }],
         },
     )
@@ -1120,6 +1121,7 @@ fn slot_to_agent_slot(
         bar_history_limit: None,
         memory_mode: Default::default(),
         noop_skip: None,
+        delta_briefing: None,
     }
 }
 

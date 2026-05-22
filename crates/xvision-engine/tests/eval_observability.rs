@@ -187,6 +187,8 @@ async fn failing_dispatch_emits_error_span_with_message() {
         scenario_id: String::new(),
         cycle_idx: 0,
         catalog: None,
+        delta_briefing: false,
+        prev_briefing: None,
     })
     .await;
     assert!(result.is_err(), "failing dispatch must propagate Err");
@@ -247,6 +249,8 @@ async fn execute_slot_with_no_emitter_does_not_touch_bus() {
         scenario_id: String::new(),
         cycle_idx: 0,
         catalog: None,
+        delta_briefing: false,
+        prev_briefing: None,
     })
     .await;
     assert!(result.is_err());

@@ -158,6 +158,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             scenario_id: String::new(),
             cycle_idx: 0,
             catalog: catalog_for_slot(slot, &input.provider_catalogs),
+            delta_briefing: false,
+            prev_briefing: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -188,6 +190,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             scenario_id: String::new(),
             cycle_idx: 0,
             catalog: catalog_for_slot(slot, &input.provider_catalogs),
+            delta_briefing: false,
+            prev_briefing: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -218,6 +222,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             scenario_id: String::new(),
             cycle_idx: 0,
             catalog: catalog_for_slot(slot, &input.provider_catalogs),
+            delta_briefing: false,
+            prev_briefing: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -343,6 +349,8 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             scenario_id: input.scenario_id.clone(),
             cycle_idx: input.cycle_idx,
             catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
+            delta_briefing: false,
+            prev_briefing: None,
         })
         .await?;
         total_in += out.input_tokens;

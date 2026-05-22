@@ -345,6 +345,7 @@ impl AgentStore {
                 // back as `None` (equivalent to `Some(true)` — skip
                 // enabled) until the operator re-saves with an explicit value.
                 noop_skip: None,
+                delta_briefing: None,
             });
         }
         Ok(out)
@@ -477,6 +478,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::default(),
             noop_skip: None,
+            delta_briefing: None,
         }
     }
 

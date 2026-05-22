@@ -70,6 +70,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                delta_briefing: None,
             }],
         })
         .await

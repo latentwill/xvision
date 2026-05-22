@@ -153,6 +153,24 @@ pub struct SlotInput<'a> {
     /// preserved across the recovery retry: this is the same slot
     /// invocation, not a new one.
     pub catalog: Option<Arc<Catalog>>,
+    /// F41 token-efficiency tail: per-slot opt-in for delta-briefing
+    /// mode. When `true` AND `prev_briefing` is `Some`, the user
+    /// message for this dispatch is rebuilt from the `BriefingDelta`
+    /// (changed indicators, new fills, regime transitions) instead of
+    /// the full `upstream_inputs` snapshot. Falls back to the full
+    /// briefing on cache miss (`prev_briefing = None`), empty delta,
+    /// or the regime-shift heuristic — see
+    /// [`crate::agent::briefing::should_use_delta`].
+    ///
+    /// `false` (the default) preserves byte-identical pre-F41 behaviour.
+    /// See `team/contracts/eval-token-efficiency-tail.md`.
+    pub delta_briefing: bool,
+    /// F41 token-efficiency tail: the previous bar's briefing JSON, if
+    /// the caller has it. `None` on the first bar of a run or after a
+    /// cache eviction; both force the full-briefing fallback regardless
+    /// of `delta_briefing`. The caller (eval executor or test harness)
+    /// owns the cache.
+    pub prev_briefing: Option<serde_json::Value>,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
@@ -165,6 +183,28 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         .as_object_mut()
         .and_then(|o| o.remove("agent_error_feedback"))
         .filter(|v| !v.is_null());
+
+    // F41 token-efficiency tail: when the slot opts in and a prior
+    // briefing is cached, swap the full snapshot for the delta. The
+    // briefing module's `should_use_delta` handles the cache-miss /
+    // empty-delta / regime-shift fallbacks — a `false` return means
+    // we stay on the full-briefing path verbatim (byte-identical to
+    // pre-F41).
+    let inputs_for_prompt = if input.delta_briefing && input.prev_briefing.is_some() {
+        let prev = input.prev_briefing.as_ref();
+        // Compute the delta against the (already error-feedback-stripped)
+        // current briefing so the diff doesn't churn on transient
+        // diagnostic state.
+        let computed_delta =
+            crate::agent::briefing::delta(prev.unwrap_or(&serde_json::Value::Null), &inputs_for_prompt);
+        if crate::agent::briefing::should_use_delta(prev, &inputs_for_prompt, &computed_delta) {
+            crate::agent::briefing::render_delta_payload(&computed_delta)
+        } else {
+            inputs_for_prompt
+        }
+    } else {
+        inputs_for_prompt
+    };
 
     let initial_user = format!(
         "Inputs:\n{}\n\nFollow the slot's instructions. You may call tools \
@@ -936,6 +976,8 @@ mod tests {
             scenario_id: String::new(),
             cycle_idx: 0,
             catalog: None,
+            delta_briefing: false,
+            prev_briefing: None,
         })
         .await
         .unwrap();
@@ -991,6 +1033,8 @@ mod tests {
             scenario_id: String::new(),
             cycle_idx: 0,
             catalog: None,
+            delta_briefing: false,
+            prev_briefing: None,
         })
         .await
         .unwrap();

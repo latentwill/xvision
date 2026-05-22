@@ -61,6 +61,7 @@ fn slot(name: &str, prompt: impl Into<String>, skill_ids: Vec<&str>) -> AgentSlo
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
+        delta_briefing: None,
     }
 }
 
