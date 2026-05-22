@@ -1044,6 +1044,26 @@ async fn set_pipeline(strategy_id: &str, kind: &str, edges: &[String]) -> CliRes
     Ok(())
 }
 
+/// Best-effort archive the agents created during a clone attempt that
+/// failed downstream (per-agent error, validation error, or strategy
+/// save error). Each archive call is independent — one failure doesn't
+/// stop the rest. Errors are logged at `warn` level and otherwise
+/// swallowed: cleanup is a hygiene pass, not a hard requirement, and
+/// the operator can always re-archive via `xvn agent archive` if a
+/// row escapes here.
+async fn cleanup_cloned_agents(ctx: &ApiContext, agent_ids: &[String]) {
+    for agent_id in agent_ids {
+        if let Err(e) = api_agents::archive(ctx, agent_id).await {
+            tracing::warn!(
+                target: "strategy::clone",
+                agent_id = %agent_id,
+                error = %e,
+                "best-effort archive of orphan cloned agent failed; archive manually with `xvn agent archive`",
+            );
+        }
+    }
+}
+
 /// `xvn strategy clone <source-id> --name <new-name> [--provider X --model Y]`
 ///
 /// Mints a new strategy id (ULID), copies every field except id +
@@ -1124,14 +1144,16 @@ async fn clone(
 
     // 3. Clone each AgentRef into a new library record. Track the
     //    resulting (new_id, role) pairs so we can build the new
-    //    Strategy.agents Vec in step 4. Failures here return early
-    //    before any strategy file is written.
+    //    Strategy.agents Vec in step 4. On any per-agent failure,
+    //    best-effort archive the agents we already created so a half-
+    //    clone doesn't litter the library with orphan rows.
     let mut cloned_agent_refs: Vec<AgentRef> = Vec::with_capacity(source.agents.len());
     let mut created_agent_ids: Vec<String> = Vec::new();
     for agent_ref in &source.agents {
         let source_agent = match api_agents::get(&ctx, &agent_ref.agent_id).await {
             Ok(a) => a,
             Err(e) => {
+                cleanup_cloned_agents(&ctx, &created_agent_ids).await;
                 return Err(api_to_cli("strategy clone (load agent)", e));
             }
         };
@@ -1152,7 +1174,7 @@ async fn clone(
             })
             .collect();
 
-        let new_agent = api_agents::create(
+        let new_agent = match api_agents::create(
             &ctx,
             api_agents::CreateAgentRequest {
                 name: format!(
@@ -1172,7 +1194,13 @@ async fn clone(
             },
         )
         .await
-        .map_err(|e| api_to_cli("strategy clone (create cloned agent)", e))?;
+        {
+            Ok(a) => a,
+            Err(e) => {
+                cleanup_cloned_agents(&ctx, &created_agent_ids).await;
+                return Err(api_to_cli("strategy clone (create cloned agent)", e));
+            }
+        };
 
         created_agent_ids.push(new_agent.agent_id.clone());
         cloned_agent_refs.push(AgentRef {
@@ -1230,9 +1258,12 @@ async fn clone(
     };
 
     // 5. Shape-validate the cloned strategy. A bad clone surfaces here
-    //    rather than after a partial filesystem write.
+    //    rather than after a partial filesystem write. Cleanup the
+    //    cloned agents before returning so a validation failure
+    //    doesn't litter the library either.
     let preflight = preflight_validate(&new_strategy, None);
     if !preflight.errors.is_empty() {
+        cleanup_cloned_agents(&ctx, &created_agent_ids).await;
         return Err(CliError::usage(anyhow::anyhow!(
             "clone validation failed: {}",
             preflight.errors.join("; ")
@@ -1240,8 +1271,16 @@ async fn clone(
     }
 
     // 6. Persist the cloned strategy. Source is untouched; agents we
-    //    created above already exist in the library.
-    store().save(&new_strategy).await.exit_with(XvnExit::Upstream)?;
+    //    created above already exist in the library. A save failure
+    //    here also triggers cleanup so the filesystem stays consistent
+    //    with the DB.
+    if let Err(e) = store().save(&new_strategy).await {
+        cleanup_cloned_agents(&ctx, &created_agent_ids).await;
+        return Err(CliError {
+            exit: XvnExit::Upstream,
+            source: anyhow::anyhow!("strategy clone (save): {e}"),
+        });
+    }
 
     // 7. Emit output. Contract shape:
     //    `{ strategy_id, agent_id, source_strategy_id, ... }`. For
