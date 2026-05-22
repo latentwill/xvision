@@ -8,10 +8,12 @@
 //! See `crates/xvision-engine/src/api/README.md` for the pattern downstream
 //! plans must follow.
 
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 use xvision_core::config::AlpacaData;
@@ -186,9 +188,26 @@ impl ApiContext {
             .map_err(|e| ApiError::Internal(format!("create xvn_home {}: {e}", xvn_home.display())))?;
 
         let db_path = xvn_home.join("xvn.db");
-        // `mode=rwc` creates the file if missing.
-        let url = format!("sqlite://{}?mode=rwc", db_path.display());
-        let pool = SqlitePool::connect(&url).await?;
+        // The deployed `xvn-app` was hitting SQLITE_BUSY on
+        // `chat_messages` first-message inserts under normal operator
+        // load — the previous `SqlitePool::connect("sqlite://…?mode=rwc")`
+        // form used sqlx defaults: rollback journal (one writer at a
+        // time, blocks readers), no `busy_timeout` (writers fail
+        // immediately instead of waiting on the lock), and no
+        // connection cap. WAL + a 5s busy timeout + a bounded pool is
+        // the standard server SQLite recipe; it's a no-op on a fresh
+        // file and idempotent on an existing one.
+        let opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(Duration::from_secs(5))
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .connect_with(opts)
+            .await?;
 
         // Multi-statement SQL — sqlx::query executes the whole text.
         sqlx::query(MIGRATION_001).execute(&pool).await?;
