@@ -351,6 +351,106 @@ pub fn referenced_indicators(filter: &Filter) -> Vec<IndicatorRef> {
     crate::state::collect_indicator_refs(&filter.conditions)
 }
 
+// ---------------------------------------------------------------------------
+// Phase C DSL → agent-graph bridge
+// ---------------------------------------------------------------------------
+
+/// Engine-side signal shape that the DSL bridge produces. Mirrors the
+/// `xvision_engine::agent::dispatch_capability::FilterSignal` payload
+/// shape — kept here as a plain struct so this crate stays
+/// engine-independent.
+///
+/// The agent-graph dispatcher in `xvision-engine` either constructs a
+/// `FilterSignal` from this bridge's output or accepts the bridge's
+/// fields directly. We use a serde-compatible shape so the engine can
+/// `serde_json::from_value::<engine::FilterSignal>(bridge_value)` if
+/// it prefers to round-trip through JSON.
+///
+/// Note: `granularity` is hard-coded to `"bar"` because DSL filters
+/// are always bar-cadence today (contract acceptance: "DSL filters
+/// are always bar-cadence today").
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgedFilterSignal {
+    pub name: String,
+    pub payload: serde_json::Value,
+    pub granularity: String,
+}
+
+/// Adapter wrapping `RuntimeFilter::evaluate()`'s `ActivationDecision`
+/// into a `BridgedFilterSignal` whose `payload` is a stable
+/// `{ "active": <bool>, "reason": <string?> }` shape — matching the
+/// edge-predicate contract on the engine side.
+///
+/// The `active` flag reflects whether the DSL filter is "tripping" or
+/// "holding" — i.e. `ActivationDecision::is_active()`. `reason` is the
+/// human-readable tag for non-active outcomes (`"warming"`,
+/// `"inactive"`, `"cooldown"`, `"capped_for_day"`,
+/// `"suppressed_in_position"`) and `null` when active.
+///
+/// Why `null` instead of `Some("active")` when the filter is active?
+/// Predicate-authoring ergonomics: an `Eq` on `payload.active = true`
+/// is a one-liner; an additional `Eq` on `payload.reason = …` should
+/// only need to be authored for the suppression cases.
+pub fn dsl_to_filter_signal(filter_id: &str, decision: ActivationDecision) -> BridgedFilterSignal {
+    let active = decision.is_active();
+    let reason = if active {
+        None
+    } else {
+        Some(decision.tag().to_string())
+    };
+    let payload = serde_json::json!({
+        "active": active,
+        "reason": reason,
+    });
+    BridgedFilterSignal {
+        name: filter_id.to_string(),
+        payload,
+        granularity: "bar".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod bridge_tests {
+    use super::*;
+
+    #[test]
+    fn dsl_to_filter_signal_active_emits_true_with_null_reason() {
+        let s = dsl_to_filter_signal(
+            "regime_filter",
+            ActivationDecision::Active {
+                transition: Transition::Trip,
+            },
+        );
+        assert_eq!(s.name, "regime_filter");
+        assert_eq!(s.granularity, "bar");
+        assert_eq!(s.payload["active"], serde_json::Value::Bool(true));
+        assert_eq!(s.payload["reason"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn dsl_to_filter_signal_inactive_emits_false_with_tag_reason() {
+        let s = dsl_to_filter_signal("f", ActivationDecision::Inactive);
+        assert_eq!(s.payload["active"], serde_json::Value::Bool(false));
+        assert_eq!(s.payload["reason"], serde_json::Value::String("inactive".into()));
+    }
+
+    #[test]
+    fn dsl_to_filter_signal_cooldown_carries_tag_in_reason() {
+        let s = dsl_to_filter_signal("f", ActivationDecision::Cooldown { bars_left: 3 });
+        assert_eq!(s.payload["active"], serde_json::Value::Bool(false));
+        assert_eq!(s.payload["reason"], serde_json::Value::String("cooldown".into()));
+    }
+
+    #[test]
+    fn dsl_to_filter_signal_capped_for_day_carries_tag_in_reason() {
+        let s = dsl_to_filter_signal("f", ActivationDecision::CappedForDay { wakeups_today: 5 });
+        assert_eq!(
+            s.payload["reason"],
+            serde_json::Value::String("capped_for_day".into())
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

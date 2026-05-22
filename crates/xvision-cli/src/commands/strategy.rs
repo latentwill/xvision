@@ -1528,6 +1528,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             scenario_id: String::new(),
             cycle_idx: 0,
             provider_catalogs: std::collections::HashMap::new(),
+            filter_ctx: None,
         })
         .await
         .exit_with(XvnExit::Upstream)?;

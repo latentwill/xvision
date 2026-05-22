@@ -116,6 +116,7 @@ async fn pipeline_output_assigned_for_role_variants() {
 
             cycle_idx: 0,
             provider_catalogs: std::collections::HashMap::new(),
+            filter_ctx: None,
         })
         .await
         .expect("pipeline runs");

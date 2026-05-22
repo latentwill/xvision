@@ -130,6 +130,38 @@ pub struct PipelineInputs<'a> {
     /// history summarization. Empty map preserves the legacy no-recovery
     /// behavior for tests and non-eval callers.
     pub provider_catalogs: HashMap<String, Arc<Catalog>>,
+    /// Phase C — optional Filter-capability runtime context. Carries
+    /// the per-eval-run signal cache, the bar period (for the
+    /// `granularity_fallback` event), the multi-Filter cardinality
+    /// config, and the current bar timestamp. `None` preserves the
+    /// legacy "no cache / single-fire / no fallback" behavior — every
+    /// existing call site inherits it without code changes. The eval
+    /// executors opt in via `with_filter_ctx`.
+    pub filter_ctx: Option<FilterPipelineCtx<'a>>,
+}
+
+/// Phase C — runtime context owned by the executor for the duration
+/// of one eval run and threaded into each per-cycle `run_pipeline`
+/// invocation. See [`PipelineInputs::filter_ctx`].
+pub struct FilterPipelineCtx<'a> {
+    /// Mutable per-run signal cache. Lifetime equals the executor's
+    /// run loop; dropped when the run completes.
+    pub signal_cache: &'a mut crate::agent::signal_cache::SignalCache,
+    /// Bar period of the current scenario / live feed, in minutes.
+    /// Drives the `granularity_fallback` event and the multi-Filter
+    /// cardinality threshold.
+    pub bar_period_minutes: u32,
+    /// Multi-Filter cardinality config. Built once at executor startup
+    /// (default: threshold 30 minutes — operator Q3 resolution
+    /// 2026-05-22).
+    pub multi_filter_config: crate::agent::filter_dispatch::MultiFilterConfig,
+    /// Current bar timestamp. Used to populate `FilterSignal.ts` and
+    /// to drive Minute-granularity freshness comparisons.
+    pub bar_ts: chrono::DateTime<chrono::Utc>,
+    /// Canonicalised strategy id used as the first component of the
+    /// `SignalCacheKey`. Caller typically passes
+    /// `strategy.manifest.id.clone()`.
+    pub strategy_id: String,
 }
 
 #[derive(Debug)]
@@ -297,7 +329,7 @@ fn noop_skip_response() -> LlmResponse {
     }
 }
 
-async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
+async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
     if input.strategy.pipeline.kind == PipelineKind::Graph {
         anyhow::bail!("graph agent pipelines are not executable yet");
     }
@@ -324,6 +356,18 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
     // first iteration's tail.
     let mut prev_output: Option<AgentOutput> = None;
     let _ = &prev_output;
+
+    // Phase C — per-cycle ordered map of `(role_key, FilterSignal)` for
+    // every Filter that emitted on this cycle. Threaded into the
+    // briefing under `filter_signals` so downstream Traders read a
+    // stable shape regardless of multi-fire mode.
+    let mut filter_signals: std::collections::BTreeMap<
+        String,
+        crate::agent::dispatch_capability::FilterSignal,
+    > = std::collections::BTreeMap::new();
+    // Emission order — used by the multi-fire path to invoke the
+    // Trader once per emitting Filter in strategy-declaration order.
+    let mut filter_emit_order: Vec<String> = Vec::new();
 
     // Index-driven loop so Router's `RouteSelection.target_agent_ref_index`
     // can jump forward, and so DAG-strict acceptance of `target > current`
@@ -405,34 +449,157 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             slot_for_exec.allowed_tools = strategy_tools.clone();
         }
 
-        let outcome = dispatch_capability(DispatchInput {
-            resolved,
-            slot: &slot_for_exec,
-            system_prompt: resolved.system_prompt.clone(),
-            upstream_inputs: accumulated.clone(),
-            dispatch: input.dispatch.clone(),
-            tools: input.tools.clone(),
-            max_tokens: resolved.max_tokens,
-            temperature: resolved.temperature,
-            obs: input.obs.clone(),
-            memory: input.memory_recorder.clone(),
-            memory_mode: resolved.memory_mode,
-            agent_id: resolved.agent_id.clone(),
-            scenario_start: input.scenario_start,
-            run_id: input.run_id.clone(),
-            scenario_id: input.scenario_id.clone(),
-            cycle_idx: input.cycle_idx,
-            catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
-            delta_briefing: false,
-            prev_briefing: None,
-            current_index: i,
-            total_agents: n,
-            activates: capability,
-        })
-        .await?;
+        // Phase C — Filter cache lookup. If the cache has a fresh
+        // signal for this `(strategy, role)`, the dispatcher's LLM
+        // call is replaced with a re-fire of the cached payload — no
+        // tokens charged, no provider hit. Cache-hit / cache-miss
+        // policy depends on the Filter's declared granularity:
+        //
+        // * `Bar`    — always re-evaluate (no cache lookup).
+        // * `Minute` — re-fire when `truncate_to_minute(now) <=
+        //              cached_ts.truncate_to_minute()`.
+        // * `Decision` — re-fire when no Trader is reachable in
+        //              `agents[i+1..]`; otherwise re-evaluate.
+        //
+        // When the runtime degrades a Minute-granularity Filter on a
+        // multi-minute bar to `Bar`, the cache lookup is skipped and
+        // we emit `granularity_fallback`.
+        let mut cached_outcome: Option<AgentOutput> = None;
+        if capability == Capability::Filter {
+            // To pick the cache decision we need the prior cached
+            // signal (granularity comes from that signal). If no prior
+            // signal exists, we must evaluate.
+            if let Some(filter_ctx) = input.filter_ctx.as_ref() {
+                let key = crate::agent::signal_cache::SignalCacheKey::new(
+                    filter_ctx.strategy_id.clone(),
+                    role_key.clone(),
+                );
+                if let Some(cached) = filter_ctx.signal_cache.get(&key) {
+                    let reuse = match cached.signal.granularity {
+                        crate::agent::dispatch_capability::FilterGranularity::Bar => false,
+                        crate::agent::dispatch_capability::FilterGranularity::Minute => {
+                            if filter_ctx.bar_period_minutes > 1 {
+                                // Granularity fallback — emit once
+                                // per cache lookup so the trace
+                                // records the demotion.
+                                crate::agent::filter_dispatch::emit_granularity_fallback(
+                                    input.obs.as_ref(),
+                                    &role_key,
+                                    filter_ctx.bar_period_minutes,
+                                )
+                                .await;
+                                false
+                            } else {
+                                crate::agent::signal_cache::minute_cache_is_fresh(
+                                    cached.last_evaluated_ts,
+                                    filter_ctx.bar_ts,
+                                )
+                            }
+                        }
+                        crate::agent::dispatch_capability::FilterGranularity::Decision => {
+                            !trader_reachable_after(input.strategy, input.agent_slots, i)
+                        }
+                    };
+                    if reuse {
+                        cached_outcome = Some(AgentOutput::Filter(cached.signal.clone()));
+                    }
+                }
+            }
+        }
+
+        let was_cache_hit = cached_outcome.is_some();
+        let outcome = if let Some(cached) = cached_outcome {
+            crate::agent::dispatch_capability::DispatchOutcome {
+                output: cached,
+                input_tokens: 0,
+                output_tokens: 0,
+                raw_response: None,
+            }
+        } else {
+            dispatch_capability(DispatchInput {
+                resolved,
+                slot: &slot_for_exec,
+                system_prompt: resolved.system_prompt.clone(),
+                upstream_inputs: accumulated.clone(),
+                dispatch: input.dispatch.clone(),
+                tools: input.tools.clone(),
+                max_tokens: resolved.max_tokens,
+                temperature: resolved.temperature,
+                obs: input.obs.clone(),
+                memory: input.memory_recorder.clone(),
+                memory_mode: resolved.memory_mode,
+                agent_id: resolved.agent_id.clone(),
+                scenario_start: input.scenario_start,
+                run_id: input.run_id.clone(),
+                scenario_id: input.scenario_id.clone(),
+                cycle_idx: input.cycle_idx,
+                catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
+                delta_briefing: false,
+                prev_briefing: None,
+                current_index: i,
+                total_agents: n,
+                activates: capability,
+            })
+            .await?
+        };
 
         total_in += outcome.input_tokens;
         total_out += outcome.output_tokens;
+
+        // Phase C — if this was a Filter, stash the signal in the
+        // per-cycle ordered map AND in the per-run cache so
+        // downstream Traders + subsequent cycles see it. Stash
+        // happens whether the signal was re-evaluated or re-fired
+        // from cache; the cache write is idempotent on re-fire (same
+        // payload, same ts).
+        if let AgentOutput::Filter(ref signal) = outcome.output {
+            // The signal's `ts` is set by the dispatcher to either
+            // `scenario_start` or `Utc::now()` (LLM Filter path), or
+            // to the cached `ts` (re-fire path). Override here with
+            // the executor's `bar_ts` when we have one — keeps the
+            // cache keyed to the bar that produced the signal so
+            // Minute-granularity comparisons make sense.
+            let mut signal_for_cache = signal.clone();
+            if let Some(filter_ctx) = input.filter_ctx.as_ref() {
+                // Only update ts on the fresh-evaluation path —
+                // re-fires already carry the cached ts and we don't
+                // want to lie about freshness. The Filter path
+                // returns `raw_response: None` even on a fresh LLM
+                // call (the dispatcher wraps the LlmResponse into a
+                // typed `FilterSignal` and drops the raw), so we use
+                // the explicit `was_cache_hit` flag instead.
+                if !was_cache_hit {
+                    signal_for_cache.ts = filter_ctx.bar_ts;
+                }
+            }
+            if !filter_signals.contains_key(&role_key) {
+                filter_emit_order.push(role_key.clone());
+            }
+            filter_signals.insert(role_key.clone(), signal_for_cache.clone());
+
+            if let Some(filter_ctx) = input.filter_ctx.as_mut() {
+                let key = crate::agent::signal_cache::SignalCacheKey::new(
+                    filter_ctx.strategy_id.clone(),
+                    role_key.clone(),
+                );
+                filter_ctx.signal_cache.insert(key, signal_for_cache);
+            }
+
+            // Materialise into `filter_signals[role]` on the briefing.
+            // Downstream Traders read this stable shape regardless of
+            // whether one or many Filters fired this cycle.
+            let entry = accumulated.as_object_mut().and_then(|m| {
+                m.entry("filter_signals")
+                    .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+                    .as_object_mut()
+            });
+            if let Some(map) = entry {
+                map.insert(
+                    role_key.clone(),
+                    serde_json::to_value(signal).unwrap_or(serde_json::Value::Null),
+                );
+            }
+        }
 
         // Materialise the role's text output into the accumulated
         // briefing JSON. For Trader / Router (real LLM calls), use the
@@ -450,6 +617,78 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         };
         accumulated[format!("{role_key}_output")] = serde_json::Value::String(text_for_briefing);
 
+        // Phase C — Multi-Filter cardinality. The Trader we just ran
+        // already saw `filter_signals` in its briefing. If we're in
+        // multi-fire mode (`bar_period_minutes >= threshold`) AND the
+        // cycle produced 2+ Filter signals, we invoke the Trader once
+        // more per remaining Filter — each invocation sees a
+        // single-signal `filter_signals` map containing only that
+        // Filter. The recorded `trader` is the LAST invocation's
+        // output (matches Phase B's "last AgentRef of `activates:
+        // Trader` wins" rule).
+        if capability == Capability::Trader && filter_signals.len() >= 2 {
+            let multi_fire = input
+                .filter_ctx
+                .as_ref()
+                .map(|c| c.multi_filter_config.should_multi_fire(c.bar_period_minutes))
+                .unwrap_or(false);
+            if multi_fire {
+                // The first invocation already saw all signals merged
+                // (above). For multi-fire we want each invocation to
+                // see ONLY one signal, so re-run the Trader once per
+                // emitting Filter in emission order. Last invocation
+                // wins — overwrites `trader`.
+                let mut last_response: Option<LlmResponse> = outcome.raw_response.clone();
+                for role in &filter_emit_order {
+                    // Per-Filter briefing: replace `filter_signals`
+                    // with a one-key map.
+                    let mut briefing = accumulated.clone();
+                    if let Some(map) = briefing.as_object_mut() {
+                        if let Some(sig) = filter_signals.get(role) {
+                            let mut single = serde_json::Map::with_capacity(1);
+                            single.insert(
+                                role.clone(),
+                                serde_json::to_value(sig).unwrap_or(serde_json::Value::Null),
+                            );
+                            map.insert("filter_signals".to_string(), serde_json::Value::Object(single));
+                        }
+                    }
+                    let outcome2 = dispatch_capability(DispatchInput {
+                        resolved,
+                        slot: &slot_for_exec,
+                        system_prompt: resolved.system_prompt.clone(),
+                        upstream_inputs: briefing,
+                        dispatch: input.dispatch.clone(),
+                        tools: input.tools.clone(),
+                        max_tokens: resolved.max_tokens,
+                        temperature: resolved.temperature,
+                        obs: input.obs.clone(),
+                        memory: input.memory_recorder.clone(),
+                        memory_mode: resolved.memory_mode,
+                        agent_id: resolved.agent_id.clone(),
+                        scenario_start: input.scenario_start,
+                        run_id: input.run_id.clone(),
+                        scenario_id: input.scenario_id.clone(),
+                        cycle_idx: input.cycle_idx,
+                        catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
+                        delta_briefing: false,
+                        prev_briefing: None,
+                        current_index: i,
+                        total_agents: n,
+                        activates: capability,
+                    })
+                    .await?;
+                    total_in += outcome2.input_tokens;
+                    total_out += outcome2.output_tokens;
+                    last_response = outcome2.raw_response.clone();
+                }
+                if let Some(raw) = last_response.clone() {
+                    accumulated[format!("{role_key}_output")] = serde_json::Value::String(raw.text());
+                    trader = Some(raw);
+                }
+            }
+        }
+
         // Legacy harness shape: surface regime / intern / trader by
         // role name into the `PipelineOutputs` struct for back-compat.
         // Future Phase D refactor will replace the named slots with a
@@ -458,7 +697,10 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             match role_key.as_str() {
                 "regime" => regime = Some(raw),
                 "intern" => intern = Some(raw),
-                "trader" => trader = Some(raw),
+                // For Trader, only set if the multi-fire branch above
+                // didn't already overwrite `trader` with the
+                // last-invocation response.
+                "trader" if trader.is_none() => trader = Some(raw),
                 _ => {}
             }
         }
@@ -537,6 +779,36 @@ fn next_index(strategy: &Strategy, prev_output: &Option<AgentOutput>, current_in
     }
 
     current_index + 1
+}
+
+/// Phase C — graph-topology check for `Decision`-granularity Filter
+/// re-evaluation. Returns `true` when any `AgentRef` at index
+/// `> current_index` activates [`Capability::Trader`] — meaning the
+/// downstream of this Filter has a Trader the runtime is about to
+/// invoke, so the Decision-cadence cache MUST be refreshed.
+///
+/// We accept slight false-positives here (e.g. a Trader that the
+/// Router will skip over). The conservative call is to re-evaluate
+/// when in doubt — a stale Decision-granularity signal feeding a
+/// Trader is the failure mode the contract is built to prevent.
+fn trader_reachable_after(
+    strategy: &Strategy,
+    _agent_slots: &[ResolvedAgentSlot],
+    current_index: usize,
+) -> bool {
+    strategy
+        .agents
+        .iter()
+        .enumerate()
+        .skip(current_index + 1)
+        .any(|(_, a)| {
+            // Resolve capability: explicit `activates`, falling back
+            // to the default-capability heuristic. Matches the main
+            // loop's resolution so cache freshness aligns with what
+            // the loop is about to dispatch.
+            let cap = resolve_activates(a.activates, &default_capabilities());
+            cap == Capability::Trader
+        })
 }
 
 fn catalog_for_slot(slot: &LLMSlot, catalogs: &HashMap<String, Arc<Catalog>>) -> Option<Arc<Catalog>> {

@@ -652,6 +652,14 @@ impl PaperExecutor {
         let initial_balance = self.broker.balance().await?;
         let mut equity_samples: Vec<f64> = Vec::new();
         let mut decision_idx = 0u32;
+        // Phase C — per-eval-run signal cache + multi-Filter cardinality
+        // config owned by the paper executor for the lifetime of the
+        // run. Dropped when this function returns. Live-trading
+        // scenarios rebuild the cache from cycle 1 per operator Q5
+        // resolution 2026-05-22.
+        let mut signal_cache = crate::agent::signal_cache::SignalCache::new();
+        let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
+        let bar_period_minutes = cadence_min.max(1) as u32;
         let mut n_trades = 0u32;
         // agent-error-feedback-self-healing: counter is for tests +
         // future metrics surface; the value lives only in this scope
@@ -933,6 +941,14 @@ impl PaperExecutor {
                 scenario_id: scenario.id.clone(),
                 cycle_idx: decision_idx as i64,
                 provider_catalogs: self.provider_catalogs.clone(),
+                // Phase C — Filter capability runtime context.
+                filter_ctx: Some(crate::agent::pipeline::FilterPipelineCtx {
+                    signal_cache: &mut signal_cache,
+                    bar_period_minutes,
+                    multi_filter_config,
+                    bar_ts: bar.timestamp,
+                    strategy_id: strategy.manifest.id.clone(),
+                }),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
