@@ -105,6 +105,13 @@ last_reviewed = "2026-05-20"
 path = "operator-manual.md"
 
 [[page]]
+slug = "firing-conditions"
+title = "Firing Conditions"
+section = "Operator"
+last_reviewed = "2026-05-22"
+path = "firing-conditions.md"
+
+[[page]]
 slug = "cli-non-surfaced"
 title = "Why some commands aren't in xvn"
 section = "Operator"

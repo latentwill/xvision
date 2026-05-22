@@ -295,7 +295,7 @@ function FiringConditionsAwareness({ slot }: { slot: AgentSlot }) {
         regime, indicator threshold, or other signal, add a Filter-capable
         agent upstream of this one inside a strategy.{" "}
         <a
-          href="/docs/operator/firing-conditions"
+          href="/docs?slug=firing-conditions"
           className="text-gold hover:text-gold-soft underline-offset-2 hover:underline"
         >
           Learn more →
