@@ -142,6 +142,7 @@ async fn seed_anthropic_agent(ctx: &ApiContext, label: &str) -> String {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: xvision_engine::agents::model::default_capabilities(),
                 delta_briefing: None,
             }],
         })
@@ -171,6 +172,7 @@ async fn save_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
         agents: vec![AgentRef {
             agent_id: trader_agent_id,
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,

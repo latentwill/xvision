@@ -2,8 +2,9 @@ use thiserror::Error;
 
 use std::collections::HashSet;
 
+use crate::agents::Capability;
 use crate::eval::scenario::Scenario;
-use crate::strategies::agent_ref::canonical_role;
+use crate::strategies::agent_ref::{canonical_role, EdgePredicate};
 use crate::strategies::{PipelineKind, Strategy};
 
 #[derive(Debug, Error)]
@@ -20,6 +21,10 @@ pub enum ValidationError {
     InvalidSinglePipeline,
     #[error("graph pipeline edge references unknown role '{0}'")]
     UnknownPipelineRole(String),
+    #[error("graph pipeline edge from '{from}' to '{to}' carries a condition predicate but no upstream Filter precedes it")]
+    PredicateWithoutUpstreamFilter { from: String, to: String },
+    #[error("graph pipeline edge from '{from}' to '{to}' must target a strictly later agent (DAG-strict)")]
+    BackwardEdge { from: String, to: String },
     #[error("asset universe cannot be empty")]
     EmptyAssetUniverse,
     #[error("invalid risk config: {0}")]
@@ -183,9 +188,70 @@ fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
             if !roles.contains(&to) {
                 return Err(ValidationError::UnknownPipelineRole(edge.to_role.clone()));
             }
+
+            // Phase B (capability-dispatch): edges with a predicate
+            // must have at least one upstream Filter (by `activates`)
+            // in strategy order; otherwise the predicate could never
+            // fire because no `FilterSignal` would have been produced.
+            // Edges with `condition: None` always pass — they are the
+            // unconditional fall-through case.
+            if let Some(predicate) = edge.condition.as_ref() {
+                let from_idx = b
+                    .agents
+                    .iter()
+                    .position(|a| canonical_role(&a.role) == from)
+                    .unwrap_or(usize::MAX);
+                let to_idx = b
+                    .agents
+                    .iter()
+                    .position(|a| canonical_role(&a.role) == to)
+                    .unwrap_or(usize::MAX);
+
+                // DAG-strict: forward-only edges. Backward / self
+                // targets are cycle introductions — reject at draft
+                // time so Router-style runtime fall-through cannot
+                // smuggle them in.
+                if from_idx != usize::MAX && to_idx != usize::MAX && to_idx <= from_idx {
+                    return Err(ValidationError::BackwardEdge {
+                        from: edge.from_role.clone(),
+                        to: edge.to_role.clone(),
+                    });
+                }
+
+                // Walk agents[0..=from_idx] looking for a Filter on
+                // `activates`. Phase B heuristic — the slot's full
+                // `capabilities` set isn't accessible from the
+                // strategy alone. Phase C may strengthen this once
+                // Filter signal schemas are typed.
+                if !predicate_has_upstream_filter(b, from_idx, predicate) {
+                    return Err(ValidationError::PredicateWithoutUpstreamFilter {
+                        from: edge.from_role.clone(),
+                        to: edge.to_role.clone(),
+                    });
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Returns true when at least one `AgentRef` at index `<= from_idx`
+/// activates `Capability::Filter`. Conservative on `usize::MAX`
+/// (unknown role) — the upstream caller has already rejected the
+/// `UnknownPipelineRole` case so this is defensive.
+///
+/// `_predicate` is reserved for a future enrichment where the validator
+/// inspects the predicate's `signal_field` against the Filter's typed
+/// payload schema. Phase B only checks existence.
+fn predicate_has_upstream_filter(strategy: &Strategy, from_idx: usize, _predicate: &EdgePredicate) -> bool {
+    if from_idx == usize::MAX {
+        return false;
+    }
+    strategy
+        .agents
+        .iter()
+        .take(from_idx + 1)
+        .any(|a| matches!(a.activates, Some(Capability::Filter)))
 }
 
 #[cfg(test)]

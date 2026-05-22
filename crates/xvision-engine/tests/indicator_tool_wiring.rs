@@ -175,6 +175,7 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
         agents: vec![AgentRef {
             agent_id: "test-agent".into(),
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
