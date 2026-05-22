@@ -210,6 +210,7 @@ async fn agent_loop_dispatch_advertises_indicator_panel_tool_when_strategy_requi
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
+        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     };
 
@@ -269,6 +270,7 @@ async fn agent_loop_routes_tool_use_to_indicator_panel_and_feeds_result_back() {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
+        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     };
     let dispatch = Arc::new(ToolUseThenEndTurn::new());
@@ -365,6 +367,7 @@ async fn indicator_panel_invocation_emits_validate_spans_for_trace_dock() {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
+        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     };
 

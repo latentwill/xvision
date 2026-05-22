@@ -227,6 +227,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            capabilities: std::collections::BTreeSet::new(),
             noop_skip: true,
         },
         ResolvedAgentSlot {
@@ -245,6 +246,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            capabilities: std::collections::BTreeSet::new(),
             noop_skip: true,
         },
     ];
@@ -301,6 +303,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            capabilities: std::collections::BTreeSet::new(),
             noop_skip: true,
         },
         ResolvedAgentSlot {
@@ -319,6 +322,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            capabilities: std::collections::BTreeSet::new(),
             noop_skip: true,
         },
     ];
