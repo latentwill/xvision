@@ -4,13 +4,13 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-22 (sweep 3, ~04:55 UTC) — F-5 harness recovery
-> state machine fully merged (phase 1 #499, phase 2a #511, phase 2b
-> #516, phase 2c #513). Capability-first agent model spec merged via
-> PR #518; operator decisions locked. Phase A contract authored
-> (`agent-graph-capability-schema`), reserves migration 033. Wave-2
-> wave is now fully unblocked — `agent/execute.rs`, `agent/llm.rs`,
-> `eval/executor/paper.rs`, `eval/executor/backtest.rs` all released.
+> Last updated: 2026-05-22 (sweep 4) — `strategy-slot-prompt-resolution`
+> (#515) merged 04:57 UTC and is archived this pass. Wave-2 dispatch is
+> in flight: `memory-provenance-in-decisions-trace` (#523) and
+> `indicator-tool-wiring` (#521) opened as PRs; `eval-token-efficiency-tail`
+> and `trace-dock-emitters` still ready but unclaimed. F-5 harness
+> recovery state machine, capability-first spec (#518), and the Phase A
+> schema contract remain in the picture from sweep 3.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
@@ -23,12 +23,10 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 ### memory-safety-and-observability-2026-05-22 — V2D follow-up
 
-- [memory-provenance-in-decisions-trace](contracts/memory-provenance-in-decisions-trace.md) — **P1 foundation** · ready · thread `decision_id` through `MemoryRecorder::recall`; events table carries `(run_id, decision_id, memory_item_id)`. Blocks `memory-aware-eval-findings`.
 - [memory-aware-eval-findings](contracts/memory-aware-eval-findings.md) — **P2 leaf** · deferred (depends on `memory-provenance-in-decisions-trace`) · per-decision finding extractor.
 
 ### eval-honesty-tail-2026-05-22 — F41 remaining sub-tracks
 
-- [indicator-tool-wiring](contracts/indicator-tool-wiring.md) — **P2 leaf** · ready · actually wire `indicator_panel` tool to trader slot (today `tools: []`)
 - [eval-token-efficiency-tail](contracts/eval-token-efficiency-tail.md) — **P2 leaf** · ready · per-provider `max_tokens` defaults + optional delta-briefing mode
 
 ### trace-dock-emitters-2026-05-22 — F43
@@ -41,7 +39,11 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 ## Open PRs (in-flight, not yet merged)
 
-- **#515** — `strategy-slot-prompt-resolution` — CLEAN. Removes `LLMSlot.prompt`; agent-side `system_prompt` is source of truth. (Contract still in `team/contracts/`; will archive when the PR merges.)
+- **#523** — `memory-provenance-in-decisions-trace` — wave-2 dispatch; threads `decision_id` through `MemoryRecorder::recall`. Contract still in `team/contracts/`; archive on merge.
+- **#521** — `indicator-tool-wiring` — wave-2 dispatch; wires `indicator_panel` tool through to trader slot. Contract still in `team/contracts/`; archive on merge.
+- **#525** — `chore/gha-node-24-bump` — F26: GHA Node 20 → 24 ahead of 2026-06-02 cutover. No contract (CI housekeeping).
+- **#520** — `fix/unbreak-main-provider-catalogs` — build fix for `xvn strategy run-inline`. No contract.
+- **#522** — `fix/sqlite-busy-wal-busy-timeout` — `xvn.db` pool WAL + busy_timeout. No contract.
 - **#512** — `[codex] streamline strategy creation and docs layout` — CLEAN, external.
 - **#498** — `fix(trace-dock): hide state.transition stub in Advanced view` — CLEAN, older.
 
@@ -57,9 +59,15 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 ## Recently Closed
 
+### Merged 2026-05-22 (post-cascade) — archived under `team/archive/2026-05-22-conductor-pass-4/`
+
+1 contract archived this pass:
+
+- `strategy-slot-prompt-resolution` (#515 — removed `LLMSlot.prompt`; agent-side `system_prompt` is the source of truth post-2026-05-12 refactor)
+
 ### Merged 2026-05-22 (~04:46–04:51 UTC cascade) — archived under `team/archive/2026-05-22-conductor-pass-3/`
 
-3 contracts archived this pass:
+3 contracts archived in sweep 3:
 
 - `harness-recovery-context-overflow` (#513, F-5 phase 2c — context_length_exceeded → summarize-and-retry)
 - `harness-recovery-schema-missing-field` (#516, F-5 phase 2b — targeted-patch retry on missing/invalid trader fields)

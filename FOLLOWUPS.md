@@ -309,19 +309,21 @@ Infrastructure used by both tracks. Lives on `main`.
 
 - **Status: Done.** Eval provider preflight shipped as `eval-provider-preflight` (#452 + follow-up clawpatch #468). Scenario display-name contract subsumed by `scenario-clone-form-structural-fields` (#437) and the wider scenario-form polish in the QA Round 4 tail.
 
-### F41 [Shared]. Eval contract honesty + agent-graph composition — **PARTIALLY DONE (eval-honesty cohort merged 2026-05-21)**
+### F41 [Shared]. Eval contract honesty + agent-graph composition — **MOSTLY DONE (5 of 8 sub-items shipped 2026-05-22)**
 
 - **Status: tier-0 done.** Eval-honesty cohort merged: `eval-honesty-smell-tests` (#448), `eval-guardrail-log-collapse` (#449), `eval-provider-attestation` (#450), `eval-provider-preflight` (#452 + #468). `seed-scaffolding-cleanup` (#463) and `container-config-path-papercut` (#464) also merged. Eval numbers are now trustworthy at tier-0 (stub detection, provider attestation, preflight).
-- **Still open (8 sub-tracks not yet decomposed into contracts):**
-  - `trader-noop-skip` — skip LLM call when portfolio_state allows zero legal actions
-  - `strategy-model-attestation-only` — demote `required_models` / `model_requirement` to informational `attested_with`
-  - `strategy-slot-prompt-resolution` — resolve role of `strategy.trader_slot.prompt` (remove or make explicit override)
-  - `agent-graph-composition` — formalize `kind` on `AgentRef`, per-kind I/O contracts, Filter granularity. **Originally depends on `executor-refactor`** (which was superseded by executor-trait-extraction #487 + live-* tracks). Re-evaluate dependency vs the now-shipped `xvision-filters` crate (filter-v1 stages 1–5).
-  - `indicator-tool-wiring` — wire `indicator_panel` tool through to trader slot (currently `tools: []`)
-  - `bar-history-limit-surface` — surface/respect `AgentSlot.bar_history_limit` in agent editor
-  - `risk-sees-conviction` — expose `conviction` to risk layer for optional sizing scale
-  - `eval-token-efficiency` — prompt-cache stable prefix, per-slot `max_tokens` cap default, optional delta-briefing mode
-- **Source intake** (still open): `team/intake/2026-05-21-eval-honesty-and-agent-graph.md`.
+- **Shipped 2026-05-22 (5 of 8 sub-items):**
+  - ✅ `trader-noop-skip` — skip LLM call when `portfolio_state` allows zero legal actions (#506)
+  - ✅ `strategy-model-attestation-only` — demote `required_models` / `model_requirement` to informational `attested_with` (#508)
+  - ✅ `strategy-slot-prompt-resolution` — removed `LLMSlot.prompt`; agent-side `system_prompt` is source of truth (#515)
+  - ✅ `bar-history-limit-surface` — surface/respect `AgentSlot.bar_history_limit` in agent editor (#505)
+  - ✅ `risk-sees-conviction` — expose `TraderDecision.conviction` to risk gate (#507)
+- **In flight:**
+  - 🟡 `indicator-tool-wiring` — PR #521 open (wires `indicator_panel` tool through to trader slot — today `tools: []`)
+- **Still open:**
+  - `eval-token-efficiency-tail` — per-provider `max_tokens` defaults + optional delta-briefing mode. Contract authored (`team/contracts/eval-token-efficiency-tail.md`), ready to dispatch.
+  - `agent-graph-composition` — spec landed via PR #518 (`docs/superpowers/specs/2026-05-22-capability-first-agent-model.md`). Decomposed into Phases A–F; Phase A contract authored (`agent-graph-capability-schema`, reserves migration 033). Phases B–F still need their own contracts.
+- **Source intake** (still open for the remaining 2 items): `team/intake/2026-05-21-eval-honesty-and-agent-graph.md`.
 - **Blocking:** non-blocking for trust at tier-0 (already shipped); these are quality / capability extensions.
 
 ### F42 [Shared]. Memory safety + observability (post-V2D follow-ups)
