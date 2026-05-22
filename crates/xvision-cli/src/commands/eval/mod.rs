@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
-use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
+use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride};
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
@@ -148,6 +148,21 @@ pub struct RunArgs {
     /// known-unreachable but the run should proceed anyway.
     #[arg(long)]
     pub skip_preflight: bool,
+
+    // ===== Per-launch model override (Wave B #5 — cli-eval-model-override) =====
+    /// Per-launch override of the strategy's bound provider. Must be
+    /// supplied together with `--model`; passing one without the other
+    /// is a usage error. The override does not mutate the strategy on
+    /// disk — it applies to this single run.
+    #[arg(long)]
+    pub provider: Option<String>,
+    /// Per-launch override of the strategy's bound model id. Must be
+    /// supplied together with `--provider`. The override is resolved
+    /// through the same `effective_providers::resolve_provider` gate as
+    /// the strategy-bound path; an unreachable override refuses the
+    /// launch with the same structured `reason` discriminant.
+    #[arg(long)]
+    pub model: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -424,6 +439,31 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         }
     };
 
+    // Per-launch override (Wave B #5). `--provider` and `--model` must
+    // be supplied together — passing one without the other is exit-2
+    // usage. The engine validates the override against the resolver
+    // (`key_missing`/`model_disabled`/…) and refuses with the same typed
+    // reason as the strategy-bound path.
+    let provider_override = match (args.provider.as_deref(), args.model.as_deref()) {
+        (Some(p), Some(m)) => Some(ProviderOverride {
+            provider: p.to_string(),
+            model: m.to_string(),
+        }),
+        (Some(_), None) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--provider requires --model (both flags must be supplied together)"),
+            });
+        }
+        (None, Some(_)) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--model requires --provider (both flags must be supplied together)"),
+            });
+        }
+        (None, None) => None,
+    };
+
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
         scenario_id: args.scenario.clone(),
@@ -431,6 +471,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         params_override: None,
         limits,
         skip_preflight: args.skip_preflight,
+        provider_override,
     };
 
     // Banner — operator-facing progress, never on stdout. Stays visible
@@ -700,18 +741,34 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         None
     };
 
+    // Surface the per-launch override (Wave B #5) in `--json` so a
+    // results table can show which model produced which sharpe. None
+    // for the common case where the run used the strategy's bound
+    // provider.
+    let provider_override = eval::load_provider_override(&ctx, &run.id).await;
+
     if args.json {
-        let body = if let Some(ref bsummary) = behavior {
-            serde_json::json!({
+        let body = match (behavior.as_ref(), provider_override.as_ref()) {
+            (Some(bsummary), Some(po)) => serde_json::json!({
                 "run": run,
                 "report": report,
                 "behavior_summary": bsummary,
-            })
-        } else {
-            serde_json::json!({
+                "provider_override": po,
+            }),
+            (Some(bsummary), None) => serde_json::json!({
                 "run": run,
                 "report": report,
-            })
+                "behavior_summary": bsummary,
+            }),
+            (None, Some(po)) => serde_json::json!({
+                "run": run,
+                "report": report,
+                "provider_override": po,
+            }),
+            (None, None) => serde_json::json!({
+                "run": run,
+                "report": report,
+            }),
         };
         crate::io::print_json(&body)?;
         return Ok(());
@@ -805,6 +862,15 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         for pm in &providers_used {
             println!("  {}/{:<30}  {}", pm.provider, pm.model, pm.call_count);
         }
+    }
+
+    // Per-launch override receipt (Wave B #5). Surface only when set —
+    // the absence of this section means the run used the strategy's
+    // bound provider/model.
+    if let Some(po) = provider_override.as_ref() {
+        println!("\nprovider_override");
+        println!("  provider      {}", po.provider);
+        println!("  model         {}", po.model);
     }
 
     if let Some(e) = run.error.as_deref() {

@@ -230,6 +230,7 @@ async fn run_tiny_notional_probe(
             params_override: None,
             limits: None,
             skip_preflight: false,
+            provider_override: None,
         },
         broker,
         long_open_dispatch(),

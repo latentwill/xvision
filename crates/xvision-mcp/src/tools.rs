@@ -1140,6 +1140,7 @@ impl XvisionTools {
                 params_override: None,
                 limits: None,
                 skip_preflight: false,
+                provider_override: None,
             };
 
             let entry = match api_eval::run(&ctx, run_req).await {
