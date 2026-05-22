@@ -194,7 +194,7 @@ fn strategy_with_risk_pct(agent_id: &str, risk_pct: f64) -> Strategy {
             regime_fit: vec![],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 1_440, // daily
-            required_models: vec![],
+            attested_with: vec![],
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -207,7 +207,7 @@ fn strategy_with_risk_pct(agent_id: &str, risk_pct: f64) -> Strategy {
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             prompt: "Decide.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
+            attested_with: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
             provider: None,
             model: None,

@@ -101,7 +101,7 @@ fn seed_strategy_with_trader(
                 regime_fit: vec![],
                 asset_universe: vec!["BTC/USD".into()],
                 decision_cadence_minutes: 240, // 4h
-                required_models: vec![],
+                attested_with: vec![],
                 required_tools: vec![],
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,

@@ -63,7 +63,7 @@ export type ListStrategiesParams = {
 type LLMSlot = {
   role: string;
   prompt: string;
-  model_requirement: string;
+  attested_with: string;
   provider?: string | null;
   model?: string | null;
   allowed_tools: string[];
@@ -86,7 +86,7 @@ type PublicManifest = {
   regime_fit: string[];
   asset_universe: string[];
   decision_cadence_minutes: number;
-  required_models: string[];
+  attested_with: string[];
   required_tools: string[];
   risk_preset_or_config: string;
   published_at: string | null;

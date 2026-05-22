@@ -586,7 +586,7 @@ async fn new_atomic(
             regime_fit: Vec::new(),
             asset_universe: vec![asset.clone()],
             decision_cadence_minutes: cadence_minutes,
-            required_models: Vec::new(),
+            attested_with: Vec::new(),
             required_tools: Vec::new(),
             risk_preset_or_config: "balanced".to_string(),
             published_at: None,
@@ -1142,7 +1142,7 @@ fn slot_to_agent_slot(
 /// AgentSlot. Order of precedence: explicit `--provider` / `--model`
 /// override > slot's `provider` / `model` fields > empty string.
 ///
-/// The legacy `model_requirement` string ("anthropic.claude-sonnet-4.6")
+/// The legacy `attested_with` string ("anthropic.claude-sonnet-4.6")
 /// is intentionally NOT parsed as a fallback. That field captures the
 /// template's policy/constraint, not the user's provider choice — using
 /// it to seed an Anthropic-locked AgentSlot caused QA10's "smoke
@@ -1333,7 +1333,7 @@ mod tests {
         LLMSlot {
             role: "trader".into(),
             prompt: String::new(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: Vec::new(),
             provider: None,
             model: None,
@@ -1341,10 +1341,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_model_from_slot_does_not_bake_anthropic_from_template_model_requirement() {
+    fn provider_model_from_slot_does_not_bake_anthropic_from_template_attested_with() {
         let slot = template_anthropic_slot();
         let (provider, model) = provider_model_from_slot(&slot, None, None);
-        // Pre-QA10 behavior parsed `model_requirement` into ("anthropic",
+        // Pre-QA10 behavior parsed `attested_with` into ("anthropic",
         // "claude-sonnet-4.6") which silently locked seeded AgentSlots
         // to Anthropic even when the user's intent was OpenRouter.
         assert_eq!(provider, "");

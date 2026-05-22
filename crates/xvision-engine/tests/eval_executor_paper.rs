@@ -68,7 +68,7 @@ fn minimal_strategy() -> Strategy {
             regime_fit: vec![],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 60,
-            required_models: vec![],
+            attested_with: vec![],
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -83,7 +83,7 @@ fn minimal_strategy() -> Strategy {
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             prompt: "Decide.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
+            attested_with: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
             provider: None,
             model: None,

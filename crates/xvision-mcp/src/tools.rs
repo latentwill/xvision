@@ -156,7 +156,7 @@ pub struct UpdateSlotReq {
     pub prompt: Option<String>,
     /// Model requirement (e.g., `anthropic.claude-sonnet-4.6+`).
     #[serde(default)]
-    pub model_requirement: Option<String>,
+    pub attested_with: Option<String>,
     /// Explicit provider name for this slot.
     #[serde(default)]
     pub provider: Option<String>,
@@ -648,7 +648,7 @@ impl XvisionTools {
                 id: req.id,
                 slot: req.slot,
                 prompt: req.prompt,
-                model_requirement: req.model_requirement,
+                attested_with: req.attested_with,
                 provider: req.provider,
                 model: req.model,
                 allowed_tools: req.allowed_tools,
@@ -930,7 +930,7 @@ impl XvisionTools {
                 regime_fit: Vec::new(),
                 asset_universe: vec![asset],
                 decision_cadence_minutes: cadence_minutes,
-                required_models: Vec::new(),
+                attested_with: Vec::new(),
                 required_tools: Vec::new(),
                 risk_preset_or_config: "balanced".to_string(),
                 published_at: None,
@@ -1934,7 +1934,7 @@ mod tests {
                 id: id.clone(),
                 slot: "trader".into(),
                 prompt: Some("New prompt".into()),
-                model_requirement: None,
+                attested_with: None,
                 provider: None,
                 model: None,
                 allowed_tools: None,
@@ -1968,7 +1968,7 @@ mod tests {
                 id,
                 slot: "nope".into(),
                 prompt: Some("p".into()),
-                model_requirement: None,
+                attested_with: None,
                 provider: None,
                 model: None,
                 allowed_tools: None,

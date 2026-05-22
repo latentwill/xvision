@@ -309,7 +309,7 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
     // Emit the provider-mismatch finding (best-effort, idempotent). We
     // do this at export-build time because the export is the moment we
     // materialise both `providers_used` and the strategy's
-    // `model_requirement` together. Failures are swallowed so an
+    // `attested_with` together. Failures are swallowed so an
     // unavailable DB row doesn't block the export.
     if let (Some(s), Some(diag)) = (strategy.as_ref(), provider_diagnostics.as_ref()) {
         emit_provider_mismatch_finding_if_needed(&store, &run.id, s, diag).await;
@@ -457,12 +457,12 @@ pub async fn load_providers_used(pool: &sqlx::SqlitePool, eval_run_id: &str) -> 
 }
 
 /// Emit a `provider_mismatch` warning finding when the strategy's
-/// `trader_slot.model_requirement` names a model that is not present in
+/// `trader_slot.attested_with` names a model that is not present in
 /// `providers_used`. Best-effort and idempotent: a pre-existing finding of
 /// the same kind for this run is detected by scanning existing findings, and
 /// a second emission is skipped.
 ///
-/// `model_requirement` uses the dot-separated form `"provider.model"` (e.g.
+/// `attested_with` uses the dot-separated form `"provider.model"` (e.g.
 /// `"anthropic.claude-sonnet-4.6"`). The check compares
 /// `format!("{}.{}", pm.provider, pm.model)` against the requirement string
 /// after trimming.
@@ -475,11 +475,11 @@ async fn emit_provider_mismatch_finding_if_needed(
     let required = match strategy
         .trader_slot
         .as_ref()
-        .map(|s| s.model_requirement.trim().to_string())
+        .map(|s| s.attested_with.trim().to_string())
         .filter(|s| !s.is_empty())
     {
         Some(r) => r,
-        None => return, // no model_requirement set — nothing to compare
+        None => return, // no attested_with set — nothing to compare
     };
 
     if diag.providers_used.is_empty() {
@@ -509,10 +509,10 @@ async fn emit_provider_mismatch_finding_if_needed(
         .join(", ");
 
     let body = format!(
-        "The strategy's trader_slot.model_requirement is \"{required}\" but the run's model calls \
+        "The strategy's trader_slot.attested_with is \"{required}\" but the run's model calls \
          used: {actual_list}. \
-         model_requirement is advisory — the operator may rebind the agent to the intended \
-         provider/model or update the strategy manifest's model_requirement to reflect the \
+         attested_with is advisory — the operator may rebind the agent to the intended \
+         provider/model or update the strategy manifest's attested_with to reflect the \
          provider actually in use.",
     );
 
@@ -523,7 +523,7 @@ async fn emit_provider_mismatch_finding_if_needed(
         severity: Severity::Warning,
         summary: format!("strategy requested {required}, run used {actual_list}"),
         evidence: serde_json::json!({
-            "model_requirement": required,
+            "attested_with": required,
             "providers_used": diag.providers_used.iter().map(|pm| serde_json::json!({
                 "provider": pm.provider,
                 "model": pm.model,
@@ -541,7 +541,7 @@ async fn emit_provider_mismatch_finding_if_needed(
         description: Some(body),
         recommendation: Some(
             "Rebind the agent slot to the intended provider/model, or update \
-             trader_slot.model_requirement in the strategy manifest to reflect the \
+             trader_slot.attested_with in the strategy manifest to reflect the \
              provider actually in use."
                 .to_string(),
         ),
@@ -766,7 +766,7 @@ mod roundtrip {
         let slot = LLMSlot {
             role: "trader".into(),
             prompt: "decide".into(),
-            model_requirement: format!("openrouter.{model}"),
+            attested_with: format!("openrouter.{model}"),
             allowed_tools: Vec::new(),
             provider: Some("openrouter".into()),
             model: Some(model.into()),
@@ -781,7 +781,7 @@ mod roundtrip {
                 regime_fit: vec![RegimeFit::RangeBound],
                 asset_universe: vec!["BTC/USD".into()],
                 decision_cadence_minutes: 15,
-                required_models: vec![model.into()],
+                attested_with: vec![model.into()],
                 required_tools: Vec::new(),
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
@@ -1267,7 +1267,7 @@ mod provider_attestation {
         }
     }
 
-    fn strategy_with_requirement(model_requirement: &str) -> Strategy {
+    fn strategy_with_requirement(attested_with: &str) -> Strategy {
         Strategy {
             manifest: PublicManifest {
                 id: "test-strategy".into(),
@@ -1278,7 +1278,7 @@ mod provider_attestation {
                 regime_fit: vec![RegimeFit::RangeBound],
                 asset_universe: vec!["BTC/USD".into()],
                 decision_cadence_minutes: 15,
-                required_models: vec![model_requirement.into()],
+                attested_with: vec![attested_with.into()],
                 required_tools: Vec::new(),
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
@@ -1292,7 +1292,7 @@ mod provider_attestation {
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
                 prompt: "decide".into(),
-                model_requirement: model_requirement.into(),
+                attested_with: attested_with.into(),
                 allowed_tools: Vec::new(),
                 provider: None,
                 model: None,
@@ -1368,7 +1368,7 @@ mod provider_attestation {
     }
 
     #[tokio::test]
-    async fn no_finding_when_model_requirement_is_empty() {
+    async fn no_finding_when_attested_with_is_empty() {
         let (ctx, _dir) = ctx_with_tables().await;
         let store = RunStore::new(ctx.db.clone());
 
@@ -1389,7 +1389,7 @@ mod provider_attestation {
         emit_provider_mismatch_finding_if_needed(&store, &run.id, &strategy, &diag).await;
 
         let findings = store.read_findings(&run.id).await.unwrap();
-        assert!(findings.is_empty(), "no finding when model_requirement is empty");
+        assert!(findings.is_empty(), "no finding when attested_with is empty");
     }
 
     #[tokio::test]

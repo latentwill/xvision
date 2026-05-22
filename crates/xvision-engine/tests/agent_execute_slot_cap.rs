@@ -85,7 +85,7 @@ fn trader_slot_with_health_tool() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
         prompt: "decide".into(),
-        model_requirement: "anthropic.claude-sonnet-4-6".into(),
+        attested_with: "anthropic.claude-sonnet-4-6".into(),
         allowed_tools: vec!["xvision_health_ping".into()],
         provider: Some("anthropic".into()),
         model: Some("claude-sonnet-4-6".into()),

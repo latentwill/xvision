@@ -9,7 +9,7 @@ async fn execute_slot_returns_parsed_output() {
     let slot = LLMSlot {
         role: "trader".into(),
         prompt: "decide".into(),
-        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
         provider: None,
         model: None,
@@ -47,7 +47,7 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
     let slot = LLMSlot {
         role: "trader".into(),
         prompt: "decide".into(),
-        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
         provider: None,
         model: None,
@@ -103,7 +103,7 @@ async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
     let slot = LLMSlot {
         role: "trader".into(),
         prompt: "decide".into(),
-        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
         provider: None,
         model: None,
@@ -167,7 +167,7 @@ async fn execute_slot_succeeds_even_when_caller_passes_extra_inputs() {
     let slot = LLMSlot {
         role: "trader".into(),
         prompt: "decide".into(),
-        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
         provider: None,
         model: None,

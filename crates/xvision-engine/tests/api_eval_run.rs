@@ -62,7 +62,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
             regime_fit: vec![],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 60,
-            required_models: vec![],
+            attested_with: vec![],
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -496,7 +496,7 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
 // `openrouter` must dispatch through the OpenRouter path. Prior to this
 // fix, `xvn strategy new` baked `provider="anthropic"` into the
 // auto-created `AgentSlot` by parsing the template's legacy
-// `model_requirement` string ("anthropic.claude-sonnet-4.6"). Even when
+// `attested_with` string ("anthropic.claude-sonnet-4.6"). Even when
 // the operator later picked OpenRouter in settings, eval still resolved
 // the executable slot to Anthropic and 401'd against an Anthropic key.
 //
@@ -545,7 +545,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
             regime_fit: vec![],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 60,
-            required_models: vec![],
+            attested_with: vec![],
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,

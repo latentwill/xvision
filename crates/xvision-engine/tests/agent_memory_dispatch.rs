@@ -180,7 +180,7 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
     let slot = LLMSlot {
         role: "trader".into(),
         prompt: "BASE_SYSTEM_PROMPT".into(),
-        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
         model: Some("claude-sonnet-4-6".into()),
@@ -271,7 +271,7 @@ async fn recall_wraps_each_pattern_in_caselaw_framing() {
     let slot = LLMSlot {
         role: "trader".into(),
         prompt: "BASE".into(),
-        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
         model: Some("claude-sonnet-4-6".into()),
@@ -339,7 +339,7 @@ async fn recall_excludes_pattern_when_training_window_overlaps_scenario() {
     let slot = LLMSlot {
         role: "trader".into(),
         prompt: "BASE".into(),
-        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
         model: Some("claude-sonnet-4-6".into()),
@@ -396,7 +396,7 @@ async fn execute_slot_writes_final_decision_into_namespace() {
     let slot = LLMSlot {
         role: "trader".into(),
         prompt: "BASE_SYSTEM_PROMPT".into(),
-        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
         model: Some("claude-sonnet-4-6".into()),
@@ -455,7 +455,7 @@ fn pipeline_fixture_strategy() -> Strategy {
             regime_fit: vec![RegimeFit::RangeBound],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 15,
-            required_models: vec!["mock".into()],
+            attested_with: vec!["mock".into()],
             required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -521,7 +521,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         slot: LLMSlot {
             role: "trader".into(),
             prompt: "decide".into(),
-            model_requirement: "mock".into(),
+            attested_with: "mock".into(),
             allowed_tools: Vec::new(),
             provider: None,
             model: Some("mock".into()),

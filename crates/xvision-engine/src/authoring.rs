@@ -67,7 +67,7 @@ pub struct UpdateSlotReq {
     pub id: String,
     pub slot: String,
     pub prompt: Option<String>,
-    pub model_requirement: Option<String>,
+    pub attested_with: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub allowed_tools: Option<Vec<String>>,
@@ -209,7 +209,7 @@ pub async fn create_blank_strategy(
             regime_fit: Vec::new(),
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 60,
-            required_models: Vec::new(),
+            attested_with: Vec::new(),
             required_tools: Vec::new(),
             risk_preset_or_config: "conservative".into(),
             published_at: None,
@@ -245,7 +245,7 @@ pub async fn update_slot(store: &dyn StrategyStore, req: UpdateSlotReq) -> anyho
     let slot = slot_field.get_or_insert_with(|| LLMSlot {
         role: req.slot.clone(),
         prompt: String::new(),
-        model_requirement: String::new(),
+        attested_with: String::new(),
         allowed_tools: vec![],
         provider: None,
         model: None,
@@ -255,9 +255,9 @@ pub async fn update_slot(store: &dyn StrategyStore, req: UpdateSlotReq) -> anyho
         slot.prompt = p;
         updated.push("prompt".into());
     }
-    if let Some(m) = req.model_requirement {
-        slot.model_requirement = m;
-        updated.push("model_requirement".into());
+    if let Some(m) = req.attested_with {
+        slot.attested_with = m;
+        updated.push("attested_with".into());
     }
     if let Some(p) = req.provider {
         slot.provider = if p.trim().is_empty() { None } else { Some(p) };
@@ -272,9 +272,7 @@ pub async fn update_slot(store: &dyn StrategyStore, req: UpdateSlotReq) -> anyho
         updated.push("allowed_tools".into());
     }
     if updated.is_empty() {
-        anyhow::bail!(
-            "no fields to update — supply at least one of prompt / model_requirement / allowed_tools"
-        );
+        anyhow::bail!("no fields to update — supply at least one of prompt / attested_with / allowed_tools");
     }
     store.save(&strategy).await?;
     Ok(UpdateSlotOut { id: req.id, updated })
@@ -675,7 +673,7 @@ mod tests {
                 id: out.id.clone(),
                 slot: "trader".into(),
                 prompt: Some("New prompt".into()),
-                model_requirement: None,
+                attested_with: None,
                 provider: None,
                 model: None,
                 allowed_tools: None,
@@ -904,7 +902,7 @@ mod tests {
         strategy.trader_slot = Some(LLMSlot {
             role: "trader".into(),
             prompt: "Trade ETH/USD on 6-hour candles. Return JSON.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into()],
             provider: None,
             model: None,

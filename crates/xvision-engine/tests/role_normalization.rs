@@ -39,7 +39,7 @@ fn fixture_strategy_with_agents(agents: Vec<AgentRef>, pipeline: PipelineDef) ->
             regime_fit: vec![RegimeFit::RangeBound],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 15,
-            required_models: vec!["mock".into()],
+            attested_with: vec!["mock".into()],
             required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -64,7 +64,7 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
         slot: LLMSlot {
             role: role.into(),
             prompt: "decide".into(),
-            model_requirement: "mock".into(),
+            attested_with: "mock".into(),
             allowed_tools: Vec::new(),
             provider: None,
             model: Some("mock".into()),

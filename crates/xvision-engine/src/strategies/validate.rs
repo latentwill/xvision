@@ -349,7 +349,7 @@ mod preflight_tests {
                 regime_fit: vec![],
                 asset_universe: vec![asset.to_string()],
                 decision_cadence_minutes: cadence_minutes,
-                required_models: vec![],
+                attested_with: vec![],
                 required_tools: vec![],
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,

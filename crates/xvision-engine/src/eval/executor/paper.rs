@@ -1615,7 +1615,7 @@ mod role_tests {
                 regime_fit: vec![RegimeFit::RangeBound],
                 asset_universe: vec!["BTC/USD".into()],
                 decision_cadence_minutes: 15,
-                required_models: vec!["m".into()],
+                attested_with: vec!["m".into()],
                 required_tools: vec!["ohlcv".into()],
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
@@ -1640,7 +1640,7 @@ mod role_tests {
             slot: LLMSlot {
                 role: role.into(),
                 prompt: "p".into(),
-                model_requirement: model.into(),
+                attested_with: model.into(),
                 allowed_tools: Vec::new(),
                 provider: None,
                 model: Some(model.into()),
@@ -1744,7 +1744,7 @@ mod role_tests {
                 slot: LLMSlot {
                     role: "scout".into(),
                     prompt: "p".into(),
-                    model_requirement: "m".into(),
+                    attested_with: "m".into(),
                     allowed_tools: Vec::new(),
                     provider: None,
                     model: Some("m".into()),
@@ -1762,7 +1762,7 @@ mod role_tests {
                 slot: LLMSlot {
                     role: "trader".into(),
                     prompt: "p".into(),
-                    model_requirement: "m".into(),
+                    attested_with: "m".into(),
                     allowed_tools: Vec::new(),
                     provider: None,
                     model: Some("m".into()),

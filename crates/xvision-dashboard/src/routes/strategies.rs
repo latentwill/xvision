@@ -140,7 +140,7 @@ pub struct UpdateSlotBody {
     #[serde(default)]
     pub prompt: Option<String>,
     #[serde(default)]
-    pub model_requirement: Option<String>,
+    pub attested_with: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
@@ -160,7 +160,7 @@ pub async fn put_slot(
         id,
         slot: role,
         prompt: body.prompt,
-        model_requirement: body.model_requirement,
+        attested_with: body.attested_with,
         provider: body.provider,
         model: body.model,
         allowed_tools: body.allowed_tools,

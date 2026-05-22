@@ -70,7 +70,7 @@ const baseStrategy = {
     regime_fit: [],
     asset_universe: [],
     decision_cadence_minutes: 240,
-    required_models: [],
+    attested_with: [],
     required_tools: [],
     risk_preset_or_config: "balanced",
     published_at: null,

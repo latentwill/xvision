@@ -53,7 +53,7 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
             regime_fit: vec![RegimeFit::RangeBound, RegimeFit::LowVol],
             asset_universe: vec!["ETH/USD".into()],
             decision_cadence_minutes: 60,
-            required_models: vec!["anthropic.claude-sonnet-4.6".into()],
+            attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
             required_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -65,7 +65,7 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
         regime_slot: Some(LLMSlot {
             role: "regime".into(),
             prompt: "Classify the current crypto regime.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["indicator_panel".into()],
             provider: None,
             model: None,
@@ -74,7 +74,7 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             prompt: "Buy dips, sell rallies. Output JSON {action,conviction,justification}.".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             provider: None,
             model: None,
