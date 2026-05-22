@@ -646,6 +646,33 @@ The operator must resolve these before Phase A opens. Each is a decision the spe
 
 8. **Are pre-spec strategies allowed to mix legacy `trader_slot` with new `agents`?** Today the deserialize path accepts both (per `mixed_strategy_json_keeps_both` test in `strategies/mod.rs`). The spec preserves this for back-compat. But the dispatcher must pick one — currently the engine prefers `agents` when both are populated. **Spec recommends:** preserve current behavior (prefer `agents` when both are present; the legacy fields are read but ignored by the dispatcher if `agents.len() > 0`). **Operator decision pending — could also harden into "reject strategies with both populated" once a migration window passes.**
 
+## Operator decisions (2026-05-22)
+
+All 8 open questions resolved by operator review on 2026-05-22. Locked
+decisions below; phase contracts may proceed.
+
+1. **`role` enforcement (Q1):** `role` is **display-only**. The engine routes on `AgentSlot.capabilities` and `AgentRef.activates`; `role` is operator-authored free text rendered in UI and traces.
+
+2. **Router in v1 (Q2):** **Router ships in v1** ("compose router"). Phase B's `dispatch_capability` seam includes `Capability::Router` dispatch and `RouteSelection` plumbing alongside Trader/Filter/Critic/Intern.
+
+3. **Multi-Filter cardinality (Q3):** **Conditional on Filter granularity / bar duration.** Two-tier behavior:
+   - **Short bars** (`bar_duration < 30 minutes`): **coalesce** — one Trader call per bar with all matching Filter signals appended to its briefing as `Vec<FilterSignal>`. Avoids firing N times per bar at fast cadences where the trader is already cost-sensitive.
+   - **Long bars** (`bar_duration >= 30 minutes`): **multi-fire** — Trader runs once per matching Filter signal, each invocation receives a single `FilterSignal` in its briefing. On long bars, gaps between decisions are large enough that a per-signal reasoning trace is more valuable than coalescing.
+   - **Threshold:** `30 minutes` is the v1 default. Phase B reserves an operator config (`[engine] multi_fire_bar_threshold_minutes = 30`) so the cutoff can be tuned per deployment without a code change.
+   - **Implementation note:** the granularity check is on the **bar** (scenario `granularity_minutes`), not the per-Filter `granularity` field. Per-Filter granularity still controls *when* the Filter is evaluated; this cardinality rule controls how many Trader invocations the coalesced/non-coalesced signal set triggers.
+
+4. **Critic veto (Q4):** **Observation-only in v1.** Critic emits a `Critique` that surfaces in the Trader's next briefing as advisory info; it never blocks the Trader's decision. Veto-capable Critic is a v2 capability, tracked separately when proposed.
+
+5. **Signal cache persistence (Q5):** **In-memory only.** The cache holds a Filter's last-emitted signal so subsequent Trader invocations within the same eval run can read it without re-running the Filter. Cleared at end of each run; not written to SQLite. Restart of an eval forces re-evaluation from the bar that follows the last persisted decision.
+
+6. **DAG-strict (Q6):** **Forward edges only.** `RouteSelection.to` is validated to reference AgentRefs that appear later in `Strategy.agents`. Cycle-detection is structural (no back-refs allowed) so the runtime can guarantee termination without per-cycle iteration limits. Loop-style flows (e.g. Critic-retry-Trader) are deferred to a v2 cycle-aware extension.
+
+7. **UI surface (Q7):** **Inline in AgentForm.** Capability editor is a chip-style multi-select rendered inside the existing single-page AgentForm — no separate tab, route, or modal. Honors the form's recent 2-pages → 1-page collapse. `AgentRef.activates` is shown as a small badge on the strategy-graph node, deep-linking to the AgentForm chip set on click. Phase F's separate UI spec still authors the detailed component shape but is bound by this inline-only constraint.
+
+8. **Legacy `trader_slot` + new `agents` mix (Q8):** **Leave as-is.** Deserialization continues to accept both; dispatcher prefers `agents` when `agents.len() > 0`. No hardening to "reject strategies with both populated" in v1; revisit after a migration window passes.
+
+These decisions supersede the corresponding rows in the **Open questions** section above. Phase A is now unblocked.
+
 ## Verification
 
 This spec is verified by:
