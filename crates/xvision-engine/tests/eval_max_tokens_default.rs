@@ -21,8 +21,8 @@
 //!    rule, established by QA15-followup, must still hold).
 
 use xvision_engine::agents::model::{
-    provider_default_max_tokens, AgentSlot, InputsPolicy, CONSERVATIVE_DEFAULT_MAX_TOKENS,
-    OPENAI_COMPAT_DEFAULT_MAX_TOKENS,
+    default_capabilities, provider_default_max_tokens, AgentSlot, InputsPolicy,
+    CONSERVATIVE_DEFAULT_MAX_TOKENS, OPENAI_COMPAT_DEFAULT_MAX_TOKENS,
 };
 
 fn slot_with(provider: &str, model: &str, max_tokens: Option<u32>) -> AgentSlot {
@@ -39,6 +39,7 @@ fn slot_with(provider: &str, model: &str, max_tokens: Option<u32>) -> AgentSlot 
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
+        capabilities: default_capabilities(),
         delta_briefing: None,
     }
 }
