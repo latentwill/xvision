@@ -134,12 +134,12 @@ pub async fn run(
         initial_nav_usd,
         fee_bps,
         slippage_atr_frac: 0.0,
-        instrument: asset_sym,
         step_hours,
         horizon_hours,
         n_bootstrap_resamples: 1000,
         block_size: None,
     };
+    let _asset_sym = asset_sym; // F18: asset now lives on snapshots/decisions, not BacktestRunConfig
 
     let init_nav = initial_nav_usd;
     let portfolio_provider: PortfolioProvider = Arc::new(move || PortfolioState {

@@ -47,7 +47,7 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 5.0,
             trader_summary: "show-decision smoke fixture decision.".into(),
-            asset: None,
+            asset: AssetSymbol::Btc,
         };
         store
             .upsert_cycle(&cycle_id, AssetSymbol::Btc.as_str(), 24, &serde_json::json!({}))

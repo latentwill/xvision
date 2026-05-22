@@ -8,24 +8,22 @@
 use std::path::Path;
 
 use tracing::{info, warn};
-use xvision_core::{AssetSymbol, PortfolioState, RiskDecision, TraderDecision};
+use xvision_core::{PortfolioState, RiskDecision, TraderDecision};
 use xvision_risk::RiskLayer;
 
 /// Run a `TraderDecision` through the risk layer and return the `RiskDecision`.
 ///
 /// The caller is responsible for persisting the result via `store::insert_risk_outcome`.
 ///
-/// The explicit `asset` is the source of truth for the risk evaluation. The
-/// returned decision is normalized to carry the same asset for downstream
-/// persistence.
+/// The decision's `asset` field is the source of truth for the risk evaluation
+/// (F18 cascade — risk no longer takes a separate `asset` parameter).
 pub fn apply_risk(
-    mut trader_decision: TraderDecision,
+    trader_decision: TraderDecision,
     portfolio: &PortfolioState,
-    asset: AssetSymbol,
     risk_layer: &RiskLayer,
 ) -> RiskDecision {
-    trader_decision.asset = Some(asset);
-    let risk_decision = risk_layer.evaluate(trader_decision, portfolio, asset);
+    let asset = trader_decision.asset;
+    let risk_decision = risk_layer.evaluate(trader_decision, portfolio);
 
     match &risk_decision {
         RiskDecision::Approved { .. } => {
@@ -69,7 +67,7 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 5.0,
             trader_summary: "Harness smoke test decision.".into(),
-            asset: None,
+            asset: AssetSymbol::Btc,
         }
     }
 
@@ -87,26 +85,13 @@ mod tests {
     #[test]
     fn harness_apply_risk_approves_clean_decision() {
         let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
-        let result = apply_risk(fixture_decision(), &flat_portfolio(), AssetSymbol::Btc, &layer);
+        let result = apply_risk(fixture_decision(), &flat_portfolio(), &layer);
         match result {
             RiskDecision::Approved { decision } => {
-                assert_eq!(decision.asset, Some(AssetSymbol::Btc));
+                assert_eq!(decision.asset, AssetSymbol::Btc);
             }
             other => panic!("expected Approved, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn harness_apply_risk_overrides_conflicting_embedded_asset() {
-        let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
-        let mut decision = fixture_decision();
-        decision.asset = Some(AssetSymbol::Eth);
-
-        let result = apply_risk(decision, &flat_portfolio(), AssetSymbol::Btc, &layer);
-        assert_eq!(
-            result.effective().and_then(|decision| decision.asset),
-            Some(AssetSymbol::Btc)
-        );
     }
 
     #[test]
@@ -115,11 +100,11 @@ mod tests {
         let mut decision = fixture_decision();
         decision.stop_loss_pct = 15.0;
 
-        let result = apply_risk(decision, &flat_portfolio(), AssetSymbol::Btc, &layer);
+        let result = apply_risk(decision, &flat_portfolio(), &layer);
         match result {
             RiskDecision::Modified { modified, reason, .. } => {
                 assert_eq!(reason, VetoReason::StopLossTooWide);
-                assert_eq!(modified.asset, Some(AssetSymbol::Btc));
+                assert_eq!(modified.asset, AssetSymbol::Btc);
                 assert!((modified.stop_loss_pct - 10.0).abs() < 0.01);
             }
             other => panic!("expected Modified, got {other:?}"),
@@ -132,11 +117,11 @@ mod tests {
         let mut decision = fixture_decision();
         decision.size_bps = 2500;
 
-        let result = apply_risk(decision, &flat_portfolio(), AssetSymbol::Btc, &layer);
+        let result = apply_risk(decision, &flat_portfolio(), &layer);
         match result {
             RiskDecision::Vetoed { original, reason } => {
                 assert_eq!(reason, VetoReason::PositionTooLarge);
-                assert_eq!(original.asset, Some(AssetSymbol::Btc));
+                assert_eq!(original.asset, AssetSymbol::Btc);
             }
             other => panic!("expected Vetoed, got {other:?}"),
         }

@@ -14,7 +14,7 @@
 use anyhow::Result;
 use uuid::Uuid;
 
-use xvision_core::{Action, Direction, RiskDecision, TraderDecision};
+use xvision_core::{Action, AssetSymbol, Direction, RiskDecision, TraderDecision};
 use xvision_execution::{AlpacaExecutor, Executor, OrderlyExecutor};
 
 use crate::commands::venue::Venue;
@@ -52,6 +52,7 @@ pub async fn run(
     stop_loss_pct: f32,
     take_profit_pct: f32,
     summary: String,
+    asset: AssetSymbol,
 ) -> Result<()> {
     let (action, direction) = match side {
         Side::Buy => (Action::Buy, Direction::Long),
@@ -67,7 +68,7 @@ pub async fn run(
         stop_loss_pct,
         take_profit_pct,
         trader_summary: summary,
-        asset: None,
+        asset,
     };
     let risk = RiskDecision::Approved { decision };
 

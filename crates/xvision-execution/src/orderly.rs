@@ -624,7 +624,19 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             RiskDecision::Modified { modified: td, .. } => td,
         };
 
-        // 2. Handle Flat / Close.
+        // 2. Validate asset routing. Orderly v1 ships only PERP_BTC_USDC
+        //    (ADR 0008 scope); a decision targeting any other asset is a
+        //    hard reject — the operator should either pick Alpaca or wait
+        //    for the multi-asset Orderly track to expand the product
+        //    surface.
+        if td.asset != AssetSymbol::Btc {
+            return Err(ExecutorError::NotActionable(format!(
+                "Orderly v1 only supports BTC (PERP_BTC_USDC); decision asked for {:?}",
+                td.asset
+            )));
+        }
+
+        // 3. Handle Flat / Close.
         match td.action {
             Action::Flat => {
                 return Err(ExecutorError::NotActionable(
@@ -1022,7 +1034,7 @@ mod tests {
                 stop_loss_pct: 2.5,
                 take_profit_pct: 5.0,
                 trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
-                asset: None,
+                asset: AssetSymbol::Btc,
             },
         }
     }
@@ -1151,7 +1163,7 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "Vetoed test decision — should not reach executor.".into(),
-                asset: None,
+                asset: AssetSymbol::Btc,
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };

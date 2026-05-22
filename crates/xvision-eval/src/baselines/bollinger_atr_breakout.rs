@@ -70,7 +70,7 @@ impl Algorithm for BollingerATRBreakout {
                     "BollingerATRBreakout: close {:.2} broke above upper band {:.2} with ATR {:.2} ({:.2}%) — long.",
                     close, bb_upper, atr, atr_pct * 100.0
                 ),
-                asset: None,
+                asset: snapshot.asset,
             })
         } else if close < bb_lower {
             Some(TraderDecision {
@@ -84,7 +84,7 @@ impl Algorithm for BollingerATRBreakout {
                     "BollingerATRBreakout: close {:.2} broke below lower band {:.2} with ATR {:.2} ({:.2}%) — short.",
                     close, bb_lower, atr, atr_pct * 100.0
                 ),
-                asset: None,
+                asset: snapshot.asset,
             })
         } else {
             None

@@ -339,15 +339,10 @@ fn apca_position_to_plain(pos: &apca::api::v2::position::Position) -> AlpacaPosi
 // ── AlpacaExecutor ───────────────────────────────────────────────────────────
 
 /// Alpaca paper-trading executor. Generic over `AlpacaApi` so tests can inject
-/// a mock without hitting the network.
+/// a mock without hitting the network. Asset is taken from each decision —
+/// no fallback asset field (F18 cascade complete).
 pub struct AlpacaExecutor<A = ApacClientApi> {
     api: A,
-    /// Fallback asset for `submit()` calls whose `TraderDecision` does not
-    /// carry an explicit `asset`, and for the `Action::Close` path (which
-    /// doesn't see a `TraderDecision`). Default constructors set this to
-    /// `AssetSymbol::Btc` for back-compat; use [`AlpacaExecutor::with_asset`]
-    /// to change the fallback.
-    default_asset: AssetSymbol,
 }
 
 impl AlpacaExecutor<ApacClientApi> {
@@ -359,7 +354,6 @@ impl AlpacaExecutor<ApacClientApi> {
         let client = apca::Client::new(api_info);
         Ok(Self {
             api: ApacClientApi::new(client),
-            default_asset: AssetSymbol::Btc,
         })
     }
 
@@ -370,7 +364,6 @@ impl AlpacaExecutor<ApacClientApi> {
         let client = apca::Client::new(api_info);
         Ok(Self {
             api: ApacClientApi::new(client),
-            default_asset: AssetSymbol::Btc,
         })
     }
 }
@@ -379,19 +372,9 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
     /// Constructor for tests: inject any `AlpacaApi` implementation.
     #[cfg(test)]
     pub(crate) fn with_api(api: A) -> Self {
-        Self {
-            api,
-            default_asset: AssetSymbol::Btc,
-        }
+        Self { api }
     }
 
-    /// Override the fallback asset this executor uses when a
-    /// `TraderDecision` doesn't carry its own `asset` (and for the
-    /// `Action::Close` path, which has no decision in hand).
-    pub fn with_asset(mut self, asset: AssetSymbol) -> Self {
-        self.default_asset = asset;
-        self
-    }
 
     /// Poll an order until it reaches a terminal state.
     /// 5 retries × 200 ms; aborts with `Timeout` if still pending after that.
@@ -467,19 +450,14 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
                 ));
             }
             Action::Close => {
-                // `Close` on a `TraderDecision` carrying its own asset closes
-                // that asset; otherwise fall back to the executor's
-                // configured `default_asset`.
-                let close_asset = td.asset.unwrap_or(self.default_asset);
-                return self.close_position(close_asset).await;
+                // Post-F18: every decision carries its own asset.
+                return self.close_position(td.asset).await;
             }
             Action::Buy | Action::Sell => {} // fall through
         }
 
-        // 3. Determine Alpaca symbol. Prefer the trader's choice when it
-        //    carries an explicit asset; otherwise use the executor's
-        //    fallback.
-        let asset = td.asset.unwrap_or(self.default_asset);
+        // 3. Route by the asset on the decision (post-F18 cascade).
+        let asset = td.asset;
         let symbol = alpaca_symbol_for(asset);
 
         // 4. Compute notional from live equity.
@@ -770,7 +748,7 @@ mod tests {
                 stop_loss_pct: 2.5,
                 take_profit_pct: 5.0,
                 trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
-                asset: None,
+                asset: AssetSymbol::Btc,
             },
         }
     }
@@ -841,10 +819,8 @@ mod tests {
 
     // ── submit_honors_trader_decision_asset (multi-asset unlock) ─────────────
 
-    /// When `TraderDecision.asset` is set, `submit()` routes the order to
-    /// that asset's Alpaca pair instead of the executor's `default_asset`.
-    /// This is the wire-level half of the multi-asset Alpaca unlock; the
-    /// validator half lives in `xvision_engine::eval::scenario::validate_v1`.
+    /// `submit()` routes the order to the Alpaca pair named on
+    /// `TraderDecision.asset` (post-F18 cascade — no fallback `default_asset`).
     #[tokio::test]
     async fn submit_honors_trader_decision_asset() {
         let cycle_id = Uuid::new_v4();
@@ -860,7 +836,6 @@ mod tests {
         );
         let captured_request = Arc::clone(&api.captured_request);
 
-        // default_asset stays BTC; the decision explicitly asks for ETH.
         let executor = AlpacaExecutor::with_api(api);
         let decision = RiskDecision::Approved {
             decision: TraderDecision {
@@ -870,9 +845,8 @@ mod tests {
                 direction: Direction::Long,
                 stop_loss_pct: 2.5,
                 take_profit_pct: 5.0,
-                trader_summary: "Long ETH on confirmed range break with 2:1 R:R; default_asset is BTC."
-                    .into(),
-                asset: Some(AssetSymbol::Eth),
+                trader_summary: "Long ETH on confirmed range break with 2:1 R:R.".into(),
+                asset: AssetSymbol::Eth,
             },
         };
         executor.submit(&decision).await.expect("submit should succeed");
@@ -880,7 +854,7 @@ mod tests {
         let req = captured_request.lock().unwrap().clone().unwrap();
         assert_eq!(
             req.symbol, "ETH/USD",
-            "submit must route to the asset named on the TraderDecision, not default_asset"
+            "submit must route to the asset named on the TraderDecision"
         );
     }
 
@@ -922,7 +896,7 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "Vetoed test decision — should not reach executor.".into(),
-                asset: None,
+                asset: AssetSymbol::Btc,
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };

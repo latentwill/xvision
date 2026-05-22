@@ -58,14 +58,14 @@ pub struct TickReport {
 // Configuration
 // ---------------------------------------------------------------------------
 
-/// Static configuration for one backtest run.
+/// Static configuration for one backtest run. F18 cascade: `instrument` is
+/// removed — `submit()` routes per `TraderDecision.asset`. The runner is
+/// asset-agnostic; multiple positions keyed by asset coexist in the
+/// portfolio.
 #[derive(Debug, Clone)]
 pub struct BacktestConfig {
     /// Starting equity in USD.
     pub initial_equity_usd: f64,
-    /// The instrument being simulated. Defaults to BTC.
-    /// `submit()` applies all decisions to this asset.
-    pub instrument: AssetSymbol,
     /// Round-trip fee in basis points (entry + exit combined).
     /// Default: 10 bps (5 entry + 5 exit) — conservative for crypto perps.
     pub fee_bps: u32,
@@ -80,7 +80,6 @@ impl Default for BacktestConfig {
     fn default() -> Self {
         Self {
             initial_equity_usd: 100_000.0,
-            instrument: AssetSymbol::Btc,
             fee_bps: 10,
             slippage_atr_frac: 0.10,
             max_history_days: 30,
@@ -435,7 +434,7 @@ impl Executor for BacktestExecutor {
             }
         };
 
-        let asset = self.config.instrument;
+        let asset = td.asset;
 
         match td.action {
             Action::Flat => {
@@ -653,7 +652,7 @@ mod tests {
                 stop_loss_pct: sl,
                 take_profit_pct: tp,
                 trader_summary: "test fixture decision for unit test".into(),
-                asset: None,
+                asset: AssetSymbol::Btc,
             },
         }
     }
@@ -661,7 +660,6 @@ mod tests {
     fn default_exec(opening_close: f64) -> BacktestExecutor {
         let cfg = BacktestConfig {
             initial_equity_usd: 100_000.0,
-            instrument: AssetSymbol::Btc,
             fee_bps: 10,
             slippage_atr_frac: 0.10,
             max_history_days: 30,
@@ -686,7 +684,6 @@ mod tests {
         // Opening bar: close 50000, ATR seed = high-low = 500
         let cfg = BacktestConfig {
             initial_equity_usd: 100_000.0,
-            instrument: AssetSymbol::Btc,
             fee_bps: 10,
             slippage_atr_frac: 0.10,
             max_history_days: 30,
@@ -768,7 +765,7 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 5.0,
                 trader_summary: "test vetoed decision fixture for test".into(),
-                asset: None,
+                asset: AssetSymbol::Btc,
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };
@@ -818,7 +815,6 @@ mod tests {
         // Opening bar: day 0 baseline, ts=0
         let cfg = BacktestConfig {
             initial_equity_usd: 100_000.0,
-            instrument: AssetSymbol::Btc,
             fee_bps: 10,
             slippage_atr_frac: 0.0, // zero slippage so we can reason about exact prices
             max_history_days: 30,
@@ -909,7 +905,6 @@ mod tests {
         // Expected fill = 50000 × (1 + 0.1 × 1000/50000) = 50000 × 1.002 = 50100
         let cfg = BacktestConfig {
             initial_equity_usd: 100_000.0,
-            instrument: AssetSymbol::Btc,
             fee_bps: 10,
             slippage_atr_frac: 0.10,
             max_history_days: 30,
@@ -949,7 +944,6 @@ mod tests {
         // Total fees ≈ 1 USD
         let cfg = BacktestConfig {
             initial_equity_usd: 100_000.0,
-            instrument: AssetSymbol::Btc,
             fee_bps: 10,
             slippage_atr_frac: 0.0, // zero slippage to isolate fee effect
             max_history_days: 30,

@@ -25,9 +25,11 @@ enum RiskAction {
         decision: PathBuf,
         #[arg(long)]
         portfolio: PathBuf,
-        /// BTC | ETH | SOL.
+        /// Optional asset override — overwrites the decision JSON's `asset`
+        /// before evaluation. Useful for sanity-checking a fixture against a
+        /// different asset without editing the file.
         #[arg(long, value_parser = parse_asset)]
-        asset: xvision_core::AssetSymbol,
+        asset: Option<xvision_core::AssetSymbol>,
         /// Path to `risk.toml`. Defaults to `config/risk.toml` under cwd.
         #[arg(long, default_value = "config/risk.toml")]
         risk_config: PathBuf,
@@ -63,14 +65,17 @@ pub async fn run(cmd: RiskCmd) -> anyhow::Result<()> {
 fn evaluate(
     decision_path: PathBuf,
     portfolio_path: PathBuf,
-    asset: xvision_core::AssetSymbol,
+    asset_override: Option<xvision_core::AssetSymbol>,
     risk_path: &Path,
     whitelist_path: &Path,
 ) -> anyhow::Result<()> {
-    let decision: TraderDecision = serde_json::from_slice(&std::fs::read(&decision_path)?)?;
+    let mut decision: TraderDecision = serde_json::from_slice(&std::fs::read(&decision_path)?)?;
     let portfolio: PortfolioState = serde_json::from_slice(&std::fs::read(&portfolio_path)?)?;
+    if let Some(asset) = asset_override {
+        decision.asset = asset;
+    }
     let layer = xvision_risk::RiskLayer::from_config(risk_path, whitelist_path)?;
-    let outcome = layer.evaluate(decision, &portfolio, asset);
+    let outcome = layer.evaluate(decision, &portfolio);
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(())
 }
