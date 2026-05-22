@@ -290,13 +290,13 @@ async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
     }
 
     match crate::agent::filter_dispatch::run_llm_filter(input).await {
-        Ok(signal) => Ok(DispatchOutcome {
-            output: AgentOutput::Filter(signal),
-            input_tokens: 0,
-            output_tokens: 0,
+        Ok(result) => Ok(DispatchOutcome {
+            output: AgentOutput::Filter(result.signal),
+            input_tokens: result.input_tokens,
+            output_tokens: result.output_tokens,
             raw_response: None,
         }),
-        Err(_) => {
+        Err(crate::agent::filter_dispatch::FilterDispatchError::Parse(_)) => {
             // Parse error already emitted as `filter_parse_error`
             // (filter_dispatch::run_llm_filter). Surface a `null`
             // payload so the pipeline can keep walking — predicates
@@ -314,6 +314,7 @@ async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
                 raw_response: None,
             })
         }
+        Err(crate::agent::filter_dispatch::FilterDispatchError::Dispatch(e)) => Err(e),
     }
 }
 

@@ -1529,6 +1529,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             cycle_idx: 0,
             provider_catalogs: std::collections::HashMap::new(),
             filter_ctx: None,
+            recorder: None,
         })
         .await
         .exit_with(XvnExit::Upstream)?;

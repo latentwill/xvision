@@ -11,11 +11,11 @@ use std::sync::{Arc, Mutex};
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::agents::Capability;
-use xvision_engine::strategies::agent_ref::AgentRef;
+use xvision_engine::strategies::agent_ref::{AgentRef, EdgePredicate};
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::{PipelineDef, PipelineKind, Strategy};
+use xvision_engine::strategies::{PipelineDef, PipelineEdge, PipelineKind, Strategy};
 use xvision_engine::tools::ToolRegistry;
 
 /// Routes the canned-response selection by the slot's role so a single
@@ -65,6 +65,14 @@ impl LlmDispatch for RoleAwareDispatch {
 }
 
 fn fixture_strategy(agents: Vec<AgentRef>) -> Strategy {
+    fixture_strategy_with_pipeline(agents, PipelineKind::Sequential, Vec::new())
+}
+
+fn fixture_strategy_with_pipeline(
+    agents: Vec<AgentRef>,
+    kind: PipelineKind,
+    edges: Vec<PipelineEdge>,
+) -> Strategy {
     Strategy {
         manifest: PublicManifest {
             id: "01HZFLT".into(),
@@ -83,10 +91,7 @@ fn fixture_strategy(agents: Vec<AgentRef>) -> Strategy {
         },
         hypothesis: None,
         agents,
-        pipeline: PipelineDef {
-            kind: PipelineKind::Sequential,
-            edges: Vec::new(),
-        },
+        pipeline: PipelineDef { kind, edges },
         regime_slot: None,
         intern_slot: None,
         trader_slot: None,
@@ -186,6 +191,8 @@ async fn filter_signal_flows_into_trader_briefing() {
         body.contains("trend"),
         "Trader briefing must include the Filter payload value: {body}"
     );
+    assert_eq!(outs.total_input_tokens, 6, "Filter + Trader token accounting");
+    assert_eq!(outs.total_output_tokens, 10, "Filter + Trader token accounting");
 }
 
 #[tokio::test]
@@ -239,4 +246,177 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
         outs.trader.is_some(),
         "Trader still runs with a null-payload Filter signal"
     );
+}
+
+#[tokio::test]
+async fn graph_predicate_true_invokes_trader() {
+    let agents = vec![
+        AgentRef {
+            agent_id: "01HZF".into(),
+            role: "regime_filter".into(),
+            activates: Some(Capability::Filter),
+        },
+        AgentRef {
+            agent_id: "01HZT".into(),
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        },
+    ];
+    let strategy = fixture_strategy_with_pipeline(
+        agents,
+        PipelineKind::Graph,
+        vec![PipelineEdge {
+            from_role: "regime_filter".into(),
+            to_role: "trader".into(),
+            condition: Some(EdgePredicate::Eq {
+                signal_field: "regime".into(),
+                value: serde_json::json!("trend"),
+            }),
+        }],
+    );
+    let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let dispatch = Arc::new(RoleAwareDispatch::new(
+        r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"bar"}"#,
+        r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
+    ));
+
+    let outs = run_pipeline(PipelineInputs {
+        strategy: &strategy,
+        agent_slots: &slots,
+        seed_inputs: serde_json::json!({}),
+        dispatch: dispatch.clone(),
+        tools: Arc::new(ToolRegistry::default_with_builtins()),
+        obs: None,
+        memory_recorder: None,
+        scenario_start: None,
+        run_id: "run-1".into(),
+        scenario_id: "sc-1".into(),
+        cycle_idx: 0,
+        provider_catalogs: std::collections::HashMap::new(),
+        filter_ctx: None,
+        recorder: None,
+    })
+    .await
+    .expect("graph pipeline runs");
+
+    assert!(outs.trader.is_some(), "matching predicate should invoke Trader");
+    assert_eq!(dispatch.requests().len(), 2, "Filter + Trader dispatches");
+}
+
+#[tokio::test]
+async fn graph_predicate_false_skips_trader() {
+    let agents = vec![
+        AgentRef {
+            agent_id: "01HZF".into(),
+            role: "regime_filter".into(),
+            activates: Some(Capability::Filter),
+        },
+        AgentRef {
+            agent_id: "01HZT".into(),
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        },
+    ];
+    let strategy = fixture_strategy_with_pipeline(
+        agents,
+        PipelineKind::Graph,
+        vec![PipelineEdge {
+            from_role: "regime_filter".into(),
+            to_role: "trader".into(),
+            condition: Some(EdgePredicate::Eq {
+                signal_field: "regime".into(),
+                value: serde_json::json!("trend"),
+            }),
+        }],
+    );
+    let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let dispatch = Arc::new(RoleAwareDispatch::new(
+        r#"{"name":"regime_filter","payload":{"regime":"range"},"granularity":"bar"}"#,
+        r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
+    ));
+
+    let outs = run_pipeline(PipelineInputs {
+        strategy: &strategy,
+        agent_slots: &slots,
+        seed_inputs: serde_json::json!({}),
+        dispatch: dispatch.clone(),
+        tools: Arc::new(ToolRegistry::default_with_builtins()),
+        obs: None,
+        memory_recorder: None,
+        scenario_start: None,
+        run_id: "run-1".into(),
+        scenario_id: "sc-1".into(),
+        cycle_idx: 0,
+        provider_catalogs: std::collections::HashMap::new(),
+        filter_ctx: None,
+        recorder: None,
+    })
+    .await
+    .expect("graph pipeline runs");
+
+    let trader = outs.trader.expect("graph skip synthesizes a hold response");
+    assert!(
+        trader.text().contains("trader_skipped_by_graph"),
+        "skip response should explain graph gating: {}",
+        trader.text(),
+    );
+    assert_eq!(dispatch.requests().len(), 1, "only Filter should dispatch");
+}
+
+#[tokio::test]
+async fn filter_provider_error_aborts_pipeline() {
+    struct FilterFails;
+
+    #[async_trait]
+    impl LlmDispatch for FilterFails {
+        async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+            if req.system_prompt.contains("You are a Filter") {
+                anyhow::bail!("provider unavailable");
+            }
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: r#"{"action":"hold","conviction":0.1,"justification":"r"}"#.into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 3,
+                output_tokens: 5,
+            })
+        }
+    }
+
+    let agents = vec![
+        AgentRef {
+            agent_id: "01HZF".into(),
+            role: "regime_filter".into(),
+            activates: Some(Capability::Filter),
+        },
+        AgentRef {
+            agent_id: "01HZT".into(),
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        },
+    ];
+    let strategy = fixture_strategy(agents);
+    let slots = vec![resolved("regime_filter"), resolved("trader")];
+
+    let err = run_pipeline(PipelineInputs {
+        strategy: &strategy,
+        agent_slots: &slots,
+        seed_inputs: serde_json::json!({}),
+        dispatch: Arc::new(FilterFails),
+        tools: Arc::new(ToolRegistry::default_with_builtins()),
+        obs: None,
+        memory_recorder: None,
+        scenario_start: None,
+        run_id: "run-1".into(),
+        scenario_id: "sc-1".into(),
+        cycle_idx: 0,
+        provider_catalogs: std::collections::HashMap::new(),
+        filter_ctx: None,
+        recorder: None,
+    })
+    .await
+    .expect_err("provider failures must not become null Filter signals");
+
+    assert!(err.to_string().contains("provider unavailable"), "got: {err}");
 }

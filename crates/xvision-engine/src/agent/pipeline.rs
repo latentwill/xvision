@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::agent::dispatch_capability::{dispatch_capability, resolve_activates, AgentOutput, DispatchInput};
@@ -338,11 +338,18 @@ fn noop_skip_response() -> LlmResponse {
     }
 }
 
-async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
-    if input.strategy.pipeline.kind == PipelineKind::Graph {
-        anyhow::bail!("graph agent pipelines are not executable yet");
+fn graph_skip_response() -> LlmResponse {
+    LlmResponse {
+        content: vec![ContentBlock::Text {
+            text: r#"{"action":"hold","conviction":0.0,"justification":"trader_skipped_by_graph: all Trader agents were gated out by graph edge predicates"}"#.into(),
+        }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 0,
+        output_tokens: 0,
     }
+}
 
+async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
     let mut accumulated = input.seed_inputs.clone();
     let mut total_in = 0u32;
     let mut total_out = 0u32;
@@ -357,14 +364,13 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
     // this fallback to every dispatch under the Phase B seam.
     let strategy_tools: Vec<String> = input.strategy.manifest.required_tools.clone();
 
-    // Phase B: track the previous capability output so edge predicates
-    // can read it via `evaluate_predicate(predicate, &prev_output)`. The
-    // first iteration has nothing upstream — predicates that fire then
-    // simply don't match. Suppressing the lint here because the `None`
-    // is the intentional starting state read by `next_index` on the
-    // first iteration's tail.
+    // Phase B: track the previous capability output so Router can
+    // redirect the next dispatch. Graph edge predicates read from
+    // `outputs_by_role` instead because they gate targets by incoming
+    // edge, not by the immediately previous agent.
     let mut prev_output: Option<AgentOutput> = None;
     let _ = &prev_output;
+    let mut outputs_by_role: BTreeMap<String, AgentOutput> = BTreeMap::new();
 
     // Phase C — per-cycle ordered map of `(role_key, FilterSignal)` for
     // every Filter that emitted on this cycle. Threaded into the
@@ -409,6 +415,29 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
         };
         let capability = resolve_activates(activates_field, &capabilities_for_fallback);
 
+        // Graph pipelines gate an agent on its incoming conditioned
+        // edges. A missing or non-matching upstream FilterSignal skips
+        // the target for this cycle instead of silently falling through
+        // to the default sequential order.
+        if graph_agent_is_gated_out(input.strategy, &outputs_by_role, i) {
+            tracing::debug!(
+                event = "graph_agent_gated_out",
+                role = %resolved.role,
+                "graph edge predicate skipped agent dispatch",
+            );
+            if let Some(obs) = input.obs.as_ref() {
+                let payload = serde_json::json!({
+                    "role": resolved.role,
+                    "cycle_idx": input.cycle_idx,
+                    "reason": "incoming graph edge predicate evaluated false",
+                });
+                obs.emit_engine_event("graph_agent_gated_out", None, Some(payload.to_string()))
+                    .await;
+            }
+            i += 1;
+            continue;
+        }
+
         // trader-noop-skip: only fires on Trader-capable agents AND
         // when the seed has zero legal open actions. Keeping the gate
         // here (above `dispatch_capability`) so the synthesized
@@ -443,10 +472,11 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
             let skip_out = noop_skip_response();
             accumulated[format!("{role_key}_output")] = serde_json::Value::String(skip_out.text());
             trader = Some(skip_out.clone());
-            prev_output = Some(AgentOutput::Trader(
-                crate::agent::dispatch_capability::TraderDecision { response: skip_out },
-            ));
-            i = next_index(input.strategy, &prev_output, i);
+            let skip_output =
+                AgentOutput::Trader(crate::agent::dispatch_capability::TraderDecision { response: skip_out });
+            outputs_by_role.insert(role_key.clone(), skip_output.clone());
+            prev_output = Some(skip_output);
+            i = next_index(&prev_output, i);
             continue;
         }
 
@@ -716,13 +746,17 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
             }
         }
 
+        outputs_by_role.insert(role_key.clone(), outcome.output.clone());
         prev_output = Some(outcome.output);
 
         // Decide which index to visit next: Router output jumps
-        // directly; any matching predicate fires its `to_role` target;
-        // otherwise fall through to `i + 1` (Sequential / Single
-        // semantics — spec Decision 6).
-        i = next_index(input.strategy, &prev_output, i);
+        // directly; otherwise fall through to `i + 1`. Graph edge
+        // predicates are target gates evaluated before dispatch.
+        i = next_index(&prev_output, i);
+    }
+
+    if input.strategy.pipeline.kind == PipelineKind::Graph && trader.is_none() {
+        trader = Some(graph_skip_response());
     }
 
     Ok(PipelineOutputs {
@@ -736,60 +770,45 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
 
 /// Pick the next `Strategy.agents` index to dispatch.
 ///
-/// Resolution order (spec Decision 6):
-/// 1. Router output → `RouteSelection.target_agent_ref_index`. The
-///    dispatcher already validated this is `> current_index` and
-///    `< total_agents`.
-/// 2. The first outgoing edge with a matching predicate (when
-///    `PipelineKind::Graph` — Sequential/Single carry no edges). The
-///    edge's `to_role` is looked up against `strategy.agents`. Backward
-///    targets are not honoured here (Phase B is DAG-strict); they would
-///    have failed `validate_strategy` already.
-/// 3. Plain fall-through to `current_index + 1`.
-fn next_index(strategy: &Strategy, prev_output: &Option<AgentOutput>, current_index: usize) -> usize {
+/// Router output may jump forward; every other capability walks to the
+/// next strategy-order agent. `PipelineKind::Graph` predicates are
+/// evaluated as incoming target gates in `graph_agent_is_gated_out`.
+fn next_index(prev_output: &Option<AgentOutput>, current_index: usize) -> usize {
     if let Some(AgentOutput::Router(sel)) = prev_output.as_ref() {
         return sel.target_agent_ref_index;
     }
 
-    if strategy.pipeline.kind == PipelineKind::Graph {
-        if let (Some(prev), Some(prev_role)) = (
-            prev_output.as_ref(),
-            strategy
-                .agents
-                .get(current_index)
-                .map(|a| canonical_role(&a.role)),
-        ) {
-            for edge in &strategy.pipeline.edges {
-                if canonical_role(&edge.from_role) != prev_role {
-                    continue;
-                }
-                let condition_matches = match &edge.condition {
-                    None => true,
-                    Some(p) => evaluate_predicate(p, prev),
-                };
-                if !condition_matches {
-                    continue;
-                }
-                let to_role = canonical_role(&edge.to_role);
-                if let Some((target_idx, _)) = strategy
-                    .agents
-                    .iter()
-                    .enumerate()
-                    .find(|(_, a)| canonical_role(&a.role) == to_role)
-                {
-                    // DAG-strict: only honour forward edges at runtime.
-                    // Backward edges are rejected by `validate_strategy`
-                    // so they should never reach here, but the guard
-                    // makes the runtime invariant explicit.
-                    if target_idx > current_index {
-                        return target_idx;
-                    }
-                }
-            }
+    current_index + 1
+}
+
+fn graph_agent_is_gated_out(
+    strategy: &Strategy,
+    outputs_by_role: &BTreeMap<String, AgentOutput>,
+    current_index: usize,
+) -> bool {
+    if strategy.pipeline.kind != PipelineKind::Graph {
+        return false;
+    }
+    let Some(agent) = strategy.agents.get(current_index) else {
+        return false;
+    };
+    let role = canonical_role(&agent.role);
+    for edge in &strategy.pipeline.edges {
+        if canonical_role(&edge.to_role) != role {
+            continue;
+        }
+        let Some(predicate) = edge.condition.as_ref() else {
+            continue;
+        };
+        let from_role = canonical_role(&edge.from_role);
+        let Some(upstream) = outputs_by_role.get(&from_role) else {
+            return true;
+        };
+        if !evaluate_predicate(predicate, upstream) {
+            return true;
         }
     }
-
-    current_index + 1
+    false
 }
 
 /// Phase C — graph-topology check for `Decision`-granularity Filter
