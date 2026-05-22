@@ -45,6 +45,36 @@ export function SlotForm({
     onChange({ ...slot, [key]: value });
   }
 
+  // `bar_history_limit` UX:
+  //   - empty string  → null   (engine default: send full warmup_bars slice)
+  //   - positive int  → number (trim to most-recent N bars)
+  //   - 0 / negative  → null   (server-side normalization mirrors this; we
+  //                             reject at the input layer too to avoid the
+  //                             confusing "saved 0 → reloaded as null" round-trip)
+  //   - non-integer   → null   (HTML number input + step=1 keeps the UI honest)
+  // Bounds: 1..=1000. The engine has no hard cap (the field is `Option<u32>`)
+  // but 1000 is well past any reasonable per-decision context window and
+  // gives operators a guardrail against typing 100000 by accident.
+  const BAR_HISTORY_LIMIT_MIN = 1;
+  const BAR_HISTORY_LIMIT_MAX = 1000;
+  function patchBarHistoryLimit(raw: string) {
+    if (raw.trim() === "") {
+      patch("bar_history_limit", null);
+      return;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+      patch("bar_history_limit", null);
+      return;
+    }
+    if (parsed < BAR_HISTORY_LIMIT_MIN) {
+      patch("bar_history_limit", null);
+      return;
+    }
+    const clamped = Math.min(parsed, BAR_HISTORY_LIMIT_MAX);
+    patch("bar_history_limit", clamped);
+  }
+
   function changeProvider(provider: string) {
     const row = providerRows.find((p) => p.name === provider);
     const modelStillValid =
@@ -159,6 +189,39 @@ export function SlotForm({
           className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono leading-relaxed focus:outline-none focus:border-gold/40 resize-y"
         />
       </Field>
+
+      {/* F-8 — bar-history rolling window. `null` (empty input) keeps
+          today's behavior: the full warmup_bars slice goes to the trader
+          LLM. A positive integer trims the slice to its most-recent N
+          entries so the prompt prefix is stable across many decisions
+          and Anthropic prompt-caching can land hits. Shipped runner-side
+          via PR #372; this input surfaces the existing cap to operators.
+          See team/contracts/bar-history-limit-surface.md */}
+      <div className="mt-4">
+        <Field label="Bar history limit">
+          <input
+            type="number"
+            inputMode="numeric"
+            step={1}
+            min={BAR_HISTORY_LIMIT_MIN}
+            max={BAR_HISTORY_LIMIT_MAX}
+            value={slot.bar_history_limit ?? ""}
+            onChange={(e) => patchBarHistoryLimit(e.target.value)}
+            placeholder="auto (full warmup window)"
+            aria-describedby={`slot-${index}-bar-history-help`}
+            className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
+          />
+          <small
+            id={`slot-${index}-bar-history-help`}
+            className="block mt-1.5 text-[11.5px] text-text-3 leading-snug"
+          >
+            How many recent bars the agent sees per decision. Lower ={" "}
+            cheaper + faster. Higher = more context. Defaults to the
+            engine's runtime cap (currently set per-provider). Leave blank
+            for the default; integer 1–1000.
+          </small>
+        </Field>
+      </div>
 
       {/* V2D — cortex-memory mode. `off` keeps the dispatcher's memory
           seam dormant (the default). `global` shares the workspace pool

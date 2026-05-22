@@ -142,6 +142,133 @@ describe("SlotForm.changeProvider", () => {
     expect(next.model).toBe("gpt-4.1-mini");
   });
 
+  it("renders bar_history_limit input empty when slot value is null", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    });
+
+    renderSlot({
+      slot: makeSlot({ bar_history_limit: null }),
+      onChange: vi.fn(),
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
+    );
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    expect(input.value).toBe("");
+  });
+
+  it("renders bar_history_limit input with the slot's stored value", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    });
+
+    renderSlot({
+      slot: makeSlot({ bar_history_limit: 50 }),
+      onChange: vi.fn(),
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
+    );
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    expect(input.value).toBe("50");
+  });
+
+  it("persists a valid bar_history_limit through onChange", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    });
+
+    const onChange = vi.fn();
+    renderSlot({
+      slot: makeSlot({ bar_history_limit: null }),
+      onChange,
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
+    );
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "120" } });
+
+    expect(onChange).toHaveBeenCalled();
+    const next = onChange.mock.calls[0]![0] as AgentSlot;
+    expect(next.bar_history_limit).toBe(120);
+  });
+
+  it("clears bar_history_limit when input is emptied", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    });
+
+    const onChange = vi.fn();
+    renderSlot({
+      slot: makeSlot({ bar_history_limit: 42 }),
+      onChange,
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
+    );
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "" } });
+
+    expect(onChange).toHaveBeenCalled();
+    const next = onChange.mock.calls[0]![0] as AgentSlot;
+    expect(next.bar_history_limit).toBeNull();
+  });
+
+  it("rejects zero / negative bar_history_limit values (maps to null)", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    });
+
+    const onChange = vi.fn();
+    renderSlot({
+      slot: makeSlot({ bar_history_limit: 50 }),
+      onChange,
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
+    );
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+
+    fireEvent.change(input, { target: { value: "0" } });
+    expect(
+      (onChange.mock.calls.at(-1)![0] as AgentSlot).bar_history_limit,
+    ).toBeNull();
+
+    fireEvent.change(input, { target: { value: "-5" } });
+    expect(
+      (onChange.mock.calls.at(-1)![0] as AgentSlot).bar_history_limit,
+    ).toBeNull();
+  });
+
+  it("clamps bar_history_limit above the max bound", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    });
+
+    const onChange = vi.fn();
+    renderSlot({
+      slot: makeSlot({ bar_history_limit: null }),
+      onChange,
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
+    );
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "999999" } });
+
+    expect(onChange).toHaveBeenCalled();
+    const next = onChange.mock.calls.at(-1)![0] as AgentSlot;
+    expect(next.bar_history_limit).toBe(1000);
+  });
+
   it("preserves an empty model when changing providers (no spurious change)", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [
