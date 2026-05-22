@@ -65,7 +65,11 @@ before contracts can open:
   P0 bundle shipped via #425, #428, #429. P1 (#4–#11) and P2 (#13–#15)
   tracks Reserved pending operator confirmation.
 
-## Pre-existing CLI test failures (carryover, not yet contracted)
+## Pre-existing CLI test failures — now contracted as `cli-test-fixture-completion-tail`
+
+See `team/contracts/cli-test-fixture-completion-tail.md` — ready to dispatch, no dependencies, leaf scope.
+
+### Original carryover note
 
 Surfaced 2026-05-22 by the `strategy-slot-prompt-resolution` worker
 during full-workspace verification. Predate all wave-1+ work this
@@ -81,9 +85,7 @@ session; flagged here so a follow-up contract can pick them up:
 - `cargo test -p xvision-cli --test experiment_run` — same shape as
   `eval_batch_run`.
 
-Suggested contract: `cli-test-fixture-completion-tail` — migrate the
-9 CLI fixtures to the post-template-registry, post-strategy-fixture-
-migration shape.
+Contract authored 2026-05-22 — see `team/contracts/cli-test-fixture-completion-tail.md`.
 
 ## Recently Closed
 
