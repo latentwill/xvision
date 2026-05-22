@@ -199,7 +199,12 @@ Infrastructure used by both tracks. Lives on `main`.
   `BacktestRunConfig::instrument` are gone — backtest executor reads asset
   from each decision. Alpaca's `default_asset` field removed; Orderly v1
   rejects non-BTC decisions (PERP_BTC_USDC scope per ADR 0008). See contract
-  `team/contracts/multi-asset-alpaca-unlock.md`.
+  `team/archive/2026-05-22-conductor-pass-5/contracts/multi-asset-alpaca-unlock.md`.
+- **Orderly multi-asset expansion (2026-05-22).** The BTC-only `NotActionable`
+  guard at the Orderly executor boundary was lifted shortly after. Orderly
+  now routes per `td.asset` across `ORDERLY_SUPPORTED` (BTC, ETH, SOL, AVAX,
+  DOGE, LINK). See `docs/superpowers/plans/2026-05-22-orderly-multi-asset-expansion.md`
+  and follow-on F44 below.
 
 ### F19 [Shared]. Re-adopt `orderly-connector-rs` SDK when its `zeroize` pin loosens
 
@@ -337,3 +342,13 @@ Infrastructure used by both tracks. Lives on `main`.
 - **Scope:** execute tracks in `team/intake/2026-05-21-memory-safety-and-observability.md`. Three tracks: (a) `memory-forget-undo-snapshot` — soft-delete + grace period so `xvn memory forget` is recoverable; (b) `memory-provenance-in-decisions-trace` — bind `memory_recall` events to `decision_id` so trace can answer "which memories drove this decision"; (c) `memory-aware-eval-findings` — surface findings that name memory items most likely to have influenced outcome.
 - **Explicitly out of scope:** kill bucket from `team/decisions.md` D5 (cross-namespace blending, embedder config UI, memory diff CLI, mem0/Honcho/mempalace adapters, cortex-http sidecar, cross-host sharing, embedding swap CLI) and V3-candidate slips (tool-driven memory, TTL/LRU eviction).
 - **Blocking:** non-blocking; safety net + observability over V2D. `memory-forget-undo-snapshot` should land close to V2D.
+
+> Note: F43 was assigned to trace-dock-emitters (shipped 2026-05-22, #524) on
+> the board but never landed in this file; the next free slot is therefore F44.
+
+### F44 [Shared]. Orderly market refresh — periodic `GET /v1/public/info` poll
+
+- **Trigger:** Orderly multi-asset expansion landed (2026-05-22 — see `docs/superpowers/plans/2026-05-22-orderly-multi-asset-expansion.md`). Current supported set is hardcoded in `ORDERLY_SUPPORTED` (`crates/xvision-execution/src/orderly.rs`).
+- **Scope:** schedule a background poll of Orderly's `GET /v1/public/info` (or `GET /v1/public/futures_info`) into a SQLite cache, then have `orderly_symbol_for` short-circuit against the cache instead of the inline constant. Delisted markets should be rejected pre-submit by the executor with `NotActionable` and a clear "delisted" hint, not surface only when the broker returns an opaque rejection. Cache TTL: 24h.
+- **Why noted:** the hardcoded set is fine until Orderly adds or removes a market; without this, a delisted symbol would silently route to the broker and the order would fail at submit-time. Quality-of-life over correctness — the executor already rejects with `NotActionable` for assets not in the inline set.
+- **Blocking:** non-blocking.

@@ -12,14 +12,15 @@ use std::sync::Arc;
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+use xvision_engine::agents::AgentSlot;
+use xvision_engine::api::agents::{self as agents_api, CreateAgentRequest};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
-use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
-use xvision_engine::strategies::{ActivationMode, Strategy};
+use xvision_engine::strategies::{ActivationMode, AgentRef, PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 // Import the run_experiment orchestrator.
 use xvision_cli::commands::experiment_run::{run_experiment, ExperimentRunRequest};
@@ -50,6 +51,35 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // Agent tables (005) + slot column migrations needed by agents_api::create.
+    sqlx::query(include_str!("../../xvision-engine/migrations/005_agents.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/019_agent_slot_prompt_version.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/020_agent_slot_inputs_policy.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/025_agent_slot_cache_and_window.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/029_agent_slot_memory_mode.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
@@ -101,10 +131,40 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     (ctx, dir)
 }
 
-async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
+async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
+    // Post-refactor shape: create a real Agent first, then bind it into the
+    // strategy's `agents: Vec<AgentRef>`. The legacy `trader_slot` field is
+    // not used — the eval boundary rejects strategies without at least one
+    // bound Agent ref.
+    let agent = agents_api::create(
+        ctx,
+        CreateAgentRequest {
+            name: format!("exp-test-agent-{strategy_id}"),
+            description: "experiment test agent".into(),
+            tags: vec!["exp-test".into()],
+            slots: vec![AgentSlot {
+                name: "main".into(),
+                provider: "openai".into(),
+                model: "gpt-4.1-mini".into(),
+                system_prompt: "Use the supplied OHLCV context, risk limits, and scenario metadata to produce a disciplined trading decision. Explain position sizing, invalidation, and risk controls before choosing an action.".into(),
+                skill_ids: vec![],
+                max_tokens: Some(1024),
+                temperature: None,
+                prompt_version: String::new(),
+                inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: Default::default(),
+                noop_skip: None,
+                delta_briefing: None,
+            }],
+        },
+    )
+    .await
+    .unwrap();
+
     let strategy = Strategy {
         manifest: PublicManifest {
-            id: agent_id.to_string(),
+            id: strategy_id.to_string(),
             display_name: "Experiment-test strategy".into(),
             plain_summary: "for experiment run tests".into(),
             creator: "@tester".into(),
@@ -119,17 +179,14 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
             min_warmup_bars: None,
         },
         hypothesis: None,
-        agents: Vec::new(),
-        pipeline: Default::default(),
+        agents: vec![AgentRef {
+            agent_id: agent.agent_id.clone(),
+            role: "trader".into(),
+        }],
+        pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            attested_with: "anthropic.claude-sonnet-4.6+".into(),
-            allowed_tools: vec![],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,

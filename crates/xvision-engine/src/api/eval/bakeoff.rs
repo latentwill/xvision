@@ -5,22 +5,17 @@
 //! A bakeoff runs the cartesian product of `strategies × models` against a
 //! single scenario. Each arm is one `EvalRunRequest` dispatched through
 //! `eval::run_with_deps`, with the requested `(provider, model)` either
-//! materialized as a per-launch dispatch override (default — `--mode
+//! materialized as a per-launch provider override (default — `--mode
 //! override`) or as a cloned strategy record (`--mode clone`, currently a
 //! deferred stub until the sibling `cli-strategy-clone-model-override`
 //! track lands).
 //!
 //! ## Sibling-dependency posture
 //!
-//! Both materialization paths (`--mode override` and `--mode clone`) sit
-//! on top of sibling Wave B tracks that have not merged yet:
+//! The default materialization path now uses `EvalRunRequest.provider_override`
+//! from the sibling `cli-eval-model-override` track. Clone mode still sits
+//! behind the strategy-clone sibling:
 //!
-//! - `cli-eval-model-override` — adds `EvalRunRequest.provider_override`
-//!   so the per-arm override is recorded in `provider_diagnostics`. This
-//!   crate ships the override receipt **today** by constructing the
-//!   per-arm dispatch directly (the caller supplies the dispatch into
-//!   `run_bakeoff`); when the sibling merges, the override receipt
-//!   field will be threaded through here without breaking callers.
 //! - `cli-strategy-clone-model-override` — adds `xvn strategy clone`.
 //!   The `--mode clone` path is a deferred stub here; until the sibling
 //!   merges, `--mode clone` returns a clean validation error and the
@@ -54,11 +49,11 @@ use xvision_execution::broker_surface::BrokerSurface;
 ///
 /// One arm = one `(strategy_id, provider, model)` triple. The caller
 /// supplies the dispatch that will drive every per-strategy eval for
-/// this arm. In `--mode override` the dispatch is built from
-/// `(provider, model)` at the CLI layer (sibling `cli-eval-model-override`
-/// will later contribute the `provider_override` receipt to the
-/// underlying `EvalRunRequest`). In `--mode clone` the dispatch is built
-/// from the cloned strategy's own slot binding.
+/// this arm. In `--mode override`, the dispatch is built from the
+/// provider entry at the CLI layer while `EvalRunRequest.provider_override`
+/// carries the arm's `(provider, model)` through validation, slot rewrite,
+/// and the persisted provider-override receipt. In `--mode clone` the
+/// dispatch is built from the cloned strategy's own slot binding.
 pub struct BakeoffArm {
     pub strategy_id: String,
     pub provider: String,
@@ -293,6 +288,14 @@ async fn run_one_arm(
     arm: &BakeoffArm,
     req: &BakeoffRunRequest,
 ) -> BakeoffArmResult {
+    let provider_override = if req.params.use_strategy_models {
+        None
+    } else {
+        Some(api_eval::ProviderOverride {
+            provider: arm.provider.clone(),
+            model: arm.model.clone(),
+        })
+    };
     let eval_req = api_eval::EvalRunRequest {
         agent_id: arm.strategy_id.clone(),
         scenario_id: req.params.scenario_id.clone(),
@@ -304,6 +307,7 @@ async fn run_one_arm(
             Some(req.params.limits.clone())
         },
         skip_preflight: false,
+        provider_override,
     };
     match api_eval::run_with_deps(
         ctx,
@@ -341,7 +345,8 @@ pub async fn run_bakeoff(ctx: &ApiContext, req: BakeoffRunRequest) -> ApiResult<
         // we reject up front so the operator gets a clean message
         // rather than a half-implemented launch.
         return Err(ApiError::Validation(
-            "--mode clone is not yet wired (depends on sibling track cli-strategy-clone-model-override)".into(),
+            "--mode clone is not yet wired (depends on sibling track cli-strategy-clone-model-override)"
+                .into(),
         ));
     }
     let cap = req.params.max_runs.unwrap_or(req.arms.len());
@@ -401,15 +406,22 @@ pub async fn get_bakeoff(ctx: &ApiContext, bakeoff_id: &str) -> ApiResult<Bakeof
     .bind(bakeoff_id)
     .fetch_optional(&ctx.db)
     .await?;
-    let (id, name, status, summary_json) = row.ok_or_else(|| {
-        ApiError::NotFound(format!("bakeoff {bakeoff_id}"))
-    })?;
+    let (id, name, status, summary_json) =
+        row.ok_or_else(|| ApiError::NotFound(format!("bakeoff {bakeoff_id}")))?;
 
     let arms: Vec<BakeoffArmResult> = if let Some(j) = summary_json {
         serde_json::from_str(&j).unwrap_or_default()
     } else {
         // Pre-finalize read: rebuild from per-arm rows.
-        let rows: Vec<(i64, Option<String>, String, String, String, String, Option<String>)> = sqlx::query_as(
+        let rows: Vec<(
+            i64,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+        )> = sqlx::query_as(
             "SELECT arm_index, run_id, arm_strategy_id, arm_provider, arm_model, status, error
              FROM eval_bakeoff_runs WHERE bakeoff_id = ? ORDER BY arm_index ASC",
         )
@@ -447,11 +459,7 @@ pub async fn compare_bakeoff_arms(
     result: &BakeoffResult,
 ) -> ApiResult<Vec<ComparisonReport>> {
     let store = RunStore::new(ctx.db.clone());
-    let run_ids: Vec<String> = result
-        .arms
-        .iter()
-        .filter_map(|a| a.run_id.clone())
-        .collect();
+    let run_ids: Vec<String> = result.arms.iter().filter_map(|a| a.run_id.clone()).collect();
     let mut reports = Vec::new();
     for chunk in run_ids.chunks(10) {
         let report = compare_runs(chunk, &store, &CompareOptions::default())

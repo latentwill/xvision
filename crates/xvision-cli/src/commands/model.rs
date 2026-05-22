@@ -26,12 +26,11 @@
 //! ## Materialization modes
 //!
 //! - `--mode override` (default): per-launch dispatch is constructed from the
-//!   requested `(provider, model)`. No new strategy records. Sibling track
-//!   `cli-eval-model-override` will later contribute the structured
-//!   `provider_override` receipt persisted to `provider_diagnostics`; until
-//!   that lands we still record the override in
-//!   `eval_bakeoff_runs.{arm_provider, arm_model}` so the audit trail is
-//!   intact.
+//!   requested provider and `EvalRunRequest.provider_override` carries the
+//!   concrete `(provider, model)` into the eval launch. No new strategy
+//!   records. The override receipt is persisted through provider diagnostics,
+//!   while `eval_bakeoff_runs.{arm_provider, arm_model}` preserves the
+//!   bakeoff matrix audit trail.
 //! - `--mode clone`: materializes one cloned strategy per arm via sibling
 //!   `cli-strategy-clone-model-override`. Currently a deferred stub — the
 //!   engine orchestrator rejects this mode with a clean validation error
@@ -44,9 +43,9 @@
 //!
 //! ## Sibling-dependency posture
 //!
-//! Built off `origin/main`. When the sibling Wave B tracks merge:
-//! - `cli-eval-model-override` lands → thread `provider_override` into the
-//!   per-arm `EvalRunRequest`.
+//! Built off `origin/main`. The `cli-eval-model-override` sibling has landed;
+//! `--mode override` threads `provider_override` into each arm's
+//! `EvalRunRequest`.
 //! - `cli-strategy-clone-model-override` lands → wire `xvn strategy clone`
 //!   into the `--mode clone` path and lift the orchestrator's rejection.
 
@@ -56,12 +55,11 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use clap::{Args, Subcommand};
 
-use xvision_engine::agent::llm::{
-    AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch,
-};
+use xvision_core::config::{self, ProviderEntry, ProviderKind};
+use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
 use xvision_engine::api::bakeoff::{
-    compare_bakeoff_arms, get_bakeoff, run_bakeoff, BakeoffArm, BakeoffMode, BakeoffParams,
-    BakeoffResult, BakeoffRunRequest,
+    compare_bakeoff_arms, get_bakeoff, run_bakeoff, BakeoffArm, BakeoffMode, BakeoffParams, BakeoffResult,
+    BakeoffRunRequest,
 };
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::compare::ComparisonReport;
@@ -69,7 +67,6 @@ use xvision_engine::eval::limits::EvalLimits;
 use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::tools::ToolRegistry;
-use xvision_core::config::{self, ProviderEntry, ProviderKind};
 
 use crate::exit::{CliError, CliResult, XvnExit};
 
@@ -280,7 +277,7 @@ fn strategies_from_args(args: &BakeoffArgs) -> Vec<String> {
 async fn build_arm_dispatch(
     ctx: &ApiContext,
     provider: &str,
-    model: &str,
+    _model: &str,
 ) -> CliResult<Arc<dyn LlmDispatch>> {
     let cfg_path = if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
         if !p.is_empty() {
@@ -304,15 +301,9 @@ async fn build_arm_dispatch(
             exit: XvnExit::Usage,
             source: anyhow!("provider {provider:?} is not configured in default.toml"),
         })?;
-    // Surface the requested model as a no-op gate — `--mode override`
-    // does NOT today route the model into the dispatch object (the
-    // dispatch wraps a provider client; the model id flows through the
-    // strategy slot or override field). The model is recorded in the
-    // bakeoff record for audit. When the sibling `cli-eval-model-override`
-    // lands, the request gains a `provider_override` field carrying the
-    // model so the agent layer picks it up; until then the override
-    // surfaces in the audit trail but not the LLM call itself.
-    let _ = model;
+    // The dispatch object is provider-level. The concrete arm model is
+    // threaded via `EvalRunRequest.provider_override` so the eval layer
+    // validates it, rewrites runtime slots, and persists the receipt.
 
     let api_key = if entry.api_key_env.is_empty() {
         String::new()
@@ -321,9 +312,7 @@ async fn build_arm_dispatch(
     };
     let dispatch: Arc<dyn LlmDispatch> = match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat => {
-            Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
-        }
+        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
         ProviderKind::LocalCandle => Arc::new(MockDispatch::echo(
             r#"{"action":"hold","conviction":0.0,"justification":"local-candle hold"}"#,
         )),
@@ -353,22 +342,16 @@ fn print_plan(
     if use_strategy_models {
         eprintln!("  models:        (per-strategy default — --use-strategy-models)");
     } else {
-        eprintln!(
-            "  provider:      {}",
-            provider.unwrap_or("(missing — error)")
-        );
-        eprintln!(
-            "  models:        {} ({})",
-            models.len(),
-            models.join(",")
-        );
+        eprintln!("  provider:      {}", provider.unwrap_or("(missing — error)"));
+        eprintln!("  models:        {} ({})", models.len(), models.join(","));
     }
     eprintln!("  mode:          {:?}", mode);
     eprintln!(
         "  arms:          {arms_planned}{}",
         if let Some(c) = cap {
             if arms_capped {
-                format!(" (capped from {} × {} = {} by --max-runs={c})",
+                format!(
+                    " (capped from {} × {} = {} by --max-runs={c})",
                     strategies.len(),
                     if use_strategy_models { 1 } else { models.len() },
                     strategies.len() * std::cmp::max(1, models.len()),
@@ -382,7 +365,11 @@ fn print_plan(
     );
     eprintln!(
         "  execution:     {}",
-        if parallel { "parallel (opt-in)" } else { "sequential (default)" }
+        if parallel {
+            "parallel (opt-in)"
+        } else {
+            "sequential (default)"
+        }
     );
     if let Some(d) = limits.max_decisions {
         eprintln!("  max_decisions: {d}");
@@ -444,7 +431,9 @@ async fn run_bakeoff_cmd(args: BakeoffArgs) -> CliResult<()> {
     if mode == BakeoffMode::Clone && args.clone_name_template.is_none() {
         return Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow!("--mode clone requires --clone-name-template (e.g. \"{{strategy}}-{{model}}-bakeoff\")"),
+            source: anyhow!(
+                "--mode clone requires --clone-name-template (e.g. \"{{strategy}}-{{model}}-bakeoff\")"
+            ),
         });
     }
 
@@ -533,7 +522,10 @@ async fn run_bakeoff_cmd(args: BakeoffArgs) -> CliResult<()> {
             if arms.len() >= arms_planned {
                 break 'outer;
             }
-            let provider_name = args.provider.clone().unwrap_or_else(|| "(strategy-default)".into());
+            let provider_name = args
+                .provider
+                .clone()
+                .unwrap_or_else(|| "(strategy-default)".into());
             let dispatch = if args.use_strategy_models {
                 // No override — build a stub dispatch the engine won't
                 // actually use, since `--use-strategy-models` is a
@@ -596,7 +588,11 @@ async fn run_bakeoff_cmd(args: BakeoffArgs) -> CliResult<()> {
     if args.json {
         let envelope = BakeoffJsonEnvelope {
             bakeoff: &result,
-            comparisons: if args.compare { Some(&compare_reports) } else { None },
+            comparisons: if args.compare {
+                Some(&compare_reports)
+            } else {
+                None
+            },
         };
         crate::io::print_json(&envelope)?;
         return Ok(());
@@ -626,15 +622,13 @@ async fn run_bakeoff_cmd(args: BakeoffArgs) -> CliResult<()> {
 
 async fn run_status_cmd(args: StatusArgs) -> CliResult<()> {
     let ctx = open_ctx(args.xvn_home).await?;
-    let result = get_bakeoff(&ctx, &args.bakeoff_id)
-        .await
-        .map_err(|e| match e {
-            xvision_engine::api::ApiError::NotFound(_) => CliError {
-                exit: XvnExit::NotFound,
-                source: anyhow!("bakeoff {} not found", args.bakeoff_id),
-            },
-            other => CliError::upstream(anyhow!("get_bakeoff: {other}")),
-        })?;
+    let result = get_bakeoff(&ctx, &args.bakeoff_id).await.map_err(|e| match e {
+        xvision_engine::api::ApiError::NotFound(_) => CliError {
+            exit: XvnExit::NotFound,
+            source: anyhow!("bakeoff {} not found", args.bakeoff_id),
+        },
+        other => CliError::upstream(anyhow!("get_bakeoff: {other}")),
+    })?;
     if args.json {
         crate::io::print_json(&result)?;
     } else {
@@ -740,4 +734,3 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{trunc}…")
     }
 }
-

@@ -294,6 +294,26 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
     let mut intern = None;
     let mut trader = None;
 
+    // `indicator-tool-wiring` (2026-05-22): the agent-loop path
+    // historically lost the strategy's tool surface because
+    // `agent_slot_to_llm_slot` hard-coded `allowed_tools: Vec::new()`
+    // (AgentSlot has no per-slot tool list yet; the strategy manifest
+    // is the source of truth). The eval LLM blob therefore shipped
+    // `"tools": []` and the trader could not request `indicator_panel`
+    // on demand, even though every example template declares
+    // `required_tools: ["ohlcv", "indicator_panel"]`. We now derive
+    // the slot's wire-level `allowed_tools` from
+    // `strategy.manifest.required_tools` and bridge it through a
+    // per-iteration LLMSlot clone. The fix is conservative on purpose:
+    // (a) only entries the local `ToolRegistry` actually knows survive
+    //     `definitions_for_slot`'s filter, so unknown declarations are
+    //     silently dropped (strategy validation catches misspellings at
+    //     draft time), and
+    // (b) `resolved.slot.allowed_tools` is preserved if non-empty so a
+    //     future per-AgentSlot override can land without revisiting
+    //     this seam.
+    let strategy_tools: Vec<String> = input.strategy.manifest.required_tools.clone();
+
     for resolved in input.agent_slots.iter() {
         // Single canonical comparison key (trim + lowercase) so the
         // trader-output schema selection and the output-assignment
@@ -353,8 +373,19 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         // recorder into `execute_slot`. The recorder treats `Off` /
         // empty-namespace as a no-op, so non-eval call sites that don't
         // pass a recorder stay on the legacy path.
+
+        // `indicator-tool-wiring`: build the per-iteration LLMSlot
+        // with the strategy's tool surface stamped in. If the resolved
+        // slot already carries an explicit list (a future per-slot
+        // override path), honour it verbatim — strategy_tools is the
+        // fallback, not an override.
+        let mut slot_for_exec = resolved.slot.clone();
+        if slot_for_exec.allowed_tools.is_empty() && !strategy_tools.is_empty() {
+            slot_for_exec.allowed_tools = strategy_tools.clone();
+        }
+
         let out = execute_slot(SlotInput {
-            slot: &resolved.slot,
+            slot: &slot_for_exec,
             system_prompt: resolved.system_prompt.clone(),
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),

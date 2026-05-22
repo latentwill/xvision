@@ -177,21 +177,15 @@ fn create_scenario(home: &Path, asset: &str, granularity: &str, name: &str) -> S
 fn validate_shape_only_without_scenario_flag() {
     let dir = tempdir().unwrap();
 
-    let out = xvn(
-        &[
-            "strategy",
-            "new",
-            "--template",
-            "mean_reversion",
-            "--name",
-            "shape-only-test",
-            "--json",
-        ],
+    // Pre-2026-05-21 this used `--template mean_reversion`; that flag is gone.
+    // Seed via `--from-file` with a pre-built strategy JSON instead.
+    let (strategy_id, _) = seed_strategy_with_trader(
         dir.path(),
+        "shape-only-strategy",
+        "trader",
+        "Evaluate the market on each bar.",
     );
-    assert!(out.status.success());
-    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let strategy_id = body["id"].as_str().unwrap();
+    let strategy_id: &str = &strategy_id;
 
     // Validate without --scenario, with --json.
     let out = xvn(&["strategy", "validate", strategy_id, "--json"], dir.path());
