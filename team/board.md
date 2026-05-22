@@ -4,112 +4,82 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-22 (sweep 2) — `bar-history-limit-surface`,
-> `harness-recovery-malformed-json`, `memory-forget-undo-snapshot`,
-> `strategy-model-attestation-only`, `trader-noop-skip`,
-> `risk-sees-conviction`, `live-bar-source-alpaca` all archived after
-> merging. 4 PRs still open against contracts in this board
-> (`harness-recovery-context-overflow` #513,
-> `harness-recovery-schema-missing-field` #516,
-> `strategy-slot-prompt-resolution` #515,
-> plus the build-fix #514). Wave-2 (memory-provenance, indicator-tool-wiring,
-> eval-token-efficiency-tail, trace-dock-emitters) still held — all
-> conflict with `agent/execute.rs` that PR #513 is currently editing.
+> Last updated: 2026-05-22 (sweep 3, ~04:55 UTC) — F-5 harness recovery
+> state machine fully merged (phase 1 #499, phase 2a #511, phase 2b
+> #516, phase 2c #513). Capability-first agent model spec merged via
+> PR #518; operator decisions locked. Phase A contract authored
+> (`agent-graph-capability-schema`), reserves migration 033. Wave-2
+> wave is now fully unblocked — `agent/execute.rs`, `agent/llm.rs`,
+> `eval/executor/paper.rs`, `eval/executor/backtest.rs` all released.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
 
-## Active (open PRs)
+## Active (ready to dispatch — no file conflicts)
 
-### harness-observability-tail-2026-05-21 — F-5 recovery state machine
+### agent-graph-2026-05-22 — Phase A of capability-first refactor
 
-Wave complete in PR form — all three phase-2 contracts have PRs open
-on top of phase 1 (#499, merged 2026-05-21). Phase 2a (#511) already
-merged. Phase 2b + 2c are CLEAN and awaiting merge.
+- [agent-graph-capability-schema](contracts/agent-graph-capability-schema.md) — **P1 foundation** · ready · adds `Capability` enum + `AgentSlot.capabilities` + `AgentRef.activates` + `PipelineEdge.condition` + migration 033. Pure schema/storage — no dispatch logic. Unblocks Phases B–F.
 
-- [harness-recovery-context-overflow](contracts/harness-recovery-context-overflow.md) — **P2 integration** · pr-open **#513** · phase 2c: cheap-model history summarize + retry; adds `FailureClass::ContextOverflow` variant and `agent/summarize.rs` module
-- [harness-recovery-schema-missing-field](contracts/harness-recovery-schema-missing-field.md) — **P2 integration** · pr-open **#516** · phase 2b: targeted-patch retry on TraderMissingField / TraderInvalidField with merge-and-reparse; disjoint families (no fall-through to MalformedJson)
+### memory-safety-and-observability-2026-05-22 — V2D follow-up
 
-### eval-honesty-tail-2026-05-22 — F41 tail (one PR open, rest held or deferred)
+- [memory-provenance-in-decisions-trace](contracts/memory-provenance-in-decisions-trace.md) — **P1 foundation** · ready · thread `decision_id` through `MemoryRecorder::recall`; events table carries `(run_id, decision_id, memory_item_id)`. Blocks `memory-aware-eval-findings`.
+- [memory-aware-eval-findings](contracts/memory-aware-eval-findings.md) — **P2 leaf** · deferred (depends on `memory-provenance-in-decisions-trace`) · per-decision finding extractor.
 
-- [strategy-slot-prompt-resolution](contracts/strategy-slot-prompt-resolution.md) — **P2 leaf** · pr-open **#515** · removed `LLMSlot.prompt` (decision: REMOVE — single consumer in `validate.rs:200`; agent-side `system_prompt` is source of truth post-2026-05-12 refactor)
+### eval-honesty-tail-2026-05-22 — F41 remaining sub-tracks
 
-## Held (waiting for in-flight PRs to merge)
+- [indicator-tool-wiring](contracts/indicator-tool-wiring.md) — **P2 leaf** · ready · actually wire `indicator_panel` tool to trader slot (today `tools: []`)
+- [eval-token-efficiency-tail](contracts/eval-token-efficiency-tail.md) — **P2 leaf** · ready · per-provider `max_tokens` defaults + optional delta-briefing mode
 
-All conflict with `crates/xvision-engine/src/agent/execute.rs` that PR #513
-(`harness-recovery-context-overflow`) is currently editing. Will dispatch
-once #513 merges.
+### trace-dock-emitters-2026-05-22 — F43
 
-- [memory-provenance-in-decisions-trace](contracts/memory-provenance-in-decisions-trace.md) — **P1 foundation** · ready (held) · thread `decision_id` through `MemoryRecorder::recall`
-- [memory-aware-eval-findings](contracts/memory-aware-eval-findings.md) — **P2 leaf** · deferred (depends on `memory-provenance`) · per-decision finding extractor over memory recall
-- [indicator-tool-wiring](contracts/indicator-tool-wiring.md) — **P2 leaf** · ready (held) · actually wire `indicator_panel` tool to trader slot (`tools: []` today)
-- [eval-token-efficiency-tail](contracts/eval-token-efficiency-tail.md) — **P2 leaf** · ready (held) · per-provider `max_tokens` defaults + optional delta-briefing mode
-- [trace-dock-emitters](contracts/trace-dock-emitters.md) — **P2 integration** · ready (held) · F43: tool_calls + events writer + supervisor_notes broadening + per-decision spans
+- [trace-dock-emitters](contracts/trace-dock-emitters.md) — **P2 integration** · ready · 5 sub-items: tool_calls emitters, events writer + lifecycle events, supervisor_notes broadening, per-decision spans, design call on checkpoints/approvals/sandbox_results
 
-## Deferred — needs spec
+### cli-test-tech-debt-2026-05-22
 
-- [agent-graph-composition](contracts/agent-graph-composition.md) — **P1 foundation** · deferred · per-kind I/O contracts, Filter granularity, graph short-circuit. Converges with board-v2's "Capability-first agent model" research-needed item. Spec author dispatched 2026-05-22.
-- [docs-search-list-component-adoption](contracts/docs-search-list-component-adoption.md) — **P2 leaf** · deferred · only opens if a docs-sidebar audit confirms list-component fit
+- [cli-test-fixture-completion-tail](contracts/cli-test-fixture-completion-tail.md) — **P2 leaf** · ready · migrate 9 failing CLI test fixtures to post-template-registry, post-strategy-fixture-migration shape
 
-## Reserved
+## Open PRs (in-flight, not yet merged)
 
-Intakes that exist in `team/intake/` but **need spec authoring first**
-before contracts can open:
+- **#515** — `strategy-slot-prompt-resolution` — CLEAN. Removes `LLMSlot.prompt`; agent-side `system_prompt` is source of truth. (Contract still in `team/contracts/`; will archive when the PR merges.)
+- **#512** — `[codex] streamline strategy creation and docs layout` — CLEAN, external.
+- **#498** — `fix(trace-dock): hide state.transition stub in Advanced view` — CLEAN, older.
 
-- **`team/intake/2026-05-19-compare-ab-evaluations.md`** — 10 open-
-  ended product asks for the AB-compare surface. Gated by FOLLOWUPS F33
-  (chart rework — PR #501 base now in main).
-- **`team/intake/2026-05-20-canonical-template-needs-trader.md`** —
-  P2, explicitly gated on the capability-first agent-model spec.
-- **`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`** —
-  P0 bundle shipped via #425, #428, #429. P1 (#4–#11) and P2 (#13–#15)
-  tracks Reserved pending operator confirmation.
+## Reserved (need spec authoring)
 
-## Pre-existing CLI test failures — now contracted as `cli-test-fixture-completion-tail`
+- **`team/intake/2026-05-19-compare-ab-evaluations.md`** — 10 product asks for AB-compare. Gated by F33 chart rework.
+- **`team/intake/2026-05-20-canonical-template-needs-trader.md`** — folded into capability-first refactor; closes in Phase E.
+- **`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`** — P0 shipped; P1/P2 tracks Reserved pending operator confirmation.
 
-See `team/contracts/cli-test-fixture-completion-tail.md` — ready to dispatch, no dependencies, leaf scope.
+## Deferred — operator-gated
 
-### Original carryover note
-
-Surfaced 2026-05-22 by the `strategy-slot-prompt-resolution` worker
-during full-workspace verification. Predate all wave-1+ work this
-session; flagged here so a follow-up contract can pick them up:
-
-- `cargo test -p xvision-cli --test strategy_validate` — 4 failures
-  from `--template` flag removal during the template-registry cleanup
-  (PR #486 fallout).
-- `cargo test -p xvision-cli --test eval_batch_run` — 5 failures from
-  legacy `trader_slot`-only strategies being rejected at the eval
-  boundary (`strategy-require-at-least-one-agent` fixture migration,
-  PR #443/#467 — incomplete on the CLI side).
-- `cargo test -p xvision-cli --test experiment_run` — same shape as
-  `eval_batch_run`.
-
-Contract authored 2026-05-22 — see `team/contracts/cli-test-fixture-completion-tail.md`.
+- [docs-search-list-component-adoption](contracts/docs-search-list-component-adoption.md) — only opens if docs-sidebar audit confirms list-component fit.
 
 ## Recently Closed
 
-### Merged 2026-05-22 (this session) — archived under `team/archive/2026-05-22-conductor-pass-2/`
+### Merged 2026-05-22 (~04:46–04:51 UTC cascade) — archived under `team/archive/2026-05-22-conductor-pass-3/`
 
-7 contracts archived this pass:
+3 contracts archived this pass:
 
-- `bar-history-limit-surface` (#505) — surface `AgentSlot.bar_history_limit` in SlotForm
-- `harness-recovery-malformed-json` (#511) — F-5 phase 2a, repair-prompt retry
-- `memory-forget-undo-snapshot` (#510) — soft-delete + grace + `xvn memory undo-forget`
-- `strategy-model-attestation-only` (#508) — demote `required_models`/`model_requirement` to `attested_with`
-- `trader-noop-skip` (#506) — skip LLM call on zero-legal-actions (external)
-- `risk-sees-conviction` (#507) — expose `TraderDecision.conviction` to risk gate (external)
-- `live-bar-source-alpaca` — leftover from earlier wave; merged via PR #489 on 2026-05-21
+- `harness-recovery-context-overflow` (#513, F-5 phase 2c — context_length_exceeded → summarize-and-retry)
+- `harness-recovery-schema-missing-field` (#516, F-5 phase 2b — targeted-patch retry on missing/invalid trader fields)
+- `agent-graph-composition` (placeholder superseded by spec PR #518; archived contract points at the spec + 5 phase successors)
 
-### Merged 2026-05-22 conductor pass — archived under `team/archive/2026-05-22-conductor-pass/`
+Also merged in the cascade but no contract attached (operator/conductor maintenance):
+- **#504** `conductor sweep + 3 new waves`
+- **#509** `fix(build): activation_mode/filter for 6 Strategy literals`
+- **#514** `fix(build): noop_skip on 3 cfg(test) AgentSlot literals`
+- **#517** `conductor sweep-2 + cli-test-fixture-completion-tail contract`
+- **#518** `spec: capability-first agent model + graph composition`
 
-13 contracts + 17 orphan status files archived (see prior board snapshot
-in archive for details).
+### Earlier 2026-05-22 sweeps (still on disk)
+
+- `team/archive/2026-05-22-conductor-pass-2/` — 7 contracts archived after the first merge cascade (#505, #508, #510, #511, #506-external, #507-external, live-bar-source-alpaca leftover)
+- `team/archive/2026-05-22-conductor-pass/` — 13 contracts + 17 status files archived at the start of the session
 
 ### Merged 2026-05-21 sweep — archived under `team/archive/2026-05-21-conductor-sweep/`
 
-28 contracts archived (eval honesty wave, V2B/V2D/V2E/V2F tracks,
-clawpatch blockers, QA Round 4 tail).
+28 contracts archived (eval honesty wave, V2B/V2D/V2E/V2F tracks, clawpatch blockers, QA Round 4 tail).
 
 ## Stale-info hygiene
 

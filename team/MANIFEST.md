@@ -84,8 +84,9 @@ unambiguous.
 | 030 | v2b-broker-wallet-kill-switch (safety_state + safety_audit) | merged 2026-05-21 |
 | 031 | v2b-broker-wallet-kill-switch (eval_runs.venue_label)        | merged 2026-05-21 |
 | 032 | memory-provenance-in-decisions-trace (decision_id on memory_recall events) | reserved 2026-05-22 (conditional — only if events table needs a column, not a payload field) |
+| 033 | agent-graph-capability-schema (agent_slots.capabilities JSON column + AgentRef.activates + PipelineEdge.condition) | reserved 2026-05-22 — Phase A of capability-first spec PR #518 |
 
-The next available number is **033**. The conductor must approve and
+The next available number is **034**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 
