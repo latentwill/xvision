@@ -1,71 +1,82 @@
 ---
 track: risk-sees-conviction
 lane: leaf
-wave: eval-honesty-tail-2026-05-22
-worktree: .worktrees/risk-sees-conviction
+wave: eval-honesty-2026-05-21
+worktree: .worktrees/agent-a0f48260fbcd498fa
 branch: task/risk-sees-conviction
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none
 allowed_paths:
+  - crates/xvision-risk/**
   - crates/xvision-core/src/trading.rs
-  - crates/xvision-engine/src/safety/gate.rs
-  - crates/xvision-engine/src/api/safety/routes.rs
-  - crates/xvision-engine/src/agent/execute.rs
-  - crates/xvision-engine/tests/risk_sees_conviction.rs
-  - crates/xvision-engine/src/agents/model.rs
+  - team/contracts/risk-sees-conviction.md
 forbidden_paths:
-  - crates/xvision-engine/migrations/**
-  - crates/xvision-engine/src/safety/limits.rs
-  - frontend/web/**
+  - frontend/**
+  - crates/xvision-eval/**
 interfaces_used:
-  - xvision_core::trading::TraderDecision (add `conviction: f32` field, 0.0–1.0, default 0.5)
-  - xvision_engine::safety::gate::RiskGate (read `conviction`, never enforce)
-  - Trader prompt schema (declare `conviction` as optional 0–1)
+  - RiskRule (trait)
+  - RiskLayer::evaluate
+  - RiskLayer::evaluate_with_conviction
+  - RiskEvalContext
+  - TraderDecision
+  - RiskDecision
 parallel_safe: true
 parallel_conflicts: []
 verification:
-  - cargo test -p xvision-engine --test risk_sees_conviction
-  - cargo test -p xvision-engine
-  - cargo test -p xvision-core
+  - cargo fmt --all -- --check
+  - cargo clippy -p xvision-risk -- -D warnings
+  - cargo test -p xvision-risk
 acceptance:
-  - `TraderDecision.conviction: f32` exists (range 0.0–1.0, default 0.5 for missing field via `#[serde(default)]`)
-  - Risk gate has access to the field; default user-authored risk configs ignore it
-  - Documentation in the prompt schema (and the schema-drift test fixture) lists `conviction` as optional
-  - Existing serialized `TraderDecision` blobs without `conviction` deserialize cleanly (no migration; `serde default` covers it)
-  - **Never enforced** — risk gate must not reject a decision based on `conviction` value alone
+  - "the risk-eval context (RiskEvalContext) exposes `conviction: f32`"
+  - "with default risk config, evaluate() and evaluate_with_conviction() at any conviction level produce byte-identical RiskDecision — no default rule scales size by conviction"
+  - "a new test (risk_sees_conviction.rs) demonstrates a user-authored rule that opts into scaling and reads ctx.conviction"
+  - "RiskLayer::evaluate() unchanged signature — existing callers in xvision-eval/src/harness.rs compile without modification"
+  - "RiskLayer::prepend_rule / append_rule allow composing user rules around the built-in chain"
 ---
 
 # Scope
 
-Expose `conviction` as a `TraderDecision` field so user-authored
-risk configs can scale sizing if they choose. Never enforced by the
-default risk gate — it's a piece of data the trader can volunteer
-that downstream policies are free to ignore or use.
+Exposes `conviction` to the risk evaluation layer so user-authored risk
+policies can scale sizing by it if they choose. The engine never enforces a
+default `size *= conviction` mapping.
 
-Source intake: `team/intake/2026-05-21-eval-honesty-and-agent-graph.md`
-row "Expose `conviction` to the risk layer so user-authored risk
-configs can scale sizing if they choose; never enforced."
+Implementation: a new `RiskEvalContext<'a>` struct in
+`crates/xvision-risk/src/context.rs` bundles `decision`, `portfolio`, `asset`,
+and the new `conviction: f32` field. The `RiskRule::evaluate` trait method is
+changed from `(&TraderDecision, &PortfolioState, AssetSymbol)` to
+`(&RiskEvalContext<'_>)`. All 9 built-in rules are updated; none read
+`conviction`. The public `RiskLayer::evaluate` signature is unchanged so
+existing callers in `xvision-eval` and `xvision-harness` do not need
+modification. A new `RiskLayer::evaluate_with_conviction` overload accepts the
+conviction value from callers that have it. Two new hooks
+`RiskLayer::prepend_rule` and `append_rule` let user policies inject rules
+around the built-in chain.
 
 # Out of scope
 
-- Default conviction-based sizing in the risk gate (operator-authored only)
-- Conviction-based gating / vetoing (explicitly forbidden by intake)
-- Trader prompt-template changes to require conviction (optional always)
+- Modifying `TraderDecision` struct (no `conviction` field added there).
+- Any default `size *= conviction` logic in the engine.
+- Wiring conviction from the LLM response through the eval executor to the
+  risk layer (that is a follow-on plumbing task; the seam is now open).
+- `frontend/**` and `crates/xvision-eval/**` changes.
 
 # Sync-before-work ritual
 
 ```bash
-cd /Users/edkennedy/Code/xvision
 git fetch --prune origin
-git worktree add .worktrees/risk-sees-conviction -b task/risk-sees-conviction origin/main
+git -C .worktrees/agent-a0f48260fbcd498fa status
+git -C .worktrees/agent-a0f48260fbcd498fa log --oneline -3 origin/main..HEAD
 ```
 
 # Notes
 
-`TraderDecision` shape is at `crates/xvision-core/src/trading.rs:196`.
-Pattern after the `asset: Option<AssetSymbol>` field (line 219) for
-the additive-with-serde-default approach so legacy blobs parse.
-Add a `#[garde(range(min = 0.0, max = 1.0))]` clamp.
+2026-05-22: Implemented. `RiskEvalContext` added to `xvision-risk/src/context.rs`.
+All 9 rule impls updated to `fn evaluate(&self, ctx: &RiskEvalContext<'_>)`.
+Tests in `crates/xvision-risk/tests/risk_sees_conviction.rs` cover:
+
+- regression: default config ignores conviction at all values 0.0..1.0
+- user rule: ConvictionScale reads ctx.conviction and scales size_bps
+- sentinel: AssertConviction verifies the value propagates exactly

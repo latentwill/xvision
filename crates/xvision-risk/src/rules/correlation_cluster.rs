@@ -1,8 +1,8 @@
 //! Rule: at most `max_correlation_cluster` concurrent open positions in the same cluster.
 
-use xvision_core::{Action, AssetSymbol, PortfolioState, TraderDecision, VetoReason};
+use xvision_core::{Action, VetoReason};
 
-use crate::{whitelist::Whitelist, RiskRule, RuleVerdict};
+use crate::{context::RiskEvalContext, whitelist::Whitelist, RiskRule, RuleVerdict};
 
 pub struct CorrelationCluster {
     pub max: usize,
@@ -14,23 +14,19 @@ impl RiskRule for CorrelationCluster {
         "CorrelationCluster"
     }
 
-    fn evaluate(
-        &self,
-        decision: &TraderDecision,
-        portfolio: &PortfolioState,
-        asset: AssetSymbol,
-    ) -> RuleVerdict {
+    fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
         // Closing a position frees a cluster slot — always allow.
-        if matches!(decision.action, Action::Flat | Action::Close) {
+        if matches!(ctx.decision.action, Action::Flat | Action::Close) {
             return RuleVerdict::Pass;
         }
 
-        let Some(target_cluster) = self.whitelist.cluster_of(asset) else {
+        let Some(target_cluster) = self.whitelist.cluster_of(ctx.asset) else {
             // Unknown asset has no cluster → handled by AssetWhitelist rule.
             return RuleVerdict::Pass;
         };
 
-        let count = portfolio
+        let count = ctx
+            .portfolio
             .open_positions
             .iter()
             .filter(|(sym, _)| {
@@ -52,7 +48,7 @@ impl RiskRule for CorrelationCluster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_common::{flat_portfolio, make_decision, test_whitelist};
+    use crate::tests_common::{flat_portfolio, make_ctx, make_decision, test_whitelist};
     use crate::whitelist::AssetEntry;
     use std::collections::BTreeMap;
     use xvision_core::{Action, AssetSymbol, Direction, OpenPosition, PortfolioState};
@@ -111,8 +107,9 @@ mod tests {
     #[test]
     fn pass_when_no_cluster_positions() {
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -124,7 +121,7 @@ mod tests {
         // Adding BTC again: count=1+1=2 ≤ max=2 → pass.
         let d = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
         assert!(matches!(
-            rule().evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -140,7 +137,7 @@ mod tests {
         let portfolio = two_position_portfolio();
         let d = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
         assert!(matches!(
-            rule.evaluate(&d, &portfolio, AssetSymbol::Sol),
+            rule.evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Sol)),
             RuleVerdict::Veto(VetoReason::CorrelationClusterCap)
         ));
     }
@@ -151,7 +148,7 @@ mod tests {
         let portfolio = portfolio_with_btc(1000);
         let d = make_decision(Action::Flat, Direction::Flat, 0, 2.0, 5.0);
         assert!(matches!(
-            rule().evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
