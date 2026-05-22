@@ -171,7 +171,7 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, strategy_id: &str) -> Strateg
             regime_fit: vec![],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 60,
-            required_models: vec![],
+            attested_with: vec![],
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,

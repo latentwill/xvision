@@ -11,7 +11,11 @@ pub struct PublicManifest {
     pub regime_fit: Vec<RegimeFit>,
     pub asset_universe: Vec<String>, // e.g., ["ETH/USD", "BTC/USD"]
     pub decision_cadence_minutes: u32,
-    pub required_models: Vec<String>,
+    /// Informational attestation: the model(s) this strategy was last
+    /// published / tested with. Surfaced in the UI but never gates which
+    /// model the operator binds at eval-launch — the binding choice is
+    /// owned by the operator, not the strategy author.
+    pub attested_with: Vec<String>,
     pub required_tools: Vec<String>,
     pub risk_preset_or_config: String, // "conservative" | "balanced" | "aggressive" | "custom"
     pub published_at: Option<DateTime<Utc>>,

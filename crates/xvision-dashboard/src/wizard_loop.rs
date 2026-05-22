@@ -2126,7 +2126,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "id": {"type": "string"},
                     "slot": {"type": "string", "enum": ["regime", "intern", "trader"]},
                     "prompt": {"type": "string"},
-                    "model_requirement": {"type": "string"},
+                    "attested_with": {"type": "string"},
                     "provider": {"type": "string"},
                     "model": {"type": "string"},
                     "allowed_tools": {"type": "array", "items": {"type": "string"}}

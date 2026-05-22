@@ -416,7 +416,7 @@ mod tests {
                 regime_fit: vec![RegimeFit::TrendingBull],
                 asset_universe: vec!["BTC/USD".into()],
                 decision_cadence_minutes: 60,
-                required_models: vec!["anthropic.claude-sonnet-4.6".into()],
+                attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
                 required_tools: vec!["ohlcv".into()],
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
@@ -430,7 +430,7 @@ mod tests {
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
                 prompt: "act on the briefing".into(),
-                model_requirement: "anthropic.claude-sonnet-4.6".into(),
+                attested_with: "anthropic.claude-sonnet-4.6".into(),
                 allowed_tools: vec!["ohlcv".into()],
                 provider: None,
                 model: None,

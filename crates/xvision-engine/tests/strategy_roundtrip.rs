@@ -16,7 +16,7 @@ fn sample_strategy() -> Strategy {
             regime_fit: vec![RegimeFit::RangeBound],
             asset_universe: vec!["BTC/USD".to_string()],
             decision_cadence_minutes: 15,
-            required_models: vec!["anthropic.claude-sonnet-4.6".to_string()],
+            attested_with: vec!["anthropic.claude-sonnet-4.6".to_string()],
             required_tools: vec!["ohlcv".to_string()],
             risk_preset_or_config: "balanced".to_string(),
             published_at: None,
@@ -29,7 +29,7 @@ fn sample_strategy() -> Strategy {
         regime_slot: Some(LLMSlot {
             role: "regime".into(),
             prompt: "...".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             provider: None,
             model: None,
@@ -38,7 +38,7 @@ fn sample_strategy() -> Strategy {
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             prompt: "...".into(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into()],
             provider: None,
             model: None,
@@ -55,7 +55,7 @@ fn slot_serializes_to_json_and_back() {
     let slot = LLMSlot {
         role: "trader".to_string(),
         prompt: "decide: enter long, enter short, or no-op".to_string(),
-        model_requirement: "anthropic.claude-sonnet-4.6+".to_string(),
+        attested_with: "anthropic.claude-sonnet-4.6+".to_string(),
         allowed_tools: vec!["ohlcv".to_string(), "indicator_panel".to_string()],
         provider: None,
         model: None,
@@ -96,7 +96,7 @@ fn manifest_roundtrip_with_required_fields() {
         regime_fit: vec![RegimeFit::RangeBound, RegimeFit::LowVol],
         asset_universe: vec!["ETH/USD".to_string()],
         decision_cadence_minutes: 15,
-        required_models: vec!["anthropic.claude-sonnet-4.6+".to_string()],
+        attested_with: vec!["anthropic.claude-sonnet-4.6+".to_string()],
         required_tools: vec!["ohlcv".to_string(), "indicator_panel".to_string()],
         risk_preset_or_config: "balanced".to_string(),
         published_at: None,
@@ -191,7 +191,7 @@ fn strategy_with_extra_capital_field_in_json_still_deserializes() {
             "regime_fit": ["range_bound"],
             "asset_universe": ["BTC/USD"],
             "decision_cadence_minutes": 15,
-            "required_models": ["mock"],
+            "attested_with": ["mock"],
             "required_tools": ["ohlcv"],
             "risk_preset_or_config": "balanced",
             "published_at": null
@@ -199,7 +199,7 @@ fn strategy_with_extra_capital_field_in_json_still_deserializes() {
         "trader_slot": {
             "role": "trader",
             "prompt": "decide",
-            "model_requirement": "mock",
+            "attested_with": "mock",
             "allowed_tools": ["ohlcv"]
         },
         "risk": {

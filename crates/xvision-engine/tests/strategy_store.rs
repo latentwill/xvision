@@ -15,7 +15,7 @@ fn sample_strategy(id: &str) -> Strategy {
             regime_fit: vec![RegimeFit::RangeBound],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 15,
-            required_models: vec!["anthropic.claude-sonnet-4.6".into()],
+            attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
             required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,

@@ -130,8 +130,8 @@ describe("modelMetadata table", () => {
     expect(dated.output_token_ceiling).toBe(exact.output_token_ceiling);
   });
 
-  it("resolves the legacy LLMSlot model_requirement dotted form", () => {
-    // Pre-agent templates store `model_requirement` as
+  it("resolves the legacy LLMSlot attested_with dotted form", () => {
+    // Pre-agent templates store `attested_with` as
     // `"anthropic.claude-sonnet-4.6"`. The dispatcher resolves this to
     // the model's real ceiling; the lookup table must agree so anywhere
     // else that consumes the metadata (tooling, labels) matches.

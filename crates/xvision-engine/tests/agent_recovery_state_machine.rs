@@ -37,7 +37,7 @@ fn slot() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
         prompt: "decide".into(),
-        model_requirement: "test.model".into(),
+        attested_with: "test.model".into(),
         allowed_tools: vec!["always_fails".to_string()],
         provider: Some("test".into()),
         model: Some("test".into()),

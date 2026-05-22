@@ -351,7 +351,7 @@ pub fn agent_slot_to_llm_slot(role: &str, slot: &AgentSlot) -> LLMSlot {
     LLMSlot {
         role: role.to_string(),
         prompt: slot.system_prompt.clone(),
-        model_requirement: if slot.provider.trim().is_empty() {
+        attested_with: if slot.provider.trim().is_empty() {
             slot.model.clone()
         } else {
             format!("{}.{}", slot.provider, slot.model)
@@ -423,7 +423,7 @@ mod legacy_max_tokens_tests {
         LLMSlot {
             role: "trader".into(),
             prompt: "p".into(),
-            model_requirement: model.to_string(),
+            attested_with: model.to_string(),
             allowed_tools: Vec::new(),
             provider: None,
             model: Some(model.to_string()),
@@ -452,7 +452,7 @@ mod legacy_max_tokens_tests {
     fn legacy_slot_with_no_resolvable_model_returns_unknown_default_auto() {
         let mut slot = slot_with_model("");
         slot.model = None;
-        slot.model_requirement = "".into();
+        slot.attested_with = "".into();
         assert_eq!(default_max_tokens_for(&slot), Some(4096));
     }
 }

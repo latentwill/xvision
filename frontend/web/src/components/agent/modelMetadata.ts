@@ -129,7 +129,7 @@ const PREFIX_MATCHES: Array<[string, ModelMetadata]> = [...TABLE].sort(
   (a, b) => b[0].length - a[0].length,
 );
 
-// Provider prefixes that the legacy `LLMSlot.model_requirement` form
+// Provider prefixes that the legacy `LLMSlot.attested_with` form
 // uses to qualify a model id (e.g. `"anthropic.claude-sonnet-4.6"`).
 // Mirrors `KNOWN_PROVIDER_PREFIXES` in
 // `crates/xvision-core/src/providers/model_metadata.rs`. Drift between
@@ -174,7 +174,7 @@ function lookupModelOptional(modelId: string): ModelMetadata | null {
   // OpenRouter-style `vendor/model` — keep only the trailing segment.
   const lastSlash = trimmed.lastIndexOf("/");
   const afterSlash = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
-  // Pre-agent templates write `LLMSlot.model_requirement` as
+  // Pre-agent templates write `LLMSlot.attested_with` as
   // `provider.model-x.y`; strip the prefix when it matches a known
   // provider name.
   const tail = stripKnownProviderPrefix(afterSlash);

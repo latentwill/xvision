@@ -20,7 +20,7 @@ fn fixture_strategy() -> Strategy {
             regime_fit: vec![RegimeFit::RangeBound],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 15,
-            required_models: vec!["mock".into()],
+            attested_with: vec!["mock".into()],
             required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -33,7 +33,7 @@ fn fixture_strategy() -> Strategy {
         regime_slot: Some(LLMSlot {
             role: "regime".into(),
             prompt: "classify regime".into(),
-            model_requirement: "mock".into(),
+            attested_with: "mock".into(),
             allowed_tools: vec!["ohlcv".into()],
             provider: None,
             model: None,
@@ -41,7 +41,7 @@ fn fixture_strategy() -> Strategy {
         intern_slot: Some(LLMSlot {
             role: "intern".into(),
             prompt: "build briefing".into(),
-            model_requirement: "mock".into(),
+            attested_with: "mock".into(),
             allowed_tools: vec!["ohlcv".into()],
             provider: None,
             model: None,
@@ -49,7 +49,7 @@ fn fixture_strategy() -> Strategy {
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             prompt: "decide".into(),
-            model_requirement: "mock".into(),
+            attested_with: "mock".into(),
             allowed_tools: vec!["ohlcv".into()],
             provider: None,
             model: None,
@@ -217,7 +217,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
             slot: LLMSlot {
                 role: "scout".into(),
                 prompt: "scan".into(),
-                model_requirement: "mock".into(),
+                attested_with: "mock".into(),
                 allowed_tools: vec!["ohlcv".into()],
                 provider: None,
                 model: None,
@@ -235,7 +235,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
             slot: LLMSlot {
                 role: "trader".into(),
                 prompt: "decide".into(),
-                model_requirement: "mock".into(),
+                attested_with: "mock".into(),
                 allowed_tools: vec!["ohlcv".into()],
                 provider: None,
                 model: None,
@@ -290,7 +290,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
             slot: LLMSlot {
                 role: "scout".into(),
                 prompt: "scan".into(),
-                model_requirement: "mock".into(),
+                attested_with: "mock".into(),
                 allowed_tools: vec!["ohlcv".into()],
                 provider: None,
                 model: None,
@@ -308,7 +308,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
             slot: LLMSlot {
                 role: "final_decider".into(),
                 prompt: "decide".into(),
-                model_requirement: "mock".into(),
+                attested_with: "mock".into(),
                 allowed_tools: vec!["ohlcv".into()],
                 provider: None,
                 model: None,

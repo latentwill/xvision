@@ -38,7 +38,7 @@ fn mean_reversion_fixture(id: &str) -> Strategy {
             regime_fit: vec![RegimeFit::RangeBound],
             asset_universe: vec!["ETH/USD".into()],
             decision_cadence_minutes: 60,
-            required_models: vec!["anthropic.claude-sonnet-4.6".into()],
+            attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
             required_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -50,7 +50,7 @@ fn mean_reversion_fixture(id: &str) -> Strategy {
         regime_slot: Some(LLMSlot {
             role: "regime".into(),
             prompt: REGIME_PROMPT.into(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["indicator_panel".into()],
             provider: None,
             model: None,
@@ -59,7 +59,7 @@ fn mean_reversion_fixture(id: &str) -> Strategy {
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             prompt: TRADER_PROMPT.into(),
-            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             provider: None,
             model: None,

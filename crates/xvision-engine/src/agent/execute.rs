@@ -626,7 +626,7 @@ mod tests {
         LLMSlot {
             role: role.to_string(),
             prompt: "system".into(),
-            model_requirement: "test.model".into(),
+            attested_with: "test.model".into(),
             allowed_tools: Vec::new(),
             provider: Some("test".into()),
             model: Some("model".into()),
@@ -702,7 +702,7 @@ mod tests {
         let slot = LLMSlot {
             role: "trader".into(),
             prompt: "decide".into(),
-            model_requirement: "anthropic.claude-sonnet-4-6".into(),
+            attested_with: "anthropic.claude-sonnet-4-6".into(),
             allowed_tools: Vec::new(),
             provider: Some("anthropic".into()),
             model: Some("claude-sonnet-4-6".into()),
@@ -756,7 +756,7 @@ mod tests {
         let slot = LLMSlot {
             role: "trader".into(),
             prompt: "decide".into(),
-            model_requirement: "anthropic.claude-sonnet-4-6".into(),
+            attested_with: "anthropic.claude-sonnet-4-6".into(),
             allowed_tools: Vec::new(),
             provider: Some("anthropic".into()),
             model: Some("claude-sonnet-4-6".into()),

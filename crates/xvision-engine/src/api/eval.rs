@@ -1220,14 +1220,19 @@ fn validate_eval_provider_models(
             .map(str::trim)
             .filter(|model| !model.is_empty())
             .ok_or_else(|| {
-                let legacy = slot.model_requirement.trim();
+                let attested = slot.attested_with.trim();
+                let attestation_hint = if attested.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Strategy was last attested with `{attested}` (informational only — does not gate binding).")
+                };
                 let enabled = if entry.enabled_models.is_empty() {
                     "No models are enabled for this provider.".to_string()
                 } else {
                     format!("Enabled models: {}", entry.enabled_models.join(", "))
                 };
                 ApiError::Validation(format!(
-                    "provider `{}` is selected for strategy role `{}`, but no explicit model is configured. Legacy model_requirement `{legacy}` is not used as a provider model id. {enabled}",
+                    "provider `{}` is selected for strategy role `{}`, but no explicit model is configured.{attestation_hint} {enabled}",
                     entry.name, slot.role
                 ))
             })?;
@@ -2849,11 +2854,11 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    fn slot(provider: Option<&str>, model: Option<&str>, model_requirement: &str) -> LLMSlot {
+    fn slot(provider: Option<&str>, model: Option<&str>, attested_with: &str) -> LLMSlot {
         LLMSlot {
             role: "trader".into(),
             prompt: "Trade.".into(),
-            model_requirement: model_requirement.into(),
+            attested_with: attested_with.into(),
             allowed_tools: Vec::new(),
             provider: provider.map(str::to_string),
             model: model.map(str::to_string),
@@ -2872,7 +2877,7 @@ mod tests {
                 regime_fit: Vec::new(),
                 asset_universe: vec!["BTC/USD".into()],
                 decision_cadence_minutes: 60,
-                required_models: Vec::new(),
+                attested_with: Vec::new(),
                 required_tools: Vec::new(),
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,

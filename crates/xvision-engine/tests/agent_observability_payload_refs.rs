@@ -54,7 +54,7 @@ fn trader_slot() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
         prompt: "You are a deterministic test trader.".into(),
-        model_requirement: "anthropic.claude-sonnet-4-6".into(),
+        attested_with: "anthropic.claude-sonnet-4-6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
         model: Some("claude-sonnet-4-6".into()),

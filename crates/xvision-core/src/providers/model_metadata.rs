@@ -109,7 +109,7 @@ impl ModelMetadata {
     }
 }
 
-/// Known provider-name prefixes that the legacy `LLMSlot.model_requirement`
+/// Known provider-name prefixes that the legacy `LLMSlot.attested_with`
 /// path uses to qualify a model id (e.g. `"anthropic.claude-sonnet-4.6"`).
 /// Lookup strips one of these prefixes when it would otherwise prevent a
 /// hit. Order doesn't matter; the comparison is exact on the segment
@@ -135,7 +135,7 @@ const KNOWN_PROVIDER_PREFIXES: &[&str] = &[
 /// normalizes three legacy spellings:
 ///
 /// - OpenRouter `vendor/model` is reduced to `model`.
-/// - Pre-refactor `LLMSlot.model_requirement` values qualify the id with
+/// - Pre-refactor `LLMSlot.attested_with` values qualify the id with
 ///   a provider prefix and a dot — `"anthropic.claude-sonnet-4.6"`. When
 ///   the prefix matches a known provider, it's stripped.
 /// - The same legacy form also writes version separators with `.`
@@ -398,8 +398,8 @@ mod tests {
     }
 
     #[test]
-    fn legacy_dotted_model_requirement_resolves_to_canonical_row() {
-        // Pre-agent templates carry `LLMSlot.model_requirement` strings
+    fn legacy_dotted_attested_with_resolves_to_canonical_row() {
+        // Pre-agent templates carry `LLMSlot.attested_with` strings
         // like `"anthropic.claude-sonnet-4.6"` (see e.g. the mean-reversion
         // template). The lookup must strip the provider prefix and
         // normalize the dotted version separator so legacy strategies
