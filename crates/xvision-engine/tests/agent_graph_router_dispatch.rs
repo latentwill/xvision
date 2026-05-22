@@ -160,6 +160,7 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         scenario_id: "sc-r".into(),
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
+        filter_ctx: None,
     })
     .await
     .expect("pipeline runs");

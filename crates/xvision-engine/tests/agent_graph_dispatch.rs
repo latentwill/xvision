@@ -159,6 +159,7 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
         scenario_id: "sc-1".into(),
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
+        filter_ctx: None,
     })
     .await
     .expect("pipeline runs");
@@ -169,13 +170,16 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
     assert!(outs.regime.is_none());
     assert!(outs.intern.is_none());
 
-    // Only the Trader (third agent) made an LLM call. Filter and
-    // Critic are stubs in Phase B and never touch the dispatcher.
+    // Phase C: Filter now makes a real LLM call (one for the Filter,
+    // one for the Trader). Critic stays a stub in Phase C — Phase D
+    // wires the Critic semantics. So we expect TWO dispatches:
+    // Filter + Trader. (The fixture's filter response is malformed
+    // JSON; the parse error fires but the cycle continues.)
     let requests = dispatch.requests();
     assert_eq!(
         requests.len(),
-        1,
-        "Phase B: only Trader dispatches; Filter and Critic are stub handlers (got {} requests)",
+        2,
+        "Phase C: Filter + Trader dispatch; Critic still a stub (got {} requests)",
         requests.len(),
     );
 }

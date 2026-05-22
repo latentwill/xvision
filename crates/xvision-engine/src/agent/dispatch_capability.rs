@@ -232,11 +232,87 @@ pub struct DispatchOutcome {
 pub async fn dispatch_capability(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
     match input.capability_to_dispatch() {
         Capability::Trader => dispatch_trader(input).await,
-        Capability::Filter => Ok(dispatch_filter_stub(input)),
+        Capability::Filter => dispatch_filter(input).await,
         Capability::Critic => Ok(dispatch_critic_stub()),
         Capability::Intern => Ok(dispatch_intern_stub()),
         Capability::Router => dispatch_router(input).await,
     }
+}
+
+/// Phase C — Filter dispatcher. DSL-backed slots (slot `provider ==
+/// "dsl"`) route through the `xvision-filters` bridge for a thin
+/// `RuntimeFilter → FilterSignal` adapter; everything else runs the
+/// LLM Filter dispatcher in `filter_dispatch::run_llm_filter`.
+///
+/// Edge predicates work identically on both — they read
+/// `FilterSignal.payload` regardless of the producer.
+///
+/// On LLM parse failure, the dispatcher records the
+/// `filter_parse_error` event (inside `filter_dispatch`) and returns a
+/// `FilterSignal` whose `payload` is `Value::Null`. Downstream edge
+/// predicates that depend on a missing field then evaluate to `false`
+/// per the contract — edges do not fire, the cycle falls through.
+async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
+    let role = input.resolved.role.clone();
+    if slot_is_dsl(input.slot) {
+        // The DSL bridge runs synchronously — no LLM call, no token
+        // accounting. The eval executor populates the bridge via
+        // `xvision_filters::runtime::dsl_to_filter_signal` ahead of
+        // the dispatch loop (Phase C). Reaching this branch without an
+        // upstream-provided signal is a programmer error: we surface
+        // it as a parse-error-shaped null signal so the trace records
+        // the drift rather than silently producing a bogus payload.
+        let signal = FilterSignal {
+            name: role,
+            payload: serde_json::Value::Null,
+            granularity: FilterGranularity::Bar,
+            ts: input.scenario_start.unwrap_or_else(Utc::now),
+        };
+        return Ok(DispatchOutcome {
+            output: AgentOutput::Filter(signal),
+            input_tokens: 0,
+            output_tokens: 0,
+            raw_response: None,
+        });
+    }
+
+    match crate::agent::filter_dispatch::run_llm_filter(input).await {
+        Ok(signal) => Ok(DispatchOutcome {
+            output: AgentOutput::Filter(signal),
+            input_tokens: 0,
+            output_tokens: 0,
+            raw_response: None,
+        }),
+        Err(_) => {
+            // Parse error already emitted as `filter_parse_error`
+            // (filter_dispatch::run_llm_filter). Surface a `null`
+            // payload so the pipeline can keep walking — predicates
+            // resolve to `false` per the edge-predicate "unknown
+            // field" rule (see `agent::edge_predicate`).
+            Ok(DispatchOutcome {
+                output: AgentOutput::Filter(FilterSignal {
+                    name: role,
+                    payload: serde_json::Value::Null,
+                    granularity: FilterGranularity::Bar,
+                    ts: Utc::now(),
+                }),
+                input_tokens: 0,
+                output_tokens: 0,
+                raw_response: None,
+            })
+        }
+    }
+}
+
+/// DSL-backed slot detection. The marker is `slot.provider == "dsl"`
+/// (case-insensitive) — same convention the rest of the engine uses
+/// for the existing `xvision-filters` DSL substrate. Other markers
+/// are reserved for future provider-style integrations.
+fn slot_is_dsl(slot: &LLMSlot) -> bool {
+    slot.provider
+        .as_deref()
+        .map(|p| p.trim().eq_ignore_ascii_case("dsl"))
+        .unwrap_or(false)
 }
 
 impl DispatchInput<'_> {
@@ -285,22 +361,6 @@ async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
         output_tokens,
         raw_response: Some(resp),
     })
-}
-
-/// Phase B Filter stub. Phase C replaces this with a real LLM dispatch
-/// that emits a structured `FilterSignal.payload`.
-fn dispatch_filter_stub(input: DispatchInput<'_>) -> DispatchOutcome {
-    DispatchOutcome {
-        output: AgentOutput::Filter(FilterSignal {
-            name: input.resolved.role.clone(),
-            payload: serde_json::Value::Null,
-            granularity: FilterGranularity::Bar,
-            ts: Utc::now(),
-        }),
-        input_tokens: 0,
-        output_tokens: 0,
-        raw_response: None,
-    }
 }
 
 /// Phase B Critic stub. Phase D wires the real verdict + rationale.

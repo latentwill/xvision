@@ -580,6 +580,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         scenario_id: "pipeline-scenario-1".into(),
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
+        filter_ctx: None,
     })
     .await
     .expect("run_pipeline must succeed");

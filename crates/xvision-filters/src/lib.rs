@@ -30,8 +30,8 @@ pub use events::{FilterEventV1, FilterSummary, SuppressedReason};
 pub use indicators::{Bar, IndicatorEngine, IndicatorKey};
 pub use parse::{parse_json, parse_toml};
 pub use runtime::{
-    referenced_indicators, ActivationDecision, ConditionResult, EvalContext, FilterEvalOutcome,
-    RuntimeFilter, Transition,
+    dsl_to_filter_signal, referenced_indicators, ActivationDecision, BridgedFilterSignal, ConditionResult,
+    EvalContext, FilterEvalOutcome, RuntimeFilter, Transition,
 };
 pub use state::{collect_indicator_refs, FilterState};
 pub use types::{

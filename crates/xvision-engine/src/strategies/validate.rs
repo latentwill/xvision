@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::agents::Capability;
 use crate::eval::scenario::Scenario;
@@ -134,6 +134,115 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
 
     result.eval_ready = result.errors.is_empty() && result.warnings.is_empty();
     result
+}
+
+/// Phase C extension — predicate `signal_field` warning.
+///
+/// For each `PipelineEdge.condition`, walk every `signal_field`
+/// referenced (recursively into `All`/`Any`/`Not`) and look up the
+/// upstream Filter slot's `system_prompt`. If the prompt does not
+/// mention the field name (case-insensitive substring scan), record a
+/// warning. The scan is intentionally lenient — operators may rename
+/// fields between schema changes and we'd rather not error.
+///
+/// `system_prompts_by_role` maps the canonicalised role name to the
+/// owning `AgentSlot.system_prompt`. The caller (api/eval/strategy
+/// CRUD) builds this map from the strategy's bound agents before
+/// invoking this helper. Missing entries (role exists in the strategy
+/// but no slot was supplied) are skipped — the caller has already
+/// rejected unknown roles via `validate_strategy`.
+///
+/// Returns the list of warning strings — the caller folds these into
+/// its own `PreflightResult` or `Vec<String>` surface.
+///
+/// Note: this is the field-existence side of the contract's
+/// `validate.rs` extension. The "no upstream Filter at all" check
+/// stays an error in Phase B's `validate_strategy`
+/// (`PredicateWithoutUpstreamFilter`) — operators can't silence that
+/// one, but the field-existence drift below is just a warning.
+pub fn predicate_signal_field_warnings(
+    strategy: &Strategy,
+    system_prompts_by_role: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if strategy.pipeline.kind != PipelineKind::Graph {
+        return warnings;
+    }
+    for edge in &strategy.pipeline.edges {
+        let Some(predicate) = edge.condition.as_ref() else {
+            continue;
+        };
+        let from = canonical_role(&edge.from_role);
+        let to = canonical_role(&edge.to_role);
+        let from_idx = strategy
+            .agents
+            .iter()
+            .position(|a| canonical_role(&a.role) == from);
+        let Some(from_idx) = from_idx else { continue };
+
+        // Collect every upstream Filter prompt at index <= from_idx —
+        // any of them may declare the field. The scan is lenient: if
+        // any upstream Filter mentions the field, we accept it (no
+        // warning). If none mention it, we warn.
+        let upstream_filter_prompts: Vec<&str> = strategy
+            .agents
+            .iter()
+            .take(from_idx + 1)
+            .filter(|a| matches!(a.activates, Some(Capability::Filter)))
+            .filter_map(|a| {
+                system_prompts_by_role
+                    .get(&canonical_role(&a.role))
+                    .map(String::as_str)
+            })
+            .collect();
+        if upstream_filter_prompts.is_empty() {
+            // No upstream Filter has a known prompt — defer to the
+            // Phase B `PredicateWithoutUpstreamFilter` error path. We
+            // intentionally do not warn here so we don't double-fire.
+            continue;
+        }
+
+        for field in collect_signal_fields(predicate) {
+            let head = field.split('.').next().unwrap_or(&field).to_ascii_lowercase();
+            let mentioned = upstream_filter_prompts
+                .iter()
+                .any(|p| p.to_ascii_lowercase().contains(&head));
+            if !mentioned {
+                warnings.push(format!(
+                    "graph pipeline edge from '{}' to '{}' references signal_field '{}' which is not declared in any upstream Filter system_prompt; predicate may never match",
+                    from, to, field,
+                ));
+            }
+        }
+    }
+    warnings
+}
+
+/// Walk an `EdgePredicate` and collect every `signal_field` leaf
+/// referenced. Recurses through `All`/`Any`/`Not` so nested predicates
+/// surface their fields.
+fn collect_signal_fields(predicate: &EdgePredicate) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_signal_fields_into(predicate, &mut out);
+    out
+}
+
+fn collect_signal_fields_into(predicate: &EdgePredicate, out: &mut Vec<String>) {
+    match predicate {
+        EdgePredicate::Eq { signal_field, .. }
+        | EdgePredicate::Neq { signal_field, .. }
+        | EdgePredicate::Gte { signal_field, .. }
+        | EdgePredicate::Lte { signal_field, .. }
+        | EdgePredicate::In { signal_field, .. } => {
+            out.push(signal_field.clone());
+        }
+        EdgePredicate::All(inner) | EdgePredicate::Any(inner) => {
+            for p in inner {
+                collect_signal_fields_into(p, out);
+            }
+        }
+        EdgePredicate::Not(inner) => collect_signal_fields_into(inner, out),
+    }
 }
 
 fn validate_common(b: &Strategy) -> Result<(), ValidationError> {

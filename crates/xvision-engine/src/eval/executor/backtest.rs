@@ -490,6 +490,13 @@ impl BacktestExecutor {
         let mut entry_price: f64 = 0.0;
         let mut realized_total: f64 = 0.0;
         let mut decision_idx = 0u32;
+        // Phase C — per-eval-run signal cache owned by the executor.
+        // Lifetime equals the run loop; dropped when the run completes.
+        // Built once here so the cache survives across cycles and the
+        // Minute / Decision granularity paths can re-fire prior signals.
+        let mut signal_cache = crate::agent::signal_cache::SignalCache::new();
+        let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
+        let bar_period_minutes = cadence_min.max(1) as u32;
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
@@ -885,6 +892,16 @@ impl BacktestExecutor {
                 scenario_id: scenario.id.clone(),
                 cycle_idx: decision_idx as i64,
                 provider_catalogs: self.provider_catalogs.clone(),
+                // Phase C — Filter capability runtime context. The
+                // executor owns the cache for the run's lifetime; the
+                // pipeline borrows it mutably for this cycle.
+                filter_ctx: Some(crate::agent::pipeline::FilterPipelineCtx {
+                    signal_cache: &mut signal_cache,
+                    bar_period_minutes,
+                    multi_filter_config,
+                    bar_ts: bar.timestamp,
+                    strategy_id: strategy.manifest.id.clone(),
+                }),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
