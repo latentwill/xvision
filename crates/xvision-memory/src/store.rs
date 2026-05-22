@@ -3,10 +3,32 @@
 use std::path::Path;
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::Row;
 use sqlx::SqlitePool;
 
 use crate::types::{MemoryItem, MemoryMatch, Tier};
+
+/// Env var controlling the soft-delete grace window for
+/// `MemoryStore::forget`. `0` collapses the soft-delete to an
+/// immediate hard-delete (matches V2D's prior behavior for opt-out).
+pub const FORGET_GRACE_ENV: &str = "XVN_MEMORY_FORGET_GRACE_DAYS";
+
+/// Default grace window when `XVN_MEMORY_FORGET_GRACE_DAYS` is unset.
+/// A working week + a weekend so an operator who accidentally fires
+/// `xvn memory forget` has time to notice and run `undo-forget`.
+pub const DEFAULT_FORGET_GRACE_DAYS: u32 = 14;
+
+/// Read the configured grace window, falling back to the default.
+/// A malformed value falls back to the default (the env var is an
+/// operator escape hatch, not a typed contract).
+pub fn forget_grace_days() -> u32 {
+    std::env::var(FORGET_GRACE_ENV)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(DEFAULT_FORGET_GRACE_DAYS)
+}
 
 pub struct MemoryStore {
     pool: SqlitePool,
@@ -43,6 +65,27 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
+/// Idempotent column-add for `forgotten_at`. The crate owns its own
+/// SQLite schema and adds the column on next open rather than via a
+/// new sqlx migration file — keeps the soft-delete change self-
+/// contained inside `store.rs` per the contract.
+async fn ensure_forgotten_at_column(pool: &SqlitePool) -> anyhow::Result<()> {
+    let exists: bool =
+        sqlx::query("SELECT 1 FROM pragma_table_info('memory_items') WHERE name = 'forgotten_at'")
+            .fetch_optional(pool)
+            .await?
+            .is_some();
+    if !exists {
+        sqlx::query("ALTER TABLE memory_items ADD COLUMN forgotten_at TEXT")
+            .execute(pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_memory_items_forgotten_at ON memory_items(forgotten_at)")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 impl MemoryStore {
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(parent) = path.parent() {
@@ -58,6 +101,9 @@ impl MemoryStore {
             .run(&pool)
             .await
             .context("memory: migrate")?;
+        ensure_forgotten_at_column(&pool)
+            .await
+            .context("memory: ensure forgotten_at column")?;
         Ok(Self { pool })
     }
 
@@ -70,6 +116,7 @@ impl MemoryStore {
             .connect_with(opts)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        ensure_forgotten_at_column(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -169,6 +216,7 @@ impl MemoryStore {
                     "SELECT id, text, embedding FROM memory_items \
                      WHERE namespace = ? \
                        AND tier = 'pattern' \
+                       AND forgotten_at IS NULL \
                        AND (training_window_end IS NULL OR training_window_end < ?)",
                 )
                 .bind(namespace)
@@ -179,7 +227,7 @@ impl MemoryStore {
             None => {
                 sqlx::query_as(
                     "SELECT id, text, embedding FROM memory_items \
-                     WHERE namespace = ? AND tier = 'pattern'",
+                     WHERE namespace = ? AND tier = 'pattern' AND forgotten_at IS NULL",
                 )
                 .bind(namespace)
                 .fetch_all(&self.pool)
@@ -199,11 +247,97 @@ impl MemoryStore {
         Ok(scored)
     }
 
+    /// Soft-delete every live row in `namespace`. Rows whose
+    /// `forgotten_at` is already set are left untouched (a re-forget
+    /// must not shift the restorable window). When
+    /// `XVN_MEMORY_FORGET_GRACE_DAYS=0` the call collapses to an
+    /// immediate hard-delete, matching V2D's prior destructive
+    /// semantics for operators who explicitly want that.
+    ///
+    /// Returns the number of rows affected.
     pub async fn forget(&self, namespace: &str) -> anyhow::Result<u64> {
-        let res = sqlx::query("DELETE FROM memory_items WHERE namespace = ?")
-            .bind(namespace)
-            .execute(&self.pool)
-            .await?;
+        self.forget_at(namespace, Utc::now()).await
+    }
+
+    /// Test seam: same as `forget` but with an injected `now` for
+    /// deterministic timestamp assertions. Production callers use
+    /// `forget`.
+    pub async fn forget_at(&self, namespace: &str, now: DateTime<Utc>) -> anyhow::Result<u64> {
+        if forget_grace_days() == 0 {
+            let res = sqlx::query("DELETE FROM memory_items WHERE namespace = ?")
+                .bind(namespace)
+                .execute(&self.pool)
+                .await?;
+            return Ok(res.rows_affected());
+        }
+        let res = sqlx::query(
+            "UPDATE memory_items SET forgotten_at = ? \
+             WHERE namespace = ? AND forgotten_at IS NULL",
+        )
+        .bind(now.to_rfc3339())
+        .bind(namespace)
+        .execute(&self.pool)
+        .await?;
         Ok(res.rows_affected())
+    }
+
+    /// Restore soft-deleted rows in `namespace` whose `forgotten_at`
+    /// is `>= since`. `since` is the lower bound of the grace
+    /// window — callers compute it as `now - grace_days`. Rows
+    /// forgotten before that point have either been hard-deleted by
+    /// the janitor or are about to be, so restoring them would race
+    /// the sweep.
+    ///
+    /// Returns the count restored.
+    pub async fn undo_forget(&self, namespace: &str, since: DateTime<Utc>) -> anyhow::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE memory_items SET forgotten_at = NULL \
+             WHERE namespace = ? \
+               AND forgotten_at IS NOT NULL \
+               AND forgotten_at >= ?",
+        )
+        .bind(namespace)
+        .bind(since.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Janitor sweep — hard-delete rows whose `forgotten_at` is older
+    /// than the grace window. `grace_days = 0` deletes every
+    /// soft-deleted row regardless of age (matches the opt-out env
+    /// var's eager behavior).
+    ///
+    /// Returns the count hard-deleted.
+    pub async fn hard_delete_expired(&self, grace_days: u32) -> anyhow::Result<u64> {
+        self.hard_delete_expired_at(grace_days, Utc::now()).await
+    }
+
+    /// Test seam: same as `hard_delete_expired` but with an injected
+    /// `now` for deterministic grace-window assertions.
+    pub async fn hard_delete_expired_at(&self, grace_days: u32, now: DateTime<Utc>) -> anyhow::Result<u64> {
+        let cutoff = now - chrono::Duration::days(grace_days as i64);
+        let res = sqlx::query(
+            "DELETE FROM memory_items \
+             WHERE forgotten_at IS NOT NULL AND forgotten_at < ?",
+        )
+        .bind(cutoff.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Count rows tagged forgotten in a namespace. Used by the engine
+    /// API to surface the "N restorable items" hint and by tests.
+    pub async fn count_forgotten(&self, namespace: &str) -> anyhow::Result<u64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as n FROM memory_items \
+             WHERE namespace = ? AND forgotten_at IS NOT NULL",
+        )
+        .bind(namespace)
+        .fetch_one(&self.pool)
+        .await?;
+        let n: i64 = row.try_get("n")?;
+        Ok(n.max(0) as u64)
     }
 }

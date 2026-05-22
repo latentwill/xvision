@@ -69,6 +69,7 @@ fn memory_item(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
         scenario_id: None,
         cycle_idx: None,
         training_window_end: None,
+        forgotten_at: None,
     }
 }
 

@@ -103,6 +103,12 @@ pub struct MemoryItem {
     /// every scenario; operator owns the safety guarantee). MUST be
     /// `None` on Observations.
     pub training_window_end: Option<chrono::DateTime<chrono::Utc>>,
+    /// Soft-delete timestamp. `None` on live rows; `Some(_)` on rows
+    /// that `forget` has marked. Rows with non-null `forgotten_at` are
+    /// skipped by queries until either `undo_forget` clears the flag
+    /// (inside the grace window) or the janitor sweep hard-deletes
+    /// them (outside the window).
+    pub forgotten_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

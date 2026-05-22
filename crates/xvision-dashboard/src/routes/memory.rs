@@ -10,6 +10,7 @@
 //! - `POST   /api/memory/patterns`         → `engine::api::memory::create_pattern`
 //! - `DELETE /api/memory/:id`              → `engine::api::memory::delete_one`
 //! - `DELETE /api/memory`                  → `engine::api::memory::forget`
+//! - `POST   /api/memory/undo-forget`      → `engine::api::memory::undo_forget`
 //!
 //! ## Memory store sourcing
 //!
@@ -43,6 +44,7 @@ use tokio::sync::OnceCell;
 
 use xvision_engine::api::memory::{
     self, ForgetResponse, ListMemoryRequest, MemoryItemDto, MemoryListResponse, PatternCreateRequest,
+    UndoForgetRequest, UndoForgetResponse,
 };
 use xvision_memory::store::MemoryStore;
 
@@ -70,6 +72,9 @@ pub struct ListQuery {
     pub run_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    /// When `Some(true)` the response includes soft-deleted rows. Default
+    /// hides them.
+    pub include_forgotten: Option<bool>,
 }
 
 impl From<ListQuery> for ListMemoryRequest {
@@ -82,6 +87,7 @@ impl From<ListQuery> for ListMemoryRequest {
             run_id: q.run_id,
             limit: q.limit,
             offset: q.offset,
+            include_forgotten: q.include_forgotten,
         }
     }
 }
@@ -163,5 +169,18 @@ pub async fn forget(
     };
     let store = resolve_store().await?;
     let resp = memory::forget(&store, &namespace).await?;
+    Ok(Json(resp))
+}
+
+/// `POST /api/memory/undo-forget` — restore rows soft-deleted by a
+/// recent `DELETE /api/memory` call. Rows whose `forgotten_at` is older
+/// than the grace window are not restored (the janitor sweep is about
+/// to or already has hard-deleted them).
+pub async fn undo_forget(
+    State(_state): State<AppState>,
+    Json(body): Json<UndoForgetRequest>,
+) -> Result<Json<UndoForgetResponse>, DashboardError> {
+    let store = resolve_store().await?;
+    let resp = memory::undo_forget(&store, body).await?;
     Ok(Json(resp))
 }
