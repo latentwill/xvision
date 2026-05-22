@@ -27,6 +27,7 @@ use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use xvision_engine::eval::compare::ComparisonEquityCurve;
 use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
+use xvision_engine::eval::report::compute_run_report;
 use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
 
@@ -685,29 +686,34 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("eval get", e))?;
 
-    // Optionally fetch the behavior summary (on-demand derivation, no DB write).
+    // Compose the canonical run report (action counts, tokens, cost, wall
+    // clock). The aggregation reads from `model_calls` via the
+    // observability join; absent rows produce `None`-valued fields rather
+    // than zeros, matching the contract acceptance.
+    let (report, derived_behavior) = compute_run_report(&ctx.db, &run).await;
+
+    // `--behavior` keeps the legacy verbose shape for back-compat; the
+    // action_counts / repeated_opens fields on `report` cover the contract.
     let behavior: Option<BehaviorSummary> = if args.behavior {
-        Some(
-            eval::get_run_behavior(&ctx, &args.run_id)
-                .await
-                .map_err(|e| api_to_cli("eval behavior", e))?,
-        )
+        Some(derived_behavior)
     } else {
         None
     };
 
     if args.json {
-        if let Some(ref bsummary) = behavior {
-            // Wrap run + behavior_summary in a single object. Only done when
-            // --behavior is set so the plain `--json` shape is unchanged.
-            let wrapped = serde_json::json!({
+        let body = if let Some(ref bsummary) = behavior {
+            serde_json::json!({
                 "run": run,
+                "report": report,
                 "behavior_summary": bsummary,
-            });
-            crate::io::print_json(&wrapped)?;
+            })
         } else {
-            crate::io::print_json(&run)?;
-        }
+            serde_json::json!({
+                "run": run,
+                "report": report,
+            })
+        };
+        crate::io::print_json(&body)?;
         return Ok(());
     }
 
@@ -719,6 +725,9 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     println!("started_at      {}", run.started_at.to_rfc3339());
     if let Some(c) = run.completed_at {
         println!("completed_at    {}", c.to_rfc3339());
+    }
+    if let Some(wc) = report.wall_clock_ms {
+        println!("wall_clock_ms   {wc}");
     }
     if let Some(m) = run.metrics.as_ref() {
         println!("\nMetrics");
@@ -738,6 +747,42 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         println!("  win_rate      {:.2}", m.win_rate);
         println!("  n_trades      {}", m.n_trades);
         println!("  n_decisions   {}", m.n_decisions);
+    }
+
+    // Action distribution + tokens + cost roll-up. Always emitted so an
+    // operator can tell at a glance "no model calls ever landed for this
+    // run" (all-None tokens, model_call_count = 0).
+    println!("\nActions");
+    println!("  long_open     {}", report.action_counts.long_open);
+    println!("  short_open    {}", report.action_counts.short_open);
+    println!("  flat          {}", report.action_counts.flat);
+    println!("  hold          {}", report.action_counts.hold);
+    println!("  long_close    {}", report.action_counts.long_close);
+    println!("  short_close   {}", report.action_counts.short_close);
+    println!("  decisions     {}", report.decisions);
+    println!("  trades        {}", report.trades);
+    println!("  direct_flips  {}", report.direct_flips);
+    println!("  repeated_opens {}", report.repeated_opens);
+
+    println!("\nTokens / cost");
+    match report.input_tokens {
+        Some(n) => println!("  input_tokens  {n}"),
+        None => println!("  input_tokens  n/a"),
+    }
+    match report.output_tokens {
+        Some(n) => println!("  output_tokens {n}"),
+        None => println!("  output_tokens n/a"),
+    }
+    match report.cost_usd_estimate {
+        Some(c) => {
+            let lb = if report.cost_estimate_complete {
+                ""
+            } else {
+                " (lower bound — some calls had unknown cost)"
+            };
+            println!("  cost_usd      ${c:.4}{lb}");
+        }
+        None => println!("  cost_usd      n/a"),
     }
     if let Some(ref bsummary) = behavior {
         println!("\nbehavior_summary:");

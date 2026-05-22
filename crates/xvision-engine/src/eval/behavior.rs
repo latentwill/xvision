@@ -17,11 +17,62 @@
 //! * `exits_on_invalidation` — `flat` decisions with `pnl_realized < 0`
 //!   (closed at a loss).
 //! * `primary_failure_mode` — see `primary_failure_mode()`.
+//! * `action_counts` — per-action distribution over the decisions table:
+//!   `long_open`, `short_open`, `flat`, `hold`, `long_close`, `short_close`.
+//!   Together they account for every row whose action enum we know;
+//!   unknown action strings are ignored.
+//! * `repeated_opens` — number of open decisions whose immediately prior
+//!   decision on the same asset was *also* an open in the same direction
+//!   without an intervening close. Tracks "the bot keeps stacking into the
+//!   same side" — distinct from `direct_flips` which counts opposite-side
+//!   open-after-open transitions. A `hold` between two same-direction opens
+//!   does **not** break the chain (hold is no-op for position state); a
+//!   `flat`, `long_close`, or `short_close` does. Computed per asset.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::eval::store::DecisionRow;
+
+/// Per-action decision counts for a run.
+///
+/// Covers every action enum the engine emits today: the four open/flat/hold
+/// variants and the two directional-close variants. Unknown action strings
+/// are ignored — the surface intentionally does not carry an `other`
+/// catch-all because the action set is a versioned wire enum, not free text.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionCounts {
+    pub long_open: u32,
+    pub short_open: u32,
+    pub flat: u32,
+    pub hold: u32,
+    pub long_close: u32,
+    pub short_close: u32,
+}
+
+impl ActionCounts {
+    /// Count of decisions that opened a position: long_open + short_open.
+    pub fn opens(&self) -> u32 {
+        self.long_open + self.short_open
+    }
+    /// Count of decisions that closed a position via either explicit-close
+    /// variant: long_close + short_close. Does **not** include `flat`,
+    /// which the trader emits as a position-clear primitive.
+    pub fn closes(&self) -> u32 {
+        self.long_close + self.short_close
+    }
+    /// Round-trip count: opens + closes. Used by report surfaces as the
+    /// "trade count" headline (every open and every directional close is one
+    /// trade leg the executor would have routed).
+    pub fn trades(&self) -> u32 {
+        self.opens() + self.closes()
+    }
+}
 
 /// Behavior summary derived from a run's decision rows.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -46,6 +97,17 @@ pub struct BehaviorSummary {
     pub exits_on_invalidation: u32,
     /// Heuristic label for the most likely failure mode.
     pub primary_failure_mode: String,
+    /// Per-action decision counts. Appended 2026-05-22 for the
+    /// `cli-report-actions-and-tokens` track. `Default` is the all-zeroes
+    /// counts struct, so older callers deserializing payloads without this
+    /// field still parse — `#[serde(default)]` keeps the JSON shape
+    /// backward-compatible.
+    #[serde(default)]
+    pub action_counts: ActionCounts,
+    /// Number of same-direction "stacking" opens on the same asset without
+    /// an intervening close (see module doc).
+    #[serde(default)]
+    pub repeated_opens: u32,
 }
 
 /// Derive a `BehaviorSummary` from a slice of decision rows.
@@ -63,6 +125,8 @@ pub fn derive_behavior_summary(decisions: &[DecisionRow]) -> BehaviorSummary {
             reentries_after_loss: 0,
             exits_on_invalidation: 0,
             primary_failure_mode: primary_failure_mode(0.0, 0, 0, 0, None).to_string(),
+            action_counts: ActionCounts::default(),
+            repeated_opens: 0,
         };
     }
 
@@ -107,6 +171,9 @@ pub fn derive_behavior_summary(decisions: &[DecisionRow]) -> BehaviorSummary {
         reentries_after_loss,
     );
 
+    let action_counts = count_actions(decisions);
+    let repeated_opens = count_repeated_opens(decisions);
+
     BehaviorSummary {
         flat_rate,
         trades_opened,
@@ -115,7 +182,60 @@ pub fn derive_behavior_summary(decisions: &[DecisionRow]) -> BehaviorSummary {
         reentries_after_loss,
         exits_on_invalidation,
         primary_failure_mode: pfm.to_string(),
+        action_counts,
+        repeated_opens,
     }
+}
+
+/// Tally per-action decisions in a single pass. Unknown action strings are
+/// ignored — see [`ActionCounts`] doc.
+fn count_actions(decisions: &[DecisionRow]) -> ActionCounts {
+    let mut c = ActionCounts::default();
+    for d in decisions {
+        match d.action.as_str() {
+            "long_open" => c.long_open += 1,
+            "short_open" => c.short_open += 1,
+            "flat" => c.flat += 1,
+            "hold" => c.hold += 1,
+            "long_close" => c.long_close += 1,
+            "short_close" => c.short_close += 1,
+            _ => {}
+        }
+    }
+    c
+}
+
+/// Count "stacking" opens (see module doc).
+///
+/// Per asset, track whether the most recent non-hold/non-open decision left
+/// the position open in some direction. Each subsequent same-direction open
+/// without an intervening close (`flat`, `long_close`, `short_close`)
+/// increments the counter. `hold` is a no-op for position state and does
+/// not break the chain; opposite-direction opens are counted by
+/// `direct_flips`, not here.
+fn count_repeated_opens(decisions: &[DecisionRow]) -> u32 {
+    let mut last_open: HashMap<&str, &str> = HashMap::new();
+    let mut count = 0u32;
+
+    for d in decisions {
+        match d.action.as_str() {
+            "flat" | "long_close" | "short_close" => {
+                last_open.remove(d.asset.as_str());
+            }
+            open @ ("long_open" | "short_open") => {
+                if let Some(&prev) = last_open.get(d.asset.as_str()) {
+                    if prev == open {
+                        count += 1;
+                    }
+                }
+                last_open.insert(d.asset.as_str(), open);
+            }
+            _ => {
+                // hold and any unknown action: leave state alone.
+            }
+        }
+    }
+    count
 }
 
 /// Count consecutive open-direction flips on the same asset.
@@ -421,6 +541,86 @@ mod tests {
         ];
         let s = derive_behavior_summary(&decisions);
         assert_eq!(s.direct_flips, 1);
+    }
+
+    // action_counts: every known enum variant is tallied; unknown strings
+    // (defensive, since the wire enum is closed) are ignored.
+    #[test]
+    fn test_action_counts_tallies_each_variant() {
+        let decisions = vec![
+            d(0, "BTC", "long_open", None),
+            d(1, "BTC", "hold", None),
+            d(2, "BTC", "long_close", Some(5.0)),
+            d(3, "BTC", "short_open", None),
+            d(4, "BTC", "short_close", Some(-1.0)),
+            d(5, "BTC", "flat", Some(0.0)),
+            d(6, "BTC", "hold", None),
+            d(7, "BTC", "weird_unknown", None),
+        ];
+        let s = derive_behavior_summary(&decisions);
+        assert_eq!(s.action_counts.long_open, 1);
+        assert_eq!(s.action_counts.short_open, 1);
+        assert_eq!(s.action_counts.long_close, 1);
+        assert_eq!(s.action_counts.short_close, 1);
+        assert_eq!(s.action_counts.flat, 1);
+        assert_eq!(s.action_counts.hold, 2);
+        assert_eq!(s.action_counts.opens(), 2);
+        assert_eq!(s.action_counts.closes(), 2);
+        assert_eq!(s.action_counts.trades(), 4);
+    }
+
+    // repeated_opens: same-direction open after open on the same asset,
+    // with no close in between, counts once per subsequent stack.
+    #[test]
+    fn test_repeated_opens_counts_same_direction_stacking() {
+        let decisions = vec![
+            d(0, "BTC", "long_open", None),
+            d(1, "BTC", "long_open", None), // +1
+            d(2, "BTC", "long_open", None), // +2
+            d(3, "BTC", "flat", Some(0.0)),
+            d(4, "BTC", "long_open", None), // not counted (after flat)
+        ];
+        let s = derive_behavior_summary(&decisions);
+        assert_eq!(s.repeated_opens, 2);
+    }
+
+    // repeated_opens: a `hold` between two same-direction opens does not
+    // break the chain (hold is no-op for position state).
+    #[test]
+    fn test_repeated_opens_survives_hold_between_opens() {
+        let decisions = vec![
+            d(0, "BTC", "long_open", None),
+            d(1, "BTC", "hold", None),
+            d(2, "BTC", "long_open", None), // +1
+        ];
+        let s = derive_behavior_summary(&decisions);
+        assert_eq!(s.repeated_opens, 1);
+    }
+
+    // repeated_opens: opposite-direction opens are counted by direct_flips,
+    // not repeated_opens.
+    #[test]
+    fn test_repeated_opens_excludes_direct_flips() {
+        let decisions = vec![
+            d(0, "BTC", "long_open", None),
+            d(1, "BTC", "short_open", None), // direct flip, not a repeat
+        ];
+        let s = derive_behavior_summary(&decisions);
+        assert_eq!(s.repeated_opens, 0);
+        assert_eq!(s.direct_flips, 1);
+    }
+
+    // repeated_opens: an explicit close (long_close / short_close) breaks
+    // the chain just like a flat does.
+    #[test]
+    fn test_repeated_opens_close_breaks_chain() {
+        let decisions = vec![
+            d(0, "BTC", "long_open", None),
+            d(1, "BTC", "long_close", Some(5.0)),
+            d(2, "BTC", "long_open", None), // not counted (chain broken)
+        ];
+        let s = derive_behavior_summary(&decisions);
+        assert_eq!(s.repeated_opens, 0);
     }
 
     // Regression: reentries_after_loss must be tracked per-asset. A losing
