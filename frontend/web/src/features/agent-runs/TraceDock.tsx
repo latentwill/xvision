@@ -34,6 +34,22 @@ const SIMPLE_HIDDEN_KINDS: ReadonlySet<string> = new Set([
   "prompt.render",
 ]);
 
+/**
+ * Kinds hidden in BOTH Simple and Advanced views. These are spans that
+ * carry no operator-actionable information and exist only as
+ * machine-readable OTel markers. The Advanced toggle is for revealing
+ * useful instrumentation that's noisy in Simple — not for surfacing
+ * empty stubs.
+ *
+ * `state.transition` — emitted at run start (`(start) → running`) and
+ * at each terminal transition. Carries only the from/to label; the
+ * supervisor-category coloring made it look important in the trace
+ * tree but it never had a payload worth inspecting. Hiding it
+ * everywhere declutters the trace without dropping the OTel marker
+ * (the engine still emits it; only the UI suppresses it).
+ */
+const ALWAYS_HIDDEN_KINDS: ReadonlySet<string> = new Set(["state.transition"]);
+
 export function TraceDock() {
   const {
     height,
@@ -83,11 +99,14 @@ export function TraceDock() {
   // `filter.filtered` so flipping the toggle does not auto-clear a
   // selection that lives in a hidden kind — the operator can switch
   // to Advanced and stay on the same span.
+  //
+  // `ALWAYS_HIDDEN_KINDS` applies in both modes: empty stubs the
+  // Advanced toggle shouldn't surface.
   const displaySpans: RunSpan[] = useMemo(
-    () =>
-      advanced_view
-        ? filter.filtered
-        : filter.filtered.filter((s) => !SIMPLE_HIDDEN_KINDS.has(s.kind)),
+    () => {
+      const base = filter.filtered.filter((s) => !ALWAYS_HIDDEN_KINDS.has(s.kind));
+      return advanced_view ? base : base.filter((s) => !SIMPLE_HIDDEN_KINDS.has(s.kind));
+    },
     [advanced_view, filter.filtered],
   );
 
