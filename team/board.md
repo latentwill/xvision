@@ -4,11 +4,14 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-22 (sweep 4) — `strategy-slot-prompt-resolution`
-> (#515) and `trace-dock-emitters` (#524, F43) both merged this morning
-> and are archived this pass. Wave-2 dispatch is in flight:
-> `memory-provenance-in-decisions-trace` (#523) and
-> `indicator-tool-wiring` (#521) opened as PRs. Only
+> Last updated: 2026-05-22 (sweep 5) — `multi-asset-alpaca-unlock`
+> (#533, F18) merged and archived this pass. The F18 cascade closes
+> the post-F30-M1 remainder: `TraderDecision.asset` is now a required
+> `AssetSymbol`, risk drops the separate asset param, `BacktestConfig::instrument`
+> + `BacktestRunConfig::instrument` are gone, executors route per
+> decision, and Orderly rejects non-BTC with `NotActionable`.
+> Wave-2 dispatch still in flight: `memory-provenance-in-decisions-trace`
+> (#523) and `indicator-tool-wiring` (#521). Only
 > `eval-token-efficiency-tail` remains ready but unclaimed in the F41
 > tail. F-5 harness recovery state machine, capability-first spec
 > (#518), and the Phase A schema contract remain in the picture from
@@ -64,6 +67,12 @@ Wave A (#530/#531/#532) merged 2026-05-22 — see intake `team/intake/2026-05-20
 - [docs-search-list-component-adoption](contracts/docs-search-list-component-adoption.md) — only opens if docs-sidebar audit confirms list-component fit.
 
 ## Recently Closed
+
+### Merged 2026-05-22 (sweep 5) — archived under `team/archive/2026-05-22-conductor-pass-5/`
+
+1 contract archived this pass:
+
+- `multi-asset-alpaca-unlock` (#533, F18 — complete cascade: `TraderDecision.asset` required, risk drops asset param, `BacktestConfig::instrument` removed, Alpaca/Orderly route per decision)
 
 ### Merged 2026-05-22 (post-cascade) — archived under `team/archive/2026-05-22-conductor-pass-4/`
 
