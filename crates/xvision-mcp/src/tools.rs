@@ -907,6 +907,7 @@ impl XvisionTools {
                     memory_mode: Default::default(),
                     noop_skip: None,
                     capabilities: xvision_engine::agents::default_capabilities(),
+                    delta_briefing: None,
                 }],
             },
         )
@@ -1141,6 +1142,7 @@ impl XvisionTools {
                 params_override: None,
                 limits: None,
                 skip_preflight: false,
+                provider_override: None,
             };
 
             let entry = match api_eval::run(&ctx, run_req).await {

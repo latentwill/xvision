@@ -8,10 +8,12 @@
 //! See `crates/xvision-engine/src/api/README.md` for the pattern downstream
 //! plans must follow.
 
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 use xvision_core::config::AlpacaData;
@@ -21,6 +23,13 @@ pub mod agents;
 pub mod audit;
 pub mod chart;
 pub mod eval;
+/// `xvn model bakeoff` orchestrator. File lives at
+/// `api/eval/bakeoff.rs` per contract `cli-model-bakeoff`; routed here
+/// with `#[path]` so the public module path stays `api::bakeoff`
+/// without forcing a refactor of `api/eval.rs` (owned in parallel by
+/// `cli-eval-model-override`).
+#[path = "eval/bakeoff.rs"]
+pub mod bakeoff;
 pub mod experiment;
 pub mod health;
 pub mod memory;
@@ -77,6 +86,7 @@ const MIGRATION_032_FILTERS_AND_EVALUATIONS: &str =
     include_str!("../../migrations/032_filters_and_evaluations.sql");
 const MIGRATION_033_AGENT_SLOT_CAPABILITIES: &str =
     include_str!("../../migrations/033_agent_slot_capabilities.sql");
+const MIGRATION_035_EVAL_BAKEOFFS: &str = include_str!("../../migrations/035_eval_bakeoffs.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -188,9 +198,26 @@ impl ApiContext {
             .map_err(|e| ApiError::Internal(format!("create xvn_home {}: {e}", xvn_home.display())))?;
 
         let db_path = xvn_home.join("xvn.db");
-        // `mode=rwc` creates the file if missing.
-        let url = format!("sqlite://{}?mode=rwc", db_path.display());
-        let pool = SqlitePool::connect(&url).await?;
+        // The deployed `xvn-app` was hitting SQLITE_BUSY on
+        // `chat_messages` first-message inserts under normal operator
+        // load — the previous `SqlitePool::connect("sqlite://…?mode=rwc")`
+        // form used sqlx defaults: rollback journal (one writer at a
+        // time, blocks readers), no `busy_timeout` (writers fail
+        // immediately instead of waiting on the lock), and no
+        // connection cap. WAL + a 5s busy timeout + a bounded pool is
+        // the standard server SQLite recipe; it's a no-op on a fresh
+        // file and idempotent on an existing one.
+        let opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(Duration::from_secs(5))
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .connect_with(opts)
+            .await?;
 
         // Multi-statement SQL — sqlx::query executes the whole text.
         sqlx::query(MIGRATION_001).execute(&pool).await?;
@@ -225,6 +252,7 @@ impl ApiContext {
         migrate_eval_runs_venue_label(&pool).await?;
         migrate_filters_and_evaluations(&pool).await?;
         migrate_agent_slot_capabilities(&pool).await?;
+        migrate_eval_bakeoffs(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -805,6 +833,16 @@ async fn migrate_eval_runs_venue_label(pool: &SqlitePool) -> ApiResult<()> {
         sqlx::query(MIGRATION_031_EVAL_RUNS_VENUE_LABEL)
             .execute(pool)
             .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 035 (cli-model-bakeoff): `eval_bakeoffs` +
+/// `eval_bakeoff_runs` tables. Gated on table absence so the migration
+/// is idempotent on already-upgraded databases.
+async fn migrate_eval_bakeoffs(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "eval_bakeoffs").await? {
+        sqlx::query(MIGRATION_035_EVAL_BAKEOFFS).execute(pool).await?;
     }
     Ok(())
 }

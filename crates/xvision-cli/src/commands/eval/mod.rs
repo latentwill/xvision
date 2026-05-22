@@ -20,13 +20,14 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
-use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
+use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride};
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use xvision_engine::eval::compare::ComparisonEquityCurve;
 use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
+use xvision_engine::eval::report::compute_run_report;
 use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
 
@@ -147,6 +148,21 @@ pub struct RunArgs {
     /// known-unreachable but the run should proceed anyway.
     #[arg(long)]
     pub skip_preflight: bool,
+
+    // ===== Per-launch model override (Wave B #5 — cli-eval-model-override) =====
+    /// Per-launch override of the strategy's bound provider. Must be
+    /// supplied together with `--model`; passing one without the other
+    /// is a usage error. The override does not mutate the strategy on
+    /// disk — it applies to this single run.
+    #[arg(long)]
+    pub provider: Option<String>,
+    /// Per-launch override of the strategy's bound model id. Must be
+    /// supplied together with `--provider`. The override is resolved
+    /// through the same `effective_providers::resolve_provider` gate as
+    /// the strategy-bound path; an unreachable override refuses the
+    /// launch with the same structured `reason` discriminant.
+    #[arg(long)]
+    pub model: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -423,6 +439,31 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         }
     };
 
+    // Per-launch override (Wave B #5). `--provider` and `--model` must
+    // be supplied together — passing one without the other is exit-2
+    // usage. The engine validates the override against the resolver
+    // (`key_missing`/`model_disabled`/…) and refuses with the same typed
+    // reason as the strategy-bound path.
+    let provider_override = match (args.provider.as_deref(), args.model.as_deref()) {
+        (Some(p), Some(m)) => Some(ProviderOverride {
+            provider: p.to_string(),
+            model: m.to_string(),
+        }),
+        (Some(_), None) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--provider requires --model (both flags must be supplied together)"),
+            });
+        }
+        (None, Some(_)) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--model requires --provider (both flags must be supplied together)"),
+            });
+        }
+        (None, None) => None,
+    };
+
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
         scenario_id: args.scenario.clone(),
@@ -430,9 +471,13 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         params_override: None,
         limits,
         skip_preflight: args.skip_preflight,
+        provider_override,
     };
 
-    println!(
+    // Banner — operator-facing progress, never on stdout. Stays visible
+    // when --json is set so an operator running interactively still sees
+    // the run kicking off.
+    crate::progress!(
         "Starting eval run — strategy={} scenario={} mode={}",
         req.agent_id,
         req.scenario_id,
@@ -444,10 +489,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         .map_err(|e| api_to_cli("eval run", e))?;
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&run)?;
         return Ok(());
     }
 
@@ -506,10 +548,7 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("eval list", e))?;
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&runs).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&runs)?;
         return Ok(());
     }
     if runs.is_empty() {
@@ -662,10 +701,7 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
             "cancelled_ids": cancelled_ids,
             "outcomes": outcomes,
         });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&body).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&body)?;
         return Ok(());
     }
 
@@ -691,35 +727,50 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("eval get", e))?;
 
-    // Optionally fetch the behavior summary (on-demand derivation, no DB write).
+    // Compose the canonical run report (action counts, tokens, cost, wall
+    // clock). The aggregation reads from `model_calls` via the
+    // observability join; absent rows produce `None`-valued fields rather
+    // than zeros, matching the contract acceptance.
+    let (report, derived_behavior) = compute_run_report(&ctx.db, &run).await;
+
+    // `--behavior` keeps the legacy verbose shape for back-compat; the
+    // action_counts / repeated_opens fields on `report` cover the contract.
     let behavior: Option<BehaviorSummary> = if args.behavior {
-        Some(
-            eval::get_run_behavior(&ctx, &args.run_id)
-                .await
-                .map_err(|e| api_to_cli("eval behavior", e))?,
-        )
+        Some(derived_behavior)
     } else {
         None
     };
 
+    // Surface the per-launch override (Wave B #5) in `--json` so a
+    // results table can show which model produced which sharpe. None
+    // for the common case where the run used the strategy's bound
+    // provider.
+    let provider_override = eval::load_provider_override(&ctx, &run.id).await;
+
     if args.json {
-        if let Some(ref bsummary) = behavior {
-            // Wrap run + behavior_summary in a single object. Only done when
-            // --behavior is set so the plain `--json` shape is unchanged.
-            let wrapped = serde_json::json!({
+        let body = match (behavior.as_ref(), provider_override.as_ref()) {
+            (Some(bsummary), Some(po)) => serde_json::json!({
                 "run": run,
+                "report": report,
                 "behavior_summary": bsummary,
-            });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&wrapped).exit_with(XvnExit::Upstream)?
-            );
-        } else {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
-            );
-        }
+                "provider_override": po,
+            }),
+            (Some(bsummary), None) => serde_json::json!({
+                "run": run,
+                "report": report,
+                "behavior_summary": bsummary,
+            }),
+            (None, Some(po)) => serde_json::json!({
+                "run": run,
+                "report": report,
+                "provider_override": po,
+            }),
+            (None, None) => serde_json::json!({
+                "run": run,
+                "report": report,
+            }),
+        };
+        crate::io::print_json(&body)?;
         return Ok(());
     }
 
@@ -731,6 +782,9 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     println!("started_at      {}", run.started_at.to_rfc3339());
     if let Some(c) = run.completed_at {
         println!("completed_at    {}", c.to_rfc3339());
+    }
+    if let Some(wc) = report.wall_clock_ms {
+        println!("wall_clock_ms   {wc}");
     }
     if let Some(m) = run.metrics.as_ref() {
         println!("\nMetrics");
@@ -750,6 +804,42 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         println!("  win_rate      {:.2}", m.win_rate);
         println!("  n_trades      {}", m.n_trades);
         println!("  n_decisions   {}", m.n_decisions);
+    }
+
+    // Action distribution + tokens + cost roll-up. Always emitted so an
+    // operator can tell at a glance "no model calls ever landed for this
+    // run" (all-None tokens, model_call_count = 0).
+    println!("\nActions");
+    println!("  long_open     {}", report.action_counts.long_open);
+    println!("  short_open    {}", report.action_counts.short_open);
+    println!("  flat          {}", report.action_counts.flat);
+    println!("  hold          {}", report.action_counts.hold);
+    println!("  long_close    {}", report.action_counts.long_close);
+    println!("  short_close   {}", report.action_counts.short_close);
+    println!("  decisions     {}", report.decisions);
+    println!("  trades        {}", report.trades);
+    println!("  direct_flips  {}", report.direct_flips);
+    println!("  repeated_opens {}", report.repeated_opens);
+
+    println!("\nTokens / cost");
+    match report.input_tokens {
+        Some(n) => println!("  input_tokens  {n}"),
+        None => println!("  input_tokens  n/a"),
+    }
+    match report.output_tokens {
+        Some(n) => println!("  output_tokens {n}"),
+        None => println!("  output_tokens n/a"),
+    }
+    match report.cost_usd_estimate {
+        Some(c) => {
+            let lb = if report.cost_estimate_complete {
+                ""
+            } else {
+                " (lower bound — some calls had unknown cost)"
+            };
+            println!("  cost_usd      ${c:.4}{lb}");
+        }
+        None => println!("  cost_usd      n/a"),
     }
     if let Some(ref bsummary) = behavior {
         println!("\nbehavior_summary:");
@@ -774,6 +864,15 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         }
     }
 
+    // Per-launch override receipt (Wave B #5). Surface only when set —
+    // the absence of this section means the run used the strategy's
+    // bound provider/model.
+    if let Some(po) = provider_override.as_ref() {
+        println!("\nprovider_override");
+        println!("  provider      {}", po.provider);
+        println!("  model         {}", po.model);
+    }
+
     if let Some(e) = run.error.as_deref() {
         println!("\nerror: {e}");
     }
@@ -791,10 +890,14 @@ async fn run_watch(args: WatchArgs) -> CliResult<()> {
             .await
             .map_err(|e| api_to_cli("eval watch", e))?;
         if args.json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
-            );
+            // Note: `xvn eval watch --json` is one-shot only — passing
+            // `--once` (or having the run already terminal) emits a
+            // single JSON value to stdout, conforming to the
+            // cli-json-stdout-contract. Streaming-mode `--json` without
+            // `--once` writes one JSON object per poll which is
+            // intentionally not a single-value channel today; an NDJSON
+            // follow-up contract will redesign that surface.
+            crate::io::print_json(&run)?;
         } else {
             print_run_status_line(&run);
         }
@@ -1018,10 +1121,7 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
 
     if args.json {
         let report = build_compare_report(&ctx, report, &args.sort).await;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&report)?;
         return Ok(());
     }
 
@@ -1104,16 +1204,13 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         .map_err(|e| api_to_cli("eval validate scenario", e))?;
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "ok": true,
-                "strategy": args.strategy,
-                "scenario": args.scenario,
-                "mode": mode.as_str(),
-            }))
-            .exit_with(XvnExit::Upstream)?
-        );
+        let body = serde_json::json!({
+            "ok": true,
+            "strategy": args.strategy,
+            "scenario": args.scenario,
+            "mode": mode.as_str(),
+        });
+        crate::io::print_json(&body)?;
     } else {
         println!("ok");
     }
@@ -1149,10 +1246,7 @@ async fn run_attest(args: AttestArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("eval attest", e))?;
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&att).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&att)?;
         return Ok(());
     }
     let sig_prefix: String = att.signature_hex.chars().take(16).collect();

@@ -488,10 +488,7 @@ async fn new(
                 "id": id,
                 "strategy": strategy,
             });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
-            );
+            crate::io::print_json(&out)?;
         } else {
             println!("{id}");
         }
@@ -568,6 +565,7 @@ async fn new_atomic(
                 memory_mode: Default::default(),
                 noop_skip: None,
                 capabilities: xvision_engine::agents::default_capabilities(),
+                delta_briefing: None,
             }],
         },
     )
@@ -626,10 +624,7 @@ async fn new_atomic(
     let warnings = preflight.warnings;
     if json {
         let out = build_atomic_create_output(&strategy_id, &agent_id, &provider, &model, warnings);
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&out)?;
     } else {
         println!("{strategy_id}");
     }
@@ -872,10 +867,7 @@ async fn collect_prompt_mismatch_warnings(
 
 fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> {
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(report).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(report)?;
     } else {
         println!("strategy:  {}", report.strategy_id);
         println!("eval_ready: {}", report.eval_ready);
@@ -912,10 +904,7 @@ fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> 
 async fn ls(json: bool) -> CliResult<()> {
     let ids = store().list().await.exit_with(XvnExit::Upstream)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&ids).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&ids)?;
         return Ok(());
     }
     for id in ids {
@@ -943,10 +932,7 @@ async fn templates(json: bool) -> CliResult<()> {
             "templates": Vec::<serde_json::Value>::new(),
             "deprecation_note": DEPRECATION_NOTE,
         });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&out)?;
         return Ok(());
     }
     println!("{DEPRECATION_NOTE}");
@@ -1125,6 +1111,7 @@ fn slot_to_agent_slot(
         memory_mode: Default::default(),
         noop_skip: None,
         capabilities: xvision_engine::agents::default_capabilities(),
+        delta_briefing: None,
     }
 }
 

@@ -54,6 +54,7 @@ fn sample_slot_with(capabilities: BTreeSet<Capability>) -> AgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
         capabilities,
+        delta_briefing: None,
     }
 }
 

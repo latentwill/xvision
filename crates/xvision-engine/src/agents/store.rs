@@ -362,6 +362,7 @@ impl AgentStore {
                 // enabled) until the operator re-saves with an explicit value.
                 noop_skip: None,
                 capabilities,
+                delta_briefing: None,
             });
         }
         Ok(out)
@@ -514,6 +515,7 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::default(),
             noop_skip: None,
             capabilities: default_capabilities(),
+            delta_briefing: None,
         }
     }
 

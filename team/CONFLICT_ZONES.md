@@ -10,21 +10,20 @@ Conductor: see `team/CONDUCTOR.md`.
 
 | Path | Current claim | Wave | Released when |
 |---|---|---|---|
-| `team/MANIFEST.md` | conductor | process | Always conductor-only |
+| `team/MANIFEST.md` | conductor | process | Always conductor-only (operator may amend migration registry rows) |
 | `team/board.md` | conductor | process | Always conductor-only |
 | `team/OWNERSHIP.md` | conductor | process | Always conductor-only |
 | `team/CONFLICT_ZONES.md` | conductor | process | Always conductor-only |
-| `crates/xvision-engine/migrations/**` | (none) | - | A new migration number is reserved in the contract |
+| `crates/xvision-engine/migrations/**` | migration 033 reserved for `agent-graph-capability-schema` | agent-graph-2026-05-22 | Released after Phase A merges; next number 034 for whichever wave-2 contract claims first |
 | `Cargo.toml` (workspace) | (none) | - | Crate add/remove proposed via a foundation contract |
-| `crates/xvision-engine/src/agent/recovery.rs` | `harness-recovery-context-overflow` (#513) + `harness-recovery-schema-missing-field` (#516) — disjoint enum arms; phase 2a (#511) `MalformedJson` arm already merged | harness-observability-tail-2026-05-21 | Released when #513 + #516 merge. |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | `harness-recovery-schema-missing-field` (#516) | harness-observability-tail-2026-05-21 | Released when #516 merges. Then `trace-dock-emitters` claims for the F43 event emitters. |
-| `crates/xvision-engine/src/eval/executor/backtest.rs` | Same as paper.rs (dual-executor pattern) | harness-observability-tail-2026-05-21 | Same rule. |
-| `crates/xvision-engine/src/eval/executor/trader_output.rs` | `harness-recovery-schema-missing-field` (#516) | harness-observability-tail-2026-05-21 | Released when #516 merges. |
-| `crates/xvision-engine/src/agent/execute.rs` | `harness-recovery-context-overflow` (#513) | harness-observability-tail-2026-05-21 | Released when #513 merges. Then 4 wave-2 contracts (`memory-provenance`, `indicator-tool-wiring`, `eval-token-efficiency-tail`, `trace-dock-emitters`) can claim disjoint regions in parallel. |
-| `crates/xvision-engine/src/agent/llm.rs` | `harness-recovery-context-overflow` (#513) | harness-observability-tail-2026-05-21 | Released when #513 merges. Then `indicator-tool-wiring` + `eval-token-efficiency-tail` claim disjoint regions. |
-| `crates/xvision-engine/src/strategies/{manifest,slot,validate,store}.rs` | `strategy-slot-prompt-resolution` (#515) | eval-honesty-tail-2026-05-22 | Released when #515 merges. |
-| `crates/xvision-engine/src/authoring.rs` | Same as strategies/* | eval-honesty-tail-2026-05-22 | Same rule. |
-| `crates/xvision-observability/src/{sqlite,events,types,lib}.rs` | held: `trace-dock-emitters` + `memory-provenance-in-decisions-trace` — disjoint event-kinds | multiple waves | Dispatch when #513 unblocks the execute.rs co-occupancy. |
+| `crates/xvision-engine/src/agents/model.rs` | `agent-graph-capability-schema` (additive `capabilities` field); held: `eval-token-efficiency-tail` (disjoint region) | agent-graph-2026-05-22 | Released after Phase A merges. |
+| `crates/xvision-engine/src/strategies/agent_ref.rs` | `agent-graph-capability-schema` (additive `activates` + `EdgePredicate` + `PipelineEdge.condition`) | agent-graph-2026-05-22 | Released after Phase A merges. |
+| `crates/xvision-engine/src/agent/execute.rs` | held: 4 wave-2 contracts (memory-provenance, indicator-tool-wiring, eval-token-efficiency-tail, trace-dock-emitters) | multiple waves | Open for parallel dispatch — disjoint regions. Whichever lands first holds; others rebase. |
+| `crates/xvision-engine/src/agent/llm.rs` | held: indicator-tool-wiring, eval-token-efficiency-tail | multiple waves | Disjoint regions. |
+| `crates/xvision-engine/src/agent/pipeline.rs` | held: indicator-tool-wiring (tool-call dispatch), trace-dock-emitters (tool_calls emit) | multiple waves | Disjoint regions. |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | held: trace-dock-emitters | trace-dock-emitters-2026-05-22 | Single claim; safe to dispatch. |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | held: trace-dock-emitters | trace-dock-emitters-2026-05-22 | Single claim; safe to dispatch. |
+| `crates/xvision-observability/src/{sqlite,events,types,lib}.rs` | held: trace-dock-emitters (broad), memory-provenance-in-decisions-trace (narrow — `decision_id` on memory_recall payload) | multiple waves | trace-dock-emitters lands first preferred; provenance rebases. |
 
 ## Rules
 

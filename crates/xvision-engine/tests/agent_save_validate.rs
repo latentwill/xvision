@@ -106,6 +106,7 @@ fn slot_with_prompt(system_prompt: impl Into<String>) -> AgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
         capabilities: xvision_engine::agents::default_capabilities(),
+        delta_briefing: None,
     }
 }
 

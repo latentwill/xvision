@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use xvision_engine::api::settings::providers::{self, AddProviderRequest, ProviderRow};
+use xvision_engine::api::settings::providers::{self, AddProviderRequest, EffectiveProvider, ProviderRow};
 use xvision_engine::api::settings::providers_catalog;
 use xvision_engine::api::{Actor, ApiContext};
 
@@ -28,8 +28,22 @@ pub struct ProviderCmd {
 
 #[derive(Subcommand, Debug)]
 enum ProviderAction {
-    /// List all registered providers.
-    List,
+    /// List all registered providers. Default output preserves the legacy
+    /// human-readable table; pass `--effective` for the canonical
+    /// launchability rollup (provider/has_key/launchable/per-model
+    /// enablement) shared with the dashboard and `xvn doctor`.
+    List {
+        /// Emit the canonical `EffectiveProvider` rows backed by the
+        /// `providers::effective_providers` helper. Same shape served by
+        /// `GET /api/settings/providers` (with rollup) and surfaced in
+        /// the `xvn doctor` report.
+        #[arg(long, default_value_t = false)]
+        effective: bool,
+        /// Render JSON (stdout). Implies `--effective` for now — there
+        /// is no JSON encoding for the legacy table output.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// Show one provider in full.
     Show {
         #[arg(long)]
@@ -83,6 +97,18 @@ enum ProviderAction {
 pub async fn run(cmd: ProviderCmd) -> Result<()> {
     let xvn_home = resolve_xvn_home()?;
     let config_path = runtime_config_path(&xvn_home);
+
+    // Read-only `--effective` / `--json` paths skip opening the
+    // ApiContext so stdout stays JSON-clean. `ApiContext::open`
+    // side-effects tracing on stdout (the "V2D: failed to open
+    // memory store" WARN) — fixing the tracing-init upstream is the
+    // `cli-json-stdout-contract` sibling track's scope.
+    if let ProviderAction::List { effective, json } = &cmd.action {
+        if *effective || *json {
+            return list_effective(&xvn_home, &config_path, *json).await;
+        }
+    }
+
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -91,7 +117,12 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("open ApiContext: {e}"))?;
 
     match cmd.action {
-        ProviderAction::List => list(&ctx, &config_path).await,
+        ProviderAction::List { effective: _, json: _ } => {
+            // Legacy human table — falls through here (the `--effective`
+            // / `--json` branches were handled above without an
+            // ApiContext open).
+            list_legacy(&ctx, &config_path).await
+        }
         ProviderAction::Show { name } => show(&ctx, &config_path, &name).await,
         ProviderAction::Check { name, probe } => check(&ctx, &config_path, &name, probe).await,
         ProviderAction::Add {
@@ -120,7 +151,26 @@ fn resolve_xvn_home() -> Result<PathBuf> {
     crate::commands::home::resolve_xvn_home_env()
 }
 
-async fn list(ctx: &ApiContext, config_path: &std::path::Path) -> Result<()> {
+/// Canonical "is this provider launchable" view. Path-only — does not
+/// open `ApiContext`, so JSON output is uncontaminated by audit-pool
+/// migration tracing.
+async fn list_effective(
+    xvn_home: &std::path::Path,
+    config_path: &std::path::Path,
+    json: bool,
+) -> Result<()> {
+    let rows = providers::effective_providers_with_paths(xvn_home, config_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        print_effective_table(&rows);
+    }
+    Ok(())
+}
+
+async fn list_legacy(ctx: &ApiContext, config_path: &std::path::Path) -> Result<()> {
     let report = providers::list(ctx, config_path)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -148,6 +198,24 @@ async fn list(ctx: &ApiContext, config_path: &std::path::Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn print_effective_table(rows: &[EffectiveProvider]) {
+    println!(
+        "{:<18} {:<14} {:<8} {:<8} {:<7} {}",
+        "PROVIDER", "KIND", "ENABLED", "KEY", "MODELS", "LAUNCHABLE"
+    );
+    for r in rows {
+        println!(
+            "{:<18} {:<14} {:<8} {:<8} {:<7} {}",
+            r.provider,
+            r.kind,
+            if r.enabled { "yes" } else { "no" },
+            if r.has_key { "set" } else { "missing" },
+            r.models.len(),
+            if r.launchable { "yes" } else { "no" },
+        );
+    }
 }
 
 async fn show(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> Result<()> {
@@ -356,7 +424,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = write_min_config(&dir);
         let ctx = test_ctx(&dir).await;
-        list(&ctx, &config).await.unwrap();
+        list_legacy(&ctx, &config).await.unwrap();
     }
 
     #[tokio::test]

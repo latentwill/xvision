@@ -15,7 +15,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use xvision_core::market::MarketSnapshot;
-use xvision_core::trading::{AssetSymbol, Regime, RiskDecision, TraderDecision};
+use xvision_core::trading::{Regime, RiskDecision, TraderDecision};
 use xvision_execution::{ExecutionReceipt, Executor};
 use xvision_risk::RiskLayer;
 
@@ -53,13 +53,14 @@ pub struct ArmConfig {
     pub strategy: Box<dyn Algorithm>,
 }
 
-/// Static configuration for a multi-arm backtest run.
+/// Static configuration for a multi-arm backtest run. F18 cascade:
+/// `instrument` is gone — asset is carried per `MarketSnapshot` /
+/// `TraderDecision`. Multi-asset runs feed mixed-asset snapshots.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestRunConfig {
     pub initial_nav_usd: f64,
     pub fee_bps: u32,
     pub slippage_atr_frac: f64,
-    pub instrument: AssetSymbol,
     /// Minimum gap between consecutive decision snapshots. Must be >=
     /// `horizon_hours` (Tier 1 fix #4).
     pub step_hours: u32,
@@ -182,7 +183,6 @@ impl BacktestRunner {
 
         let exec_cfg = BacktestConfig {
             initial_equity_usd: nav_initial,
-            instrument: self.config.instrument,
             fee_bps: self.config.fee_bps,
             slippage_atr_frac: self.config.slippage_atr_frac,
             max_history_days: 30,
@@ -233,7 +233,7 @@ impl BacktestRunner {
                     st.regimes.push(snapshot.regime);
 
                     let portfolio = st.exec.portfolio_snapshot();
-                    let risk_outcome = risk.evaluate(td, &portfolio, self.config.instrument);
+                    let risk_outcome = risk.evaluate(td, &portfolio);
                     st.risk_outcomes.push(risk_outcome.clone());
 
                     if risk_outcome.effective().is_some() {
@@ -405,7 +405,7 @@ mod tests {
                 stop_loss_pct: 5.0,
                 take_profit_pct: 10.0,
                 trader_summary: "AlwaysBuy test strategy for harness smoke test.".into(),
-                asset: None,
+                asset: snapshot.asset,
             })
         }
     }
@@ -440,7 +440,6 @@ mod tests {
             initial_nav_usd: 10_000.0,
             fee_bps: 10,
             slippage_atr_frac: 0.0,
-            instrument: AssetSymbol::Btc,
             step_hours: 1,
             horizon_hours: 4,
             n_bootstrap_resamples: 100,
@@ -474,7 +473,6 @@ mod tests {
             initial_nav_usd: 100_000.0,
             fee_bps: 10,
             slippage_atr_frac: 0.0,
-            instrument: AssetSymbol::Btc,
             step_hours: 2,
             horizon_hours: 1,
             n_bootstrap_resamples: 10,
@@ -536,7 +534,6 @@ mod tests {
             initial_nav_usd: 100_000.0,
             fee_bps: 0,
             slippage_atr_frac: 0.0,
-            instrument: AssetSymbol::Btc,
             step_hours: 1,
             horizon_hours: 1,
             n_bootstrap_resamples: 10,
@@ -582,7 +579,6 @@ mod tests {
             initial_nav_usd: 100_000.0,
             fee_bps: 0,
             slippage_atr_frac: 0.0,
-            instrument: AssetSymbol::Btc,
             step_hours: 1,
             horizon_hours: 1,
             n_bootstrap_resamples: 10,

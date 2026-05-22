@@ -117,6 +117,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
                 capabilities: xvision_engine::agents::default_capabilities(),
+                delta_briefing: None,
             }],
         })
         .await
@@ -191,6 +192,7 @@ fn eval_request_for_scenario(agent_id: &str, scenario_id: &str, mode: RunMode) -
         params_override: None,
         limits: None,
         skip_preflight: false,
+        provider_override: None,
     }
 }
 
@@ -533,6 +535,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
                 capabilities: xvision_engine::agents::default_capabilities(),
+                delta_briefing: None,
             }],
         })
         .await
@@ -606,6 +609,7 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
             params_override: None,
             limits: None,
             skip_preflight: false,
+            provider_override: None,
         },
     )
     .await;

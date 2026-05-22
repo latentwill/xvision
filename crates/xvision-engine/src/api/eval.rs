@@ -593,6 +593,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         params_override: source.params_override.clone(),
         limits: None,
         skip_preflight: false,
+        provider_override: None,
     };
     let detail = start_run(ctx, req).await?;
     Ok(RetryOutcome {
@@ -804,6 +805,24 @@ pub async fn get_run_behavior(
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderOverride {
+    /// Provider name as it appears in `[[providers]]` (e.g. `anthropic`,
+    /// `openrouter`). Must be paired with a concrete `model` — passing
+    /// one without the other is a CLI/API usage error.
+    pub provider: String,
+    /// Model id to use for the duration of this run. Must be enabled on
+    /// the named provider (verified through
+    /// `effective_providers::resolve_provider`).
+    pub model: String,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvalRunRequest {
@@ -835,7 +854,25 @@ pub struct EvalRunRequest {
     /// immediately after run creation so the audit trail is honest.
     #[serde(default)]
     pub skip_preflight: bool,
+    /// Optional per-launch override of the strategy's bound `(provider,
+    /// model)`. When set, the override is resolved through
+    /// `effective_providers::resolve_provider`; if the override is
+    /// unreachable (key_missing, provider_disabled, model_disabled,
+    /// provider_unknown) the launch refuses with the typed `reason`.
+    ///
+    /// The override does NOT mutate the strategy on disk — it is a
+    /// per-run swap. Hard limits in `EvalLimits` still apply. CLI:
+    /// `--provider <X> --model <Y>` (both required together).
+    ///
+    /// Wave B #5: `cli-eval-model-override`.
+    #[serde(default)]
+    pub provider_override: Option<ProviderOverride>,
 }
+
+/// Stable role string used on the `supervisor_notes` row that captures
+/// the per-launch provider/model override. Read at export time so
+/// `EvalRunExport.provider_diagnostics.override` round-trips.
+pub const PROVIDER_OVERRIDE_NOTE_ROLE: &str = "provider_override";
 
 /// Public env-bound entry point: constructs broker (paper mode only) /
 /// dispatch / tools from environment variables and dispatches to
@@ -854,6 +891,7 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     // Early NotFound surfaces without env-var noise. Resolve the scenario
     // via the DB-backed registry (with a legacy `canonical_scenarios()`
     // fallback for test contexts that haven't applied migration 006).
+    validate_provider_override_shape(req.provider_override.as_ref())?;
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
     let _scenario = resolve_scenario(ctx, &req.scenario_id).await?;
 
@@ -861,17 +899,116 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    let mut agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+    apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
 
     let provider_names = validate_provider_preflight(ctx, &req, &strategy, &agent_slots).await?;
     let skip_preflight = req.skip_preflight;
-    let (dispatch_arc, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
+    let (dispatch_arc, findings_model) =
+        build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
     let run = run_with_deps(ctx, req, broker, dispatch_arc, findings_model, tools_arc).await?;
     let store = RunStore::new(ctx.db.clone());
     write_preflight_supervisor_notes(&store, &run.id, &provider_names, skip_preflight).await;
+    // The override receipt is written inside `run_inner` (called via
+    // `run_with_deps`), so it lands once per launched run regardless of
+    // entry point — no duplicate write needed here.
     Ok(run)
+}
+
+/// Reject a malformed `ProviderOverride` (either field empty after trim)
+/// with `ApiError::Validation`. CLIs validate both flags are supplied
+/// together up front, but the engine boundary keeps its own gate so the
+/// dashboard/MCP API cannot bypass it.
+fn validate_provider_override_shape(override_value: Option<&ProviderOverride>) -> ApiResult<()> {
+    let Some(o) = override_value else { return Ok(()) };
+    let p = o.provider.trim();
+    let m = o.model.trim();
+    if p.is_empty() && m.is_empty() {
+        return Err(ApiError::Validation(
+            "per-launch override requires both `provider` and `model`; both fields are empty".into(),
+        ));
+    }
+    if p.is_empty() {
+        return Err(ApiError::Validation(
+            "per-launch override has empty `provider`; both `provider` and `model` are required together".into(),
+        ));
+    }
+    if m.is_empty() {
+        return Err(ApiError::Validation(
+            "per-launch override has empty `model`; both `provider` and `model` are required together".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Rewrite each `ResolvedAgentSlot.slot.provider` / `.model` (and the
+/// `attested_with` echo) in place when a per-launch override is set.
+/// No-op when the override is `None`. Empty/whitespace overrides are
+/// treated as no-op too — validation must reject those upstream (the
+/// CLI requires both flags together and rejects blank values).
+fn apply_provider_override(
+    agent_slots: &mut [ResolvedAgentSlot],
+    override_value: Option<&ProviderOverride>,
+) {
+    let Some(o) = override_value else { return };
+    let p = o.provider.trim();
+    let m = o.model.trim();
+    if p.is_empty() || m.is_empty() {
+        return;
+    }
+    for resolved in agent_slots.iter_mut() {
+        resolved.slot.provider = Some(p.to_string());
+        resolved.slot.model = Some(m.to_string());
+        resolved.slot.attested_with = format!("{p}.{m}");
+    }
+}
+
+/// Read the per-launch override receipt that was persisted via
+/// `record_provider_override_note`. Scans `supervisor_notes` for the
+/// `provider_override` role and parses the JSON content. Returns `None`
+/// when no override was applied for this run (the common case) or when
+/// the note row is malformed (best-effort surface — we don't fail the
+/// export over a malformed historical row).
+pub async fn load_provider_override(ctx: &ApiContext, run_id: &str) -> Option<ProviderOverride> {
+    let store = RunStore::new(ctx.db.clone());
+    let notes = store.read_supervisor_notes(run_id).await.ok()?;
+    for (role, _severity, content) in notes {
+        if role == PROVIDER_OVERRIDE_NOTE_ROLE {
+            if let Ok(parsed) = serde_json::from_str::<ProviderOverride>(&content) {
+                return Some(parsed);
+            }
+        }
+    }
+    None
+}
+
+/// Persist the per-launch override receipt as a `supervisor_notes` row so
+/// it round-trips into the eval export and `xvn eval results --json`.
+/// Best-effort; failures log but don't abort the run (the override
+/// already took effect at dispatch time).
+async fn record_provider_override_note(
+    store: &RunStore,
+    run_id: &str,
+    override_value: Option<&ProviderOverride>,
+) {
+    let Some(o) = override_value else { return };
+    let payload = serde_json::json!({
+        "provider": o.provider,
+        "model": o.model,
+    });
+    let content = payload.to_string();
+    if let Err(e) = store
+        .record_supervisor_note(run_id, PROVIDER_OVERRIDE_NOTE_ROLE, "info", &content)
+        .await
+    {
+        tracing::warn!(
+            run_id,
+            err = %e,
+            "failed to record provider_override supervisor note (run continues; override already applied at dispatch)",
+        );
+    }
 }
 
 /// Build an Alpaca paper broker, preferring credentials stored via the
@@ -915,26 +1052,100 @@ async fn build_eval_dispatch(
     ctx: &ApiContext,
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
+    provider_override: Option<&ProviderOverride>,
 ) -> ApiResult<(Arc<dyn LlmDispatch>, String)> {
-    let provider_name = select_eval_provider(ctx, strategy, agent_slots).await?;
-    let cfg_path = runtime_config_path(ctx);
-    let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
+    // Per-launch override (Wave B #5, `cli-eval-model-override`). When set,
+    // the override replaces the strategy-bound `(provider, model)` for
+    // *this run only*. Resolved through the canonical
+    // `resolve_provider` helper so the typed `reason` discriminant on
+    // refusal matches the strategy-bound path: an unreachable override
+    // surfaces as the same `key_missing` / `provider_disabled` /
+    // `model_disabled` / `provider_unknown` ApiError::Validation.
+    if let Some(o) = provider_override {
+        let cfg_path = runtime_config_path(ctx);
+        let entry = match crate::api::settings::providers::resolve_provider(
+            ctx,
+            &cfg_path,
+            &o.provider,
+            Some(&o.model),
+        )
         .await
-        .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
-        .map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
-    let entry = cfg
-        .providers
-        .iter()
-        .find(|p| p.name == provider_name)
-        .ok_or_else(|| {
-            ApiError::Validation(format!(
-                "provider `{provider_name}` is not configured. Pick a configured provider/model for the strategy agent before running eval."
-            ))
-        })?;
+        {
+            Ok(e) => e,
+            Err(unavailable) => {
+                let model_clause = unavailable
+                    .model
+                    .as_ref()
+                    .map(|m| format!(" model `{m}`,"))
+                    .unwrap_or_default();
+                return Err(ApiError::Validation(format!(
+                    "per-launch override provider `{}`{} is not launchable (reason={}): {}",
+                    unavailable.provider,
+                    model_clause,
+                    unavailable.reason.as_str(),
+                    unavailable.hint,
+                )));
+            }
+        };
+        let findings_model = crate::eval::postprocess::findings_model_for_provider(&entry);
+        let dispatch = dispatch_from_provider(&entry).await?;
+        return Ok((dispatch, findings_model));
+    }
+
+    let provider_name = select_eval_provider(ctx, strategy, agent_slots).await?;
+    // Route through the canonical helper so the CLI, dashboard, and
+    // eval-launch all agree on what "configured + launchable" means.
     let runtime_slots = runtime_slots(strategy, agent_slots);
-    validate_eval_provider_models(entry, &runtime_slots)?;
-    let findings_model = crate::eval::postprocess::findings_model_for_provider(entry);
-    let dispatch = dispatch_from_provider(entry).await?;
+    // Find the model that will be used for this provider — needed so
+    // `resolve_provider` can verify the model is enabled. Strategies are
+    // single-provider today (validated by `validate_eval_provider_models`
+    // below) so the first non-empty model on a matching slot wins.
+    let requested_model: Option<String> = runtime_slots
+        .iter()
+        .filter(|slot| {
+            slot.provider
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(|p| p == provider_name)
+                .unwrap_or(false)
+        })
+        .filter_map(|slot| {
+            slot.model
+                .as_deref()
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(str::to_string)
+        })
+        .next();
+    let cfg_path = runtime_config_path(ctx);
+    let entry = match crate::api::settings::providers::resolve_provider(
+        ctx,
+        &cfg_path,
+        &provider_name,
+        requested_model.as_deref(),
+    )
+    .await
+    {
+        Ok(e) => e,
+        Err(unavailable) => {
+            let model_clause = unavailable
+                .model
+                .as_ref()
+                .map(|m| format!(" model `{m}`,"))
+                .unwrap_or_default();
+            return Err(ApiError::Validation(format!(
+                "provider `{}`{} is not launchable (reason={}): {}",
+                unavailable.provider,
+                model_clause,
+                unavailable.reason.as_str(),
+                unavailable.hint,
+            )));
+        }
+    };
+    validate_eval_provider_models(&entry, &runtime_slots)?;
+    let findings_model = crate::eval::postprocess::findings_model_for_provider(&entry);
+    let dispatch = dispatch_from_provider(&entry).await?;
     Ok((dispatch, findings_model))
 }
 
@@ -1387,6 +1598,7 @@ pub async fn run_with_deps(
     tools: Arc<ToolRegistry>,
 ) -> ApiResult<Run> {
     let started = Instant::now();
+    validate_provider_override_shape(req.provider_override.as_ref())?;
     let target_clone = format!("{}@{}", req.agent_id, req.scenario_id);
     let args_json = serde_json::to_string(&req).ok();
 
@@ -1419,8 +1631,49 @@ async fn run_inner(
 ) -> ApiResult<Run> {
     // 1. Look up the strategy. Propagates ApiError::NotFound cleanly.
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
-    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    let mut agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+    // Per-launch override (Wave B #5): resolve against the canonical
+    // `effective_providers::resolve_provider` gate. An unreachable
+    // override (key_missing / model_disabled / provider_unknown /
+    // provider_disabled) refuses the launch with the typed reason.
+    //
+    // This gate runs in `run_inner` (not only in `build_eval_dispatch`)
+    // so it covers the `run_with_deps` entry point too — that path lets
+    // callers inject a `MockDispatch`, bypassing the dispatch builder,
+    // but the override still must be validated against the resolver
+    // before slot rewriting.
+    if let Some(o) = req.provider_override.as_ref() {
+        let cfg_path = runtime_config_path(ctx);
+        if let Err(unavailable) = crate::api::settings::providers::resolve_provider(
+            ctx,
+            &cfg_path,
+            &o.provider,
+            Some(&o.model),
+        )
+        .await
+        {
+            let model_clause = unavailable
+                .model
+                .as_ref()
+                .map(|m| format!(" model `{m}`,"))
+                .unwrap_or_default();
+            return Err(ApiError::Validation(format!(
+                "per-launch override provider `{}`{} is not launchable (reason={}): {}",
+                unavailable.provider,
+                model_clause,
+                unavailable.reason.as_str(),
+                unavailable.hint,
+            )));
+        }
+    }
+    // Rewrite the resolved slots so the executor's `model_id` parameter
+    // on every model call matches the override. When `run_with_deps`
+    // wires a pre-built dispatch in, the override only swaps the slot's
+    // `(provider, model)` echoed onto observability; when `run` builds
+    // the dispatch from the override, the resolver above already
+    // produced the matching `ProviderEntry`.
+    apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
 
     // 2. Look up the scenario. Primary path is the DB-backed registry
     //    (`api::scenario::get`); legacy path falls back to the compiled-in
@@ -1516,6 +1769,12 @@ async fn run_inner(
         .create(&run)
         .await
         .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+    // Persist the per-launch override receipt as soon as the run row
+    // exists. We write it here (not only in the outer `run` wrapper) so
+    // `run_with_deps` callers — including the test surface that injects
+    // a pre-built dispatch — also produce the receipt for `xvn eval
+    // results --json` and the export.
+    record_provider_override_note(&store, &run.id, req.provider_override.as_ref()).await;
     let started = store
         .begin_running(&run.id)
         .await
@@ -2070,6 +2329,7 @@ fn missing_bars_validation(scenario: &Scenario, source_error: Option<String>) ->
 /// for the same reason.
 pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let started = Instant::now();
+    validate_provider_override_shape(req.provider_override.as_ref())?;
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
     let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
 
@@ -2080,12 +2340,14 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    let mut agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+    apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
 
     let provider_names = validate_provider_preflight(ctx, &req, &strategy, &agent_slots).await?;
 
-    let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
+    let (dispatch, findings_model) =
+        build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     // Other entry point (`run_with_deps_in_progress`) — observability
@@ -2158,6 +2420,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // row exists. Uses `info` severity for reachable providers and `warn` for
     // skip_preflight. Best-effort: a failed note write does NOT abort the run.
     write_preflight_supervisor_notes(&store, &run.id, &provider_names, req.skip_preflight).await;
+    record_provider_override_note(&store, &run.id, req.provider_override.as_ref()).await;
 
     if let Some(em) = obs_emitter.as_ref() {
         let objective = format!(

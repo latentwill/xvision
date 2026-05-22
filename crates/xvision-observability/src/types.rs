@@ -129,6 +129,14 @@ pub enum SpanKind {
     /// having to diff successive snapshots.
     #[serde(rename = "state.transition")]
     StateTransition,
+    /// One per-decision pipeline iteration (briefing → trader output →
+    /// fill). Emitted by the eval executor wrapping the per-bar slice
+    /// so the trace dock can show a per-decision breakdown (LLM /
+    /// tool / fill timing) without inferring boundaries from the run
+    /// timeline. Added by F43 (`trace-dock-emitters`) — previously the
+    /// trace dock only had run-level spans.
+    #[serde(rename = "agent.decision")]
+    AgentDecision,
 }
 
 impl SpanKind {
@@ -151,6 +159,7 @@ impl SpanKind {
             Self::ToolValidateOutput => "tool.validate_output",
             Self::RecoveryAttempt => "recovery.attempt",
             Self::StateTransition => "state.transition",
+            Self::AgentDecision => "agent.decision",
         }
     }
 }
@@ -300,6 +309,14 @@ pub struct SpanAttributes {
     /// populate it from the slot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_version: Option<String>,
+    /// Per-decision index inside an eval run, populated on
+    /// `agent.decision` spans (and propagated to `tool.call` /
+    /// `model.call` child spans where the call site knows it). Added
+    /// by F43 (`trace-dock-emitters`) so the dashboard can group
+    /// per-decision spans without re-deriving the index from the bar
+    /// timeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_index: Option<i64>,
 }
 
 impl SpanAttributes {
@@ -375,6 +392,7 @@ mod span_attributes_tests {
         assert!(!obj.contains_key("tool_name"));
         assert!(!obj.contains_key("retry_count"));
         assert!(!obj.contains_key("prompt_version"));
+        assert!(!obj.contains_key("decision_index"));
     }
 
     #[test]
@@ -388,6 +406,7 @@ mod span_attributes_tests {
             tool_name: Some("get_quote".into()),
             retry_count: Some(2),
             prompt_version: Some("v1".into()),
+            decision_index: Some(42),
         };
         let json = attrs.to_attributes_json().expect("populated bag serializes");
         let parsed: SpanAttributes = serde_json::from_str(&json).unwrap();

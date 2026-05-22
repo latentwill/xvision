@@ -82,7 +82,7 @@ impl Algorithm for MaCrossover {
                             "MaCrossover: SMA{} crossed above SMA{} — golden cross long.",
                             self.fast_window, self.slow_window
                         ),
-                        asset: None,
+                        asset: snapshot.asset,
                     })
                 } else if death_cross {
                     Some(TraderDecision {
@@ -96,7 +96,7 @@ impl Algorithm for MaCrossover {
                             "MaCrossover: SMA{} crossed below SMA{} — death cross short.",
                             self.fast_window, self.slow_window
                         ),
-                        asset: None,
+                        asset: snapshot.asset,
                     })
                 } else {
                     None

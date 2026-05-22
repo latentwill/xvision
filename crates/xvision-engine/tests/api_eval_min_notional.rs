@@ -71,6 +71,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
                 capabilities: xvision_engine::agents::default_capabilities(),
+                delta_briefing: None,
             }],
         })
         .await
@@ -231,6 +232,7 @@ async fn run_tiny_notional_probe(
             params_override: None,
             limits: None,
             skip_preflight: false,
+            provider_override: None,
         },
         broker,
         long_open_dispatch(),

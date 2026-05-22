@@ -136,6 +136,7 @@ pub mod get {
                         memory_mode: Default::default(),
                         noop_skip: None,
                         capabilities: xvision_engine::agents::default_capabilities(),
+                        delta_briefing: None,
                     }],
                 },
             )

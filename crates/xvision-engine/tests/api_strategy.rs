@@ -100,6 +100,7 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
                 capabilities: xvision_engine::agents::default_capabilities(),
+                delta_briefing: None,
             }],
         },
     )

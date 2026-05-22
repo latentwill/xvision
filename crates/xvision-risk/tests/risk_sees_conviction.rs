@@ -72,7 +72,7 @@ fn buy_decision(size_bps: u32) -> TraderDecision {
         stop_loss_pct: 2.0,
         take_profit_pct: 5.0,
         trader_summary: "Conviction regression test decision.".into(),
-        asset: None,
+        asset: AssetSymbol::Btc,
     }
 }
 
@@ -92,12 +92,12 @@ fn default_config_ignores_conviction_regression() {
     let portfolio = flat_portfolio();
 
     // Run with the plain `evaluate` (conviction=0.0 implicit).
-    let baseline = layer.evaluate(buy_decision(1500), &portfolio, AssetSymbol::Btc);
+    let baseline = layer.evaluate(buy_decision(1500), &portfolio);
 
     // Run with explicit conviction values spanning the full 0..1 range.
     for &conviction in &[0.0f32, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] {
         let result =
-            layer.evaluate_with_conviction(buy_decision(1500), &portfolio, AssetSymbol::Btc, conviction);
+            layer.evaluate_with_conviction(buy_decision(1500), &portfolio, conviction);
 
         // Both must be Approved.
         assert!(
@@ -134,7 +134,7 @@ fn default_config_ignores_conviction_regression() {
 fn default_config_low_conviction_still_approves() {
     let layer = default_layer();
     let result =
-        layer.evaluate_with_conviction(buy_decision(1000), &flat_portfolio(), AssetSymbol::Btc, 0.01);
+        layer.evaluate_with_conviction(buy_decision(1000), &flat_portfolio(), 0.01);
     assert!(
         matches!(result, RiskDecision::Approved { .. }),
         "low conviction must not cause veto with default rules, got {result:?}"
@@ -148,8 +148,8 @@ fn evaluate_convenience_equals_zero_conviction() {
     let layer = default_layer();
     let portfolio = flat_portfolio();
 
-    let via_convenience = layer.evaluate(buy_decision(1500), &portfolio, AssetSymbol::Btc);
-    let via_explicit = layer.evaluate_with_conviction(buy_decision(1500), &portfolio, AssetSymbol::Btc, 0.0);
+    let via_convenience = layer.evaluate(buy_decision(1500), &portfolio);
+    let via_explicit = layer.evaluate_with_conviction(buy_decision(1500), &portfolio, 0.0);
 
     match (via_convenience, via_explicit) {
         (RiskDecision::Approved { decision: d1 }, RiskDecision::Approved { decision: d2 }) => {
@@ -228,7 +228,7 @@ fn user_rule_can_scale_size_by_conviction() {
     let portfolio = flat_portfolio();
 
     // conviction=0.5 → 1000 bps × 0.5 = 500 bps
-    let result = layer.evaluate_with_conviction(buy_decision(1000), &portfolio, AssetSymbol::Btc, 0.5);
+    let result = layer.evaluate_with_conviction(buy_decision(1000), &portfolio, 0.5);
 
     match result {
         RiskDecision::Modified { modified, .. } => {
@@ -247,7 +247,7 @@ fn user_rule_full_conviction_is_passthrough() {
     let layer = layer_with_conviction_scale();
     let portfolio = flat_portfolio();
 
-    let result = layer.evaluate_with_conviction(buy_decision(1000), &portfolio, AssetSymbol::Btc, 1.0);
+    let result = layer.evaluate_with_conviction(buy_decision(1000), &portfolio, 1.0);
 
     assert!(
         matches!(result, RiskDecision::Approved { .. }),
@@ -282,6 +282,6 @@ fn conviction_value_propagates_to_rule() {
     layer.prepend_rule(Box::new(AssertConviction(0.73)));
 
     let result =
-        layer.evaluate_with_conviction(buy_decision(1000), &flat_portfolio(), AssetSymbol::Btc, 0.73);
+        layer.evaluate_with_conviction(buy_decision(1000), &flat_portfolio(), 0.73);
     assert!(matches!(result, RiskDecision::Approved { .. }));
 }

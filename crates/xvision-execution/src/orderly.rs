@@ -1,6 +1,11 @@
 //! Phase 6.3 — Orderly Network perpetuals executor (Mantle EVM gateway).
 //!
-//! v1 scope: BTC-only via `PERP_BTC_USDC` on `https://api-evm.orderly.org`.
+//! Routes per `TraderDecision.asset` (post-F18 cascade, expanded
+//! 2026-05-22 per `docs/superpowers/plans/2026-05-22-orderly-multi-asset-expansion.md`).
+//! Supported markets: BTC, ETH, SOL, AVAX, DOGE, LINK — the Orderly
+//! perp inventory on `https://api-evm.orderly.org`. Decisions targeting
+//! any other `AssetSymbol` are rejected at the executor boundary with
+//! `ExecutorError::NotActionable` naming the asset.
 //!
 //! # SDK dep conflict — why we use raw reqwest
 //!
@@ -54,8 +59,50 @@ use crate::executor::{ExecutionReceipt, Executor, ExecutorError};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const PERP_BTC_USDC: &str = "PERP_BTC_USDC";
 const ORDERLY_MAINNET_BASE: &str = "https://api-evm.orderly.org";
+
+/// Orderly perp markets we currently route to. Each entry is
+/// `(AssetSymbol, "PERP_<X>_USDC")`. Pulled from Orderly's Mantle EVM
+/// gateway listings as of 2026-05-22. Adding new markets here is the
+/// single point of expansion — `orderly_symbol_for` and
+/// `asset_symbol_from_orderly` both drive off this table.
+///
+/// Refreshing this list against Orderly's live `GET /v1/public/info`
+/// is tracked as F44 in FOLLOWUPS.md.
+const ORDERLY_SUPPORTED: &[(AssetSymbol, &str)] = &[
+    (AssetSymbol::Btc, "PERP_BTC_USDC"),
+    (AssetSymbol::Eth, "PERP_ETH_USDC"),
+    (AssetSymbol::Sol, "PERP_SOL_USDC"),
+    (AssetSymbol::Avax, "PERP_AVAX_USDC"),
+    (AssetSymbol::Doge, "PERP_DOGE_USDC"),
+    (AssetSymbol::Link, "PERP_LINK_USDC"),
+];
+
+/// Map an `AssetSymbol` to its Orderly perp symbol. Returns
+/// `ExecutorError::NotActionable` if Orderly does not list the asset on
+/// its Mantle EVM gateway — the same shape used by `submit` for any
+/// other unactionable decision.
+pub fn orderly_symbol_for(asset: AssetSymbol) -> Result<&'static str, ExecutorError> {
+    ORDERLY_SUPPORTED
+        .iter()
+        .find_map(|(a, sym)| if *a == asset { Some(*sym) } else { None })
+        .ok_or_else(|| {
+            ExecutorError::NotActionable(format!(
+                "Orderly does not list {} on its Mantle EVM gateway",
+                asset.as_str()
+            ))
+        })
+}
+
+/// Inverse helper: map an Orderly market string back to its
+/// `AssetSymbol`. Returns `None` for unknown / delisted markets so
+/// callers (position scans, receipt parsing) can filter them out
+/// without crashing.
+pub fn asset_symbol_from_orderly(symbol: &str) -> Option<AssetSymbol> {
+    ORDERLY_SUPPORTED
+        .iter()
+        .find_map(|(a, sym)| if *sym == symbol { Some(*a) } else { None })
+}
 
 // ── Credentials ──────────────────────────────────────────────────────────────
 
@@ -505,13 +552,13 @@ impl OrderlyApi for ReqwestOrderlyApi {
 
 // ── OrderlyExecutor ──────────────────────────────────────────────────────────
 
-/// Orderly Network perpetuals executor. v1: BTC-only (`PERP_BTC_USDC`) on
-/// the Mantle EVM gateway.
+/// Orderly Network perpetuals executor. Routes per `TraderDecision.asset`
+/// across the Mantle EVM gateway's perp markets (see
+/// [`ORDERLY_SUPPORTED`]).
 ///
 /// Generic over `OrderlyApi` so tests can inject a mock.
 pub struct OrderlyExecutor<A = ReqwestOrderlyApi> {
     api: A,
-    symbol: String,
 }
 
 impl OrderlyExecutor<ReqwestOrderlyApi> {
@@ -526,7 +573,6 @@ impl OrderlyExecutor<ReqwestOrderlyApi> {
             .map_err(|e| ExecutorError::Internal(format!("reqwest client: {e}")))?;
         Ok(Self {
             api: ReqwestOrderlyApi::new(http, url, creds),
-            symbol: PERP_BTC_USDC.to_string(),
         })
     }
 
@@ -559,10 +605,7 @@ impl OrderlyExecutor<ReqwestOrderlyApi> {
 impl<A: OrderlyApi> OrderlyExecutor<A> {
     #[cfg(test)]
     pub(crate) fn with_api(api: A) -> Self {
-        Self {
-            api,
-            symbol: PERP_BTC_USDC.to_string(),
-        }
+        Self { api }
     }
 
     async fn await_fill(&self, order_id: u64) -> Result<OrderlyOrder, ExecutorError> {
@@ -587,7 +630,12 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
         )))
     }
 
-    fn build_receipt(cycle_id: Uuid, order: &OrderlyOrder, equity_usd: f64) -> ExecutionReceipt {
+    fn build_receipt(
+        cycle_id: Uuid,
+        asset: AssetSymbol,
+        order: &OrderlyOrder,
+        equity_usd: f64,
+    ) -> ExecutionReceipt {
         let qty = order.executed_quantity.unwrap_or(0.0);
         let price = order.average_executed_price.unwrap_or(0.0);
         let notional = qty * price;
@@ -601,7 +649,7 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
             cycle_id,
             venue: "orderly".to_string(),
             venue_order_id: order.order_id.to_string(),
-            asset: AssetSymbol::Btc,
+            asset,
             filled_size_bps,
             avg_fill_price: price,
             fee_bps: 0,
@@ -624,7 +672,13 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             RiskDecision::Modified { modified: td, .. } => td,
         };
 
-        // 2. Handle Flat / Close.
+        // 2. Resolve the Orderly perp symbol for this asset. Decisions
+        //    targeting an asset Orderly doesn't list are rejected at the
+        //    executor boundary as a defense-in-depth gate (the risk
+        //    layer's whitelist is the primary check).
+        let symbol = orderly_symbol_for(td.asset)?;
+
+        // 3. Handle Flat / Close.
         match td.action {
             Action::Flat => {
                 return Err(ExecutorError::NotActionable(
@@ -632,40 +686,34 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                 ));
             }
             Action::Close => {
-                return self.close_position(AssetSymbol::Btc).await;
+                return self.close_position(td.asset).await;
             }
             Action::Buy | Action::Sell => {}
         }
 
-        // 3. Read live equity and open positions.
+        // 4. Read live equity and open positions.
         let account = self.api.get_account().await?;
         let equity = account.equity();
         let positions = self.api.get_positions().await?;
 
-        // 4. Compute BTC quantity from notional.
+        // 5. Compute base-asset quantity from notional.
         let notional_usd = (td.size_bps as f64 / 10_000.0) * equity;
-        let btc_mark = positions
+        let mark_price = positions
             .iter()
-            .find(|p| p.symbol == self.symbol)
+            .find(|p| p.symbol == symbol)
             .map(|p| p.mark_price);
 
         // If we have a mark price, compute base quantity; otherwise send notional
         // directly via order_quantity (Orderly accepts USDC notional for Market
         // orders when no base qty is available — see F19 for the cleaner approach
-        // once the SDK dep conflict is resolved). For safety, if no mark price
-        // exists, use a minimum-safe proxy: notional / current_btc_estimate.
-        // In v1 single-shot flow the account almost always has a BTC position
-        // already so mark_price is available; the fallback triggers only on
-        // the very first order.
-        let qty = if let Some(price) = btc_mark {
+        // once the SDK dep conflict is resolved). The fallback triggers only on
+        // the very first order against this market for this account.
+        let qty = if let Some(price) = mark_price {
             notional_usd / price
         } else {
-            // No mark price available. This is a first-order scenario.
-            // Orderly's Market order with order_quantity in base asset.
-            // Without a price we cannot compute base qty correctly; use
-            // order_amount (USD notional) path by sending quantity=notional
-            // and documenting the limitation. The fill receipt will correct
-            // the bps math via the actual filled price.
+            // No mark price available. First-order scenario for this
+            // market. Send notional as `order_quantity`; the fill receipt
+            // corrects the bps math via the actual filled price.
             notional_usd
         };
 
@@ -674,18 +722,18 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             _ => OrderSide::Sell,
         };
 
-        // 5. Place entry order (client_order_id = cycle_id for idempotency).
+        // 6. Place entry order (client_order_id = cycle_id for idempotency).
         let entry = self
             .api
-            .create_order(&self.symbol, side, qty, Some(td.cycle_id.to_string()), None)
+            .create_order(symbol, side, qty, Some(td.cycle_id.to_string()), None)
             .await?;
 
-        // 6. Poll for fill.
+        // 7. Poll for fill.
         let filled = self.await_fill(entry.order_id).await?;
-        let fill_price = filled.average_executed_price.unwrap_or(btc_mark.unwrap_or(0.0));
+        let fill_price = filled.average_executed_price.unwrap_or(mark_price.unwrap_or(0.0));
         let fill_qty = filled.executed_quantity.unwrap_or(qty);
 
-        // 7. Place TP/SL bracket legs (best-effort).
+        // 8. Place TP/SL bracket legs (best-effort).
         let close_side = match side {
             OrderSide::Buy => OrderSide::Sell,
             OrderSide::Sell => OrderSide::Buy,
@@ -705,7 +753,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             let _ = self
                 .api
                 .create_algo_order(
-                    &self.symbol,
+                    symbol,
                     AlgoKind::TakeProfitMarket,
                     close_side,
                     fill_qty,
@@ -718,7 +766,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             let _ = self
                 .api
                 .create_algo_order(
-                    &self.symbol,
+                    symbol,
                     AlgoKind::StopMarket,
                     close_side,
                     fill_qty,
@@ -729,7 +777,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                 .await;
         }
 
-        // 8. Build receipt.
+        // 9. Build receipt.
         let filled_size_bps = if equity > 0.0 && fill_price > 0.0 {
             ((fill_qty * fill_price / equity) * 10_000.0).round() as u32
         } else {
@@ -740,7 +788,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             cycle_id: td.cycle_id,
             venue: "orderly".to_string(),
             venue_order_id: entry.order_id.to_string(),
-            asset: AssetSymbol::Btc,
+            asset: td.asset,
             filled_size_bps,
             avg_fill_price: fill_price,
             fee_bps: 0,
@@ -750,16 +798,17 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         })
     }
 
-    async fn close_position(&self, _asset: AssetSymbol) -> Result<ExecutionReceipt, ExecutorError> {
+    async fn close_position(&self, asset: AssetSymbol) -> Result<ExecutionReceipt, ExecutorError> {
+        let symbol = orderly_symbol_for(asset)?;
         let positions = self.api.get_positions().await?;
-        let btc_pos = positions.iter().find(|p| p.symbol == self.symbol);
+        let target_pos = positions.iter().find(|p| p.symbol == symbol);
 
-        let Some(pos) = btc_pos else {
+        let Some(pos) = target_pos else {
             return Ok(ExecutionReceipt {
                 cycle_id: Uuid::nil(),
                 venue: "orderly".to_string(),
                 venue_order_id: String::new(),
-                asset: AssetSymbol::Btc,
+                asset,
                 filled_size_bps: 0,
                 avg_fill_price: 0.0,
                 fee_bps: 0,
@@ -774,7 +823,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                 cycle_id: Uuid::nil(),
                 venue: "orderly".to_string(),
                 venue_order_id: String::new(),
-                asset: AssetSymbol::Btc,
+                asset,
                 filled_size_bps: 0,
                 avg_fill_price: 0.0,
                 fee_bps: 0,
@@ -794,7 +843,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         let order = self
             .api
             .create_order(
-                &self.symbol,
+                symbol,
                 close_side,
                 qty,
                 Some(format!("close-{}", Uuid::new_v4())),
@@ -805,7 +854,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         let filled = self.await_fill(order.order_id).await?;
         let account = self.api.get_account().await?;
 
-        Ok(Self::build_receipt(Uuid::nil(), &filled, account.equity()))
+        Ok(Self::build_receipt(Uuid::nil(), asset, &filled, account.equity()))
     }
 
     async fn portfolio(&self) -> Result<PortfolioState, ExecutorError> {
@@ -815,9 +864,17 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         let mut open_positions = BTreeMap::new();
 
         for pos in &positions {
-            if pos.symbol != PERP_BTC_USDC || pos.position_qty == 0.0 {
+            if pos.position_qty == 0.0 {
                 continue;
             }
+            // Filter out any positions on symbols we don't recognise —
+            // Orderly may list markets we haven't added to
+            // ORDERLY_SUPPORTED yet. Operators see them on the venue UI
+            // but the executor refuses to surface them via the
+            // PortfolioState contract until they're explicitly enabled.
+            let Some(asset) = asset_symbol_from_orderly(&pos.symbol) else {
+                continue;
+            };
             let direction = if pos.position_qty > 0.0 {
                 Direction::Long
             } else {
@@ -831,9 +888,9 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             };
 
             open_positions.insert(
-                AssetSymbol::Btc,
+                asset,
                 OpenPosition {
-                    asset: AssetSymbol::Btc,
+                    asset,
                     direction,
                     size_bps,
                     entry_price: pos.average_open_price,
@@ -874,7 +931,6 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct CreateOrderCall {
-        #[allow(dead_code)]
         symbol: String,
         side: OrderSide,
         #[allow(dead_code)]
@@ -1003,11 +1059,15 @@ mod tests {
     }
 
     fn fixture_btc_position(qty: f64) -> OrderlyPosition {
+        fixture_position("PERP_BTC_USDC", qty, 70_000.0, 71_000.0)
+    }
+
+    fn fixture_position(symbol: &str, qty: f64, entry: f64, mark: f64) -> OrderlyPosition {
         OrderlyPosition {
-            symbol: PERP_BTC_USDC.to_string(),
+            symbol: symbol.to_string(),
             position_qty: qty,
-            average_open_price: 70_000.0,
-            mark_price: 71_000.0,
+            average_open_price: entry,
+            mark_price: mark,
             unsettled_pnl: 100.0,
         }
     }
@@ -1022,7 +1082,7 @@ mod tests {
                 stop_loss_pct: 2.5,
                 take_profit_pct: 5.0,
                 trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
-                asset: None,
+                asset: AssetSymbol::Btc,
             },
         }
     }
@@ -1151,7 +1211,7 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "Vetoed test decision — should not reach executor.".into(),
-                asset: None,
+                asset: AssetSymbol::Btc,
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };
@@ -1339,5 +1399,279 @@ mod tests {
         let state = executor.portfolio().await.expect("live portfolio() must succeed");
         println!("equity_usd: {}", state.equity_usd);
         assert!(state.equity_usd >= 0.0);
+    }
+
+    // ── Multi-asset expansion (2026-05-22) ────────────────────────────────────
+
+    #[test]
+    fn orderly_symbol_mapping_round_trips_supported_set() {
+        for (asset, sym) in ORDERLY_SUPPORTED {
+            assert_eq!(
+                orderly_symbol_for(*asset).unwrap_or("ERR"),
+                *sym,
+                "forward mapping for {asset:?}",
+            );
+            assert_eq!(
+                asset_symbol_from_orderly(sym),
+                Some(*asset),
+                "inverse mapping for {sym}",
+            );
+        }
+    }
+
+    #[test]
+    fn orderly_symbol_for_rejects_unsupported_asset() {
+        // SHIB is in the Alpaca whitelist but Orderly does not list it.
+        let err = orderly_symbol_for(AssetSymbol::Shib).expect_err("unsupported must error");
+        match err {
+            ExecutorError::NotActionable(msg) => {
+                assert!(msg.contains("Orderly"), "msg should name Orderly: {msg}");
+                assert!(msg.contains("SHIB"), "msg should name the asset: {msg}");
+            }
+            other => panic!("expected NotActionable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn asset_symbol_from_orderly_returns_none_for_unknown_market() {
+        assert_eq!(asset_symbol_from_orderly("PERP_XRP_USDC"), None);
+        assert_eq!(asset_symbol_from_orderly(""), None);
+        assert_eq!(asset_symbol_from_orderly("BTC/USD"), None);
+    }
+
+    /// `submit_routes_per_decision_asset`: when the decision names ETH, the
+    /// captured entry-order request must target `PERP_ETH_USDC`, not the
+    /// previously-hardcoded `PERP_BTC_USDC`. Mirrors Alpaca's
+    /// `submit_honors_trader_decision_asset` test.
+    #[tokio::test]
+    async fn submit_routes_per_decision_asset_to_orderly_eth() {
+        let cycle_id = Uuid::new_v4();
+        let entry_order = fixture_create_order_result(7777);
+        let get_order = fixture_filled_order(7777, Some(&cycle_id.to_string()));
+
+        let api = MockOrderlyApi::new(
+            fixture_account(),
+            vec![fixture_position("PERP_ETH_USDC", 0.0, 3_500.0, 3_500.0)],
+            entry_order,
+            get_order,
+        );
+        let captured = api.captured_create.clone();
+
+        let executor = OrderlyExecutor::with_api(api);
+        let decision = RiskDecision::Approved {
+            decision: TraderDecision {
+                cycle_id,
+                action: Action::Buy,
+                size_bps: 1000,
+                direction: Direction::Long,
+                stop_loss_pct: 2.5,
+                take_profit_pct: 5.0,
+                trader_summary: "Long ETH 1000bps confirming range break with 2:1 R:R.".into(),
+                asset: AssetSymbol::Eth,
+            },
+        };
+
+        let receipt = executor.submit(&decision).await.expect("ETH submit must succeed");
+        assert_eq!(receipt.asset, AssetSymbol::Eth);
+
+        let req = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("a create_order must have been recorded");
+        assert_eq!(
+            req.symbol, "PERP_ETH_USDC",
+            "entry order must route to the asset named on the decision"
+        );
+    }
+
+    /// Decisions targeting assets Orderly doesn't list must reject at the
+    /// boundary with `NotActionable`, not crash and not fall through.
+    #[tokio::test]
+    async fn submit_rejects_orderly_unsupported_asset() {
+        // PanicApi: any call panics — the test only passes if submit
+        // short-circuits before touching the network.
+        struct PanicApi;
+
+        #[async_trait]
+        impl OrderlyApi for PanicApi {
+            async fn create_order(
+                &self,
+                _: &str,
+                _: OrderSide,
+                _: f64,
+                _: Option<String>,
+                _: Option<bool>,
+            ) -> Result<OrderlyOrder, ExecutorError> {
+                panic!("create_order must not run for an unsupported asset");
+            }
+            async fn create_algo_order(
+                &self,
+                _: &str,
+                _: AlgoKind,
+                _: OrderSide,
+                _: f64,
+                _: f64,
+                _: Option<String>,
+                _: Option<bool>,
+            ) -> Result<u64, ExecutorError> {
+                panic!("create_algo_order must not run for an unsupported asset");
+            }
+            async fn get_order(&self, _: u64) -> Result<OrderlyOrder, ExecutorError> {
+                panic!("get_order must not run for an unsupported asset");
+            }
+            async fn get_account(&self) -> Result<OrderlyAccount, ExecutorError> {
+                panic!("get_account must not run for an unsupported asset");
+            }
+            async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
+                panic!("get_positions must not run for an unsupported asset");
+            }
+        }
+
+        let executor = OrderlyExecutor::with_api(PanicApi);
+        let decision = RiskDecision::Approved {
+            decision: TraderDecision {
+                cycle_id: Uuid::new_v4(),
+                action: Action::Buy,
+                size_bps: 500,
+                direction: Direction::Long,
+                stop_loss_pct: 2.0,
+                take_profit_pct: 5.0,
+                trader_summary: "SHIB long — Orderly does not list this.".into(),
+                asset: AssetSymbol::Shib,
+            },
+        };
+
+        let err = executor
+            .submit(&decision)
+            .await
+            .expect_err("unsupported asset must reject");
+        match err {
+            ExecutorError::NotActionable(msg) => {
+                assert!(msg.contains("SHIB"), "msg should name the asset: {msg}");
+                assert!(msg.contains("Orderly"), "msg should name Orderly: {msg}");
+            }
+            other => panic!("expected NotActionable, got {other:?}"),
+        }
+    }
+
+    /// `close_position(ETH)` must look up the ETH position by
+    /// `PERP_ETH_USDC` and submit the close order against the same
+    /// symbol. Before the multi-asset expansion this was hardcoded to
+    /// the BTC market regardless of the requested asset.
+    #[tokio::test]
+    async fn close_position_routes_per_asset() {
+        let api = MockOrderlyApi::new(
+            fixture_account(),
+            vec![fixture_position("PERP_ETH_USDC", 1.5, 3_500.0, 3_550.0)],
+            fixture_create_order_result(8888),
+            fixture_filled_order(8888, None),
+        );
+        let captured = api.captured_create.clone();
+
+        let executor = OrderlyExecutor::with_api(api);
+        let receipt = executor
+            .close_position(AssetSymbol::Eth)
+            .await
+            .expect("close_position(ETH) must succeed");
+
+        assert_eq!(receipt.asset, AssetSymbol::Eth);
+        let req = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("close must call create_order");
+        assert_eq!(req.symbol, "PERP_ETH_USDC");
+        // ETH position was long → close side is Sell.
+        assert!(matches!(req.side, OrderSide::Sell));
+    }
+
+    /// Closing an asset Orderly doesn't list returns `NotActionable`
+    /// rather than a confused zero-fill receipt.
+    #[tokio::test]
+    async fn close_position_rejects_orderly_unsupported_asset() {
+        struct PanicApi;
+        #[async_trait]
+        impl OrderlyApi for PanicApi {
+            async fn create_order(
+                &self,
+                _: &str,
+                _: OrderSide,
+                _: f64,
+                _: Option<String>,
+                _: Option<bool>,
+            ) -> Result<OrderlyOrder, ExecutorError> {
+                panic!("must not call create_order");
+            }
+            async fn create_algo_order(
+                &self,
+                _: &str,
+                _: AlgoKind,
+                _: OrderSide,
+                _: f64,
+                _: f64,
+                _: Option<String>,
+                _: Option<bool>,
+            ) -> Result<u64, ExecutorError> {
+                panic!("must not call create_algo_order");
+            }
+            async fn get_order(&self, _: u64) -> Result<OrderlyOrder, ExecutorError> {
+                panic!("must not call get_order");
+            }
+            async fn get_account(&self) -> Result<OrderlyAccount, ExecutorError> {
+                panic!("must not call get_account");
+            }
+            async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
+                panic!("must not call get_positions");
+            }
+        }
+
+        let executor = OrderlyExecutor::with_api(PanicApi);
+        let err = executor
+            .close_position(AssetSymbol::Shib)
+            .await
+            .expect_err("unsupported close must reject");
+        assert!(matches!(err, ExecutorError::NotActionable(_)));
+    }
+
+    /// `portfolio()` must map an ETH position back to `AssetSymbol::Eth`
+    /// via the inverse helper, not silently drop it because it isn't BTC.
+    #[tokio::test]
+    async fn portfolio_maps_eth_position_to_asset_symbol_eth() {
+        let api = MockOrderlyApi::new(
+            fixture_account(),
+            vec![
+                fixture_position("PERP_ETH_USDC", 2.0, 3_500.0, 3_550.0),
+                fixture_position("PERP_BTC_USDC", 0.05, 70_000.0, 71_000.0),
+                // unknown market — must be filtered, not blow up the mapping
+                fixture_position("PERP_XRP_USDC", 100.0, 2.0, 2.1),
+            ],
+            fixture_create_order_result(1),
+            fixture_filled_order(1, None),
+        );
+        let executor = OrderlyExecutor::with_api(api);
+        let state = executor.portfolio().await.expect("portfolio must succeed");
+
+        assert!(state.open_positions.contains_key(&AssetSymbol::Eth));
+        assert!(state.open_positions.contains_key(&AssetSymbol::Btc));
+        assert_eq!(
+            state.open_positions.len(),
+            2,
+            "unknown markets must be filtered out, not crash the map"
+        );
+    }
+
+    // Helper used by the new multi-asset tests above. Returns a generic
+    // `OrderlyOrder` pretending to be the just-created order; tests
+    // pair it with `fixture_filled_order` returned by `get_order` to
+    // complete the await_fill loop in `submit`.
+    fn fixture_create_order_result(id: u64) -> OrderlyOrder {
+        OrderlyOrder {
+            order_id: id,
+            client_order_id: None,
+            status: "NEW".to_string(),
+            executed_quantity: None,
+            average_executed_price: None,
+        }
     }
 }

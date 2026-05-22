@@ -921,6 +921,11 @@ mod tests {
             bars_content_hash: None,
             manifest_canonical: None,
             net_return_pct: None,
+            input_tokens: None,
+            output_tokens: None,
+            cost_usd_estimate: None,
+            cost_estimate_complete: true,
+            wall_clock_ms: None,
         }
     }
 }

@@ -28,8 +28,10 @@ use crate::eval::cost::compute_token_cost_usd_from_catalog;
 use xvision_core::providers::Catalog;
 use xvision_observability::{
     AssistantTextDeltaEvent, BlobStore, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
-    BrokerSide, ModelCallFinishedEvent, Redactor, RetentionMode, RunEvent, RunEventBus, RunFinishedEvent,
-    RunStartedEvent, RunStatus, SpanAttributes, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
+    BrokerSide, EngineEvent, ModelCallFinishedEvent, Redactor, RetentionMode, RiskLevel, RunEvent,
+    RunEventBus, RunFinishedEvent, RunStartedEvent, RunStatus, SideEffectLevel, SpanAttributes,
+    SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus, SupervisorNoteEvent, ToolCallFailedEvent,
+    ToolCallFinishedEvent, ToolCallStartedEvent, ToolOrigin,
 };
 
 /// Serializable digest input for `compute_prompt_hash`. Private —
@@ -466,6 +468,212 @@ impl ObsEmitter {
                 ended_at: now,
                 status: SpanStatus::Ok,
                 error_json: None,
+            }))
+            .await;
+    }
+
+    // ---- F43 (`trace-dock-emitters`) ----------------------------------
+    //
+    // The following helpers fill the migration-018 trace-dock surface
+    // that previously had zero engine writers: `tool_calls`, `events`,
+    // per-decision `spans`, broadened `supervisor_notes`. See
+    // FOLLOWUPS.md § F43.
+
+    /// Emit a bar-level engine lifecycle event onto the `events` table.
+    /// `kind` is a free-form snake_case string. Known kinds carried by
+    /// F43: `decision_started`, `decision_completed`, `fill_attempted`,
+    /// `guardrail_fired`, `early_stop_triggered`, `flat_skip_fired`,
+    /// `preflight_warning`, `broker_rule_violation`, `cost_cap_warning`.
+    ///
+    /// `payload_json` MUST already be free of secrets — the writer
+    /// trusts the producer. Callers that pass user-typed strings should
+    /// run them through the [`Redactor`] first; structured payloads
+    /// (ints / known enum strings) need no scrubbing.
+    pub async fn emit_engine_event(&self, kind: &str, span_id: Option<String>, payload_json: Option<String>) {
+        self.bus
+            .publish(RunEvent::EngineEvent(EngineEvent {
+                run_id: self.run_id.clone(),
+                span_id,
+                kind: kind.to_string(),
+                payload_json,
+                created_at: Utc::now(),
+            }))
+            .await;
+    }
+
+    /// Open an `agent.decision` span. Caller pairs this with exactly
+    /// one `emit_span_finished_ok` (or `_error`) using the same
+    /// `span_id`. Carries `decision_index` in the typed attributes
+    /// bag so the trace dock can group child spans without inferring
+    /// the index from the bar timeline.
+    pub async fn emit_decision_span_started(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        decision_index: i64,
+        asset: Option<&str>,
+    ) {
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            decision_index: Some(decision_index),
+            ..SpanAttributes::default()
+        };
+        let mut base = serde_json::Map::new();
+        if let Some(a) = asset {
+            base.insert("asset".to_string(), serde_json::Value::String(a.to_string()));
+        }
+        let merged = if base.is_empty() {
+            attrs.to_attributes_json()
+        } else {
+            Some(attrs.merge_into_object(base))
+        };
+        let name = match asset {
+            Some(a) => format!("decision#{decision_index} {a}"),
+            None => format!("decision#{decision_index}"),
+        };
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::AgentDecision,
+                name,
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: merged,
+            }))
+            .await;
+    }
+
+    /// Emit a `tool.call` span + matching `tool_calls` row around one
+    /// tool invocation. Caller pairs with exactly one
+    /// `emit_tool_call_finished` or `emit_tool_call_failed` using the
+    /// same `span_id`.
+    ///
+    /// `args_redacted` is the producer's input payload AFTER passing
+    /// through [`Redactor`] — never raw provider tokens or broker
+    /// keys. The helper hashes the redacted text into `input_hash`
+    /// and stores the redacted text on the (per-policy) blob ref slot
+    /// is left `None` for now; F43's scope is to ensure the row
+    /// exists, not to wire payload blobs to a new path.
+    pub async fn emit_tool_call_started(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        tool_name: &str,
+        args_redacted: &str,
+    ) {
+        // Open the parent span row first so the tool_calls row has a
+        // FK target.
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            tool_name: Some(tool_name.to_string()),
+            ..SpanAttributes::default()
+        };
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::ToolCall,
+                name: tool_name.to_string(),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: attrs.to_attributes_json(),
+            }))
+            .await;
+        let input_hash = format!("sha256:{}", hex::encode(Sha256::digest(args_redacted.as_bytes())));
+        // F43 conservative defaults — the engine's native tools today
+        // are all read-only (indicator lookups, price fetches). The
+        // dashboard's risk-tier UI projects safe_read as "no warning";
+        // future tools that write state should override at the call
+        // site.
+        self.bus
+            .publish(RunEvent::ToolCallStarted(ToolCallStartedEvent {
+                span_id: span_id.to_string(),
+                tool_name: tool_name.to_string(),
+                origin: ToolOrigin::Native,
+                tool_version: None,
+                tool_hash: None,
+                side_effect_level: SideEffectLevel::ReadOnly,
+                risk_level: RiskLevel::SafeRead,
+                requires_approval: false,
+                is_run_terminator: false,
+                input_hash,
+                input_payload_ref: None,
+            }))
+            .await;
+    }
+
+    /// Finish a tool call as success. Closes the matching `tool.call`
+    /// span with `Ok` status and stamps the `output_hash` onto the
+    /// `tool_calls` row. `output_redacted` MUST already be free of
+    /// secrets — same producer-trusts-redactor contract as
+    /// `emit_tool_call_started`.
+    pub async fn emit_tool_call_finished(&self, span_id: &str, output_redacted: &str) {
+        let output_hash = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(output_redacted.as_bytes()))
+        );
+        self.bus
+            .publish(RunEvent::ToolCallFinished(ToolCallFinishedEvent {
+                span_id: span_id.to_string(),
+                output_hash: Some(output_hash),
+                output_payload_ref: None,
+                exit_code: Some(0),
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: Utc::now(),
+                status: SpanStatus::Ok,
+                error_json: None,
+            }))
+            .await;
+    }
+
+    /// Finish a tool call as failure. Closes the matching span with
+    /// `Error` status and writes the error JSON. Caller's
+    /// `error_message` is wrapped in `{"message": "..."}` to match
+    /// SpanInspector's expected shape.
+    pub async fn emit_tool_call_failed(&self, span_id: &str, error_message: &str) {
+        let error_json = serde_json::json!({ "message": error_message }).to_string();
+        self.bus
+            .publish(RunEvent::ToolCallFailed(ToolCallFailedEvent {
+                span_id: span_id.to_string(),
+                error_json: Some(error_json.clone()),
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: Utc::now(),
+                status: SpanStatus::Error,
+                error_json: Some(error_json),
+            }))
+            .await;
+    }
+
+    /// Emit a `supervisor_notes` row directly. Broadens the F-7
+    /// guardrail emit site to cover preflight warnings, broker-rule
+    /// violations, cost-cap warnings, and flat-degeneracy skip notes
+    /// per F43 § 3. The dashboard's "operator notes" surface renders
+    /// these in order.
+    ///
+    /// `role` is producer-defined: `system` / `guard` / `planner` /
+    /// `reviewer`. `severity` is `info` / `warn` / `error`. `content`
+    /// MUST be redacted before passing in.
+    pub async fn emit_supervisor_note(&self, role: &str, severity: &str, content: &str) {
+        self.bus
+            .publish(RunEvent::SupervisorNote(SupervisorNoteEvent {
+                run_id: self.run_id.clone(),
+                role: role.to_string(),
+                content: content.to_string(),
+                severity: severity.to_string(),
+                created_at: Utc::now(),
             }))
             .await;
     }

@@ -219,6 +219,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
         capabilities: xvision_engine::agents::default_capabilities(),
+        delta_briefing: None,
     };
     let agent_ulid = agent_store
         .create(NewAgent {
