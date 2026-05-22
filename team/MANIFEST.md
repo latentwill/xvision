@@ -81,10 +81,11 @@ unambiguous.
 | 027 | eval-candle-integrity-and-manifest (V2E) | merged 2026-05-21 |
 | 028 | v2b-remote-cli-job-safety (cli_job_audit) | merged 2026-05-21 |
 | 029 | agent-slot-memory-mode (V2D)         | merged 2026-05-21 |
-| 030 | v2b-broker-wallet-kill-switch (safety_state + safety_audit) | in flight 2026-05-21 |
-| 031 | v2b-broker-wallet-kill-switch (eval_runs.venue_label)        | in flight 2026-05-21 |
+| 030 | v2b-broker-wallet-kill-switch (safety_state + safety_audit) | merged 2026-05-21 |
+| 031 | v2b-broker-wallet-kill-switch (eval_runs.venue_label)        | merged 2026-05-21 |
+| 032 | memory-provenance-in-decisions-trace (decision_id on memory_recall events) | reserved 2026-05-22 (conditional — only if events table needs a column, not a payload field) |
 
-The next available number is **032**. The conductor must approve and
+The next available number is **033**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 

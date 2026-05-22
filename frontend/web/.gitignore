@@ -2,3 +2,5 @@ node_modules
 dist
 *.log
 .vite
+vite.config.ts.timestamp-*.mjs
+vitest.config.ts.timestamp-*.mjs

@@ -288,11 +288,9 @@ Infrastructure used by both tracks. Lives on `main`.
 
 - **Status: Done.** Guided tours implemented.
 
-### F37 [Shared]. Orphan recovery for remote CLI jobs after dashboard restart
+### F37 [Shared]. ~~Orphan recovery for remote CLI jobs after dashboard restart~~ — **DONE (shipped V2B 2026-05-21)**
 
-- **Trigger:** any operational use of `/api/cli/jobs*` on tailscale-served dashboard nodes beyond one-shot smoke tests.
-- **Scope:** add startup sweep marking stale `queued` / `running` CLI jobs as failed-or-cancelled with explicit restart/orphan reason; document post-restart contract for `GET /api/cli/jobs/:id` and `/output`; add at least one restart/orphan integration test. (Remote CLI backend routes + SQLite persistence already exist in `routes/cli.rs`, `cli_jobs/`, migration `013_cli_jobs.sql`; the gap is restart/orphan handling only.)
-- **Blocking:** non-blocking for tailscale-only private use; blocking before treating remote CLI jobs as a durable operator surface.
+- **Status: Done.** Shipped as `v2b-remote-cli-job-safety` (#447) — orphan recovery on startup, SIGTERM/SIGKILL escalation, runtime/output caps, `cli_job_audit` table (migration 028). Followup #459 added remote CLI job process cleanup.
 
 ### F38 [Shared]. QA6 dashboard remediation — chat, strategies, charts, eval reliability
 
@@ -307,18 +305,24 @@ Infrastructure used by both tracks. Lives on `main`.
 - **Why noted:** evals increasingly need to be agent-operable. Copyable chart image lets agents include visual evidence in reports and hand off eval results through CLI-only workflows.
 - **Blocking:** non-blocking; quality-of-life.
 
-### F40 [Shared]. Scenario display name + eval provider preflight
+### F40 [Shared]. ~~Scenario display name + eval provider preflight~~ — **DONE (eval-honesty wave, 2026-05-21)**
 
-- **Trigger:** 2026-05-14 operator pass hit two eval-adjacent workflow failures: scenario creation omitted required display name; Web UI eval launch sent stale `openai` provider, triggering tool-use loop cap.
-- **Scope:** execute board tracks `qa8-scenario-display-name-contract` and `qa8-eval-provider-preflight`. Scenario create flows require `display_name` before persistence. Eval launch reads configured providers/models before running, blocks zero-provider/stale-provider states with actionable setup path.
-- **Blocking:** blocking for unattended agent use of Web UI eval launcher and wizard.
+- **Status: Done.** Eval provider preflight shipped as `eval-provider-preflight` (#452 + follow-up clawpatch #468). Scenario display-name contract subsumed by `scenario-clone-form-structural-fields` (#437) and the wider scenario-form polish in the QA Round 4 tail.
 
-### F41 [Shared]. Eval contract honesty + agent-graph composition
+### F41 [Shared]. Eval contract honesty + agent-graph composition — **PARTIALLY DONE (eval-honesty cohort merged 2026-05-21)**
 
-- **Trigger:** QA rerun on `xvnej-app` 2026-05-21 found LLM never called — every decision returned fixture from `gemini-local` Serveo endpoint; eval shipped `status=completed` regardless; 432/432 forced-hold pattern not surfaced.
-- **Scope:** execute tracks in `team/intake/2026-05-21-eval-honesty-and-agent-graph.md`. Two cohorts: (a) eval contract honesty — smell-test for uniform decisions, per-call `(provider, model)` attestation in export, provider preflight before launch, log-spam collapse, skip-LLM-when-no-legal-action; (b) agent-graph composition — formalize `kind` on `AgentRef` (`trader/filter/critic/intern`) with per-kind I/O contracts, Filter emits user-named signals into downstream briefings, strategy declares graph edges that can short-circuit downstream calls. Plus token-efficiency knobs, indicator-tool wiring, scaffolding cleanup, `XVN_CONFIG_PATH` docker-compose papercut.
-- **Explicitly out of scope:** anything that authors strategies/agents for the user, anything that gates model choice (`required_models` demoted to informational `attested_with`), pre-computing indicators into briefings (agents request via tool).
-- **Blocking:** YES for treating eval results as trustworthy. Every metric in dashboard today is derived from fixture response; tier-0 items (stub detection, provider attestation, preflight) must land before publishing eval numbers as evidence.
+- **Status: tier-0 done.** Eval-honesty cohort merged: `eval-honesty-smell-tests` (#448), `eval-guardrail-log-collapse` (#449), `eval-provider-attestation` (#450), `eval-provider-preflight` (#452 + #468). `seed-scaffolding-cleanup` (#463) and `container-config-path-papercut` (#464) also merged. Eval numbers are now trustworthy at tier-0 (stub detection, provider attestation, preflight).
+- **Still open (8 sub-tracks not yet decomposed into contracts):**
+  - `trader-noop-skip` — skip LLM call when portfolio_state allows zero legal actions
+  - `strategy-model-attestation-only` — demote `required_models` / `model_requirement` to informational `attested_with`
+  - `strategy-slot-prompt-resolution` — resolve role of `strategy.trader_slot.prompt` (remove or make explicit override)
+  - `agent-graph-composition` — formalize `kind` on `AgentRef`, per-kind I/O contracts, Filter granularity. **Originally depends on `executor-refactor`** (which was superseded by executor-trait-extraction #487 + live-* tracks). Re-evaluate dependency vs the now-shipped `xvision-filters` crate (filter-v1 stages 1–5).
+  - `indicator-tool-wiring` — wire `indicator_panel` tool through to trader slot (currently `tools: []`)
+  - `bar-history-limit-surface` — surface/respect `AgentSlot.bar_history_limit` in agent editor
+  - `risk-sees-conviction` — expose `conviction` to risk layer for optional sizing scale
+  - `eval-token-efficiency` — prompt-cache stable prefix, per-slot `max_tokens` cap default, optional delta-briefing mode
+- **Source intake** (still open): `team/intake/2026-05-21-eval-honesty-and-agent-graph.md`.
+- **Blocking:** non-blocking for trust at tier-0 (already shipped); these are quality / capability extensions.
 
 ### F42 [Shared]. Memory safety + observability (post-V2D follow-ups)
 
