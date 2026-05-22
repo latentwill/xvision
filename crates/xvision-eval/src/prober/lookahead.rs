@@ -368,7 +368,7 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "FuturePeekBaseline: reads beyond current bar.".into(),
-                asset: None,
+                asset: snapshot.asset,
             })
         }
     }
@@ -461,7 +461,7 @@ mod tests {
                     stop_loss_pct: 2.0,
                     take_profit_pct: 4.0,
                     trader_summary: "ExactBarCount fires when len matches.".into(),
-                    asset: None,
+                    asset: snapshot.asset,
                 })
             } else {
                 None
@@ -566,7 +566,7 @@ mod tests {
                     stop_loss_pct: 2.0,
                     take_profit_pct: 4.0,
                     trader_summary: "CurrentBarClose fires when close matches target.".into(),
-                    asset: None,
+                    asset: snapshot.asset,
                 })
             } else {
                 None

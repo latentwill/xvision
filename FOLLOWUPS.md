@@ -31,8 +31,8 @@ xvision-play per ADR 0011.
 | Track | Items | Lives on |
 |---|---|---|
 | **SLF — Strategy Loom** | SLF1–16 (below) | `main` (post-merge of `pivot/cv-extract`) |
-| **Shared** | F5, F6, F7, F8, F18, F19, F20, F22, F24, F26, F27, F28, F29, F30, F31, F33, F34, F37, F38, F39, F40, F41, F42 | `main` |
-| **Done** | F25, F35, F36 | — |
+| **Shared** | F5, F6, F7, F8, F19, F20, F22, F24, F26, F27, F28, F29, F30, F31, F33, F34, F37, F38, F39, F40, F41, F42 | `main` |
+| **Done** | F18, F25, F35, F36 | — |
 
 Quick navigation: [SLF queue](#strategy-loom-queue-slf) ·
 [Shared queue](#shared-queue)
@@ -189,12 +189,17 @@ Infrastructure used by both tracks. Lives on `main`.
 - **Scope:** doc comment on `xvision-core::market::MarketSnapshot` listing the temporal invariants (recent_bars.last().timestamp ≤ snapshot.timestamp; recent_bars chronologically ordered; horizon_hours non-negative). From `decisions/0005-lookahead-audit.md` follow-up #3.
 - **Blocking:** non-blocking; documentation hygiene.
 
-### F18 [Shared]. Add `asset: AssetSymbol` to `TraderDecision`
+### F18 [Shared]. ~~Add `asset: AssetSymbol` to `TraderDecision`~~ — **DONE**
 
-- **Trigger:** multi-asset enabled in `whitelist.toml` (post-headline / post-hackathon).
-- **Note:** F30 M1 covers the partial pull-in of `TraderDecision.asset` as part of the Alpaca unlock. The full cascade below is the post-hackathon remainder. Validate scope against `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md` before opening a contract.
-- **Scope (remaining after F30 M1):** cascade `asset` field through xvision-trader (prompt schema), xvision-intern (briefing format), xvision-risk (drop the separate `asset` parameter), xvision-execution (Alpaca + Orderly stop pinning to BTC), xvision-eval (drop `BacktestConfig.instrument`). Mechanical but wide.
-- **Blocking:** YES for full multi-asset.
+- **Status: Done (2026-05-22).** Multi-asset cascade complete. `TraderDecision.asset`
+  is now a required `AssetSymbol` (no `Option<>`). Risk layer signature
+  `evaluate(decision, portfolio)` drops the separate asset param. Trader
+  prompt schema asks the model to echo `asset`; parser validates it matches
+  the briefing's asset. `BacktestConfig::instrument` and
+  `BacktestRunConfig::instrument` are gone — backtest executor reads asset
+  from each decision. Alpaca's `default_asset` field removed; Orderly v1
+  rejects non-BTC decisions (PERP_BTC_USDC scope per ADR 0008). See contract
+  `team/contracts/multi-asset-alpaca-unlock.md`.
 
 ### F19 [Shared]. Re-adopt `orderly-connector-rs` SDK when its `zeroize` pin loosens
 

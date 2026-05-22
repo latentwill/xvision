@@ -16,7 +16,7 @@ use std::path::Path;
 
 use thiserror::Error;
 use tracing::debug;
-use xvision_core::{AssetSymbol, PortfolioState, RiskDecision, TraderDecision, VetoReason};
+use xvision_core::{PortfolioState, RiskDecision, TraderDecision, VetoReason};
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
@@ -65,9 +65,8 @@ pub struct RiskLayer {
 impl RiskLayer {
     /// Build a `RiskLayer` from TOML config files.
     ///
-    /// The explicit `asset` passed to `evaluate` is authoritative. Accepted
-    /// decisions are returned with that asset populated, while an existing
-    /// different `TraderDecision.asset` is vetoed.
+    /// Asset routing is taken from `TraderDecision.asset` — the decision is
+    /// self-describing post-F18.
     ///
     /// Venue context defaults to `None`, which disables venue-keyed rules
     /// such as `MinNotional`. Use [`Self::from_config_for_venue`] when the
@@ -190,13 +189,8 @@ impl RiskLayer {
     /// `conviction` is threaded through to every rule as [`RiskEvalContext::conviction`].
     /// The built-in ruleset ignores it; user-authored rules may use it to scale sizing.
     /// Callers without a conviction signal should pass `0.0`.
-    pub fn evaluate(
-        &self,
-        decision: TraderDecision,
-        portfolio: &PortfolioState,
-        asset: AssetSymbol,
-    ) -> RiskDecision {
-        self.evaluate_with_conviction(decision, portfolio, asset, 0.0)
+    pub fn evaluate(&self, decision: TraderDecision, portfolio: &PortfolioState) -> RiskDecision {
+        self.evaluate_with_conviction(decision, portfolio, 0.0)
     }
 
     /// Like [`evaluate`] but threads the trader's `conviction` (0.0..=1.0) through
@@ -208,22 +202,12 @@ impl RiskLayer {
         &self,
         decision: TraderDecision,
         portfolio: &PortfolioState,
-        asset: AssetSymbol,
         conviction: f32,
     ) -> RiskDecision {
         let original = decision.clone();
-        if decision
-            .asset
-            .is_some_and(|decision_asset| decision_asset != asset)
-        {
-            return RiskDecision::Vetoed {
-                original,
-                reason: VetoReason::Custom("asset_mismatch".into()),
-            };
-        }
+        let asset = decision.asset;
 
         let mut current = decision;
-        current.asset = Some(asset);
         let mut first_modify_reason: Option<VetoReason> = None;
 
         for rule in &self.rules {
@@ -243,7 +227,7 @@ impl RiskLayer {
                         first_modify_reason = Some(reason);
                     }
                     current = modified;
-                    current.asset = Some(asset);
+                    current.asset = asset;
                 }
                 RuleVerdict::Veto(reason) => {
                     debug!(rule = rule.name(), ?reason, "veto");
@@ -291,7 +275,7 @@ pub(crate) mod tests_common {
             stop_loss_pct,
             take_profit_pct,
             trader_summary: "Test decision for risk layer.".into(),
-            asset: None,
+            asset: AssetSymbol::Btc,
         }
     }
 
@@ -472,7 +456,7 @@ mod integration {
         let layer = layer_from_files();
         let decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
         let portfolio = flat_portfolio();
-        let result = layer.evaluate(decision, &portfolio, AssetSymbol::Btc);
+        let result = layer.evaluate(decision, &portfolio);
         assert!(
             matches!(result, RiskDecision::Approved { .. }),
             "expected Approved, got {result:?}"
@@ -493,7 +477,7 @@ mod integration {
         let mut decision = make_decision(Action::Buy, Direction::Long, 2000, 2.0, 5.0);
         decision.size_bps = 2500; // bypass garde for rule-level test
         let portfolio = flat_portfolio();
-        let result = layer.evaluate(decision, &portfolio, AssetSymbol::Btc);
+        let result = layer.evaluate(decision, &portfolio);
         assert!(
             matches!(
                 result,
@@ -516,7 +500,7 @@ mod integration {
         // Use a value that passes garde (≤ 20.0) but exceeds risk limit (> 10.0).
         let decision = make_decision(Action::Buy, Direction::Long, 1500, 15.0, 5.0);
         let portfolio = flat_portfolio();
-        let result = layer.evaluate(decision, &portfolio, AssetSymbol::Btc);
+        let result = layer.evaluate(decision, &portfolio);
         match &result {
             RiskDecision::Modified { modified, reason, .. } => {
                 assert!(
@@ -537,8 +521,9 @@ mod integration {
         use tests_common::{flat_portfolio, make_decision};
 
         let layer = layer_from_files();
-        let decision = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
-        let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Eth);
+        let mut decision = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
+        decision.asset = AssetSymbol::Eth;
+        let result = layer.evaluate(decision, &flat_portfolio());
         assert!(
             matches!(
                 result,
@@ -559,7 +544,7 @@ mod integration {
         // -6% loss (above the 5% threshold)
         let portfolio = make_portfolio(100_000.0, -6_000.0);
         let decision = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
-        let result = layer.evaluate(decision, &portfolio, AssetSymbol::Btc);
+        let result = layer.evaluate(decision, &portfolio);
         assert!(
             matches!(
                 result,
@@ -578,7 +563,7 @@ mod integration {
 
         let layer = default_risk_layer();
         let decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
-        let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Btc);
+        let result = layer.evaluate(decision, &flat_portfolio());
         assert!(matches!(result, RiskDecision::Approved { .. }));
     }
 
@@ -588,10 +573,10 @@ mod integration {
 
         let layer = default_risk_layer();
         let decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
-        let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Btc);
+        let result = layer.evaluate(decision, &flat_portfolio());
         match result {
             RiskDecision::Approved { decision } => {
-                assert_eq!(decision.asset, Some(AssetSymbol::Btc));
+                assert_eq!(decision.asset, AssetSymbol::Btc);
             }
             other => panic!("expected Approved, got {other:?}"),
         }
@@ -603,28 +588,12 @@ mod integration {
 
         let layer = default_risk_layer();
         let decision = make_decision(Action::Buy, Direction::Long, 1500, 15.0, 5.0);
-        let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Btc);
+        let result = layer.evaluate(decision, &flat_portfolio());
         match result {
             RiskDecision::Modified { modified, .. } => {
-                assert_eq!(modified.asset, Some(AssetSymbol::Btc));
+                assert_eq!(modified.asset, AssetSymbol::Btc);
             }
             other => panic!("expected Modified, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn mismatched_decision_asset_is_vetoed() {
-        use tests_common::{default_risk_layer, flat_portfolio, make_decision};
-
-        let layer = default_risk_layer();
-        let mut decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
-        decision.asset = Some(AssetSymbol::Eth);
-        let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Btc);
-        match result {
-            RiskDecision::Vetoed { reason, .. } => {
-                assert_eq!(reason, VetoReason::Custom("asset_mismatch".into()));
-            }
-            other => panic!("expected Vetoed(asset_mismatch), got {other:?}"),
         }
     }
 }

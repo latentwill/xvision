@@ -73,9 +73,9 @@ pub async fn run(snapshot_path: PathBuf, intern_provider: String, model: String)
         stop_loss_pct: 2.0,
         take_profit_pct: 5.0,
         trader_summary: "run-setup placeholder decision (Trader path not invoked here).".into(),
-        asset: None,
+        asset: snap.asset,
     };
-    let risk_outcome = xvision_harness::apply_risk(placeholder, &portfolio, AssetSymbol::Btc, &risk);
+    let risk_outcome = xvision_harness::apply_risk(placeholder, &portfolio, &risk);
     println!("risk verdict: {risk_outcome:?}");
     Ok(())
 }

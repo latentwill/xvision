@@ -25,7 +25,7 @@ pub async fn run_trader(
     let prompt = build_trader_prompt(briefing, portfolio, params, &opts);
 
     let first = backend.complete(&prompt).await?;
-    match parse_trader_response(&first, briefing.cycle_id) {
+    match parse_trader_response(&first, briefing.cycle_id, briefing.asset) {
         Ok(decision) => Ok(decision),
         Err(TraderError::Validation(report)) => Err(TraderError::Validation(report)),
         Err(first_err) => {
@@ -44,7 +44,7 @@ pub async fn run_trader(
                  markdown fences, prose, or `<think>` blocks. Output JSON only."
             );
             let second = backend.complete(&retry_prompt).await?;
-            parse_trader_response(&second, briefing.cycle_id)
+            parse_trader_response(&second, briefing.cycle_id, briefing.asset)
         }
     }
 }

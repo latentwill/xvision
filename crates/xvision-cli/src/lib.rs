@@ -154,6 +154,9 @@ pub enum Command {
         /// Audit-trail summary string written into the TraderDecision (10–500 chars).
         #[arg(long, default_value = "manual fire-trade smoke from xvn cli", value_parser = parse_fire_trade_summary)]
         summary: String,
+        /// Asset to trade. Defaults to BTC. Must be on the venue's whitelist.
+        #[arg(long, default_value = "BTC", value_parser = commands::asset::parse_asset)]
+        asset: xvision_core::AssetSymbol,
     },
     /// Read live portfolio state from a venue.
     Portfolio {
@@ -318,7 +321,8 @@ impl Cli {
                 stop_loss_pct,
                 take_profit_pct,
                 summary,
-            } => commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary)
+                asset,
+            } => commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary, asset)
                 .await
                 .map_err(Into::into),
             Command::Portfolio { venue } => commands::venue::portfolio(venue).await.map_err(Into::into),

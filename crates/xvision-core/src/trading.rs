@@ -209,14 +209,11 @@ pub struct TraderDecision {
     pub take_profit_pct: f32,
     #[garde(length(min = 10, max = 500))]
     pub trader_summary: String,
-    /// F18 partial: defaulted to None and resolved from the active scenario's
-    /// single asset at downstream consumer sites. Full multi-asset cascade
-    /// (Trader prompt, Risk param drop, Eval BacktestConfig.instrument drop)
-    /// is tracked in F18 proper. `#[serde(default)]` keeps older serialized
-    /// blobs without this field deserializing cleanly as `None`.
+    /// F18 cascade complete: the trader names the asset every decision routes
+    /// to. Risk reads `asset` directly (no separate param), executors route
+    /// per-decision, and `BacktestConfig::instrument` was removed.
     #[garde(skip)]
-    #[serde(default)]
-    pub asset: Option<AssetSymbol>,
+    pub asset: AssetSymbol,
 }
 
 /// Shadow struct backing `TraderDecision`'s `try_from` deserialize
@@ -234,8 +231,7 @@ struct TraderDecisionRaw {
     stop_loss_pct: f32,
     take_profit_pct: f32,
     trader_summary: String,
-    #[serde(default)]
-    asset: Option<AssetSymbol>,
+    asset: AssetSymbol,
 }
 
 impl TryFrom<TraderDecisionRaw> for TraderDecision {
@@ -476,7 +472,7 @@ mod tests {
             stop_loss_pct: 2.5,
             take_profit_pct: 5.0,
             trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
-            asset: None,
+            asset: AssetSymbol::Btc,
         }
     }
 
@@ -731,6 +727,7 @@ mod tests {
             "stop_loss_pct": 5.0,
             "take_profit_pct": 3.0,
             "trader_summary": "Long entry on confirmed range break with 2:1 R:R.",
+            "asset": "BTC",
         });
         let err = serde_json::from_value::<TraderDecision>(bad)
             .expect_err("Buy with TP<=SL must fail deserialization");
@@ -750,6 +747,7 @@ mod tests {
             "stop_loss_pct": 5.0,
             "take_profit_pct": 1.0,
             "trader_summary": "Flat — no directional signal.",
+            "asset": "BTC",
         });
         let d: TraderDecision = serde_json::from_value(raw)
             .expect("Flat action must skip the TP/SL cross-field rule at parse time");
@@ -771,6 +769,7 @@ mod tests {
                 "stop_loss_pct": 4.0,
                 "take_profit_pct": 4.0,
                 "trader_summary": "Short on RSI overbought with 1:1 R:R.",
+                "asset": "BTC",
             }
         });
         let err = serde_json::from_value::<RiskDecision>(bad)
