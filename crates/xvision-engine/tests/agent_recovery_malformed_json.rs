@@ -151,7 +151,6 @@ fn minimal_strategy() -> Strategy {
         intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
-            prompt: "Decide.".into(),
             attested_with: "openai.gpt-4o-mini+".into(),
             allowed_tools: vec![],
             provider: Some("openai".into()),
