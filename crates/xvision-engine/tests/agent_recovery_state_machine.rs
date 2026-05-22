@@ -156,6 +156,8 @@ fn build_input<'a>(
         scenario_id: String::new(),
         cycle_idx: 0,
         catalog: None,
+        delta_briefing: false,
+        prev_briefing: None,
     }
 }
 

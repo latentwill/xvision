@@ -128,6 +128,8 @@ async fn execute_slot_caps_runaway_tool_use_loop() {
         scenario_id: String::new(),
         cycle_idx: 0,
         catalog: None,
+        delta_briefing: false,
+        prev_briefing: None,
     })
     .await
     .expect_err("runaway tool-use loop must terminate at the iteration cap");

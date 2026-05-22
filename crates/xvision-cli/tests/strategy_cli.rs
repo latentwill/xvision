@@ -123,6 +123,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
+                    delta_briefing: None,
                 }],
             },
         )

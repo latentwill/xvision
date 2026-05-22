@@ -35,6 +35,7 @@ fn slot_with(max_tokens: Option<u32>, temperature: Option<f64>) -> AgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
+        delta_briefing: None,
     }
 }
 

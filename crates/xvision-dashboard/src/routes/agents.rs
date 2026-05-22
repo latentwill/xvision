@@ -223,6 +223,7 @@ pub mod get {
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
+                    delta_briefing: None,
                 }],
             },
         )
