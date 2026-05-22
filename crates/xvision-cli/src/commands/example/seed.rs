@@ -401,7 +401,7 @@ mod tests {
         use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
         use xvision_engine::strategies::risk::RiskPreset;
         use xvision_engine::strategies::slot::LLMSlot;
-        use xvision_engine::strategies::{PipelineDef, Strategy};
+        use xvision_engine::strategies::{ActivationMode, PipelineDef, Strategy};
 
         let dir = tempdir().unwrap();
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
@@ -437,6 +437,8 @@ mod tests {
             }),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({"ema_fast": 12}),
+            activation_mode: ActivationMode::EveryBar,
+            filter: None,
         };
         store.save(&operator).await.unwrap();
 

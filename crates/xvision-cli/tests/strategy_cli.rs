@@ -20,7 +20,7 @@ use xvision_engine::{
     strategies::risk::RiskPreset,
     strategies::slot::LLMSlot,
     strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore},
-    strategies::{PipelineDef, Strategy},
+    strategies::{ActivationMode, PipelineDef, Strategy},
 };
 
 fn xvn(args: &[&str], home: &std::path::Path) -> std::process::Output {
@@ -87,6 +87,8 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
             "bollinger_sigma": 2.0,
             "atr_period": 14
         }),
+        activation_mode: ActivationMode::EveryBar,
+        filter: None,
     }
 }
 
@@ -122,6 +124,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: Default::default(),
+                    noop_skip: None,
                 }],
             },
         )

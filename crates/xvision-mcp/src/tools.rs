@@ -35,7 +35,7 @@ use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
 use xvision_engine::strategies::{
     risk::RiskConfig,
-    store::{strategy_store_dir, FilesystemStore, StrategyStore},
+    store::{FilesystemStore, StrategyStore},
 };
 
 // ---------------------------------------------------------------------------
@@ -875,7 +875,9 @@ impl XvisionTools {
     ) -> Result<String, rmcp::ErrorData> {
         use xvision_engine::agents::InputsPolicy;
         use xvision_engine::strategies::risk::RiskPreset;
-        use xvision_engine::strategies::{manifest::PublicManifest, AgentRef, PipelineDef, Strategy};
+        use xvision_engine::strategies::{
+            manifest::PublicManifest, ActivationMode, AgentRef, PipelineDef, Strategy,
+        };
 
         let asset = req.asset.unwrap_or_else(|| "BTC/USD".to_string());
         let timeframe = req.timeframe.unwrap_or_else(|| "4h".to_string());
@@ -907,6 +909,7 @@ impl XvisionTools {
                     inputs_policy: InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: Default::default(),
+                    noop_skip: None,
                 }],
             },
         )
@@ -944,6 +947,8 @@ impl XvisionTools {
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
             hypothesis: None,
+            activation_mode: ActivationMode::EveryBar,
+            filter: None,
         };
 
         // 3. Validate shape.
