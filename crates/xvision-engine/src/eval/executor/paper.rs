@@ -42,7 +42,10 @@ use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
-use crate::agent::recovery::{is_malformed_json_recoverable, try_repair_malformed_json, TraderRepairContext};
+use crate::agent::recovery::{
+    is_malformed_json_recoverable, is_schema_missing_field_recoverable, try_repair_malformed_json,
+    try_repair_schema_missing_field, TraderRepairContext,
+};
 
 use super::trader_output::TraderOutput;
 
@@ -987,7 +990,36 @@ impl PaperExecutor {
                     // ORIGINAL error on second-attempt failure so
                     // `eval_runs.error` keeps its wire-stable
                     // `[invalid_json]` / `[truncated]` prefix.
-                    if is_malformed_json_recoverable(&e) {
+                    // F-5 phase 2b (`harness-recovery-schema-missing-field`)
+                    // is checked FIRST: when the JSON parsed but a field
+                    // was missing/invalid, a targeted patch retry is
+                    // cheaper than re-asking for the whole shape. Schema
+                    // and Malformed are disjoint families per
+                    // `FailureClass::family`, so each error walks exactly
+                    // one branch — no double-repair.
+                    if is_schema_missing_field_recoverable(&e) {
+                        if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
+                            match try_repair_schema_missing_field(
+                                trader,
+                                e,
+                                ctx,
+                                &seed_for_repair,
+                                dispatch.clone(),
+                                self.obs_emitter.as_ref(),
+                                &run.id,
+                                decision_idx,
+                            )
+                            .await
+                            {
+                                Ok(repaired) => repaired,
+                                Err(original) => {
+                                    return Err(original.with_model_hint(trader_model_id.as_deref()).into());
+                                }
+                            }
+                        } else {
+                            return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                        }
+                    } else if is_malformed_json_recoverable(&e) {
                         if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
                             match try_repair_malformed_json(
                                 trader,

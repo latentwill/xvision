@@ -122,6 +122,56 @@ impl TraderOutputError {
         self.kind.tag()
     }
 
+    /// Extract the offending JSON field name(s) from the structured
+    /// `detail` text. F-5 phase 2b (`harness-recovery-schema-missing-field`)
+    /// uses this to drive the targeted-patch repair: the dispatcher asks
+    /// the model for just the bad fields rather than the full JSON shape.
+    ///
+    /// Recognised shapes (stable across the codebase's parser output;
+    /// see `parse_with_response_inner` for the producers):
+    ///
+    /// - `MissingField`: serde's `missing field `<name>`` shape, plus the
+    ///   `missing required trader field `action`` decorator we add for
+    ///   the `action` case. Returns each matched name in order, deduped.
+    /// - `InvalidField`: the `validate()` step produces three stable
+    ///   detail strings — `"... action must be one of ..."`,
+    ///   `"... conviction must be between 0 and 1 ..."`, and
+    ///   `"... justification is required"`. Returns `["action"]` /
+    ///   `["conviction"]` / `["justification"]` respectively.
+    ///
+    /// Returns an empty vec for any other kind (the caller should NOT
+    /// invoke this for non-schema failures — `recovery::is_schema_missing_field_recoverable`
+    /// gates the call).
+    pub fn problem_fields(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        match self.kind {
+            TraderFailureKind::MissingField => {
+                // Walk `missing field `<name>`` occurrences. Multiple may
+                // appear if serde aggregates (rare in practice but cheap
+                // to handle defensively).
+                extract_backticked_after(&self.detail, "missing field ", &mut out);
+                extract_backticked_after(&self.detail, "missing required trader field ", &mut out);
+            }
+            TraderFailureKind::InvalidField => {
+                // The `validate()` step in this module produces three
+                // stable wordings; match each by the field name verbatim
+                // because the wordings name the field directly (no
+                // backticks around the field).
+                if self.detail.contains("action must be one of") {
+                    push_unique(&mut out, "action");
+                }
+                if self.detail.contains("conviction must be between") {
+                    push_unique(&mut out, "conviction");
+                }
+                if self.detail.contains("justification is required") {
+                    push_unique(&mut out, "justification");
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
     /// Replace the generic `detail` with an actionable hint when the
     /// failure is a reasoning-class model running out of budget before
     /// any visible text emerged — the QA15 item 5 footprint. No-op when:
@@ -378,6 +428,95 @@ impl TraderOutput {
     }
 }
 
+/// Extract every name inside `` `<name>` `` immediately following `prefix`
+/// in `s`, pushing each unique result into `out`. Helper for
+/// [`TraderOutputError::problem_fields`]. The serde message format is
+/// stable enough that a literal anchor + a closing-backtick search
+/// suffices — no regex required.
+fn extract_backticked_after(s: &str, prefix: &str, out: &mut Vec<String>) {
+    let mut cursor = 0usize;
+    while let Some(rel) = s[cursor..].find(prefix) {
+        let start = cursor + rel + prefix.len();
+        if !s[start..].starts_with('`') {
+            cursor = start;
+            continue;
+        }
+        let after_tick = start + 1;
+        if let Some(end_rel) = s[after_tick..].find('`') {
+            let name = &s[after_tick..after_tick + end_rel];
+            if !name.is_empty() {
+                push_unique(out, name);
+            }
+            cursor = after_tick + end_rel + 1;
+        } else {
+            break;
+        }
+    }
+}
+
+fn push_unique(out: &mut Vec<String>, name: &str) {
+    if !out.iter().any(|n| n == name) {
+        out.push(name.to_string());
+    }
+}
+
+/// Merge the partial original trader text (best-effort parsed as a JSON
+/// object) with a follow-up patch (also a JSON object), then attempt to
+/// parse the merged value as a `TraderOutput`. F-5 phase 2b
+/// (`harness-recovery-schema-missing-field`): the targeted-patch retry
+/// asks the model to emit *only* the failing fields; merging here
+/// overlays them on top of the original response so fields the model
+/// already produced correctly are preserved verbatim.
+///
+/// `original_raw` is the verbatim text from the first attempt — we feed
+/// it through the same candidate-extraction pipeline as
+/// `parse_response` so code-fenced / wrapper-wrapped first responses
+/// are recovered as the base object. If no object candidate parses, the
+/// merge starts from an empty object (the patch alone must contain
+/// every required field).
+///
+/// `patch_raw` is the verbatim text from the second attempt. Same
+/// candidate-extraction is applied.
+///
+/// On success, returns the parsed `TraderOutput`. On failure, returns a
+/// `TraderOutputError` describing the merged value's parse failure —
+/// callers in the recovery module surface the ORIGINAL error per the
+/// contract, but the returned error here drives the
+/// `recovery.failed.second_detail` diagnostic.
+pub(crate) fn merge_and_reparse_trader_output(
+    original_raw: &str,
+    patch_raw: &str,
+    run_id: &str,
+    decision_index: u32,
+) -> Result<TraderOutput, TraderOutputError> {
+    fn first_object(raw: &str) -> serde_json::Map<String, serde_json::Value> {
+        for candidate in trader_output_candidates(raw) {
+            if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(&candidate)
+            {
+                return map;
+            }
+        }
+        serde_json::Map::new()
+    }
+
+    let base = first_object(original_raw);
+    let patch = first_object(patch_raw);
+
+    // Right-biased merge: patch keys win. Shallow merge only —
+    // `TraderOutput` is a flat struct so deep-merge would never matter,
+    // and shallow keeps the semantics legible.
+    let mut merged = base;
+    for (k, v) in patch {
+        merged.insert(k, v);
+    }
+
+    let merged_raw = serde_json::Value::Object(merged).to_string();
+    // Reparse using the same strict pipeline. No `LlmResponse` is
+    // available here (we're past the dispatch boundary), so the
+    // diagnostics use `raw_text=Some(merged_raw)` + `response=None`.
+    TraderOutput::parse_with_response_inner(&merged_raw, run_id, decision_index, None)
+}
+
 fn trader_output_candidates(raw: &str) -> Vec<String> {
     let mut out = Vec::new();
     push_candidate(&mut out, raw.trim());
@@ -496,6 +635,135 @@ mod tests {
     use crate::agent::llm::{ContentBlock, LlmResponse, StopReason};
 
     use super::{TraderFailureKind, TraderOutput};
+
+    // ─── F-5 phase 2b: problem_fields extraction ──────────────────────
+
+    #[test]
+    fn problem_fields_extracts_missing_conviction() {
+        let err =
+            TraderOutput::parse_strict(r#"{"action":"hold","justification":"hold pattern"}"#, "01TEST", 0)
+                .expect_err("missing conviction must fail");
+        assert_eq!(err.kind, TraderFailureKind::MissingField);
+        let fields = err.problem_fields();
+        assert!(
+            fields.iter().any(|f| f == "conviction"),
+            "expected conviction in {fields:?}; detail={}",
+            err.detail,
+        );
+    }
+
+    #[test]
+    fn problem_fields_extracts_missing_action_via_decorator() {
+        // `action` triggers the `missing required trader field `action``
+        // decorator in addition to serde's bare `missing field `action``.
+        // Either anchor matching is sufficient; just one occurrence of
+        // `action` should appear in the deduped output.
+        let err = TraderOutput::parse_strict(
+            r#"{"conviction":0.7,"justification":"trend continuation"}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("missing action must fail");
+        assert_eq!(err.kind, TraderFailureKind::MissingField);
+        let fields = err.problem_fields();
+        assert!(
+            fields.iter().any(|f| f == "action"),
+            "expected action in {fields:?}; detail={}",
+            err.detail,
+        );
+    }
+
+    #[test]
+    fn problem_fields_extracts_invalid_action() {
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"BUY_BIG","conviction":0.7,"justification":"go big"}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("invalid action must fail");
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
+        assert_eq!(err.problem_fields(), vec!["action".to_string()]);
+    }
+
+    #[test]
+    fn problem_fields_extracts_invalid_conviction() {
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"hold","conviction":1.5,"justification":"out of range"}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("out-of-range conviction must fail");
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
+        assert_eq!(err.problem_fields(), vec!["conviction".to_string()]);
+    }
+
+    #[test]
+    fn problem_fields_extracts_invalid_justification() {
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"hold","conviction":0.5,"justification":""}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("empty justification must fail");
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
+        assert_eq!(err.problem_fields(), vec!["justification".to_string()]);
+    }
+
+    #[test]
+    fn problem_fields_empty_for_non_schema_kinds() {
+        let err = TraderOutput::parse_strict("not json at all", "01TEST", 0).expect_err("garbage must fail");
+        assert_eq!(err.kind, TraderFailureKind::InvalidJson);
+        assert!(
+            err.problem_fields().is_empty(),
+            "InvalidJson must not produce field names: {:?}",
+            err.problem_fields(),
+        );
+    }
+
+    #[test]
+    fn merge_and_reparse_recovers_when_patch_supplies_missing_field() {
+        use super::merge_and_reparse_trader_output;
+        // Original was missing conviction; patch supplies it.
+        let merged = merge_and_reparse_trader_output(
+            r#"{"action":"hold","justification":"range chop"}"#,
+            r#"{"conviction":0.7}"#,
+            "01TEST",
+            0,
+        )
+        .expect("merge must produce a valid TraderOutput");
+        assert_eq!(merged.action, "hold");
+        assert_eq!(merged.conviction, 0.7);
+        assert_eq!(merged.justification, "range chop");
+    }
+
+    #[test]
+    fn merge_and_reparse_patch_overrides_invalid_field() {
+        use super::merge_and_reparse_trader_output;
+        // Original had invalid action `BUY_BIG`; patch supplies `hold`.
+        let merged = merge_and_reparse_trader_output(
+            r#"{"action":"BUY_BIG","conviction":0.6,"justification":"go big"}"#,
+            r#"{"action":"hold"}"#,
+            "01TEST",
+            0,
+        )
+        .expect("merge must produce a valid TraderOutput");
+        assert_eq!(merged.action, "hold");
+    }
+
+    #[test]
+    fn merge_and_reparse_still_fails_when_patch_is_incomplete() {
+        use super::merge_and_reparse_trader_output;
+        // Both original and patch are missing `conviction`. Merge fails.
+        let err = merge_and_reparse_trader_output(
+            r#"{"action":"hold","justification":"x"}"#,
+            r#"{"justification":"better explanation"}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("merge must still fail when patch is incomplete");
+        // The remaining failure is still MissingField (conviction).
+        assert_eq!(err.kind, TraderFailureKind::MissingField);
+    }
 
     #[test]
     fn missing_action_has_field_level_diagnostic() {

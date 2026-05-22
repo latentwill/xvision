@@ -29,7 +29,7 @@ use crate::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, OpenAiCompatError, ResponseSchema,
 };
 use crate::agent::observability::{fresh_span_id, ObsEmitter};
-use crate::eval::executor::trader_output::TraderOutput;
+use crate::eval::executor::trader_output::{merge_and_reparse_trader_output, TraderOutput};
 use crate::eval::executor::{TraderFailureKind, TraderOutputError};
 
 /// Stable failure class. Each variant maps to exactly one of the wire
@@ -673,6 +673,233 @@ pub(crate) async fn try_repair_malformed_json(
     }
 }
 
+// ─── SchemaMissingField repair (F-5 phase 2b) ──────────────────────────────
+//
+// `harness-recovery-schema-missing-field`. Targets the
+// [`RecoveryFamily::SchemaMissingField`] family: trader response parsed as
+// JSON but a required field was missing or invalid.
+//
+// Unlike the MalformedJson repair (which re-asks for the *whole* JSON
+// object), the schema-patch repair asks the model to emit ONLY the
+// offending field(s). The original response is then merged with the patch
+// — second-attempt keys override first-attempt keys — and re-parsed via
+// [`merge_and_reparse_trader_output`]. Cheaper than the full-response retry
+// because the model is constrained to a single small JSON object.
+//
+// Fall-through behaviour: ONE patch attempt only. If the merged value
+// still fails to parse, the ORIGINAL `TraderOutputError` is propagated
+// (same fail-closed policy as MalformedJson). The dispatcher does NOT
+// fall through into the MalformedJson repair — schema and malformed are
+// disjoint families per [`FailureClass::family`], and double-repair is
+// out of scope (it would silently use 2x the budget without operator
+// consent).
+
+/// Convenience predicate: returns `true` when the `TraderOutputError`
+/// falls into the SchemaMissingField family and is therefore eligible for
+/// the targeted-patch repair path. Callers in paper.rs / backtest.rs
+/// check this before invoking [`try_repair_schema_missing_field`].
+pub fn is_schema_missing_field_recoverable(err: &TraderOutputError) -> bool {
+    matches!(
+        err.kind,
+        TraderFailureKind::MissingField | TraderFailureKind::InvalidField
+    )
+}
+
+/// Build the user-message body for a schema-patch repair attempt. The
+/// returned string carries:
+///
+///   1. The list of missing/invalid field names (comma-separated) so the
+///      model sees exactly what needs to change.
+///   2. A one-line instruction: emit JUST the offending fields as a
+///      single JSON object — the engine merges the patch over the
+///      original response, so other fields the model already produced
+///      are accepted as-is.
+///   3. The verbatim parse-error detail (clipped to the repaired-field
+///      diagnostic) so the model has the specific complaint at hand.
+///
+/// The text is deterministic for a given `(field_list, parse_error)`
+/// pair so the prompt-hashing seam produces a stable digest across
+/// re-runs with the same `cycle_id` — see the A/B-cache pairing test in
+/// the integration suite.
+pub fn build_schema_missing_field_repair_message(problem_fields: &[String], parse_error: &str) -> String {
+    let fields = if problem_fields.is_empty() {
+        // Defensive: the dispatcher gates with `is_schema_missing_field_recoverable`
+        // and the contract says we should always have at least one field,
+        // but emit a usable prompt either way so a bad detail string
+        // doesn't break the repair.
+        "(unknown field — see error detail)".to_string()
+    } else {
+        problem_fields.join(", ")
+    };
+    format!(
+        "Your previous response was missing or invalid for the following fields: [{fields}].\n\
+         \n\
+         Re-emit ONLY a single JSON object containing those fields, filled in correctly. \
+         The other fields you produced are accepted as-is — do not repeat them. \
+         Do not include prose, code fences, or tool calls.\n\
+         \n\
+         Validator detail: {parse_error}",
+    )
+}
+
+/// Single-shot targeted-patch repair for the SchemaMissingField family
+/// (`MissingField` / `InvalidField`). Returns `Ok(parsed)` on success
+/// and emits a `recovery.attempt` span. Returns the ORIGINAL
+/// [`TraderOutputError`] on second-attempt failure and emits
+/// `recovery.failed` carrying the merged-reparse error as
+/// `final_error`. Callers propagate the returned error verbatim — the
+/// wire-stable `[missing_field]` / `[invalid_field]` prefix on
+/// `eval_runs.error` stays exactly as today's path produces it.
+///
+/// The dispatched repair LlmRequest mirrors the MalformedJson helper:
+/// same `system_prompt`/`model`/`max_tokens`/`temperature`, same
+/// `response_schema`, no tools. The user turn carries
+/// [`build_schema_missing_field_repair_message`] with the failing field
+/// list. The model is expected to emit a small JSON object with just
+/// those fields; the helper merges that patch over the original (partial)
+/// response via [`merge_and_reparse_trader_output`].
+///
+/// ## A/B cache pairing
+///
+/// The repair body is deterministic for a given `(problem_fields,
+/// parse_error)` pair. The seed-derived user prompt is reproducible
+/// across re-runs because the eval executor's seed is reconstructed from
+/// the scenario + bar history every cycle. Together these mean the
+/// repair dispatch's prompt hash is reproducible across re-runs — see
+/// the `schema_missing_field_repair_is_deterministic_for_ab_cache_pairing`
+/// integration test.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn try_repair_schema_missing_field(
+    failed_response: &LlmResponse,
+    original_error: TraderOutputError,
+    repair_ctx: TraderRepairContext<'_>,
+    seed_inputs: &serde_json::Value,
+    dispatch: Arc<dyn LlmDispatch>,
+    obs: Option<&ObsEmitter>,
+    run_id: &str,
+    decision_index: u32,
+) -> Result<TraderOutput, TraderOutputError> {
+    let class_tag = match original_error.kind {
+        TraderFailureKind::MissingField => "missing_field",
+        TraderFailureKind::InvalidField => "invalid_field",
+        _ => return Err(original_error),
+    };
+
+    let schema = ResponseSchema::trader_output();
+    let problem_fields = original_error.problem_fields();
+
+    // Reconstruct the original user prompt body in the same shape
+    // `execute_slot` would have produced — byte-identical to the
+    // MalformedJson repair so the model's context is consistent
+    // across both repair families.
+    let initial_user_body = format!(
+        "Inputs:\n{inputs}\n\nFollow the slot's instructions. You may call tools \
+         to fetch additional data; emit your final decision as JSON.",
+        inputs = serde_json::to_string_pretty(seed_inputs)
+            .unwrap_or_else(|_| "<seed-serialize-error>".to_string()),
+    );
+
+    let assistant_raw = failed_response.text();
+    let repair_user_body = build_schema_missing_field_repair_message(&problem_fields, &original_error.detail);
+
+    let messages = vec![
+        Message {
+            role: "user".into(),
+            content: vec![ContentBlock::Text {
+                text: initial_user_body,
+            }],
+        },
+        Message {
+            role: "assistant".into(),
+            content: vec![ContentBlock::Text {
+                text: assistant_raw.clone(),
+            }],
+        },
+        Message {
+            role: "user".into(),
+            content: vec![ContentBlock::Text {
+                text: repair_user_body,
+            }],
+        },
+    ];
+
+    let req = LlmRequest {
+        model: repair_ctx.model,
+        system_prompt: repair_ctx.system_prompt.to_string(),
+        messages,
+        max_tokens: repair_ctx.max_tokens,
+        // No tools — see MalformedJson helper for the rationale.
+        tools: Vec::new(),
+        temperature: repair_ctx.temperature,
+        response_schema: Some(schema),
+        cache_control: None,
+    };
+
+    let repair_resp = match dispatch.complete(req).await {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(emitter) = obs {
+                emitter
+                    .emit_recovery_failed(
+                        &fresh_span_id(),
+                        None,
+                        class_tag,
+                        1,
+                        &format!("repair dispatch failed: {e:#}"),
+                    )
+                    .await;
+            }
+            return Err(original_error);
+        }
+    };
+
+    let patch_text = repair_resp.text();
+    match merge_and_reparse_trader_output(&assistant_raw, &patch_text, run_id, decision_index) {
+        Ok(parsed) => {
+            if let Some(emitter) = obs {
+                emitter
+                    .emit_recovery_attempt(&fresh_span_id(), None, class_tag, 1)
+                    .await;
+            }
+            tracing::info!(
+                event = "trader_output_schema_patch_recovered",
+                run_id = %run_id,
+                decision_index,
+                class_tag,
+                fields = ?problem_fields,
+                "F-5 SchemaMissingField patch repair succeeded on retry 1",
+            );
+            Ok(parsed)
+        }
+        Err(second_err) => {
+            if let Some(emitter) = obs {
+                emitter
+                    .emit_recovery_failed(
+                        &fresh_span_id(),
+                        None,
+                        class_tag,
+                        1,
+                        &format!("merge-and-reparse failed: {second_err}"),
+                    )
+                    .await;
+            }
+            tracing::warn!(
+                event = "trader_output_schema_patch_failed",
+                run_id = %run_id,
+                decision_index,
+                class_tag,
+                original_detail = %original_error.detail,
+                second_detail = %second_err.detail,
+                "F-5 SchemaMissingField patch repair exhausted (1 retry); surfacing original error",
+            );
+            // Contract: propagate the ORIGINAL error so `eval_runs.error`
+            // carries `[missing_field]` / `[invalid_field]` exactly as
+            // it did pre-F-5.
+            Err(original_error)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -886,6 +1113,47 @@ mod tests {
             body.contains("Return ONLY the JSON object"),
             "repair message must instruct returning JSON only, got: {body}"
         );
+    }
+
+    #[test]
+    fn build_schema_missing_field_repair_message_carries_field_list_and_instruction() {
+        let fields = vec!["conviction".to_string()];
+        let body = build_schema_missing_field_repair_message(&fields, "missing field `conviction`");
+        assert!(
+            body.contains("[conviction]"),
+            "repair body must reference the field list: {body}"
+        );
+        assert!(
+            body.contains("Re-emit ONLY a single JSON object"),
+            "repair body must instruct emitting ONLY the bad fields: {body}"
+        );
+        assert!(
+            body.contains("missing field `conviction`"),
+            "repair body must include the verbatim parse-error detail: {body}"
+        );
+        assert!(
+            body.contains("Do not include prose, code fences, or tool calls"),
+            "repair body must carry the no-prose-no-fences instruction: {body}"
+        );
+    }
+
+    #[test]
+    fn build_schema_missing_field_repair_message_lists_multiple_fields() {
+        let fields = vec!["action".to_string(), "conviction".to_string()];
+        let body = build_schema_missing_field_repair_message(&fields, "two fields failed");
+        assert!(body.contains("[action, conviction]"), "multi-field list: {body}");
+    }
+
+    #[test]
+    fn build_schema_missing_field_repair_message_is_deterministic_for_ab_cache_pairing() {
+        // A/B cache pairing acceptance: byte-stable for the same
+        // `(field_list, parse_error)` pair so the prompt-hash digest is
+        // reproducible across re-runs of the same strategy/cycle.
+        let fields = vec!["action".to_string()];
+        let detail = "invalid value for field `action`";
+        let a = build_schema_missing_field_repair_message(&fields, detail);
+        let b = build_schema_missing_field_repair_message(&fields, detail);
+        assert_eq!(a, b);
     }
 
     #[test]
