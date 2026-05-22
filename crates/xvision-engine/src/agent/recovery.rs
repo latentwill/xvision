@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 
-use crate::agent::llm::OpenAiCompatError;
+use crate::agent::llm::{OpenAiCompatError, ResponseSchema};
 use crate::eval::executor::{TraderFailureKind, TraderOutputError};
 
 /// Stable failure class. Each variant maps to exactly one of the wire
@@ -378,6 +378,58 @@ fn hash_input(input: &serde_json::Value) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(&bytes)))
 }
 
+// ─── MalformedJson repair-prompt builder ───────────────────────────────────
+//
+// F-5 phase 2a (`harness-recovery-malformed-json`): when the trader's text
+// fails to parse as the canonical `TraderOutput` JSON shape, the eval
+// executor invokes a single-shot repair attempt before propagating the
+// original error. The conversation log appended on that retry carries
+// the parse diagnostic + the response schema descriptor + a no-prose
+// instruction so the model has every piece of information it needs to
+// emit a clean JSON object on the second try.
+//
+// The body construction lives here so the call site in
+// `eval::executor::recovery` stays minimal — paper.rs and backtest.rs
+// dispatch through the same helper, which keeps the wire-shape of the
+// repair turn identical across executors.
+
+/// Build the user-message body for a malformed-json repair attempt. The
+/// returned string carries:
+///
+///   1. The verbatim parse error from `TraderOutputError.detail` so the
+///      model sees exactly which key, type, or token tripped the
+///      deserializer.
+///   2. The response-schema descriptor (name + serialized schema) so the
+///      model is reminded what it should have emitted.
+///   3. A one-line instruction forbidding prose, code fences, or further
+///      tool calls — the second attempt must emit a single JSON object.
+///
+/// The text is deterministic for a given `(parse_error, schema)` pair so
+/// the engine's prompt-hashing seam (A/B cache pairing across re-runs
+/// with the same `cycle_id`) produces a stable digest. Operators
+/// inspecting the trace dock see the same repair message every time a
+/// strategy's trader emits the same unparseable response.
+pub fn build_malformed_json_repair_message(parse_error: &str, schema: &ResponseSchema) -> String {
+    // Render the schema body deterministically — `serde_json::to_string`
+    // is field-order-stable for a `serde_json::Value` built from a
+    // literal `json!` macro, but `to_string_pretty` is what callers
+    // typically see in the trace dock, so we use that for human
+    // readability. The schema descriptor is the same object the
+    // dispatcher would have stamped on the original outbound request,
+    // so quoting it here only restates known context.
+    let schema_body = serde_json::to_string_pretty(&schema.schema)
+        .unwrap_or_else(|_| "<schema-serialize-error>".to_string());
+    format!(
+        "Your previous response failed to parse: {parse_error}\n\
+         \n\
+         Emit a single JSON object matching the `{schema_name}` schema below. \
+         Do not include prose, code fences, or tool calls. Return ONLY the JSON object.\n\
+         \n\
+         Schema:\n{schema_body}",
+        schema_name = schema.name,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,5 +615,47 @@ mod tests {
         for (variant, tag) in expected {
             assert_eq!(variant.tag(), *tag, "tag drift for variant: {variant:?}");
         }
+    }
+
+    #[test]
+    fn build_malformed_json_repair_message_carries_parse_error_schema_and_instruction() {
+        // F-5 phase 2a contract acceptance: the repair body must contain
+        // (1) the verbatim parse-error detail, (2) the schema name hint,
+        // and (3) the no-prose-no-fences instruction. The trader-output
+        // canonical schema name is `trader_output`.
+        let schema = ResponseSchema::trader_output();
+        let parse_error = "expected value at line 1 column 1";
+        let body = build_malformed_json_repair_message(parse_error, &schema);
+
+        assert!(
+            body.contains(parse_error),
+            "repair message must include the verbatim parse error, got: {body}"
+        );
+        assert!(
+            body.contains("trader_output"),
+            "repair message must reference the schema name, got: {body}"
+        );
+        assert!(
+            body.contains("Do not include prose, code fences, or tool calls"),
+            "repair message must carry the no-prose instruction, got: {body}"
+        );
+        assert!(
+            body.contains("Return ONLY the JSON object"),
+            "repair message must instruct returning JSON only, got: {body}"
+        );
+    }
+
+    #[test]
+    fn build_malformed_json_repair_message_is_deterministic_for_ab_cache_pairing() {
+        // A/B cache pairing acceptance: the repair body must be
+        // byte-stable for the same `(parse_error, schema)` pair so the
+        // prompt-hash digest is reproducible across re-runs of the same
+        // strategy/cycle. Two calls with identical inputs must produce
+        // identical strings.
+        let schema = ResponseSchema::trader_output();
+        let parse_error = "missing field `action` at line 2 column 8";
+        let a = build_malformed_json_repair_message(parse_error, &schema);
+        let b = build_malformed_json_repair_message(parse_error, &schema);
+        assert_eq!(a, b, "repair message must be deterministic for cache pairing");
     }
 }

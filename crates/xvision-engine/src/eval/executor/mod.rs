@@ -13,6 +13,7 @@ pub mod backtest;
 pub mod live_source;
 pub mod paper;
 pub mod real_broker_fills;
+pub mod recovery;
 pub mod trace_types;
 pub mod trader_output;
 pub mod traits;

@@ -34,7 +34,9 @@
 use clap::{Args, Subcommand};
 
 use xvision_engine::api::memory as memory_api;
-use xvision_engine::api::memory::{ListMemoryRequest, MemoryItemDto, PatternCreateRequest};
+use xvision_engine::api::memory::{
+    ListMemoryRequest, MemoryItemDto, PatternCreateRequest, UndoForgetRequest,
+};
 use xvision_engine::api::ApiError;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
