@@ -19,7 +19,7 @@ use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
-use xvision_engine::strategies::Strategy;
+use xvision_engine::strategies::{ActivationMode, Strategy};
 use xvision_engine::tools::ToolRegistry;
 // Import the run_experiment orchestrator.
 use xvision_cli::commands::experiment_run::{run_experiment, ExperimentRunRequest};
@@ -133,6 +133,8 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        activation_mode: ActivationMode::EveryBar,
+        filter: None,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

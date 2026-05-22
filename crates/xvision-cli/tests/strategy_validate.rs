@@ -17,7 +17,7 @@ use xvision_engine::api::{
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineKind, Strategy};
+use xvision_engine::strategies::{ActivationMode, AgentRef, PipelineDef, PipelineKind, Strategy};
 
 fn xvn(args: &[&str], home: &Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_xvn"))
@@ -80,6 +80,7 @@ fn seed_strategy_with_trader(
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                     bar_history_limit: None,
                     memory_mode: Default::default(),
+                    noop_skip: None,
                 }],
             },
         )
@@ -120,6 +121,8 @@ fn seed_strategy_with_trader(
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
             hypothesis: None,
+            activation_mode: ActivationMode::EveryBar,
+            filter: None,
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));

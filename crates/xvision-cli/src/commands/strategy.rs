@@ -565,6 +565,7 @@ async fn new_atomic(
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 bar_history_limit: None,
                 memory_mode: Default::default(),
+                noop_skip: None,
             }],
         },
     )
@@ -1133,6 +1134,7 @@ fn slot_to_agent_slot(
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,
         memory_mode: Default::default(),
+        noop_skip: None,
     }
 }
 
@@ -1314,6 +1316,7 @@ async fn resolve_agent_slots_for_cli(
             bar_history_limit: slot.bar_history_limit,
             memory_mode: slot.memory_mode,
             agent_id: agent.agent_id.clone(),
+            noop_skip: slot.noop_skip.unwrap_or(true),
         });
     }
     Ok(out)
