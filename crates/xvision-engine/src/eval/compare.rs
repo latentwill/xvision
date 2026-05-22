@@ -27,6 +27,7 @@ use thiserror::Error;
 
 use crate::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use crate::eval::findings::Finding;
+use crate::eval::report::{aggregate_run_token_totals, wall_clock_ms};
 use crate::eval::run::{MetricsSummary, RunMode, RunStatus};
 use crate::eval::store::RunStore;
 
@@ -113,6 +114,39 @@ pub struct ComparisonRunSummary {
     /// the full metrics blob.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net_return_pct: Option<f64>,
+    /// Sum of `model_calls.input_token_count` for this run. `None` when
+    /// the run produced no model_calls (legacy / pre-observability rows)
+    /// or none of them recorded token counts. Appended 2026-05-22 for
+    /// `cli-report-actions-and-tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Sum of `model_calls.output_token_count`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// Sum of `model_calls.cost_usd`. Not a recomputation — purely a
+    /// rollup of the populated column. `None` when every contributing
+    /// row had `cost_usd = NULL` or there were no contributing rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd_estimate: Option<f64>,
+    /// `true` iff every model_call contributing to `cost_usd_estimate`
+    /// had a non-null `cost_usd`. When `false`, the estimate is a strict
+    /// lower bound. Defaults to `true` for legacy payloads where no
+    /// model_calls were aggregated — but in that case the cost itself is
+    /// `None`, so the flag carries no false signal.
+    #[serde(default = "default_cost_complete")]
+    pub cost_estimate_complete: bool,
+    /// Wall-clock duration (`completed_at - started_at`) in milliseconds.
+    /// `None` for runs that haven't terminated, or pre-migration rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_clock_ms: Option<u64>,
+}
+
+/// Default `cost_estimate_complete` for serde deserialization of legacy
+/// payloads. We default to `true` because a payload that didn't include
+/// the field also didn't include `cost_usd_estimate` (it's all-`None`),
+/// so the flag is operationally meaningless on legacy reads.
+fn default_cost_complete() -> bool {
+    true
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -191,7 +225,14 @@ pub async fn compare_runs(
             .ok()
             .map(|rows| derive_behavior_summary(&rows));
 
+        // Token / cost / wall-clock rollup. Aggregator is defensive: when
+        // the model_calls join yields zero rows (e.g. very old runs, or
+        // baselines that didn't touch the observability bus), every
+        // optional field stays `None` and `cost_estimate_complete` is the
+        // safe default.
+        let totals = aggregate_run_token_totals(store.pool(), &run.id).await;
         let net_return_pct = run.metrics.as_ref().and_then(|m| m.net_return_pct);
+
         runs.push(ComparisonRunSummary {
             id: run.id.clone(),
             agent_id: run.agent_id.clone(),
@@ -206,6 +247,11 @@ pub async fn compare_runs(
             bars_content_hash: run.bars_content_hash.clone(),
             manifest_canonical: run.manifest_canonical.clone(),
             net_return_pct,
+            input_tokens: totals.input_tokens,
+            output_tokens: totals.output_tokens,
+            cost_usd_estimate: totals.cost_usd_estimate,
+            cost_estimate_complete: totals.cost_estimate_complete,
+            wall_clock_ms: wall_clock_ms(run.started_at, run.completed_at),
         });
         curves.push(ComparisonEquityCurve {
             run_id: run.id.clone(),

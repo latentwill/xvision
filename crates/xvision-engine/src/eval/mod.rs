@@ -34,6 +34,7 @@ pub mod postprocess;
 pub mod preflight;
 pub mod progress;
 pub mod regime;
+pub mod report;
 pub mod review;
 pub mod run;
 pub mod scenario;
