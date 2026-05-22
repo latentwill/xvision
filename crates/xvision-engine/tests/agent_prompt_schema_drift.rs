@@ -60,6 +60,7 @@ fn slot(name: &str, prompt: impl Into<String>, skill_ids: Vec<&str>) -> AgentSlo
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
+        noop_skip: None,
     }
 }
 

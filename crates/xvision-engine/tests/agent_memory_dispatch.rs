@@ -532,6 +532,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         bar_history_limit: None,
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-pipeline-fixture".into(),
+        noop_skip: true,
     }];
 
     let dispatch = Arc::new(MockDispatch::echo(

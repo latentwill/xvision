@@ -114,6 +114,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 inputs_policy: InputsPolicy::Raw,
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
             }],
         })
         .await
@@ -528,6 +529,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
             }],
         })
         .await

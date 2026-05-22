@@ -1287,6 +1287,7 @@ async fn resolve_agent_slots(
             bar_history_limit: slot.bar_history_limit,
             memory_mode: slot.memory_mode,
             agent_id: agent.agent_id.clone(),
+            noop_skip: slot.noop_skip.unwrap_or(true),
         });
     }
     Ok(out)
@@ -2939,6 +2940,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            noop_skip: true,
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -2980,6 +2982,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            noop_skip: true,
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -3012,6 +3015,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            noop_skip: true,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();
