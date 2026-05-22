@@ -33,6 +33,7 @@
 
 #![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -43,6 +44,8 @@ use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::observability::ObsEmitter;
+use xvision_engine::agent::pipeline::ResolvedAgentSlot;
+use xvision_engine::agents::InputsPolicy;
 use xvision_engine::eval::executor::{classify_run_failure, BacktestExecutor, Executor, PaperExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
@@ -220,6 +223,44 @@ fn paired_span_status(events: &[RunEvent], span_id: &str) -> Option<SpanStatus> 
     })
 }
 
+/// Build a populated trader `ResolvedAgentSlot` so the F-5 phase-2a
+/// repair path (`harness-recovery-malformed-json`) can construct a
+/// `TraderRepairContext` from it. Post-#515, the repair path no longer
+/// reads `LLMSlot.prompt` (that field was removed); it requires an
+/// attached agent-slot with non-empty `system_prompt` + `model` to
+/// dispatch the repair turn. These tests used to pass `&[]` for
+/// `agent_slots` when the legacy `LLMSlot.prompt` was the prompt source;
+/// they now thread an explicit trader slot.
+///
+/// Capabilities set is left empty so `resolve_activates` falls back to
+/// `Capability::Trader` (the dispatcher fallback for empty sets); this
+/// matches the legacy `{Trader}`-by-default shape used elsewhere in the
+/// test suite.
+fn trader_agent_slot() -> ResolvedAgentSlot {
+    ResolvedAgentSlot {
+        role: "trader".into(),
+        slot: LLMSlot {
+            role: "trader".into(),
+            attested_with: "openai.gpt-4o-mini+".into(),
+            allowed_tools: vec![],
+            provider: Some("openai".into()),
+            model: Some("gpt-4o-mini".into()),
+        },
+        system_prompt: "You are a discretionary trader. Read the briefing and \
+             emit a single JSON object: {\"action\":\"long_open|short_open|flat|hold\", \
+             \"conviction\":0..1, \"justification\":\"string\"}."
+            .into(),
+        max_tokens: None,
+        temperature: None,
+        inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::default(),
+        agent_id: "test-trader-agent".into(),
+        capabilities: BTreeSet::new(),
+        noop_skip: false,
+    }
+}
+
 // ─── Case (a): InvalidJson → clean JSON. Run completes. ────────────────────
 
 #[tokio::test]
@@ -251,7 +292,7 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch_dyn, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[trader_agent_slot()], dispatch_dyn, tools, &store)
         .await;
     assert!(
         res.is_ok(),
@@ -391,7 +432,7 @@ async fn paper_executor_surfaces_original_error_after_two_consecutive_truncation
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let err = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch_dyn, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[trader_agent_slot()], dispatch_dyn, tools, &store)
         .await
         .expect_err("second-attempt truncated must surface the original error");
 
@@ -489,7 +530,7 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let _ = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch_dyn, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[trader_agent_slot()], dispatch_dyn, tools, &store)
         .await
         .expect("repaired run must succeed");
 
@@ -544,7 +585,7 @@ async fn backtest_executor_repairs_invalid_json_on_single_retry() {
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch_dyn, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[trader_agent_slot()], dispatch_dyn, tools, &store)
         .await;
     assert!(
         res.is_ok(),

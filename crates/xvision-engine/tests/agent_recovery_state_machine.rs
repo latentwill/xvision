@@ -337,9 +337,17 @@ async fn third_failure_trips_block_and_emits_recovery_failed() {
     // tool_result content is the structured repeated_tool_failure
     // message. We assert the message shape via the recovery.failed
     // span's error_json.
-    let blocked_fin = finished
-        .values()
+    //
+    // Filter to ONLY the recovery-attempt spans (span_id in `started`)
+    // before picking the Error one. Other span kinds (tool.call,
+    // model.call) can emit SpanFinished{ status: Error } too, and
+    // those don't carry a recovery class_tag — searching the unfiltered
+    // `finished` map would surface them first and trip the assertion.
+    let blocked_fin = started
+        .keys()
+        .filter_map(|sid| finished.get(sid))
         .find(|f| matches!(f.status, SpanStatus::Error))
+        .copied()
         .expect("blocked recovery span");
     let err_json: serde_json::Value =
         serde_json::from_str(blocked_fin.error_json.as_ref().expect("error_json")).expect("error_json parse");
