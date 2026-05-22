@@ -1,8 +1,8 @@
 //! Rule: asset must be listed and enabled in the whitelist.
 
-use xvision_core::{AssetSymbol, PortfolioState, TraderDecision, VetoReason};
+use xvision_core::VetoReason;
 
-use crate::{whitelist::Whitelist, RiskRule, RuleVerdict};
+use crate::{context::RiskEvalContext, whitelist::Whitelist, RiskRule, RuleVerdict};
 
 pub struct AssetWhitelist {
     pub whitelist: Whitelist,
@@ -13,13 +13,8 @@ impl RiskRule for AssetWhitelist {
         "AssetWhitelist"
     }
 
-    fn evaluate(
-        &self,
-        _decision: &TraderDecision,
-        _portfolio: &PortfolioState,
-        asset: AssetSymbol,
-    ) -> RuleVerdict {
-        if self.whitelist.is_enabled(asset) {
+    fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
+        if self.whitelist.is_enabled(ctx.asset) {
             RuleVerdict::Pass
         } else {
             RuleVerdict::Veto(VetoReason::AssetNotWhitelisted)
@@ -30,7 +25,7 @@ impl RiskRule for AssetWhitelist {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_common::{flat_portfolio, make_decision, test_whitelist};
+    use crate::tests_common::{flat_portfolio, make_ctx, make_decision, test_whitelist};
     use xvision_core::{Action, AssetSymbol, Direction};
 
     fn rule() -> AssetWhitelist {
@@ -42,8 +37,9 @@ mod tests {
     #[test]
     fn pass_for_enabled_asset() {
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -51,8 +47,9 @@ mod tests {
     #[test]
     fn veto_for_disabled_asset() {
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Eth),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Eth)),
             RuleVerdict::Veto(VetoReason::AssetNotWhitelisted)
         ));
     }
@@ -60,8 +57,9 @@ mod tests {
     #[test]
     fn veto_for_unknown_asset() {
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Sol),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Sol)),
             RuleVerdict::Veto(VetoReason::AssetNotWhitelisted)
         ));
     }

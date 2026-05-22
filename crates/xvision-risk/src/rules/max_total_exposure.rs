@@ -1,8 +1,8 @@
 //! Rule: portfolio total exposure must not exceed `max_total_exposure_pct` of NAV.
 
-use xvision_core::{Action, AssetSymbol, PortfolioState, TraderDecision, VetoReason};
+use xvision_core::{Action, VetoReason};
 
-use crate::{RiskRule, RuleVerdict};
+use crate::{context::RiskEvalContext, RiskRule, RuleVerdict};
 
 pub struct MaxTotalExposure {
     /// Threshold in basis points (e.g. 100% → 10000 bps).
@@ -14,17 +14,12 @@ impl RiskRule for MaxTotalExposure {
         "MaxTotalExposure"
     }
 
-    fn evaluate(
-        &self,
-        decision: &TraderDecision,
-        portfolio: &PortfolioState,
-        _asset: AssetSymbol,
-    ) -> RuleVerdict {
+    fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
         // Flat/close decisions don't add exposure.
-        if matches!(decision.action, Action::Flat | Action::Close) || decision.size_bps == 0 {
+        if matches!(ctx.decision.action, Action::Flat | Action::Close) || ctx.decision.size_bps == 0 {
             return RuleVerdict::Pass;
         }
-        let projected = portfolio.total_exposure_bps() + decision.size_bps;
+        let projected = ctx.portfolio.total_exposure_bps() + ctx.decision.size_bps;
         if projected > self.max_bps {
             RuleVerdict::Veto(VetoReason::ExposureCap)
         } else {
@@ -36,7 +31,7 @@ impl RiskRule for MaxTotalExposure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_common::{flat_portfolio, make_decision, portfolio_with_position};
+    use crate::tests_common::{flat_portfolio, make_ctx, make_decision, portfolio_with_position};
     use xvision_core::{Action, AssetSymbol, Direction};
 
     fn rule() -> MaxTotalExposure {
@@ -47,8 +42,9 @@ mod tests {
     #[test]
     fn pass_within_limit() {
         let d = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -59,7 +55,7 @@ mod tests {
         let portfolio = portfolio_with_position(9000);
         let d = make_decision(Action::Buy, Direction::Long, 2000, 2.0, 5.0);
         assert!(matches!(
-            rule().evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Veto(VetoReason::ExposureCap)
         ));
     }
@@ -69,7 +65,7 @@ mod tests {
         let portfolio = portfolio_with_position(9000);
         let d = make_decision(Action::Flat, Direction::Flat, 0, 2.0, 5.0);
         assert!(matches!(
-            rule().evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }

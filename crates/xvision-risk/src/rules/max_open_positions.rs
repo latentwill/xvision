@@ -4,9 +4,9 @@
 //! position, so it doesn't consume a slot. Flat/Close decisions also don't
 //! consume a slot.
 
-use xvision_core::{Action, AssetSymbol, PortfolioState, TraderDecision, VetoReason};
+use xvision_core::{Action, VetoReason};
 
-use crate::{RiskRule, RuleVerdict};
+use crate::{context::RiskEvalContext, RiskRule, RuleVerdict};
 
 pub struct MaxOpenPositions {
     pub max: usize,
@@ -17,24 +17,19 @@ impl RiskRule for MaxOpenPositions {
         "MaxOpenPositions"
     }
 
-    fn evaluate(
-        &self,
-        decision: &TraderDecision,
-        portfolio: &PortfolioState,
-        asset: AssetSymbol,
-    ) -> RuleVerdict {
+    fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
         // Flat/close decisions free a slot, they don't consume one.
-        if matches!(decision.action, Action::Flat | Action::Close) {
+        if matches!(ctx.decision.action, Action::Flat | Action::Close) {
             return RuleVerdict::Pass;
         }
 
         // Size-up of existing position: slot already counted.
-        if portfolio.open_positions.contains_key(&asset) {
+        if ctx.portfolio.open_positions.contains_key(&ctx.asset) {
             return RuleVerdict::Pass;
         }
 
         // New asset entry — check slot availability.
-        if portfolio.open_positions.len() >= self.max {
+        if ctx.portfolio.open_positions.len() >= self.max {
             RuleVerdict::Veto(VetoReason::MaxOpenPositions)
         } else {
             RuleVerdict::Pass
@@ -46,7 +41,7 @@ impl RiskRule for MaxOpenPositions {
 mod tests {
     use super::*;
     use crate::tests_common::{
-        flat_portfolio, make_decision, portfolio_with_btc, portfolio_with_n_positions,
+        flat_portfolio, make_ctx, make_decision, portfolio_with_btc, portfolio_with_n_positions,
     };
     use chrono::Utc;
     use xvision_core::{Action, AssetSymbol, Direction, OpenPosition};
@@ -58,8 +53,9 @@ mod tests {
     #[test]
     fn pass_when_below_limit() {
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -72,7 +68,7 @@ mod tests {
         // BTC is not in the portfolio → new slot → but already at limit.
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
         assert!(matches!(
-            rule.evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule.evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Veto(VetoReason::MaxOpenPositions)
         ));
     }
@@ -82,7 +78,7 @@ mod tests {
         let portfolio = full_portfolio(5);
         let d = make_decision(Action::Flat, Direction::Flat, 0, 2.0, 5.0);
         assert!(matches!(
-            rule().evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -95,7 +91,7 @@ mod tests {
         // even if we add more positions to fill up, BTC size-up should still pass.
         let d = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
         assert!(matches!(
-            rule().evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -105,7 +101,7 @@ mod tests {
         let portfolio = portfolio_with_n_positions(2);
         let d = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
         assert!(matches!(
-            rule().evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }

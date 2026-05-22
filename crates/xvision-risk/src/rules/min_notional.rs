@@ -18,9 +18,9 @@
 //! is `0.0` — preserves today's pass-everything behavior on venues that
 //! haven't been mapped yet.
 
-use xvision_core::{Action, AssetSymbol, PortfolioState, TraderDecision, VetoReason};
+use xvision_core::{Action, VetoReason};
 
-use crate::{RiskRule, RuleVerdict};
+use crate::{context::RiskEvalContext, RiskRule, RuleVerdict};
 
 pub struct MinNotional {
     /// Minimum notional in USD. `0.0` disables the rule.
@@ -34,12 +34,7 @@ impl RiskRule for MinNotional {
         "MinNotional"
     }
 
-    fn evaluate(
-        &self,
-        decision: &TraderDecision,
-        portfolio: &PortfolioState,
-        _asset: AssetSymbol,
-    ) -> RuleVerdict {
+    fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
         // No-op when unconfigured. Matches pre-rule behavior on venues
         // we haven't catalogued yet (zero is the serde default for
         // `VenueLimits::min_notional_usd`).
@@ -49,22 +44,22 @@ impl RiskRule for MinNotional {
         // Non-actionable decisions don't produce an order — let them
         // through so a `hold` or `flat` near a tiny portfolio doesn't
         // surface as a notional veto.
-        if !matches!(decision.action, Action::Buy | Action::Sell) {
+        if !matches!(ctx.decision.action, Action::Buy | Action::Sell) {
             return RuleVerdict::Pass;
         }
         // Zero-size decisions are degenerate but harmless; treat them
         // as a pass and let other rules / executor guards decide.
-        if decision.size_bps == 0 {
+        if ctx.decision.size_bps == 0 {
             return RuleVerdict::Pass;
         }
-        let notional = portfolio.equity_usd * (decision.size_bps as f64) / 10_000.0;
+        let notional = ctx.portfolio.equity_usd * (ctx.decision.size_bps as f64) / 10_000.0;
         if notional < self.min_notional_usd {
             tracing::debug!(
                 venue = %self.venue_id,
                 min = self.min_notional_usd,
                 notional,
-                equity = portfolio.equity_usd,
-                size_bps = decision.size_bps,
+                equity = ctx.portfolio.equity_usd,
+                size_bps = ctx.decision.size_bps,
                 "MinNotional veto"
             );
             RuleVerdict::Veto(VetoReason::BelowVenueMinNotional)
@@ -77,7 +72,7 @@ impl RiskRule for MinNotional {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_common::{flat_portfolio, make_decision, make_portfolio};
+    use crate::tests_common::{flat_portfolio, make_ctx, make_decision, make_portfolio};
     use xvision_core::{Action, AssetSymbol, Direction};
 
     fn rule_paper() -> MinNotional {
@@ -98,7 +93,7 @@ mod tests {
         let portfolio = make_portfolio(100.0, 0.0);
         let d = make_decision(Action::Buy, Direction::Long, 1, 2.0, 5.0);
         assert!(matches!(
-            rule.evaluate(&d, &portfolio, AssetSymbol::Eth),
+            rule.evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Eth)),
             RuleVerdict::Pass
         ));
     }
@@ -109,7 +104,7 @@ mod tests {
         let portfolio = make_portfolio(1000.0, 0.0);
         let d = make_decision(Action::Buy, Direction::Long, 50, 2.0, 5.0);
         assert!(matches!(
-            rule_paper().evaluate(&d, &portfolio, AssetSymbol::Eth),
+            rule_paper().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Eth)),
             RuleVerdict::Veto(VetoReason::BelowVenueMinNotional)
         ));
     }
@@ -120,7 +115,7 @@ mod tests {
         let portfolio = flat_portfolio();
         let d = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
         assert!(matches!(
-            rule_paper().evaluate(&d, &portfolio, AssetSymbol::Btc),
+            rule_paper().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -132,7 +127,7 @@ mod tests {
         let portfolio = make_portfolio(1000.0, 0.0);
         let d = make_decision(Action::Buy, Direction::Long, 100, 2.0, 5.0);
         assert!(matches!(
-            rule_paper().evaluate(&d, &portfolio, AssetSymbol::Eth),
+            rule_paper().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Eth)),
             RuleVerdict::Pass
         ));
     }
@@ -147,7 +142,7 @@ mod tests {
             let d = make_decision(action, Direction::Flat, 50, 2.0, 5.0);
             assert!(
                 matches!(
-                    rule_paper().evaluate(&d, &portfolio, AssetSymbol::Eth),
+                    rule_paper().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Eth)),
                     RuleVerdict::Pass
                 ),
                 "non-actionable {:?} should pass MinNotional",
@@ -162,7 +157,7 @@ mod tests {
         let portfolio = make_portfolio(1000.0, 0.0);
         let d = make_decision(Action::Buy, Direction::Long, 0, 2.0, 5.0);
         assert!(matches!(
-            rule_paper().evaluate(&d, &portfolio, AssetSymbol::Eth),
+            rule_paper().evaluate(&make_ctx(&d, &portfolio, AssetSymbol::Eth)),
             RuleVerdict::Pass
         ));
     }
