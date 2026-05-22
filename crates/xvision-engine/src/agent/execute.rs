@@ -664,7 +664,8 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 let latency_ms = tool_started_at.elapsed().as_millis() as i64;
                 match is_error {
                     Some(true) => {
-                        obs.emit_tool_call_failed(&tool_span_id, &content).await;
+                        let redacted_error = Redactor::new().redact(&content).text;
+                        obs.emit_tool_call_failed(&tool_span_id, &redacted_error).await;
                     }
                     _ => {
                         let redacted_out = Redactor::new().redact(&content).text;

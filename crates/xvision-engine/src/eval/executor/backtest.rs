@@ -852,6 +852,14 @@ impl BacktestExecutor {
                 )
                 .await;
             }
+            macro_rules! finish_decision_span_error {
+                ($message:expr) => {
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        obs.emit_span_finished_error(&decision_span_id, $message)
+                            .await;
+                    }
+                };
+            }
 
             // F-5 phase 2a: keep a copy of the seed so the
             // malformed-json repair path (below) can rebuild the
@@ -902,19 +910,23 @@ impl BacktestExecutor {
                     ) {
                         let reason = breach.reason();
                         let _ = store.cancel_active(&run.id, &reason).await;
+                        finish_decision_span_error!(reason.as_str());
                         anyhow::bail!(reason);
                     }
                 }
             }
 
             if store.is_terminal(&run.id).await? {
+                finish_decision_span_error!("eval run stopped");
                 anyhow::bail!("eval run stopped");
             }
 
             let trader = match outs.trader.as_ref() {
                 Some(t) => t,
                 None => {
-                    return Err(TraderOutput::missing_response_error(&run.id, decision_idx).into());
+                    let err = TraderOutput::missing_response_error(&run.id, decision_idx);
+                    finish_decision_span_error!(&err.to_string());
+                    return Err(err.into());
                 }
             };
             let trader_model_id = trader_model_id(agent_slots, strategy);
@@ -952,11 +964,15 @@ impl BacktestExecutor {
                             {
                                 Ok(repaired) => repaired,
                                 Err(original) => {
-                                    return Err(original.with_model_hint(trader_model_id.as_deref()).into());
+                                    let err = original.with_model_hint(trader_model_id.as_deref());
+                                    finish_decision_span_error!(&err.to_string());
+                                    return Err(err.into());
                                 }
                             }
                         } else {
-                            return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                            let err = e.with_model_hint(trader_model_id.as_deref());
+                            finish_decision_span_error!(&err.to_string());
+                            return Err(err.into());
                         }
                     } else if is_malformed_json_recoverable(&e) {
                         if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
@@ -974,19 +990,26 @@ impl BacktestExecutor {
                             {
                                 Ok(repaired) => repaired,
                                 Err(original) => {
-                                    return Err(original.with_model_hint(trader_model_id.as_deref()).into());
+                                    let err = original.with_model_hint(trader_model_id.as_deref());
+                                    finish_decision_span_error!(&err.to_string());
+                                    return Err(err.into());
                                 }
                             }
                         } else {
-                            return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                            let err = e.with_model_hint(trader_model_id.as_deref());
+                            finish_decision_span_error!(&err.to_string());
+                            return Err(err.into());
                         }
                     } else {
-                        return Err(e.with_model_hint(trader_model_id.as_deref()).into());
+                        let err = e.with_model_hint(trader_model_id.as_deref());
+                        finish_decision_span_error!(&err.to_string());
+                        return Err(err.into());
                     }
                 }
             };
 
             if store.is_terminal(&run.id).await? {
+                finish_decision_span_error!("eval run stopped");
                 anyhow::bail!("eval run stopped");
             }
 
