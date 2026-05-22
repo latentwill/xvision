@@ -21,10 +21,32 @@
 //!
 //! Slot names are example conventions — the user is free to rename
 //! anything. Templates seed the form; they don't enforce structure.
+//!
+//! # Capability declarations are mandatory
+//!
+//! Every `AgentSlot` below must declare an explicit
+//! `capabilities: BTreeSet<Capability>` matching the spec table in
+//! `docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md`
+//! (Phase E — "Default-capability-set on starter templates"). The
+//! Phase A `serde(default = "default_capabilities")` value
+//! (`{Trader}`) is intentionally NOT relied on here — Phase E was
+//! about making every slot's role explicit so the unified Phase B
+//! dispatcher routes each one through the right capability handler
+//! without guessing.
+//!
+//! Adding a new builtin template? Declare `capabilities` on every
+//! slot and add an `AgentRef { activates: Some(...) }` for each in
+//! the strategy template. Otherwise the
+//! `validate_succeeds_for_template_with_capabilities` regression test
+//! (see `tests/template_validation.rs`) will start surfacing the
+//! missing role.
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agents::model::{default_capabilities, AgentSlot, InputsPolicy};
+use crate::agents::capability::Capability;
+use crate::agents::model::{AgentSlot, InputsPolicy};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -69,7 +91,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                capabilities: default_capabilities(),
+                capabilities: BTreeSet::from([Capability::Trader]),
                 delta_briefing: None,
             }],
         },
@@ -97,7 +119,11 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    // Synthesizes briefing-shaped observations the downstream
+                    // executor consumes — semantically an Intern, not a Trader.
+                    // Not in the Phase E spec table (the table doesn't include
+                    // this template); using {Intern} matches news-reader-plus-trader.
+                    capabilities: BTreeSet::from([Capability::Intern]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -117,7 +143,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
             ],
@@ -146,7 +172,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -165,7 +191,10 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    // Phase E spec table: risk_check → {Critic}. Observes the
+                    // upstream trader's decision and emits an approve/modify/veto
+                    // critique — not a new trader.
+                    capabilities: BTreeSet::from([Capability::Critic]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -185,7 +214,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
             ],
@@ -219,7 +248,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                capabilities: default_capabilities(),
+                capabilities: BTreeSet::from([Capability::Trader]),
                 delta_briefing: None,
             }],
         },
@@ -251,7 +280,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                capabilities: default_capabilities(),
+                capabilities: BTreeSet::from([Capability::Trader]),
                 delta_briefing: None,
             }],
         },
@@ -283,7 +312,10 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    // Phase E spec table: router → {Router}. Phase B shipped
+                    // Router fully (operator Q2 resolution), so this maps to
+                    // the real Router handler — not a Trader fallback.
+                    capabilities: BTreeSet::from([Capability::Router]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -304,7 +336,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -326,7 +358,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -347,7 +379,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
             ],
@@ -370,6 +402,10 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          the specific indicators, breadth, or volatility readings that drove \
                          the label."
                         .into(),
+                    // Phase E spec table: regime_filter → {Filter}. Output is a
+                    // FilterSignal-shaped JSON the downstream Trader reads via
+                    // edge predicates. Slot name "regime" preserved (the spec's
+                    // "regime_filter" is the role; we don't rename codebase slots).
                     skill_ids: vec![],
                     max_tokens: None,
                     temperature: None,
@@ -378,7 +414,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Filter]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -402,7 +438,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
             ],
@@ -435,7 +471,10 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    // Phase E spec table: news_reader → {Intern}. Produces a
+                    // structured briefing-extension digest the Trader reads via
+                    // accumulated upstream inputs. Slot name "news" preserved.
+                    capabilities: BTreeSet::from([Capability::Intern]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -459,7 +498,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
             ],
@@ -493,7 +532,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -518,7 +557,11 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    capabilities: default_capabilities(),
+                    // Phase E spec table: live_executor → {Critic}. v1 ships as
+                    // Critic-observation (spec Decision 4) — the slot observes
+                    // the paper-trader's proposal and emits confirm/downgrade/veto.
+                    // v2 may promote to a veto-capable Critic.
+                    capabilities: BTreeSet::from([Capability::Critic]),
                     delta_briefing: None,
                 },
             ],
