@@ -44,6 +44,7 @@ use crate::agents::Capability;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
 use xvision_core::providers::Catalog;
+use xvision_observability::Recorder;
 
 /// Trader's typed decision output. Phase B wraps the existing `LlmResponse`
 /// so the pre-Phase-B trader path is byte-identical — the trader still
@@ -199,6 +200,18 @@ pub struct DispatchInput<'a> {
     /// once by the pipeline per spec Decision 1 (explicit `activates` or
     /// the first capability in the slot's `BTreeSet`).
     pub activates: Capability,
+    /// Phase D — unified recorder threaded from the pipeline / eval
+    /// executor entry point. Each capability handler emits through this
+    /// trait, never directly to `ObsEmitter` or a trace buffer. The
+    /// harness path constructs a `HarnessRecorder`; the eval-executor
+    /// path constructs an `EvalRecorder`; both implement `&dyn Recorder`
+    /// so the dispatcher stays oblivious to which surface it's on.
+    ///
+    /// `None` is the back-compat default — existing call sites that
+    /// haven't been migrated yet inherit a `NullRecorder`-shaped no-op
+    /// without code changes. Phase D's pipeline + executor wiring sets
+    /// this explicitly.
+    pub recorder: Option<&'a dyn Recorder>,
 }
 
 /// Result of `dispatch_capability`: the typed `AgentOutput` AND the

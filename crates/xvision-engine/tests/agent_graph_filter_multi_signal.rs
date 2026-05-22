@@ -191,6 +191,7 @@ fn resolved(role: &str) -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip: false,
+        capabilities: std::collections::BTreeSet::new(),
     }
 }
 
@@ -252,6 +253,7 @@ async fn short_bar_coalesces_both_filter_signals_into_one_trader_call() {
             bar_ts: t0,
             strategy_id: strategy.manifest.id.clone(),
         }),
+        recorder: None,
     })
     .await
     .expect("pipeline runs");
@@ -312,6 +314,7 @@ async fn long_bar_multi_fires_trader_per_emitting_filter() {
             bar_ts: t0,
             strategy_id: strategy.manifest.id.clone(),
         }),
+        recorder: None,
     })
     .await
     .expect("pipeline runs");
@@ -369,6 +372,7 @@ async fn threshold_zero_forces_multi_fire_on_short_bars() {
             bar_ts: t0,
             strategy_id: strategy.manifest.id.clone(),
         }),
+        recorder: None,
     })
     .await
     .expect("pipeline runs");

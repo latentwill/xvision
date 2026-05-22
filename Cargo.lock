@@ -8140,6 +8140,7 @@ dependencies = [
  "tracing-subscriber",
  "ts-rs",
  "ulid",
+ "uuid",
  "wiremock",
  "xvision-core",
  "xvision-data",

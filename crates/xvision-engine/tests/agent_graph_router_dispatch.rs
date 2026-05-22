@@ -161,6 +161,7 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        recorder: None,
     })
     .await
     .expect("pipeline runs");
@@ -212,6 +213,7 @@ async fn dispatch_capability_router_returns_route_selection() {
         current_index: 1,
         total_agents: 5,
         activates: Capability::Router,
+        recorder: None,
     })
     .await
     .expect("router dispatch succeeds");
@@ -256,6 +258,7 @@ async fn dispatch_capability_router_rejects_backward_target() {
         current_index: 2, // Router at index 2; target=0 is backward.
         total_agents: 5,
         activates: Capability::Router,
+        recorder: None,
     })
     .await
     .unwrap_err();

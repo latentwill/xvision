@@ -12,8 +12,10 @@ pub mod blobs;
 pub mod bus;
 pub mod bus_subscriber;
 pub mod config;
+pub mod eval_recorder;
 pub mod events;
 pub mod export;
+pub mod harness_recorder;
 pub mod janitor;
 #[cfg(feature = "otel")]
 pub mod otel;
@@ -31,6 +33,7 @@ pub use config::{
     default_config_path, ObservabilityConfig, RetentionConfig, RetentionMode, CONFIG_FILE_NAME,
     ENV_OVERRIDE_PREFIX,
 };
+pub use eval_recorder::{EvalRecorder, TraceBuf, TraceBufCounts};
 pub use events::{
     ArtifactWrittenEvent, AssistantTextDeltaEvent, BackpressureDroppedEvent, BrokerCallFinishedEvent,
     BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide, CheckpointWrittenEvent, EngineEvent,
@@ -43,12 +46,16 @@ pub use export::{
     build_export, build_report, find_blob_owner, render_report, AgentRunExport, AgentRunReport, ExportError,
     ExportTotals, FinalArtifact, SpanNode, SCHEMA_VERSION,
 };
+pub use harness_recorder::HarnessRecorder;
 pub use janitor::{
     expire_old_payload_refs, gc_orphaned_blobs, run_once as run_janitor_once,
     spawn_periodic as spawn_janitor, truncate_to_max_bytes, GcReport, JanitorConfig, JanitorError,
     JanitorStats, GC_MIN_AGE_SECS,
 };
-pub use recorder::{AgentRunRecorder, Attribute, NoopRecorder, RecorderError};
+pub use recorder::{
+    AgentEvent, AgentRunRecorder, Attribute, CountingRecorder, NoopRecorder, NullRecorder, Recorder,
+    RecorderCounts, RecorderError,
+};
 pub use redactor::{RedactionMatch, Redactor};
 pub use retention::{
     clear_config, full_debug_sentinel_path, resolve as resolve_retention, write_config, CliOverrides,

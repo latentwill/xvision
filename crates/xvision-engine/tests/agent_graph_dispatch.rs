@@ -160,6 +160,7 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        recorder: None,
     })
     .await
     .expect("pipeline runs");
@@ -230,6 +231,7 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         current_index: 0,
         total_agents: 1,
         activates: Capability::Trader,
+        recorder: None,
     })
     .await
     .expect("dispatch_capability runs");
