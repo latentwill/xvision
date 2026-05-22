@@ -4,48 +4,43 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-22 (sweep 6) — `indicator-tool-wiring`
-> (#521) merged + archived; Orderly multi-asset expansion (#540) shipped
-> as a follow-on to F18 cascade (no contract — implemented directly
-> from `docs/superpowers/plans/2026-05-22-orderly-multi-asset-expansion.md`
-> #539). #520 / #522 / #525 also merged in this window (no contracts).
-> Only `eval-token-efficiency-tail`, the agent-graph Phase A schema,
-> Wave B model bakeoff cluster, and `memory-aware-eval-findings`
-> (deferred behind #523) remain in Active. Memory provenance #523 is
-> the lone live wave-2 PR.
+> Last updated: 2026-05-22 (sweep 6 + sweep-5 rebase) —
+> `indicator-tool-wiring` (#521), Orderly multi-asset expansion (#540),
+> CLI test fixture tail (#541), eval model override (#538), and model
+> bakeoff (#537) merged in the cascade. Sweep 5 archives
+> `eval-token-efficiency-tail` (#528) and consolidates the
+> `multi-asset-alpaca-unlock` (#533/#536) archive. Agent-graph Phase B-E
+> contracts are authored and deferred behind Phase A (#527). Remaining
+> live owned PRs: #527 and #523.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
 
 ## Active (ready to dispatch — no file conflicts)
 
-### agent-graph-2026-05-22 — Phase A of capability-first refactor
+### agent-graph-2026-05-22 — capability-first refactor cascade
 
-- [agent-graph-capability-schema](contracts/agent-graph-capability-schema.md) — **P1 foundation** · ready · adds `Capability` enum + `AgentSlot.capabilities` + `AgentRef.activates` + `PipelineEdge.condition` + migration 033. Pure schema/storage — no dispatch logic. Unblocks Phases B–F.
+- [agent-graph-capability-schema](contracts/agent-graph-capability-schema.md) — **P1 foundation** · in flight (PR #527) · `Capability` enum + `AgentSlot.capabilities` + `AgentRef.activates` + `PipelineEdge.condition` + migration 033.
+- [agent-graph-capability-dispatch](contracts/agent-graph-capability-dispatch.md) — **P1 seam** · deferred behind #527 · `dispatch_capability` seam, `AgentOutput` typed sum, `EdgePredicate` evaluator. Lifts both eval executors onto unified seam. Router shipped in v1.
+- [agent-graph-filter-capability](contracts/agent-graph-filter-capability.md) — **P1 filter runtime** · deferred behind Phase A + Phase B · LLM Filter dispatcher + `FilterGranularity` runtime (Bar/Minute/Decision) + in-memory signal cache + DSL filter bridge + multi-Filter cardinality knob (`multi_fire_bar_threshold_minutes`, default 30; operator Q3 resolution).
+- [agent-graph-unified-recorder](contracts/agent-graph-unified-recorder.md) — **P1 recorder** · deferred behind Phase B · `Recorder` trait + `HarnessRecorder` + `EvalRecorder`; closes F-11(f) structurally so eval-driven runs produce non-empty rows in all 7 recorder tables.
+- [agent-graph-template-capabilities](contracts/agent-graph-template-capabilities.md) — **P2 leaf** · deferred behind Phase A · explicit `capabilities` + `activates` on every starter template; flips `validate_draft_succeeds_for_fresh_template` from expected-fail to expected-pass (closes the longest-standing QA carryover, red since 2026-05-20).
 
 ### memory-safety-and-observability-2026-05-22 — V2D follow-up
 
 - [memory-aware-eval-findings](contracts/memory-aware-eval-findings.md) — **P2 leaf** · deferred (depends on `memory-provenance-in-decisions-trace`) · per-decision finding extractor.
 
-### eval-honesty-tail-2026-05-22 — F41 remaining sub-tracks
-
-- [eval-token-efficiency-tail](contracts/eval-token-efficiency-tail.md) — **P2 leaf** · ready · per-provider `max_tokens` defaults + optional delta-briefing mode
-
-### cli-test-tech-debt-2026-05-22
-
-- [cli-test-fixture-completion-tail](contracts/cli-test-fixture-completion-tail.md) — **P2 leaf** · ready · migrate 9 failing CLI test fixtures to post-template-registry, post-strategy-fixture-migration shape
-
 ### cli-operator-safety-wave-b-2026-05-22 — model-bakeoff cluster
 
-Wave A (#530/#531/#532) merged 2026-05-22 — see intake `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`. Wave B promotes three contracts that together ship `xvn model bakeoff`. #5 + #4 are leaf parallel-safe; #6 depends on both but can be dispatched in its own worktree off main with rebase-on-merge.
+Wave A (#530/#531/#532) and Wave B #5/#6 (#538/#537) merged
+2026-05-22. The clone helper remains as the one unshipped Wave B leaf.
 
-- [cli-eval-model-override](contracts/cli-eval-model-override.md) — **P1 leaf** · ready · `xvn eval run --provider X --model Y` per-launch override + receipt. Blocks `cli-model-bakeoff`.
-- [cli-strategy-clone-model-override](contracts/cli-strategy-clone-model-override.md) — **P1 leaf** · ready · `xvn strategy clone <id> --provider X --model Y --name N`. Blocks `cli-model-bakeoff`.
-- [cli-model-bakeoff](contracts/cli-model-bakeoff.md) — **P1 integration** · ready (depends on both leaves) · the headline verb; absorbs intake #7 (`cli-two-run-rerun-workflow`). New migration 035.
+- [cli-strategy-clone-model-override](contracts/cli-strategy-clone-model-override.md) — **P1 leaf** · ready · `xvn strategy clone <id> --provider X --model Y --name N`.
 
 ## Open PRs (in-flight, not yet merged)
 
-- **#523** — `memory-provenance-in-decisions-trace` — wave-2 dispatch; threads `decision_id` through `MemoryRecorder::recall`. Contract still in `team/contracts/`; archive on merge.
+- **#527** — Phase A schema (`agent-graph-capability-schema`).
+- **#523** — `memory-provenance-in-decisions-trace` (wave-2 dispatch).
 - **#512** — `[codex] streamline strategy creation and docs layout` — CLEAN, external.
 - **#498** — `fix(trace-dock): hide state.transition stub in Advanced view` — CLEAN, older.
 
@@ -53,13 +48,21 @@ Wave A (#530/#531/#532) merged 2026-05-22 — see intake `team/intake/2026-05-20
 
 - **`team/intake/2026-05-19-compare-ab-evaluations.md`** — 10 product asks for AB-compare. Gated by F33 chart rework.
 - **`team/intake/2026-05-20-canonical-template-needs-trader.md`** — folded into capability-first refactor; closes in Phase E.
-- **`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`** — P0 + Wave A shipped; Wave B promoted 2026-05-22 (listed in Active above); #12 already shipped via V2B remote-cli-job-safety; P2 (#13–#15) Reserved indefinitely.
+- **`team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`** — P0 + Wave A shipped; Wave B in flight; P2 (#13–#15) Reserved indefinitely.
 
 ## Deferred — operator-gated
 
 - [docs-search-list-component-adoption](contracts/docs-search-list-component-adoption.md) — only opens if docs-sidebar audit confirms list-component fit.
 
 ## Recently Closed
+
+### Merged 2026-05-22 (post sweep-6 cascade)
+
+3 owned tracks closed after sweep 6:
+
+- `cli-test-fixture-completion-tail` (#541 — migrated the remaining 9 CLI fixtures; full `cargo test -p xvision-cli` clean)
+- `cli-eval-model-override` (#538 — per-launch provider/model override + provider-diagnostics receipt)
+- `cli-model-bakeoff` (#537 — `xvn model bakeoff`, migration 035, compare/status support)
 
 ### Merged 2026-05-22 (sweep 6) — archived under `team/archive/2026-05-22-conductor-pass-6/`
 
@@ -74,36 +77,44 @@ Wave A (#530/#531/#532) merged 2026-05-22 — see intake `team/intake/2026-05-20
 
 ### Merged 2026-05-22 (sweep 5) — archived under `team/archive/2026-05-22-conductor-pass-5/`
 
-1 contract archived this pass:
+2 contracts archived/consolidated this pass:
 
+- `eval-token-efficiency-tail` (#528 — per-provider `max_tokens` defaults + delta-briefing mode)
 - `multi-asset-alpaca-unlock` (#533, F18 — complete cascade: `TraderDecision.asset` required, risk drops asset param, `BacktestConfig::instrument` removed, Alpaca/Orderly route per decision)
 
 ### Merged 2026-05-22 (post-cascade) — archived under `team/archive/2026-05-22-conductor-pass-4/`
 
-2 contracts archived this pass:
+2 contracts archived:
 
 - `strategy-slot-prompt-resolution` (#515 — removed `LLMSlot.prompt`; agent-side `system_prompt` is the source of truth post-2026-05-12 refactor)
-- `trace-dock-emitters` (#524, F43 — filled in `tool_calls`, `events`, `spans`, `supervisor_notes` emitters across the eval/agent loop)
+- `trace-dock-emitters` (#524, F43 — filled in `tool_calls`, `events`, `spans`, `supervisor_notes` emitters)
 
 ### Merged 2026-05-22 (~04:46–04:51 UTC cascade) — archived under `team/archive/2026-05-22-conductor-pass-3/`
 
 3 contracts archived in sweep 3:
 
-- `harness-recovery-context-overflow` (#513, F-5 phase 2c — context_length_exceeded → summarize-and-retry)
-- `harness-recovery-schema-missing-field` (#516, F-5 phase 2b — targeted-patch retry on missing/invalid trader fields)
-- `agent-graph-composition` (placeholder superseded by spec PR #518; archived contract points at the spec + 5 phase successors)
+- `harness-recovery-context-overflow` (#513, F-5 phase 2c)
+- `harness-recovery-schema-missing-field` (#516, F-5 phase 2b)
+- `agent-graph-composition` (placeholder superseded by spec PR #518)
 
-Also merged in the cascade but no contract attached (operator/conductor maintenance):
+Also merged in the cascade with no contract attached:
 - **#504** `conductor sweep + 3 new waves`
 - **#509** `fix(build): activation_mode/filter for 6 Strategy literals`
 - **#514** `fix(build): noop_skip on 3 cfg(test) AgentSlot literals`
 - **#517** `conductor sweep-2 + cli-test-fixture-completion-tail contract`
 - **#518** `spec: capability-first agent model + graph composition`
+- **#520** `fix(build): provider_catalogs on PipelineInputs (run-inline)`
+- **#522** `fix(api): xvn.db pool — WAL + busy_timeout`
+- **#525** `chore(ci): GHA Node 20 → 24`
+- **#532** `feat(eval): action counts + tokens + wall clock (Wave A #11)`
+- **#535** `conductor(wave-b): promote Wave B model-bakeoff cluster`
+- **#536** `team: sweep-5 — archive multi-asset-alpaca-unlock`
+- **#539** `plan: Orderly multi-asset expansion`
 
 ### Earlier 2026-05-22 sweeps (still on disk)
 
-- `team/archive/2026-05-22-conductor-pass-2/` — 7 contracts archived after the first merge cascade (#505, #508, #510, #511, #506-external, #507-external, live-bar-source-alpaca leftover)
-- `team/archive/2026-05-22-conductor-pass/` — 13 contracts + 17 status files archived at the start of the session
+- `team/archive/2026-05-22-conductor-pass-2/` — 7 contracts archived after the first merge cascade.
+- `team/archive/2026-05-22-conductor-pass/` — 13 contracts + 17 status files archived at session start.
 
 ### Merged 2026-05-21 sweep — archived under `team/archive/2026-05-21-conductor-sweep/`
 
