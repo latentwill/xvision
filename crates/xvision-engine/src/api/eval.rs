@@ -3173,6 +3173,7 @@ mod tests {
             agents: vec![AgentRef {
                 agent_id: "01TESTAGENT".into(),
                 role: "trader".into(),
+                activates: None,
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,

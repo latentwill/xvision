@@ -81,6 +81,7 @@ fn seed_strategy_with_trader(
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
+                    capabilities: xvision_engine::agents::default_capabilities(),
                     delta_briefing: None,
                 }],
             },
@@ -111,6 +112,7 @@ fn seed_strategy_with_trader(
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),
                 role: role.clone(),
+                activates: None,
             }],
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,
