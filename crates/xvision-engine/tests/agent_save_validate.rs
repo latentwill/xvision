@@ -56,6 +56,11 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // Phase A capability-first schema (migration 033).
+    sqlx::query(include_str!("../migrations/033_agent_slot_capabilities.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = TempDir::new().unwrap();
     (AgentStore::new(pool), dir)
 }
@@ -100,6 +105,7 @@ fn slot_with_prompt(system_prompt: impl Into<String>) -> AgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
+        capabilities: xvision_engine::agents::default_capabilities(),
     }
 }
 

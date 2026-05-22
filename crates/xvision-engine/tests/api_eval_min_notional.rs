@@ -70,6 +70,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: xvision_engine::agents::default_capabilities(),
             }],
         })
         .await
@@ -181,6 +182,7 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, strategy_id: &str) -> Strateg
         agents: vec![AgentRef {
             agent_id,
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,

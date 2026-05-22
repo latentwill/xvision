@@ -99,6 +99,7 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: xvision_engine::agents::default_capabilities(),
             }],
         },
     )
@@ -253,6 +254,7 @@ async fn set_pipeline_rejects_graph_edges_for_non_graph_kind() {
             edges: vec![PipelineEdge {
                 from_role: "analyst".into(),
                 to_role: "trader".into(),
+                condition: None,
             }],
         },
     )
@@ -364,6 +366,7 @@ async fn set_pipeline_accepts_valid_graph_edges_persists_and_audits() {
     let edges = vec![PipelineEdge {
         from_role: "scout".into(),
         to_role: "trader".into(),
+        condition: None,
     }];
     let out = strategy::set_pipeline(
         &ctx,
@@ -410,6 +413,7 @@ async fn set_pipeline_rejects_graph_edges_for_unknown_roles() {
             edges: vec![PipelineEdge {
                 from_role: "analyst".into(),
                 to_role: "trader".into(),
+                condition: None,
             }],
         },
     )
@@ -459,10 +463,12 @@ async fn set_pipeline_rejects_graph_cycles() {
                 PipelineEdge {
                     from_role: "scout".into(),
                     to_role: "trader".into(),
+                    condition: None,
                 },
                 PipelineEdge {
                     from_role: "trader".into(),
                     to_role: "scout".into(),
+                    condition: None,
                 },
             ],
         },
@@ -524,10 +530,12 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
                 PipelineEdge {
                     from_role: "scout".into(),
                     to_role: "trader".into(),
+                    condition: None,
                 },
                 PipelineEdge {
                     from_role: "trader".into(),
                     to_role: "risk".into(),
+                    condition: None,
                 },
             ],
         },

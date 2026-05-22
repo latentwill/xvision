@@ -24,7 +24,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::agents::model::{AgentSlot, InputsPolicy};
+use crate::agents::model::{default_capabilities, AgentSlot, InputsPolicy};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -69,6 +69,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: default_capabilities(),
             }],
         },
         AgentTemplate {
@@ -95,6 +96,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -113,6 +115,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
             ],
         },
@@ -140,6 +143,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "risk_check".into(),
@@ -157,6 +161,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -175,6 +180,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
             ],
         },
@@ -207,6 +213,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: default_capabilities(),
             }],
         },
         AgentTemplate {
@@ -237,6 +244,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: default_capabilities(),
             }],
         },
         AgentTemplate {
@@ -267,6 +275,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "equities_trader".into(),
@@ -286,6 +295,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "crypto_trader".into(),
@@ -306,6 +316,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "fx_trader".into(),
@@ -325,6 +336,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
             ],
         },
@@ -354,6 +366,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "trader".into(),
@@ -376,6 +389,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
             ],
         },
@@ -407,6 +421,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "trader".into(),
@@ -429,6 +444,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
             ],
         },
@@ -461,6 +477,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -484,6 +501,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    capabilities: default_capabilities(),
                 },
             ],
         },

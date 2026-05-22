@@ -33,6 +33,7 @@ fn slot_with(provider: &str, model: &str, max_tokens: Option<u32>) -> AgentSlot 
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
+        capabilities: crate::agents::default_capabilities(),
     }
 }
 

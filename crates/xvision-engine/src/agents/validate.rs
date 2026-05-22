@@ -397,6 +397,7 @@ mod tests {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: crate::agents::default_capabilities(),
             },
             AgentSlot {
                 name: "TRADER".into(), // case-insensitive duplicate
@@ -411,6 +412,7 @@ mod tests {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: crate::agents::default_capabilities(),
             },
         ];
         let diags = validate_agent(&a);

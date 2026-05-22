@@ -1286,6 +1286,7 @@ impl WizardLoop {
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
+                    capabilities: xvision_engine::agents::default_capabilities(),
                 }],
             },
         )

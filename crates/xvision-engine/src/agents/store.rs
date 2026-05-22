@@ -4,12 +4,15 @@
 //! manage the SQLite pool; callers construct an `ApiContext` (which owns
 //! the pool + has migrations applied) and pass `ctx.db.clone()` here.
 
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
-use crate::agents::model::{Agent, AgentSlot, InputsPolicy};
+use crate::agents::capability::Capability;
+use crate::agents::model::{default_capabilities, Agent, AgentSlot, InputsPolicy};
 use crate::agents::validate::validate_agent_for_save;
 use crate::agents::validator::{validate_prompt_schema_slots, PromptSchemaDriftError};
 
@@ -291,7 +294,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit, memory_mode \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -328,6 +331,19 @@ impl AgentStore {
             // also fall back to `Off` via `parse_or_off`.
             let memory_mode_s: String = row.try_get("memory_mode").unwrap_or_default();
             let memory_mode = xvision_memory::types::MemoryMode::parse_or_off(&memory_mode_s);
+            // Phase A capability-first schema (migration 033): JSON
+            // array column on `agent_slots.capabilities` with DEFAULT
+            // '["trader"]'. Pre-033 rows that somehow lack the column
+            // (legacy path / mid-migration test pools) fall back to
+            // `{Trader}` via `default_capabilities`. A parse error on
+            // the stored JSON also falls back to the safe default so a
+            // future column-value typo can't crash every read.
+            let capabilities_s: Option<String> = row.try_get("capabilities").ok();
+            let capabilities = match capabilities_s {
+                Some(s) if !s.is_empty() => serde_json::from_str::<BTreeSet<Capability>>(&s)
+                    .unwrap_or_else(|_| default_capabilities()),
+                _ => default_capabilities(),
+            };
             out.push(AgentSlot {
                 name: row.try_get("name")?,
                 provider: row.try_get("provider")?,
@@ -345,6 +361,7 @@ impl AgentStore {
                 // back as `None` (equivalent to `Some(true)` — skip
                 // enabled) until the operator re-saves with an explicit value.
                 noop_skip: None,
+                capabilities,
             });
         }
         Ok(out)
@@ -369,10 +386,17 @@ async fn insert_slot(
     let bar_history_limit_db: Option<i64> =
         slot.bar_history_limit
             .and_then(|n| if n == 0 { None } else { Some(n as i64) });
+    // Phase A capability-first schema (migration 033): persist the
+    // closed `BTreeSet<Capability>` as a JSON array on
+    // `agent_slots.capabilities`. The DB column DEFAULT is
+    // `'["trader"]'` so any row inserted via a code path that hasn't
+    // been updated still reads back as `{Trader}`. We always emit the
+    // explicit value here so the row is byte-stable across writes.
+    let capabilities_json = serde_json::to_string(&slot.capabilities).context("serialize capabilities")?;
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit, memory_mode) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
     .bind(idx)
@@ -397,6 +421,11 @@ async fn insert_slot(
     // Column DEFAULT is 'off' (migration 029); we still bind the
     // explicit value here so the row is byte-stable across writes.
     .bind(slot.memory_mode.as_str())
+    // Phase A: JSON array column on `agent_slots.capabilities`
+    // (migration 033). DEFAULT `'["trader"]'` covers the back-compat
+    // path; we still bind the explicit serialized set here so reads
+    // return whatever the operator persisted.
+    .bind(capabilities_json)
     .execute(&mut **tx)
     .await
     .with_context(|| format!("insert slot {} for agent {}", slot.name, agent_id))?;
@@ -451,6 +480,13 @@ mod tests {
         // save; the read path falls back to `Off` for pre-029 rows.
         let migration_028 = include_str!("../../migrations/029_agent_slot_memory_mode.sql");
         sqlx::query(migration_028).execute(&pool).await.unwrap();
+        // 033 adds agent_slots.capabilities (Phase A of the
+        // capability-first agent model spec). The column DEFAULT is
+        // `'["trader"]'`; `insert_slot` writes the explicit JSON
+        // payload on every save and the read path falls back to
+        // `{Trader}` for any row that somehow lacks a stored value.
+        let migration_033 = include_str!("../../migrations/033_agent_slot_capabilities.sql");
+        sqlx::query(migration_033).execute(&pool).await.unwrap();
         pool
     }
 
@@ -477,6 +513,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::default(),
             noop_skip: None,
+            capabilities: default_capabilities(),
         }
     }
 

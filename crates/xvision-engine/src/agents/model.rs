@@ -1,9 +1,21 @@
 //! Agent + AgentSlot value types.
 
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::agents::capability::Capability;
 use xvision_core::providers::{lookup_model, ModelMetadata};
+
+/// Back-compat default for the `AgentSlot.capabilities` field
+/// (migration 033). Pre-033 rows and JSON payloads that omit the field
+/// resolve to `{Trader}` — every slot in the pre-capability world was
+/// implicitly a trader, and the dispatcher's pre-Phase-B role-string
+/// path still expects that.
+pub fn default_capabilities() -> BTreeSet<Capability> {
+    BTreeSet::from([Capability::Trader])
+}
 
 /// How the eval executor sanitizes the seed JSON before handing it to
 /// the trader LLM. Persisted as the `inputs_policy` column on
@@ -219,6 +231,18 @@ pub struct AgentSlot {
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(type = "boolean | null"))]
     pub noop_skip: Option<bool>,
+    /// Closed set of capability classes this slot can play in a strategy
+    /// pipeline (Phase A of the capability-first agent model spec,
+    /// `docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md`).
+    ///
+    /// Default = `{Trader}` so every pre-033 slot keeps today's
+    /// behavior on the back-compat path. Persisted as a JSON array on
+    /// `agent_slots.capabilities` (migration 033). The Phase B unified
+    /// dispatcher reads this set to decide which capability handler
+    /// runs; Phase A only persists the shape.
+    #[serde(default = "default_capabilities")]
+    #[cfg_attr(feature = "ts-export", ts(type = "Capability[]"))]
+    pub capabilities: BTreeSet<Capability>,
 }
 
 impl AgentSlot {
@@ -293,6 +317,7 @@ impl Agent {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: default_capabilities(),
             }],
             archived: false,
             created_at: now,

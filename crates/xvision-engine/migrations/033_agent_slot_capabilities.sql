@@ -1,0 +1,34 @@
+-- 033_agent_slot_capabilities.sql — Phase A of the capability-first
+-- agent model.
+--
+-- Spec: docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md
+-- Contract: team/contracts/agent-graph-capability-schema.md
+--
+-- Adds a per-slot `capabilities` column to `agent_slots`. The column
+-- stores a JSON array of lowercase capability strings (e.g.
+-- `["trader"]`, `["trader","critic"]`); the Rust side parses it as
+-- `BTreeSet<Capability>` where `Capability` is the closed enum
+-- `{Trader, Filter, Critic, Intern, Router}` defined in
+-- `crates/xvision-engine/src/agents/capability.rs`.
+--
+-- The column is `TEXT NOT NULL DEFAULT '["trader"]'` so every pre-033
+-- row reads back as `{Trader}` — preserving today's behavior on the
+-- back-compat path (Decision 8 in the spec: legacy slots are implicit
+-- traders). No backfill pass is required; the next save through
+-- `AgentStore::insert_slot` re-stamps the explicit JSON value the
+-- operator selected.
+--
+-- The allowed-values set is enforced at the Rust boundary by the
+-- `Capability` enum's `serde(rename_all = "lowercase")` parse step;
+-- unknown strings inside the JSON array fall back to the safe default
+-- (`{Trader}`) via the store's `default_capabilities()` helper, so a
+-- future column-value typo can't crash the read path on every load. A
+-- CHECK constraint would be tighter but SQLite can't add CHECK
+-- constraints via `ALTER TABLE` without a full table rebuild — not
+-- worth the complexity for a value space the engine pins in Rust.
+--
+-- The Phase B unified `dispatch_capability` seam (separate contract)
+-- consumes this column. Phase A only persists the shape; no runtime
+-- dispatch behavior changes here.
+
+ALTER TABLE agent_slots ADD COLUMN capabilities TEXT NOT NULL DEFAULT '["trader"]';

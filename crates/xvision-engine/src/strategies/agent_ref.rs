@@ -10,6 +10,8 @@
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::agents::capability::Capability;
+
 /// Canonical form of a role string used as the comparison key across
 /// the engine: trimmed of leading/trailing whitespace and lowercased
 /// (ASCII). Pick the single helper so every comparison site agrees;
@@ -56,6 +58,17 @@ pub struct AgentRef {
     pub agent_id: String,
     #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
     pub role: String,
+    /// Which capability of the referenced agent this position
+    /// activates. Phase A field — Phase B's unified dispatcher reads
+    /// this to pick the slot's handler when an agent advertises more
+    /// than one capability.
+    ///
+    /// `None` (the default) means "let the runtime pick the slot's
+    /// first capability in `BTreeSet` order" — which is `Trader` for
+    /// every legacy/pre-033 slot. Spec Decision 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(type = "Capability | null"))]
+    pub activates: Option<Capability>,
 }
 
 impl AgentRef {
@@ -92,6 +105,70 @@ pub enum PipelineKind {
     Graph,
 }
 
+/// Predicate evaluated against an upstream agent's `FilterSignal.payload`
+/// to decide whether a `PipelineEdge` fires. Closed set per Decision 5
+/// of the capability-first agent model spec.
+///
+/// Phase A persists the shape only. The Phase B unified dispatcher
+/// implements the evaluator — when an edge has `condition = Some(p)`,
+/// the dispatcher resolves `p` against the from-side agent's most
+/// recent `FilterSignal.payload` and drops the edge if the predicate
+/// evaluates to `false`. `signal_field` is a dotted path into the
+/// payload JSON (e.g. `"regime"`, `"confidence.value"`).
+///
+/// The serde tag is `snake_case` so on-disk JSON reads the lowercase
+/// variant name verbatim:
+///
+/// ```json
+/// { "eq": { "signal_field": "regime", "value": "trend" } }
+/// { "any": [ { "eq": { ... } }, { "eq": { ... } } ] }
+/// ```
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgePredicate {
+    /// `payload.<signal_field> == value`
+    Eq {
+        signal_field: String,
+        #[cfg_attr(feature = "ts-export", ts(type = "unknown"))]
+        value: serde_json::Value,
+    },
+    /// `payload.<signal_field> != value`
+    Neq {
+        signal_field: String,
+        #[cfg_attr(feature = "ts-export", ts(type = "unknown"))]
+        value: serde_json::Value,
+    },
+    /// `payload.<signal_field> >= value` (numeric)
+    Gte {
+        signal_field: String,
+        #[cfg_attr(feature = "ts-export", ts(type = "unknown"))]
+        value: serde_json::Value,
+    },
+    /// `payload.<signal_field> <= value` (numeric)
+    Lte {
+        signal_field: String,
+        #[cfg_attr(feature = "ts-export", ts(type = "unknown"))]
+        value: serde_json::Value,
+    },
+    /// `payload.<signal_field>` ∈ `values`
+    In {
+        signal_field: String,
+        #[cfg_attr(feature = "ts-export", ts(type = "unknown[]"))]
+        values: Vec<serde_json::Value>,
+    },
+    /// All inner predicates must evaluate to `true`.
+    All(Vec<EdgePredicate>),
+    /// At least one inner predicate must evaluate to `true`.
+    Any(Vec<EdgePredicate>),
+    /// Inner predicate must evaluate to `false`.
+    Not(Box<EdgePredicate>),
+}
+
 /// One directed edge in a `Graph` pipeline. Ignored for `Single` and
 /// `Sequential`. Roles refer to `AgentRef.role` values present on the
 /// owning strategy's `agents` list.
@@ -100,12 +177,20 @@ pub enum PipelineKind {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PipelineEdge {
     #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
     pub from_role: String,
     #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
     pub to_role: String,
+    /// Optional predicate evaluated against the upstream agent's
+    /// `FilterSignal.payload`. `None` (the default) = unconditional
+    /// edge — today's behavior. `Some(p)` fires the edge only when `p`
+    /// evaluates to `true`. Phase A persists the shape; Phase B
+    /// implements the evaluator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(type = "EdgePredicate | null"))]
+    pub condition: Option<EdgePredicate>,
 }
 
 /// Wiring spec for a strategy's agents.
@@ -114,7 +199,7 @@ pub struct PipelineEdge {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PipelineDef {
     pub kind: PipelineKind,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -173,6 +258,7 @@ mod tests {
         let r = AgentRef {
             agent_id: "01HZAGENT".into(),
             role: "trader".into(),
+            activates: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         let back: AgentRef = serde_json::from_str(&s).unwrap();
@@ -187,10 +273,12 @@ mod tests {
                 PipelineEdge {
                     from_role: "scout".into(),
                     to_role: "trader".into(),
+                    condition: None,
                 },
                 PipelineEdge {
                     from_role: "risk".into(),
                     to_role: "trader".into(),
+                    condition: None,
                 },
             ],
         };
@@ -242,6 +330,7 @@ mod tests {
         let r = AgentRef {
             agent_id: "01HZAGENT".into(),
             role: " Trader ".into(),
+            activates: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         assert!(

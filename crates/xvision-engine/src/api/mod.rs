@@ -75,6 +75,8 @@ const MIGRATION_031_EVAL_RUNS_VENUE_LABEL: &str =
     include_str!("../../migrations/031_eval_runs_venue_label.sql");
 const MIGRATION_032_FILTERS_AND_EVALUATIONS: &str =
     include_str!("../../migrations/032_filters_and_evaluations.sql");
+const MIGRATION_033_AGENT_SLOT_CAPABILITIES: &str =
+    include_str!("../../migrations/033_agent_slot_capabilities.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -222,6 +224,7 @@ impl ApiContext {
         migrate_safety_state_and_audit(&pool).await?;
         migrate_eval_runs_venue_label(&pool).await?;
         migrate_filters_and_evaluations(&pool).await?;
+        migrate_agent_slot_capabilities(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -816,6 +819,18 @@ async fn migrate_filters_and_evaluations(pool: &SqlitePool) -> ApiResult<()> {
 
     if !table_has_column(pool, "eval_filter_evaluations", "filter_event_json").await? {
         sqlx::query("ALTER TABLE eval_filter_evaluations ADD COLUMN filter_event_json TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 033 (Phase A of the capability-first agent model):
+/// add `agent_slots.capabilities` (JSON-array TEXT column with default
+/// `'["trader"]'`). Idempotent — gated on the column not existing.
+async fn migrate_agent_slot_capabilities(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agent_slots", "capabilities").await? {
+        sqlx::query(MIGRATION_033_AGENT_SLOT_CAPABILITIES)
             .execute(pool)
             .await?;
     }

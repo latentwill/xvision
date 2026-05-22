@@ -73,6 +73,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
         agents: vec![AgentRef {
             agent_id: trader_agent_id,
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,
@@ -115,6 +116,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: xvision_engine::agents::default_capabilities(),
             }],
         })
         .await
@@ -530,6 +532,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: xvision_engine::agents::default_capabilities(),
             }],
         })
         .await
@@ -556,6 +559,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
         agents: vec![AgentRef {
             agent_id,
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
