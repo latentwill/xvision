@@ -311,6 +311,32 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
                 role = %resolved.role,
                 "trader-noop-skip: portfolio already carries a position — skipping LLM call",
             );
+            // F43 (`trace-dock-emitters`): emit a `flat_skip_fired`
+            // engine event + supervisor_notes row so the trace dock
+            // can show the LLM-skip cause-and-effect without diffing
+            // decision rows. The skip is otherwise invisible on the
+            // dock today because no span / model_call / tool_call row
+            // is written for the skipped iteration.
+            if let Some(obs) = input.obs.as_ref() {
+                let payload = serde_json::json!({
+                    "role": resolved.role,
+                    "cycle_idx": input.cycle_idx,
+                    "reason": "noop_skip: portfolio already carries a position",
+                });
+                obs.emit_engine_event("flat_skip_fired", None, Some(payload.to_string()))
+                    .await;
+                obs.emit_supervisor_note(
+                    "guard",
+                    "info",
+                    &format!(
+                        "trader-noop-skip fired at cycle {} — portfolio already \
+                         carries a position; the LLM call was skipped and a \
+                         hold decision was synthesized",
+                        input.cycle_idx
+                    ),
+                )
+                .await;
+            }
             let skip_out = noop_skip_response();
             accumulated[format!("{role_key}_output")] = serde_json::Value::String(skip_out.text());
             trader = Some(skip_out);
