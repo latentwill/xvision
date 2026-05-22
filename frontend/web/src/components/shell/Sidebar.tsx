@@ -14,16 +14,6 @@ const PRIMARY: Item[] = [
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
-// Sub-items rendered indented under their parent section. Keyed by the
-// parent `to` value so the Sidebar can look them up when rendering.
-type SubItem = { to: string; label: string };
-
-const SUB_ITEMS: Record<string, SubItem[]> = {
-  "/agents": [
-    { to: "/agents/memory", label: "Memory" },
-  ],
-};
-
 export function Sidebar({ className = "" }: { className?: string }) {
   const { resolvedTheme, setDarkTheme, setLightTheme } = useTheme();
   const isLight = resolvedTheme === "light";
@@ -65,22 +55,6 @@ export function Sidebar({ className = "" }: { className?: string }) {
                 </>
               )}
             </NavLink>
-            {(SUB_ITEMS[it.to] ?? []).map((sub) => (
-              <NavLink
-                key={sub.to}
-                to={sub.to}
-                className={({ isActive }) =>
-                  [
-                    "flex items-center gap-2 pl-[3.25rem] pr-6 py-1.5 text-[12.5px] border-l-2 transition-colors",
-                    isActive
-                      ? "text-text border-gold bg-gold/[0.04]"
-                      : "text-text-3 border-transparent hover:text-text-2",
-                  ].join(" ")
-                }
-              >
-                {sub.label}
-              </NavLink>
-            ))}
           </div>
         ))}
       </nav>

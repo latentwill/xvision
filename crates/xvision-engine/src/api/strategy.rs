@@ -860,10 +860,9 @@ fn strategy_agents_out(strategy: Strategy) -> StrategyAgentsOut {
     }
 }
 
-/// Create a new draft strategy from a template. Wraps
-/// `authoring::create_strategy` with an audit row keyed on the resulting
-/// `agent_id` (or no target on failure, since the id only exists on
-/// success).
+/// Create a new blank draft strategy. Wraps `authoring::create_strategy`
+/// with an audit row keyed on the resulting `agent_id` (or no target on
+/// failure, since the id only exists on success).
 pub async fn create_strategy(ctx: &ApiContext, req: CreateStrategyReq) -> ApiResult<CreateStrategyOut> {
     let started = Instant::now();
     let args_json = serde_json::to_string(&req).ok();

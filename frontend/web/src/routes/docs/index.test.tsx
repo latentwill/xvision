@@ -201,26 +201,14 @@ describe("DocsRoute", () => {
     expect(filter).toHaveFocus();
   });
 
-  test("display-options panel toggles TOC visibility and persists", async () => {
-    const { unmount } = renderRoute();
-    await screen.findByTestId("docs-index-item-quickstart");
-
-    // Open the inline display-options panel.
-    fireEvent.click(screen.getByTestId("docs-display-options-toggle"));
-    const tocSeg = await screen.findByTestId("docs-pref-toc");
-
-    // Flip TOC off; the persisted pref should reflect that.
-    const offBtn = tocSeg.querySelector('[data-value="hidden"]') as HTMLButtonElement;
-    fireEvent.click(offBtn);
-    await waitFor(() => {
-      const raw = window.localStorage.getItem("xvn-docs-prefs");
-      expect(raw && JSON.parse(raw).toc).toBe("hidden");
-    });
-
-    unmount();
-    // Mount a fresh route — the pref should round-trip from localStorage.
+  test("display-options panel keeps only article density controls", async () => {
     renderRoute();
     await screen.findByTestId("docs-index-item-quickstart");
+
+    fireEvent.click(screen.getByTestId("docs-display-options-toggle"));
+
+    expect(await screen.findByTestId("docs-pref-density")).toBeInTheDocument();
+    expect(screen.queryByTestId("docs-pref-toc")).toBeNull();
     expect(screen.queryByTestId("docs-toc")).toBeNull();
   });
 

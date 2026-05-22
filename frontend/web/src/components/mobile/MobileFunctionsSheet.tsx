@@ -12,7 +12,7 @@ type Action = {
 };
 
 const CREATE: Action[] = [
-  { label: "New strategy", summary: "Start from the wizard", icon: "code", href: "/setup" },
+  { label: "New strategy", summary: "Create a blank draft", icon: "code", href: "/strategies/new" },
   { label: "Draft variant", summary: "Fork an existing strategy", icon: "branch", href: "/strategies" },
   { label: "Run backtest", summary: "Pick scenario and horizon", icon: "play", href: "/eval-runs" },
   { label: "Journal note", summary: "Capture a finding", icon: "book", disabled: true },

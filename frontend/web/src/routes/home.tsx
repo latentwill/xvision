@@ -269,9 +269,9 @@ function RecentRunsCard({
         </p>
       ) : runs.length === 0 ? (
         <p className="m-0 text-text-2 text-[13px] leading-snug">
-          No runs yet. Draft a strategy in{" "}
-          <Link to="/setup" className="text-gold hover:underline">
-            Setup
+          No runs yet. Create a{" "}
+          <Link to="/strategies/new" className="text-gold hover:underline">
+            new strategy
           </Link>
           , validate it from the{" "}
           <Link to="/strategies" className="text-gold hover:underline">

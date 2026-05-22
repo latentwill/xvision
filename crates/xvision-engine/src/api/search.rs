@@ -132,9 +132,9 @@ pub async fn seed_actions(ctx: &ApiContext) {
     const ACTIONS: &[(&str, &str, &str, &str)] = &[
         (
             "new-strategy",
-            "New strategy from template…",
-            "Open the wizard with a template picker",
-            "/setup",
+            "New strategy",
+            "Create a blank strategy draft",
+            "/strategies/new",
         ),
         (
             "new-run",

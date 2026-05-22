@@ -32,6 +32,12 @@ describe("Sidebar theme toggle", () => {
     );
   });
 
+  it("does not render Memory as a sidebar menu item", () => {
+    renderSidebar();
+
+    expect(screen.queryByRole("link", { name: /^Memory$/ })).toBeNull();
+  });
+
   it("switches to light with the sun button", () => {
     renderSidebar();
 
