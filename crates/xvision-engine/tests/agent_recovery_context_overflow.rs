@@ -44,7 +44,7 @@ fn slot() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
         prompt: "you are a trader. keep BTC focus and respect the 5% risk cap.".into(),
-        model_requirement: "test.expensive".into(),
+        attested_with: "test.expensive".into(),
         allowed_tools: Vec::new(),
         provider: Some("test".into()),
         model: Some("expensive".into()),
