@@ -64,7 +64,30 @@ target/
 # generated mobile artifacts). Repo-root anchored so it doesn't shadow
 # nested `docs/` paths like `crates/xvision-dashboard/src/routes/docs/`.
 # The in-app wiki lives at `crates/xvision-dashboard/wiki/`, not here.
-/docs/
+# NOTE: docs/design/ is tracked for design research and prompts.
+/docs/*.md
+/docs/*.png
+/docs/*.jpg
+/docs/*.jpeg
+/docs/*.webp
+/docs/*.gif
+/docs/*.svg
+/docs/*.py
+/docs/*.js
+/docs/*.ts
+/docs/*.json
+/docs/*.yaml
+/docs/*.yml
+/docs/*.txt
+/docs/superpowers/
+/docs/scratch/
+/docs/mockups/
+/docs/prototypes/
+/docs/generated/
+/docs/mobile/
+/docs/.DS_Store
+!/docs/design/
+!/docs/design/**
 
 # Git worktrees for parallel team operation (see team/README.md)
 .worktrees/
