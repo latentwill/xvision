@@ -115,6 +115,7 @@ fn resolved(role: &str) -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip: false,
+        capabilities: std::collections::BTreeSet::new(),
     }
 }
 
@@ -155,6 +156,7 @@ async fn filter_signal_flows_into_trader_briefing() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        recorder: None,
     })
     .await
     .expect("pipeline runs");
@@ -228,6 +230,7 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        recorder: None,
     })
     .await
     .expect("pipeline runs even with malformed Filter");

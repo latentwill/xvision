@@ -7,11 +7,11 @@ use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, ResponseSchema, StopReason};
 use crate::agent::observability::ObsEmitter;
 use crate::agents::{default_capabilities, AgentSlot, Capability, InputsPolicy};
-use std::collections::BTreeSet;
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
+use std::collections::BTreeSet;
 use xvision_core::providers::{lookup_model, Catalog};
 
 #[derive(Debug, Clone)]
@@ -138,6 +138,15 @@ pub struct PipelineInputs<'a> {
     /// existing call site inherits it without code changes. The eval
     /// executors opt in via `with_filter_ctx`.
     pub filter_ctx: Option<FilterPipelineCtx<'a>>,
+    /// Phase D — unified `Recorder` threaded from the entry point
+    /// (harness path constructs a `HarnessRecorder`; eval-executor path
+    /// constructs an `EvalRecorder`). Each capability handler in
+    /// `dispatch_capability` emits row-typed writes via this trait so
+    /// the harness + eval surfaces produce symmetric recorder rows
+    /// (F-11(f) closure). `None` is the back-compat default — every
+    /// existing call site keeps working until its entry point is
+    /// migrated to construct one of the two implementors.
+    pub recorder: Option<&'a (dyn xvision_observability::Recorder + 'a)>,
 }
 
 /// Phase C — runtime context owned by the executor for the duration
@@ -539,6 +548,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 current_index: i,
                 total_agents: n,
                 activates: capability,
+                recorder: input.recorder,
             })
             .await?
         };
@@ -676,6 +686,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         current_index: i,
                         total_agents: n,
                         activates: capability,
+                        recorder: input.recorder,
                     })
                     .await?;
                     total_in += outcome2.input_tokens;

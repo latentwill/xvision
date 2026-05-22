@@ -98,6 +98,12 @@ pub struct PaperExecutor {
     /// contract as backtest: limits are checked after each paid pipeline
     /// decision and cancel the run before the next bar starts.
     limits: Option<EvalLimits>,
+    /// Phase D — unified `Recorder` (typically an `EvalRecorder` that
+    /// mirrors rows into both a `TraceBuf` and the `xvn.db` recorder
+    /// tables). When `None`, the executor keeps the legacy bus-driven
+    /// emission path. The recorder-symmetry regression test wires this
+    /// explicitly to assert F-11(f) closure.
+    recorder: Option<Arc<dyn xvision_observability::Recorder>>,
 }
 
 impl PaperExecutor {
@@ -115,6 +121,7 @@ impl PaperExecutor {
             provider_catalogs: HashMap::new(),
             min_notional_usd: None,
             limits: None,
+            recorder: None,
         }
     }
 
@@ -130,6 +137,7 @@ impl PaperExecutor {
             provider_catalogs: HashMap::new(),
             min_notional_usd: None,
             limits: None,
+            recorder: None,
         }
     }
 
@@ -148,6 +156,7 @@ impl PaperExecutor {
             provider_catalogs: HashMap::new(),
             min_notional_usd: None,
             limits: None,
+            recorder: None,
         }
     }
 
@@ -167,6 +176,7 @@ impl PaperExecutor {
             provider_catalogs: HashMap::new(),
             min_notional_usd: None,
             limits: None,
+            recorder: None,
         }
     }
 
@@ -178,6 +188,16 @@ impl PaperExecutor {
     /// Attach an observability emitter (`qa-eval-observability-wiring`).
     pub fn with_observability(mut self, emitter: ObsEmitter) -> Self {
         self.obs_emitter = Some(emitter);
+        self
+    }
+
+    /// Phase D — attach a unified `Recorder` (typically an
+    /// `EvalRecorder`). Once wired, every `dispatch_capability`
+    /// invocation routes its row-typed writes through this recorder so
+    /// the eval-executor surface produces rows symmetric to the
+    /// harness path (F-11(f) closure).
+    pub fn with_recorder(mut self, recorder: Arc<dyn xvision_observability::Recorder>) -> Self {
+        self.recorder = Some(recorder);
         self
     }
 
@@ -949,6 +969,12 @@ impl PaperExecutor {
                     bar_ts: bar.timestamp,
                     strategy_id: strategy.manifest.id.clone(),
                 }),
+                // Phase D — unified Recorder. Wired by callers that
+                // construct an `EvalRecorder` and thread it via
+                // `PaperExecutor::with_recorder`. The default `None`
+                // keeps the legacy bus-driven emission path untouched
+                // for executors that haven't been migrated yet.
+                recorder: self.recorder.as_deref(),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;

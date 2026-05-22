@@ -581,6 +581,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        recorder: None,
     })
     .await
     .expect("run_pipeline must succeed");

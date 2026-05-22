@@ -124,6 +124,12 @@ pub struct BacktestExecutor {
     /// reason string in `Run.error`. `None` (the default) preserves
     /// pre-limits behavior. See `crate::eval::limits`.
     limits: Option<super::super::limits::EvalLimits>,
+    /// Phase D — unified `Recorder` (typically an `EvalRecorder` that
+    /// mirrors rows into both a `TraceBuf` and the `xvn.db` recorder
+    /// tables). When `None`, the executor keeps the legacy bus-driven
+    /// emission path. The recorder-symmetry regression test wires this
+    /// explicitly to assert F-11(f) closure.
+    recorder: Option<Arc<dyn xvision_observability::Recorder>>,
 }
 
 impl BacktestExecutor {
@@ -148,6 +154,7 @@ impl BacktestExecutor {
             memory_recorder: None,
             provider_catalogs: HashMap::new(),
             limits: None,
+            recorder: None,
         }
     }
 
@@ -168,6 +175,7 @@ impl BacktestExecutor {
             memory_recorder: None,
             provider_catalogs: HashMap::new(),
             limits: None,
+            recorder: None,
         }
     }
 
@@ -182,6 +190,7 @@ impl BacktestExecutor {
             memory_recorder: None,
             provider_catalogs: HashMap::new(),
             limits: None,
+            recorder: None,
         }
     }
 
@@ -198,6 +207,16 @@ impl BacktestExecutor {
     /// `execute_slot` invocation via `PipelineInputs.obs`.
     pub fn with_observability(mut self, emitter: ObsEmitter) -> Self {
         self.obs_emitter = Some(emitter);
+        self
+    }
+
+    /// Phase D — attach a unified `Recorder` (typically an
+    /// `EvalRecorder`). Once wired, every `dispatch_capability`
+    /// invocation routes its row-typed writes through this recorder so
+    /// the eval-executor surface produces rows symmetric to the
+    /// harness path (F-11(f) closure).
+    pub fn with_recorder(mut self, recorder: Arc<dyn xvision_observability::Recorder>) -> Self {
+        self.recorder = Some(recorder);
         self
     }
 
@@ -902,6 +921,11 @@ impl BacktestExecutor {
                     bar_ts: bar.timestamp,
                     strategy_id: strategy.manifest.id.clone(),
                 }),
+                // Phase D — unified Recorder. Wired by callers that
+                // construct an `EvalRecorder` and thread it via
+                // `BacktestExecutor::with_recorder`. The default `None`
+                // keeps the legacy bus-driven emission path untouched.
+                recorder: self.recorder.as_deref(),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
