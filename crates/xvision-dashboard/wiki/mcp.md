@@ -38,7 +38,7 @@ fresh sqlite pool scoped to the request.
 | `xvn_list_templates` | `xvision_engine::authoring::list_templates` | — | `[{name, display_name, plain_summary}]` | no |
 | `xvn_create_strategy` | `authoring::create_strategy` | `template`, `name`, `creator?` | `{id}` | yes — writes strategy file |
 | `xvn_get_strategy` | `authoring::get_strategy` | `id` | full Strategy JSON | no |
-| `xvn_update_slot` | `authoring::update_slot` | `id`, `slot`, `prompt?`, `model_requirement?`, `provider?`, `model?`, `allowed_tools?` | `{id, updated}` | yes — mutates strategy |
+| `xvn_update_slot` | `authoring::update_slot` | `id`, `slot`, `prompt?`, `attested_with?`, `provider?`, `model?`, `allowed_tools?` | `{id, updated}` | yes — mutates strategy |
 | `xvn_set_mechanical_param` | `authoring::set_mechanical_param` | `id`, `key`, `value` | `{id, key}` | yes — mutates strategy |
 | `xvn_set_risk_config` | `authoring::set_risk_config` | `id`, `preset` or `explicit` | `{id, applied}` | yes — mutates strategy |
 | `xvn_validate_draft` | `authoring::validate_draft` | `id` | `{id, ok, errors}` | no |

@@ -41,7 +41,7 @@ fn fixture_strategy() -> Strategy {
             regime_fit: vec![RegimeFit::RangeBound],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 15,
-            required_models: vec!["mock".into()],
+            attested_with: vec!["mock".into()],
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -99,7 +99,7 @@ fn trader_slot(noop_skip: bool) -> ResolvedAgentSlot {
         slot: LLMSlot {
             role: "trader".into(),
             prompt: "decide".into(),
-            model_requirement: "mock".into(),
+            attested_with: "mock".into(),
             allowed_tools: Vec::new(),
             provider: None,
             model: Some("mock".into()),
