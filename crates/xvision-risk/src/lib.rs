@@ -4,10 +4,12 @@
 //! resulting `RiskDecision`. A veto is a signal (ADR philosophy), not an error.
 
 pub mod config;
+pub mod context;
 pub mod rules;
 pub mod whitelist;
 
 pub use config::RiskConfig;
+pub use context::RiskEvalContext;
 pub use whitelist::Whitelist;
 
 use std::path::Path;
@@ -27,14 +29,14 @@ pub enum RiskError {
 // ── Core trait ────────────────────────────────────────────────────────────────
 
 /// A single, stateless risk check.
+///
+/// Rules receive a [`RiskEvalContext`] which exposes the full trader decision,
+/// the portfolio snapshot, the authoritative asset, and — new in this track —
+/// `conviction`. Built-in rules ignore `conviction`; user-authored rules may
+/// read it to scale sizing if they choose.
 pub trait RiskRule: Send + Sync {
     fn name(&self) -> &'static str;
-    fn evaluate(
-        &self,
-        decision: &TraderDecision,
-        portfolio: &PortfolioState,
-        asset: AssetSymbol,
-    ) -> RuleVerdict;
+    fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict;
 }
 
 /// Outcome of a single rule evaluation.
@@ -159,6 +161,24 @@ impl RiskLayer {
         }
     }
 
+    /// Prepend a rule at the front of the rule chain.
+    ///
+    /// Intended for user-authored rules that need to run before the built-in
+    /// ruleset (e.g. a conviction-scaling rule that modifies `size_bps` before
+    /// the standard size / exposure checks). The built-in rule ordering is
+    /// unchanged; the prepended rule runs first.
+    pub fn prepend_rule(&mut self, rule: Box<dyn RiskRule>) {
+        self.rules.insert(0, rule);
+    }
+
+    /// Append a rule at the end of the rule chain.
+    ///
+    /// The rule runs after all built-in rules have passed. Useful for
+    /// user-authored post-processing or audit rules.
+    pub fn append_rule(&mut self, rule: Box<dyn RiskRule>) {
+        self.rules.push(rule);
+    }
+
     /// Evaluate all rules in order.
     ///
     /// - First `Veto` short-circuits and returns `RiskDecision::Vetoed`.
@@ -166,11 +186,30 @@ impl RiskLayer {
     /// - Only the **first** modification reason is preserved (matching `RiskDecision::Modified`
     ///   which holds a single `VetoReason`).
     /// - If no veto and no modification: `RiskDecision::Approved`.
+    ///
+    /// `conviction` is threaded through to every rule as [`RiskEvalContext::conviction`].
+    /// The built-in ruleset ignores it; user-authored rules may use it to scale sizing.
+    /// Callers without a conviction signal should pass `0.0`.
     pub fn evaluate(
         &self,
         decision: TraderDecision,
         portfolio: &PortfolioState,
         asset: AssetSymbol,
+    ) -> RiskDecision {
+        self.evaluate_with_conviction(decision, portfolio, asset, 0.0)
+    }
+
+    /// Like [`evaluate`] but threads the trader's `conviction` (0.0..=1.0) through
+    /// to each rule. The built-in ruleset ignores it; user-authored rules may
+    /// read `ctx.conviction` to implement conviction-scaled sizing.
+    ///
+    /// [`evaluate`]: Self::evaluate
+    pub fn evaluate_with_conviction(
+        &self,
+        decision: TraderDecision,
+        portfolio: &PortfolioState,
+        asset: AssetSymbol,
+        conviction: f32,
     ) -> RiskDecision {
         let original = decision.clone();
         if decision
@@ -188,7 +227,13 @@ impl RiskLayer {
         let mut first_modify_reason: Option<VetoReason> = None;
 
         for rule in &self.rules {
-            match rule.evaluate(&current, portfolio, asset) {
+            let ctx = RiskEvalContext {
+                decision: &current,
+                portfolio,
+                asset,
+                conviction,
+            };
+            match rule.evaluate(&ctx) {
                 RuleVerdict::Pass => {
                     debug!(rule = rule.name(), "pass");
                 }
@@ -228,6 +273,7 @@ pub(crate) mod tests_common {
     use uuid::Uuid;
     use xvision_core::{Action, AssetSymbol, Direction, OpenPosition, PortfolioState, TraderDecision};
 
+    use crate::context::RiskEvalContext;
     use crate::whitelist::{AssetEntry, Whitelist};
 
     pub fn make_decision(
@@ -246,6 +292,23 @@ pub(crate) mod tests_common {
             take_profit_pct,
             trader_summary: "Test decision for risk layer.".into(),
             asset: None,
+        }
+    }
+
+    /// Build a [`RiskEvalContext`] for unit-testing individual rules.
+    ///
+    /// Uses `conviction: 0.0` (the neutral default). Tests that need to
+    /// exercise conviction-aware logic should construct the context manually.
+    pub fn make_ctx<'a>(
+        decision: &'a TraderDecision,
+        portfolio: &'a PortfolioState,
+        asset: AssetSymbol,
+    ) -> RiskEvalContext<'a> {
+        RiskEvalContext {
+            decision,
+            portfolio,
+            asset,
+            conviction: 0.0,
         }
     }
 

@@ -3,9 +3,9 @@
 //! - Missing (< min) → Veto(StopLossMissing)
 //! - Too wide (> max) → Modify (clamp to max, reason StopLossTooWide)
 
-use xvision_core::{Action, AssetSymbol, PortfolioState, TraderDecision, VetoReason};
+use xvision_core::{Action, VetoReason};
 
-use crate::{RiskRule, RuleVerdict};
+use crate::{context::RiskEvalContext, RiskRule, RuleVerdict};
 
 pub struct StopLossPresent {
     pub required: bool,
@@ -18,25 +18,20 @@ impl RiskRule for StopLossPresent {
         "StopLossPresent"
     }
 
-    fn evaluate(
-        &self,
-        decision: &TraderDecision,
-        _portfolio: &PortfolioState,
-        _asset: AssetSymbol,
-    ) -> RuleVerdict {
+    fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
         // Flat/close decisions don't require a stop.
-        if matches!(decision.action, Action::Flat | Action::Close) {
+        if matches!(ctx.decision.action, Action::Flat | Action::Close) {
             return RuleVerdict::Pass;
         }
 
-        let sl = decision.stop_loss_pct as f64;
+        let sl = ctx.decision.stop_loss_pct as f64;
 
         if self.required && sl < self.min_pct {
             return RuleVerdict::Veto(VetoReason::StopLossMissing);
         }
 
         if sl > self.max_pct {
-            let mut modified = decision.clone();
+            let mut modified = ctx.decision.clone();
             modified.stop_loss_pct = self.max_pct as f32;
             return RuleVerdict::Modify(modified, VetoReason::StopLossTooWide);
         }
@@ -48,7 +43,7 @@ impl RiskRule for StopLossPresent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_common::{flat_portfolio, make_decision};
+    use crate::tests_common::{flat_portfolio, make_ctx, make_decision};
     use xvision_core::{Action, AssetSymbol, Direction, VetoReason};
 
     fn rule() -> StopLossPresent {
@@ -62,8 +57,9 @@ mod tests {
     #[test]
     fn pass_normal_stop() {
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
@@ -72,8 +68,9 @@ mod tests {
     fn veto_missing_stop() {
         // stop_loss_pct = 0.1 is below min of 0.5
         let d = make_decision(Action::Buy, Direction::Long, 1000, 0.1, 5.0);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
             RuleVerdict::Veto(VetoReason::StopLossMissing)
         ));
     }
@@ -82,7 +79,8 @@ mod tests {
     fn modify_stop_too_wide() {
         // stop_loss_pct = 15.0 > max of 10.0
         let d = make_decision(Action::Buy, Direction::Long, 1000, 15.0, 5.0);
-        match rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Btc) {
+        let p = flat_portfolio();
+        match rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)) {
             RuleVerdict::Modify(modified, VetoReason::StopLossTooWide) => {
                 assert!((modified.stop_loss_pct - 10.0).abs() < 1e-6);
             }
@@ -93,8 +91,9 @@ mod tests {
     #[test]
     fn flat_skips_stop_check() {
         let d = make_decision(Action::Flat, Direction::Flat, 0, 0.1, 0.1);
+        let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&d, &flat_portfolio(), AssetSymbol::Btc),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
     }
