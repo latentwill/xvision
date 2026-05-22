@@ -233,10 +233,7 @@ pub async fn run_probe_lookahead(args: ProbeLookaheadArgs) -> CliResult<()> {
 
     // 8. Output.
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&engine_findings).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&engine_findings)?;
         return Ok(());
     }
 
