@@ -1576,6 +1576,10 @@ async fn resolve_agent_slots_for_cli(
             bar_history_limit: slot.bar_history_limit,
             memory_mode: slot.memory_mode,
             agent_id: agent.agent_id.clone(),
+            // Snapshot the slot's full capabilities set (Phase A) so the
+            // Phase B dispatcher's `resolve_activates` picks the right
+            // primary capability when `AgentRef.activates` is `None`.
+            capabilities: slot.capabilities.clone(),
             noop_skip: slot.noop_skip.unwrap_or(true),
         });
     }

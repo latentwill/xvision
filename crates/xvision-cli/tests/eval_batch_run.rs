@@ -144,6 +144,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
+                capabilities: ::std::collections::BTreeSet::new(),
                 delta_briefing: None,
             }],
         },
@@ -171,6 +172,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
         agents: vec![AgentRef {
             agent_id: agent.agent_id.clone(),
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,

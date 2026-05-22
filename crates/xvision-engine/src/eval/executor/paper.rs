@@ -1774,6 +1774,7 @@ mod role_tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            capabilities: std::collections::BTreeSet::new(),
             noop_skip: true,
         }
     }
@@ -1878,6 +1879,7 @@ mod role_tests {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::Off,
                 agent_id: String::new(),
+                capabilities: std::collections::BTreeSet::new(),
                 noop_skip: true,
             },
             ResolvedAgentSlot {
@@ -1896,6 +1898,7 @@ mod role_tests {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::Off,
                 agent_id: String::new(),
+                capabilities: std::collections::BTreeSet::new(),
                 noop_skip: true,
             },
         ];

@@ -191,6 +191,7 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "agent-schema-patch-trader".into(),
+        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     }
 }
