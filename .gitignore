@@ -60,11 +60,6 @@ target/
 # Superpowers brainstorming session content (ephemeral mockups + state)
 .superpowers/
 
-# Dev-only docs scratch area (design mockups, prototypes, gpt prompts,
-# generated mobile artifacts). Repo-root anchored so it doesn't shadow
-# nested `docs/` paths like `crates/xvision-dashboard/src/routes/docs/`.
-# The in-app wiki lives at `crates/xvision-dashboard/wiki/`, not here.
-/docs/
 
 # Git worktrees for parallel team operation (see team/README.md)
 .worktrees/
