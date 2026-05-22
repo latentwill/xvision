@@ -98,12 +98,12 @@ fn trader_slot(noop_skip: bool) -> ResolvedAgentSlot {
         role: "trader".into(),
         slot: LLMSlot {
             role: "trader".into(),
-            prompt: "decide".into(),
             attested_with: "mock".into(),
             allowed_tools: Vec::new(),
             provider: None,
             model: Some("mock".into()),
         },
+        system_prompt: String::new(),
         max_tokens: None,
         temperature: None,
         inputs_policy: InputsPolicy::Raw,

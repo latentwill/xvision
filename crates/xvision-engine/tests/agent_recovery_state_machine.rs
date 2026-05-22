@@ -36,7 +36,6 @@ use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBu
 fn slot() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
-        prompt: "decide".into(),
         attested_with: "test.model".into(),
         allowed_tools: vec!["always_fails".to_string()],
         provider: Some("test".into()),
@@ -141,6 +140,7 @@ fn build_input<'a>(
 ) -> SlotInput<'a> {
     SlotInput {
         slot,
+        system_prompt: "decide".into(),
         upstream_inputs: serde_json::json!({}),
         dispatch,
         tools,

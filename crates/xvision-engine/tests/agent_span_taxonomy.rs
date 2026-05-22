@@ -33,7 +33,6 @@ use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBu
 fn trader_slot() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
-        prompt: "decide".into(),
         attested_with: "anthropic.claude-sonnet-4-6".into(),
         allowed_tools: vec!["price_of_thing".to_string()],
         provider: Some("anthropic".into()),
@@ -92,6 +91,7 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
     let slot = trader_slot();
     let input = SlotInput {
         slot: &slot,
+        system_prompt: "decide".into(),
         upstream_inputs: serde_json::json!({}),
         dispatch: Arc::new(OneToolThenEndTurn),
         tools: Arc::new(ToolRegistry::empty()),

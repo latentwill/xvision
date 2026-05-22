@@ -63,12 +63,12 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
         role: role.into(),
         slot: LLMSlot {
             role: role.into(),
-            prompt: "decide".into(),
             attested_with: "mock".into(),
             allowed_tools: Vec::new(),
             provider: None,
             model: Some("mock".into()),
         },
+        system_prompt: String::new(),
         max_tokens: None,
         temperature: None,
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,

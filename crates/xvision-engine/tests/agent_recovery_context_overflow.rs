@@ -43,7 +43,6 @@ use xvision_core::providers::{Catalog, ModelEntry};
 fn slot() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
-        prompt: "you are a trader. keep BTC focus and respect the 5% risk cap.".into(),
         attested_with: "test.expensive".into(),
         allowed_tools: Vec::new(),
         provider: Some("test".into()),
@@ -141,6 +140,7 @@ fn build_input<'a>(
 ) -> SlotInput<'a> {
     SlotInput {
         slot,
+        system_prompt: "you are a trader. keep BTC focus and respect the 5% risk cap.".into(),
         upstream_inputs: serde_json::json!({"prompt": "decide on BTC at $50000"}),
         dispatch,
         tools,

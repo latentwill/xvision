@@ -15,6 +15,11 @@ use xvision_core::providers::{lookup_model, Catalog};
 pub struct ResolvedAgentSlot {
     pub role: String,
     pub slot: LLMSlot,
+    /// The system prompt for this slot, snapshotted from the bound
+    /// agent's `AgentSlot.system_prompt`. The agent-side field is the
+    /// single source of truth for prompt text; `LLMSlot` no longer
+    /// carries one.
+    pub system_prompt: String,
     /// Operator's per-request output-token budget. `None` lets the
     /// dispatcher decide: OpenAI-compat omits the field entirely (the
     /// provider applies its own default); Anthropic falls back to the
@@ -137,6 +142,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         // if a recorder was provided. Only the agent-slot path opts in.
         let out = execute_slot(SlotInput {
             slot,
+            system_prompt: String::new(),
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
@@ -166,6 +172,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         let max_tokens = default_max_tokens_for(slot);
         let out = execute_slot(SlotInput {
             slot,
+            system_prompt: String::new(),
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
@@ -195,6 +202,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         let max_tokens = default_max_tokens_for(slot);
         let out = execute_slot(SlotInput {
             slot,
+            system_prompt: String::new(),
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
@@ -315,6 +323,7 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         // pass a recorder stay on the legacy path.
         let out = execute_slot(SlotInput {
             slot: &resolved.slot,
+            system_prompt: resolved.system_prompt.clone(),
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
@@ -369,7 +378,6 @@ fn catalog_for_slot(slot: &LLMSlot, catalogs: &HashMap<String, Arc<Catalog>>) ->
 pub fn agent_slot_to_llm_slot(role: &str, slot: &AgentSlot) -> LLMSlot {
     LLMSlot {
         role: role.to_string(),
-        prompt: slot.system_prompt.clone(),
         attested_with: if slot.provider.trim().is_empty() {
             slot.model.clone()
         } else {
@@ -402,6 +410,7 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
     ResolvedAgentSlot {
         role: role.to_string(),
         slot: agent_slot_to_llm_slot(role, slot),
+        system_prompt: slot.system_prompt.clone(),
         max_tokens: slot.resolve_max_tokens(),
         temperature: slot.temperature,
         inputs_policy: slot.inputs_policy,
@@ -441,7 +450,6 @@ mod legacy_max_tokens_tests {
     fn slot_with_model(model: &str) -> LLMSlot {
         LLMSlot {
             role: "trader".into(),
-            prompt: "p".into(),
             attested_with: model.to_string(),
             allowed_tools: Vec::new(),
             provider: None,

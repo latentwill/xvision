@@ -84,7 +84,6 @@ impl Tool for CountingHealthTool {
 fn trader_slot_with_health_tool() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
-        prompt: "decide".into(),
         attested_with: "anthropic.claude-sonnet-4-6".into(),
         allowed_tools: vec!["xvision_health_ping".into()],
         provider: Some("anthropic".into()),
@@ -113,6 +112,7 @@ async fn execute_slot_caps_runaway_tool_use_loop() {
 
     let err = execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: String::new(),
         upstream_inputs: serde_json::json!({}),
         dispatch: dispatch.clone(),
         tools,

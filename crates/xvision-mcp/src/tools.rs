@@ -151,9 +151,6 @@ pub struct UpdateSlotReq {
     pub id: String,
     /// Slot to update: `regime` | `intern` | `trader`.
     pub slot: String,
-    /// New system prompt for the slot.
-    #[serde(default)]
-    pub prompt: Option<String>,
     /// Model requirement (e.g., `anthropic.claude-sonnet-4.6+`).
     #[serde(default)]
     pub attested_with: Option<String>,
@@ -647,7 +644,6 @@ impl XvisionTools {
             authoring::UpdateSlotReq {
                 id: req.id,
                 slot: req.slot,
-                prompt: req.prompt,
                 attested_with: req.attested_with,
                 provider: req.provider,
                 model: req.model,
@@ -1933,8 +1929,7 @@ mod tests {
             .xvn_update_slot(Parameters(UpdateSlotReq {
                 id: id.clone(),
                 slot: "trader".into(),
-                prompt: Some("New prompt".into()),
-                attested_with: None,
+                attested_with: Some("anthropic.claude-sonnet-4.6".into()),
                 provider: None,
                 model: None,
                 allowed_tools: None,
@@ -1942,14 +1937,17 @@ mod tests {
             .await
             .unwrap();
         let v = parsed(&upd);
-        assert_eq!(v["updated"], serde_json::json!(["prompt"]));
+        assert_eq!(v["updated"], serde_json::json!(["attested_with"]));
 
         let g = tools
             .xvn_get_strategy(Parameters(StrategyId { id }))
             .await
             .unwrap();
         let strategy = parsed(&g);
-        assert_eq!(strategy["trader_slot"]["prompt"], "New prompt");
+        assert_eq!(
+            strategy["trader_slot"]["attested_with"],
+            "anthropic.claude-sonnet-4.6"
+        );
     }
 
     #[tokio::test]
@@ -1967,8 +1965,7 @@ mod tests {
             .xvn_update_slot(Parameters(UpdateSlotReq {
                 id,
                 slot: "nope".into(),
-                prompt: Some("p".into()),
-                attested_with: None,
+                attested_with: Some("anthropic.claude-sonnet-4.6".into()),
                 provider: None,
                 model: None,
                 allowed_tools: None,

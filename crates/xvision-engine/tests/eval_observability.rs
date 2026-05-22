@@ -53,7 +53,6 @@ impl LlmDispatch for FailingDispatch {
 fn slot() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
-        prompt: "decide".into(),
         attested_with: "anthropic.claude-sonnet-4-6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
@@ -172,6 +171,7 @@ async fn failing_dispatch_emits_error_span_with_message() {
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let result = execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: String::new(),
         upstream_inputs: serde_json::json!({}),
         dispatch,
         tools,
@@ -231,6 +231,7 @@ async fn execute_slot_with_no_emitter_does_not_touch_bus() {
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let result = execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: String::new(),
         upstream_inputs: serde_json::json!({}),
         dispatch,
         tools,

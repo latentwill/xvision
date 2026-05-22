@@ -66,7 +66,6 @@ pub struct CreateStrategyOut {
 pub struct UpdateSlotReq {
     pub id: String,
     pub slot: String,
-    pub prompt: Option<String>,
     pub attested_with: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -244,17 +243,12 @@ pub async fn update_slot(store: &dyn StrategyStore, req: UpdateSlotReq) -> anyho
     };
     let slot = slot_field.get_or_insert_with(|| LLMSlot {
         role: req.slot.clone(),
-        prompt: String::new(),
         attested_with: String::new(),
         allowed_tools: vec![],
         provider: None,
         model: None,
     });
     let mut updated: Vec<String> = Vec::new();
-    if let Some(p) = req.prompt {
-        slot.prompt = p;
-        updated.push("prompt".into());
-    }
     if let Some(m) = req.attested_with {
         slot.attested_with = m;
         updated.push("attested_with".into());
@@ -272,7 +266,9 @@ pub async fn update_slot(store: &dyn StrategyStore, req: UpdateSlotReq) -> anyho
         updated.push("allowed_tools".into());
     }
     if updated.is_empty() {
-        anyhow::bail!("no fields to update — supply at least one of prompt / attested_with / allowed_tools");
+        anyhow::bail!(
+            "no fields to update — supply at least one of attested_with / provider / model / allowed_tools"
+        );
     }
     store.save(&strategy).await?;
     Ok(UpdateSlotOut { id: req.id, updated })
@@ -672,8 +668,7 @@ mod tests {
             UpdateSlotReq {
                 id: out.id.clone(),
                 slot: "trader".into(),
-                prompt: Some("New prompt".into()),
-                attested_with: None,
+                attested_with: Some("anthropic.claude-sonnet-4.6".into()),
                 provider: None,
                 model: None,
                 allowed_tools: None,
@@ -681,10 +676,13 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(upd.updated, vec!["prompt".to_string()]);
+        assert_eq!(upd.updated, vec!["attested_with".to_string()]);
 
         let strategy = get_strategy(&store, &out.id).await.unwrap();
-        assert_eq!(strategy.trader_slot.unwrap().prompt, "New prompt");
+        assert_eq!(
+            strategy.trader_slot.unwrap().attested_with,
+            "anthropic.claude-sonnet-4.6"
+        );
     }
 
     #[tokio::test]
@@ -876,50 +874,6 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("attach at least one complete agent")),
             "expected missing attached agent error, got {:?}",
-            v.errors,
-        );
-    }
-
-    #[tokio::test]
-    async fn validate_draft_reports_prompt_manifest_asset_and_cadence_drift() {
-        let (store, _td) = store_in_tmp();
-        let out = create_strategy(
-            &store,
-            CreateStrategyReq {
-                name: "x".into(),
-                creator: None,
-            },
-        )
-        .await
-        .unwrap();
-        // Post-template-registry-removal, create_strategy yields a blank
-        // draft (no trader_slot). Wire a legacy trader_slot up here so
-        // the drift check has something to chew on.
-        let mut strategy = get_strategy(&store, &out.id).await.unwrap();
-        // Prompt mentions ETH/USD so it drifts from create_blank_strategy's
-        // default asset_universe of ["BTC/USD"]. (Pre-2026-05-21 templates
-        // seeded ETH/USD and the test used BTC/USD for the same purpose.)
-        strategy.trader_slot = Some(LLMSlot {
-            role: "trader".into(),
-            prompt: "Trade ETH/USD on 6-hour candles. Return JSON.".into(),
-            attested_with: "anthropic.claude-sonnet-4.6".into(),
-            allowed_tools: vec!["ohlcv".into()],
-            provider: None,
-            model: None,
-        });
-        store.save(&strategy).await.unwrap();
-
-        let v = validate_draft(&store, &out.id).await.unwrap();
-
-        assert!(!v.ok);
-        assert!(
-            v.errors.iter().any(|e| e.contains("ETH/USD")),
-            "expected asset drift error, got {:?}",
-            v.errors,
-        );
-        assert!(
-            v.errors.iter().any(|e| e.contains("6h")),
-            "expected cadence drift error, got {:?}",
             v.errors,
         );
     }

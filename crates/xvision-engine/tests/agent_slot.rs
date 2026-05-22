@@ -8,7 +8,6 @@ use xvision_engine::tools::ToolRegistry;
 async fn execute_slot_returns_parsed_output() {
     let slot = LLMSlot {
         role: "trader".into(),
-        prompt: "decide".into(),
         attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
         provider: None,
@@ -21,6 +20,7 @@ async fn execute_slot_returns_parsed_output() {
 
     let out = execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: String::new(),
         upstream_inputs: serde_json::json!({"ohlcv_history": [], "indicator_panel": {}}),
         dispatch,
         tools,
@@ -47,7 +47,6 @@ async fn execute_slot_returns_parsed_output() {
 async fn execute_slot_loops_through_tool_use_to_final_text() {
     let slot = LLMSlot {
         role: "trader".into(),
-        prompt: "decide".into(),
         attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
         provider: None,
@@ -74,6 +73,7 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
 
     let out = execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: String::new(),
         upstream_inputs: serde_json::json!({
             "asset": "BTC/USD",
             "fixture": "test-fixture-btc-2024-01"
@@ -104,7 +104,6 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
 async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
     let slot = LLMSlot {
         role: "trader".into(),
-        prompt: "decide".into(),
         attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
         provider: None,
@@ -139,6 +138,7 @@ async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
 
     let out = execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: String::new(),
         upstream_inputs: serde_json::json!({
             "asset": "BTC/USD",
             "fixture": "test-fixture-btc-2024-01"
@@ -169,7 +169,6 @@ async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
 async fn execute_slot_succeeds_even_when_caller_passes_extra_inputs() {
     let slot = LLMSlot {
         role: "trader".into(),
-        prompt: "decide".into(),
         attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
         provider: None,
@@ -181,6 +180,7 @@ async fn execute_slot_succeeds_even_when_caller_passes_extra_inputs() {
     // does not invoke tools so undeclared inputs pass through.
     let result = execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: String::new(),
         upstream_inputs: serde_json::json!({"requested_tool": "indicator_panel"}),
         dispatch,
         tools,

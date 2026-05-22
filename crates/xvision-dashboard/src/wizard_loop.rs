@@ -1259,7 +1259,6 @@ impl WizardLoop {
             .system_prompt
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .or_else(|| prompt_for_strategy_role(&strategy, &role))
             .unwrap_or_default();
         let skill_ids = tools_for_strategy_role(&strategy, &role);
         let agent = api_agents::create(
@@ -1355,20 +1354,6 @@ impl WizardLoop {
             .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing model; pick a provider/model in the chat model picker or pass model explicitly"))?;
         Ok((provider, model))
     }
-}
-
-fn prompt_for_strategy_role(strategy: &xvision_engine::strategies::Strategy, role: &str) -> Option<String> {
-    let role = role.trim().to_ascii_lowercase();
-    if role == "trader" {
-        return strategy.trader_slot.as_ref().map(|slot| slot.prompt.clone());
-    }
-    if role == "intern" {
-        return strategy.intern_slot.as_ref().map(|slot| slot.prompt.clone());
-    }
-    if role == "regime" {
-        return strategy.regime_slot.as_ref().map(|slot| slot.prompt.clone());
-    }
-    None
 }
 
 fn tools_for_strategy_role(strategy: &xvision_engine::strategies::Strategy, role: &str) -> Vec<String> {

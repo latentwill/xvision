@@ -96,7 +96,6 @@ fn tiny_risk_strategy() -> Strategy {
         intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
-            prompt: "Decide.".into(),
             attested_with: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
             provider: None,

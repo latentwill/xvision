@@ -27,7 +27,6 @@ fn manifest(attested: Vec<String>) -> PublicManifest {
 fn trader_slot(attested: &str, bound_provider: Option<&str>, bound_model: Option<&str>) -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
-        prompt: "trade ETH/USD on a 60m cadence".into(),
         attested_with: attested.into(),
         allowed_tools: vec![],
         provider: bound_provider.map(|s| s.into()),

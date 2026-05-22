@@ -125,7 +125,6 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
         intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
-            prompt: "Decide.".into(),
             attested_with: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
             provider: None,

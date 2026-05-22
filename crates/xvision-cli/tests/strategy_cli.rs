@@ -64,7 +64,6 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
         pipeline: PipelineDef::default(),
         regime_slot: Some(LLMSlot {
             role: "regime".into(),
-            prompt: "Classify the current crypto regime.".into(),
             attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["indicator_panel".into()],
             provider: None,
@@ -73,7 +72,6 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
         intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
-            prompt: "Buy dips, sell rallies. Output JSON {action,conviction,justification}.".into(),
             attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             provider: None,

@@ -28,7 +28,6 @@ fn sample_strategy() -> Strategy {
         pipeline: Default::default(),
         regime_slot: Some(LLMSlot {
             role: "regime".into(),
-            prompt: "...".into(),
             attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             provider: None,
@@ -37,7 +36,6 @@ fn sample_strategy() -> Strategy {
         intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
-            prompt: "...".into(),
             attested_with: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into()],
             provider: None,
@@ -54,7 +52,6 @@ fn sample_strategy() -> Strategy {
 fn slot_serializes_to_json_and_back() {
     let slot = LLMSlot {
         role: "trader".to_string(),
-        prompt: "decide: enter long, enter short, or no-op".to_string(),
         attested_with: "anthropic.claude-sonnet-4.6+".to_string(),
         allowed_tools: vec!["ohlcv".to_string(), "indicator_panel".to_string()],
         provider: None,
@@ -198,7 +195,6 @@ fn strategy_with_extra_capital_field_in_json_still_deserializes() {
         },
         "trader_slot": {
             "role": "trader",
-            "prompt": "decide",
             "attested_with": "mock",
             "allowed_tools": ["ohlcv"]
         },

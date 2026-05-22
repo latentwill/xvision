@@ -180,7 +180,6 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
 
     let slot = LLMSlot {
         role: "trader".into(),
-        prompt: "BASE_SYSTEM_PROMPT".into(),
         attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
@@ -193,6 +192,7 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
 
     execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: "BASE_SYSTEM_PROMPT".into(),
         upstream_inputs: serde_json::json!({"ohlcv_history": []}),
         dispatch: dispatch.clone(),
         tools,
@@ -272,7 +272,6 @@ async fn recall_wraps_each_pattern_in_caselaw_framing() {
 
     let slot = LLMSlot {
         role: "trader".into(),
-        prompt: "BASE".into(),
         attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
@@ -283,6 +282,7 @@ async fn recall_wraps_each_pattern_in_caselaw_framing() {
 
     execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: "BASE".into(),
         upstream_inputs: serde_json::json!({}),
         dispatch: dispatch.clone(),
         tools,
@@ -341,7 +341,6 @@ async fn recall_excludes_pattern_when_training_window_overlaps_scenario() {
 
     let slot = LLMSlot {
         role: "trader".into(),
-        prompt: "BASE".into(),
         attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
@@ -354,6 +353,7 @@ async fn recall_excludes_pattern_when_training_window_overlaps_scenario() {
 
     execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: "BASE".into(),
         upstream_inputs: serde_json::json!({}),
         dispatch: dispatch.clone(),
         tools,
@@ -399,7 +399,6 @@ async fn execute_slot_writes_final_decision_into_namespace() {
 
     let slot = LLMSlot {
         role: "trader".into(),
-        prompt: "BASE_SYSTEM_PROMPT".into(),
         attested_with: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: Vec::new(),
         provider: Some("anthropic".into()),
@@ -410,6 +409,7 @@ async fn execute_slot_writes_final_decision_into_namespace() {
 
     execute_slot(SlotInput {
         slot: &slot,
+        system_prompt: "BASE_SYSTEM_PROMPT".into(),
         upstream_inputs: serde_json::json!({}),
         dispatch,
         tools,
@@ -525,12 +525,12 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         role: "trader".into(),
         slot: LLMSlot {
             role: "trader".into(),
-            prompt: "decide".into(),
             attested_with: "mock".into(),
             allowed_tools: Vec::new(),
             provider: None,
             model: Some("mock".into()),
         },
+        system_prompt: "decide".into(),
         max_tokens: None,
         temperature: None,
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,

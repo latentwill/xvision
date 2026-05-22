@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LLMSlot {
-    pub role: String,   // "regime", "intern", "trader"
-    pub prompt: String, // slot prompt body
+    pub role: String, // "regime", "intern", "trader"
     /// Informational attestation: the model id this slot was last
     /// published / tested with (e.g. "anthropic.claude-sonnet-4.6").
     /// Never gates eval-launch — the operator's `provider` + `model`
