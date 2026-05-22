@@ -24,6 +24,21 @@ use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{LlmResponse, ResponseSchema};
 use crate::agent::observability::ObsEmitter;
 
+#[derive(Debug)]
+pub struct FilterDispatchResult {
+    pub signal: FilterSignal,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FilterDispatchError {
+    #[error(transparent)]
+    Dispatch(#[from] anyhow::Error),
+    #[error("filter output parse failed: {0}")]
+    Parse(anyhow::Error),
+}
+
 /// The strict JSON shape we ask the model to return. `deny_unknown_fields`
 /// means a model that adds extra keys is treated as a parse error — the
 /// dispatcher refuses to silently ignore drift.
@@ -45,7 +60,7 @@ struct FilterLlmResponse {
 /// observability event with the truncated raw text and bubbles up the
 /// error so the pipeline's caller can decide whether to propagate
 /// `None` into the signal map.
-pub async fn run_llm_filter(input: DispatchInput<'_>) -> anyhow::Result<FilterSignal> {
+pub async fn run_llm_filter(input: DispatchInput<'_>) -> Result<FilterDispatchResult, FilterDispatchError> {
     let role = input.resolved.role.clone();
     let obs = input.obs.clone();
     let bar_ts = input.scenario_start.unwrap_or_else(Utc::now);
@@ -85,11 +100,17 @@ pub async fn run_llm_filter(input: DispatchInput<'_>) -> anyhow::Result<FilterSi
     })
     .await?;
 
+    let input_tokens = resp.input_tokens;
+    let output_tokens = resp.output_tokens;
     match parse_filter_response(&resp, &role, bar_ts) {
-        Ok(signal) => Ok(signal),
+        Ok(signal) => Ok(FilterDispatchResult {
+            signal,
+            input_tokens,
+            output_tokens,
+        }),
         Err(e) => {
             emit_parse_error(obs.as_ref(), &role, &resp, &e).await;
-            Err(e)
+            Err(FilterDispatchError::Parse(e))
         }
     }
 }
