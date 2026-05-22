@@ -321,6 +321,7 @@ mod tests {
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::default(),
+            noop_skip: None,
         }
     }
 

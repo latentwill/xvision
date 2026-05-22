@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::agent::execute::{execute_slot, SlotInput};
-use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
+use crate::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, ResponseSchema, StopReason};
 use crate::agent::observability::ObsEmitter;
 use crate::agents::{AgentSlot, InputsPolicy};
 use crate::strategies::agent_ref::canonical_role;
@@ -58,6 +58,12 @@ pub struct ResolvedAgentSlot {
     /// no associated agent (legacy regime/intern/trader `LLMSlot` path,
     /// unit tests). With `memory_mode = Off` this field is ignored.
     pub agent_id: String,
+    /// Snapshotted `AgentSlot.noop_skip` at strategy-resolution time.
+    /// `true` (the effective default for both `None` and `Some(true)`)
+    /// enables the pre-LLM zero-legal-actions gate on trader-role slots;
+    /// `false` disables it so the LLM runs even in a corner.
+    /// Non-trader roles always run regardless of this flag.
+    pub noop_skip: bool,
 }
 
 pub struct PipelineInputs<'a> {
@@ -213,6 +219,46 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
     })
 }
 
+/// Returns true when the current seed's `portfolio_state.position_size`
+/// indicates that both `long_open` and `short_open` are blocked — i.e. the
+/// only legal action for the trader is `hold`. This is the "zero legal open
+/// actions" condition defined in the trader-noop-skip intake.
+///
+/// The check is purely on the seed JSON: a non-zero `position_size` means the
+/// portfolio already carries a position on the cycle's asset (long > 0 or
+/// short < 0), so the risk gate would block any new open on the same asset
+/// before the LLM response even gets there. If `position_size` is absent or
+/// cannot be parsed as a float, the gate does NOT fire (conservative default
+/// — run the LLM).
+fn seed_has_zero_legal_opens(seed: &serde_json::Value) -> bool {
+    let ps = match seed.get("portfolio_state") {
+        Some(v) => v,
+        None => return false,
+    };
+    let size = match ps.get("position_size").and_then(|v| v.as_f64()) {
+        Some(f) => f,
+        None => return false,
+    };
+    size != 0.0
+}
+
+/// Synthesize a `TraderDecision`-shaped `LlmResponse` that records the
+/// noop-skip without calling the LLM. The JSON body is valid trader output
+/// (`action: hold`, `conviction: 0`) with `noop_skip` in the `justification`
+/// so the trace/eval review surface can distinguish it from a genuine LLM
+/// hold while preserving the strict trader-output schema. Token counts are
+/// both 0 — no provider was called.
+fn noop_skip_response() -> LlmResponse {
+    LlmResponse {
+        content: vec![ContentBlock::Text {
+            text: r#"{"action":"hold","conviction":0.0,"justification":"noop_skip: portfolio already carries a position — only hold is legal"}"#.into(),
+        }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 0,
+        output_tokens: 0,
+    }
+}
+
 async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
     if input.strategy.pipeline.kind == PipelineKind::Graph {
         anyhow::bail!("graph agent pipelines are not executable yet");
@@ -234,6 +280,26 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         // right schema and then silently dropped its result (QA #5).
         let role_key = canonical_role(&resolved.role);
         let is_trader_output = role_key == "trader";
+
+        // trader-noop-skip: before paying the LLM tax, check whether this
+        // is a trader slot with noop_skip enabled AND the current seed has
+        // zero legal open actions (position already held). If so, return a
+        // synthesized hold decision with `noop_skip` provenance in the
+        // justification so the trace shows the skip. We still record the
+        // output key so downstream slots (if any) see a `trader_output`
+        // field — matching the normal pipeline shape.
+        if is_trader_output && resolved.noop_skip && seed_has_zero_legal_opens(&accumulated) {
+            tracing::debug!(
+                event = "noop_skip",
+                role = %resolved.role,
+                "trader-noop-skip: portfolio already carries a position — skipping LLM call",
+            );
+            let skip_out = noop_skip_response();
+            accumulated[format!("{role_key}_output")] = serde_json::Value::String(skip_out.text());
+            trader = Some(skip_out);
+            continue;
+        }
+
         // V2D: thread the per-slot memory snapshot + the executor's
         // recorder into `execute_slot`. The recorder treats `Off` /
         // empty-namespace as a no-op, so non-eval call sites that don't
@@ -323,6 +389,9 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
         bar_history_limit: slot.bar_history_limit,
         memory_mode: slot.memory_mode,
         agent_id: agent_id.to_string(),
+        // `None` and `Some(true)` both enable the skip; `Some(false)`
+        // explicitly disables it so the LLM runs even in a corner.
+        noop_skip: slot.noop_skip.unwrap_or(true),
     }
 }
 

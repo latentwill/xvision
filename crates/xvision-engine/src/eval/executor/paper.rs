@@ -1651,6 +1651,7 @@ mod role_tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
+            noop_skip: true,
         }
     }
 
@@ -1754,6 +1755,7 @@ mod role_tests {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::Off,
                 agent_id: String::new(),
+                noop_skip: true,
             },
             ResolvedAgentSlot {
                 role: "trader".into(),
@@ -1771,6 +1773,7 @@ mod role_tests {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::Off,
                 agent_id: String::new(),
+                noop_skip: true,
             },
         ];
         assert_eq!(resolve_inputs_policy(&slots), InputsPolicy::Causal);

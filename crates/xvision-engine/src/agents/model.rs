@@ -194,6 +194,31 @@ pub struct AgentSlot {
     /// frontend gains a UI for this knob.
     #[serde(default)]
     pub memory_mode: xvision_memory::types::MemoryMode,
+    /// Per-slot opt-out for the `trader-noop-skip` pre-LLM gate
+    /// (`team/intake/2026-05-21-eval-honesty-and-agent-graph.md`).
+    ///
+    /// When `None` (the default) or `Some(true)`, the engine skips the
+    /// LLM call entirely for any decision cycle where the current
+    /// `portfolio_state` allows **zero legal open actions** (i.e. the
+    /// portfolio already holds a position on this asset so both
+    /// `long_open` and `short_open` are blocked — the only legal action
+    /// is `hold`). A synthesized trader output with `action: hold`,
+    /// `conviction: 0`, and `noop_skip` in `justification` is recorded so
+    /// the trace and eval review surfaces can see that the skip happened.
+    ///
+    /// Set to `Some(false)` when you explicitly want the LLM to run even
+    /// in a zero-legal-actions state (e.g. "what would the model say in
+    /// a corner case?" analysis). This opt-out is intentional model spend
+    /// and is honoured without warning.
+    ///
+    /// Not yet persisted to SQLite (a follow-up migration will add the
+    /// column when the UI surfaces this knob). For now the field
+    /// round-trips through JSON via `#[serde(default)]`; rows loaded
+    /// from the store come back as `None` which is treated the same as
+    /// `Some(true)`.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "boolean | null"))]
+    pub noop_skip: Option<bool>,
 }
 
 impl AgentSlot {
@@ -267,6 +292,7 @@ impl Agent {
                 inputs_policy: InputsPolicy::default(),
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
             }],
             archived: false,
             created_at: now,
@@ -306,6 +332,10 @@ mod tests {
         // consult or write the cortex-memory store until an operator
         // explicitly opts in.
         assert_eq!(a.slots[0].memory_mode, xvision_memory::types::MemoryMode::Off);
+        // trader-noop-skip: new slots default to `None` (equivalent to
+        // `Some(true)` — the skip is enabled). Operators who want the
+        // LLM to run in zero-legal-actions corners explicitly set `false`.
+        assert_eq!(a.slots[0].noop_skip, None);
     }
 
     #[test]
