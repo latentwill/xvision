@@ -64,6 +64,10 @@ pub struct MemoryItemDto {
     /// RFC3339 date; `None` on Observations and on operator-attested
     /// Patterns where the operator wants global applicability.
     pub training_window_end: Option<String>,
+    /// RFC3339 timestamp of when the row was soft-deleted via
+    /// `forget`. `None` on live rows.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub forgotten_at: Option<String>,
 }
 
 impl MemoryItemDto {
@@ -78,6 +82,7 @@ impl MemoryItemDto {
             scenario_id: item.scenario_id,
             cycle_idx: item.cycle_idx,
             training_window_end: item.training_window_end.map(|d| d.to_rfc3339()),
+            forgotten_at: item.forgotten_at.map(|d| d.to_rfc3339()),
         }
     }
 }
@@ -105,6 +110,10 @@ pub struct ListMemoryRequest {
     pub run_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    /// When `Some(true)`, soft-deleted rows are included. Default is
+    /// to skip rows with non-null `forgotten_at`.
+    #[serde(default)]
+    pub include_forgotten: Option<bool>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -153,7 +162,54 @@ pub struct PatternCreateRequest {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForgetResponse {
+    /// Number of rows affected by the call. When grace > 0 these are
+    /// soft-deleted (still in-table with `forgotten_at` set);
+    /// when grace == 0 they are hard-deleted.
     pub deleted: u64,
+    /// RFC3339 timestamp until which `undo-forget` will restore the
+    /// rows soft-deleted by this call. `None` when grace == 0 (the
+    /// rows are gone immediately and there is nothing to restore).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub restorable_until: Option<String>,
+    /// Resolved grace window in days (0 means immediate hard-delete).
+    pub grace_days: u32,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UndoForgetRequest {
+    /// Exact namespace whose soft-deleted rows should be restored.
+    /// Mutually exclusive with `agent`.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Shorthand for `namespace = "agent:<id>"`.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// Optional RFC3339 lower bound. Rows whose `forgotten_at` is
+    /// strictly older than this are NOT restored. Defaults to
+    /// `now - XVN_MEMORY_FORGET_GRACE_DAYS` so an operator restoring
+    /// without an explicit `since` gets the natural "everything still
+    /// in the grace window" behavior.
+    #[serde(default)]
+    pub since: Option<String>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoForgetResponse {
+    pub restored: u64,
+    /// RFC3339 lower bound that was applied (resolved from
+    /// `since` or computed from `grace_days`).
+    pub since: String,
 }
 
 /// Resolve the optional `agent` filter into a namespace string. Returns
@@ -230,6 +286,9 @@ fn row_to_item(row: &sqlx::sqlite::SqliteRow) -> ApiResult<MemoryItem> {
     let training_window_end_str: Option<String> = row
         .try_get::<Option<String>, _>("training_window_end")
         .map_err(|e| ApiError::Internal(format!("memory: read training_window_end: {e}")))?;
+    let forgotten_at_str: Option<String> = row
+        .try_get::<Option<String>, _>("forgotten_at")
+        .map_err(|e| ApiError::Internal(format!("memory: read forgotten_at: {e}")))?;
 
     let created_at = DateTime::parse_from_rfc3339(&created_at_str)
         .map_err(|e| ApiError::Internal(format!("memory: parse created_at: {e}")))?
@@ -239,6 +298,14 @@ fn row_to_item(row: &sqlx::sqlite::SqliteRow) -> ApiResult<MemoryItem> {
         Some(s) => Some(
             DateTime::parse_from_rfc3339(&s)
                 .map_err(|e| ApiError::Internal(format!("memory: parse training_window_end: {e}")))?
+                .with_timezone(&Utc),
+        ),
+        None => None,
+    };
+    let forgotten_at = match forgotten_at_str {
+        Some(s) => Some(
+            DateTime::parse_from_rfc3339(&s)
+                .map_err(|e| ApiError::Internal(format!("memory: parse forgotten_at: {e}")))?
                 .with_timezone(&Utc),
         ),
         None => None,
@@ -257,6 +324,7 @@ fn row_to_item(row: &sqlx::sqlite::SqliteRow) -> ApiResult<MemoryItem> {
         scenario_id,
         cycle_idx,
         training_window_end,
+        forgotten_at,
     })
 }
 
@@ -286,6 +354,9 @@ pub async fn list(store: &MemoryStore, req: ListMemoryRequest) -> ApiResult<Memo
     if req.run_id.is_some() {
         where_parts.push("run_id = ?");
     }
+    if !req.include_forgotten.unwrap_or(false) {
+        where_parts.push("forgotten_at IS NULL");
+    }
     let where_clause = if where_parts.is_empty() {
         String::new()
     } else {
@@ -310,7 +381,7 @@ pub async fn list(store: &MemoryStore, req: ListMemoryRequest) -> ApiResult<Memo
 
     let list_sql = format!(
         "SELECT id, namespace, tier, text, created_at, run_id, scenario_id, cycle_idx, \
-         training_window_end FROM memory_items{where_clause} \
+         training_window_end, forgotten_at FROM memory_items{where_clause} \
          ORDER BY created_at DESC LIMIT ? OFFSET ?"
     );
     let mut list_q = sqlx::query(&list_sql);
@@ -346,7 +417,7 @@ pub async fn list(store: &MemoryStore, req: ListMemoryRequest) -> ApiResult<Memo
 pub async fn get(store: &MemoryStore, id: &str) -> ApiResult<MemoryItemDto> {
     let row = sqlx::query(
         "SELECT id, namespace, tier, text, created_at, run_id, scenario_id, cycle_idx, \
-         training_window_end FROM memory_items WHERE id = ?",
+         training_window_end, forgotten_at FROM memory_items WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(store.pool())
@@ -408,6 +479,7 @@ pub async fn create_pattern(
         scenario_id: None,
         cycle_idx: None,
         training_window_end,
+        forgotten_at: None,
     };
 
     store
@@ -445,11 +517,75 @@ pub async fn forget(store: &MemoryStore, namespace: &str) -> ApiResult<ForgetRes
             "namespace is required for bulk forget".into(),
         ));
     }
+    let grace_days = xvision_memory::store::forget_grace_days();
+    let now = Utc::now();
     let deleted = store
-        .forget(namespace)
+        .forget_at(namespace, now)
         .await
         .map_err(|e| ApiError::Internal(format!("memory: forget: {e}")))?;
-    Ok(ForgetResponse { deleted })
+    let restorable_until = if grace_days == 0 {
+        None
+    } else {
+        Some((now + chrono::Duration::days(grace_days as i64)).to_rfc3339())
+    };
+    Ok(ForgetResponse {
+        deleted,
+        restorable_until,
+        grace_days,
+    })
+}
+
+/// Restore rows soft-deleted by a recent `forget`. Rows whose
+/// `forgotten_at` is older than the grace window are not restored
+/// (the janitor sweep is about to or already has hard-deleted them).
+pub async fn undo_forget(store: &MemoryStore, req: UndoForgetRequest) -> ApiResult<UndoForgetResponse> {
+    let namespace = match (req.namespace.as_deref(), req.agent.as_deref()) {
+        (Some(_), Some(_)) => {
+            return Err(ApiError::Validation(
+                "set either `namespace` or `agent`, not both".into(),
+            ));
+        }
+        (Some(ns), None) => ns.to_string(),
+        (None, Some(agent)) => agent_namespace(agent),
+        (None, None) => {
+            return Err(ApiError::Validation(
+                "one of `namespace` or `agent` is required".into(),
+            ));
+        }
+    };
+    if namespace.trim().is_empty() {
+        return Err(ApiError::Validation(
+            "namespace is required for undo-forget".into(),
+        ));
+    }
+
+    let since = match req.since.as_deref() {
+        Some(s) => DateTime::parse_from_rfc3339(s)
+            .map_err(|e| ApiError::Validation(format!("since must be RFC3339: {e}")))?
+            .with_timezone(&Utc),
+        None => Utc::now() - chrono::Duration::days(xvision_memory::store::forget_grace_days() as i64),
+    };
+
+    let restored = store
+        .undo_forget(&namespace, since)
+        .await
+        .map_err(|e| ApiError::Internal(format!("memory: undo_forget: {e}")))?;
+    Ok(UndoForgetResponse {
+        restored,
+        since: since.to_rfc3339(),
+    })
+}
+
+/// Janitor sweep — hard-delete every soft-deleted row whose
+/// `forgotten_at` is older than the grace window. Returns the count
+/// hard-deleted. Safe to call repeatedly (idempotent past the grace
+/// window).
+pub async fn sweep_expired(store: &MemoryStore) -> ApiResult<u64> {
+    let grace_days = xvision_memory::store::forget_grace_days();
+    store
+        .hard_delete_expired(grace_days)
+        .await
+        .map_err(|e| ApiError::Internal(format!("memory: sweep_expired: {e}")))
 }
 
 /// Convenience: resolve `?agent=<id>` to a namespace string. Dashboard
@@ -525,6 +661,7 @@ mod tests {
             scenario_id: Some(scenario_id.into()),
             cycle_idx: Some(cycle_idx),
             training_window_end: None,
+            forgotten_at: None,
         };
         store
             .upsert_observation(&item, "test-embedder")

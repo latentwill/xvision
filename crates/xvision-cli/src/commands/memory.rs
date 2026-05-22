@@ -34,7 +34,9 @@
 use clap::{Args, Subcommand};
 
 use xvision_engine::api::memory as memory_api;
-use xvision_engine::api::memory::{ListMemoryRequest, MemoryItemDto, PatternCreateRequest};
+use xvision_engine::api::memory::{
+    ListMemoryRequest, MemoryItemDto, PatternCreateRequest, UndoForgetRequest,
+};
 use xvision_engine::api::ApiError;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
@@ -57,6 +59,8 @@ pub enum Op {
     Rm(RmArgs),
     /// Bulk-delete every item in a namespace.
     Forget(ForgetArgs),
+    /// Restore soft-deleted items inside the grace window.
+    UndoForget(UndoForgetArgs),
 }
 
 #[derive(Args, Debug)]
@@ -137,6 +141,24 @@ pub struct ForgetArgs {
     pub json: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct UndoForgetArgs {
+    /// Exact namespace whose soft-deleted rows should be restored.
+    /// Mutually exclusive with `--agent`.
+    #[arg(long)]
+    pub namespace: Option<String>,
+    /// Shorthand for `--namespace agent:<id>`.
+    #[arg(long, conflicts_with = "namespace")]
+    pub agent: Option<String>,
+    /// Optional RFC3339 lower bound. Rows whose `forgotten_at` is
+    /// strictly older than this are not restored. Defaults to
+    /// `now - XVN_MEMORY_FORGET_GRACE_DAYS` (the full grace window).
+    #[arg(long)]
+    pub since: Option<String>,
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub async fn run(cmd: MemoryCmd) -> CliResult<()> {
     match cmd.op {
         Op::Ls(args) => run_ls(args).await,
@@ -144,6 +166,7 @@ pub async fn run(cmd: MemoryCmd) -> CliResult<()> {
         Op::AddPattern(args) => run_add_pattern(args).await,
         Op::Rm(args) => run_rm(args).await,
         Op::Forget(args) => run_forget(args).await,
+        Op::UndoForget(args) => run_undo_forget(args).await,
     }
 }
 
@@ -174,6 +197,9 @@ async fn run_ls(args: LsArgs) -> CliResult<()> {
         run_id: args.run,
         limit: Some(args.limit),
         offset: Some(args.offset),
+        // CLI v1 hides forgotten rows; the dashboard's
+        // `--include-forgotten` toggle lives in the route layer.
+        include_forgotten: None,
     };
 
     let resp = memory_api::list(&store, req)
@@ -345,6 +371,51 @@ async fn run_forget(args: ForgetArgs) -> CliResult<()> {
         write_stdout(&bytes)?;
     } else {
         println!("forgot {} item(s) in namespace {}", resp.deleted, namespace);
+    }
+    Ok(())
+}
+
+async fn run_undo_forget(args: UndoForgetArgs) -> CliResult<()> {
+    // Resolve namespace shorthand. We could let the engine handle this
+    // but mirroring the `forget` shape keeps the operator's mental
+    // model symmetric (same flags, same error messages).
+    let namespace = match (args.namespace.as_deref(), args.agent.as_deref()) {
+        (Some(ns), None) => Some(ns.to_string()),
+        (None, Some(agent)) => Some(memory_api::agent_namespace(agent)),
+        (None, None) => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "set either --namespace or --agent for undo-forget"
+            )));
+        }
+        (Some(_), Some(_)) => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--namespace and --agent are mutually exclusive"
+            )));
+        }
+    };
+
+    let store = memory_api::open_default_store()
+        .await
+        .map_err(|e| api_to_cli("memory undo-forget", e))?;
+
+    let req = UndoForgetRequest {
+        namespace,
+        agent: None,
+        since: args.since,
+    };
+
+    let resp = memory_api::undo_forget(&store, req)
+        .await
+        .map_err(|e| api_to_cli("memory undo-forget", e))?;
+
+    if args.json {
+        let bytes = serde_json::to_vec_pretty(&resp).exit_with(XvnExit::Upstream)?;
+        write_stdout(&bytes)?;
+    } else {
+        println!(
+            "restored {} item(s) forgotten since {}",
+            resp.restored, resp.since
+        );
     }
     Ok(())
 }

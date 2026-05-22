@@ -318,3 +318,87 @@ fn add_pattern_force_bypasses_no_embedder_gate() {
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(body["text"], "force seed");
 }
+
+#[test]
+fn undo_forget_restores_soft_deleted_items() {
+    let (dir, mem) = paths();
+
+    // Seed two patterns, forget them, then undo-forget and confirm
+    // both reappear in `memory ls`.
+    let out = xvn(
+        &[
+            "memory",
+            "add-pattern",
+            "first pattern",
+            "--namespace",
+            "agent:undo-test",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&out);
+    let out = xvn(
+        &[
+            "memory",
+            "add-pattern",
+            "second pattern",
+            "--namespace",
+            "agent:undo-test",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&out);
+
+    // Forget the namespace — default grace window (14d) → soft-delete.
+    let out = xvn(
+        &["memory", "forget", "--namespace", "agent:undo-test", "--json"],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(body["deleted"], 2);
+
+    // `ls` hides forgotten rows.
+    let ls = xvn(
+        &["memory", "ls", "--namespace", "agent:undo-test", "--json"],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&ls);
+    let items: serde_json::Value = serde_json::from_slice(&ls.stdout).expect("json");
+    assert_eq!(items.as_array().unwrap().len(), 0);
+
+    // undo-forget → both rows restored.
+    let out = xvn(
+        &[
+            "memory",
+            "undo-forget",
+            "--namespace",
+            "agent:undo-test",
+            "--json",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(body["restored"], 2);
+
+    let ls = xvn(
+        &["memory", "ls", "--namespace", "agent:undo-test", "--json"],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&ls);
+    let items: serde_json::Value = serde_json::from_slice(&ls.stdout).expect("json");
+    assert_eq!(items.as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn undo_forget_requires_namespace_or_agent() {
+    let (dir, mem) = paths();
+    let out = xvn(&["memory", "undo-forget"], dir.path(), &mem);
+    assert!(!out.status.success(), "undo-forget with no namespace must fail");
+}

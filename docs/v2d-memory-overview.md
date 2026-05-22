@@ -272,3 +272,37 @@ section above. The remaining gap is automated distillation:
 Until then, leave memory off for backtests you want to keep clean,
 turn it on (Global or Agent-scoped) for runs whose Observations you
 want to feed the future distillation pass.
+
+## Undo a `forget`
+
+`xvn memory forget` is no longer destructive by default. Rows are
+soft-deleted — marked with a `forgotten_at` timestamp — and stay
+recoverable for `XVN_MEMORY_FORGET_GRACE_DAYS` (default **14 days**)
+before a janitor sweep removes them permanently. Inside the window,
+`xvn memory ls` hides them; `xvn memory undo-forget` restores them.
+
+```bash
+# accidentally forgot a namespace
+xvn memory forget --agent abc
+
+# bring it back inside the grace window
+xvn memory undo-forget --agent abc
+```
+
+`undo-forget` accepts an optional RFC3339 `--since` that lower-bounds
+which rows are restored. The default lower bound is `now - grace_days`
+so a bare `undo-forget` recovers everything inside the window.
+
+### Bypassing the grace window
+
+To restore V2D's prior destructive semantics, set
+`XVN_MEMORY_FORGET_GRACE_DAYS=0`. `forget` then immediately
+hard-deletes and there is nothing for `undo-forget` to recover.
+
+### Janitor sweep
+
+The engine surface exposes `sweep_expired` (and the matching
+`MemoryStore::hard_delete_expired`) for hosts that want to run the
+sweep periodically. With grace > 0 the sweep is safe to call as often
+as desired — it only removes rows whose `forgotten_at` is older than
+the grace window.
