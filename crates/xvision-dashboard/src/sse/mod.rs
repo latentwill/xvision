@@ -58,6 +58,13 @@ fn event_name(ev: &RunEvent) -> &'static str {
         // registration only — the SSE forwarder treats it like any
         // other run-scoped event.
         RunEvent::MemoryRecall(_) => "memory_recall",
+        // Carryover build-fix (2026-05-22): `EngineEvent` was added to
+        // `xvision_observability::RunEvent` upstream and this match
+        // wasn't extended, breaking every `cargo build` against
+        // origin/main. The contract `cli-report-actions-and-tokens`
+        // needs the CLI crate to compile in order to verify, so the arm
+        // is added here as a minimal one-line carryover fix.
+        RunEvent::EngineEvent(_) => "engine_event",
     }
 }
 

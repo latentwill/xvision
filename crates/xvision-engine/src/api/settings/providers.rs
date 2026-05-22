@@ -65,6 +65,123 @@ pub struct ProviderRow {
     pub enabled_models: Vec<String>,
 }
 
+/// Canonical view of one provider — combines the persisted `ProviderEntry`,
+/// secret/env presence, and the operator's `enabled_models` curation into
+/// the answer to "is this `(provider, model)` launchable right now?".
+///
+/// Returned by [`effective_providers`]; the same shape backs:
+/// - `xvn provider list --effective` (CLI)
+/// - the dashboard's `/api/settings/providers` handler (via `list`)
+/// - the `xvn doctor` `providers` block
+/// - eval-launch refusal in `crate::api::eval::resolve_provider`
+///
+/// No other code path may independently compute `launchable`. If a new
+/// surface needs the answer, route it through `effective_providers` so
+/// the CLI / dashboard / eval-launch verdicts stay byte-identical.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectiveProvider {
+    pub provider: String,
+    /// Stable string form — `"anthropic" | "openai-compat" | "local-candle"`.
+    pub kind: String,
+    pub base_url: String,
+    /// Env var holding the API key. Empty string for no-auth endpoints.
+    pub api_key_env: String,
+    /// Whether the provider is enabled in the workspace config. Today this
+    /// is always `true` for every non-synthetic row — there is no separate
+    /// `enabled` toggle — but the field is surfaced so future toggles plug
+    /// in without breaking JSON consumers.
+    pub enabled: bool,
+    /// True iff an API key for this provider is materialized (stored
+    /// secret, env-exported, or unnecessary because the kind is no-auth).
+    pub has_key: bool,
+    /// Per-model launch verdict, one entry per id in `enabled_models`.
+    /// Empty when the operator hasn't curated a model list yet.
+    pub models: Vec<EffectiveProviderModel>,
+    /// Roll-up verdict — `enabled && has_key && (kind == LocalCandle || at least one model enabled)`.
+    /// The single source of truth for "can the operator launch eval against
+    /// this provider right now". Eval-launch refusal turns on the same
+    /// predicate (see `ProviderUnavailableReason`).
+    pub launchable: bool,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectiveProviderModel {
+    pub id: String,
+    /// True iff this model id appears in the provider's `enabled_models`
+    /// list. All entries in `EffectiveProvider::models` are derived from
+    /// that list, so today every entry is `enabled = true` — the field is
+    /// kept on the wire so a future "disable individual models" toggle
+    /// can ship without an API shape change.
+    pub enabled: bool,
+}
+
+/// Discriminant for why eval-launch refused a `(provider, model)`. Replaces
+/// the historic flat `"provider '{name}' is not configured"` string so
+/// operators reading CLI output know whether to add a key or flip a toggle.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderUnavailableReason {
+    /// Provider name is not in `[[providers]]`.
+    ProviderUnknown,
+    /// Provider row exists but `enabled` is false. Today no toggle exists
+    /// — the variant is on the wire so the discriminant survives if one
+    /// is added.
+    ProviderDisabled,
+    /// Provider is configured but no API key is materialized (env var
+    /// unset, no stored secret).
+    KeyMissing,
+    /// Provider has the key but the requested model is not enabled (or no
+    /// model is requested and `enabled_models` is empty).
+    ModelDisabled,
+}
+
+impl ProviderUnavailableReason {
+    /// Stable wire identifier — matches the `#[serde]` form. Surfaced on
+    /// `ProviderUnavailable::reason_str` for code that walks the error
+    /// without re-parsing it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ProviderUnknown => "provider_unknown",
+            Self::ProviderDisabled => "provider_disabled",
+            Self::KeyMissing => "key_missing",
+            Self::ModelDisabled => "model_disabled",
+        }
+    }
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderUnavailable {
+    pub provider: String,
+    pub reason: ProviderUnavailableReason,
+    /// Set when the caller named a specific model. None means the caller
+    /// only asked about provider-level launchability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Human-readable hint — names the env var to set or the toggle to
+    /// flip. Eval refusal renders this verbatim into the CLI error.
+    pub hint: String,
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -176,6 +293,134 @@ struct ProviderSecret {
     env_var: String,
     /// Plaintext API key. Treat the file like an SSH private key.
     api_key: String,
+}
+
+/// Canonical "which providers are launchable right now" lookup. Returns
+/// one row per non-synthetic provider in the workspace config; each row
+/// carries the verdict the rest of the surface uses (CLI `provider list
+/// --effective`, dashboard `/api/settings/providers`, `xvn doctor`,
+/// eval-launch refusal).
+///
+/// Reads from existing config + secrets + provider catalog. No
+/// persistence side-effects.
+pub async fn effective_providers(
+    ctx: &ApiContext,
+    config_path: &Path,
+) -> ApiResult<Vec<EffectiveProvider>> {
+    effective_providers_with_paths(&ctx.xvn_home, config_path).await
+}
+
+/// Same canonical rollup as [`effective_providers`], but only requires
+/// the on-disk paths. Used by `xvn doctor`, which is a diagnostic verb
+/// and should not open an `ApiContext` (that side-effects tracing /
+/// audit-table migration and pollutes a `--json` report). Keep the two
+/// in lock-step: any change to launch verdicts goes through this
+/// function.
+pub async fn effective_providers_with_paths(
+    xvn_home: &Path,
+    config_path: &Path,
+) -> ApiResult<Vec<EffectiveProvider>> {
+    let cfg = load_cfg(config_path).await?;
+    let secrets = load_providers_secrets(xvn_home).await?;
+    let rows = cfg
+        .providers
+        .iter()
+        .filter(|p| !p.name.starts_with('_'))
+        .map(|entry| effective_from_entry(entry, &secrets))
+        .collect();
+    Ok(rows)
+}
+
+/// Look up the launch verdict for a specific `(provider, model)` pair.
+///
+/// Returns `Ok(entry)` only when the helper's `launchable` predicate is
+/// satisfied AND the requested `model` (if any) is in `enabled_models`
+/// (or the provider is `local-candle`, which has no remote catalog).
+///
+/// On refusal, returns the typed `ProviderUnavailable` so callers can
+/// surface a `reason` discriminant instead of pattern-matching a string.
+pub async fn resolve_provider(
+    ctx: &ApiContext,
+    config_path: &Path,
+    name: &str,
+    model: Option<&str>,
+) -> Result<ProviderEntry, ProviderUnavailable> {
+    let cfg = match load_cfg(config_path).await {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(ProviderUnavailable {
+                provider: name.to_string(),
+                reason: ProviderUnavailableReason::ProviderUnknown,
+                model: model.map(str::to_string),
+                hint: format!("load runtime config: {e}"),
+            });
+        }
+    };
+    let entry = match cfg.providers.iter().find(|p| p.name == name) {
+        Some(e) => e.clone(),
+        None => {
+            return Err(ProviderUnavailable {
+                provider: name.to_string(),
+                reason: ProviderUnavailableReason::ProviderUnknown,
+                model: model.map(str::to_string),
+                hint: format!(
+                    "provider `{name}` is not in `[[providers]]`. Add it with `xvn provider add --name {name} …` or pick a configured provider/model for the strategy agent."
+                ),
+            });
+        }
+    };
+    // Reserved/synthetic rows are not launchable from any surface.
+    if entry.name.starts_with('_') {
+        return Err(ProviderUnavailable {
+            provider: name.to_string(),
+            reason: ProviderUnavailableReason::ProviderDisabled,
+            model: model.map(str::to_string),
+            hint: format!("provider `{name}` is reserved/internal and cannot be used to launch eval"),
+        });
+    }
+    // Key presence — env var OR stored secret OR no-auth kind.
+    let secrets = match load_providers_secrets(&ctx.xvn_home).await {
+        Ok(s) => s,
+        Err(_) => ProvidersSecretsFile::default(),
+    };
+    let has_key = entry_has_key(&entry, &secrets);
+    if !has_key && entry.kind != ProviderKind::LocalCandle {
+        let env_hint = if entry.api_key_env.is_empty() {
+            "no api_key_env configured for this provider; set one in Settings → Providers".to_string()
+        } else {
+            format!("export {} or paste a key in Settings → Providers", entry.api_key_env)
+        };
+        return Err(ProviderUnavailable {
+            provider: name.to_string(),
+            reason: ProviderUnavailableReason::KeyMissing,
+            model: model.map(str::to_string),
+            hint: env_hint,
+        });
+    }
+    // Model enablement — only applies when caller named a model. local-candle
+    // bypasses the per-model gate (it has no remote catalog).
+    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        if entry.kind != ProviderKind::LocalCandle {
+            let enabled = entry.enabled_models.iter().any(|enabled_id| enabled_id == m);
+            if !enabled {
+                let listing = if entry.enabled_models.is_empty() {
+                    format!("no models are enabled for `{name}`; enable one in Settings → Providers → Manage models")
+                } else {
+                    format!(
+                        "enabled models for `{name}`: {}",
+                        entry.enabled_models.join(", ")
+                    )
+                };
+                return Err(ProviderUnavailable {
+                    provider: name.to_string(),
+                    reason: ProviderUnavailableReason::ModelDisabled,
+                    model: Some(m.to_string()),
+                    hint: listing,
+                });
+            }
+        }
+    }
+    Ok(entry)
 }
 
 pub async fn list(ctx: &ApiContext, config_path: &Path) -> ApiResult<ProvidersReport> {
@@ -1003,6 +1248,62 @@ async fn load_cfg(config_path: &Path) -> ApiResult<RuntimeConfig> {
         .await
         .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
         .map_err(|e| ApiError::Validation(format!("load config: {e}")))
+}
+
+/// True iff the provider has a usable API key — stored secret OR env-exported
+/// OR a no-auth kind that needs none. Shared by `row_from_entry`,
+/// `effective_from_entry`, and `resolve_provider` so all three surfaces
+/// agree on what "key set" means.
+fn entry_has_key(entry: &ProviderEntry, secrets: &ProvidersSecretsFile) -> bool {
+    if entry.kind == ProviderKind::LocalCandle {
+        // No-auth kind — always "has key" for launchability purposes.
+        return true;
+    }
+    if entry.api_key_env.is_empty() {
+        return false;
+    }
+    secrets.provider.contains_key(&entry.name)
+        || std::env::var(&entry.api_key_env)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+}
+
+/// Build the canonical `EffectiveProvider` view for one row. Shared by
+/// `effective_providers` (engine) and any future caller that needs the
+/// same rollup off a single `ProviderEntry`.
+fn effective_from_entry(entry: &ProviderEntry, secrets: &ProvidersSecretsFile) -> EffectiveProvider {
+    let has_key = entry_has_key(entry, secrets);
+    let models: Vec<EffectiveProviderModel> = entry
+        .enabled_models
+        .iter()
+        .map(|id| EffectiveProviderModel {
+            id: id.clone(),
+            // Today every entry in `enabled_models` is enabled. The wire
+            // shape carries the per-model bool so a future "disable
+            // individual models" toggle doesn't break consumers.
+            enabled: true,
+        })
+        .collect();
+    // For now `enabled` mirrors "row exists and is non-synthetic". Filtered
+    // upstream in `effective_providers`; setting `true` here keeps the
+    // field meaningful if a caller hands a synthetic row directly.
+    let enabled = !entry.name.starts_with('_');
+    let has_enabled_model = !models.is_empty();
+    // Local-candle has no remote catalog — launchability for it skips
+    // the per-model gate. For network kinds we require at least one model.
+    let launchable = enabled
+        && has_key
+        && (entry.kind == ProviderKind::LocalCandle || has_enabled_model);
+    EffectiveProvider {
+        provider: entry.name.clone(),
+        kind: kind_to_str(entry.kind).into(),
+        base_url: entry.base_url.clone(),
+        api_key_env: entry.api_key_env.clone(),
+        enabled,
+        has_key,
+        models,
+        launchable,
+    }
 }
 
 fn row_from_entry(entry: &ProviderEntry, cfg: &RuntimeConfig, secrets: &ProvidersSecretsFile) -> ProviderRow {

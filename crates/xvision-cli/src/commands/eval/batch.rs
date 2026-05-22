@@ -155,8 +155,28 @@ pub struct RunEntry {
     /// Total decisions made during the run (`MetricsSummary::n_decisions`).
     pub decisions: u32,
     /// Count of each decision action kind across the run's decisions table.
-    /// Keys: `long_open`, `short_open`, `flat`, `hold`.
+    /// Keys: `long_open`, `short_open`, `flat`, `hold`, `long_close`,
+    /// `short_close`.
     pub actions: BTreeMap<String, u64>,
+    /// Sum of `model_calls.input_token_count` across the run. `None` for
+    /// runs that produced no model_calls (legacy / failure-mode rows).
+    /// Appended 2026-05-22 for `cli-report-actions-and-tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Sum of `model_calls.output_token_count`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// Sum of `model_calls.cost_usd`. Lower-bound when
+    /// `cost_estimate_complete = false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd_estimate: Option<f64>,
+    /// `true` iff every contributing `model_calls.cost_usd` was non-null.
+    #[serde(default = "default_true")]
+    pub cost_estimate_complete: bool,
+    /// `completed_at - started_at` in milliseconds. `None` for runs that
+    /// haven't reached a terminal state with a `completed_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_clock_ms: Option<u64>,
     /// Error message when `status == "failed"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -164,6 +184,10 @@ pub struct RunEntry {
     /// completed. Absent entirely (not serialised as `null`) otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review: Option<ReviewDetail>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 // ── Testable core ─────────────────────────────────────────────────────────────
@@ -244,6 +268,7 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
             params_override: None,
             limits: None,
             skip_preflight: false,
+            provider_override: None,
         };
 
         let entry = match eval::run_with_deps(
@@ -393,6 +418,11 @@ async fn run_entry_from_run(
         (None, None, None, 0)
     };
 
+    // Token / cost / wall-clock rollup so batch payloads carry the same
+    // shape `xvn eval results` returns per run.
+    let totals = xvision_engine::eval::report::aggregate_run_token_totals(&ctx.db, &run_id).await;
+    let wall_clock_ms = xvision_engine::eval::report::wall_clock_ms(run.started_at, run.completed_at);
+
     RunEntry {
         scenario_id: scenario_id.to_owned(),
         scenario_name: scenario_name.to_owned(),
@@ -403,6 +433,11 @@ async fn run_entry_from_run(
         drawdown_pct,
         decisions,
         actions,
+        input_tokens: totals.input_tokens,
+        output_tokens: totals.output_tokens,
+        cost_usd_estimate: totals.cost_usd_estimate,
+        cost_estimate_complete: totals.cost_estimate_complete,
+        wall_clock_ms,
         error: run.error,
         review: None,
     }
@@ -447,6 +482,11 @@ async fn failed_entry_from_error(
         drawdown_pct: None,
         decisions: 0,
         actions: BTreeMap::new(),
+        input_tokens: None,
+        output_tokens: None,
+        cost_usd_estimate: None,
+        cost_estimate_complete: true,
+        wall_clock_ms: None,
         error: Some(error),
         review: None,
     }
@@ -568,6 +608,7 @@ pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> 
             params_override: None,
             limits: None,
             skip_preflight: false,
+            provider_override: None,
         };
 
         let entry = match eval::run(ctx, run_req).await {
@@ -663,10 +704,7 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
     let result = run_batch_via_env(&ctx, &args).await?;
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&result)?;
         return Ok(());
     }
 
@@ -719,11 +757,31 @@ pub async fn run_batch_status_cmd(args: BatchStatusArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("eval batch status", e))?;
 
+    // Compose per-run reports so `--json` carries the same token/cost/action
+    // payload as `xvn eval results`. Errors per-run are swallowed (the run
+    // may have been deleted out from under the batch); a missing entry is
+    // simply absent from the `run_reports` array.
+    let store = RunStore::new(ctx.db.clone());
+    let mut run_reports: Vec<serde_json::Value> = Vec::with_capacity(detail.run_ids.len());
+    for run_id in &detail.run_ids {
+        if let Ok(run) = store.get(run_id).await {
+            let (report, _behavior) =
+                xvision_engine::eval::report::compute_run_report(&ctx.db, &run).await;
+            run_reports.push(serde_json::json!({
+                "run_id": run.id,
+                "status": run.status.as_str(),
+                "scenario_id": run.scenario_id,
+                "report": report,
+            }));
+        }
+    }
+
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&detail).exit_with(XvnExit::Upstream)?
-        );
+        let body = serde_json::json!({
+            "batch": &detail,
+            "run_reports": run_reports,
+        });
+        crate::io::print_json(&body)?;
         return Ok(());
     }
 

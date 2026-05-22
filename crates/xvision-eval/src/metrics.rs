@@ -348,7 +348,7 @@ fn compute_regime_stratified(
 mod tests {
     use super::*;
     use uuid::Uuid;
-    use xvision_core::trading::{Action, Direction, Regime, TraderDecision};
+    use xvision_core::trading::{Action, AssetSymbol, Direction, Regime, TraderDecision};
 
     // -----------------------------------------------------------------------
     // returns_from_pnl
@@ -497,7 +497,7 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 4.0,
             trader_summary: "test decision fixture for divergence test".into(),
-            asset: None,
+            asset: AssetSymbol::Btc,
         }
     }
 

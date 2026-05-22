@@ -153,3 +153,39 @@ build on the P0 surface and should decompose only after P0 lands.
 The conductor's recommended next-wave order from the intake (provider
 parity → CLI machine contract → results enrichment → bakeoff verb)
 holds; expect 4–5 separate contracts on that wave.
+
+## Status — 2026-05-22 (Wave A complete)
+
+Wave A shipped:
+- #8 `provider-resolution-parity` → PR #530 merged
+- #10 `cli-json-stdout-contract` → PR #531 merged
+- #11 `cli-report-actions-and-tokens` → PR #532 merged
+- #9 `provider-doctor-effective` was folded into #530 (single `effective_providers()` helper + `xvn doctor` providers block).
+
+P0 bundle (#1/#2/#3) was already merged before Wave A (#425/#428/#429).
+
+## Status — 2026-05-22 (Wave B promoted)
+
+Wave B opened as three leaf+integration contracts:
+
+| # | Track | Contract | Lane |
+|---|---|---|---|
+| 5 | `cli-eval-model-override` | `team/contracts/cli-eval-model-override.md` | leaf — per-launch override receipt |
+| 4 | `cli-strategy-clone-model-override` | `team/contracts/cli-strategy-clone-model-override.md` | leaf — durable clone with new model |
+| 6 | `cli-model-bakeoff` (absorbs #7) | `team/contracts/cli-model-bakeoff.md` | integration — depends on #4 + #5 |
+
+`#7 cli-two-run-rerun-workflow` is folded into `cli-model-bakeoff` —
+it's the common-case shape of the bakeoff verb (small N, single
+scenario, single model), not a separate surface.
+
+`#12 remote-cli-safe-eval-allowlist` is **already shipped** via the
+V2B `remote-cli-job-safety` work (PR #447). The dashboard
+allowlist at `crates/xvision-dashboard/src/cli_jobs/allowlist.rs`
+already permits `eval list/show/results/watch/compare/cancel`,
+`strategy show`, `scenario show`, bounded `experiment run`, and even
+pre-allows the `["model", "bakeoff"]` STRICT_TEMPLATES entry for when
+`cli-model-bakeoff` ships. No new contract needed.
+
+### P2 (#13–#15) — Reserved indefinitely
+
+Reopen if Wave B operator feedback surfaces them as material.

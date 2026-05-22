@@ -31,8 +31,8 @@ xvision-play per ADR 0011.
 | Track | Items | Lives on |
 |---|---|---|
 | **SLF — Strategy Loom** | SLF1–16 (below) | `main` (post-merge of `pivot/cv-extract`) |
-| **Shared** | F5, F6, F7, F8, F18, F19, F20, F22, F24, F26, F27, F28, F29, F30, F31, F33, F34, F37, F38, F39, F40, F41, F42 | `main` |
-| **Done** | F25, F35, F36 | — |
+| **Shared** | F5, F6, F7, F8, F19, F20, F22, F24, F26, F27, F28, F29, F30, F31, F33, F34, F37, F38, F39, F40, F41, F42 | `main` |
+| **Done** | F18, F25, F35, F36 | — |
 
 Quick navigation: [SLF queue](#strategy-loom-queue-slf) ·
 [Shared queue](#shared-queue)
@@ -189,12 +189,22 @@ Infrastructure used by both tracks. Lives on `main`.
 - **Scope:** doc comment on `xvision-core::market::MarketSnapshot` listing the temporal invariants (recent_bars.last().timestamp ≤ snapshot.timestamp; recent_bars chronologically ordered; horizon_hours non-negative). From `decisions/0005-lookahead-audit.md` follow-up #3.
 - **Blocking:** non-blocking; documentation hygiene.
 
-### F18 [Shared]. Add `asset: AssetSymbol` to `TraderDecision`
+### F18 [Shared]. ~~Add `asset: AssetSymbol` to `TraderDecision`~~ — **DONE**
 
-- **Trigger:** multi-asset enabled in `whitelist.toml` (post-headline / post-hackathon).
-- **Note:** F30 M1 covers the partial pull-in of `TraderDecision.asset` as part of the Alpaca unlock. The full cascade below is the post-hackathon remainder. Validate scope against `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md` before opening a contract.
-- **Scope (remaining after F30 M1):** cascade `asset` field through xvision-trader (prompt schema), xvision-intern (briefing format), xvision-risk (drop the separate `asset` parameter), xvision-execution (Alpaca + Orderly stop pinning to BTC), xvision-eval (drop `BacktestConfig.instrument`). Mechanical but wide.
-- **Blocking:** YES for full multi-asset.
+- **Status: Done (2026-05-22).** Multi-asset cascade complete. `TraderDecision.asset`
+  is now a required `AssetSymbol` (no `Option<>`). Risk layer signature
+  `evaluate(decision, portfolio)` drops the separate asset param. Trader
+  prompt schema asks the model to echo `asset`; parser validates it matches
+  the briefing's asset. `BacktestConfig::instrument` and
+  `BacktestRunConfig::instrument` are gone — backtest executor reads asset
+  from each decision. Alpaca's `default_asset` field removed; Orderly v1
+  rejects non-BTC decisions (PERP_BTC_USDC scope per ADR 0008). See contract
+  `team/archive/2026-05-22-conductor-pass-5/contracts/multi-asset-alpaca-unlock.md`.
+- **Orderly multi-asset expansion (2026-05-22).** The BTC-only `NotActionable`
+  guard at the Orderly executor boundary was lifted shortly after. Orderly
+  now routes per `td.asset` across `ORDERLY_SUPPORTED` (BTC, ETH, SOL, AVAX,
+  DOGE, LINK). See `docs/superpowers/plans/2026-05-22-orderly-multi-asset-expansion.md`
+  and follow-on F44 below.
 
 ### F19 [Shared]. Re-adopt `orderly-connector-rs` SDK when its `zeroize` pin loosens
 
@@ -309,19 +319,21 @@ Infrastructure used by both tracks. Lives on `main`.
 
 - **Status: Done.** Eval provider preflight shipped as `eval-provider-preflight` (#452 + follow-up clawpatch #468). Scenario display-name contract subsumed by `scenario-clone-form-structural-fields` (#437) and the wider scenario-form polish in the QA Round 4 tail.
 
-### F41 [Shared]. Eval contract honesty + agent-graph composition — **PARTIALLY DONE (eval-honesty cohort merged 2026-05-21)**
+### F41 [Shared]. Eval contract honesty + agent-graph composition — **MOSTLY DONE (5 of 8 sub-items shipped 2026-05-22)**
 
 - **Status: tier-0 done.** Eval-honesty cohort merged: `eval-honesty-smell-tests` (#448), `eval-guardrail-log-collapse` (#449), `eval-provider-attestation` (#450), `eval-provider-preflight` (#452 + #468). `seed-scaffolding-cleanup` (#463) and `container-config-path-papercut` (#464) also merged. Eval numbers are now trustworthy at tier-0 (stub detection, provider attestation, preflight).
-- **Still open (8 sub-tracks not yet decomposed into contracts):**
-  - `trader-noop-skip` — skip LLM call when portfolio_state allows zero legal actions
-  - `strategy-model-attestation-only` — demote `required_models` / `model_requirement` to informational `attested_with`
-  - `strategy-slot-prompt-resolution` — resolve role of `strategy.trader_slot.prompt` (remove or make explicit override)
-  - `agent-graph-composition` — formalize `kind` on `AgentRef`, per-kind I/O contracts, Filter granularity. **Originally depends on `executor-refactor`** (which was superseded by executor-trait-extraction #487 + live-* tracks). Re-evaluate dependency vs the now-shipped `xvision-filters` crate (filter-v1 stages 1–5).
-  - `indicator-tool-wiring` — wire `indicator_panel` tool through to trader slot (currently `tools: []`)
-  - `bar-history-limit-surface` — surface/respect `AgentSlot.bar_history_limit` in agent editor
-  - `risk-sees-conviction` — expose `conviction` to risk layer for optional sizing scale
-  - `eval-token-efficiency` — prompt-cache stable prefix, per-slot `max_tokens` cap default, optional delta-briefing mode
-- **Source intake** (still open): `team/intake/2026-05-21-eval-honesty-and-agent-graph.md`.
+- **Shipped 2026-05-22 (5 of 8 sub-items):**
+  - ✅ `trader-noop-skip` — skip LLM call when `portfolio_state` allows zero legal actions (#506)
+  - ✅ `strategy-model-attestation-only` — demote `required_models` / `model_requirement` to informational `attested_with` (#508)
+  - ✅ `strategy-slot-prompt-resolution` — removed `LLMSlot.prompt`; agent-side `system_prompt` is source of truth (#515)
+  - ✅ `bar-history-limit-surface` — surface/respect `AgentSlot.bar_history_limit` in agent editor (#505)
+  - ✅ `risk-sees-conviction` — expose `TraderDecision.conviction` to risk gate (#507)
+- **In flight:**
+  - 🟡 `indicator-tool-wiring` — PR #521 open (wires `indicator_panel` tool through to trader slot — today `tools: []`)
+- **Still open:**
+  - `eval-token-efficiency-tail` — per-provider `max_tokens` defaults + optional delta-briefing mode. Contract authored (`team/contracts/eval-token-efficiency-tail.md`), ready to dispatch.
+  - `agent-graph-composition` — spec landed via PR #518 (`docs/superpowers/specs/2026-05-22-capability-first-agent-model.md`). Decomposed into Phases A–F; Phase A contract authored (`agent-graph-capability-schema`, reserves migration 033). Phases B–F still need their own contracts.
+- **Source intake** (still open for the remaining 2 items): `team/intake/2026-05-21-eval-honesty-and-agent-graph.md`.
 - **Blocking:** non-blocking for trust at tier-0 (already shipped); these are quality / capability extensions.
 
 ### F42 [Shared]. Memory safety + observability (post-V2D follow-ups)
@@ -330,3 +342,13 @@ Infrastructure used by both tracks. Lives on `main`.
 - **Scope:** execute tracks in `team/intake/2026-05-21-memory-safety-and-observability.md`. Three tracks: (a) `memory-forget-undo-snapshot` — soft-delete + grace period so `xvn memory forget` is recoverable; (b) `memory-provenance-in-decisions-trace` — bind `memory_recall` events to `decision_id` so trace can answer "which memories drove this decision"; (c) `memory-aware-eval-findings` — surface findings that name memory items most likely to have influenced outcome.
 - **Explicitly out of scope:** kill bucket from `team/decisions.md` D5 (cross-namespace blending, embedder config UI, memory diff CLI, mem0/Honcho/mempalace adapters, cortex-http sidecar, cross-host sharing, embedding swap CLI) and V3-candidate slips (tool-driven memory, TTL/LRU eviction).
 - **Blocking:** non-blocking; safety net + observability over V2D. `memory-forget-undo-snapshot` should land close to V2D.
+
+> Note: F43 was assigned to trace-dock-emitters (shipped 2026-05-22, #524) on
+> the board but never landed in this file; the next free slot is therefore F44.
+
+### F44 [Shared]. Orderly market refresh — periodic `GET /v1/public/info` poll
+
+- **Trigger:** Orderly multi-asset expansion landed (2026-05-22 — see `docs/superpowers/plans/2026-05-22-orderly-multi-asset-expansion.md`). Current supported set is hardcoded in `ORDERLY_SUPPORTED` (`crates/xvision-execution/src/orderly.rs`).
+- **Scope:** schedule a background poll of Orderly's `GET /v1/public/info` (or `GET /v1/public/futures_info`) into a SQLite cache, then have `orderly_symbol_for` short-circuit against the cache instead of the inline constant. Delisted markets should be rejected pre-submit by the executor with `NotActionable` and a clear "delisted" hint, not surface only when the broker returns an opaque rejection. Cache TTL: 24h.
+- **Why noted:** the hardcoded set is fine until Orderly adds or removes a market; without this, a delisted symbol would silently route to the broker and the order would fail at submit-time. Quality-of-life over correctness — the executor already rejects with `NotActionable` for assets not in the inline set.
+- **Blocking:** non-blocking.

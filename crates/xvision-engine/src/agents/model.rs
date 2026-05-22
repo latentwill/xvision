@@ -1,9 +1,100 @@
 //! Agent + AgentSlot value types.
 
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::agents::capability::Capability;
 use xvision_core::providers::{lookup_model, ModelMetadata};
+
+/// Back-compat default for the `AgentSlot.capabilities` field
+/// (migration 033). Pre-033 rows and JSON payloads that omit the field
+/// resolve to `{Trader}` — every slot in the pre-capability world was
+/// implicitly a trader, and the dispatcher's pre-Phase-B role-string
+/// path still expects that.
+pub fn default_capabilities() -> BTreeSet<Capability> {
+    BTreeSet::from([Capability::Trader])
+}
+
+/// Generic conservative cap for unknown providers / unannounced models
+/// when `provider_default_max_tokens` can't find a canonical metadata
+/// entry. Big enough to fit a typical trader decision JSON + reasoning;
+/// small enough that a runaway provider can't burn through an operator's
+/// budget on the first miss. See `eval-token-efficiency-tail` (F41).
+pub const CONSERVATIVE_DEFAULT_MAX_TOKENS: u32 = 8_192;
+
+/// Sensible default for the OpenAI-compatible family (vanilla OpenAI,
+/// OpenRouter, DeepSeek, Groq, Together, Mistral, xAI, etc.) when no
+/// canonical model metadata entry matches. 16k matches the
+/// gpt-4.1-mini class budget and leaves headroom for the structured-
+/// output schemas the eval traders typically use. See
+/// `eval-token-efficiency-tail` (F41).
+pub const OPENAI_COMPAT_DEFAULT_MAX_TOKENS: u32 = 16_384;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderFamily {
+    Anthropic,
+    OpenAiCompat,
+    Unknown,
+}
+
+fn normalise_provider(provider: &str) -> ProviderFamily {
+    match provider.trim().to_lowercase().as_str() {
+        "anthropic" => ProviderFamily::Anthropic,
+        "openai" | "openai-compat" | "openrouter" | "deepseek" | "groq" | "together" | "mistral" | "xai"
+        | "x-ai" | "fireworks" | "perplexity" => ProviderFamily::OpenAiCompat,
+        _ => ProviderFamily::Unknown,
+    }
+}
+
+/// Resolve a sensible per-(provider, model) default `max_tokens` for
+/// slots where the operator left the field unset.
+///
+/// Resolution order:
+///
+/// 1. Canonical model metadata (`lookup_model(model).auto_max_tokens()`).
+///    Covers every model id listed in
+///    `crates/xvision-core/src/providers/model_metadata.rs`. A hit is
+///    detected by the proxy "metadata is not the `unknown_default`" —
+///    auto > 4096 OR `reasoning_token_default > 0`.
+/// 2. Per-provider fallback table when the metadata missed:
+///    - `anthropic` → use the metadata `auto_max_tokens` even for the
+///      unknown fallback (matches `anthropic_request_body`'s wire-time
+///      contract: the API requires `max_tokens` and the dispatcher
+///      already falls back to the per-model auto value).
+///    - OpenAI-compat family (`openai`, `openai-compat`, `openrouter`,
+///      `deepseek`, `groq`, `together`, `mistral`, `xai`, `fireworks`,
+///      `perplexity`) → `OPENAI_COMPAT_DEFAULT_MAX_TOKENS` (16k).
+///    - Unknown provider → `CONSERVATIVE_DEFAULT_MAX_TOKENS` (8k).
+///
+/// Always returns a positive `u32`. Callers use the returned value when
+/// `AgentSlot::resolve_max_tokens` returned `None`.
+///
+/// See `team/contracts/eval-token-efficiency-tail.md`.
+pub fn provider_default_max_tokens(provider: &str, model: &str) -> u32 {
+    let meta = lookup_model(model);
+    // `lookup_model` returns `ModelMetadata::unknown_default` for ids
+    // missing from the canonical table. The unknown_default has
+    // `output_token_ceiling == 4096`; every real canonical row has a
+    // larger ceiling (Anthropic 8k, gpt-4o 16k, gpt-4.1 32k, etc.).
+    // Use the ceiling as the canonical-hit proxy so claude-sonnet-4-6
+    // (which has `recommended_visible_output: 4096`) still resolves
+    // via the metadata path.
+    let canonical_hit = meta.output_token_ceiling > 4_096 || meta.reasoning_token_default > 0;
+    if canonical_hit {
+        return meta.auto_max_tokens();
+    }
+
+    match normalise_provider(provider) {
+        // Anthropic always honours the metadata path — including
+        // `unknown_default`'s 4096 — to mirror the wire-time fallback
+        // in `anthropic_request_body`.
+        ProviderFamily::Anthropic => meta.auto_max_tokens(),
+        ProviderFamily::OpenAiCompat => OPENAI_COMPAT_DEFAULT_MAX_TOKENS,
+        ProviderFamily::Unknown => CONSERVATIVE_DEFAULT_MAX_TOKENS,
+    }
+}
 
 /// How the eval executor sanitizes the seed JSON before handing it to
 /// the trader LLM. Persisted as the `inputs_policy` column on
@@ -219,6 +310,44 @@ pub struct AgentSlot {
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(type = "boolean | null"))]
     pub noop_skip: Option<bool>,
+    /// Closed set of capability classes this slot can play in a strategy
+    /// pipeline (Phase A of the capability-first agent model spec,
+    /// `docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md`).
+    ///
+    /// Default = `{Trader}` so every pre-033 slot keeps today's
+    /// behavior on the back-compat path. Persisted as a JSON array on
+    /// `agent_slots.capabilities` (migration 033). The Phase B unified
+    /// dispatcher reads this set to decide which capability handler
+    /// runs; Phase A only persists the shape.
+    #[serde(default = "default_capabilities")]
+    #[cfg_attr(feature = "ts-export", ts(type = "Capability[]"))]
+    pub capabilities: BTreeSet<Capability>,
+    /// Per-slot opt-in for **delta-briefing mode** (F41 token-efficiency
+    /// tail). When `Some(true)`, the trader briefing for bar N+1 is
+    /// compressed to **only the delta** from bar N's briefing — changed
+    /// indicators, new fills, regime transitions — rather than the full
+    /// snapshot. Falls back to the full briefing on cache miss (first
+    /// bar of a run; the prev briefing wasn't tracked; or the diff
+    /// would be too sparse to be useful).
+    ///
+    /// Defaults to `None` ≡ `Some(false)`. The full-briefing path is
+    /// byte-identical to pre-F41 behaviour so existing eval runs are
+    /// unaffected. Operators opt in per slot when they want to lean on
+    /// provider prompt caching (Anthropic `cache_control`) **and**
+    /// shrink the variable suffix of the prompt — the two combine to
+    /// cut per-cycle token spend by ~60% on long horizons.
+    ///
+    /// Not yet persisted to SQLite (a follow-up migration will add the
+    /// column when the UI surfaces this knob). For now the field
+    /// round-trips through JSON via `#[serde(default)]`; rows loaded
+    /// from the store come back as `None` (full briefing).
+    ///
+    /// See `team/contracts/eval-token-efficiency-tail.md` and
+    /// `crates/xvision-engine/src/agent/briefing.rs` for the diff shape
+    /// and `delta(prev, curr)` function.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "boolean | null"))]
+    pub delta_briefing: Option<bool>,
 }
 
 impl AgentSlot {
@@ -263,6 +392,15 @@ impl AgentSlot {
             _ => None,
         }
     }
+
+    /// Resolve `delta_briefing` to a concrete bool. `None` (the default)
+    /// and `Some(false)` both disable the delta-briefing path; `Some(true)`
+    /// enables it. Mirrors the `Option<bool>` storage shape used by
+    /// `noop_skip`. See `agent/briefing.rs` for the diff function this
+    /// flag gates.
+    pub fn resolve_delta_briefing(&self) -> bool {
+        matches!(self.delta_briefing, Some(true))
+    }
 }
 
 impl Agent {
@@ -293,6 +431,8 @@ impl Agent {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                capabilities: default_capabilities(),
+                delta_briefing: None,
             }],
             archived: false,
             created_at: now,
@@ -336,6 +476,11 @@ mod tests {
         // `Some(true)` — the skip is enabled). Operators who want the
         // LLM to run in zero-legal-actions corners explicitly set `false`.
         assert_eq!(a.slots[0].noop_skip, None);
+        // F41 token-efficiency tail: new slots default to `None`
+        // (equivalent to `Some(false)` — full briefing). Operators
+        // opt into delta-briefing per slot.
+        assert_eq!(a.slots[0].delta_briefing, None);
+        assert!(!a.slots[0].resolve_delta_briefing());
     }
 
     #[test]

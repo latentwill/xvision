@@ -222,6 +222,7 @@ mod preflight_tests {
             agents: vec![AgentRef {
                 agent_id: "01HZAGENT".into(),
                 role: "trader".into(),
+                activates: None,
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,

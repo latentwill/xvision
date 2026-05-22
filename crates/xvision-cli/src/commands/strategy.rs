@@ -344,6 +344,7 @@ fn parse_edge(raw: &str) -> CliResult<PipelineEdge> {
     Ok(PipelineEdge {
         from_role: from.to_string(),
         to_role: to.to_string(),
+        condition: None,
     })
 }
 
@@ -487,10 +488,7 @@ async fn new(
                 "id": id,
                 "strategy": strategy,
             });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
-            );
+            crate::io::print_json(&out)?;
         } else {
             println!("{id}");
         }
@@ -566,6 +564,8 @@ async fn new_atomic(
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
+                capabilities: xvision_engine::agents::default_capabilities(),
+                delta_briefing: None,
             }],
         },
     )
@@ -596,6 +596,7 @@ async fn new_atomic(
         agents: vec![AgentRef {
             agent_id: agent_id.clone(),
             role: role.clone(),
+            activates: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
@@ -623,10 +624,7 @@ async fn new_atomic(
     let warnings = preflight.warnings;
     if json {
         let out = build_atomic_create_output(&strategy_id, &agent_id, &provider, &model, warnings);
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&out)?;
     } else {
         println!("{strategy_id}");
     }
@@ -869,10 +867,7 @@ async fn collect_prompt_mismatch_warnings(
 
 fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> {
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(report).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(report)?;
     } else {
         println!("strategy:  {}", report.strategy_id);
         println!("eval_ready: {}", report.eval_ready);
@@ -909,10 +904,7 @@ fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> 
 async fn ls(json: bool) -> CliResult<()> {
     let ids = store().list().await.exit_with(XvnExit::Upstream)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&ids).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&ids)?;
         return Ok(());
     }
     for id in ids {
@@ -940,10 +932,7 @@ async fn templates(json: bool) -> CliResult<()> {
             "templates": Vec::<serde_json::Value>::new(),
             "deprecation_note": DEPRECATION_NOTE,
         });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
-        );
+        crate::io::print_json(&out)?;
         return Ok(());
     }
     println!("{DEPRECATION_NOTE}");
@@ -1059,6 +1048,7 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
             agent_refs.push(AgentRef {
                 agent_id: agent.agent_id,
                 role,
+                activates: None,
             });
         }
 
@@ -1120,6 +1110,8 @@ fn slot_to_agent_slot(
         bar_history_limit: None,
         memory_mode: Default::default(),
         noop_skip: None,
+        capabilities: xvision_engine::agents::default_capabilities(),
+        delta_briefing: None,
     }
 }
 
@@ -1254,6 +1246,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
+            provider_catalogs: std::collections::HashMap::new(),
         })
         .await
         .exit_with(XvnExit::Upstream)?;

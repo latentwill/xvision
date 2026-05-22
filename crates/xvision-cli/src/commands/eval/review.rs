@@ -154,12 +154,17 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
     // implies --format json regardless of the chosen mode.
     let want_json = matches!(args.format, OutputFormat::Json) || args.output.is_some();
     if want_json {
-        let json = serde_json::to_string_pretty(&out).context("serialize review JSON")?;
         if let Some(path) = args.output.as_ref() {
+            let json = serde_json::to_string_pretty(&out).context("serialize review JSON")?;
             std::fs::write(path, &json).with_context(|| format!("write {}", path.display()))?;
-            println!("{}", path.display());
+            // Path-of-record goes to stderr — stdout is reserved for the
+            // structured payload when `--format json` was requested.
+            crate::human!("{}", path.display());
         } else {
-            println!("{json}");
+            crate::io::print_json(&out).map_err(|e| CliError {
+                exit: XvnExit::Upstream,
+                source: anyhow::anyhow!("emit review json: {}", e.source),
+            })?;
         }
         return Ok(());
     }

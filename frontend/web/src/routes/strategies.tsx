@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { StrategiesFolderView } from "./strategies-folder";
 import { Pill } from "@/components/primitives/Pill";
@@ -19,8 +19,10 @@ import {
 import { MListRow } from "@/components/lists/MListRow";
 import { ApiError } from "@/api/client";
 import {
+  createStrategy,
   listStrategiesPaged,
   strategyKeys,
+  type CreateStrategyOut,
   type StrategiesPage,
   type StrategyListItem,
 } from "@/api/strategies";
@@ -150,6 +152,17 @@ function ViewToggle({
 
 /** List view body — the original StrategiesRoute content. */
 function StrategiesListView() {
+  const navigate = useNavigate();
+  const create = useMutation<CreateStrategyOut, unknown, void>({
+    mutationFn: () =>
+      createStrategy({
+        name: "Untitled strategy",
+        creator: null,
+      }),
+    onSuccess: (out) => {
+      navigate(`/authoring/${encodeURIComponent(out.id)}`);
+    },
+  });
   // QA-round-7 backend-pagination follow-up (#386 gap): page-size +
   // page-nav drive `limit`/`offset` in the TanStack query key so page
   // changes refetch the next slice instead of slicing one big
@@ -243,20 +256,22 @@ function StrategiesListView() {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-[12.5px] text-text-3">{subtitle}</span>
         <div className="flex flex-wrap items-center gap-2">
-          <Link
-            to="/strategies/new"
-            className="inline-flex w-full items-center justify-center gap-2 rounded border border-border px-3.5 py-1.5 text-[13px] font-medium text-text-2 transition-colors hover:border-text-3 hover:text-text sm:w-auto"
-          >
-            <Icon name="plus" size={13} /> New strategy
-          </Link>
-          <Link
-            to="/strategies/new"
-            className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
-          >
-            <Icon name="plus" size={13} /> Open form
-          </Link>
+          <NewStrategyButton
+            pending={create.isPending}
+            onClick={() => create.mutate()}
+          />
         </div>
       </div>
+
+      {create.isError ? (
+        <div
+          role="alert"
+          className="mb-3 rounded border border-danger/30 bg-danger/[0.06] px-3 py-2 text-[12.5px] text-danger"
+        >
+          Couldn't create strategy:{" "}
+          <code className="font-mono">{errorDetail(create.error)}</code>
+        </div>
+      ) : null}
 
       <ResponsiveListCard<StrategyListItem>
         listId="strategies"
@@ -281,12 +296,11 @@ function StrategiesListView() {
         }
         empty="No strategies match these filters."
         emptyAction={
-          <Link
-            to="/strategies/new"
-            className="inline-flex items-center gap-1.5 rounded border border-gold px-3 py-1.5 text-[12px] font-medium text-gold hover:bg-gold/10"
-          >
-            <Icon name="plus" size={11} /> New strategy
-          </Link>
+          <NewStrategyButton
+            compact
+            pending={create.isPending}
+            onClick={() => create.mutate()}
+          />
         }
         renderRow={(row) => <DesktopRow key={row.agent_id} row={row} />}
         renderMobileRow={(row) => (
@@ -319,6 +333,31 @@ function StrategiesListView() {
         itemLabel="strategies"
       />
     </>
+  );
+}
+
+function NewStrategyButton({
+  pending,
+  onClick,
+  compact = false,
+}: {
+  pending: boolean;
+  onClick: () => void;
+  compact?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={onClick}
+      className={[
+        "inline-flex w-full items-center justify-center gap-2 rounded bg-gold font-medium text-bg transition-colors hover:bg-gold-soft disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto",
+        compact ? "px-3 py-1.5 text-[12px]" : "px-3.5 py-1.5 text-[13px]",
+      ].join(" ")}
+    >
+      <Icon name="plus" size={compact ? 11 : 13} />
+      {pending ? "Creating..." : "New Strategy"}
+    </button>
   );
 }
 

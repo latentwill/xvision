@@ -30,6 +30,7 @@ vi.mock("@/api/strategies", async () => {
   );
   return {
     ...actual,
+    createStrategy: vi.fn(),
     listStrategies: vi.fn(),
     listStrategiesPaged: vi.fn(),
   };
@@ -149,17 +150,22 @@ describe("StrategiesRoute", () => {
       items: [],
       total: 0,
     });
+    vi.mocked(strategiesApi.createStrategy).mockResolvedValue({ id: "st_new" });
 
     renderRoute();
 
     await waitFor(() =>
       expect(screen.getByText(/No strategies match these filters\./)).toBeInTheDocument(),
     );
-    // Two CTAs exist: one in the top action bar, one inside the empty
-    // state. Both should link to /strategies/new.
-    const ctas = screen.getAllByRole("link", { name: /New strategy/i });
+    const ctas = screen.getAllByRole("button", { name: /New Strategy/i });
     expect(ctas.length).toBeGreaterThanOrEqual(1);
-    expect(ctas[0]).toHaveAttribute("href", "/strategies/new");
+    fireEvent.click(ctas[0]);
+    await waitFor(() => {
+      expect(strategiesApi.createStrategy).toHaveBeenCalledWith({
+        name: "Untitled strategy",
+        creator: null,
+      });
+    });
   });
 
   it("filters by pipeline shape via the toolbar select", async () => {

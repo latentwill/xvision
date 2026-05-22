@@ -148,11 +148,14 @@ const SCHEMA_INSTRUCTIONS: &str = "\n\n# Required output (JSON only)\n\
   \"size_bps\":        integer in [0, 2000],\n\
   \"stop_loss_pct\":   number  in [0.1, 20.0],\n\
   \"take_profit_pct\": number  in [0.1, 50.0],\n\
-  \"trader_summary\":  string  in [10, 500] chars\n\
+  \"trader_summary\":  string  in [10, 500] chars,\n\
+  \"asset\":           must match the briefing's asset (echo it back)\n\
 }\n\
 ```\n\
 \n\
-Emit only the JSON object. The runtime will fill in `cycle_id`.";
+Emit only the JSON object. The runtime will fill in `cycle_id`. `asset`\n\
+must echo the value from the briefing — it exists to make the decision\n\
+self-describing and is rejected if it disagrees.";
 
 #[cfg(test)]
 mod tests {

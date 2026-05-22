@@ -82,6 +82,7 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
         agents: vec![AgentRef {
             agent_id: "01HZAGENT".into(),
             role: "trader".into(),
+            activates: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
@@ -119,6 +120,7 @@ async fn validate_draft_passes_with_bound_agent_ref() {
     strategy.agents.push(AgentRef {
         agent_id: "01HZAGENTSMOKE".into(),
         role: "trader".into(),
+        activates: None,
     });
     store.save(&strategy).await.expect("save strategy");
 

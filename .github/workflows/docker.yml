@@ -44,6 +44,12 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   BUILD_PROFILE: ${{ github.event.inputs.build_profile || 'release' }}
+  # Forces JavaScript actions still pinned to Node 20 runtime to run on
+  # Node 24 ahead of the 2026-06-02 forced cutover (and 2026-09-16 removal).
+  # Safe escape hatch documented by GitHub; remove once every action used
+  # here (checkout@v4, setup-node@v4, setup-buildx@v3, login@v3,
+  # metadata@v5, build-push@v6) ships a Node-24-runtime release.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   preflight:
@@ -87,7 +93,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/web/pnpm-lock.yaml
 

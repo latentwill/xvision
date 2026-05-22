@@ -155,7 +155,7 @@ async fn run_new(args: NewArgs, xvn_home: Option<PathBuf>) -> CliResult<()> {
     .map_err(|e| api_to_cli("create_experiment", e))?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&exp).unwrap());
+        crate::io::print_json(&exp)?;
     } else {
         println!("{}", exp.experiment_id);
         println!("name: {}", exp.name);
@@ -178,7 +178,7 @@ async fn run_ls(args: LsArgs, xvn_home: Option<PathBuf>) -> CliResult<()> {
         .map_err(|e| api_to_cli("list_experiments", e))?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&experiments).unwrap());
+        crate::io::print_json(&experiments)?;
     } else if experiments.is_empty() {
         println!("(no experiments)");
     } else {
@@ -208,7 +208,7 @@ async fn run_show(args: ShowArgs, xvn_home: Option<PathBuf>) -> CliResult<()> {
 
     let exp = &detail.experiment;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(exp).unwrap());
+        crate::io::print_json(exp)?;
     } else {
         println!("{}", exp.experiment_id);
         println!("name: {}", exp.name);
@@ -258,7 +258,7 @@ async fn run_update(args: UpdateArgs, xvn_home: Option<PathBuf>) -> CliResult<()
     .map_err(|e| api_to_cli("update_experiment", e))?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&updated).unwrap());
+        crate::io::print_json(&updated)?;
     } else {
         println!("{}", updated.experiment_id);
         if let Some(ref c) = updated.conclusion {

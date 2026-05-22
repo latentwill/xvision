@@ -87,6 +87,10 @@ fn portfolio(equity_usd: f64) -> PortfolioState {
 }
 
 fn decision(size_bps: u32) -> TraderDecision {
+    decision_with_asset(size_bps, AssetSymbol::Btc)
+}
+
+fn decision_with_asset(size_bps: u32, asset: AssetSymbol) -> TraderDecision {
     TraderDecision {
         cycle_id: Uuid::nil(),
         action: Action::Buy,
@@ -95,7 +99,7 @@ fn decision(size_bps: u32) -> TraderDecision {
         stop_loss_pct: 2.0,
         take_profit_pct: 5.0,
         trader_summary: "MinNotional integration test".into(),
-        asset: None,
+        asset,
     }
 }
 
@@ -108,7 +112,7 @@ fn no_venue_means_no_min_notional_rule() {
         RiskLayer::with_default_rules(risk_config(10.0, 1.0), whitelist_with_btc_and_eth_enabled(), None);
     // Tiny portfolio, tiny size → would be vetoed under paper if the
     // venue were configured. Without a venue, it's approved.
-    let result = layer.evaluate(decision(50), &portfolio(1_000.0), AssetSymbol::Btc);
+    let result = layer.evaluate(decision(50), &portfolio(1_000.0));
     assert!(
         matches!(result, RiskDecision::Approved { .. }),
         "unset venue should bypass MinNotional, got {result:?}"
@@ -125,7 +129,7 @@ fn venue_with_zero_min_is_noop() {
         whitelist_with_btc_and_eth_enabled(),
         Some("paper"),
     );
-    let result = layer.evaluate(decision(1), &portfolio(100.0), AssetSymbol::Btc);
+    let result = layer.evaluate(decision(1), &portfolio(100.0));
     assert!(
         matches!(result, RiskDecision::Approved { .. }),
         "zero min should be a no-op, got {result:?}"
@@ -141,7 +145,7 @@ fn paper_venue_below_min_is_vetoed() {
         whitelist_with_btc_and_eth_enabled(),
         Some("paper"),
     );
-    let result = layer.evaluate(decision(50), &portfolio(1_000.0), AssetSymbol::Btc);
+    let result = layer.evaluate(decision(50), &portfolio(1_000.0));
     match result {
         RiskDecision::Vetoed { reason, .. } => {
             assert_eq!(reason, VetoReason::BelowVenueMinNotional);
@@ -159,7 +163,7 @@ fn paper_venue_equal_to_min_passes() {
         whitelist_with_btc_and_eth_enabled(),
         Some("paper"),
     );
-    let result = layer.evaluate(decision(100), &portfolio(1_000.0), AssetSymbol::Btc);
+    let result = layer.evaluate(decision(100), &portfolio(1_000.0));
     assert!(
         matches!(result, RiskDecision::Approved { .. }),
         "equal-to-min should pass, got {result:?}"
@@ -175,7 +179,7 @@ fn paper_venue_above_min_passes() {
         whitelist_with_btc_and_eth_enabled(),
         Some("paper"),
     );
-    let result = layer.evaluate(decision(1_500), &portfolio(100_000.0), AssetSymbol::Btc);
+    let result = layer.evaluate(decision(1_500), &portfolio(100_000.0));
     assert!(
         matches!(result, RiskDecision::Approved { .. }),
         "well-above-min should pass, got {result:?}"
@@ -194,7 +198,7 @@ fn live_venue_uses_its_own_min() {
         whitelist_with_btc_and_eth_enabled(),
         Some("live"),
     );
-    let live_result = live_layer.evaluate(decision(50), &portfolio(1_000.0), AssetSymbol::Btc);
+    let live_result = live_layer.evaluate(decision(50), &portfolio(1_000.0));
     assert!(
         matches!(live_result, RiskDecision::Approved { .. }),
         "live $1 min should approve $5 notional, got {live_result:?}"
@@ -205,7 +209,7 @@ fn live_venue_uses_its_own_min() {
         whitelist_with_btc_and_eth_enabled(),
         Some("paper"),
     );
-    let paper_result = paper_layer.evaluate(decision(50), &portfolio(1_000.0), AssetSymbol::Btc);
+    let paper_result = paper_layer.evaluate(decision(50), &portfolio(1_000.0));
     assert!(
         matches!(
             paper_result,
@@ -244,9 +248,9 @@ fn min_notional_runs_after_size_modifying_rules() {
         stop_loss_pct: 15.0,
         take_profit_pct: 5.0,
         trader_summary: "wide stop + below min".into(),
-        asset: None,
+        asset: AssetSymbol::Btc,
     };
-    let result = layer.evaluate(d, &portfolio(1_000.0), AssetSymbol::Btc);
+    let result = layer.evaluate(d, &portfolio(1_000.0));
     assert!(
         matches!(
             result,
@@ -283,7 +287,7 @@ fn vetoes_with_existing_positions() {
         },
     );
     // 30 bps × $1000 = $3 notional, below paper $10 min.
-    let result = layer.evaluate(decision(30), &p, AssetSymbol::Eth);
+    let result = layer.evaluate(decision_with_asset(30, AssetSymbol::Eth), &p);
     assert!(
         matches!(
             result,

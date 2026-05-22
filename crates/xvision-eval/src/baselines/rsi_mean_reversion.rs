@@ -65,7 +65,7 @@ impl Algorithm for RsiMeanReversion {
             stop_loss_pct: 2.5,
             take_profit_pct: 5.0,
             trader_summary: summary.into(),
-            asset: None,
+            asset: snapshot.asset,
         })
     }
 }

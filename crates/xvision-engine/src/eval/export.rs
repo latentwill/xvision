@@ -215,6 +215,12 @@ pub struct ProviderDiagnostics {
     /// non-LLM baseline arm).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub providers_used: Vec<ProviderModel>,
+    /// Per-launch `(provider, model)` override applied to this run via
+    /// `xvn eval run --provider X --model Y` (Wave B #5). `None` for the
+    /// common case where the run used the strategy's bound provider.
+    /// Sourced from the `provider_override` supervisor_notes row.
+    #[serde(default, rename = "override", skip_serializing_if = "Option::is_none")]
+    pub override_receipt: Option<crate::api::eval::ProviderOverride>,
 }
 
 /// Build the export for a *terminal* run id (`completed` / `failed` /
@@ -304,7 +310,9 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
     let attestation = store.get_attestation(&run.id).await.ok().flatten();
     let cost_usd = compute_export_cost_usd(ctx, &run, strategy.as_ref(), &agents).await;
     let providers_used = load_providers_used(&ctx.db, &run.id).await;
-    let provider_diagnostics = build_provider_diagnostics(&run, attestation, cost_usd, providers_used);
+    let override_receipt = api::eval::load_provider_override(ctx, &run.id).await;
+    let provider_diagnostics =
+        build_provider_diagnostics(&run, attestation, cost_usd, providers_used, override_receipt);
 
     // Emit the provider-mismatch finding (best-effort, idempotent). We
     // do this at export-build time because the export is the moment we
@@ -360,6 +368,7 @@ fn build_provider_diagnostics(
     attestation: Option<EvalAttestation>,
     cost_usd: Option<f64>,
     providers_used: Vec<ProviderModel>,
+    override_receipt: Option<crate::api::eval::ProviderOverride>,
 ) -> Option<ProviderDiagnostics> {
     // Attestation wins when present — its `tokens_used` is part of the
     // signed payload, so the export must mirror it exactly. Falling
@@ -403,6 +412,7 @@ fn build_provider_diagnostics(
         && trader_output_failure.is_none()
         && cost_usd.is_none()
         && providers_used.is_empty()
+        && override_receipt.is_none()
     {
         return None;
     }
@@ -414,6 +424,7 @@ fn build_provider_diagnostics(
         trader_output_failure,
         cost_usd,
         providers_used,
+        override_receipt,
     })
 }
 
@@ -1263,6 +1274,7 @@ mod provider_attestation {
             trader_output_failure: None,
             cost_usd: None,
             providers_used: providers,
+            override_receipt: None,
         }
     }
 

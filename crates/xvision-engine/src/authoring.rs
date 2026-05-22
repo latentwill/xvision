@@ -327,6 +327,7 @@ pub async fn add_agent_ref(store: &dyn StrategyStore, req: AddAgentRefRequest) -
     strategy.agents.push(AgentRef {
         agent_id: req.agent_id,
         role,
+        activates: None,
     });
     if strategy.pipeline.kind == PipelineKind::Single && strategy.agents.len() > 1 {
         strategy.pipeline.kind = PipelineKind::Sequential;
@@ -777,10 +778,12 @@ mod tests {
             AgentRef {
                 agent_id: "01HZSCOUT".into(),
                 role: "Scout".into(),
+                activates: None,
             },
             AgentRef {
                 agent_id: "01HZTRADER".into(),
                 role: "Trader".into(),
+                activates: None,
             },
         ];
         strategy.pipeline = PipelineDef {
@@ -788,6 +791,7 @@ mod tests {
             edges: vec![PipelineEdge {
                 from_role: "SCOUT".into(),
                 to_role: "TRADER".into(),
+                condition: None,
             }],
         };
         store.save(&strategy).await.unwrap();

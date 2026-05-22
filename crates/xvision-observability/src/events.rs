@@ -70,6 +70,17 @@ pub enum RunEvent {
     /// new orthogonal event variants for the trace dock; this one is
     /// scoped to memory provenance.
     MemoryRecall(MemoryRecallEvent),
+
+    /// Bar-level engine lifecycle event. Persists as a row in the
+    /// migration-018 `events` table (no dedicated table), which is the
+    /// schema-018 design for sparse/extensible bar-level signals such as
+    /// `decision_started`, `decision_completed`, `fill_attempted`,
+    /// `guardrail_fired`, `early_stop_triggered`, `flat_skip_fired`.
+    ///
+    /// Added by F43 (`trace-dock-emitters`) to close the eval-traces
+    /// audit F-11(b) gap: the `events` table had no writer in the
+    /// observability crate before this contract.
+    EngineEvent(EngineEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +306,44 @@ pub struct MemoryRecallItem {
     pub text_preview: String,
 }
 
+/// One bar-level engine lifecycle signal. Recorded as a single row in
+/// the `events` table.
+///
+/// `kind` is a free-form snake_case string the producer chooses; the
+/// dashboard projects it verbatim. F43 introduces these known kinds:
+///
+///   - `decision_started` — opening a per-decision pipeline iteration
+///   - `decision_completed` — closing the same
+///   - `fill_attempted` — broker submit / paper-fill attempt was made
+///   - `guardrail_fired` — guardrail rewrote / blocked a trader action
+///   - `early_stop_triggered` — flat-degeneracy early-stop policy fired
+///   - `flat_skip_fired` — trader-noop-skip short-circuited the LLM
+///   - `preflight_warning` — pre-run preflight surfaced a warning
+///   - `broker_rule_violation` — broker rule rejected / warned an order
+///   - `cost_cap_warning` — max-tokens / cost guard surfaced a warning
+///
+/// `payload_json` is producer-defined. F43 emits structured payloads
+/// with `decision_index`, `asset`, action/severity etc. — see
+/// `xvision-engine` call sites for the canonical shape per kind.
+///
+/// Producers MUST scrub secrets out of any free-text fields before
+/// serializing into `payload_json` — the writer trusts the producer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineEvent {
+    pub run_id: String,
+    /// Optional span this event is scoped to. `None` when the event is
+    /// run-scoped (e.g. early-stop policy fire that isn't bracketed by
+    /// a specific span). The dashboard joins on this to surface event
+    /// rows in the SpanInspector when present.
+    pub span_id: Option<String>,
+    /// Producer-defined kind string. See struct docs for known values.
+    pub kind: String,
+    /// Producer-defined structured payload. Caller is responsible for
+    /// keeping this redacted — the writer does not scan.
+    pub payload_json: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Side of a broker submit. Mirrors `xvision_execution::Side`, plus
 /// the higher-level `CloseFlat` / `ShortOpen` intents the executor
 /// derives from the trader's action. Operators look at this column in
@@ -399,6 +448,7 @@ impl RunEvent {
             Self::SidecarError(e) => &e.run_id,
             Self::BackpressureDropped(e) => &e.run_id,
             Self::MemoryRecall(e) => &e.run_id,
+            Self::EngineEvent(e) => &e.run_id,
         }
     }
 
@@ -418,6 +468,7 @@ impl RunEvent {
             Self::BrokerCallFinished(e) => Some(&e.span_id),
             Self::CheckpointWritten(e) => Some(&e.span_id),
             Self::AssistantTextDelta(e) => Some(&e.span_id),
+            Self::EngineEvent(e) => e.span_id.as_deref(),
             Self::RunStarted(_)
             | Self::RunFinished(_)
             | Self::RunInterrupted(_)

@@ -434,6 +434,27 @@ impl AgentRunRecorder for SqliteRecorder {
                 .execute(&self.pool)
                 .await?;
             }
+
+            RunEvent::EngineEvent(e) => {
+                // F43 (`trace-dock-emitters`): the migration-018 `events`
+                // table previously had zero writers; this is the writer.
+                // Caller is responsible for redacting any secrets out of
+                // payload_json before publishing.
+                let id = format!("evt_{}", uuid::Uuid::new_v4());
+                sqlx::query(
+                    "INSERT INTO events (\
+                        id, run_id, span_id, kind, payload_json, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(id)
+                .bind(&e.run_id)
+                .bind(&e.span_id)
+                .bind(&e.kind)
+                .bind(&e.payload_json)
+                .bind(ts(&e.created_at))
+                .execute(&self.pool)
+                .await?;
+            }
         }
         Ok(())
     }

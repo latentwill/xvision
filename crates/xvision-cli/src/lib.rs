@@ -7,6 +7,7 @@
 
 pub mod commands;
 pub mod exit;
+pub mod io;
 pub mod json;
 
 use std::path::PathBuf;
@@ -154,6 +155,9 @@ pub enum Command {
         /// Audit-trail summary string written into the TraderDecision (10–500 chars).
         #[arg(long, default_value = "manual fire-trade smoke from xvn cli", value_parser = parse_fire_trade_summary)]
         summary: String,
+        /// Asset to trade. Defaults to BTC. Must be on the venue's whitelist.
+        #[arg(long, default_value = "BTC", value_parser = commands::asset::parse_asset)]
+        asset: xvision_core::AssetSymbol,
     },
     /// Read live portfolio state from a venue.
     Portfolio {
@@ -275,6 +279,9 @@ pub enum Command {
     /// over the operator memory store (`$XVN_MEMORY_DB` or
     /// `~/.xvn/memory.db`).
     Memory(commands::memory::MemoryCmd),
+    /// Bounded (strategy × model) bakeoff verb. See
+    /// `team/contracts/cli-model-bakeoff.md`.
+    Model(commands::model::ModelCmd),
 }
 
 impl Cli {
@@ -318,7 +325,8 @@ impl Cli {
                 stop_loss_pct,
                 take_profit_pct,
                 summary,
-            } => commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary)
+                asset,
+            } => commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary, asset)
                 .await
                 .map_err(Into::into),
             Command::Portfolio { venue } => commands::venue::portfolio(venue).await.map_err(Into::into),
@@ -385,6 +393,7 @@ impl Cli {
             Command::Run(cmd) => commands::run::run(cmd).await,
             Command::Experiment(cmd) => commands::experiment::run(cmd).await,
             Command::Memory(cmd) => commands::memory::run(cmd).await,
+            Command::Model(cmd) => commands::model::run(cmd).await,
         }
     }
 }

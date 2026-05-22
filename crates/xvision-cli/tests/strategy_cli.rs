@@ -123,6 +123,8 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
+                    capabilities: xvision_engine::agents::default_capabilities(),
+                    delta_briefing: None,
                 }],
             },
         )

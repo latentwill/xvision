@@ -11,12 +11,15 @@
 use garde::Validate;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use xvision_core::trading::{Action, Direction, TraderDecision};
+use xvision_core::trading::{Action, AssetSymbol, Direction, TraderDecision};
 use xvision_intern::strip_reasoning;
 
 use crate::error::TraderError;
 
-/// What the LLM produces. The runtime fills in `cycle_id`.
+/// What the LLM produces. The runtime fills in `cycle_id`. `asset` is
+/// optional on the wire: when present, it must match the briefing's asset
+/// (the trader is told what it's trading); when absent, the briefing's
+/// asset is used as the authoritative fallback. F18 cascade.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmTraderDecision {
     pub action: Action,
@@ -25,11 +28,19 @@ pub struct LlmTraderDecision {
     pub stop_loss_pct: f32,
     pub take_profit_pct: f32,
     pub trader_summary: String,
+    #[serde(default)]
+    pub asset: Option<AssetSymbol>,
 }
 
 /// Parse + validate a Trader response. The caller supplies the runtime-owned
-/// `cycle_id`.
-pub fn parse_trader_response(body: &str, cycle_id: Uuid) -> Result<TraderDecision, TraderError> {
+/// `cycle_id` and the briefing's `asset` (authoritative — the trader was
+/// told what asset to trade in its prompt). If the LLM emits its own
+/// `asset` field, it must match.
+pub fn parse_trader_response(
+    body: &str,
+    cycle_id: Uuid,
+    briefing_asset: AssetSymbol,
+) -> Result<TraderDecision, TraderError> {
     if body.trim().is_empty() {
         return Err(TraderError::Empty);
     }
@@ -40,6 +51,14 @@ pub fn parse_trader_response(body: &str, cycle_id: Uuid) -> Result<TraderDecisio
     let llm: LlmTraderDecision = serde_json::from_str(&trimmed)
         .map_err(|e| TraderError::Parse(format!("{e}; body[..200]={}", short(&trimmed, 200))))?;
 
+    if let Some(emitted) = llm.asset {
+        if emitted != briefing_asset {
+            return Err(TraderError::Parse(format!(
+                "trader emitted asset={emitted:?} but briefing asset={briefing_asset:?}"
+            )));
+        }
+    }
+
     let decision = TraderDecision {
         cycle_id,
         action: llm.action,
@@ -48,10 +67,7 @@ pub fn parse_trader_response(body: &str, cycle_id: Uuid) -> Result<TraderDecisio
         stop_loss_pct: llm.stop_loss_pct,
         take_profit_pct: llm.take_profit_pct,
         trader_summary: llm.trader_summary,
-        // F18 partial: Trader-emitted decisions default to None; downstream
-        // consumers resolve to the active scenario's single asset until the
-        // full multi-asset cascade lands.
-        asset: None,
+        asset: briefing_asset,
     };
     decision.validate().map_err(TraderError::Validation)?;
     Ok(decision)
@@ -79,7 +95,7 @@ mod tests {
     use super::*;
 
     fn parse(body: &str) -> Result<TraderDecision, TraderError> {
-        parse_trader_response(body, Uuid::nil())
+        parse_trader_response(body, Uuid::nil(), AssetSymbol::Btc)
     }
 
     const GOLDEN_BUY: &str = r#"{
