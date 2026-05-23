@@ -1,6 +1,7 @@
 use chrono::{TimeZone, Utc};
 use std::str::FromStr;
 use xvision_data::alpaca::BarGranularity;
+use xvision_data::asset_whitelist::ALPACA_CRYPTO_WHITELIST;
 use xvision_engine::api::scenario::{archive, create, validate_request, CreateScenarioRequest};
 use xvision_engine::api::{ApiContext, ApiError};
 use xvision_engine::eval::scenario::*;
@@ -99,6 +100,27 @@ async fn create_succeeds_with_valid_request() {
     assert_eq!(s.source, ScenarioSource::User);
     assert!(s.id.starts_with("sc_"));
     assert!(!s.bar_cache_policy.cache_key.is_empty());
+}
+
+#[tokio::test]
+async fn create_accepts_every_supported_single_asset() {
+    let ctx = test_ctx().await;
+
+    for asset in ALPACA_CRYPTO_WHITELIST {
+        let mut req = valid_request();
+        req.display_name = format!("{} single asset 2024", asset.symbol);
+        req.asset = vec![AssetRef {
+            class: AssetClass::Crypto,
+            symbol: asset.symbol.into(),
+            venue_symbol: asset.venue_symbol.into(),
+        }];
+
+        let scenario = create(&ctx, req)
+            .await
+            .unwrap_or_else(|err| panic!("{} should create as a single-asset scenario: {err}", asset.symbol));
+        assert_eq!(scenario.asset[0].symbol, asset.symbol);
+        assert_eq!(scenario.asset[0].venue_symbol, asset.venue_symbol);
+    }
 }
 
 #[tokio::test]

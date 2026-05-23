@@ -839,7 +839,14 @@ rate_limit_rpm = 600
         let cfg = load_whitelist(&project_root().join("config/whitelist.toml"))
             .expect("config/whitelist.toml must load");
         let enabled = cfg.enabled_symbols();
-        assert_eq!(enabled, vec!["BTC"], "v1 BTC-only");
+        assert_eq!(
+            enabled,
+            vec![
+                "BTC", "ETH", "SOL", "LTC", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "SHIB", "MATIC",
+                "BCH", "USDT", "USDC",
+            ],
+            "single-asset crypto flows should not be BTC-gated"
+        );
     }
 
     #[test]
