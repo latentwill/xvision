@@ -1,9 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, ApiError } from "@/api/client";
 import { InlineEditField } from "@/features/strategies/InlineEditField";
+import { CHART2_STRATEGY_ROTATION } from "@/theme/themes";
 
 /**
  * Minimal strategy-detail route added by the
@@ -30,6 +31,7 @@ type StrategyManifest = {
   template: string;
   asset_universe: string[];
   decision_cadence_minutes: number;
+  color?: string | null;
 };
 
 type StrategyDetail = {
@@ -40,6 +42,7 @@ type MetadataPatch = {
   display_name?: string;
   plain_summary?: string;
   asset_universe?: string[];
+  color?: string;
 };
 
 const detailQueryKey = (id: string) => ["strategy-detail", id] as const;
@@ -56,6 +59,171 @@ function patchStrategyMetadata(
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+// The 8-color rotation palette extracted for swatch display.
+const ROTATION_SWATCHES = CHART2_STRATEGY_ROTATION.map((e) => e.color);
+
+/**
+ * Inline color picker row. No modal/popover — displays as a
+ * horizontal swatch row with an "unset" chip and a custom
+ * `<input type="color">` per the no-popup rule.
+ *
+ * Semantics mirror the backend convention:
+ * - Click a swatch → PATCH with `{ color: "#XXXXXX" }`.
+ * - Click "unset" → PATCH with `{ color: "" }` (server maps "" → None).
+ * - Custom color picker → PATCH on change.
+ */
+function ColorPickerRow({
+  currentColor,
+  onPatch,
+}: {
+  currentColor: string | null | undefined;
+  onPatch: (color: string) => Promise<void>;
+}) {
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handlePick = useCallback(
+    async (color: string) => {
+      setError(null);
+      try {
+        await onPatch(color);
+        setSaved(true);
+        if (savedTimer.current) clearTimeout(savedTimer.current);
+        savedTimer.current = setTimeout(() => setSaved(false), 1800);
+      } catch (err) {
+        const msg =
+          err instanceof ApiError ? err.message : "Could not save color.";
+        setError(msg);
+      }
+    },
+    [onPatch],
+  );
+
+  const active = currentColor ?? null;
+
+  return (
+    <div data-testid="color-picker-row">
+      <div
+        style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}
+        aria-label="Strategy color swatches"
+      >
+        {/* 8 rotation swatches */}
+        {ROTATION_SWATCHES.map((hex) => {
+          const isActive = active === hex;
+          return (
+            <button
+              key={hex}
+              type="button"
+              data-testid={`color-swatch-${hex}`}
+              aria-label={`Set color ${hex}`}
+              aria-pressed={isActive}
+              onClick={() => void handlePick(hex)}
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 4,
+                background: hex,
+                border: isActive
+                  ? "2px solid white"
+                  : "2px solid transparent",
+                outline: isActive ? "2px solid " + hex : "none",
+                cursor: "pointer",
+                padding: 0,
+                position: "relative",
+                flexShrink: 0,
+              }}
+            >
+              {isActive && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#fff",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    textShadow: "0 0 2px rgba(0,0,0,0.6)",
+                  }}
+                >
+                  ✓
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        {/* Unset chip */}
+        <button
+          type="button"
+          data-testid="color-swatch-unset"
+          aria-label="Clear color"
+          aria-pressed={active === null}
+          onClick={() => void handlePick("")}
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: 4,
+            background: "transparent",
+            border: active === null ? "2px solid currentColor" : "2px dashed currentColor",
+            cursor: "pointer",
+            padding: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 11,
+            opacity: active === null ? 1 : 0.5,
+            flexShrink: 0,
+          }}
+        >
+          —
+        </button>
+
+        {/* Custom freeform picker */}
+        <label
+          style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}
+          aria-label="Custom color"
+        >
+          <input
+            type="color"
+            data-testid="color-picker-custom"
+            aria-label="Custom color"
+            value={
+              active && /^#[0-9a-fA-F]{6}$/.test(active) ? active : "#000000"
+            }
+            onChange={(e) => void handlePick(e.target.value)}
+            style={{ width: 24, height: 24, padding: 0, border: "none", cursor: "pointer" }}
+          />
+        </label>
+
+        {/* Feedback indicators */}
+        {saved && (
+          <span
+            data-testid="color-saved-indicator"
+            aria-live="polite"
+            style={{ fontSize: 11, opacity: 0.7 }}
+          >
+            saved
+          </span>
+        )}
+        {error && (
+          <span
+            data-testid="color-error"
+            role="alert"
+            style={{ fontSize: 11, color: "var(--color-danger, #c8443a)" }}
+          >
+            {error}
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function StrategyDetailRoute() {
@@ -118,6 +286,13 @@ function StrategyDetailView({ id }: { id: string }) {
         setPlainSummaryError(message);
         throw err;
       }
+    },
+    [patchMutation],
+  );
+
+  const onPatchColor = useCallback(
+    async (color: string) => {
+      await patchMutation.mutateAsync({ color });
     },
     [patchMutation],
   );
@@ -194,6 +369,13 @@ function StrategyDetailView({ id }: { id: string }) {
         </dd>
         <dt>Cadence</dt>
         <dd>every {m.decision_cadence_minutes} min</dd>
+        <dt>Color</dt>
+        <dd>
+          <ColorPickerRow
+            currentColor={m.color}
+            onPatch={onPatchColor}
+          />
+        </dd>
       </dl>
     </main>
   );

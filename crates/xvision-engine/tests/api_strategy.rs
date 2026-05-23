@@ -669,6 +669,7 @@ async fn update_metadata_audits_and_refreshes_search_index() {
         display_name: Some("RenamedForSearch".into()),
         plain_summary: None,
         asset_universe: None,
+        color: None,
     };
     let updated = strategy::update_metadata(&ctx, &id, patch)
         .await
@@ -715,6 +716,7 @@ async fn update_metadata_failed_validation_records_error_outcome_and_skips_index
         display_name: Some("   ".into()), // whitespace-only triggers EmptyDisplayName
         plain_summary: None,
         asset_universe: None,
+        color: None,
     };
     let err = strategy::update_metadata(&ctx, &id, patch)
         .await
