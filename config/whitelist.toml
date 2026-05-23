@@ -1,6 +1,7 @@
 # Tradeable assets and per-venue symbol mappings.
-# v1 ships BTC only. ETH/SOL declared but disabled — re-enable once the BTC
-# headline result is established (see implementation-plan.md "Future additions").
+# Keep this in sync with the Alpaca crypto symbols exposed by scenario
+# creation and the dashboard asset picker. Single-asset strategy/scenario
+# flows should not be BTC-gated by risk config.
 
 [[assets]]
 symbol  = "BTC"
@@ -12,7 +13,7 @@ orderly = "PERP_BTC_USDC"
 
 [[assets]]
 symbol  = "ETH"
-enabled = false
+enabled = true
 cluster = "eth"
 [assets.venues]
 alpaca  = "ETH/USD"
@@ -20,8 +21,104 @@ orderly = "PERP_ETH_USDC"
 
 [[assets]]
 symbol  = "SOL"
-enabled = false
+enabled = true
 cluster = "sol"
 [assets.venues]
 alpaca  = "SOL/USD"
 orderly = "PERP_SOL_USDC"
+
+[[assets]]
+symbol  = "LTC"
+enabled = true
+cluster = "ltc"
+[assets.venues]
+alpaca  = "LTC/USD"
+orderly = "PERP_LTC_USDC"
+
+[[assets]]
+symbol  = "AVAX"
+enabled = true
+cluster = "avax"
+[assets.venues]
+alpaca  = "AVAX/USD"
+orderly = "PERP_AVAX_USDC"
+
+[[assets]]
+symbol  = "LINK"
+enabled = true
+cluster = "link"
+[assets.venues]
+alpaca  = "LINK/USD"
+orderly = "PERP_LINK_USDC"
+
+[[assets]]
+symbol  = "AAVE"
+enabled = true
+cluster = "aave"
+[assets.venues]
+alpaca  = "AAVE/USD"
+orderly = "PERP_AAVE_USDC"
+
+[[assets]]
+symbol  = "UNI"
+enabled = true
+cluster = "uni"
+[assets.venues]
+alpaca  = "UNI/USD"
+orderly = "PERP_UNI_USDC"
+
+[[assets]]
+symbol  = "DOT"
+enabled = true
+cluster = "dot"
+[assets.venues]
+alpaca  = "DOT/USD"
+orderly = "PERP_DOT_USDC"
+
+[[assets]]
+symbol  = "DOGE"
+enabled = true
+cluster = "doge"
+[assets.venues]
+alpaca  = "DOGE/USD"
+orderly = "PERP_DOGE_USDC"
+
+[[assets]]
+symbol  = "SHIB"
+enabled = true
+cluster = "shib"
+[assets.venues]
+alpaca  = "SHIB/USD"
+orderly = "PERP_SHIB_USDC"
+
+[[assets]]
+symbol  = "MATIC"
+enabled = true
+cluster = "matic"
+[assets.venues]
+alpaca  = "MATIC/USD"
+orderly = "PERP_MATIC_USDC"
+
+[[assets]]
+symbol  = "BCH"
+enabled = true
+cluster = "bch"
+[assets.venues]
+alpaca  = "BCH/USD"
+orderly = "PERP_BCH_USDC"
+
+[[assets]]
+symbol  = "USDT"
+enabled = true
+cluster = "stable"
+[assets.venues]
+alpaca  = "USDT/USD"
+orderly = "PERP_USDT_USDC"
+
+[[assets]]
+symbol  = "USDC"
+enabled = true
+cluster = "stable"
+[assets.venues]
+alpaca  = "USDC/USD"
+orderly = "PERP_USDC_USDC"
