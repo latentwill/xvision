@@ -2,18 +2,19 @@
  * kline-anchor — convert candle-array index + price into pixel
  * coordinates inside the candle pane.
  *
- * B3 ships a **geometric approximation** that doesn't reach into the
- * klinecharts instance. It assumes:
- *   - x is uniformly spaced across the host div's content width minus
- *     left + right padding (the price-axis margin).
- *   - y is linearly mapped between min/max of the visible candle prices.
+ * Two variants:
  *
- * This is correct enough for the AnnotationOverlay's connectors to
- * point at the right candles when pan/zoom is disabled (the default
- * for B3). A pixel-perfect upgrade that consults
- * klinecharts' `convertToPixel` / `onVisibleRangeChange` is a
- * follow-up — track via the chart-rework spec §3 B3 verification list.
+ * 1. **Pure geometric approximation** (`xForIndex` / `yForPrice` /
+ *    `deriveRange` + `DEFAULT_BOUNDS`). Used as a fallback when no
+ *    klinecharts instance is available (e.g. chart-lab fixture render
+ *    before mount). These helpers are also exercised by unit tests.
+ *
+ * 2. **Instance-aware anchor** (`createKlineAnchor`). Uses
+ *    `chart.convertToPixel` for pixel-perfect x/y, and subscribes to
+ *    `onVisibleRangeChange` + a `ResizeObserver` so the overlay
+ *    re-anchors on every pan/zoom/resize.
  */
+import type { Chart } from "klinecharts";
 
 export interface AnchorBounds {
   /** Width of the candle pane host div, in CSS pixels. */
@@ -98,4 +99,86 @@ export function deriveRange(
   }
   const pad = (max - min) * paddingFraction;
   return { min: min - pad, max: max + pad };
+}
+
+// ─── Instance-aware anchor ────────────────────────────────────────────────────
+
+/**
+ * The shape returned by `createKlineAnchor`.
+ *
+ * - `xForIndex(dataIndex)` → pixel x using `chart.convertToPixel`.
+ * - `yForPrice(price)` → pixel y using `chart.convertToPixel`.
+ * - `subscribeLayout(cb)` → register a callback fired on pan/zoom/resize;
+ *   returns an unsubscribe function.
+ *
+ * Both coordinate methods return `NaN` when the chart is disposed or
+ * the conversion result is missing (e.g. index out of visible range).
+ */
+export interface KlineAnchor {
+  xForIndex: (dataIndex: number) => number;
+  yForPrice: (price: number) => number;
+  subscribeLayout: (cb: () => void) => () => void;
+}
+
+/**
+ * Create a pixel-precise anchor tied to a live klinecharts `Chart`
+ * instance.
+ *
+ * Uses `chart.convertToPixel` (KlineCharts v10) with:
+ *   - `{ dataIndex }` for x → the chart maps the index to the
+ *     candle-bar centre pixel accounting for pan/zoom.
+ *   - `{ value }` for y → the chart maps the price to the y-axis pixel.
+ *
+ * `subscribeLayout` wires `chart.subscribeAction("onVisibleRangeChange")`
+ * plus a `ResizeObserver` on the chart's root DOM node so callers
+ * re-render after every pan, zoom, or container resize.
+ */
+export function createKlineAnchor(chart: Chart): KlineAnchor {
+  function xForIndexFn(dataIndex: number): number {
+    try {
+      const result = chart.convertToPixel({ dataIndex });
+      const x = (result as { x?: number }).x;
+      return typeof x === "number" && Number.isFinite(x) ? x : NaN;
+    } catch {
+      return NaN;
+    }
+  }
+
+  function yForPriceFn(price: number): number {
+    try {
+      const result = chart.convertToPixel({ value: price });
+      const y = (result as { y?: number }).y;
+      return typeof y === "number" && Number.isFinite(y) ? y : NaN;
+    } catch {
+      return NaN;
+    }
+  }
+
+  function subscribeLayout(cb: () => void): () => void {
+    chart.subscribeAction("onVisibleRangeChange", cb);
+
+    // Also track resize of the chart's root element so the overlay
+    // re-anchors when the container size changes independently of pan/zoom.
+    let resizeObs: ResizeObserver | null = null;
+    try {
+      const el = chart.getDom();
+      if (el) {
+        resizeObs = new ResizeObserver(cb);
+        resizeObs.observe(el);
+      }
+    } catch {
+      // getDom unavailable (e.g. chart disposed before subscribe completes)
+    }
+
+    return () => {
+      try {
+        chart.unsubscribeAction("onVisibleRangeChange", cb);
+      } catch {
+        // chart may already be disposed
+      }
+      resizeObs?.disconnect();
+    };
+  }
+
+  return { xForIndex: xForIndexFn, yForPrice: yForPriceFn, subscribeLayout };
 }

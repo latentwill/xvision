@@ -40,6 +40,12 @@ export interface KlineCandlePaneProps {
   markers?: V2Marker[];
   positions?: PositionSpan[];
   height?: number;
+  /**
+   * Called once with the live `Chart` instance after `init()` succeeds,
+   * and once with `null` on unmount/cleanup. Consumers may use this to
+   * drive pixel-precise annotation anchoring via `createKlineAnchor`.
+   */
+  onReady?: (chart: Chart | null) => void;
 }
 
 export function KlineCandlePane({
@@ -48,9 +54,16 @@ export function KlineCandlePane({
   markers,
   positions,
   height = 380,
+  onReady,
 }: KlineCandlePaneProps): React.ReactElement {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<Chart | null>(null);
+  // Keep a stable ref to onReady so the init effect doesn't re-run when
+  // the callback identity changes between renders.
+  const onReadyRef = useRef<((chart: Chart | null) => void) | undefined>(onReady);
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  });
   const theme = useChart2Theme();
 
   // ── Init / Destroy ─────────────────────────────────────────────────────────
@@ -74,6 +87,9 @@ export function KlineCandlePane({
     chart.setSymbol({ ticker: "chart-v2", pricePrecision: 4, volumePrecision: 2 });
     chart.setPeriod({ type: "minute", span: 1 });
 
+    // Notify the consumer that the chart is ready.
+    onReadyRef.current?.(chart);
+
     const obs = new ResizeObserver(() => {
       try {
         chartRef.current?.resize();
@@ -85,6 +101,8 @@ export function KlineCandlePane({
 
     return () => {
       obs.disconnect();
+      // Notify the consumer that the chart is being destroyed.
+      onReadyRef.current?.(null);
       try {
         dispose(el);
       } catch (err) {

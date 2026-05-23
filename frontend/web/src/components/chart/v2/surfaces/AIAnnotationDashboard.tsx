@@ -12,7 +12,8 @@
  * adapter (DEFAULT_BOUNDS-based — B3 ships without pan/zoom
  * re-anchoring; tracked as a follow-up).
  */
-import { useMemo, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import type { Chart } from "klinecharts";
 
 import type { AnnotatedChartPayload, Annotation } from "../types";
 import { KlineCandlePane } from "../primitives/KlineCandlePane";
@@ -70,6 +71,15 @@ export function AIAnnotationDashboard({
     "ALL",
   );
   const [logOpen, setLogOpen] = useState(true);
+
+  // Hold the live klinecharts instance so AnnotationOverlay can use
+  // pixel-precise anchoring. Null until KlineCandlePane fires onReady.
+  const chartRef = useRef<Chart | null>(null);
+  const [chartInstance, setChartInstance] = useState<Chart | null>(null);
+  const handleChartReady = useCallback((chart: Chart | null) => {
+    chartRef.current = chart;
+    setChartInstance(chart);
+  }, []);
 
   const visibleTypes = typesForFilter(filter);
   const last = lastClose(payload);
@@ -167,7 +177,11 @@ export function AIAnnotationDashboard({
         }}
       >
         <div className="relative" style={{ minHeight: 480 }}>
-          <KlineCandlePane candles={payload.candles} height={480} />
+          <KlineCandlePane
+            candles={payload.candles}
+            height={480}
+            onReady={handleChartReady}
+          />
           {isLiveEmpty ? (
             <div className="absolute inset-0 flex items-center justify-center p-6">
               <EmptyState
@@ -180,6 +194,7 @@ export function AIAnnotationDashboard({
               candles={payload.candles}
               annotations={payload.annotations}
               visibleTypes={visibleTypes}
+              chart={chartInstance}
             />
           )}
         </div>
@@ -194,7 +209,8 @@ export function AIAnnotationDashboard({
         className="text-[10.5px] text-text-3 px-1"
         style={{ fontFamily: '"JetBrains Mono", monospace' }}
       >
-        EMA(21) · candle_pane · drag to pan · callouts approximate-anchored ·{" "}
+        EMA(21) · candle_pane · drag to pan ·{" "}
+        {chartRef.current ? "callouts pixel-anchored" : "callouts approximate-anchored"} ·{" "}
         {payload.annotations.length} annotations · source: {payload.source}
       </footer>
     </div>

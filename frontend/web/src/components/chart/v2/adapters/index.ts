@@ -40,6 +40,8 @@ export {
   yForPrice,
   deriveRange,
   DEFAULT_BOUNDS,
+  createKlineAnchor,
   type AnchorBounds,
   type PriceRange,
+  type KlineAnchor,
 } from "./kline-anchor";

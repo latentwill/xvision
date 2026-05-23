@@ -4,20 +4,24 @@
  * SVG connectors (dashed 3 3) pointing from the candle anchor
  * (r=6 ring + r=2.4 dot) to the nearest callout corner.
  *
- * Callouts are spread evenly across the usable width
- * (full width - padLeft - padRight). The anchor x is computed from
- * `xForIndex(idx, candleCount, bounds)`; the anchor y is computed from
- * `yForPrice(price, range, bounds)` using the candle's high (top
- * callout) or low (bottom callout).
+ * Two anchoring modes:
  *
- * Layout re-anchors via a ResizeObserver on the host. Pan/zoom of the
- * underlying candles isn't tracked yet (B3-MVP); the spec's
- * pixel-perfect re-anchoring via `onVisibleRangeChange` is a follow-up.
+ * **Pixel-precise (default when `chart` prop is provided):** uses
+ * `createKlineAnchor(chart)` which calls `chart.convertToPixel` for
+ * each index/price and subscribes to `onVisibleRangeChange` so the
+ * overlay re-anchors on every pan, zoom, or resize.
+ *
+ * **Geometric fallback (when no `chart` prop):** the original
+ * `xForIndex` / `yForPrice` approximation, driven by a ResizeObserver
+ * on the overlay host. Used for chart-lab fixture renders before the
+ * klinecharts instance mounts.
  */
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import type { Chart } from "klinecharts";
 
 import type { Annotation, CandleColumns } from "../types";
 import {
+  createKlineAnchor,
   DEFAULT_BOUNDS,
   deriveRange,
   xForIndex,
@@ -32,6 +36,12 @@ export interface AnnotationOverlayProps {
   annotations: Annotation[];
   /** Filter for the current visible types. Defaults to all. */
   visibleTypes?: ReadonlySet<Annotation["type"]>;
+  /**
+   * Live klinecharts Chart instance. When provided, the overlay uses
+   * `createKlineAnchor` for pixel-precise anchoring and re-anchors on
+   * pan/zoom. When absent, falls back to the geometric approximation.
+   */
+  chart?: Chart | null;
 }
 
 /**
@@ -69,11 +79,30 @@ export function AnnotationOverlay({
   candles,
   annotations,
   visibleTypes,
+  chart,
 }: AnnotationOverlayProps): ReactElement {
   const hostRef = useRef<HTMLDivElement>(null);
+  // `tick` increments whenever the layout changes so the component re-renders
+  // with fresh pixel positions from the chart instance.
+  const [tick, setTick] = useState(0);
+  const bumpTick = useCallback(() => setTick((n) => n + 1), []);
+
+  // Geometric-fallback state: track host bounds via ResizeObserver.
   const [bounds, setBounds] = useState<AnchorBounds>(DEFAULT_BOUNDS);
 
+  // ── Pixel-precise mode: subscribe to layout changes when chart is live ──
   useEffect(() => {
+    if (!chart) return;
+    const anchor = createKlineAnchor(chart);
+    const unsub = anchor.subscribeLayout(bumpTick);
+    // Fire once to prime pixel positions.
+    bumpTick();
+    return unsub;
+  }, [chart, bumpTick]);
+
+  // ── Geometric fallback: ResizeObserver on the host div ─────────────────
+  useEffect(() => {
+    if (chart) return; // pixel-precise mode handles resize via subscribeLayout
     const host = hostRef.current;
     if (!host) return;
     const obs = new ResizeObserver(() => {
@@ -89,7 +118,7 @@ export function AnnotationOverlay({
     const rect = host.getBoundingClientRect();
     setBounds((prev) => ({ ...prev, width: rect.width, height: rect.height }));
     return () => obs.disconnect();
-  }, []);
+  }, [chart]);
 
   const filtered = visibleTypes
     ? annotations.filter((a) => visibleTypes.has(a.type))
@@ -101,28 +130,69 @@ export function AnnotationOverlay({
   const tops = filtered.filter((a) => a.side === "top");
   const bots = filtered.filter((a) => a.side === "bottom");
 
-  const topXs = spreadRowXs(tops.length, bounds, CALLOUT_WIDTH);
-  const botXs = spreadRowXs(bots.length, bounds, CALLOUT_WIDTH);
+  // When in pixel-precise mode, the host bounds for callout spreading come
+  // from the chart's DOM element; fall back to ResizeObserver-tracked bounds.
+  const activeBounds: AnchorBounds = (() => {
+    if (chart) {
+      try {
+        const el = chart.getDom();
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            return {
+              ...DEFAULT_BOUNDS,
+              width: rect.width,
+              height: rect.height,
+            };
+          }
+        }
+      } catch {
+        // chart disposed between render calls
+      }
+    }
+    return bounds;
+  })();
+
+  // Suppress tick usage from lint — it's only read to trigger re-renders.
+  void tick;
+
+  const topXs = spreadRowXs(tops.length, activeBounds, CALLOUT_WIDTH);
+  const botXs = spreadRowXs(bots.length, activeBounds, CALLOUT_WIDTH);
 
   const topY = 12;
-  const botY = Math.max(topY + 60, bounds.height - 180);
+  const botY = Math.max(topY + 60, activeBounds.height - 180);
+
+  // Resolve pixel position for a single anchor point, using the chart
+  // instance when available, falling back to geometric helpers.
+  function resolveAnchor(dataIndex: number, price: number): { ax: number; ay: number } {
+    if (chart) {
+      try {
+        const klineAnchor = createKlineAnchor(chart);
+        return { ax: klineAnchor.xForIndex(dataIndex), ay: klineAnchor.yForPrice(price) };
+      } catch {
+        // fall through to geometric
+      }
+    }
+    return {
+      ax: xForIndex(dataIndex, count, activeBounds),
+      ay: yForPrice(price, range, activeBounds),
+    };
+  }
 
   const positioned: PositionedCallout[] = [];
   for (let i = 0; i < tops.length; i++) {
     const a = tops[i];
     const candle = candles.time[a.idx];
     if (candle == null) continue;
-    const ax = xForIndex(a.idx, count, bounds);
-    const ay = yForPrice(candles.high[a.idx] ?? range.max, range, bounds);
-    positioned.push({ ann: a, cx: topXs[i] ?? bounds.padLeft, cy: topY, ax, ay });
+    const { ax, ay } = resolveAnchor(a.idx, candles.high[a.idx] ?? range.max);
+    positioned.push({ ann: a, cx: topXs[i] ?? activeBounds.padLeft, cy: topY, ax, ay });
   }
   for (let i = 0; i < bots.length; i++) {
     const a = bots[i];
     const candle = candles.time[a.idx];
     if (candle == null) continue;
-    const ax = xForIndex(a.idx, count, bounds);
-    const ay = yForPrice(candles.low[a.idx] ?? range.min, range, bounds);
-    positioned.push({ ann: a, cx: botXs[i] ?? bounds.padLeft, cy: botY, ax, ay });
+    const { ax, ay } = resolveAnchor(a.idx, candles.low[a.idx] ?? range.min);
+    positioned.push({ ann: a, cx: botXs[i] ?? activeBounds.padLeft, cy: botY, ax, ay });
   }
 
   return (
