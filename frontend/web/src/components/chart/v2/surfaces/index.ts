@@ -9,3 +9,4 @@ export * from "./WizardPreviewChartV2";
 export * from "./DarkMinimalDashboard";
 export * from "./ComparisonABDashboard";
 export * from "./AIAnnotationDashboard";
+export * from "./GradientHeroDashboard";
