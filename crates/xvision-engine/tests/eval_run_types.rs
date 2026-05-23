@@ -18,7 +18,7 @@ fn run_new_queued_starts_in_queued_state() {
 
 #[test]
 fn run_new_queued_id_is_a_ulid() {
-    let r = Run::new_queued("h".into(), "s".into(), RunMode::Paper);
+    let r = Run::new_queued("h".into(), "s".into(), RunMode::Backtest);
     // ULIDs are 26 chars Crockford base32, monotonic by encoded prefix.
     assert_eq!(r.id.len(), 26, "ULID is 26 chars");
     assert!(
@@ -57,9 +57,9 @@ fn run_status_round_trips_for_every_variant() {
 #[test]
 fn run_mode_round_trips() {
     assert_eq!(serde_json::to_string(&RunMode::Backtest).unwrap(), "\"backtest\"");
-    assert_eq!(serde_json::to_string(&RunMode::Paper).unwrap(), "\"paper\"");
+    assert_eq!(serde_json::to_string(&RunMode::Live).unwrap(), "\"live\"");
 
-    for mode in [RunMode::Backtest, RunMode::Paper] {
+    for mode in [RunMode::Backtest, RunMode::Live] {
         let s = serde_json::to_string(&mode).unwrap();
         let back: RunMode = serde_json::from_str(&s).unwrap();
         assert_eq!(back, mode);

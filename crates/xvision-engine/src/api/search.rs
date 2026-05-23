@@ -333,7 +333,7 @@ fn run_entry(run: &Run) -> IndexEntry {
 
 fn mode_label(m: RunMode) -> &'static str {
     match m {
-        RunMode::Paper => "paper",
+        RunMode::Live => "live",
         RunMode::Backtest => "backtest",
     }
 }

@@ -1,4 +1,4 @@
-//! QA15 canary — `BacktestExecutor::with_warmup` produces a per-decision
+//! QA15 canary — `Executor::with_warmup` produces a per-decision
 //! seed whose `market_data.bar_history` array exposes the prior
 //! `scenario.warmup_bars` bars to the trader pipeline.
 //!
@@ -21,7 +21,7 @@ use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
 };
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
@@ -214,7 +214,7 @@ async fn bar_one_seed_carries_warmup_history_when_warmup_provided() {
     ));
     let dispatch_for_inspect = dispatch.clone();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(decision_bars).with_warmup(warmup);
+    let executor = Executor::with_bars(decision_bars).with_warmup(warmup);
 
     executor
         .run(
@@ -316,7 +316,7 @@ async fn bar_one_seed_has_empty_history_when_warmup_zero() {
     ));
     let dispatch_for_inspect = dispatch.clone();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(decision_bars);
+    let executor = Executor::with_bars(decision_bars);
 
     executor
         .run(

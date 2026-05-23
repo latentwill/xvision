@@ -1,6 +1,6 @@
 //! Integration test for F-5 phase 2a (`harness-recovery-malformed-json`).
 //!
-//! Drives `PaperExecutor::run` and `BacktestExecutor::run` through a
+//! Drives `paper-mode-executor-deleted::run` and `Executor::run` through a
 //! canned `LlmDispatch` that emits a malformed trader response on the
 //! first call and a clean / second-malformed response on the repair
 //! attempt. Asserts:
@@ -21,7 +21,7 @@
 //!      (Pinned via a unit assertion against the system prompt + final
 //!      user turn captured by the dispatcher.)
 //!
-//!   4. Both `PaperExecutor` and `BacktestExecutor` apply the repair —
+//!   4. Both `paper-mode-executor-deleted` and `Executor` apply the repair —
 //!      asserted by running the same canned dispatcher through both
 //!      surfaces and confirming each one fires a `recovery.attempt`
 //!      span with `class_tag="invalid_json"`.
@@ -46,7 +46,7 @@ use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmRespo
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::agent::pipeline::ResolvedAgentSlot;
 use xvision_engine::agents::InputsPolicy;
-use xvision_engine::eval::executor::{classify_run_failure, BacktestExecutor, Executor, PaperExecutor};
+use xvision_engine::eval::executor::{classify_run_failure, Executor, RunExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
@@ -287,8 +287,8 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
@@ -427,8 +427,8 @@ async fn paper_executor_surfaces_original_error_after_two_consecutive_truncation
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
@@ -525,8 +525,8 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
@@ -557,7 +557,7 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
     );
 }
 
-// ─── Case (d): BacktestExecutor applies the repair uniformly. ─────────────
+// ─── Case (d): Executor applies the repair uniformly. ─────────────
 
 #[tokio::test]
 async fn backtest_executor_repairs_invalid_json_on_single_retry() {
@@ -576,7 +576,7 @@ async fn backtest_executor_repairs_invalid_json_on_single_retry() {
     let store = RunStore::new(pool);
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let executor = BacktestExecutor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),

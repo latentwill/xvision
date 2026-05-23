@@ -22,7 +22,7 @@
 //! ## Bar-slice alignment
 //!
 //! Callers pass the **decision bars** (the same `bars` slice the
-//! BacktestExecutor iterates), not the full warmup-extended combined slice.
+//! Executor iterates), not the full warmup-extended combined slice.
 //! The warmup bars are not passed here — they are only used to seed the LLM
 //! context in the strategy executor. Any indicator warmup needed for the
 //! baselines (SMA 20, z-score 20) is handled internally by accumulating

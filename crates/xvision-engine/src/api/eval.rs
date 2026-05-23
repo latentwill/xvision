@@ -6,12 +6,12 @@
 //!   list and (future) MCP browse tools (PR #21)
 //! - `get_run` — `RunDetail` (summary + decisions + equity curve) for the
 //!   dashboard's `/eval-runs/:id` page (PR #24)
-//! - `run` — paper-mode dispatch that constructs `PaperExecutor` +
-//!   `AlpacaPaperSurface::from_env` + `AnthropicDispatch` +
-//!   `ToolRegistry::default_with_builtins` from env vars (PR #26)
+//! - `run` — Backtest-mode dispatch that constructs `Executor` +
+//!   `AnthropicDispatch` + `ToolRegistry::default_with_builtins` from env
+//!   vars (PR #26; Live mode lands with the `live-bar-source-alpaca` track)
 //! - `run_with_deps` — testable variant that takes the broker / dispatch /
 //!   tools as parameters; useful for tests and any caller that wants to
-//!   inject a `MockBrokerSurface` (e.g., a future "dry-run" mode)
+//!   inject a custom dispatch (e.g., a `MockDispatch` for fixture-only tests)
 //! - `compare` — wraps `eval::compare_runs` with audit + typed-error mapping
 //!   for the dashboard's run-comparison view + `xvn eval compare` CLI
 //! - `attest` — sign + persist an `EvalAttestation` for a completed run,
@@ -33,12 +33,11 @@ use crate::agent::pipeline::{agent_slot_to_llm_slot, ResolvedAgentSlot};
 use crate::agents::AgentStore;
 use crate::api::audit::{self, Outcome};
 use crate::api::scenario as api_scenario;
-use crate::api::settings::brokers as api_brokers;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, CompareOptions, ComparisonReport, ManifestMismatch};
 use crate::eval::cost::aggregate_eval_run_inference_cost;
-use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
+use crate::eval::executor::{Executor, RunExecutor};
 use crate::eval::findings::{Finding, InferenceCostDominatesReturnPayload, Severity};
 use crate::eval::metrics::{
     compute_net_return_pct, inference_cost_dominates, INFERENCE_COST_DOMINANCE_THRESHOLD,
@@ -51,8 +50,7 @@ use crate::eval::store::{ListFilter, RunStore};
 use crate::tools::ToolRegistry;
 use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
-use xvision_data::fixtures::load_ohlcv_fixture;
-use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
+use xvision_execution::broker_surface::BrokerSurface;
 use xvision_filters::{FilterEventV1, FilterSummary};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -830,9 +828,10 @@ pub struct EvalRunRequest {
     pub agent_id: String,
     /// Scenario id from `canonical_scenarios()` (e.g. `crypto-bull-q1-2025`).
     pub scenario_id: String,
-    /// Run mode. `Paper` drives an `AlpacaPaperSurface` against real Alpaca
-    /// paper credentials; `Backtest` replays the scenario's parquet fixture
-    /// in-process without any broker.
+    /// Run mode. `Backtest` replays the scenario's parquet fixture in-process
+    /// without any broker. `Live` is routed to `Executor::live(...)`, which
+    /// currently returns a not-implemented error pending the
+    /// `live-bar-source-alpaca` track + the Phase 3 launch endpoint.
     pub mode: RunMode,
     /// Optional per-run override of `Strategy.mechanical_params`. Persisted as
     /// `eval_runs.params_override_json`.
@@ -895,10 +894,13 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
     let _scenario = resolve_scenario(ctx, &req.scenario_id).await?;
 
-    let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
-        RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
-        RunMode::Backtest => None,
-    };
+    // Live mode is reserved for the launch endpoint (Phase 3, see
+    // `live-bar-source-alpaca` + `live-eval-launch-and-freeze`). The
+    // engine surface today only ships the Backtest path; Live constructs
+    // through `Executor::live(...)` and returns a stable not-implemented
+    // error. Broker construction is deferred entirely — Live no longer
+    // shares the eval-paper paper-broker code path.
+    let broker: Option<Arc<dyn BrokerSurface>> = None;
     let mut agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
     apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
@@ -1011,37 +1013,10 @@ async fn record_provider_override_note(
     }
 }
 
-/// Build an Alpaca paper broker, preferring credentials stored via the
-/// settings UI (`$XVN_HOME/secrets/brokers.toml`) over `APCA_*` env
-/// vars. Env-var fallback keeps CI scripts working without migration.
-/// Returns `ApiError::Validation` with a user-actionable message if
-/// neither source has credentials — the dashboard wires this into
-/// "Configure Alpaca → Settings" copy.
-async fn build_alpaca_paper_broker(ctx: &ApiContext) -> ApiResult<Arc<dyn BrokerSurface>> {
-    const DEFAULT_PAPER_URL: &str = "https://paper-api.alpaca.markets";
-    if let Some(creds) = api_brokers::load_alpaca_credentials(&ctx.xvn_home).await? {
-        let base = creds.base_url.as_deref().unwrap_or(DEFAULT_PAPER_URL);
-        return AlpacaPaperSurface::from_credentials(&creds.api_key_id, &creds.api_secret_key, base)
-            .map(|s| Arc::new(s) as Arc<dyn BrokerSurface>)
-            .map_err(|e| ApiError::Internal(format!("alpaca paper from stored creds: {e}")));
-    }
-    // Env-var fallback.
-    match AlpacaPaperSurface::from_env() {
-        Ok(s) => Ok(Arc::new(s)),
-        Err(e) => {
-            let msg = e.to_string();
-            // Missing env vars is operator-actionable; bubble the
-            // "where to set" hint into the validation message.
-            if msg.contains("APCA_API_KEY_ID") || msg.contains("APCA_API_SECRET_KEY") {
-                Err(ApiError::Validation(
-                    "Alpaca paper credentials not configured. Set them in Settings → Brokers, or export APCA_API_KEY_ID + APCA_API_SECRET_KEY before running.".into()
-                ))
-            } else {
-                Err(ApiError::Internal(format!("alpaca paper from env: {e}")))
-            }
-        }
-    }
-}
+// `build_alpaca_paper_broker` was removed alongside the paper-mode-executor-deleted
+// deletion (executor-collapse-paper-mode, 2026-05-22). The live launch
+// endpoint (`live-bar-source-alpaca`) owns broker construction for Live
+// runs going forward; Backtest runs never built one.
 
 /// Build the LLM dispatch the eval will use plus the findings-extractor
 /// model id appropriate for that provider. The second tuple element
@@ -1742,20 +1717,7 @@ async fn run_inner(
     //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
     //    we fall back to the legacy `data/probes/<cache_key>.parquet`
     //    loader so existing test fixtures keep working.
-    let executor: Box<dyn Executor> = match req.mode {
-        RunMode::Paper => {
-            let b = broker.ok_or_else(|| ApiError::Validation("paper mode requires a broker".into()))?;
-            build_paper_executor(
-                ctx,
-                &scenario,
-                from_db,
-                b,
-                obs_emitter.clone(),
-                provider_catalogs.clone(),
-                req.limits.as_ref(),
-            )
-            .await?
-        }
+    let executor: Box<dyn RunExecutor> = match req.mode {
         RunMode::Backtest => {
             build_backtest_executor(
                 ctx,
@@ -1766,6 +1728,17 @@ async fn run_inner(
                 req.limits.as_ref(),
             )
             .await?
+        }
+        RunMode::Live => {
+            // executor-live-shell: route RunMode::Live to the Live
+            // constructor. Until live-bar-source-alpaca lands, this
+            // surfaces the stable not-implemented error to the
+            // caller so launch attempts fail loudly rather than
+            // silently dropping back to Backtest.
+            let _ = broker; // broker is None today; reserved for the Live wiring track.
+            return Err(ApiError::Validation(
+                Executor::live().err().expect("live() always errors today").to_string(),
+            ));
         }
     };
 
@@ -2025,7 +1998,7 @@ async fn resolve_scenario_with_source(ctx: &ApiContext, id: &str) -> ApiResult<(
 }
 
 /// Source bars for a DB-resolved scenario via the cache wrapper. The
-/// returned bars feed `BacktestExecutor::with_bars`. Errors surface
+/// returned bars feed `Executor::with_bars`. Errors surface
 /// fetch / cache failures so the caller can decide whether to fall
 /// back to the legacy fixture loader.
 async fn load_bars_for_scenario(
@@ -2101,120 +2074,14 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
         .collect()
 }
 
-async fn load_ohlcv_for_scenario(
-    ctx: &ApiContext,
-    scenario: &Scenario,
-    from_db: bool,
-) -> ApiResult<Vec<Ohlcv>> {
-    if from_db {
-        return load_bars_for_scenario(ctx, scenario)
-            .await
-            .map(market_bars_to_ohlcv);
-    }
-
-    let asset = scenario
-        .asset
-        .first()
-        .ok_or_else(|| ApiError::Validation(format!("scenario '{}' has empty asset list", scenario.id)))?
-        .venue_symbol
-        .clone();
-    let mut bars = load_ohlcv_fixture(&scenario.bar_cache_policy.cache_key, &asset, usize::MAX).map_err(|e| {
-        ApiError::Validation(format!(
-            "scenario '{}' is missing historical bars for paper eval. Fetch/cache bars before starting paper mode: {e}",
-            scenario.id
-        ))
-    })?;
-    let overlaps_window = bars
-        .iter()
-        .any(|b| b.timestamp >= scenario.time_window.start && b.timestamp < scenario.time_window.end);
-    if !overlaps_window {
-        let step = chrono::Duration::seconds(scenario.granularity.seconds() as i64);
-        for (idx, bar) in bars.iter_mut().enumerate() {
-            bar.timestamp = scenario.time_window.start + step * idx as i32;
-        }
-    }
-    Ok(bars)
-}
-
-async fn build_paper_executor(
-    ctx: &ApiContext,
-    scenario: &Scenario,
-    from_db: bool,
-    broker: Arc<dyn BrokerSurface>,
-    obs: Option<crate::agent::observability::ObsEmitter>,
-    provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
-    limits: Option<&crate::eval::limits::EvalLimits>,
-) -> ApiResult<Box<dyn Executor>> {
-    let bars = load_ohlcv_for_scenario(ctx, scenario, from_db).await?;
-    let warmup = if from_db {
-        market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?)
-    } else {
-        // Legacy / fixture path: no separate warmup cache wrapper. The
-        // fixture is already a wider window, and the trader sees only the
-        // current bar in the seed today, so we don't synthesize warmup
-        // here — that's only meaningful for DB-resolved scenarios that
-        // can pull a real pre-window from the bars cache.
-        Vec::new()
-    };
-    let min_notional = paper_min_notional_usd(ctx);
-    let mut paper = PaperExecutor::with_bars(broker, bars)
-        .with_warmup(warmup)
-        .with_event_bus(ctx.event_bus.clone())
-        .with_provider_catalogs(provider_catalogs)
-        .with_min_notional_usd(min_notional);
-    if let Some(emitter) = obs {
-        paper = paper.with_observability(emitter);
-    }
-    // V2D: thread the server-built recorder onto the executor so per-slot
-    // `memory_mode = AgentScoped` actually emits recall/write events. The
-    // recorder treats `Off` as a no-op, so legacy strategies are unaffected.
-    if let Some(recorder) = ctx.memory_recorder.clone() {
-        paper = paper.with_memory_recorder(recorder);
-    }
-    if let Some(l) = limits {
-        paper = paper.with_limits(l.clone());
-    }
-    Ok(Box::new(paper))
-}
-
-/// Resolve the `paper` venue's `min_notional_usd` from the active risk
-/// config (`$XVN_HOME/config/risk.toml`, with `XVN_RISK_CONFIG_PATH`
-/// override). Returns `0.0` (rule no-op) when the file is missing,
-/// fails to parse, or has no `[venues.paper]` entry — matching the
-/// "absent venue → pass-through" contract from PR #324.
-///
-/// Plumbing choice: a per-run, best-effort read at executor-build
-/// time. Avoids threading a `RiskConfig` handle through `ApiContext`
-/// (which today holds no risk-layer state), and the file is small
-/// (~30 lines) so the read is negligible next to executor setup.
-/// Failure paths log and fall back to 0.0 — never panic, never
-/// bubble. The risk-layer crate already validates the file at the
-/// top of every run, so production paths see a well-formed config.
-fn paper_min_notional_usd(ctx: &ApiContext) -> f64 {
-    let path = if let Ok(p) = std::env::var("XVN_RISK_CONFIG_PATH") {
-        if !p.is_empty() {
-            std::path::PathBuf::from(p)
-        } else {
-            ctx.xvn_home.join("config").join("risk.toml")
-        }
-    } else {
-        ctx.xvn_home.join("config").join("risk.toml")
-    };
-    if !path.exists() {
-        return 0.0;
-    }
-    match xvision_risk::config::RiskConfig::from_path(&path) {
-        Ok(cfg) => cfg.venue_limits("paper").min_notional_usd,
-        Err(e) => {
-            tracing::warn!(
-                path = %path.display(),
-                error = %e,
-                "failed to load risk config for MinNotional wiring; defaulting to 0.0 (rule no-op)"
-            );
-            0.0
-        }
-    }
-}
+// `load_ohlcv_for_scenario`, `build_paper_executor`, and
+// `paper_min_notional_usd` were removed
+// alongside the paper-mode-executor-deleted deletion (executor-collapse-paper-mode,
+// 2026-05-22). Backtest mode never used them; the future Live wiring
+// owns its own broker + min-notional surface in the
+// `live-bar-source-alpaca` track. The risk-config crate's `"paper"`
+// venue-id label is preserved (separate concept from RunMode); see
+// `xvision_risk::config::venue_limits`.
 
 async fn build_backtest_executor(
     ctx: &ApiContext,
@@ -2223,7 +2090,7 @@ async fn build_backtest_executor(
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
-) -> ApiResult<Box<dyn Executor>> {
+) -> ApiResult<Box<dyn RunExecutor>> {
     if from_db {
         match load_bars_for_scenario(ctx, scenario).await {
             Ok(bars) => {
@@ -2242,7 +2109,7 @@ async fn build_backtest_executor(
                 // operator who set `warmup_bars > 0` expects real
                 // pre-window context, not silent emptiness.
                 let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?);
-                let mut bt = BacktestExecutor::with_bars(ohlcv)
+                let mut bt = Executor::with_bars(ohlcv)
                     .with_warmup(warmup)
                     .with_event_bus(ctx.event_bus.clone())
                     .with_provider_catalogs(provider_catalogs);
@@ -2273,7 +2140,7 @@ async fn build_backtest_executor(
         return Err(missing_bars_validation(scenario, None));
     }
 
-    let mut bt = BacktestExecutor::new()
+    let mut bt = Executor::new()
         .with_event_bus(ctx.event_bus.clone())
         .with_provider_catalogs(provider_catalogs);
     if let Some(emitter) = obs {
@@ -2341,10 +2208,13 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // Build broker / dispatch / tools from env up-front so any
     // missing-config errors return synchronously rather than landing in
     // a background-task failure row the user has to dig out of the list.
-    let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
-        RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
-        RunMode::Backtest => None,
-    };
+    //
+    // Live mode broker construction is deferred to the launch endpoint
+    // (Phase 3, `live-bar-source-alpaca` track). The engine itself only
+    // ships Backtest end-to-end today; Live falls through to
+    // `Executor::live()` below which returns a stable not-implemented
+    // error.
+    let _broker: Option<Arc<dyn BrokerSurface>> = None;
     let mut agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
     apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
@@ -2387,20 +2257,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             .with_catalogs(obs_catalogs.clone())
     });
 
-    let executor: Box<dyn Executor> = match req.mode {
-        RunMode::Paper => {
-            let b = broker.expect("paper mode broker built above");
-            build_paper_executor(
-                ctx,
-                &scenario,
-                from_db,
-                b,
-                obs_emitter.clone(),
-                provider_catalogs.clone(),
-                req.limits.as_ref(),
-            )
-            .await?
-        }
+    let executor: Box<dyn RunExecutor> = match req.mode {
         RunMode::Backtest => {
             build_backtest_executor(
                 ctx,
@@ -2411,6 +2268,11 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 req.limits.as_ref(),
             )
             .await?
+        }
+        RunMode::Live => {
+            return Err(ApiError::Validation(
+                Executor::live().err().expect("live() always errors today").to_string(),
+            ));
         }
     };
 
@@ -2546,7 +2408,7 @@ async fn execute_in_background(
     strategy: crate::strategies::Strategy,
     scenario: Scenario,
     agent_slots: Vec<ResolvedAgentSlot>,
-    executor: Box<dyn Executor>,
+    executor: Box<dyn RunExecutor>,
     dispatch: Arc<dyn LlmDispatch>,
     findings_model: String,
     tools: Arc<ToolRegistry>,
@@ -2900,7 +2762,7 @@ fn summarise(run: Run) -> RunSummary {
         scenario_id: run.scenario_id,
         mode: match run.mode {
             RunMode::Backtest => "backtest".into(),
-            RunMode::Paper => "paper".into(),
+            RunMode::Live => "live".into(),
         },
         status: run.status.as_str().into(),
         started_at: run.started_at,

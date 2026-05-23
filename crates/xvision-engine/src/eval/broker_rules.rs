@@ -12,7 +12,7 @@
 //! # Architecture
 //!
 //! ```text
-//! BacktestExecutor
+//! Executor
 //!   → build_pending_order(trader_output, bar_price, equity)
 //!   → broker_rule_set.validate(&order)              ← this module
 //!       Ok                       → simulate_fill(order)

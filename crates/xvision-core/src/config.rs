@@ -180,7 +180,6 @@ pub struct Runtime {
 #[serde(rename_all = "lowercase")]
 pub enum RunMode {
     Backtest,
-    Paper,
     Live,
 }
 

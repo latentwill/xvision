@@ -190,7 +190,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
         EvalRunRequest {
             agent_id: strategy_id.into(),
             scenario_id: "no-such-scenario-anywhere".into(),
-            mode: RunMode::Paper,
+            mode: RunMode::Backtest,
             params_override: None,
             limits: None,
             skip_preflight: false,
@@ -290,7 +290,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
         EvalRunRequest {
             agent_id: strategy_id.into(),
             scenario_id: "flash-crash-aug-2024".into(),
-            mode: RunMode::Paper,
+            mode: RunMode::Backtest,
             params_override: None,
             limits: None,
             skip_preflight: false,

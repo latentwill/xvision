@@ -13,7 +13,7 @@
 //! that subscriber (`broadcast::error::RecvError::Lagged`); subscribers
 //! handle that themselves.
 //!
-//! The dashboard SSE endpoint (Plan 2d) and the BacktestExecutor wiring
+//! The dashboard SSE endpoint (Plan 2d) and the Executor wiring
 //! (when Phase 3.B-backtest lands) consume the same `ProgressEvent`
 //! shape. New event variants are additive — wire-compatible with older
 //! subscribers because the enum is `#[serde(tag = "type")]` (unknown
@@ -37,7 +37,7 @@ pub enum ProgressEvent {
     RunStarted {
         run_id: String,
         /// Pre-run token estimate from the strategy's tokens module. 0 if
-        /// the executor doesn't compute one (today: PaperExecutor).
+        /// the executor doesn't compute one (today: paper-mode-executor-deleted).
         estimated_tokens: u64,
     },
     /// One per scheduler tick. `scenario_progress_pct` is in [0.0, 100.0].
@@ -47,9 +47,9 @@ pub enum ProgressEvent {
         current_ts: DateTime<Utc>,
     },
     /// Emitted once per LLM-slot invocation. Phase 3.D-progress pares
-    /// PaperExecutor doesn't yet break out per-slot tokens, so this is
-    /// reserved for the BacktestExecutor + future per-slot
-    /// instrumentation. PaperExecutor does not emit this today.
+    /// paper-mode-executor-deleted doesn't yet break out per-slot tokens, so this is
+    /// reserved for the Executor + future per-slot
+    /// instrumentation. paper-mode-executor-deleted does not emit this today.
     AgentFired {
         run_id: String,
         slot: String,
