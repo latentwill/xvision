@@ -20,6 +20,7 @@ runbooks.
 
 - `MANUAL.md` — operator-side prerequisites (Alpaca creds, Orderly onboarding, Mantle minting). Tier 2 = forward-paper, Tier 3 = one-time setup.
 - `xvn <verb> --help` — source of truth for any CLI flag.
+- `docs/operator/filters.md` — current strategy-level filter workflow and filter-QA checks.
 - `docs/superpowers/specs/2026-05-12-remote-cli-over-tailscale-design.md` — the shipped remote CLI contract for driving live nodes.
 
 For engineering docs (specs/plans/ADRs/FOLLOWUPS, architecture, team board),
@@ -29,7 +30,7 @@ switch to `xvision-dev`.
 
 `xvn --help` is the source of truth, but the high-traffic verbs:
 
-- `strategy` — author / validate / list / inspect saved `Strategy` artifacts (`$XVN_HOME/strategies/<id>.json`). Atomic mode (`strategy new --prompt`) creates a Strategy + Agent + provider/model binding in one call. `--family / --hypothesis / --target-regime / --avoid-regime` attach a `Hypothesis` to the strategy.
+- `strategy` — author / validate / list / inspect saved `Strategy` artifacts (`$XVN_HOME/strategies/<id>.json`). Atomic mode (`strategy new --prompt`) creates a Strategy + Agent + provider/model binding in one call. Prefer explicit provider/model and asset/timeframe; no workspace default model is assumed for eval launch. `--family / --hypothesis / --target-regime / --avoid-regime` attach a `Hypothesis` to the strategy.
 - `scenario` — author scenarios. Includes `select` (read-only comparable set query), `inspect --card` (plain-text card), `classify` (auto-derive regime labels from bars), `set-regime` (operator-authored labels).
 - `eval` — `run`, `list`, `show`, `results`, `watch`, `compare` (with `--markdown` table), `batch` (multi-scenario), `attest`, `export` (canonical `EvalRunExport` JSON, q15 §3), `review`, `validate`.
 - `experiment` — ledger that groups a research question + strategy + scenarios. `experiment run` orchestrates pick → batch → bind → `result_json` in one shot; pair with `--wait --compare --markdown` for a publishable summary.
@@ -78,6 +79,17 @@ xvn provider list
 xvn provider refresh-models --name openrouter
 xvn dashboard serve --bind 127.0.0.1:8788
 ```
+
+## Strategy inspector and filters
+
+- Canonical dashboard inspector route: `/strategies/:id`.
+- `/authoring/:id` still works only as a compatibility alias for older links.
+- The inspector Manifest card edits display name, description, asset universe, and cadence. The stable strategy ID is read-only.
+- Eval readiness validation is manual: click **Check eval readiness** or run `xvn strategy validate <id>` / `xvn eval validate`.
+- Mechanical params are not an operator tuning surface in the current inspector.
+- A real XVN filter is a saved strategy filter artifact, not prompt wording. Prompt text saying "filter" does not prove the filter subsystem ran.
+- For filter QA, confirm the strategy shows a filter artifact and completed eval details include filter summaries/events when expected.
+- Eval details separate direct model decisions from synthesized rows such as `noop_skip` and early-stop inheritance. Treat high synthesized counts as a QA caveat.
 
 ## Pipeline vocabulary (locked 2026-05-10, terminology rename Option B)
 
@@ -163,6 +175,8 @@ For command-style live-node work, prefer the typed remote CLI job API instead of
 - Don't bind the dashboard wider than loopback outside Tailscale until **F35** (dashboard auth) lands.
 - Don't drive the live nodes through ad-hoc SSH or shell text — use the typed remote-CLI job API or `scripts/xvn-remote.py`.
 - Don't bypass the `xvn provider` / `xvn strategy` / `xvn eval` surfaces by editing `$XVN_HOME` files directly — the CLI knows the right invariants and audit hooks.
+- Don't call a run a filter-functionality test unless a real filter artifact was attached and the eval output shows filter participation.
+- Don't infer strategy behavior from synthesized eval rows without calling out `noop_skip`, graph-gated, or early-stop provenance.
 
 ## Deeper references
 
@@ -174,6 +188,7 @@ Engineering-side deployment + crate-level architecture moved to the
 
 ---
 
-*Skills owner: whichever track ships a new `xvn` verb is responsible
-for updating this file in the same PR. Last refresh: 2026-05-20
-(intake `team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`).*
+*Skills owner: whichever track ships a new `xvn` verb or changes
+operator-visible strategy/eval workflow is responsible for updating this
+file in the same PR. Last refresh: 2026-05-23 (QA24 strategy inspector,
+filter, and eval-readiness pass).*

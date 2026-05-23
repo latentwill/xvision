@@ -47,6 +47,8 @@ Do **not** use this for visual layout checks, control alignment, or wizard scree
 
 ### Strategy
 - `GET /api/strategy/:id`
+- `PATCH /api/strategy/:id` — editable manifest metadata, including display name, summary, asset universe, cadence, and color
+- `PUT /api/strategy/:id/filter` / `DELETE /api/strategy/:id/filter` — strategy-level deterministic filter artifact
 - `POST /api/strategy/:id/agents`
 - `PATCH /api/strategy/:id/agents/:role`
 - `DELETE /api/strategy/:id/agents/:role`
@@ -65,6 +67,8 @@ Watch for:
 - manifest fields disagreeing with slot prompts
 - validation passing despite drift
 - `eval_ready: true` returned while warnings/errors describe blockers
+- prompt text that claims a filter exists while the strategy has no saved filter artifact
+- strategy cadence/asset universe mismatches with the intended scenario
 - atomic mode partially succeeding (Agent created, Strategy not, or vice versa)
 - missing delete/archive for the strategy entity itself
 - `temperature` not threading through to the live agent slot
@@ -120,6 +124,8 @@ Watch for:
 - model/provider resolution mismatches
 - runs queuing successfully and then failing on the first decision
 - invalid JSON from the trader slot
+- empty `filter_events` / `filter_summaries` on a run that was supposed to test the XVN filter subsystem
+- conclusions drawn from synthesized rows (`noop_skip`, graph-gated trader skips, early-stop inheritance) without separating them from direct model decisions
 - `EvalRunExport` JSON not byte-identical between `GET /export` and
   `xvn eval export <run_id> --output …`
 - batch endpoint returning success when a subset of runs failed to enqueue
@@ -177,6 +183,8 @@ Watch for:
 - atomic-mode strategy create returns 200 with `eval_ready: false`
   but no `warnings` / `errors` explaining why
 - eval uses an upstream model ID that does not exist for the configured provider
+- a "filtered" strategy exists only as prompt language; no filter artifact is attached
+- eval result analysis treats early-stop / `noop_skip` rows as direct trader decisions
 - duplicate scenarios appear in dropdowns because the API already has duplicate rows
 - strategy-level deletion is absent even though agent-role mutation exists
 - `classify --all` silently skips scenarios because `regime_derived = false`
@@ -209,7 +217,7 @@ See `references/xvision-api-quirks.md` for the concrete endpoint quirks, payload
 
 ---
 
-*Skills owner: any track that adds or changes an `/api/*` route or
-the corresponding `xvn` verb is responsible for updating this file in
-the same PR. Last refresh: 2026-05-20 (intake
-`team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`).*
+*Skills owner: any track that adds or changes an `/api/*` route, the
+corresponding `xvn` verb, or a QA-critical operator workflow is responsible
+for updating this file in the same PR. Last refresh: 2026-05-23 (QA24
+strategy inspector, filter, and eval-readiness pass).*
