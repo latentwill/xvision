@@ -203,6 +203,9 @@ describe("LiveChart", () => {
       </QueryClientProvider>,
     );
 
+    expect(screen.queryByTestId("run-chart-mock")).not.toBeInTheDocument();
+    expect(screen.getByText("Waiting for first event…")).toBeInTheDocument();
+
     await waitFor(() =>
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/eval/runs/r_next/chart",

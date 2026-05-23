@@ -1,6 +1,6 @@
 //! Rule: single position must not exceed `max_position_pct_nav` of NAV.
 
-use xvision_core::VetoReason;
+use xvision_core::{Action, VetoReason};
 
 use crate::{context::RiskEvalContext, RiskRule, RuleVerdict};
 
@@ -15,6 +15,9 @@ impl RiskRule for MaxPositionSize {
     }
 
     fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
+        if matches!(ctx.decision.action, Action::Flat | Action::Close) {
+            return RuleVerdict::Pass;
+        }
         if ctx.decision.size_bps > self.max_bps {
             RuleVerdict::Veto(VetoReason::PositionTooLarge)
         } else {
@@ -61,5 +64,17 @@ mod tests {
             rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
             RuleVerdict::Pass
         ));
+    }
+
+    #[test]
+    fn close_and_flat_pass_even_when_size_exceeds_limit() {
+        let p = flat_portfolio();
+        for action in [Action::Close, Action::Flat] {
+            let d = make_decision(action, Direction::Flat, 9000, 2.0, 5.0);
+            assert!(matches!(
+                rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)),
+                RuleVerdict::Pass
+            ));
+        }
     }
 }

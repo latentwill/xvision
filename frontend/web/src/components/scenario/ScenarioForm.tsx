@@ -205,7 +205,7 @@ export function ScenarioForm({
         slippage,
         latency: { decision_to_fill_ms: latencyMs },
         fill_model: fillModel,
-        overrides: [],
+        overrides: initial?.venue?.overrides ?? [],
       },
       data_source: dataSource,
       replay_mode: REPLAY_MODE,
