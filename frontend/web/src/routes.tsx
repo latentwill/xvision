@@ -45,6 +45,7 @@ const ChartLabTokens = lazy(() => import("./routes/chart-lab/ChartLabTokens").th
 const ChartLabDashboards = lazy(() => import("./routes/chart-lab/ChartLabDashboards").then((m) => ({ default: m.ChartLabDashboards })));
 const ChartLabDashboardOverview = lazy(() => import("./routes/chart-lab/ChartLabDashboardOverview").then((m) => ({ default: m.ChartLabDashboardOverview })));
 const ChartLabDashboardCompare = lazy(() => import("./routes/chart-lab/ChartLabDashboardCompare").then((m) => ({ default: m.ChartLabDashboardCompare })));
+const ChartLabDashboardAnnotated = lazy(() => import("./routes/chart-lab/ChartLabDashboardAnnotated").then((m) => ({ default: m.ChartLabDashboardAnnotated })));
 const ChartsLayout = lazy(() => import("./routes/charts/ChartsLayout").then((m) => ({ default: m.ChartsLayout })));
 const ChartsOverview = lazy(() => import("./routes/charts/ChartsOverview").then((m) => ({ default: m.ChartsOverview })));
 const ChartsCompare = lazy(() => import("./routes/charts/ChartsCompare").then((m) => ({ default: m.ChartsCompare })));
@@ -134,6 +135,7 @@ export const router = createBrowserRouter([
           { path: "dashboards", element: page(<ChartLabDashboards />) },
           { path: "dashboards/overview", element: page(<ChartLabDashboardOverview />) },
           { path: "dashboards/compare", element: page(<ChartLabDashboardCompare />) },
+          { path: "dashboards/annotated", element: page(<ChartLabDashboardAnnotated />) },
         ],
       },
       // Charts dashboard section (chart-rework spec Track B). B0 mounts

@@ -34,3 +34,12 @@ export {
   xvnGradientFill,
   xvnSheen,
 } from "./uplot-plugins";
+
+export {
+  xForIndex,
+  yForPrice,
+  deriveRange,
+  DEFAULT_BOUNDS,
+  type AnchorBounds,
+  type PriceRange,
+} from "./kline-anchor";
