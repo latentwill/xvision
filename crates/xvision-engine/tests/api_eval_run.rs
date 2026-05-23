@@ -68,6 +68,8 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -558,6 +560,8 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {

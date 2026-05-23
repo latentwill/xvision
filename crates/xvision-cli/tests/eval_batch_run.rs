@@ -167,6 +167,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {

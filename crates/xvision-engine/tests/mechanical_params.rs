@@ -40,6 +40,7 @@ fn manifest_for(template_label: &str) -> PublicManifest {
         risk_preset_or_config: "balanced".into(),
         published_at: None,
         min_warmup_bars: None,
+        color: None,
     }
 }
 

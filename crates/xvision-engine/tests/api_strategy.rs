@@ -183,6 +183,8 @@ async fn list_returns_summaries_for_existing_strategys() {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: Vec::new(),

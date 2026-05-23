@@ -194,6 +194,7 @@ fn minimal_strategy(agent_id: &str) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),

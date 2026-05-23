@@ -32,6 +32,17 @@
 }
 
 @layer components {
+  /* Charts dashboard tracked-uppercase eyebrow label.
+     Used across B1–B4 dashboard chrome. See chart-rework spec §4A.5. */
+  .caps {
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+    font-size: 10.5px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    font-weight: 500;
+  }
+
   .serif-i {
     font-family: "Cormorant Garamond", serif;
     font-style: italic;

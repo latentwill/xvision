@@ -386,6 +386,206 @@ function makeWizard() {
   };
 }
 
+// ── Track B (Charts dashboard section, 2026-05-23) ───────────────────────
+// Three new fixtures that back the B1–B4 dashboard canvases. Each uses
+// the same mulberry32 PRNG with a fixed seed so re-runs are byte-equal.
+// Port of the handoff's generators in
+// docs/design/trading-charts/XVN.zip → design_handoff_charts/source/charts/chart-data.js
+// (XVN_STRATEGIES, makeEquity, makeDrawdownSeries, makeMonthlyMatrix).
+
+const STRATEGY_ROTATION = [
+  { id: "fib", name: "Fibonacci Golden Cross", short: "Fib · GC", color: "#D4A547", kind: "Trend", return: 82.41, sharpe: 1.92, mdd: -18.72, win: 58.6, pf: 1.81 },
+  { id: "ema", name: "EMA Pullback", short: "EMA · 50/200", color: "#E8DCB0", kind: "Trend", return: 46.27, sharpe: 1.41, mdd: -14.38, win: 54.1, pf: 1.46 },
+  { id: "brk", name: "Breakout Retest", short: "BRK · 4h", color: "#E07A3A", kind: "Momentum", return: 28.14, sharpe: 1.07, mdd: -12.93, win: 51.2, pf: 1.32 },
+  { id: "msw", name: "Momentum Swing", short: "MSW · 1d", color: "#B98AB4", kind: "Momentum", return: 12.68, sharpe: 0.74, mdd: -15.91, win: 47.8, pf: 1.18 },
+  { id: "mvr", name: "Mean Reversion AI", short: "MVR · 15m", color: "#6BAFA8", kind: "Reversion", return: 34.12, sharpe: 1.18, mdd: -16.04, win: 53.0, pf: 1.39 },
+  { id: "vsc", name: "Volatility Scalper", short: "VSC · 5m", color: "#D67B5C", kind: "Vol", return: 21.85, sharpe: 0.96, mdd: -11.42, win: 50.7, pf: 1.24 },
+  { id: "lqh", name: "Liquidation Hunter", short: "LQH · 1h", color: "#8C6024", kind: "Vol", return: 18.04, sharpe: 0.81, mdd: -19.20, win: 46.2, pf: 1.16 },
+  { id: "btc", name: "BTC Buy & Hold", short: "BTC · HOLD", color: "#6B6553", kind: "Bench", return: -3.21, sharpe: 0.22, mdd: -26.84, win: 43.1, pf: 0.89, dashed: true as const },
+];
+
+function hashSeed(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+function makeEquityCurve(target: number, points: number, seed: number): number[] {
+  const rand = rng(seed);
+  const out: number[] = [];
+  let v = 0; // accumulated return, baselined at 0
+  for (let i = 0; i < points; i++) {
+    const shock = (rand() - 0.5) * 2 * 0.012;
+    v += 0.0006 + shock;
+    v += ((target / 100) * (i / points) - v) * 0.012;
+    out.push(round2(v * 100));
+  }
+  if (out.length > 0) {
+    out[0] = 0;
+    out[out.length - 1] = round2(target);
+  }
+  return out;
+}
+
+function makeDrawdownFromEquity(equity: number[]): number[] {
+  const out: number[] = [];
+  let peak = equity[0] ?? 0;
+  for (const v of equity) {
+    if (v > peak) peak = v;
+    out.push(round2(v - peak)); // ≤ 0
+  }
+  return out;
+}
+
+function makeMonthlyMatrix(
+  strategy: (typeof STRATEGY_ROTATION)[number],
+  months: number,
+  seed: number,
+): Array<{ year: number; month: number; value: number }> {
+  const rand = rng(seed);
+  const base = strategy.return / 100 / 12;
+  const out: Array<{ year: number; month: number; value: number }> = [];
+  // Anchor to 2024-01 so the matrix is recognisable.
+  let year = 2024;
+  let month = 1;
+  for (let i = 0; i < months; i++) {
+    const v = base + (rand() - 0.5) * 0.10;
+    out.push({ year, month, value: round2(v) });
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return out;
+}
+
+function makeMultiStrategyEquity() {
+  const points = 240;
+  const startSec = Date.UTC(2024, 0, 2) / 1000;
+  const stepSec = 86400; // daily
+  const time: number[] = [];
+  for (let i = 0; i < points; i++) time.push(startSec + i * stepSec);
+
+  const strategies = STRATEGY_ROTATION.slice(0, 5).map((s) => {
+    const equity = makeEquityCurve(s.return, points, hashSeed(s.id));
+    const drawdown = makeDrawdownFromEquity(equity);
+    const monthly = makeMonthlyMatrix(s, 12, hashSeed(s.id) ^ 0xDEADBEEF);
+    return {
+      id: s.id,
+      name: s.name,
+      short: s.short,
+      color: s.color,
+      kind: s.kind,
+      ...(s.dashed ? { dashed: true as const } : {}),
+      equity,
+      drawdown,
+      monthly,
+      metrics: {
+        return: s.return,
+        sharpe: s.sharpe,
+        mdd: s.mdd,
+        win: s.win,
+        pf: s.pf,
+      },
+    };
+  });
+
+  return {
+    kind: "multi_strategy_equity" as const,
+    generatedAt: startSec,
+    granularity: "1d",
+    time,
+    strategies,
+    lead: strategies[0].id,
+  };
+}
+
+function makeAnnotationsFixture() {
+  // Five annotations matching the handoff's `chart-ai-annotation.jsx`
+  // sample. `idx` references the bar in the live-fixture candle array.
+  return [
+    {
+      idx: 22,
+      side: "top" as const,
+      type: "PATTERN" as const,
+      title: "Bull Flag",
+      body: "Flag consolidation after impulse. Breakout > 64,920 likely retests 63,100 wick.",
+      conf: 0.74,
+      action: "WATCH" as const,
+    },
+    {
+      idx: 52,
+      side: "bottom" as const,
+      type: "FLOW" as const,
+      title: "Volume Divergence",
+      body: "LL price with HH buy volume — accumulation footprint, 3-bar window.",
+      conf: 0.68,
+      action: "LONG" as const,
+    },
+    {
+      idx: 80,
+      side: "top" as const,
+      type: "RISK" as const,
+      title: "Liquidation Wall",
+      body: "$48M long liq cluster at 65,800. Likely magnet on next vol expansion.",
+      conf: 0.82,
+      action: "CAUTION" as const,
+      danger: true,
+    },
+    {
+      idx: 110,
+      side: "bottom" as const,
+      type: "REVERSION" as const,
+      title: "RSI Reset",
+      body: "RSI cooled 71 → 47 without breaking trend. Mean-reversion re-entry zone.",
+      conf: 0.61,
+      action: "LONG" as const,
+    },
+    {
+      idx: 144,
+      side: "top" as const,
+      type: "STRUCTURE" as const,
+      title: "Break of Structure",
+      body: "HL → HH → BoS sequence confirmed. Bias flips bullish on close > 65,200.",
+      conf: 0.79,
+      action: "LONG" as const,
+    },
+  ];
+}
+
+function makeMonthlyReturnsFixture() {
+  // 5 strategies × 17 months. Independent fixture from
+  // multi-strategy-equity (which carries 12 months per strategy inline)
+  // so the heatmap can be evaluated standalone. Same seed (99) the
+  // handoff uses.
+  const months = 17;
+  const rand = rng(99);
+  return STRATEGY_ROTATION.slice(0, 5).map((s) => {
+    const base = s.return / 100 / 12;
+    const cells: Array<{ year: number; month: number; value: number }> = [];
+    let year = 2024;
+    let month = 1;
+    for (let i = 0; i < months; i++) {
+      cells.push({ year, month, value: round2(base + (rand() - 0.5) * 0.10) });
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
+    }
+    return {
+      id: s.id,
+      name: s.name,
+      color: s.color,
+      cells,
+    };
+  });
+}
+
 export const fixtures = {
   run: makeRun,
   compare: makeCompare,
@@ -393,6 +593,10 @@ export const fixtures = {
   strategy: makeStrategy,
   live: makeLive,
   wizard: makeWizard,
+  // Track B dashboard fixtures
+  "multi-strategy-equity": makeMultiStrategyEquity,
+  annotations: makeAnnotationsFixture,
+  "monthly-returns": makeMonthlyReturnsFixture,
 };
 
 function main() {
