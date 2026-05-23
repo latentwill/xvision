@@ -439,6 +439,7 @@ mod tests {
             mechanical_params: serde_json::json!({"ema_fast": 12}),
             activation_mode: ActivationMode::EveryBar,
             filter: None,
+            acknowledge_no_filter: false,
         };
         store.save(&operator).await.unwrap();
 

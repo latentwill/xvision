@@ -73,6 +73,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         })
         .await
         .expect("seed trader agent")
@@ -194,6 +195,7 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, strategy_id: &str) -> Strateg
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

@@ -175,6 +175,15 @@ pub struct Agent {
     pub created_at: DateTime<Utc>,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub updated_at: DateTime<Utc>,
+    /// If `Some(strategy_id)`, this agent is scoped to a single
+    /// strategy and hidden from the default workspace agent list
+    /// (`GET /api/agents`). Persists the "Save as reusable agent"
+    /// toggle on the strategy editor's inline Filter composer —
+    /// toggle ON (default) → `None`, toggle OFF → `Some(<id>)`.
+    /// Migration 036.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
+    pub scope_strategy_id: Option<String>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -437,6 +446,7 @@ impl Agent {
             archived: false,
             created_at: now,
             updated_at: now,
+            scope_strategy_id: None,
         }
     }
 }

@@ -39,7 +39,19 @@ export type AgentSlot = {
   /// `xvision-memory`. Optional on the wire — the server's
   /// `#[serde(default)]` collapses missing values to `"off"`.
   memory_mode?: MemoryMode;
+  /// Phase A capability schema (migration 033). Closed set of the
+  /// capability classes this slot can play in a strategy pipeline.
+  /// `undefined` collapses to `{"trader"}` server-side via
+  /// `default_capabilities`. Sent explicitly by the inline Filter
+  /// composer as `["filter"]` so the Phase B dispatcher picks the
+  /// Filter handler at run time.
+  capabilities?: Capability[];
 };
+
+/// Mirror of the engine's `Capability` enum. See
+/// `frontend/web/src/api/types.gen/Capability.ts` for the canonical
+/// generated form.
+export type Capability = "trader" | "filter" | "critic" | "intern" | "router";
 
 export type Agent = {
   agent_id: string;
@@ -50,6 +62,10 @@ export type Agent = {
   archived: boolean;
   created_at: string;
   updated_at: string;
+  /// `undefined` (the default) → workspace agent. A string → this
+  /// agent is scoped to that strategy and hidden from the default
+  /// workspace list. Migration 036.
+  scope_strategy_id?: string | null;
 };
 
 type Severity = "Error" | "Warning" | "Info";
@@ -77,6 +93,11 @@ export type CreateAgentBody = {
   description?: string;
   tags?: string[];
   slots: AgentSlot[];
+  /// Optional strategy id this agent is scoped to. `undefined` (the
+  /// default) creates a workspace-visible agent; setting it scopes
+  /// the agent to a single strategy and hides it from the default
+  /// workspace list. Phase 3 of `agent-firing-filter` (migration 036).
+  scope_strategy_id?: string;
 };
 
 export type UpdateAgentBody = Partial<{
@@ -84,6 +105,11 @@ export type UpdateAgentBody = Partial<{
   description: string;
   tags: string[];
   slots: AgentSlot[];
+  /// Three-valued patch for `Agent.scope_strategy_id`:
+  /// - undefined → leave the column alone
+  /// - { set: "<id>" } → scope the agent to that strategy
+  /// - "clear" → promote a scoped agent back to the workspace
+  scope_strategy_id: { set: string } | "clear";
 }>;
 
 export type ListAgentsQuery = {
@@ -92,6 +118,11 @@ export type ListAgentsQuery = {
   limit?: number;
   /// Row offset for paged listings. Server treats `undefined` as 0.
   offset?: number;
+  /// Scope filter. Default ("workspace") hides scoped agents.
+  /// `"all"` returns every row. Any other value is interpreted as a
+  /// strategy id and merges that strategy's scoped agents with the
+  /// workspace set. Phase 3 of `agent-firing-filter` (migration 036).
+  scope?: string;
 };
 
 /// Paged response envelope returned by `listAgentsPaged`.
@@ -107,6 +138,7 @@ function buildListUrl(q?: ListAgentsQuery): string {
   if (q.q) params.set("q", q.q);
   if (q.limit !== undefined) params.set("limit", String(q.limit));
   if (q.offset !== undefined) params.set("offset", String(q.offset));
+  if (q.scope !== undefined && q.scope !== "") params.set("scope", q.scope);
   const qs = params.toString();
   return qs ? `/api/agents?${qs}` : "/api/agents";
 }

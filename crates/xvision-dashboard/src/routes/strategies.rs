@@ -234,6 +234,7 @@ pub async fn post_add_agent(
             strategy_id: id,
             agent_id: body.agent_id,
             role: body.role,
+            activates: None,
         },
     )
     .await?;
