@@ -132,8 +132,69 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
         }
     }
 
+    // Phase 2 (firing-filter CLI) — fold the no-Filter soft-warning
+    // into the preflight surface so the SPA validate panel and
+    // `xvn strategy validate --json` paths see it without duplicating
+    // the check. `eval_ready` is intentionally re-derived AFTER folding
+    // so a no-Filter warning prevents the green-checkmark UI.
+    result.warnings.extend(no_filter_warnings(strategy));
+
     result.eval_ready = result.errors.is_empty() && result.warnings.is_empty();
     result
+}
+
+/// Phase 2 (firing-filter CLI) — no-Filter soft-warning.
+///
+/// Returns one warning per `AgentRef` whose `activates` is explicitly
+/// `Trader` or `Critic` and which has no incoming `PipelineEdge` from
+/// an upstream Filter `AgentRef`. The warning is suppressed entirely
+/// when the strategy carries `acknowledge_no_filter = true`.
+///
+/// The check intentionally fires only on agents whose `activates` is
+/// explicitly set — legacy strategies with `activates: None` are
+/// considered "pre-capability-model" and not nagged. Phase E
+/// (`agent-graph-template-capabilities`) flips every starter template
+/// to explicit `activates`, at which point this warning starts firing
+/// in practice for any unfiltered trader.
+///
+/// The text is stable: downstream tooling (SPA validate panel,
+/// scriptable `xvn strategy validate --json`) treats the string
+/// verbatim as the warning surface. See contract
+/// `team/contracts/agent-firing-filter-cli-verbs.md` acceptance #5.
+pub fn no_filter_warnings(strategy: &Strategy) -> Vec<String> {
+    if strategy.acknowledge_no_filter {
+        return Vec::new();
+    }
+
+    let filter_roles: HashSet<String> = strategy
+        .agents
+        .iter()
+        .filter(|a| matches!(a.activates, Some(Capability::Filter)))
+        .map(|a| canonical_role(&a.role))
+        .collect();
+
+    let mut warnings = Vec::new();
+    for agent in &strategy.agents {
+        let acts_as_trader_or_critic = matches!(
+            agent.activates,
+            Some(Capability::Trader) | Some(Capability::Critic)
+        );
+        if !acts_as_trader_or_critic {
+            continue;
+        }
+        let role = canonical_role(&agent.role);
+        let has_upstream_filter_edge = strategy.pipeline.edges.iter().any(|e| {
+            canonical_role(&e.to_role) == role && filter_roles.contains(&canonical_role(&e.from_role))
+        });
+        if has_upstream_filter_edge {
+            continue;
+        }
+        warnings.push(format!(
+            "strategy '{}' has a Trader agent with no upstream Filter — it will dispatch on every bar. Consider adding a Filter to reduce LLM cost. (See: xvn agent create --capability filter)",
+            strategy.manifest.display_name,
+        ));
+    }
+    warnings
 }
 
 /// Phase C extension — predicate `signal_field` warning.
@@ -407,6 +468,7 @@ mod preflight_tests {
             mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
+            acknowledge_no_filter: false,
         }
     }
 

@@ -55,6 +55,7 @@ fn strategy_with(
         mechanical_params: json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -126,13 +127,14 @@ fn legacy_model_requirement_field_name_fails_on_deny_unknown_fields() {
     // field name must be rejected outright.
     let raw = json!({
         "role": "trader",
-        "prompt": "trade ETH",
+        "attested_with": "anthropic.claude-sonnet-4.6",
         "model_requirement": "anthropic.claude-sonnet-4.6",
         "allowed_tools": []
     });
     let parsed: Result<LLMSlot, _> = serde_json::from_value(raw);
+    let err = parsed.expect_err("legacy `model_requirement` field must be rejected");
     assert!(
-        parsed.is_err(),
-        "legacy `model_requirement` field must be rejected by deny_unknown_fields; got {parsed:?}",
+        err.to_string().contains("model_requirement"),
+        "error should name `model_requirement`, got: {err}",
     );
 }

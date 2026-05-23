@@ -948,6 +948,7 @@ impl XvisionTools {
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
+        acknowledge_no_filter: false,
         };
 
         // 3. Validate shape.

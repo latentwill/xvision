@@ -662,8 +662,14 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             // (tool_name, input_hash) pair has already tripped the
             // repeated-failure block. The model receives a structured
             // `repeated_tool_failure` tool_result.
+            let allowed = input.slot.allowed_tools.iter().any(|name| name == &tu_name);
             let blocked = repeated_failures.is_blocked(&tu_name, &tu_input);
-            let (content, is_error) = if blocked {
+            let (content, is_error) = if !allowed {
+                (
+                    format!("tool error: tool '{tu_name}' is not allowed for this slot"),
+                    Some(true),
+                )
+            } else if blocked {
                 (repeated_tool_failure_result(&tu_name), Some(true))
             } else {
                 match tool_call::invoke(&tu_name, tu_input.clone(), input.tools.clone()).await {
