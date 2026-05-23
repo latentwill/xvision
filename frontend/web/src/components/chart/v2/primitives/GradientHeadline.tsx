@@ -25,7 +25,7 @@ export function GradientHeadline({
 }: GradientHeadlineProps): ReactElement {
   return (
     <h1
-      className="text-[30px] leading-[1.1] tracking-[-0.015em] text-text font-medium whitespace-nowrap overflow-hidden text-ellipsis"
+      className="text-[30px] leading-[1.1] tracking-normal text-text font-medium"
       style={{ fontFamily: '"Cormorant Garamond", serif' }}
     >
       {prefix}
@@ -47,7 +47,7 @@ export function GradientHeadline({
       {suffix}
       {emphasis && (
         <span
-          className="ml-3 text-[26px] text-gold tabular-nums"
+          className="inline-block ml-3 text-[26px] text-gold tabular-nums"
           style={{ fontFamily: '"JetBrains Mono", monospace' }}
         >
           {emphasis}
