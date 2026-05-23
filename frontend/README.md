@@ -57,7 +57,8 @@ Implemented in `web/src/routes/`:
 | `/agents/new`, `/agents/:id` | `agents-edit.tsx` | Create/edit agent slots |
 | `/scenarios` | `scenarios.tsx` | Scenario registry |
 | `/scenarios/new`, `/scenarios/:id` | `scenarios-new.tsx`, `scenarios-detail.tsx` | Create/inspect scenarios |
-| `/authoring/:id` | `authoring.tsx` | Inspector: strategy tree + agent-role editor |
+| `/strategies/:id` | `authoring.tsx` | Inspector: manifest editor, filter, agents, risk, performance history |
+| `/authoring/:id` | `authoring.tsx` | Compatibility alias for old inspector links |
 | `/eval-runs` | `eval-runs.tsx` | Leaderboard with filters + Compare select |
 | `/eval-runs/:id` | `eval-runs-detail.tsx` | Run detail (equity, findings, ledger) |
 | `/eval-runs/compare` | `eval-compare.tsx` | Side-by-side run comparison |

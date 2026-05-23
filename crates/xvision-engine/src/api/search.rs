@@ -268,7 +268,7 @@ fn strategy_entry(strategy: &Strategy) -> IndexEntry {
         summary,
         tags,
         updated_at: m.published_at.unwrap_or_else(chrono::Utc::now),
-        href: format!("/authoring/{}", m.id),
+        href: format!("/strategies/{}", m.id),
     }
 }
 

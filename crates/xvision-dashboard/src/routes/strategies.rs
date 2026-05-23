@@ -11,16 +11,15 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, clear_strategy_filter, remove_agent, rename_agent_role, set_pipeline,
-    set_risk_config, set_strategy_filter, update_metadata, update_slot, validate_draft,
-    AddAgentReq, CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq,
-    SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    self, add_agent, clear_strategy_filter, remove_agent, rename_agent_role, set_pipeline, set_risk_config,
+    set_strategy_filter, update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq,
+    ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut,
+    StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
-    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq,
-    SetStrategyFilterOut, SetStrategyFilterReq, TemplateInfo, UpdateSlotOut, UpdateSlotReq,
-    ValidateDraftOut,
+    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq, SetStrategyFilterOut,
+    SetStrategyFilterReq, TemplateInfo, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use xvision_engine::strategies::risk::RiskConfig;
 use xvision_engine::strategies::store::{MetadataPatchError, StrategyMetadataPatch};
@@ -342,7 +341,7 @@ pub async fn put_pipeline(
 }
 
 /// `PATCH /api/strategy/:id` — update top-level manifest fields
-/// (display_name, plain_summary, asset_universe). Out of scope:
+/// (display_name, plain_summary, asset_universe, cadence). Out of scope:
 /// id/creator/template/published_at and the sub-resources covered by
 /// dedicated routes (slot/agents/pipeline/risk/mechanical_params).
 ///
@@ -388,6 +387,7 @@ fn classify_metadata_patch_error(err: anyhow::Error, id: &str) -> DashboardError
             MetadataPatchError::EmptyAssetUniverse
             | MetadataPatchError::BlankAssetEntry
             | MetadataPatchError::InvalidAssetSymbol(_) => "asset_universe",
+            MetadataPatchError::InvalidDecisionCadence => "decision_cadence_minutes",
             MetadataPatchError::InvalidColor(_) => "color",
         };
         return DashboardError::Validation {

@@ -17,7 +17,6 @@ const StrategiesNewRoute = lazy(() => import("./routes/strategies-new").then((m)
 // `/strategies?view=folder`. Lazy import kept so existing deep-links
 // (bookmarks, shared URLs) continue to land on the folder view.
 const StrategiesFolderRoute = lazy(() => import("./routes/strategies-folder").then((m) => ({ default: m.StrategiesFolderRoute })));
-const StrategyDetailRoute = lazy(() => import("./routes/strategies-detail").then((m) => ({ default: m.StrategyDetailRoute })));
 const AgentsRoute = lazy(() => import("./routes/agents").then((m) => ({ default: m.AgentsRoute })));
 const AgentsEditRoute = lazy(() => import("./routes/agents-edit").then((m) => ({ default: m.AgentsEditRoute })));
 const AuthoringRoute = lazy(() => import("./routes/authoring").then((m) => ({ default: m.AuthoringRoute })));
@@ -98,7 +97,7 @@ export const router = createBrowserRouter([
       { path: "strategies", element: page(<StrategiesRoute />) },
       { path: "strategies-folder", element: page(<StrategiesFolderRoute />) },
       { path: "strategies/new", element: page(<StrategiesNewRoute />) },
-      { path: "strategies/:id", element: page(<StrategyDetailRoute />) },
+      { path: "strategies/:id", element: page(<AuthoringRoute />) },
       { path: "agents", element: page(<AgentsRoute />) },
       { path: "agents/memory", element: page(<MemoryPage />) },
       { path: "agents/skills", element: page(<SettingsSkillsRoute />) },

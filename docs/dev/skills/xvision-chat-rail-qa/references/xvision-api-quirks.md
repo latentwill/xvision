@@ -12,6 +12,9 @@ Observed during QA against `https://xvn.tail2bb69.ts.net`.
 - `DELETE /api/strategy/:id/agents/:role` removes the attachment.
 - `POST /api/strategy/:id/validate` can return `ok: true` even if the manifest and slot prompts disagree.
 - Strategy-level deletion/archive routes were not found on the observed API surface.
+- `/strategies/:id` is the canonical inspector route; `/authoring/:id` is a compatibility alias.
+- `PATCH /api/strategy/:id` supports editable manifest metadata including display name, summary, asset universe, cadence, and color.
+- Strategy filters are real artifacts on the strategy. Prompt wording that describes a filter does not imply filter events will exist.
 
 ### Example mismatch
 
@@ -47,6 +50,8 @@ Validation still returned success.
   - `anthropic.claude-sonnet-4.6 is not a valid model ID`
 - Another failure mode observed:
   - `run ... decision 0: trader output is invalid JSON: expected value at line 1 column 1`
+- Filter QA should inspect `filter_events` and `filter_summaries`; empty values mean the XVN filter system did not visibly participate.
+- Eval detail may include synthesized rows from `noop_skip`, graph gating, or early-stop inheritance. Do not treat every decision row as a direct model decision.
 
 ## Cleanup
 

@@ -17,7 +17,7 @@ export function StrategiesNewRoute() {
         creator: null,
       }),
     onSuccess: (out) => {
-      navigate(`/authoring/${encodeURIComponent(out.id)}`, { replace: true });
+      navigate(`/strategies/${encodeURIComponent(out.id)}`, { replace: true });
     },
   });
 

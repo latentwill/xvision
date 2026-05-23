@@ -119,6 +119,7 @@ type PublicManifest = {
   required_tools: string[];
   risk_preset_or_config: string;
   published_at: string | null;
+  color?: string | null;
 };
 
 export type { Filter } from "./types.gen/Filter";
@@ -204,6 +205,14 @@ export type CloneStrategyReq = {
   display_name?: string;
 };
 
+export type StrategyMetadataPatch = {
+  display_name?: string;
+  plain_summary?: string;
+  asset_universe?: string[];
+  decision_cadence_minutes?: number;
+  color?: string;
+};
+
 export const strategyKeys = {
   all: ["strategies"] as const,
   /// Cache key includes `limit`/`offset` so page changes refetch.
@@ -251,6 +260,16 @@ export function listStrategiesPaged(
 
 export function getStrategy(id: string): Promise<Strategy> {
   return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}`);
+}
+
+export function patchStrategyMetadata(
+  id: string,
+  patch: StrategyMetadataPatch,
+): Promise<Strategy> {
+  return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 }
 
 export function setRiskConfig(
@@ -397,7 +416,7 @@ export function listTemplates(): Promise<TemplateInfo[]> {
 }
 
 /// Create a new blank draft strategy. Returns the new agent_id; the UI
-/// redirects to /authoring/:id after this resolves.
+/// redirects to /strategies/:id after this resolves.
 export function createStrategy(
   body: CreateStrategyReq,
 ): Promise<CreateStrategyOut> {

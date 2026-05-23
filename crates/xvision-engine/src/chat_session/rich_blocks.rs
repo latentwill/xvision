@@ -530,7 +530,7 @@ pub fn inline_strategy_card_from_summary(
         tags: summary.tags.clone(),
         actions: vec![InlineAction {
             label: "Open strategy".into(),
-            href: Some(format!("/authoring/{}", summary.agent_id)),
+            href: Some(format!("/strategies/{}", summary.agent_id)),
             command: None,
         }],
     };
