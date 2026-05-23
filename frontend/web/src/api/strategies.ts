@@ -156,6 +156,12 @@ export type ValidateDraftOut = {
   id: string;
   ok: boolean;
   errors: string[];
+  /// Soft signals — saveable but worth surfacing in the strategy editor
+  /// alongside errors. As of the firing-filter wave the engine populates
+  /// this with the no-Filter warning (Trader/Critic agent with no
+  /// upstream Filter). Optional on the wire so older server responses
+  /// continue to parse — treat `undefined` as `[]`.
+  warnings?: string[];
 };
 
 export type TemplateInfo = {

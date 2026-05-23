@@ -19,7 +19,7 @@ use crate::strategies::{
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
-    validate::validate_strategy,
+    validate::{no_filter_warnings, validate_strategy},
     AgentRef, PipelineDef, PipelineKind, Strategy,
 };
 
@@ -157,6 +157,19 @@ pub struct ValidateDraftOut {
     pub id: String,
     pub ok: bool,
     pub errors: Vec<String>,
+    /// Soft validation signals — the strategy is still saveable but the
+    /// operator may want to address them. The dashboard's strategy
+    /// editor surfaces these alongside errors (without blocking save).
+    ///
+    /// Populated as of the agent-firing-filter wave with the no-Filter
+    /// soft-warning from `validate::no_filter_warnings`. The field is
+    /// additive — clients that omit it on the wire still parse cleanly
+    /// via `#[serde(default)]`, and the
+    /// `skip_serializing_if = "Vec::is_empty"` collapses the field out
+    /// of the JSON when no warnings fire (e.g. the strategy carries
+    /// `acknowledge_no_filter = true`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -556,10 +569,16 @@ pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Resu
         );
     }
     let ok = errors.is_empty();
+    // Soft signals — surfaced alongside errors but do not block save.
+    // L2 of the firing-filter operator-surface spec (2026-05-22) calls
+    // for the SPA validate panel to render the no-Filter warning so the
+    // operator sees it whether they're using the CLI or the SPA.
+    let warnings = no_filter_warnings(&strategy);
     Ok(ValidateDraftOut {
         id: id.to_string(),
         ok,
         errors,
+        warnings,
     })
 }
 
@@ -918,6 +937,96 @@ mod tests {
         let strategy = get_strategy(&store, &out.id).await.unwrap();
         assert_eq!(strategy.risk.risk_pct_per_trade, 0.015);
         assert_eq!(strategy.manifest.risk_preset_or_config, "balanced");
+    }
+
+    #[tokio::test]
+    async fn validate_draft_surfaces_no_filter_warning_for_explicit_trader() {
+        // L2 of the firing-filter operator-surface spec — the SPA
+        // validate endpoint must surface the no-Filter soft-warning so
+        // the strategy editor can render it alongside errors. Without
+        // this wiring the CLI sees the warning but the SPA does not.
+        use crate::agents::Capability;
+
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "explicit-trader-no-filter".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        // Hand-author a strategy with one explicit-Trader AgentRef and
+        // no Filter. Going through `add_agent_ref` would leave
+        // `activates: None`, which (per the warning's design) does NOT
+        // fire the warning — only explicit Trader/Critic does.
+        let mut strategy = store.load(&out.id).await.unwrap();
+        strategy.agents.push(AgentRef {
+            agent_id: "01HZAGENT_TRADER".into(),
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        });
+        store.save(&strategy).await.unwrap();
+
+        let v = validate_draft(&store, &out.id).await.unwrap();
+        assert!(
+            v.warnings.iter().any(|w| w.contains("no upstream Filter")),
+            "expected no-Filter warning in ValidateDraftOut.warnings, got: {:?}",
+            v.warnings,
+        );
+        // Errors stay clean — the warning is soft.
+        assert!(
+            v.errors.is_empty(),
+            "warning must not push the draft into errors, got: {:?}",
+            v.errors,
+        );
+        // And the round-trip JSON includes the field so SPA consumers
+        // see it (skip_serializing_if pulls it out only when empty).
+        let json = serde_json::to_value(&v).unwrap();
+        assert!(
+            json.get("warnings").is_some(),
+            "warnings field must be serialized when populated; got {json}",
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_draft_omits_warnings_field_when_strategy_acknowledges() {
+        // `acknowledge_no_filter = true` silences the warning. The
+        // `skip_serializing_if = "Vec::is_empty"` then drops the field
+        // from the wire shape so the SPA panel renders nothing.
+        use crate::agents::Capability;
+
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "ack-no-filter".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut strategy = store.load(&out.id).await.unwrap();
+        strategy.agents.push(AgentRef {
+            agent_id: "01HZAGENT_TRADER".into(),
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        });
+        strategy.acknowledge_no_filter = true;
+        store.save(&strategy).await.unwrap();
+
+        let v = validate_draft(&store, &out.id).await.unwrap();
+        assert!(
+            v.warnings.is_empty(),
+            "acknowledge_no_filter must suppress all warnings, got: {:?}",
+            v.warnings,
+        );
+        let json = serde_json::to_value(&v).unwrap();
+        assert!(
+            json.get("warnings").is_none(),
+            "empty warnings must be omitted from the wire shape; got {json}",
+        );
     }
 
     #[tokio::test]
