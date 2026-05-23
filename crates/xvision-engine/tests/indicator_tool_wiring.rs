@@ -185,6 +185,7 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
         mechanical_params: json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 

@@ -55,6 +55,7 @@ fn fixture_strategy_with_agents(agents: Vec<AgentRef>, pipeline: PipelineDef) ->
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 
