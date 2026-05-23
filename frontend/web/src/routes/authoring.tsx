@@ -12,11 +12,15 @@ import {
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
+  validateDraft,
+  type AgentRef,
+  type PipelineDef,
   type PipelineKind,
   type RiskConfig,
   type Strategy,
 } from "@/api/strategies";
 import { createAgent, listAgents, type Agent } from "@/api/agents";
+import { FiringSection } from "@/components/strategy";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
@@ -127,6 +131,7 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
 function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
+      <ValidationCard strategy={strategy} />
       <ManifestCard strategy={strategy} />
       <AgentsCard strategy={strategy} />
       <RiskCard strategy={strategy} />
@@ -135,11 +140,94 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
   );
 }
 
+// L2 of `docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md`:
+// the strategy editor surfaces the engine's soft warnings (today, the
+// no-Filter warning) alongside errors so an operator sees the same
+// signal whether they're using the CLI or the SPA. Renders nothing
+// while validation is loading or when there are no
+// errors/warnings to report.
+function ValidationCard({ strategy }: { strategy: Strategy }) {
+  const validation = useQuery({
+    queryKey: strategyKeys.validate(strategy.manifest.id),
+    queryFn: () => validateDraft(strategy.manifest.id),
+    // The engine path is cheap (in-memory shape check + filesystem
+    // load); a 30-second staleTime avoids refetching on every keystroke
+    // while still picking up changes after an authoring mutation
+    // invalidates the cache key.
+    staleTime: 30_000,
+  });
+
+  if (validation.isPending || validation.isError) return null;
+  const { errors = [], warnings = [] } = validation.data ?? {};
+  if (errors.length === 0 && warnings.length === 0) return null;
+
+  return (
+    <Card>
+      <SectionHeader
+        label="Validation"
+        hint={
+          errors.length > 0
+            ? "Resolve before launching an eval."
+            : "Soft signals — the strategy is still saveable."
+        }
+      />
+      <div className="px-5 pt-4 pb-5">
+        <ul className="space-y-2">
+          {errors.map((message, i) => (
+            <ValidationItem key={`err-${i}`} severity="error" message={message} />
+          ))}
+          {warnings.map((message, i) => (
+            <ValidationItem
+              key={`warn-${i}`}
+              severity="warning"
+              message={message}
+            />
+          ))}
+        </ul>
+      </div>
+    </Card>
+  );
+}
+
+function ValidationItem({
+  severity,
+  message,
+}: {
+  severity: "error" | "warning";
+  message: string;
+}) {
+  const tone =
+    severity === "error"
+      ? "bg-danger/10 text-danger border-danger/30"
+      : "bg-warn/10 text-warn border-warn/30";
+  const label = severity === "error" ? "Error" : "Warning";
+  return (
+    <li className="flex items-start gap-2.5 text-[13px]">
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded-sm border mt-0.5 ${tone}`}
+      >
+        {label}
+      </span>
+      <div className="flex-1 text-text leading-relaxed">{message}</div>
+    </li>
+  );
+}
+
 function AgentsCard({ strategy }: { strategy: Strategy }) {
   const qc = useQueryClient();
+  // Pass `scope=<strategy_id>` so agents scoped to this strategy
+  // (the "Save as reusable agent" toggle = OFF flow) merge into the
+  // picker alongside workspace-visible agents. Strategy-detail
+  // endpoints are the documented home for the merged view per
+  // `team/contracts/agent-firing-filter-strategy-composer.md`.
   const agentPool = useQuery({
-    queryKey: ["agents", "pool"],
-    queryFn: () => listAgents({ include_archived: false, limit: 200 }),
+    queryKey: ["agents", "pool", strategy.manifest.id],
+    queryFn: () =>
+      listAgents({
+        include_archived: false,
+        limit: 200,
+        scope: strategy.manifest.id,
+      }),
   });
   const providers = useQuery({
     queryKey: settingsKeys.providers(),
@@ -165,6 +253,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
   const available = (agentPool.data ?? []).filter(
     (a) => !attached.some((r) => r.agent_id === a.agent_id),
   );
+  const filterCandidates = (agentPool.data ?? []).filter(agentSupportsFilter);
   const graphEdges = pipeline.edges ?? [];
 
   function invalidateStrategy() {
@@ -331,6 +420,14 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
                   setRenameRoleTo(a.role);
                 }}
                 onRemove={() => removeMut.mutate(a.role)}
+                allRefs={attached}
+                pipeline={pipeline}
+                filterCandidates={filterCandidates}
+                providers={providers.data?.providers ?? []}
+                onFiringChanged={async () => {
+                  await qc.invalidateQueries({ queryKey: ["agents", "pool"] });
+                  invalidateStrategy();
+                }}
               />
             ))}
           </div>
@@ -612,11 +709,26 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
 
 export type AttachedAgentRowProps = {
   strategyId: string;
-  agentRef: { agent_id: string; role: string };
+  agentRef: AgentRef;
   index: number;
   agent: Agent | undefined;
   onRenameRole: () => void;
   onRemove: () => void;
+  /// All AgentRefs on the strategy — needed by `FiringSection` so it
+  /// can resolve the upstream Filter ref for any incoming gating
+  /// edge. Pass-through prop: parents that don't render the firing
+  /// section can leave it undefined.
+  allRefs?: AgentRef[];
+  /// Current pipeline. Same rationale as `allRefs`.
+  pipeline?: PipelineDef;
+  /// Workspace + strategy-scoped Filter-capable agents the inline
+  /// composer can pick from.
+  filterCandidates?: Agent[];
+  /// Available providers for the inline author-new-agent flow.
+  providers?: import("@/api/types.gen/ProviderRow").ProviderRow[];
+  /// Strategy mutated — parent should invalidate strategy + agents
+  /// queries. Called after a filter add/remove succeeds.
+  onFiringChanged?: () => void;
 };
 
 export function AttachedAgentRow({
@@ -626,6 +738,11 @@ export function AttachedAgentRow({
   agent,
   onRenameRole,
   onRemove,
+  allRefs,
+  pipeline,
+  filterCandidates,
+  providers,
+  onFiringChanged,
 }: AttachedAgentRowProps) {
   const storageKey = agentCollapseKey(strategyId, agentRef.role);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -725,6 +842,17 @@ export function AttachedAgentRow({
                 {primarySlot.system_prompt}
               </pre>
             </div>
+          ) : null}
+          {allRefs && pipeline && filterCandidates && providers && onFiringChanged ? (
+            <FiringSection
+              strategyId={strategyId}
+              agentRef={agentRef}
+              refs={allRefs}
+              pipeline={pipeline}
+              filterCandidates={filterCandidates}
+              providers={providers}
+              onMutated={onFiringChanged}
+            />
           ) : null}
           <div className="flex items-center gap-3 pt-1">
             <button
@@ -1059,6 +1187,10 @@ function InspectorActions({
 
 function hasAttachedAgents(strategy: Strategy | null): boolean {
   return (strategy?.agents ?? []).length > 0;
+}
+
+function agentSupportsFilter(agent: Agent): boolean {
+  return agent.slots.some((slot) => slot.capabilities?.includes("filter"));
 }
 
 function Field({

@@ -89,6 +89,7 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 

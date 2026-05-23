@@ -227,6 +227,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
             description: String::new(),
             tags: vec![],
             slots: vec![trader_slot],
+            scope_strategy_id: None,
         })
         .await
         .unwrap();

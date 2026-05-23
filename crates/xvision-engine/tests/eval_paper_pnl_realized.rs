@@ -91,6 +91,7 @@ fn minimal_strategy() -> Strategy {
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 

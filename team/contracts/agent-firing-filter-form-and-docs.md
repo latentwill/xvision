@@ -5,7 +5,9 @@ wave: agent-firing-filter-operator-surface-2026-05-22
 worktree: .worktrees/agent-firing-filter-form-and-docs
 branch: task/agent-firing-filter-form-and-docs
 base: origin/main
-status: ready
+status: merged
+merged_at: 2026-05-23
+merged_by: PR #548 (a7310ab feat(agent-firing-filter): Phase 1 — form awareness card + docs + margin fix). In-app docs route wired via crates/xvision-dashboard/wiki/firing-conditions.md + index.toml. Verified live on deployed xvn-app: awareness card renders on Trader-capable slots, "Learn more →" link resolves to /docs?slug=firing-conditions.
 depends_on:
   - agent-graph-capability-schema  # PR #527 — MERGED 2026-05-22
 blocks: []

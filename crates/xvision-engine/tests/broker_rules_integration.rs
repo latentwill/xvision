@@ -217,6 +217,7 @@ fn strategy_with_risk_pct(agent_id: &str, risk_pct: f64) -> Strategy {
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 

@@ -13,7 +13,7 @@
 // and silently capped real production runs).
 
 import { useQuery } from "@tanstack/react-query";
-import type { AgentSlot } from "@/api/agents";
+import type { AgentSlot, Capability } from "@/api/agents";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon } from "@/components/primitives/Icon";
@@ -265,19 +265,22 @@ export function SlotForm({
 // The card *teaches* — it does not author. Authoring lives at the strategy
 // level in Phase 3. Filter-capable slots get no card (the Filter is the gate).
 //
-// `capabilities` is read defensively: the Rust field landed in Phase A
-// (PR #527) but the hand-authored AgentSlot TS type in api/agents.ts does
-// not yet carry it. Per the back-compat default in
-// crates/xvision-engine/src/agents/model.rs, a slot with no capabilities
-// resolves to {Trader} — so undefined here is treated as Trader-capable
-// (firing-condition relevant; card shown).
-const FIRING_CAPABLE_ROLES = new Set(["trader", "critic", "intern", "router"]);
+// Per Phase A's back-compat default in
+// `crates/xvision-engine/src/agents/model.rs::default_capabilities`,
+// a slot whose `capabilities` field is missing or empty resolves to
+// `["trader"]`. We mirror that here so legacy slots (persisted before
+// migration 033 added the column) keep showing the awareness card.
+const FIRING_CAPABLE_ROLES: ReadonlySet<Capability> = new Set<Capability>([
+  "trader",
+  "critic",
+  "intern",
+  "router",
+]);
 
 function FiringConditionsAwareness({ slot }: { slot: AgentSlot }) {
-  const rawCaps = (slot as { capabilities?: readonly string[] }).capabilities;
-  const caps =
-    rawCaps && rawCaps.length > 0
-      ? rawCaps.map((c) => c.toLowerCase())
+  const caps: readonly Capability[] =
+    slot.capabilities && slot.capabilities.length > 0
+      ? slot.capabilities
       : ["trader"];
   const isFilterSlot = caps.includes("filter");
   const isFiringCapable = caps.some((c) => FIRING_CAPABLE_ROLES.has(c));

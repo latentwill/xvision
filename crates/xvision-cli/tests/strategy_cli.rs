@@ -123,6 +123,7 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
         }),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 
@@ -162,6 +163,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     capabilities: xvision_engine::agents::default_capabilities(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await

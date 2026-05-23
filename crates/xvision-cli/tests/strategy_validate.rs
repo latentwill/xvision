@@ -84,6 +84,7 @@ fn seed_strategy_with_trader(
                     capabilities: xvision_engine::agents::default_capabilities(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await
@@ -127,6 +128,7 @@ fn seed_strategy_with_trader(
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
+        acknowledge_no_filter: false,
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));

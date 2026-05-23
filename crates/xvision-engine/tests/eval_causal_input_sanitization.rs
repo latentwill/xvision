@@ -108,6 +108,7 @@ async fn migration_020_up_down_up_preserves_rows() {
             description: String::new(),
             tags: vec![],
             slots: vec![sample_slot(InputsPolicy::Causal)],
+            scope_strategy_id: None,
         })
         .await
         .unwrap();
@@ -316,6 +317,7 @@ async fn agent_slot_round_trips_through_store_for_each_policy() {
                 description: String::new(),
                 tags: vec![],
                 slots: vec![sample_slot(policy)],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
