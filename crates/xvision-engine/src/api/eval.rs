@@ -873,14 +873,12 @@ pub struct EvalRunRequest {
 /// `EvalRunExport.provider_diagnostics.override` round-trips.
 pub const PROVIDER_OVERRIDE_NOTE_ROLE: &str = "provider_override";
 
-/// Public env-bound entry point: constructs broker (paper mode only) /
-/// dispatch / tools from environment variables and dispatches to
-/// `run_with_deps`.
+/// Public env-bound entry point: constructs dispatch / tools from
+/// environment variables and dispatches to `run_with_deps`.
 ///
 /// Required env:
-/// - paper mode: `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`,
-///   `[APCA_API_BASE_URL]`, `ANTHROPIC_API_KEY`
 /// - backtest mode: `ANTHROPIC_API_KEY` only (no broker constructed)
+/// - live mode: currently returns a stable not-implemented validation error
 ///
 /// Validation that doesn't depend on env (missing strategy, missing
 /// scenario) runs FIRST so the operator sees a clean "strategy not found"
@@ -1567,8 +1565,8 @@ async fn load_provider_catalogs(
 /// `MockBrokerSurface` + `MockDispatch` so no network is required;
 /// production callers go through `run` which constructs deps from env.
 ///
-/// `broker` is `Some` for paper mode and ignored for backtest mode.
-/// Paper mode without a broker returns `ApiError::Validation`.
+/// `broker` is ignored by the collapsed Backtest path today and reserved for
+/// follow-on Live wiring.
 pub async fn run_with_deps(
     ctx: &ApiContext,
     req: EvalRunRequest,
@@ -2194,11 +2192,10 @@ fn missing_bars_validation(scenario: &Scenario, source_error: Option<String>) ->
 /// returns in ~milliseconds; the run finishes in 3–10+ minutes and the
 /// frontend polls `GET /api/eval/runs/:id` to track progress.
 ///
-/// Sync-up-front validation: env vars (`ANTHROPIC_API_KEY`, Alpaca
-/// creds in paper mode) are read before the spawn so missing-config
-/// errors return as `ApiError::Validation` rather than landing in the
-/// row's `error` field. Strategy/scenario lookups also happen up-front
-/// for the same reason.
+/// Sync-up-front validation: env vars (`ANTHROPIC_API_KEY` today) are read
+/// before the spawn so missing-config errors return as `ApiError::Validation`
+/// rather than landing in the row's `error` field. Strategy/scenario lookups
+/// also happen up-front for the same reason.
 pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let started = Instant::now();
     validate_provider_override_shape(req.provider_override.as_ref())?;

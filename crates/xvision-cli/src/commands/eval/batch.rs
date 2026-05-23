@@ -81,7 +81,7 @@ pub struct BatchRunArgs {
     #[arg(long, value_delimiter = ',', required = true)]
     pub scenarios: Vec<String>,
 
-    /// Run mode: `backtest` (default) or `paper`.
+    /// Run mode: `backtest` (default) or `live` (`paper` is a legacy alias for `backtest`).
     #[arg(long, default_value = "backtest")]
     pub mode: String,
 
@@ -561,7 +561,10 @@ fn parse_poll_duration(s: &str) -> Result<Duration> {
 pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> CliResult<BatchResult> {
     let mode = xvision_engine::eval::run::RunMode::parse(&args.mode).ok_or_else(|| CliError {
         exit: XvnExit::Usage,
-        source: anyhow::anyhow!("unknown mode {:?}; expected one of: paper | backtest", args.mode),
+        source: anyhow::anyhow!(
+            "unknown mode {:?}; expected one of: backtest | live (legacy alias: paper)",
+            args.mode
+        ),
     })?;
 
     // --wait is required in v1 (non-wait path is a follow-on when async

@@ -86,6 +86,8 @@ describe("SlotForm.changeProvider", () => {
         row("anthropic", "anthropic", ["claude-sonnet-4-6"]),
         row("openai", "openai-compat", ["gpt-4.1-mini"]),
       ],
+    
+        default_model: null,
     });
 
     const onChange = vi.fn();
@@ -119,6 +121,8 @@ describe("SlotForm.changeProvider", () => {
         row("openai-prod", "openai-compat", ["gpt-4.1-mini"]),
         row("openai-staging", "openai-compat", ["gpt-4.1-mini"]),
       ],
+    
+        default_model: null,
     });
 
     const onChange = vi.fn();
@@ -145,6 +149,8 @@ describe("SlotForm.changeProvider", () => {
   it("renders bar_history_limit input empty when slot value is null", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    
+        default_model: null,
     });
 
     renderSlot({
@@ -162,6 +168,8 @@ describe("SlotForm.changeProvider", () => {
   it("renders bar_history_limit input with the slot's stored value", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    
+        default_model: null,
     });
 
     renderSlot({
@@ -179,6 +187,8 @@ describe("SlotForm.changeProvider", () => {
   it("persists a valid bar_history_limit through onChange", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    
+        default_model: null,
     });
 
     const onChange = vi.fn();
@@ -201,6 +211,8 @@ describe("SlotForm.changeProvider", () => {
   it("clears bar_history_limit when input is emptied", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    
+        default_model: null,
     });
 
     const onChange = vi.fn();
@@ -223,6 +235,8 @@ describe("SlotForm.changeProvider", () => {
   it("rejects zero / negative bar_history_limit values (maps to null)", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    
+        default_model: null,
     });
 
     const onChange = vi.fn();
@@ -250,6 +264,8 @@ describe("SlotForm.changeProvider", () => {
   it("clamps bar_history_limit above the max bound", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+    
+        default_model: null,
     });
 
     const onChange = vi.fn();
@@ -275,6 +291,8 @@ describe("SlotForm.changeProvider", () => {
         row("anthropic", "anthropic", ["claude-sonnet-4-6"]),
         row("openai", "openai-compat", ["gpt-4.1-mini"]),
       ],
+    
+        default_model: null,
     });
 
     const onChange = vi.fn();

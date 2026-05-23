@@ -20,9 +20,6 @@ afterEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
   document.documentElement.className = "";
-  // Reset chart-v2 cookie between tests
-  document.cookie =
-    "xvn.chartv2=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
 });
 
 describe("Sidebar theme toggle", () => {
@@ -60,16 +57,10 @@ describe("Sidebar theme toggle", () => {
   });
 });
 
-// chart-rework spec Track B B0 — Charts entry (cookie-gated, between
-// Scenarios and Eval per §11.1 / §11.4 resolutions).
+// chart-rework spec Track B — Charts entry (unconditional after
+// B-rollout; placement: after Scenarios, before Eval per §11.1).
 describe("Sidebar Charts entry (chart-rework Track B)", () => {
-  it("hides Charts entry when xvn.chartv2 cookie is absent", () => {
-    renderSidebar();
-    expect(screen.queryByRole("link", { name: /^Charts$/ })).toBeNull();
-  });
-
-  it("shows Charts entry between Scenarios and Eval when cookie is set", () => {
-    document.cookie = "xvn.chartv2=1; path=/";
+  it("renders the Charts entry unconditionally between Scenarios and Eval", () => {
     renderSidebar();
 
     const labels = screen

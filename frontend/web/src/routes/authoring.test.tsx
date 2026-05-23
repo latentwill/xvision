@@ -135,7 +135,9 @@ beforeEach(() => {
   vi.mocked(strategyApi.validateDraft).mockReset();
   vi.mocked(strategyApi.removeStrategyAgent).mockReset();
   vi.mocked(strategyApi.renameStrategyAgentRole).mockReset();
-  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
+      default_model: null,
+  });
 
   vi.mocked(agentApi.listAgents).mockResolvedValue([baseAgent]);
   vi.mocked(strategyApi.getStrategy).mockResolvedValue(baseStrategy);

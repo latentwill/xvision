@@ -12,6 +12,7 @@ import {
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
+  validateDraft,
   type AgentRef,
   type PipelineDef,
   type PipelineKind,
@@ -130,11 +131,85 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
 function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
+      <ValidationCard strategy={strategy} />
       <ManifestCard strategy={strategy} />
       <AgentsCard strategy={strategy} />
       <RiskCard strategy={strategy} />
       <MechanicalParamsCard strategy={strategy} />
     </>
+  );
+}
+
+// L2 of `docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md`:
+// the strategy editor surfaces the engine's soft warnings (today, the
+// no-Filter warning) alongside errors so an operator sees the same
+// signal whether they're using the CLI or the SPA. Renders nothing
+// while validation is loading or when there are no
+// errors/warnings to report.
+function ValidationCard({ strategy }: { strategy: Strategy }) {
+  const validation = useQuery({
+    queryKey: strategyKeys.validate(strategy.manifest.id),
+    queryFn: () => validateDraft(strategy.manifest.id),
+    // The engine path is cheap (in-memory shape check + filesystem
+    // load); a 30-second staleTime avoids refetching on every keystroke
+    // while still picking up changes after an authoring mutation
+    // invalidates the cache key.
+    staleTime: 30_000,
+  });
+
+  if (validation.isPending || validation.isError) return null;
+  const { errors = [], warnings = [] } = validation.data ?? {};
+  if (errors.length === 0 && warnings.length === 0) return null;
+
+  return (
+    <Card>
+      <SectionHeader
+        label="Validation"
+        hint={
+          errors.length > 0
+            ? "Resolve before launching an eval."
+            : "Soft signals — the strategy is still saveable."
+        }
+      />
+      <div className="px-5 pt-4 pb-5">
+        <ul className="space-y-2">
+          {errors.map((message, i) => (
+            <ValidationItem key={`err-${i}`} severity="error" message={message} />
+          ))}
+          {warnings.map((message, i) => (
+            <ValidationItem
+              key={`warn-${i}`}
+              severity="warning"
+              message={message}
+            />
+          ))}
+        </ul>
+      </div>
+    </Card>
+  );
+}
+
+function ValidationItem({
+  severity,
+  message,
+}: {
+  severity: "error" | "warning";
+  message: string;
+}) {
+  const tone =
+    severity === "error"
+      ? "bg-danger/10 text-danger border-danger/30"
+      : "bg-warn/10 text-warn border-warn/30";
+  const label = severity === "error" ? "Error" : "Warning";
+  return (
+    <li className="flex items-start gap-2.5 text-[13px]">
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded-sm border mt-0.5 ${tone}`}
+      >
+        {label}
+      </span>
+      <div className="flex-1 text-text leading-relaxed">{message}</div>
+    </li>
   );
 }
 

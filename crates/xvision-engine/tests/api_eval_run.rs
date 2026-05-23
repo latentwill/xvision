@@ -421,11 +421,12 @@ async fn backtest_run_cancels_when_max_decisions_breaches() {
 }
 
 #[tokio::test]
-async fn paper_run_cancels_when_max_decisions_breaches() {
+async fn backtest_run_cancels_when_max_decisions_breaches_with_legacy_broker_arg() {
     // Regression for the completed cli-operator-safety-p0 bundle:
     // slice 2 initially wired hard limits only into Executor.
-    // Paper launches accept the same EvalRunRequest.limits field, so
-    // they must cancel with the same persisted reason.
+    // A legacy caller may still pass a broker argument while selecting
+    // Backtest. The collapsed executor ignores that broker and must
+    // still cancel with the same persisted reason.
     let (ctx, _d) = ctx_with_tables().await;
     let agent_id = "01TESTSTRATEGY00000LIMITPAPR";
     save_test_strategy(&ctx, agent_id).await;
@@ -439,18 +440,27 @@ async fn paper_run_cancels_when_max_decisions_breaches() {
 }
 
 #[tokio::test]
-async fn run_rejects_paper_mode_without_broker() {
+async fn run_rejects_live_mode_with_stable_not_implemented_error() {
     let (ctx, _d) = ctx_with_tables().await;
-    let agent_id = "01TESTSTRATEGY000000000000PAP";
+    let agent_id = "01TESTSTRATEGY000000000000LIV";
     save_test_strategy(&ctx, agent_id).await;
 
     let dispatch = hold_dispatch();
 
-    let r = run_with_mock_deps(&ctx, eval_request(agent_id, RunMode::Backtest), None, dispatch).await;
-    assert!(
-        matches!(r, Err(ApiError::Validation(_))),
-        "paper mode without a broker must reject as Validation, got {r:?}",
-    );
+    let r = run_with_mock_deps(&ctx, eval_request(agent_id, RunMode::Live), None, dispatch).await;
+    match r {
+        Err(ApiError::Validation(msg)) => {
+            assert!(
+                msg.contains("Live mode not yet implemented"),
+                "live-mode validation should expose the stable shell error, got {msg:?}",
+            );
+            assert!(
+                msg.contains("live-bar-source-alpaca"),
+                "live-mode validation should name the follow-up track, got {msg:?}",
+            );
+        }
+        other => panic!("live mode must reject as Validation before queueing, got {other:?}"),
+    }
 }
 
 #[tokio::test]

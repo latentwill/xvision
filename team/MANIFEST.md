@@ -87,7 +87,7 @@ unambiguous.
 | 033 | agent-graph-capability-schema (agent_slots.capabilities JSON column + AgentRef.activates + PipelineEdge.condition) | merged (PR #527) — Phase A of capability-first spec PR #518 |
 | 034 | (released 2026-05-23 — see note below)                                                                                           | unused        |
 | 035 | eval-bakeoffs (`xvn model bakeoff`)                                                                                              | merged (#537) |
-| 036 | agents_scope_strategy_id (Phase 3 of `agent-firing-filter` — "Save as reusable agent" toggle)                                    | reserved 2026-05-23 |
+| 036 | agents_scope_strategy_id (Phase 3 of `agent-firing-filter` — "Save as reusable agent" toggle)                                    | merged 2026-05-23 (#557) |
 
 Note 2026-05-23: row 034 was reserved by `charts-section-b0` for a
 `strategies.color` column, but `xvision_engine::strategies::Strategy`

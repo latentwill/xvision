@@ -63,6 +63,44 @@ export function openRunStream(runId: string): EventSource {
   return new EventSource(path);
 }
 
+// Charts dashboard section (chart-rework Track B).
+
+import type {
+  AnnotatedChartPayload,
+  MultiStrategyEquityBundle,
+} from "@/components/chart/v2/types";
+
+export const dashboardChartKeys = {
+  overview: () => ["chart", "dashboards", "overview"] as const,
+};
+
+export function getDashboardOverview(): Promise<MultiStrategyEquityBundle> {
+  return apiFetch<MultiStrategyEquityBundle>(
+    `/api/v2/charts/dashboards/overview`,
+  );
+}
+
+// B3 — AI annotation chart fetchers.
+
+export type AnnotatedSource = "run" | "live";
+
+export const annotatedChartKeys = {
+  run: (runId: string) => ["chart", "annotated", "run", runId] as const,
+  live: (symbol: string) => ["chart", "annotated", "live", symbol] as const,
+};
+
+export function getAnnotatedRun(runId: string): Promise<AnnotatedChartPayload> {
+  return apiFetch<AnnotatedChartPayload>(
+    `/api/v2/charts/annotated/${encodeURIComponent(runId)}`,
+  );
+}
+
+export function getAnnotatedLive(symbol: string): Promise<AnnotatedChartPayload> {
+  return apiFetch<AnnotatedChartPayload>(
+    `/api/v2/charts/annotated/live/${encodeURIComponent(symbol)}`,
+  );
+}
+
 export async function getScenarioPreview(params: {
   asset: string;
   from: string;

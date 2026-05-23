@@ -110,8 +110,8 @@ pub struct RunArgs {
     /// Scenario id from `xvn eval scenarios`.
     #[arg(long)]
     pub scenario: String,
-    /// Run mode: `paper` or `backtest`.
-    #[arg(long, default_value = "paper")]
+    /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
+    #[arg(long, default_value = "backtest")]
     pub mode: String,
     /// Override the xvn home directory.
     #[arg(long)]
@@ -122,8 +122,8 @@ pub struct RunArgs {
 
     // ===== Hard limits (cli-operator-safety-p0 slice 2/3) =====
     /// Max decision cycles. Breach cancels the run with a stable
-    /// reason in the `error` field. Backtest mode only — paper mode
-    /// silently ignores the cap today.
+    /// reason in the `error` field. Backtest mode only until live execution
+    /// is implemented.
     #[arg(long)]
     pub max_decisions: Option<u32>,
     /// Max cumulative input tokens across all model calls in the run.
@@ -317,8 +317,8 @@ pub struct ValidateArgs {
     /// Scenario id from `xvn scenario ls`.
     #[arg(long)]
     pub scenario: String,
-    /// Run mode: `paper` or `backtest`.
-    #[arg(long, default_value = "paper")]
+    /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
+    #[arg(long, default_value = "backtest")]
     pub mode: String,
     /// Override the xvn home directory.
     #[arg(long)]
@@ -412,7 +412,9 @@ async fn run_export(args: ExportArgs) -> CliResult<()> {
 }
 
 fn parse_mode(s: &str) -> Result<RunMode> {
-    RunMode::parse(s).context(format!("unknown mode {s:?}; expected one of: paper | backtest",))
+    RunMode::parse(s).context(format!(
+        "unknown mode {s:?}; expected one of: backtest | live (legacy alias: paper)",
+    ))
 }
 
 async fn run_run(args: RunArgs) -> CliResult<()> {
