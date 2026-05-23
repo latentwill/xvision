@@ -20,7 +20,10 @@ import {
   type Strategy,
 } from "@/api/strategies";
 import { createAgent, listAgents, type Agent } from "@/api/agents";
-import { FiringSection } from "@/components/strategy";
+// `FiringSection` is still exported from `@/components/strategy` for the
+// deferred per-agent filter composer; re-add it to this import when
+// un-deferring (see authoring.tsx FilterCard wiring below).
+import { FilterCard } from "@/components/strategy";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
@@ -133,6 +136,7 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
     <>
       <ValidationCard strategy={strategy} />
       <ManifestCard strategy={strategy} />
+      <FilterCard strategy={strategy} />
       <AgentsCard strategy={strategy} />
       <RiskCard strategy={strategy} />
       <MechanicalParamsCard strategy={strategy} />
@@ -738,11 +742,6 @@ export function AttachedAgentRow({
   agent,
   onRenameRole,
   onRemove,
-  allRefs,
-  pipeline,
-  filterCandidates,
-  providers,
-  onFiringChanged,
 }: AttachedAgentRowProps) {
   const storageKey = agentCollapseKey(strategyId, agentRef.role);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -843,17 +842,8 @@ export function AttachedAgentRow({
               </pre>
             </div>
           ) : null}
-          {allRefs && pipeline && filterCandidates && providers && onFiringChanged ? (
-            <FiringSection
-              strategyId={strategyId}
-              agentRef={agentRef}
-              refs={allRefs}
-              pipeline={pipeline}
-              filterCandidates={filterCandidates}
-              providers={providers}
-              onMutated={onFiringChanged}
-            />
-          ) : null}
+          {/* Per-agent filter composer deferred — see docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md L4. Filter is now per-strategy via FilterCard. */}
+          {null}
           <div className="flex items-center gap-3 pt-1">
             <button
               type="button"

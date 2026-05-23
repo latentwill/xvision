@@ -121,6 +121,9 @@ type PublicManifest = {
   published_at: string | null;
 };
 
+export type { Filter } from "./types.gen/Filter";
+import type { Filter } from "./types.gen/Filter";
+
 export type Strategy = {
   manifest: PublicManifest;
   regime_slot: LLMSlot | null;
@@ -130,6 +133,20 @@ export type Strategy = {
   mechanical_params: unknown;
   agents?: AgentRef[];
   pipeline?: PipelineDef;
+  /// Per-strategy deterministic gate. `null` (or absent) means
+  /// `EveryBar` — the strategy fires on every cycle. Non-null means
+  /// `Filtered` — the engine evaluates the DSL each bar.
+  filter?: Filter | null;
+};
+
+export type SetFilterBody = {
+  source: string;
+  format: "toml" | "json";
+};
+
+export type SetFilterOut = {
+  id: string;
+  filter: Filter;
 };
 
 export type StrategyAgentsOut = {
@@ -246,6 +263,33 @@ export function setRiskConfig(
       method: "PUT",
       body: JSON.stringify(body),
     },
+  );
+}
+
+/// Install/replace the per-strategy deterministic filter. `source` is
+/// the raw DSL text (TOML or JSON, picked via `format`); the engine
+/// parses + validates server-side and returns the resolved Filter on
+/// success. Validation/parse failures come back as ApiError (4xx).
+export function setStrategyFilter(
+  id: string,
+  body: SetFilterBody,
+): Promise<SetFilterOut> {
+  return apiFetch<SetFilterOut>(
+    `/api/strategy/${encodeURIComponent(id)}/filter`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/// Drop the per-strategy filter and revert activation_mode back to
+/// `EveryBar`. Server returns 204 No Content; the helper resolves to
+/// void.
+export function clearStrategyFilter(id: string): Promise<void> {
+  return apiFetch<void>(
+    `/api/strategy/${encodeURIComponent(id)}/filter`,
+    { method: "DELETE" },
   );
 }
 

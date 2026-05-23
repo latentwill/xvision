@@ -15,8 +15,9 @@ use crate::api::{
 };
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
-    RenameAgentRoleRequest, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq, UpdateManifestOut,
-    UpdateManifestReq, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
+    RenameAgentRoleRequest, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq,
+    SetStrategyFilterOut, SetStrategyFilterReq, UpdateManifestOut, UpdateManifestReq,
+    UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use crate::strategies::{
     store::{strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore},
@@ -1580,6 +1581,70 @@ pub async fn set_risk_config(ctx: &ApiContext, req: SetRiskConfigReq) -> ApiResu
     .await;
     if result.is_ok() {
         index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
+    result
+}
+
+/// Set the strategy's deterministic DSL Filter from operator-supplied
+/// source text (TOML or JSON). Parse errors map to `Validation`;
+/// missing strategy maps to `NotFound`.
+pub async fn set_strategy_filter(
+    ctx: &ApiContext,
+    req: SetStrategyFilterReq,
+) -> ApiResult<SetStrategyFilterOut> {
+    let started = Instant::now();
+    let agent_id = req.id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_strategy_filter(&store, req)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(&agent_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "set_filter",
+        Some(&agent_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
+    result
+}
+
+/// Clear the strategy's filter (reverts `activation_mode` to
+/// `EveryBar`). No-op if no filter was set.
+pub async fn clear_strategy_filter(ctx: &ApiContext, id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::clear_strategy_filter(&store, id)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "clear_filter",
+        Some(id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, id).await;
     }
     result
 }

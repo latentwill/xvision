@@ -22,6 +22,7 @@ use crate::strategies::{
     validate::{no_filter_warnings, validate_strategy},
     AgentRef, PipelineDef, PipelineKind, Strategy,
 };
+use xvision_filters::{parse_json, parse_toml, validate as validate_filter_dsl, ActivationMode, Filter};
 
 // ---------------------------------------------------------------------------
 // types — request / response shapes shared by both surfaces.
@@ -150,6 +151,33 @@ pub struct SetRiskConfigOut {
     pub id: String,
     /// `preset` or `explicit`.
     pub applied: String,
+}
+
+/// Request to set or replace the strategy's deterministic DSL Filter.
+///
+/// The caller supplies the filter as DSL source text (TOML or JSON) and
+/// the server parses + validates it. This keeps the operator's text
+/// editor as the source of truth and avoids round-tripping a deeply
+/// nested JSON tree through every client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetStrategyFilterReq {
+    pub id: String,
+    pub source: String,
+    /// `"toml"` or `"json"`. Defaults to `"toml"` since the spec's
+    /// canonical authoring form is TOML.
+    #[serde(default = "default_filter_format")]
+    pub format: String,
+}
+
+fn default_filter_format() -> String {
+    "toml".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetStrategyFilterOut {
+    pub id: String,
+    pub filter: Filter,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -556,6 +584,40 @@ pub async fn set_risk_config(
     })
 }
 
+/// Parse the supplied DSL source, validate it, and write it to
+/// `Strategy.filter`. Promotes `activation_mode` from `EveryBar` to
+/// `FilterGated` so the runtime actually consults the filter on every
+/// bar — the inverse of [`clear_strategy_filter`].
+pub async fn set_strategy_filter(
+    store: &dyn StrategyStore,
+    req: SetStrategyFilterReq,
+) -> anyhow::Result<SetStrategyFilterOut> {
+    let filter = match req.format.as_str() {
+        "toml" => parse_toml(&req.source).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+        "json" => parse_json(&req.source).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+        other => anyhow::bail!("unknown filter source format `{other}` — must be `toml` or `json`"),
+    };
+    validate_filter_dsl(&filter).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+
+    let mut strategy = store.load(&req.id).await?;
+    strategy.filter = Some(filter.clone());
+    strategy.activation_mode = ActivationMode::FilterGated;
+    store.save(&strategy).await?;
+    Ok(SetStrategyFilterOut {
+        id: req.id,
+        filter,
+    })
+}
+
+/// Clear the strategy's filter, reverting `activation_mode` to
+/// `EveryBar`. No-op when the strategy already has no filter.
+pub async fn clear_strategy_filter(store: &dyn StrategyStore, id: &str) -> anyhow::Result<()> {
+    let mut strategy = store.load(id).await?;
+    strategy.filter = None;
+    strategy.activation_mode = ActivationMode::EveryBar;
+    store.save(&strategy).await
+}
+
 pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Result<ValidateDraftOut> {
     let strategy = store.load(id).await?;
     let mut errors = match validate_strategy(&strategy) {
@@ -907,6 +969,96 @@ mod tests {
         assert_eq!(strategy.agents.len(), 1);
         assert_eq!(strategy.agents[0].role, "analyst");
         assert_eq!(strategy.pipeline, PipelineDef::default());
+    }
+
+    #[tokio::test]
+    async fn set_strategy_filter_parses_toml_and_flips_activation_mode() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "filter-x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Baseline: every-bar, no filter.
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.filter.is_none());
+        assert!(matches!(strategy.activation_mode, ActivationMode::EveryBar));
+
+        // Set: minimal valid Filter TOML — mirrors the spec example.
+        const FILTER_TOML: &str = r#"
+[filter]
+id = "f_01JX0000000000000000000000"
+strategy_id = "s_01JX0000000000000000000000"
+display_name = "EMA Cross"
+asset_scope = ["BTC/USD"]
+timeframe = "1h"
+scan_cadence = "bar_close"
+cooldown_bars = 3
+
+[[filter.conditions.all]]
+lhs = "ema_20"
+op  = ">"
+rhs = "ema_50"
+"#;
+        let r = set_strategy_filter(
+            &store,
+            SetStrategyFilterReq {
+                id: out.id.clone(),
+                source: FILTER_TOML.to_string(),
+                format: "toml".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.filter.display_name, "EMA Cross");
+
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.filter.is_some());
+        assert!(matches!(
+            strategy.activation_mode,
+            ActivationMode::FilterGated
+        ));
+
+        // Clear: filter goes away, activation mode reverts.
+        clear_strategy_filter(&store, &out.id).await.unwrap();
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.filter.is_none());
+        assert!(matches!(strategy.activation_mode, ActivationMode::EveryBar));
+    }
+
+    #[tokio::test]
+    async fn set_strategy_filter_rejects_malformed_source() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "filter-bad".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let r = set_strategy_filter(
+            &store,
+            SetStrategyFilterReq {
+                id: out.id.clone(),
+                source: "this is not valid toml or json".to_string(),
+                format: "toml".to_string(),
+            },
+        )
+        .await;
+        assert!(r.is_err(), "malformed source must error");
+
+        // Strategy unchanged on error.
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.filter.is_none());
+        assert!(matches!(strategy.activation_mode, ActivationMode::EveryBar));
     }
 
     #[tokio::test]

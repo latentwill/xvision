@@ -11,14 +11,16 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_metadata,
-    update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq,
-    RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    self, add_agent, clear_strategy_filter, remove_agent, rename_agent_role, set_pipeline,
+    set_risk_config, set_strategy_filter, update_metadata, update_slot, validate_draft,
+    AddAgentReq, CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq,
+    SetPipelineReq, StrategyAgentsOut, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
-    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq, TemplateInfo,
-    UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
+    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq,
+    SetStrategyFilterOut, SetStrategyFilterReq, TemplateInfo, UpdateSlotOut, UpdateSlotReq,
+    ValidateDraftOut,
 };
 use xvision_engine::strategies::risk::RiskConfig;
 use xvision_engine::strategies::store::{MetadataPatchError, StrategyMetadataPatch};
@@ -188,6 +190,43 @@ pub async fn put_risk(
     };
     let out = set_risk_config(&state.api_context(), req).await?;
     Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+pub struct PutFilterBody {
+    /// DSL source text. The server parses + validates this and writes
+    /// the resulting `Filter` to `Strategy.filter`.
+    pub source: String,
+    /// `"toml"` (default) or `"json"`.
+    #[serde(default)]
+    pub format: Option<String>,
+}
+
+/// `PUT /api/strategy/:id/filter` — set the strategy's deterministic
+/// DSL Filter from operator-supplied source. Parse / validation errors
+/// surface as 4xx with the parser's message.
+pub async fn put_filter(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<PutFilterBody>,
+) -> Result<Json<SetStrategyFilterOut>, DashboardError> {
+    let req = SetStrategyFilterReq {
+        id,
+        source: body.source,
+        format: body.format.unwrap_or_else(|| "toml".to_string()),
+    };
+    let out = set_strategy_filter(&state.api_context(), req).await?;
+    Ok(Json(out))
+}
+
+/// `DELETE /api/strategy/:id/filter` — clear the strategy's filter,
+/// reverting `activation_mode` to `EveryBar`.
+pub async fn delete_filter(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<StatusCode, DashboardError> {
+    clear_strategy_filter(&state.api_context(), &id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /api/strategy/:id/validate` — re-validate the draft. The
