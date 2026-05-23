@@ -114,7 +114,8 @@
 //  R49. GET  /api/settings/providers/:name/catalog
 //  R50. GET  /api/chat-rail/sessions/:id/history
 //  R51. GET  /api/chat-rail/sessions
-//  R52. GET  /api/auth/session/current   (auth endpoint — own handler)
+//  R52. GET  /api/v2/charts/market-context
+//  R53. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
 //  A1.  POST   /api/auth/session
@@ -138,7 +139,8 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, chat_rail, charts_annotated, charts_dashboards, cli, docs,
+    agent_runs, agents, bars, chat_rail, charts_annotated, charts_dashboards,
+    charts_market_context, cli, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
     health::health,
@@ -203,6 +205,13 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/v2/charts/annotated/live/:symbol",
             get(charts_annotated::live),
+        )
+        // B4 follow-up — market context for MarketContextCard. Stub returns
+        // deterministic BTC stats; real exchange-data integration is a
+        // separate follow-up PR.
+        .route(
+            "/api/v2/charts/market-context",
+            get(charts_market_context::get),
         )
         .route("/api/agent-runs/:id", get(agent_runs::get))
         .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))

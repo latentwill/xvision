@@ -31,6 +31,7 @@ pub mod bakeoff;
 pub mod chart;
 pub mod charts_annotated;
 pub mod charts_dashboards;
+pub mod charts_market_context;
 pub mod eval;
 pub mod experiment;
 pub mod health;

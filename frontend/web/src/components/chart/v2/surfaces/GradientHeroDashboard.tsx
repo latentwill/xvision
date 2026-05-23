@@ -8,14 +8,19 @@
  *     + halo) for the lead strategy.
  *   - PerformanceRadar with the top 3 strategies overlaid.
  *   - DrawdownCard with `leadStyle="gold-tinted-red"`.
- *   - MarketContextCard (stubbed BTC data; real wiring is a follow-up).
+ *   - MarketContextCard wired to GET /api/v2/charts/market-context.
+ *     Falls back to the embedded literals on pending/error so the
+ *     dashboard always looks complete (no loading flash for scalar data).
  *
  * Per spec §11.3 resolution, B4 mounts only at /charts/hero in this
  * wave; the /-replacement decision is the B5 review milestone.
  */
 import type { ReactElement } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import type { MultiStrategyEquityBundle } from "../types";
+import { getMarketContext, marketContextKeys } from "@/api/chart";
+import type { MarketContextData, RegimeWeight } from "../types";
 import { KpiCard, KpiRow } from "../primitives/KpiCard";
 import {
   AuraBackground,
@@ -80,14 +85,20 @@ export function strategyToRadar(
   ];
 }
 
-const STUB_MARKET_CONTEXT = {
+/**
+ * Fallback literals — used while the market-context query is pending or when
+ * it errors, so the dashboard always renders a complete card. Loading choice:
+ * literal fallback (not skeleton) because the data is all scalar numbers and
+ * a brief flash of slightly-stale data is preferable to a blank/skeleton card.
+ */
+const FALLBACK_MARKET_CONTEXT: MarketContextData = {
   price: 65_128.4,
   fundingPct: 0.012,
   openInterestUsd: 7_450_000_000,
   liq24hUsd: 84_000_000,
 };
 
-const STUB_REGIMES = [
+const FALLBACK_REGIMES: RegimeWeight[] = [
   { label: "BULL", pct: 62 },
   { label: "SIDEWAYS", pct: 22 },
   { label: "BEAR", pct: 9 },
@@ -98,6 +109,16 @@ export function GradientHeroDashboard({
   payload,
 }: GradientHeroDashboardProps): ReactElement {
   const lead = pickLead(payload);
+
+  const marketCtxQ = useQuery({
+    queryKey: marketContextKeys.get(),
+    queryFn: getMarketContext,
+    // Market context is low-churn; refresh every 60 s is sufficient.
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const marketData = marketCtxQ.data?.data ?? FALLBACK_MARKET_CONTEXT;
+  const marketRegimes = marketCtxQ.data?.regimes ?? FALLBACK_REGIMES;
   const leadStats: DrawdownStats = lead
     ? deriveDrawdownStats(lead.drawdown)
     : { maxDrawdownPct: 0, avgDrawdownPct: 0, durationDays: 0, recoveryDays: null };
@@ -220,8 +241,8 @@ export function GradientHeroDashboard({
             )}
             <GlassCard>
               <MarketContextCard
-                data={STUB_MARKET_CONTEXT}
-                regimes={STUB_REGIMES}
+                data={marketData}
+                regimes={marketRegimes}
               />
             </GlassCard>
           </div>
