@@ -18,7 +18,7 @@ import {
 
 const EXAMPLE_FILTER_JSON = `{
   "id": "filter-upswing-v1",
-  "strategy_id": "strategy-id",
+  "strategy_id": "<strategy-id>",
   "display_name": "Upswing filter",
   "description": "Wake when fast EMA is above slow EMA.",
   "asset_scope": ["BTC/USD"],

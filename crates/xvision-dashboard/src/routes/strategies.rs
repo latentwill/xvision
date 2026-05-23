@@ -309,6 +309,8 @@ pub struct SetFilterBody {
     pub filter: Option<serde_json::Value>,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 pub async fn put_filter(
@@ -316,10 +318,15 @@ pub async fn put_filter(
     State(state): State<AppState>,
     Json(body): Json<SetFilterBody>,
 ) -> Result<Json<Strategy>, DashboardError> {
+    let filter = match (body.filter, body.source) {
+        (Some(filter), _) => Some(filter),
+        (None, Some(source)) => Some(serde_json::Value::String(source)),
+        (None, None) => None,
+    };
     let req = SetFilterReq {
         strategy_id: id,
-        filter: body.filter,
-        source: body.source,
+        filter,
+        source: body.format,
     };
     let out = strategy::set_filter(&state.api_context(), req).await?;
     Ok(Json(out))

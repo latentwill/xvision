@@ -12,6 +12,11 @@ Open `/strategies/:id` and use the **Filter** card.
 - Save with **Save filter**.
 - Use **Clear filter** to return to every-bar dispatch.
 - Use **Check eval readiness** after saving when you want backend validation.
+- The UI sends the raw filter source as `source` to
+  `PUT /api/strategy/:id/filter` with `format: "json" | "toml"`.
+  Ensure this endpoint receives a non-empty source body; sending only
+  `{ "source": ... }` now saves the parsed deterministic filter and flips
+  `activation_mode` to `FilterGated`.
 
 The strategy inspector also edits asset universe and cadence in the Manifest
 card. Those fields drive multi-asset and timeframe validation; they are not
@@ -25,6 +30,9 @@ not just prompt wording:
 - The strategy Filter card says `Filter artifact attached`.
 - The eval detail has non-empty filter summaries/events when the filter should
   fire or block.
+- Strategy detail returned by `/api/strategy/:id` should show
+  `activation_mode: "FilterGated"` and `filter` populated after a successful
+  save.
 - Decision provenance is checked: high `noop_skip` or early-stop counts mean
   many rows were synthesized rather than direct model decisions.
 - For filter-specific QA, disable or account for skip optimizations when they
