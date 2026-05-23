@@ -128,6 +128,30 @@ describe("MarketContextCard", () => {
     expect(screen.getByText(/BULL · 62%/)).toBeInTheDocument();
     expect(screen.getByText(/SIDEWAYS · 22%/)).toBeInTheDocument();
   });
+
+  it("renders the full 4-regime payload from the backend stub shape", () => {
+    // Verifies the card works unchanged against the MarketContextPayload
+    // shape returned by GET /api/v2/charts/market-context.
+    const data = {
+      price: 65_128.4,
+      fundingPct: 0.012,
+      openInterestUsd: 7_450_000_000,
+      liq24hUsd: 84_000_000,
+    };
+    const regimes = [
+      { label: "BULL", pct: 62 },
+      { label: "SIDEWAYS", pct: 22 },
+      { label: "BEAR", pct: 9 },
+      { label: "HIGH VOL", pct: 7 },
+    ];
+    render(<MarketContextCard data={data} regimes={regimes} />);
+    expect(screen.getByText(/BEAR · 9%/)).toBeInTheDocument();
+    expect(screen.getByText(/HIGH VOL · 7%/)).toBeInTheDocument();
+    // OI renders as $7.45B
+    expect(screen.getByText("$7.45B")).toBeInTheDocument();
+    // Liq renders as $84.0M
+    expect(screen.getByText("$84.0M")).toBeInTheDocument();
+  });
 });
 
 describe("strategyToRadar normalisation", () => {

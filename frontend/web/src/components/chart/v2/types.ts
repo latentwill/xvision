@@ -200,6 +200,22 @@ export type AnnotatedChartPayload = {
   annotations: Annotation[];
 };
 
+// /api/v2/charts/market-context — B4 follow-up. Replaces STUB_MARKET_CONTEXT +
+// STUB_REGIMES literals in GradientHeroDashboard.
+// MarketContextData + RegimeWeight are defined on the primitive and
+// re-exported here so API consumers have a single import point.
+import type {
+  MarketContextData,
+  RegimeWeight,
+} from "./primitives/MarketContextCard";
+
+export type { MarketContextData, RegimeWeight };
+
+export type MarketContextPayload = {
+  data: MarketContextData;
+  regimes: RegimeWeight[];
+};
+
 // /api/v2/charts/heatmap/:symbol — RESERVED for the F-CHART-LIQHEAT
 // followup (Chart 04). Type defined now so the followup picks up
 // rework-free, but no producer/consumer in this wave.

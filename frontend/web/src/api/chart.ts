@@ -67,6 +67,7 @@ export function openRunStream(runId: string): EventSource {
 
 import type {
   AnnotatedChartPayload,
+  MarketContextPayload,
   MultiStrategyEquityBundle,
 } from "@/components/chart/v2/types";
 
@@ -99,6 +100,16 @@ export function getAnnotatedLive(symbol: string): Promise<AnnotatedChartPayload>
   return apiFetch<AnnotatedChartPayload>(
     `/api/v2/charts/annotated/live/${encodeURIComponent(symbol)}`,
   );
+}
+
+// B4 follow-up — market context for MarketContextCard.
+
+export const marketContextKeys = {
+  get: () => ["chart", "market-context"] as const,
+};
+
+export function getMarketContext(): Promise<MarketContextPayload> {
+  return apiFetch<MarketContextPayload>(`/api/v2/charts/market-context`);
 }
 
 export async function getScenarioPreview(params: {
