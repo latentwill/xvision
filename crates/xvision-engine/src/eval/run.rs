@@ -55,7 +55,7 @@ impl RunAbort {
 #[serde(rename_all = "snake_case")]
 pub enum RunMode {
     Backtest,
-    Paper,
+    Live,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -111,14 +111,19 @@ impl RunMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             RunMode::Backtest => "backtest",
-            RunMode::Paper => "paper",
+            RunMode::Live => "live",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "backtest" => Some(RunMode::Backtest),
-            "paper" => Some(RunMode::Paper),
+            "live" => Some(RunMode::Live),
+            // Legacy DB read-only alias: pre-collapse runs persisted `mode = 'paper'`.
+            // The intake's "retire paper mode with prejudice" decision relabels them
+            // as Backtest on read. New writes never emit "paper". See
+            // team/archive/2026-05-22-conductor-pass/contracts/executor-refactor.md.
+            "paper" => Some(RunMode::Backtest),
             _ => None,
         }
     }
@@ -306,5 +311,47 @@ impl MetricsSummary {
     /// `total_return_pct` for one release.
     pub fn gross_return_pct(&self) -> f64 {
         self.total_return_pct
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_mode_as_str_backtest_returns_backtest() {
+        // executor-collapse-paper-mode: post-collapse the wire string is
+        // "backtest", not "paper". New writes emit "backtest"; legacy
+        // "paper" rows route through `parse(...)` to `Backtest` on read.
+        assert_eq!(RunMode::Backtest.as_str(), "backtest");
+    }
+
+    #[test]
+    fn run_mode_as_str_live_returns_live() {
+        assert_eq!(RunMode::Live.as_str(), "live");
+    }
+
+    #[test]
+    fn run_mode_parse_paper_returns_backtest_legacy_alias() {
+        // The legacy alias is the deliberate backward-compatibility seam
+        // (see comment in `RunMode::parse`). Pre-collapse rows with
+        // `mode = 'paper'` continue to load as Backtest.
+        assert_eq!(RunMode::parse("paper"), Some(RunMode::Backtest));
+    }
+
+    #[test]
+    fn run_mode_parse_backtest_returns_backtest() {
+        assert_eq!(RunMode::parse("backtest"), Some(RunMode::Backtest));
+    }
+
+    #[test]
+    fn run_mode_parse_live_returns_live() {
+        assert_eq!(RunMode::parse("live"), Some(RunMode::Live));
+    }
+
+    #[test]
+    fn run_mode_parse_unknown_returns_none() {
+        assert_eq!(RunMode::parse("???"), None);
+        assert_eq!(RunMode::parse(""), None);
     }
 }

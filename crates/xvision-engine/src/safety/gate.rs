@@ -17,7 +17,7 @@
 //!      tests via `SafetyGate::allow_all()`.
 //!
 //! 2. `crates/xvision-engine/src/eval/executor/paper.rs`
-//!    - `PaperExecutor` calls `BrokerSurface::submit_order` → gated by (1).
+//!    - `paper-mode-executor-deleted` calls `BrokerSurface::submit_order` → gated by (1).
 //!
 //! 3. `crates/xvision-execution/src/alpaca.rs`
 //!    - `AlpacaExecutor::submit` (the `Executor` trait impl) → calls the
@@ -106,13 +106,20 @@ impl SafetyGate {
     ///
     /// Checks (in order):
     ///   1. Global pause state (in-memory read, no DB).
-    ///   2. Venue-label mismatch (Paper scenario → live broker).
+    ///   2. Venue-label mismatch (Paper-labeled run → live broker).
     ///   3. Per-run safety limits.
     ///
     /// On any denial, appends an audit row (fire-and-forget) before returning
     /// the error.
     ///
     /// On success, appends an `Allowed` audit row.
+    ///
+    /// `run_venue_label` is the venue label sourced from the *run* (today
+    /// from `Scenario.venue_label` in Backtest, from `LiveConfig.venue_label`
+    /// once Live wiring lands). The rename from `scenario_venue_label` in
+    /// the executor-live-shell sub-track future-proofs the signature so
+    /// the caller is agnostic to whether the source is a scenario or a
+    /// live config.
     #[allow(clippy::too_many_arguments)]
     pub async fn check_broker_submit(
         &self,
@@ -120,7 +127,7 @@ impl SafetyGate {
         venue: &str,
         asset: Option<&str>,
         notional_usd: Option<f64>,
-        scenario_venue_label: VenueLabel,
+        run_venue_label: VenueLabel,
         broker_venue_label: VenueLabel,
         limits: Option<&SafetyLimits>,
         limit_check: Option<&SafetyLimitCheck>,
@@ -146,11 +153,11 @@ impl SafetyGate {
         }
 
         // 2. Venue-label mismatch.
-        if scenario_venue_label == VenueLabel::Paper && broker_venue_label == VenueLabel::Live {
+        if run_venue_label == VenueLabel::Paper && broker_venue_label == VenueLabel::Live {
             self.write_audit(auth, &action, AuditResult::DeniedVenueMismatch, pause_state)
                 .await;
             return Err(SafetyGateError::VenueLabelMismatch {
-                scenario_label: scenario_venue_label,
+                scenario_label: run_venue_label,
                 broker_label: broker_venue_label,
             });
         }

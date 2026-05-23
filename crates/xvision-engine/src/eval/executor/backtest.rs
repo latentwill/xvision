@@ -1,4 +1,4 @@
-//! `BacktestExecutor` — replays an OHLCV fixture in chronological order,
+//! `Executor` — replays an OHLCV fixture in chronological order,
 //! invoking the strategy's pipeline at each decision boundary and simulating
 //! fills against the next bar's open with linear slippage + taker fees. No
 //! broker is involved; positions and equity are tracked in-memory.
@@ -8,11 +8,11 @@
 //!
 //! Out of scope (deferred):
 //! - Multi-asset universes (uses `scenario.asset_universe[0]` only — v1
-//!   constraint, same as PaperExecutor).
+//!   constraint, same as paper-mode-executor-deleted).
 //! - Indicator panel injection into the pipeline seed (matching what
-//!   PaperExecutor passes today, which is just portfolio_state).
+//!   paper-mode-executor-deleted passes today, which is just portfolio_state).
 //! - Win-rate sourced from realized-PnL pairs across decisions (the
-//!   `MetricsSummary.win_rate` is left at 0.0 the same way PaperExecutor
+//!   `MetricsSummary.win_rate` is left at 0.0 the same way paper-mode-executor-deleted
 //!   leaves it — Phase 3.C work).
 
 use std::collections::HashMap;
@@ -50,7 +50,7 @@ use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::executor::traits::{
     BarSource, Clock, FillRecord, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
 };
-use crate::eval::executor::Executor;
+use crate::eval::executor::RunExecutor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
 use crate::eval::guardrails::{
     self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
@@ -73,11 +73,11 @@ use crate::tools::ToolRegistry;
 use super::trader_output::TraderOutput;
 
 #[derive(Default)]
-pub struct BacktestExecutor {
+pub struct Executor {
     /// Optional progress channel. When `None` the executor is silent
     /// (today's `api::eval::run_with_deps` callers); when `Some`, every
     /// significant action emits a `ProgressEvent`. Send-when-no-subscribers
-    /// is a no-op via `send_event`. Mirrors PR #35's PaperExecutor wiring
+    /// is a no-op via `send_event`. Mirrors PR #35's paper-mode-executor-deleted wiring
     /// so SSE / CLI subscribers see both run modes through the same bus.
     progress: Option<ProgressTx>,
     /// Optional pre-loaded bars. When `Some`, the executor skips the
@@ -132,7 +132,37 @@ pub struct BacktestExecutor {
     recorder: Option<Arc<dyn xvision_observability::Recorder>>,
 }
 
-impl BacktestExecutor {
+impl Executor {
+    /// Backtest constructor — wires `InjectedBars + InstantClock +
+    /// SimulatedFills` under the hood. The trio is composed inside
+    /// `run_inner` from the supplied bars; this constructor is the
+    /// stable entry point the API dispatch site uses for
+    /// [`RunMode::Backtest`].
+    ///
+    /// Mirrors [`Executor::with_bars`] today (which it delegates to).
+    /// Future evolution: take a `CostModel` explicitly rather than
+    /// reading it back off the scenario at `run_inner` time. Kept
+    /// minimal here so the executor-collapse-paper-mode +
+    /// executor-live-shell PR stays focused.
+    pub fn backtest(bars: Vec<Ohlcv>) -> Self {
+        Self::with_bars(bars)
+    }
+
+    /// Live constructor — would wire `LiveStream + WallClock +
+    /// RealBrokerFills`, but the live bar-source and broker-fill
+    /// wiring are deferred to the `live-bar-source-alpaca` track.
+    /// Returns a clear not-implemented error so the API dispatch can
+    /// route [`RunMode::Live`] here without panicking; the operator
+    /// sees a stable message in the eval-run `error` column.
+    ///
+    /// The signature deliberately matches the future shape (`-> Result`)
+    /// so the launch endpoint (Phase 3) can wire it up unchanged.
+    pub fn live() -> anyhow::Result<Self> {
+        Err(anyhow!(
+            "Live mode not yet implemented — pending live-bar-source-alpaca"
+        ))
+    }
+
     /// Constructor without progress wiring. Existing callers
     /// (`api::eval::run_with_deps` today, plus tests against legacy
     /// `canonical_scenarios()` ids) keep working unchanged — bars get
@@ -196,7 +226,7 @@ impl BacktestExecutor {
 
     /// Attach a live-stream event bus to an existing executor. Builder-style
     /// so callers can chain after `with_bars` / `with_progress`:
-    ///   `BacktestExecutor::with_bars(bars).with_event_bus(bus)`.
+    ///   `Executor::with_bars(bars).with_event_bus(bus)`.
     pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
         self.event_bus = Some(bus);
         self
@@ -241,7 +271,7 @@ impl BacktestExecutor {
     /// Pre-window warmup bars. The decision loop never iterates these;
     /// they only feed the per-decision rolling `bar_history` window in
     /// the seed. Chains with `with_bars` / `with_progress` / `with_event_bus`:
-    ///   `BacktestExecutor::with_bars(bars).with_warmup(warmup)`.
+    ///   `Executor::with_bars(bars).with_warmup(warmup)`.
     pub fn with_warmup(mut self, warmup_bars: Vec<Ohlcv>) -> Self {
         self.warmup_bars = warmup_bars;
         self
@@ -272,7 +302,7 @@ impl BacktestExecutor {
 }
 
 #[async_trait]
-impl Executor for BacktestExecutor {
+impl RunExecutor for Executor {
     async fn run(
         &self,
         run: &mut Run,
@@ -370,7 +400,7 @@ impl Executor for BacktestExecutor {
     }
 }
 
-impl BacktestExecutor {
+impl Executor {
     #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
@@ -427,7 +457,7 @@ impl BacktestExecutor {
         // now driven by the BarSource trait, timestamp progression by
         // the Clock trait, and fill production by the FillSink trait.
         // Trait-object dispatch keeps codegen reasonable when sub-track
-        // 3 lands the Live impl on the same `BacktestExecutor` shape.
+        // 3 lands the Live impl on the same `Executor` shape.
         //
         // The BarSource owns its own copy of the bars (clone is cheap —
         // `Ohlcv` is `Copy`-like data); the executor keeps the original
@@ -923,7 +953,7 @@ impl BacktestExecutor {
                 }),
                 // Phase D — unified Recorder. Wired by callers that
                 // construct an `EvalRecorder` and thread it via
-                // `BacktestExecutor::with_recorder`. The default `None`
+                // `Executor::with_recorder`. The default `None`
                 // keeps the legacy bus-driven emission path untouched.
                 recorder: self.recorder.as_deref(),
             })
@@ -2644,5 +2674,30 @@ mod tests {
         let strategy = empty_strategy();
         let slots = vec![resolved("regime", "claude-opus-4-7")];
         assert!(trader_model_id(&slots, &strategy).is_none());
+    }
+}
+
+#[cfg(test)]
+mod live_shell_tests {
+    use super::*;
+
+    #[test]
+    fn executor_live_returns_not_implemented_error_does_not_panic() {
+        // executor-live-shell: until the live-bar-source-alpaca track
+        // lands, the Live constructor must return a stable, operator-
+        // legible error rather than panicking. The launch endpoint
+        // (Phase 3) and the API dispatch site both surface this string
+        // directly to the user.
+        let result = Executor::live();
+        assert!(result.is_err(), "Executor::live() must return Err today");
+        let msg = format!("{}", result.err().unwrap());
+        assert!(
+            msg.contains("Live mode not yet implemented"),
+            "Executor::live() error must carry the stable not-implemented message; got: {msg}"
+        );
+        assert!(
+            msg.contains("live-bar-source-alpaca"),
+            "error message must point at the follow-up track; got: {msg}"
+        );
     }
 }

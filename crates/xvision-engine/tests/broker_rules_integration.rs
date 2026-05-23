@@ -32,7 +32,7 @@ use chrono::{Duration, TimeZone, Utc};
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::findings::Severity;
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::{
@@ -282,7 +282,7 @@ async fn broker_rejected_order_records_decision_but_no_fill() {
     let bars = daily_bars_at(100_000.0, 3);
     let dispatch = sequenced_dispatch(&["long_open", "long_open", "long_open"]);
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -395,7 +395,7 @@ async fn non_violating_order_fills_and_no_violation_finding() {
     let bars = daily_bars_at(50_000.0, 2);
     let dispatch = sequenced_dispatch(&["long_open", "flat"]);
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -459,7 +459,7 @@ async fn equity_scenario_no_op_rules_order_always_accepted() {
     let bars = daily_bars_at(100_000.0, 2);
     let dispatch = sequenced_dispatch(&["long_open", "flat"]);
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)

@@ -1,6 +1,6 @@
 //! Phase 3.D Task 13 — `eval::progress` integration tests.
 //!
-//! Drives `PaperExecutor` end-to-end with a `MockBrokerSurface` +
+//! Drives `paper-mode-executor-deleted` end-to-end with a `MockBrokerSurface` +
 //! `MockDispatch` that always echoes a `long_open` decision, subscribes
 //! to the `ProgressBus` ahead of time, and asserts every event type the
 //! executor is responsible for emitting fires at least once.
@@ -17,7 +17,7 @@ use chrono::Duration;
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::eval::executor::{Executor, PaperExecutor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::progress::{ProgressBus, ProgressEvent};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
@@ -142,7 +142,7 @@ async fn paper_executor_emits_run_failed_on_unparseable_trader_output() {
         .expect("flash-crash-2024-08 scenario must exist");
     let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000C");
 
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
 
     let bus = ProgressBus::new(1024);
@@ -152,7 +152,7 @@ async fn paper_executor_emits_run_failed_on_unparseable_trader_output() {
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Arc<dyn BrokerSurface> = mock_broker;
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = PaperExecutor::with_bars_and_progress(broker, scenario_bars(&scenario), tx);
+    let executor = Executor::with_bars_and_progress(scenario_bars(&scenario), tx);
 
     let err = executor
         .run(
@@ -204,7 +204,7 @@ async fn paper_executor_emits_all_progress_event_types() {
         .expect("flash-crash-2024-08 scenario must exist");
     let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000A");
 
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
 
     // Subscribe BEFORE running so RunStarted isn't lost.
@@ -216,7 +216,7 @@ async fn paper_executor_emits_all_progress_event_types() {
     let broker: Arc<dyn BrokerSurface> = mock_broker;
     let dispatch = long_open_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = PaperExecutor::with_bars_and_progress(broker, scenario_bars(&scenario), tx);
+    let executor = Executor::with_bars_and_progress(scenario_bars(&scenario), tx);
 
     let result = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -295,7 +295,7 @@ async fn paper_executor_runs_clean_with_no_progress_subscriber() {
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
     let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000B");
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
 
     let bus = ProgressBus::new(8);
@@ -306,7 +306,7 @@ async fn paper_executor_runs_clean_with_no_progress_subscriber() {
     let broker: Arc<dyn BrokerSurface> = mock_broker;
     let dispatch = long_open_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = PaperExecutor::with_bars_and_progress(broker, scenario_bars(&scenario), tx);
+    let executor = Executor::with_bars_and_progress(scenario_bars(&scenario), tx);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)

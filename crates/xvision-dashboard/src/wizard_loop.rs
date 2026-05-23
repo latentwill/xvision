@@ -894,7 +894,7 @@ impl WizardLoop {
                 };
                 let mode = input.get("mode").and_then(|v| v.as_str()).unwrap_or("backtest");
                 let mode = match mode {
-                    "paper" => RunMode::Paper,
+                    "live" => RunMode::Live,
                     _ => RunMode::Backtest,
                 };
                 if mode == RunMode::Backtest && scenario_needs_bars(&scenario) {
@@ -2228,7 +2228,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "properties": {
                     "agent_id": {"type": "string"},
                     "scenario_id": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["backtest", "paper"]}
+                    "mode": {"type": "string", "enum": ["backtest", "live"]}
                 },
                 "required": ["agent_id", "scenario_id"]
             }),

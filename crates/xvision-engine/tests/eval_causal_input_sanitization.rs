@@ -240,8 +240,8 @@ fn causal_per_bar_shape_drops_timestamp_and_adds_bar_index() {
 
 fn top_level_seed_shape(policy: InputsPolicy) -> serde_json::Value {
     // This is the structural skeleton the executors produce — see
-    // `paper::PaperExecutor::run_inner` and
-    // `backtest::BacktestExecutor::run_inner` for the live builders.
+    // `paper::paper-mode-executor-deleted::run_inner` and
+    // `backtest::Executor::run_inner` for the live builders.
     // Test mirrors the shape so a refactor that accidentally
     // re-introduces `decision_index` under Causal is caught.
     match policy {

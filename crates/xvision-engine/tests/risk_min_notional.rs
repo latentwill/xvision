@@ -8,7 +8,7 @@
 //! this contract is the proactive layer that keeps the broker call
 //! from firing in the first place.
 //!
-//! Acceptance: with `min_notional_usd = 10.0` set on the `PaperExecutor`,
+//! Acceptance: with `min_notional_usd = 10.0` set on the `paper-mode-executor-deleted`,
 //! a `long_open` decision that sizes below $10 produces:
 //!   - zero broker submissions (`MockBrokerSurface.submitted().len() == 0`)
 //!   - one persisted decision row per tick, tagged
@@ -27,7 +27,7 @@ use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::eval::executor::{Executor, PaperExecutor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
@@ -145,6 +145,7 @@ fn eth_like_bars(scenario: &Scenario) -> Vec<Ohlcv> {
 /// shape: tiny buying power × small risk_pct → ~$6 notional → veto.
 /// The broker never sees a submit.
 #[tokio::test]
+#[ignore = "executor-collapse-paper-mode (2026-05-22): asserts pre-submit min-notional gate that lived in the paper executor. The gate logic belongs in the Live wiring track once RealBrokerFills + LiveConfig.safety_limits land. Re-enable then."]
 async fn min_notional_gate_skips_broker_for_below_min_orders() {
     // Buying power 60 USD × risk_pct 0.1 = $6 USD notional, below the
     // paper venue's $10 minimum.
@@ -157,8 +158,8 @@ async fn min_notional_gate_skips_broker_for_below_min_orders() {
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = tiny_risk_strategy();
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario)).with_min_notional_usd(10.0); // paper venue minimum
-    let mut run = Run::new_queued("test-min-notional".into(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(eth_like_bars(&scenario)); // paper venue minimum
+    let mut run = Run::new_queued("test-min-notional".into(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());
@@ -215,6 +216,7 @@ async fn min_notional_gate_skips_broker_for_below_min_orders() {
 /// orders. Demonstrates the gate is the thing doing the work, not some
 /// unrelated guard.
 #[tokio::test]
+#[ignore = "executor-collapse-paper-mode (2026-05-22): asserts pre-submit min-notional gate that lived in the paper executor. The gate logic belongs in the Live wiring track once RealBrokerFills + LiveConfig.safety_limits land. Re-enable then."]
 async fn without_gate_below_min_orders_reach_the_broker() {
     let initial_balance = 60.0;
     let canned = r#"{"action":"long_open","conviction":0.7,"justification":"go long ETH"}"#;
@@ -226,11 +228,11 @@ async fn without_gate_below_min_orders_reach_the_broker() {
     let strategy = tiny_risk_strategy();
     let scenario = short_scenario();
     // No `with_min_notional_usd` call — gate is disabled.
-    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario));
+    let executor = Executor::with_bars(eth_like_bars(&scenario));
     let mut run = Run::new_queued(
         "test-min-notional-control".into(),
         scenario.id.clone(),
-        RunMode::Paper,
+        RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
@@ -251,6 +253,7 @@ async fn without_gate_below_min_orders_reach_the_broker() {
 /// A `min_notional_usd = 0.0` explicit disable behaves the same as
 /// no gate at all — required by the contract's "0.0 = no-op" semantics.
 #[tokio::test]
+#[ignore = "executor-collapse-paper-mode (2026-05-22): asserts pre-submit min-notional gate that lived in the paper executor. The gate logic belongs in the Live wiring track once RealBrokerFills + LiveConfig.safety_limits land. Re-enable then."]
 async fn zero_min_notional_is_noop() {
     let initial_balance = 60.0;
     let canned = r#"{"action":"long_open","conviction":0.7,"justification":"go long ETH"}"#;
@@ -261,11 +264,11 @@ async fn zero_min_notional_is_noop() {
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = tiny_risk_strategy();
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario)).with_min_notional_usd(0.0);
+    let executor = Executor::with_bars(eth_like_bars(&scenario));
     let mut run = Run::new_queued(
         "test-min-notional-zero".into(),
         scenario.id.clone(),
-        RunMode::Paper,
+        RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
@@ -286,6 +289,7 @@ async fn zero_min_notional_is_noop() {
 /// Normally-sized orders (well above the gate) flow through to the
 /// broker exactly as before — the gate is precise.
 #[tokio::test]
+#[ignore = "executor-collapse-paper-mode (2026-05-22): asserts pre-submit min-notional gate that lived in the paper executor. The gate logic belongs in the Live wiring track once RealBrokerFills + LiveConfig.safety_limits land. Re-enable then."]
 async fn above_min_notional_orders_pass_through() {
     // Large buying power × default-ish risk_pct → notional well above $10.
     let initial_balance = 100_000.0;
@@ -302,8 +306,8 @@ async fn above_min_notional_orders_pass_through() {
         s
     };
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario)).with_min_notional_usd(10.0);
-    let mut run = Run::new_queued("test-above-min".into(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(eth_like_bars(&scenario));
+    let mut run = Run::new_queued("test-above-min".into(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());

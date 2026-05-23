@@ -33,7 +33,7 @@ use chrono::{Duration, TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
@@ -234,7 +234,7 @@ async fn four_consecutive_long_open_pyramid_blocks_to_three_holds() {
     let bars = daily_bars(4);
     let dispatch = sequenced_dispatch(&["long_open", "long_open", "long_open", "long_open"]);
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -324,7 +324,7 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
     let bars = daily_bars(2);
     let dispatch = sequenced_dispatch(&["long_open", "short_open"]);
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)

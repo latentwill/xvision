@@ -97,7 +97,7 @@ pub struct PipelineInputs<'a> {
     /// `execute_slot` call (`qa-eval-observability-wiring`,
     /// 2026-05-17). `None` is the default — every existing call site
     /// inherits the no-op path without code changes, and the eval
-    /// executors opt in via `BacktestExecutor::with_observability_bus`.
+    /// executors opt in via `Executor::with_observability_bus`.
     pub obs: Option<ObsEmitter>,
     /// V2D: optional cortex-memory recorder. Threaded into every
     /// `execute_slot` call so per-slot `memory_mode = AgentScoped`

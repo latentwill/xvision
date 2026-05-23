@@ -1,7 +1,7 @@
 //! End-to-end regression for `wire-min-notional-into-eval`.
 //!
 //! Sister of `risk_min_notional.rs` (PR #324) but exercises the
-//! production `api::eval::run_with_deps` path, not the `PaperExecutor`
+//! production `api::eval::run_with_deps` path, not the `paper-mode-executor-deleted`
 //! in isolation. Confirms that the wiring added in this PR — reading
 //! `[venues.paper] min_notional_usd` from `$XVN_HOME/config/risk.toml`
 //! and chaining `.with_min_notional_usd(...)` onto the executor —
@@ -231,7 +231,7 @@ async fn run_tiny_notional_probe(
         EvalRunRequest {
             agent_id: agent_id.into(),
             scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Paper,
+            mode: RunMode::Backtest,
             params_override: None,
             limits: None,
             skip_preflight: false,
