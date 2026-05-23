@@ -6,6 +6,23 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+/// Provider + model pair stored on an eval run for the auto-fired (or later
+/// manually-fired) review. Structurally identical to `api::strategy::ProviderModelPair`
+/// but defined here so `eval::run` stays free of API-layer imports.
+///
+/// Persisted as two separate TEXT columns (`review_model_provider`,
+/// `review_model_name`) by migration 037.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewModelRef {
+    pub provider: String,
+    pub model: String,
+}
+
 /// Reason a run was aborted by the safety subsystem. Persisted to the
 /// `eval_runs.error` column so the dashboard can render a human-readable
 /// reason alongside the `Cancelled` terminal status.
@@ -165,6 +182,24 @@ pub struct Run {
     /// `None` for pre-migration rows.
     #[serde(default)]
     pub bars_manifest: Option<serde_json::Value>,
+
+    // ── Review auto-fire settings (migration 037) ──────────────────────────
+    /// When `true` the finalize path (R2) enqueues a review job automatically
+    /// on eval-run completion. Defaults `false` (manual-fire only). Persisted
+    /// as `INTEGER 0/1` in the `auto_fire_review` column.
+    #[serde(default)]
+    pub auto_fire_review: bool,
+    /// Provider + model pair chosen at eval-creation time for the auto-fired
+    /// (or subsequently manually-fired) review. `None` means "prompt the
+    /// operator at fire time". Stored as two separate columns
+    /// (`review_model_provider`, `review_model_name`) so the CLI can display
+    /// them without JSON parsing.
+    #[serde(default)]
+    pub review_model: Option<ReviewModelRef>,
+    /// Cap on the number of `ReviewAnnotation` items the review LLM may
+    /// return for this run. `None` → `DEFAULT_MAX_ANNOTATIONS_PER_REVIEW` (8).
+    #[serde(default)]
+    pub max_annotations_per_review: Option<u32>,
 }
 
 impl Run {
@@ -188,6 +223,9 @@ impl Run {
             bars_content_hash: None,
             manifest_canonical: None,
             bars_manifest: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: None,
         }
     }
 }

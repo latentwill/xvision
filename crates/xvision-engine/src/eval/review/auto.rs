@@ -195,6 +195,7 @@ pub async fn run_auto_review(
         error: None,
         created_at: now,
         updated_at: now,
+        annotations: Vec::new(),
     };
     store
         .create_review(&review)

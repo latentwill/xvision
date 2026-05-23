@@ -15,12 +15,16 @@
 //! Review-linked finding columns live on [`super::Finding`] so review
 //! findings remain first-class rows, not nested inside `raw_output_json`.
 
+pub mod annotation;
 pub mod auto;
 pub mod engine;
 pub mod parser;
 pub mod payload;
 pub mod prompt;
 
+pub use annotation::{
+    AnnotationAction, AnnotationKind, AnnotationSide, ReviewAnnotation, DEFAULT_MAX_ANNOTATIONS_PER_REVIEW,
+};
 pub use auto::{
     fire_auto_review, run_auto_review, AutoReviewOptions, AutoReviewOutcome, AUTO_AGENT_PROFILE_ID,
 };
@@ -161,6 +165,13 @@ pub struct EvalReview {
     pub created_at: DateTime<Utc>,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub updated_at: DateTime<Utc>,
+    /// Structured chart annotations produced by the review LLM and persisted
+    /// alongside the review (migration 037). Empty until R3 lands the prompt
+    /// extension. Persisted as `annotations TEXT NOT NULL DEFAULT '[]'` in the
+    /// `eval_reviews` table; deserialized here so the API can return typed
+    /// annotations without a separate query.
+    #[serde(default)]
+    pub annotations: Vec<ReviewAnnotation>,
 }
 
 impl EvalReview {
@@ -183,6 +194,7 @@ impl EvalReview {
             error: None,
             created_at: now,
             updated_at: now,
+            annotations: Vec::new(),
         }
     }
 }

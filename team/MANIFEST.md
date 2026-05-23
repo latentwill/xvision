@@ -88,6 +88,7 @@ unambiguous.
 | 034 | (released 2026-05-23 — see note below)                                                                                           | unused        |
 | 035 | eval-bakeoffs (`xvn model bakeoff`)                                                                                              | merged (#537) |
 | 036 | agents_scope_strategy_id (Phase 3 of `agent-firing-filter` — "Save as reusable agent" toggle)                                    | merged 2026-05-23 (#557) |
+| 037 | review-annotations-and-eval-autofire (`eval_reviews.annotations` JSON + `eval_runs.auto_fire_review` / `review_model_provider` / `review_model_name` / `max_annotations_per_review` cols) | reserved 2026-05-23 — R1 of live-annotation producer (spec 2026-05-23-live-annotation-producer-and-review-autofire.md) |
 
 Note 2026-05-23: row 034 was reserved by `charts-section-b0` for a
 `strategies.color` column, but `xvision_engine::strategies::Strategy`
@@ -108,7 +109,7 @@ receipt. The merged PR (#538) extended `eval_runs.provider_diagnostics`
 JSON instead, so 034 was never claimed on disk. Per the "do not recycle
 gaps" rule above, leave it unused and continue from the next sequential.
 
-The next available number is **037**. The conductor must approve and
+The next available number is **038**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 

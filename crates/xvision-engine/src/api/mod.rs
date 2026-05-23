@@ -91,6 +91,8 @@ const MIGRATION_033_AGENT_SLOT_CAPABILITIES: &str =
 const MIGRATION_035_EVAL_BAKEOFFS: &str = include_str!("../../migrations/035_eval_bakeoffs.sql");
 const MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID: &str =
     include_str!("../../migrations/036_agents_scope_strategy_id.sql");
+const MIGRATION_037_REVIEW_ANNOTATIONS_AND_EVAL_AUTOFIRE: &str =
+    include_str!("../../migrations/037_review_annotations_and_eval_autofire.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -258,6 +260,7 @@ impl ApiContext {
         migrate_agent_slot_capabilities(&pool).await?;
         migrate_eval_bakeoffs(&pool).await?;
         migrate_agents_scope_strategy_id(&pool).await?;
+        migrate_review_annotations_and_eval_autofire(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -885,6 +888,18 @@ async fn migrate_agent_slot_capabilities(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_agents_scope_strategy_id(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agents", "scope_strategy_id").await? {
         sqlx::query(MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 037 (live-annotation producer R1): add
+/// `eval_reviews.annotations` and the three `eval_runs` autofire columns.
+/// Idempotent — gated on column absence.
+async fn migrate_review_annotations_and_eval_autofire(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_reviews", "annotations").await? {
+        sqlx::query(MIGRATION_037_REVIEW_ANNOTATIONS_AND_EVAL_AUTOFIRE)
             .execute(pool)
             .await?;
     }

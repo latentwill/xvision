@@ -59,10 +59,13 @@ pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};
 pub use orders::OrderState;
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
-pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
+pub use review::{
+    AgentProfile, AnnotationAction, AnnotationKind, AnnotationSide, EvalReview, ReviewAnnotation,
+    ReviewStatus, ReviewVerdict, DEFAULT_MAX_ANNOTATIONS_PER_REVIEW,
+};
 
 pub use batch_store::{Batch, BatchStore};
-pub use run::{MetricsSummary, Run, RunMode, RunStatus};
+pub use run::{MetricsSummary, ReviewModelRef, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 pub use scenario::canonical_scenarios;
 pub use scenario::{
