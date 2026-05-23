@@ -37,6 +37,23 @@ Wave A (#530/#531/#532) and Wave B #5/#6 (#538/#537) merged
 
 - [cli-strategy-clone-model-override](contracts/cli-strategy-clone-model-override.md) — **P1 leaf** · ready · `xvn strategy clone <id> --provider X --model Y --name N`.
 
+### charts-section-2026-05-23 — Track B of chart-rework spec (4 canvases + foundation)
+
+Track B of `docs/superpowers/specs/2026-05-21-chart-rework-klinecharts-uplot.md`,
+folding in the 2026-05-22 Claude design handoff under
+`docs/design/trading-charts/XVN.zip`. Adds a `Charts` left-nav section
+(between Scenarios and Eval) with four dashboard canvases. Chart 04
+(Liquidation Heatmap) is parked as F-CHART-LIQHEAT — not in this wave.
+
+- [charts-section-b0](contracts/charts-section-b0.md) — **P0 foundation** · ready · sidebar entry, `/charts` route topology, `Strategy.color` migration 034, theme-token superset, three fixtures, `/api/v2/charts/dashboards/overview` stub, `/chart-lab/dashboards` tab.
+- B1 (`charts-section-b1`) — Dark Minimal Strategy Dashboard → `/charts/overview`. **Contract authored when B0 lands.** Plan: `docs/superpowers/plans/2026-05-23-charts-section-b1-overview-dashboard.md`.
+- B2 (`charts-section-b2`) — Comparison AB Scalable → `/charts/compare`. Plan: `docs/superpowers/plans/2026-05-23-charts-section-b2-comparison-ab.md`. **Parallel-safe with B3 after B1 lands** (B2 reuses B1's primitives; B3 doesn't).
+- B3 (`charts-section-b3`) — AI Annotation Chart → `/charts/annotated`. Plan: `docs/superpowers/plans/2026-05-23-charts-section-b3-ai-annotation.md`. **Parallel-safe with B1+B2 after B0 lands** (no shared primitives).
+- B4 (`charts-section-b4`) — Gradient Warm Hero → `/charts/hero`. Plan: `docs/superpowers/plans/2026-05-23-charts-section-b4-gradient-hero.md`. Depends on B0 + B1.
+- B5 — Review checkpoint (no code commitment) — decide whether `/` should redirect/alias to `/charts/hero` after all four canvases are in production. Fires after B4 lands.
+- B-rollout — drop the `xvn.chartv2=1` cookie gate for the Charts sidebar entry.
+- F-CHART-LIQHEAT — followup, Chart 04 Liquidation Heatmap. Not in this wave; tokens + payload type land in B0 so the followup picks up rework-free.
+
 ## Open PRs (in-flight, not yet merged)
 
 - **#527** — Phase A schema (`agent-graph-capability-schema`).

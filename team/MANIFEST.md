@@ -85,6 +85,7 @@ unambiguous.
 | 031 | v2b-broker-wallet-kill-switch (eval_runs.venue_label)        | merged 2026-05-21 |
 | 032 | filters_and_evaluations (filter-v1 wave; consumed independently of memory-provenance) | merged 2026-05-22 |
 | 033 | agent-graph-capability-schema (agent_slots.capabilities JSON column + AgentRef.activates + PipelineEdge.condition) | reserved 2026-05-22 (PR #527, in flight) — Phase A of capability-first spec PR #518 |
+| 034 | charts-section-b0 (strategies.color nullable TEXT column for chart-dashboard rotation) | reserved 2026-05-23 — Track B-0 of chart-rework spec; storage crate decision in the migration PR (engine vs core depending on where Strategy lives today) |
 
 Note 2026-05-22: row 032 was originally reserved for
 `memory-provenance-in-decisions-trace` (decision_id on memory_recall
@@ -92,7 +93,7 @@ events). That contract took the JSON-payload route instead (PR #523),
 and the `filters_and_evaluations` migration consumed slot 032 in
 parallel. Registry rewritten to reflect reality.
 
-The next available number is **034**. The conductor must approve and
+The next available number is **035**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 
