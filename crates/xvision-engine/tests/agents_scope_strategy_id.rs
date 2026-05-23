@@ -327,3 +327,96 @@ async fn update_scope_patch_promotes_and_demotes() {
     assert_eq!(loaded.scope_strategy_id.as_deref(), Some(target.as_str()));
     assert_eq!(loaded.tags, vec!["touched".to_string()]);
 }
+
+#[tokio::test]
+async fn delete_scoped_to_removes_only_matching_rows() {
+    // Janitor: when a strategy is deleted, every agent with
+    // scope_strategy_id == that strategy id must be swept. Workspace
+    // agents (scope_strategy_id IS NULL) and agents scoped to a
+    // different strategy must be left alone. Migration 036 +
+    // `AgentStore::delete_scoped_to`, called from the strategy delete
+    // handler in `api::strategy::delete`.
+    let store = AgentStore::new(fresh_pool().await);
+    let target = "01TARGET00000000000000000".to_string();
+    let other = "01OTHER000000000000000000".to_string();
+
+    let _workspace = store
+        .create(NewAgent {
+            name: "in-workspace".into(),
+            description: String::new(),
+            tags: vec![],
+            slots: vec![slot()],
+            scope_strategy_id: None,
+        })
+        .await
+        .unwrap();
+    let scoped_to_target = store
+        .create(NewAgent {
+            name: "scoped-to-target".into(),
+            description: String::new(),
+            tags: vec![],
+            slots: vec![slot()],
+            scope_strategy_id: Some(target.clone()),
+        })
+        .await
+        .unwrap();
+    let _scoped_to_other = store
+        .create(NewAgent {
+            name: "scoped-to-other".into(),
+            description: String::new(),
+            tags: vec![],
+            slots: vec![slot()],
+            scope_strategy_id: Some(other.clone()),
+        })
+        .await
+        .unwrap();
+
+    let swept = store.delete_scoped_to(&target).await.unwrap();
+    assert_eq!(swept, 1);
+
+    // Verify the row is gone and the others survived.
+    assert!(store.get(&scoped_to_target).await.unwrap().is_none());
+    let remaining = store
+        .list(ListFilter {
+            scope: ScopeFilter::All,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let names: Vec<_> = remaining.iter().map(|a| a.name.as_str()).collect();
+    assert!(names.contains(&"in-workspace"), "names: {names:?}");
+    assert!(names.contains(&"scoped-to-other"), "names: {names:?}");
+    assert_eq!(remaining.len(), 2);
+}
+
+#[tokio::test]
+async fn delete_scoped_to_is_noop_when_nothing_matches() {
+    // Strategy with no scoped agents → delete_scoped_to returns 0
+    // and leaves the table untouched. Defends the janitor against the
+    // common case where the operator never used the inline composer's
+    // toggle-OFF flow.
+    let store = AgentStore::new(fresh_pool().await);
+    let _id = store
+        .create(NewAgent {
+            name: "only-agent".into(),
+            description: String::new(),
+            tags: vec![],
+            slots: vec![slot()],
+            scope_strategy_id: None,
+        })
+        .await
+        .unwrap();
+    let swept = store
+        .delete_scoped_to("01NONESUCH00000000000000")
+        .await
+        .unwrap();
+    assert_eq!(swept, 0);
+    assert_eq!(
+        store
+            .list(ListFilter::default())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
