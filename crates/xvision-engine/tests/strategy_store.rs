@@ -21,6 +21,8 @@ fn sample_strategy(id: &str) -> Strategy {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {

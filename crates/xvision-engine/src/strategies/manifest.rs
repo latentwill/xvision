@@ -26,6 +26,12 @@ pub struct PublicManifest {
     /// reflected in `mechanical_params`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_warmup_bars: Option<u32>,
+    /// Optional per-strategy display color (hex, e.g. `"#D4A547"`).
+    /// Used by the Charts dashboard section (chart-rework spec
+    /// Track B). When `None`, render layers fall back to the
+    /// `strategyRotation` palette by stable index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

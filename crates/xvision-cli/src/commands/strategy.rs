@@ -635,6 +635,7 @@ async fn new_atomic(
             risk_preset_or_config: "balanced".to_string(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {

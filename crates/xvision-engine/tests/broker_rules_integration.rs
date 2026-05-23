@@ -199,6 +199,7 @@ fn strategy_with_risk_pct(agent_id: &str, risk_pct: f64) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),

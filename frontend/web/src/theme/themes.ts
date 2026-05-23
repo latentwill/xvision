@@ -48,6 +48,49 @@ type ChartThemeDefinition = {
   };
 };
 
+export type Chart2WarmPalette = {
+  gold: string;
+  amber: string;
+  bronze: string;
+  ember: string;
+  copper: string;
+  plum: string;
+  teal: string;
+  info: string;
+  warn: string;
+  danger: string;
+};
+
+export type Chart2StrategyRotationEntry = {
+  id: string;
+  name: string;
+  short: string;
+  color: string;
+  kind: "Trend" | "Momentum" | "Reversion" | "Vol" | "Bench";
+  dashed?: boolean;
+};
+
+export type Chart2HeatRampStop = { color: string; alpha: number };
+
+export type Chart2HeatRamp = {
+  scorching: Chart2HeatRampStop;
+  hot: Chart2HeatRampStop;
+  warm: Chart2HeatRampStop;
+  cool: Chart2HeatRampStop;
+  cold: Chart2HeatRampStop;
+};
+
+export type Chart2Typography = {
+  fontSerif: string;
+  fontSans: string;
+  fontMono: string;
+};
+
+export type Chart2Radius = {
+  card: string;
+  sm: string;
+};
+
 export type Chart2ThemeDefinition = {
   surface: {
     bg: string;
@@ -127,6 +170,62 @@ export type Chart2ThemeDefinition = {
     axisGap: number;
     paneGap: number;
   };
+  // Track B additions (chart-rework spec, 2026-05-23) — design tokens
+  // mirrored verbatim from docs/design/trading-charts/XVN.zip →
+  // design_handoff_charts/source/charts/chart-theme.css.
+  warm: Chart2WarmPalette;
+  strategyRotation: Chart2StrategyRotationEntry[];
+  heatRamp: Chart2HeatRamp;
+  typography: Chart2Typography;
+  radius: Chart2Radius;
+};
+
+// Shared constant value blocks. The 8-strategy rotation and 5-step heat
+// ramp are stable across themes; only the `warm` palette tweaks per
+// theme on legibility grounds.
+export const CHART2_STRATEGY_ROTATION: Chart2StrategyRotationEntry[] = [
+  { id: "fib", name: "Fibonacci Golden Cross", short: "Fib · GC", color: "#D4A547", kind: "Trend" },
+  { id: "ema", name: "EMA Pullback", short: "EMA · 50/200", color: "#E8DCB0", kind: "Trend" },
+  { id: "brk", name: "Breakout Retest", short: "BRK · 4h", color: "#E07A3A", kind: "Momentum" },
+  { id: "msw", name: "Momentum Swing", short: "MSW · 1d", color: "#B98AB4", kind: "Momentum" },
+  { id: "mvr", name: "Mean Reversion AI", short: "MVR · 15m", color: "#6BAFA8", kind: "Reversion" },
+  { id: "vsc", name: "Volatility Scalper", short: "VSC · 5m", color: "#D67B5C", kind: "Vol" },
+  { id: "lqh", name: "Liquidation Hunter", short: "LQH · 1h", color: "#8C6024", kind: "Vol" },
+  { id: "btc", name: "BTC Buy & Hold", short: "BTC · HOLD", color: "#6B6553", kind: "Bench", dashed: true },
+];
+
+export const CHART2_HEAT_RAMP: Chart2HeatRamp = {
+  scorching: { color: "#FF6B5C", alpha: 0.48 },
+  hot: { color: "#E04A3A", alpha: 0.42 },
+  warm: { color: "#A93428", alpha: 0.36 },
+  cool: { color: "#6A2A22", alpha: 0.30 },
+  cold: { color: "#3A1E1A", alpha: 0.22 },
+};
+
+export const CHART2_TYPOGRAPHY: Chart2Typography = {
+  fontSerif: '"Cormorant Garamond", serif',
+  fontSans: '"Inter", sans-serif',
+  fontMono: '"JetBrains Mono", monospace',
+};
+
+export const CHART2_RADIUS: Chart2Radius = {
+  card: "6px",
+  sm: "4px",
+};
+
+// Dark / black themes use the full warm palette from the handoff.
+// The light theme keeps the same hues — they read fine on cream bg.
+export const CHART2_WARM_DARK: Chart2WarmPalette = {
+  gold: "#D4A547",
+  amber: "#E5B86A",
+  bronze: "#A87A3C",
+  ember: "#C16A3A",
+  copper: "#8C4A2E",
+  plum: "#8E6789",
+  teal: "#5E8A8C",
+  info: "#6F8FB8",
+  warn: "#DB9230",
+  danger: "#C8443A",
 };
 
 export type ThemeDefinition = {
@@ -317,6 +416,11 @@ export const themeDefinitions: Record<ResolvedTheme, ThemeDefinition> = {
       },
       motion: { hoverMs: 80, animMs: 160 },
       density: { axisFont: "11px Inter, system-ui, sans-serif", axisGap: 6, paneGap: 8 },
+      warm: CHART2_WARM_DARK,
+      strategyRotation: CHART2_STRATEGY_ROTATION,
+      heatRamp: CHART2_HEAT_RAMP,
+      typography: CHART2_TYPOGRAPHY,
+      radius: CHART2_RADIUS,
     },
   },
   "folio-dark": {
@@ -478,6 +582,11 @@ export const themeDefinitions: Record<ResolvedTheme, ThemeDefinition> = {
       },
       motion: { hoverMs: 80, animMs: 160 },
       density: { axisFont: "11px Inter, system-ui, sans-serif", axisGap: 6, paneGap: 8 },
+      warm: CHART2_WARM_DARK,
+      strategyRotation: CHART2_STRATEGY_ROTATION,
+      heatRamp: CHART2_HEAT_RAMP,
+      typography: CHART2_TYPOGRAPHY,
+      radius: CHART2_RADIUS,
     },
   },
   black: {
@@ -639,6 +748,11 @@ export const themeDefinitions: Record<ResolvedTheme, ThemeDefinition> = {
       },
       motion: { hoverMs: 80, animMs: 160 },
       density: { axisFont: "11px Inter, system-ui, sans-serif", axisGap: 6, paneGap: 8 },
+      warm: CHART2_WARM_DARK,
+      strategyRotation: CHART2_STRATEGY_ROTATION,
+      heatRamp: CHART2_HEAT_RAMP,
+      typography: CHART2_TYPOGRAPHY,
+      radius: CHART2_RADIUS,
     },
   },
 };

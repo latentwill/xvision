@@ -22,6 +22,7 @@ use xvision_data::alpaca::AlpacaBarsFetcher;
 pub mod agents;
 pub mod audit;
 pub mod chart;
+pub mod charts_dashboards;
 pub mod eval;
 /// `xvn model bakeoff` orchestrator. File lives at
 /// `api/eval/bakeoff.rs` per contract `cli-model-bakeoff`; routed here

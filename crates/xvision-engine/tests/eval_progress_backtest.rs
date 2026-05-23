@@ -88,6 +88,8 @@ fn build_strategy(agent_id: &str) -> Strategy {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: Vec::new(),

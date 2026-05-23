@@ -74,6 +74,8 @@ fn minimal_strategy() -> Strategy {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: Vec::new(),

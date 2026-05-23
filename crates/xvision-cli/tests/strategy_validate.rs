@@ -108,6 +108,7 @@ fn seed_strategy_with_trader(
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
                 min_warmup_bars: None,
+                color: None,
             },
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),

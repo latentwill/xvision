@@ -32,7 +32,8 @@ export type IconName =
   | "sliders"
   | "trash"
   | "sun"
-  | "moon";
+  | "moon"
+  | "chartPie";
 
 const PATHS: Record<IconName, ReactNode> = {
   home: <path d="M3 9.5L10 4l7 5.5V16a1 1 0 01-1 1h-3v-5H9v5H4a1 1 0 01-1-1V9.5z" />,
@@ -135,6 +136,12 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   moon: <path d="M14.5 13.8A6.5 6.5 0 016.2 5.5 6.5 6.5 0 1014.5 13.8z" />,
+  chartPie: (
+    <>
+      <path d="M10 3a7 7 0 107 7h-7V3z" />
+      <path d="M12 3a5 5 0 015 5h-5V3z" />
+    </>
+  ),
 };
 
 export function Icon({

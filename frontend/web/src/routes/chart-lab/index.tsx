@@ -11,6 +11,7 @@ const TABS: { to: string; label: string; end?: boolean }[] = [
   { to: "/chart-lab", label: "Overview", end: true },
   { to: "/chart-lab/primitives", label: "Primitives" },
   { to: "/chart-lab/surfaces", label: "Surfaces" },
+  { to: "/chart-lab/dashboards", label: "Dashboards" },
   { to: "/chart-lab/tokens", label: "Tokens" },
 ];
 

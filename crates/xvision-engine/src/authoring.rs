@@ -213,6 +213,7 @@ pub async fn create_blank_strategy(
             risk_preset_or_config: "conservative".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         hypothesis: None,
         agents: Vec::new(),
