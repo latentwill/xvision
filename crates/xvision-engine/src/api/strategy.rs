@@ -85,7 +85,7 @@ pub struct AddAgentReq {
     /// Filter handler at this position even when the referenced agent
     /// advertises more than one capability.
     #[serde(default)]
-    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
     pub activates: Option<crate::agents::Capability>,
 }
 

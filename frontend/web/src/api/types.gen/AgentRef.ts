@@ -19,4 +19,4 @@ export type AgentRef = { agent_id: string, role: string,
  * first capability in `BTreeSet` order" — which is `Trader` for
  * every legacy/pre-033 slot. Spec Decision 2.
  */
-activates: Capability | null, };
+activates?: Capability, };

@@ -67,6 +67,7 @@ pub struct AgentRef {
     /// first capability in `BTreeSet` order" — which is `Trader` for
     /// every legacy/pre-033 slot. Spec Decision 2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
     pub activates: Option<Capability>,
 }
 
@@ -188,6 +189,7 @@ pub struct PipelineEdge {
     /// evaluates to `true`. Phase A persists the shape; Phase B
     /// implements the evaluator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
     pub condition: Option<EdgePredicate>,
 }
 

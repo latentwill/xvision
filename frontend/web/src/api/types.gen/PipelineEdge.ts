@@ -14,4 +14,4 @@ export type PipelineEdge = { from_role: string, to_role: string,
  * evaluates to `true`. Phase A persists the shape; Phase B
  * implements the evaluator.
  */
-condition: EdgePredicate | null, };
+condition?: EdgePredicate, };
