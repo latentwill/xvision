@@ -13,7 +13,7 @@
 // and silently capped real production runs).
 
 import { useQuery } from "@tanstack/react-query";
-import type { AgentSlot, Capability } from "@/api/agents";
+import type { AgentSlot } from "@/api/agents";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon } from "@/components/primitives/Icon";
@@ -254,56 +254,6 @@ export function SlotForm({
           </Field>
         </div>
       ) : null}
-
-      <FiringConditionsAwareness slot={slot} />
-    </div>
-  );
-}
-
-// Phase 1 of the agent-firing-filter operator surface
-// (docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md).
-// The card *teaches* — it does not author. Authoring lives at the strategy
-// level in Phase 3. Filter-capable slots get no card (the Filter is the gate).
-//
-// Per Phase A's back-compat default in
-// `crates/xvision-engine/src/agents/model.rs::default_capabilities`,
-// a slot whose `capabilities` field is missing or empty resolves to
-// `["trader"]`. We mirror that here so legacy slots (persisted before
-// migration 033 added the column) keep showing the awareness card.
-const FIRING_CAPABLE_ROLES: ReadonlySet<Capability> = new Set<Capability>([
-  "trader",
-  "critic",
-  "intern",
-  "router",
-]);
-
-function FiringConditionsAwareness({ slot }: { slot: AgentSlot }) {
-  const caps: readonly Capability[] =
-    slot.capabilities && slot.capabilities.length > 0
-      ? slot.capabilities
-      : ["trader"];
-  const isFilterSlot = caps.includes("filter");
-  const isFiringCapable = caps.some((c) => FIRING_CAPABLE_ROLES.has(c));
-  if (isFilterSlot || !isFiringCapable) {
-    return null;
-  }
-
-  return (
-    <div className="mt-5 px-4 py-3 bg-surface-card border border-border-soft rounded-sm">
-      <div className="text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
-        Firing conditions
-      </div>
-      <p className="text-[12.5px] text-text-2 leading-relaxed">
-        This agent runs on every bar by default. To gate it on a market
-        regime, indicator threshold, or other signal, add a Filter-capable
-        agent upstream of this one inside a strategy.{" "}
-        <a
-          href="/docs?slug=firing-conditions"
-          className="text-gold hover:text-gold-soft underline-offset-2 hover:underline"
-        >
-          Learn more →
-        </a>
-      </p>
     </div>
   );
 }
