@@ -163,6 +163,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     capabilities: xvision_engine::agents::default_capabilities(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await

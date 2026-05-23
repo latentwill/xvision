@@ -12,11 +12,14 @@ import {
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
+  type AgentRef,
+  type PipelineDef,
   type PipelineKind,
   type RiskConfig,
   type Strategy,
 } from "@/api/strategies";
 import { createAgent, listAgents, type Agent } from "@/api/agents";
+import { FiringSection } from "@/components/strategy";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
@@ -137,9 +140,19 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
 
 function AgentsCard({ strategy }: { strategy: Strategy }) {
   const qc = useQueryClient();
+  // Pass `scope=<strategy_id>` so agents scoped to this strategy
+  // (the "Save as reusable agent" toggle = OFF flow) merge into the
+  // picker alongside workspace-visible agents. Strategy-detail
+  // endpoints are the documented home for the merged view per
+  // `team/contracts/agent-firing-filter-strategy-composer.md`.
   const agentPool = useQuery({
-    queryKey: ["agents", "pool"],
-    queryFn: () => listAgents({ include_archived: false, limit: 200 }),
+    queryKey: ["agents", "pool", strategy.manifest.id],
+    queryFn: () =>
+      listAgents({
+        include_archived: false,
+        limit: 200,
+        scope: strategy.manifest.id,
+      }),
   });
   const providers = useQuery({
     queryKey: settingsKeys.providers(),
@@ -165,6 +178,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
   const available = (agentPool.data ?? []).filter(
     (a) => !attached.some((r) => r.agent_id === a.agent_id),
   );
+  const filterCandidates = (agentPool.data ?? []).filter(agentSupportsFilter);
   const graphEdges = pipeline.edges ?? [];
 
   function invalidateStrategy() {
@@ -331,6 +345,14 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
                   setRenameRoleTo(a.role);
                 }}
                 onRemove={() => removeMut.mutate(a.role)}
+                allRefs={attached}
+                pipeline={pipeline}
+                filterCandidates={filterCandidates}
+                providers={providers.data?.providers ?? []}
+                onFiringChanged={async () => {
+                  await qc.invalidateQueries({ queryKey: ["agents", "pool"] });
+                  invalidateStrategy();
+                }}
               />
             ))}
           </div>
@@ -612,11 +634,26 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
 
 export type AttachedAgentRowProps = {
   strategyId: string;
-  agentRef: { agent_id: string; role: string };
+  agentRef: AgentRef;
   index: number;
   agent: Agent | undefined;
   onRenameRole: () => void;
   onRemove: () => void;
+  /// All AgentRefs on the strategy — needed by `FiringSection` so it
+  /// can resolve the upstream Filter ref for any incoming gating
+  /// edge. Pass-through prop: parents that don't render the firing
+  /// section can leave it undefined.
+  allRefs?: AgentRef[];
+  /// Current pipeline. Same rationale as `allRefs`.
+  pipeline?: PipelineDef;
+  /// Workspace + strategy-scoped Filter-capable agents the inline
+  /// composer can pick from.
+  filterCandidates?: Agent[];
+  /// Available providers for the inline author-new-agent flow.
+  providers?: import("@/api/types.gen/ProviderRow").ProviderRow[];
+  /// Strategy mutated — parent should invalidate strategy + agents
+  /// queries. Called after a filter add/remove succeeds.
+  onFiringChanged?: () => void;
 };
 
 export function AttachedAgentRow({
@@ -626,6 +663,11 @@ export function AttachedAgentRow({
   agent,
   onRenameRole,
   onRemove,
+  allRefs,
+  pipeline,
+  filterCandidates,
+  providers,
+  onFiringChanged,
 }: AttachedAgentRowProps) {
   const storageKey = agentCollapseKey(strategyId, agentRef.role);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -725,6 +767,17 @@ export function AttachedAgentRow({
                 {primarySlot.system_prompt}
               </pre>
             </div>
+          ) : null}
+          {allRefs && pipeline && filterCandidates && providers && onFiringChanged ? (
+            <FiringSection
+              strategyId={strategyId}
+              agentRef={agentRef}
+              refs={allRefs}
+              pipeline={pipeline}
+              filterCandidates={filterCandidates}
+              providers={providers}
+              onMutated={onFiringChanged}
+            />
           ) : null}
           <div className="flex items-center gap-3 pt-1">
             <button
@@ -1059,6 +1112,10 @@ function InspectorActions({
 
 function hasAttachedAgents(strategy: Strategy | null): boolean {
   return (strategy?.agents ?? []).length > 0;
+}
+
+function agentSupportsFilter(agent: Agent): boolean {
+  return agent.slots.some((slot) => slot.capabilities?.includes("filter"));
 }
 
 function Field({

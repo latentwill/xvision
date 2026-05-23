@@ -338,6 +338,7 @@ mod tests {
             archived: false,
             created_at: now,
             updated_at: now,
+            scope_strategy_id: None,
         }
     }
 

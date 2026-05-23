@@ -124,6 +124,7 @@ async fn happy_consistent_name_and_prompt() {
             description: String::new(),
             tags: vec![],
             slots: vec![rich_slot("BTC")],
+            scope_strategy_id: None,
         })
         .await;
     assert!(
@@ -144,6 +145,7 @@ async fn reject_sol_name_with_eth_prompt() {
             description: String::new(),
             tags: vec![],
             slots: vec![eth_slot],
+            scope_strategy_id: None,
         })
         .await;
     assert!(result.is_err(), "SOL name + ETH-only prompt should be rejected",);
@@ -169,6 +171,7 @@ async fn happy_multi_asset_prompt_name_subset() {
             description: String::new(),
             tags: vec![],
             slots: vec![slot],
+            scope_strategy_id: None,
         })
         .await;
     assert!(
@@ -195,6 +198,7 @@ async fn reject_short_prompt() {
                 max_tokens: None,
                 ..slot_with_prompt("")
             }],
+            scope_strategy_id: None,
         })
         .await;
     assert!(result.is_err(), "short prompt (<200 chars) should be rejected",);
@@ -226,6 +230,7 @@ async fn reject_default_placeholder_prompt() {
                 max_tokens: None,
                 ..slot_with_prompt("")
             }],
+            scope_strategy_id: None,
         })
         .await;
     assert!(
@@ -265,6 +270,7 @@ async fn wrong_id_namespace_strategy_get_with_agent_id() {
                      as your primary signal. {}",
                 "Apply strict risk controls: never risk more than 1% of notional per trade. ".repeat(4),
             ))],
+            scope_strategy_id: None,
         })
         .await
         .expect("agent create should succeed");

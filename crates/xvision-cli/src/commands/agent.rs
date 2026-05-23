@@ -206,6 +206,7 @@ async fn run_create(args: CreateArgs) -> CliResult<()> {
             description: args.description,
             tags: args.tags,
             slots: vec![slot],
+            scope_strategy_id: None,
         },
     )
     .await
@@ -290,6 +291,7 @@ pub mod get {
                         capabilities: xvision_engine::agents::default_capabilities(),
                         delta_briefing: None,
                     }],
+                    scope_strategy_id: None,
                 },
             )
             .await
@@ -314,6 +316,7 @@ pub mod get {
                     strategy_id: strategy.id.clone(),
                     agent_id: agent.agent_id.clone(),
                     role: "main".into(),
+                    activates: None,
                 },
             )
             .await

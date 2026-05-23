@@ -145,6 +145,7 @@ async fn seed_anthropic_agent(ctx: &ApiContext, label: &str) -> String {
                 capabilities: xvision_engine::agents::model::default_capabilities(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         })
         .await
         .expect("seed trader agent")

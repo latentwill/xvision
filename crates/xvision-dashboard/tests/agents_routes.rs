@@ -126,6 +126,39 @@ async fn archive_then_list_excludes() {
 }
 
 #[tokio::test]
+async fn list_scope_query_includes_strategy_scoped_agents() {
+    let (server, _tmp) = test_server().await;
+
+    let workspace_res = server
+        .post("/api/agents")
+        .json(&sample_create_body("workspace-visible"))
+        .await;
+    workspace_res.assert_status_ok();
+
+    let mut scoped_body = sample_create_body("strategy-scoped");
+    scoped_body["scope_strategy_id"] = json!("01STRATEGYSCOPED000000000000");
+    let scoped_res = server.post("/api/agents").json(&scoped_body).await;
+    scoped_res.assert_status_ok();
+
+    let default_list = server.get("/api/agents").await;
+    default_list.assert_status_ok();
+    let default_items = default_list.json::<Value>()["items"].as_array().unwrap().len();
+    assert_eq!(default_items, 1, "default list should hide scoped agents");
+
+    let scoped_list = server.get("/api/agents?scope=01STRATEGYSCOPED000000000000").await;
+    scoped_list.assert_status_ok();
+    let scoped_json: Value = scoped_list.json();
+    let names: Vec<_> = scoped_json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"workspace-visible"), "names: {names:?}");
+    assert!(names.contains(&"strategy-scoped"), "names: {names:?}");
+}
+
+#[tokio::test]
 async fn deployed_in_returns_empty_v1_stub() {
     let (server, _tmp) = test_server().await;
 

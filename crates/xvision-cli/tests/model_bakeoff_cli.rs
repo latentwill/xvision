@@ -316,6 +316,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
                 capabilities: ::std::collections::BTreeSet::new(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         },
     )
     .await

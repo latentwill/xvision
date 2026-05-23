@@ -97,6 +97,14 @@ pub struct AddAgentRefRequest {
     pub strategy_id: String,
     pub agent_id: String,
     pub role: String,
+    /// Phase A `AgentRef.activates`. `None` (default, the back-compat
+    /// path) lets the dispatcher pick the slot's first capability.
+    /// `Some(Capability::Filter)` is the value the strategy editor's
+    /// inline Filter composer sets when attaching a Filter agent so
+    /// the Phase B dispatcher picks the Filter handler at this
+    /// position even if the referenced agent also advertises Trader.
+    #[serde(default)]
+    pub activates: Option<crate::agents::Capability>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -329,7 +337,7 @@ pub async fn add_agent_ref(store: &dyn StrategyStore, req: AddAgentRefRequest) -
     strategy.agents.push(AgentRef {
         agent_id: req.agent_id,
         role,
-        activates: None,
+        activates: req.activates,
     });
     if strategy.pipeline.kind == PipelineKind::Single && strategy.agents.len() > 1 {
         strategy.pipeline.kind = PipelineKind::Sequential;
@@ -743,6 +751,7 @@ mod tests {
                 strategy_id: out.id.clone(),
                 agent_id: "01HZAGENT1".into(),
                 role: " Trader ".into(),
+                activates: None,
             },
         )
         .await
@@ -755,11 +764,66 @@ mod tests {
                 strategy_id: out.id,
                 agent_id: "01HZAGENT2".into(),
                 role: "TRADER".into(),
+                activates: None,
             },
         )
         .await
         .expect_err("canonical duplicate should be rejected");
         assert!(err.to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn add_agent_ref_threads_activates_capability_to_pipeline_position() {
+        // Phase 3 of agent-firing-filter: the strategy editor's inline
+        // composer attaches a Filter agent by sending
+        // `activates: Some(Capability::Filter)` on AddAgentRefRequest.
+        // The new AgentRef must carry that value so the Phase B
+        // dispatcher picks the Filter handler at this position even
+        // when the referenced agent advertises more than one
+        // capability. None on the request preserves today's behavior.
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "z".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // None → activates stays None on the resulting AgentRef.
+        let s = add_agent_ref(
+            &store,
+            AddAgentRefRequest {
+                strategy_id: out.id.clone(),
+                agent_id: "01HZAGENTPLAIN0000000000000".into(),
+                role: "trader".into(),
+                activates: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.agents[0].activates, None);
+
+        // Some(Filter) → the new AgentRef carries it verbatim.
+        let s = add_agent_ref(
+            &store,
+            AddAgentRefRequest {
+                strategy_id: out.id,
+                agent_id: "01HZAGENTFILTER0000000000000".into(),
+                role: "regime_filter".into(),
+                activates: Some(crate::agents::Capability::Filter),
+            },
+        )
+        .await
+        .unwrap();
+        let added = s
+            .agents
+            .iter()
+            .find(|r| r.role == "regime_filter")
+            .expect("added");
+        assert_eq!(added.activates, Some(crate::agents::Capability::Filter));
     }
 
     #[tokio::test]

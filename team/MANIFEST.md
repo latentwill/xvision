@@ -84,8 +84,10 @@ unambiguous.
 | 030 | v2b-broker-wallet-kill-switch (safety_state + safety_audit) | merged 2026-05-21 |
 | 031 | v2b-broker-wallet-kill-switch (eval_runs.venue_label)        | merged 2026-05-21 |
 | 032 | filters_and_evaluations (filter-v1 wave; consumed independently of memory-provenance) | merged 2026-05-22 |
-| 033 | agent-graph-capability-schema (agent_slots.capabilities JSON column + AgentRef.activates + PipelineEdge.condition) | reserved 2026-05-22 (PR #527, in flight) — Phase A of capability-first spec PR #518 |
-| 034 | (released 2026-05-23 — see note below) | unused |
+| 033 | agent-graph-capability-schema (agent_slots.capabilities JSON column + AgentRef.activates + PipelineEdge.condition) | merged (PR #527) — Phase A of capability-first spec PR #518 |
+| 034 | (released 2026-05-23 — see note below)                                                                                           | unused        |
+| 035 | eval-bakeoffs (`xvn model bakeoff`)                                                                                              | merged (#537) |
+| 036 | agents_scope_strategy_id (Phase 3 of `agent-firing-filter` — "Save as reusable agent" toggle)                                    | reserved 2026-05-23 |
 
 Note 2026-05-23: row 034 was reserved by `charts-section-b0` for a
 `strategies.color` column, but `xvision_engine::strategies::Strategy`
@@ -100,7 +102,13 @@ events). That contract took the JSON-payload route instead (PR #523),
 and the `filters_and_evaluations` migration consumed slot 032 in
 parallel. Registry rewritten to reflect reality.
 
-The next available number is **035**. The conductor must approve and
+Note 2026-05-23: row 034 was also considered by
+`cli-eval-model-override` for optional persistence of the override
+receipt. The merged PR (#538) extended `eval_runs.provider_diagnostics`
+JSON instead, so 034 was never claimed on disk. Per the "do not recycle
+gaps" rule above, leave it unused and continue from the next sequential.
+
+The next available number is **037**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 

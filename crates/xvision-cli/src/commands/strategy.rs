@@ -704,6 +704,7 @@ async fn new_atomic(
                 capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         },
     )
     .await
@@ -1092,6 +1093,7 @@ async fn add_agent(strategy_id: &str, agent_id: &str, role: &str) -> CliResult<(
             strategy_id: strategy_id.to_string(),
             agent_id: agent_id.to_string(),
             role: role.to_string(),
+            activates: None,
         },
     )
     .await
@@ -1525,6 +1527,7 @@ async fn clone(
                     t
                 },
                 slots: new_slots,
+                scope_strategy_id: None,
             },
         )
         .await
@@ -1679,6 +1682,7 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
                         strategy.manifest.template.clone(),
                     ],
                     slots: vec![slot_to_agent_slot(&slot, None, None)],
+                    scope_strategy_id: None,
                 },
             )
             .await

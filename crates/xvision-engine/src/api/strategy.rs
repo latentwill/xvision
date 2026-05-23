@@ -78,6 +78,15 @@ pub struct AddAgentReq {
     pub strategy_id: String,
     pub agent_id: String,
     pub role: String,
+    /// Phase A `AgentRef.activates`. `None` (default) lets the
+    /// dispatcher pick the slot's first capability — today's behavior.
+    /// `Some(Capability::Filter)` is what the strategy editor's inline
+    /// Filter composer sends so the Phase B dispatcher picks the
+    /// Filter handler at this position even when the referenced agent
+    /// advertises more than one capability.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
+    pub activates: Option<crate::agents::Capability>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -1022,6 +1031,7 @@ pub async fn add_agent(ctx: &ApiContext, req: AddAgentReq) -> ApiResult<Strategy
                 strategy_id: req.strategy_id,
                 agent_id: req.agent_id,
                 role: req.role,
+                activates: req.activates,
             },
         )
         .await

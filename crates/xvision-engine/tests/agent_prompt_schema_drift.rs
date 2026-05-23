@@ -84,6 +84,7 @@ async fn create_rejects_unregistered_tool_reference() {
                 ),
                 vec![],
             )],
+            scope_strategy_id: None,
         })
         .await
         .expect_err("must reject: tools not registered");
@@ -123,6 +124,7 @@ async fn create_rejects_allowed_actions_with_exit() {
                 ),
                 vec![],
             )],
+            scope_strategy_id: None,
         })
         .await
         .expect_err("must reject: exit is not in the schema enum");
@@ -156,6 +158,7 @@ async fn create_accepts_prompt_when_referenced_tool_is_registered() {
                 long_prompt("You may call `indicator_panel` at most once per decision."),
                 vec!["indicator_panel"],
             )],
+            scope_strategy_id: None,
         })
         .await
         .expect("registered tool must not be a false positive");
@@ -177,6 +180,7 @@ async fn update_enforces_the_same_drift_gate() {
             description: String::new(),
             tags: vec![],
             slots: vec![slot("trader", clean_prompt.clone(), vec![])],
+            scope_strategy_id: None,
         })
         .await
         .expect("clean agent persists");
@@ -223,6 +227,7 @@ async fn lint_surfaces_legacy_seeded_violations() {
                 long_prompt("Use current scenario context to make disciplined trading decisions."),
                 vec![],
             )],
+            scope_strategy_id: None,
         })
         .await
         .unwrap();
