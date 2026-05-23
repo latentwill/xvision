@@ -1300,6 +1300,7 @@ impl WizardLoop {
                 strategy_id: strategy_id.clone(),
                 agent_id: agent.agent_id.clone(),
                 role: role.clone(),
+                activates: None,
             },
         )
         .await?;
@@ -1334,6 +1335,7 @@ impl WizardLoop {
                 strategy_id,
                 agent_id: req.agent_id,
                 role,
+                activates: None,
             },
         )
         .await?;

@@ -140,9 +140,19 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
 
 function AgentsCard({ strategy }: { strategy: Strategy }) {
   const qc = useQueryClient();
+  // Pass `scope=<strategy_id>` so agents scoped to this strategy
+  // (the "Save as reusable agent" toggle = OFF flow) merge into the
+  // picker alongside workspace-visible agents. Strategy-detail
+  // endpoints are the documented home for the merged view per
+  // `team/contracts/agent-firing-filter-strategy-composer.md`.
   const agentPool = useQuery({
-    queryKey: ["agents", "pool"],
-    queryFn: () => listAgents({ include_archived: false, limit: 200 }),
+    queryKey: ["agents", "pool", strategy.manifest.id],
+    queryFn: () =>
+      listAgents({
+        include_archived: false,
+        limit: 200,
+        scope: strategy.manifest.id,
+      }),
   });
   const providers = useQuery({
     queryKey: settingsKeys.providers(),

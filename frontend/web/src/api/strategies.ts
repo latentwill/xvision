@@ -270,7 +270,7 @@ export function validateDraft(id: string): Promise<ValidateDraftOut> {
 
 export function addStrategyAgent(
   strategyId: string,
-  body: { agent_id: string; role: string },
+  body: { agent_id: string; role: string; activates?: Capability },
 ): Promise<StrategyAgentsOut> {
   const trace = createTrace("strategy", {
     strategy_id: strategyId,

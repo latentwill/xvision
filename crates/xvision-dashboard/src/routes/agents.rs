@@ -252,6 +252,7 @@ pub mod get {
                 strategy_id: strategy.id.clone(),
                 agent_id: agent.agent_id.clone(),
                 role: "main".into(),
+                activates: None,
             },
         )
         .await

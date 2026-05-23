@@ -992,6 +992,7 @@ async fn add_agent(strategy_id: &str, agent_id: &str, role: &str) -> CliResult<(
             strategy_id: strategy_id.to_string(),
             agent_id: agent_id.to_string(),
             role: role.to_string(),
+            activates: None,
         },
     )
     .await

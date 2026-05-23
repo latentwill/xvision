@@ -137,6 +137,10 @@ export function InlineFilterComposer({
               system_prompt: newPrompt.trim(),
               skill_ids: [],
               max_tokens: null,
+              // Inline-authored agents are Filter agents by intent —
+              // the Phase B dispatcher reads this when resolving the
+              // (Agent, AgentRef.activates="filter") pair at run time.
+              capabilities: ["filter"],
             },
           ],
           // Toggle ON (default) → workspace agent (scope undefined).
@@ -152,7 +156,7 @@ export function InlineFilterComposer({
         // capability of the referenced agent, even if the agent also
         // advertises a Trader capability.
         activates: "filter",
-      } as { agent_id: string; role: string; activates?: string });
+      });
       const newPipeline = withAddedEdge(pipeline, {
         from_role: filterRole.trim(),
         to_role: target.role,
