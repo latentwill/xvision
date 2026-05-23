@@ -141,6 +141,7 @@ async fn store_round_trip_preserves_capability_set() {
             description: String::new(),
             tags: vec![],
             slots: vec![sample_slot_with(caps.clone())],
+            scope_strategy_id: None,
         })
         .await
         .unwrap();
@@ -159,6 +160,7 @@ async fn store_round_trip_preserves_capability_set() {
             description: String::new(),
             tags: vec![],
             slots: vec![sample_slot_with(default_capabilities())],
+            scope_strategy_id: None,
         })
         .await
         .unwrap();

@@ -29,15 +29,44 @@ export type ProviderModelPair = {
 };
 
 export type PipelineKind = "single" | "sequential" | "graph";
-type AgentRef = {
+
+// Capability the agent slot plays in this strategy. See
+// `frontend/web/src/api/types.gen/Capability.ts` for the canonical
+// generated form; mirror it locally so this module doesn't have to
+// import the generated barrel for one type.
+export type Capability = "trader" | "filter" | "critic" | "intern" | "router";
+
+// Predicate evaluated against an upstream Filter agent's signal. Mirrors
+// `EdgePredicate` from the engine — kept inline so strategies.ts stays
+// self-contained (the strategy module doesn't have ts-rs derives yet).
+export type EdgePredicate =
+  | { eq: { signal_field: string; value: unknown } }
+  | { neq: { signal_field: string; value: unknown } }
+  | { gte: { signal_field: string; value: unknown } }
+  | { lte: { signal_field: string; value: unknown } }
+  | { in: { signal_field: string; values: unknown[] } }
+  | { all: EdgePredicate[] }
+  | { any: EdgePredicate[] }
+  | { not: EdgePredicate };
+
+export type AgentRef = {
   agent_id: string;
   role: string;
+  /// Which capability this position activates. `undefined` (default)
+  /// lets the runtime pick the slot's first capability — `trader` for
+  /// every legacy slot. Set to `"filter"` by the inline composer when
+  /// adding a Filter agent to a strategy.
+  activates?: Capability | null;
 };
-type PipelineEdge = {
+export type PipelineEdge = {
   from_role: string;
   to_role: string;
+  /// Optional firing predicate. `undefined` (default) = unconditional;
+  /// the edge fires every cycle. `Some(p)` gates the edge on the
+  /// upstream Filter agent's most-recent signal.
+  condition?: EdgePredicate | null;
 };
-type PipelineDef = {
+export type PipelineDef = {
   kind: PipelineKind;
   edges?: PipelineEdge[];
 };
@@ -127,6 +156,12 @@ export type ValidateDraftOut = {
   id: string;
   ok: boolean;
   errors: string[];
+  /// Soft signals — saveable but worth surfacing in the strategy editor
+  /// alongside errors. As of the firing-filter wave the engine populates
+  /// this with the no-Filter warning (Trader/Critic agent with no
+  /// upstream Filter). Optional on the wire so older server responses
+  /// continue to parse — treat `undefined` as `[]`.
+  warnings?: string[];
 };
 
 export type TemplateInfo = {
@@ -241,7 +276,7 @@ export function validateDraft(id: string): Promise<ValidateDraftOut> {
 
 export function addStrategyAgent(
   strategyId: string,
-  body: { agent_id: string; role: string },
+  body: { agent_id: string; role: string; activates?: Capability },
 ): Promise<StrategyAgentsOut> {
   const trace = createTrace("strategy", {
     strategy_id: strategyId,

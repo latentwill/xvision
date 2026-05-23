@@ -102,6 +102,7 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         },
     )
     .await
@@ -196,6 +197,7 @@ async fn list_returns_summaries_for_existing_strategys() {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     store.save(&strategy).await.unwrap();
 
@@ -231,6 +233,7 @@ async fn add_agent_ref_appends_role_and_audits() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: agent.agent_id.clone(),
             role: "trader".into(),
+            activates: None,
         },
     )
     .await
@@ -281,6 +284,7 @@ async fn add_agent_ref_rejects_missing_agent() {
             strategy_id: strategy_strategy.manifest.id,
             agent_id: "01MISSINGAGENT00000000000000".into(),
             role: "trader".into(),
+            activates: None,
         },
     )
     .await
@@ -305,6 +309,7 @@ async fn set_pipeline_rejects_single_for_multi_agent_strategy() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: first_agent.agent_id,
             role: "scout".into(),
+            activates: None,
         },
     )
     .await
@@ -315,6 +320,7 @@ async fn set_pipeline_rejects_single_for_multi_agent_strategy() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: second_agent.agent_id,
             role: "trader".into(),
+            activates: None,
         },
     )
     .await
@@ -351,6 +357,7 @@ async fn set_pipeline_accepts_valid_graph_edges_persists_and_audits() {
             strategy_id: strategy_id.clone(),
             agent_id: scout.agent_id,
             role: "scout".into(),
+            activates: None,
         },
     )
     .await
@@ -361,6 +368,7 @@ async fn set_pipeline_accepts_valid_graph_edges_persists_and_audits() {
             strategy_id: strategy_id.clone(),
             agent_id: trader.agent_id,
             role: "trader".into(),
+            activates: None,
         },
     )
     .await
@@ -403,6 +411,7 @@ async fn set_pipeline_rejects_graph_edges_for_unknown_roles() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: agent.agent_id,
             role: "trader".into(),
+            activates: None,
         },
     )
     .await
@@ -442,6 +451,7 @@ async fn set_pipeline_rejects_graph_cycles() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: scout.agent_id,
             role: "scout".into(),
+            activates: None,
         },
     )
     .await
@@ -452,6 +462,7 @@ async fn set_pipeline_rejects_graph_cycles() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: trader.agent_id,
             role: "trader".into(),
+            activates: None,
         },
     )
     .await
@@ -499,6 +510,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: scout.agent_id,
             role: "scout".into(),
+            activates: None,
         },
     )
     .await
@@ -509,6 +521,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: trader.agent_id,
             role: "trader".into(),
+            activates: None,
         },
     )
     .await
@@ -519,6 +532,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
             strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: risk.agent_id,
             role: "risk".into(),
+            activates: None,
         },
     )
     .await

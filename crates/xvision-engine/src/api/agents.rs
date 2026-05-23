@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agents::{
     builtin_templates, validate_agent, Agent, AgentSlot, AgentStore, AgentTemplate, ListFilter, NewAgent,
-    UpdateAgent, ValidationDiagnostic,
+    ScopeFilter, ScopePatch, UpdateAgent, ValidationDiagnostic,
 };
 use crate::api::audit::{self, Outcome};
 use crate::api::{ApiContext, ApiError, ApiResult};
@@ -36,6 +36,22 @@ pub struct ListAgentsRequest {
     /// the full library leave both unset.
     #[serde(default)]
     pub offset: Option<i64>,
+    /// Scope visibility filter. `None` (default) and `Some("")` map to
+    /// `ScopeFilter::Workspace` — only workspace agents (rows where
+    /// `scope_strategy_id IS NULL`). `Some("all")` opts out of the
+    /// filter entirely (diagnostic). Any other value is interpreted as
+    /// a strategy id and merges that strategy's scoped agents with the
+    /// workspace set. Phase 3 of `agent-firing-filter`, migration 036.
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+fn resolve_scope(s: Option<&str>) -> ScopeFilter {
+    match s {
+        None | Some("") => ScopeFilter::Workspace,
+        Some("all") => ScopeFilter::All,
+        Some(id) => ScopeFilter::Strategy(id.to_string()),
+    }
 }
 
 /// Paged-list envelope used by the dashboard's `/api/agents` route.
@@ -59,6 +75,12 @@ pub struct CreateAgentRequest {
     #[serde(default)]
     pub tags: Vec<String>,
     pub slots: Vec<AgentSlot>,
+    /// Optional strategy id this agent is scoped to. Strategy editor's
+    /// inline Filter composer sets this when the "Save as reusable
+    /// agent" toggle is OFF — the resulting agent stays hidden from
+    /// the workspace list. Migration 036.
+    #[serde(default)]
+    pub scope_strategy_id: Option<String>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -73,6 +95,12 @@ pub struct UpdateAgentRequest {
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub slots: Option<Vec<AgentSlot>>,
+    /// Patch the agent's scope. `None` (default) leaves the column
+    /// alone; `Some(ScopePatch::Clear)` promotes a scoped agent to
+    /// the workspace; `Some(ScopePatch::Set(strategy_id))` scopes it.
+    /// Migration 036.
+    #[serde(default)]
+    pub scope_strategy_id: Option<ScopePatch>,
 }
 
 /// A strategy that references an agent. Empty in v1 — see plan §Downstream impact.
@@ -120,12 +148,14 @@ pub async fn list(ctx: &ApiContext, req: ListAgentsRequest) -> ApiResult<Vec<Age
 
 async fn list_inner(ctx: &ApiContext, req: ListAgentsRequest) -> ApiResult<Vec<Agent>> {
     let store = AgentStore::new(ctx.db.clone());
+    let scope = resolve_scope(req.scope.as_deref());
     store
         .list(ListFilter {
             include_archived: req.include_archived,
             name_contains: req.q,
             limit: req.limit,
             offset: req.offset,
+            scope,
         })
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))
@@ -152,11 +182,13 @@ pub async fn list_paged(ctx: &ApiContext, req: ListAgentsRequest) -> ApiResult<P
 
 async fn list_paged_inner(ctx: &ApiContext, req: ListAgentsRequest) -> ApiResult<PagedAgents> {
     let store = AgentStore::new(ctx.db.clone());
+    let scope = resolve_scope(req.scope.as_deref());
     let filter = ListFilter {
         include_archived: req.include_archived,
         name_contains: req.q,
         limit: req.limit,
         offset: req.offset,
+        scope,
     };
     let total = store
         .count(&filter)
@@ -214,6 +246,7 @@ async fn create_inner(ctx: &ApiContext, req: CreateAgentRequest) -> ApiResult<Ag
             description: req.description,
             tags: req.tags,
             slots: req.slots,
+            scope_strategy_id: req.scope_strategy_id,
         })
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -295,6 +328,7 @@ async fn update_inner(ctx: &ApiContext, agent_id: &str, req: UpdateAgentRequest)
                 description: req.description,
                 tags: req.tags,
                 slots: req.slots,
+                scope_strategy_id: req.scope_strategy_id,
             },
         )
         .await
@@ -524,6 +558,7 @@ mod tests {
             mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
+        acknowledge_no_filter: false,
         }
     }
 

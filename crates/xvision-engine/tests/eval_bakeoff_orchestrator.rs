@@ -121,6 +121,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
         mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

@@ -909,6 +909,7 @@ impl XvisionTools {
                     capabilities: xvision_engine::agents::default_capabilities(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await
@@ -949,6 +950,7 @@ impl XvisionTools {
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
+        acknowledge_no_filter: false,
         };
 
         // 3. Validate shape.

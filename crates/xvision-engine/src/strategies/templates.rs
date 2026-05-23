@@ -104,6 +104,7 @@ pub fn example_strategies() -> Vec<Strategy> {
             }),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
+            acknowledge_no_filter: false,
         },
         Strategy {
             manifest: PublicManifest {
@@ -153,6 +154,7 @@ pub fn example_strategies() -> Vec<Strategy> {
             }),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
+            acknowledge_no_filter: false,
         },
         Strategy {
             manifest: PublicManifest {
@@ -193,6 +195,7 @@ pub fn example_strategies() -> Vec<Strategy> {
             }),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
+            acknowledge_no_filter: false,
         },
     ]
 }

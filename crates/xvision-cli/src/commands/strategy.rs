@@ -9,12 +9,13 @@ use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
 use xvision_engine::agent::pipeline::{
     agent_slot_to_llm_slot, run_pipeline, PipelineInputs, ResolvedAgentSlot,
 };
-use xvision_engine::agents::{AgentSlot, AgentStore};
+use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
+use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
+use xvision_engine::strategies::validate::{no_filter_warnings, preflight_validate, validate_strategy};
 use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
@@ -111,6 +112,28 @@ enum StrategyAction {
         /// Overrides individual hypothesis flags when provided.
         #[arg(long = "hypothesis-file")]
         hypothesis_file: Option<PathBuf>,
+
+        /// Set `acknowledge_no_filter = true` on the saved strategy so
+        /// the no-Filter soft-warning is suppressed. See contract
+        /// `agent-firing-filter-cli-verbs` acceptance #6.
+        #[arg(long = "no-filter-warning", default_value_t = false)]
+        no_filter_warning: bool,
+    },
+    /// Edit a saved strategy. v1 ships only the firing-filter
+    /// acknowledgement toggle; other edits go through the dedicated
+    /// authoring verbs (`add-agent` / `remove-agent` / `add-filter` /
+    /// `remove-filter` / `set-pipeline`).
+    Edit {
+        /// Strategy id to edit.
+        id: String,
+        /// Set `acknowledge_no_filter = true` on the saved strategy so
+        /// the no-Filter soft-warning is suppressed.
+        #[arg(long = "no-filter-warning")]
+        no_filter_warning: bool,
+        /// Clear `acknowledge_no_filter` so the warning re-emerges.
+        /// Mutually exclusive with `--no-filter-warning`.
+        #[arg(long = "clear-no-filter-warning", conflicts_with = "no_filter_warning")]
+        clear_no_filter_warning: bool,
     },
     /// Validate a saved strategy by id.
     ///
@@ -169,6 +192,55 @@ enum StrategyAction {
         /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
         /// Role to remove from the strategy.
+        #[arg(long)]
+        role: String,
+    },
+    /// Wire a Filter-capable agent in front of an existing agent so the
+    /// downstream agent only dispatches when the Filter's signal matches
+    /// the supplied `--when` predicate. See contract
+    /// `team/contracts/agent-firing-filter-cli-verbs.md`.
+    ///
+    /// The Filter agent must already exist in the workspace library
+    /// (created via `xvn agent create --capability filter` or the SPA)
+    /// and advertise `Capability::Filter` in `slots[0].capabilities`.
+    /// `--gates <role>` must match an existing AgentRef on the strategy
+    /// — the predicate gates that AgentRef's dispatch.
+    ///
+    /// `--when` is a JSON literal matching the `EdgePredicate` shape
+    /// (`{"eq": {"signal_field": "...", "value": ...}}` and the
+    /// `neq`/`gte`/`lte`/`in`/`all`/`any`/`not` variants — see
+    /// `xvision_engine::strategies::agent_ref::EdgePredicate`).
+    ///
+    /// The Filter agent appears in the strategy under `--role`
+    /// (default: `filter`). On collision the operator passes
+    /// `--role <unique>` explicitly. The pipeline is promoted to
+    /// `Graph` if it isn't already; the new conditional edge is
+    /// appended to `pipeline.edges`.
+    AddFilter {
+        /// Strategy id returned from `xvn strategy create`.
+        strategy_id: String,
+        /// Library agent id (ULID) to wire as the gating Filter.
+        #[arg(long = "filter-agent")]
+        filter_agent: String,
+        /// Existing strategy AgentRef role to gate (e.g. `trader`).
+        #[arg(long)]
+        gates: String,
+        /// JSON literal `EdgePredicate` controlling when the edge fires.
+        #[arg(long)]
+        when: String,
+        /// Role label for the new Filter AgentRef on the strategy.
+        /// Defaults to `filter`; pass an explicit value when adding
+        /// multiple Filters that gate different agents.
+        #[arg(long, default_value = "filter")]
+        role: String,
+    },
+    /// Remove a Filter agent (and every PipelineEdge it originates) by
+    /// role. Idempotent — removing a non-existent role prints a warning
+    /// and exits 0.
+    RemoveFilter {
+        /// Strategy id returned from `xvn strategy create`.
+        strategy_id: String,
+        /// Role of the Filter AgentRef to remove.
         #[arg(long)]
         role: String,
     },
@@ -276,6 +348,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             target_regime,
             avoid_regime,
             hypothesis_file,
+            no_filter_warning,
         } => {
             let hypothesis_flags = HypothesisFlags {
                 family,
@@ -296,9 +369,15 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
                 asset,
                 timeframe,
                 hypothesis_flags,
+                no_filter_warning,
             )
             .await
         }
+        StrategyAction::Edit {
+            id,
+            no_filter_warning,
+            clear_no_filter_warning,
+        } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning).await,
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
@@ -309,6 +388,14 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             role,
         } => add_agent(&strategy_id, &agent_id, &role).await,
         StrategyAction::RemoveAgent { strategy_id, role } => remove_agent(&strategy_id, &role).await,
+        StrategyAction::AddFilter {
+            strategy_id,
+            filter_agent,
+            gates,
+            when,
+            role,
+        } => add_filter(&strategy_id, &filter_agent, &gates, &when, &role).await,
+        StrategyAction::RemoveFilter { strategy_id, role } => remove_filter(&strategy_id, &role).await,
         StrategyAction::SetPipeline {
             strategy_id,
             kind,
@@ -495,6 +582,7 @@ async fn new(
     asset: Option<String>,
     timeframe: Option<String>,
     _hypothesis_flags: HypothesisFlags,
+    no_filter_warning: bool,
 ) -> CliResult<()> {
     // ── atomic mode: --prompt ─────────────────────────────────────────────
     if let Some(prompt_path) = prompt {
@@ -508,6 +596,7 @@ async fn new(
             asset,
             timeframe,
             json,
+            no_filter_warning,
         )
         .await;
     }
@@ -523,7 +612,10 @@ async fn new(
                 "--provider and --model only apply to --prompt atomic mode and cannot be combined with --from-file. Edit the strategy file directly to change agent provider/model."
             )));
         }
-        let strategy = load_strategy_file(&path)?;
+        let mut strategy = load_strategy_file(&path)?;
+        if no_filter_warning {
+            strategy.acknowledge_no_filter = true;
+        }
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
         store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
         let id = strategy.manifest.id.clone();
@@ -563,6 +655,7 @@ async fn new_atomic(
     asset: Option<String>,
     timeframe: Option<String>,
     json: bool,
+    no_filter_warning: bool,
 ) -> CliResult<()> {
     // Validate required atomic-mode fields.
     let name = name.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --name")))?;
@@ -611,6 +704,7 @@ async fn new_atomic(
                 capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         },
     )
     .await
@@ -651,6 +745,7 @@ async fn new_atomic(
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_engine::strategies::ActivationMode::EveryBar,
         filter: None,
+        acknowledge_no_filter: no_filter_warning,
     };
 
     // 3. Validate shape.
@@ -691,9 +786,15 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     let strategy = store().load(id).await.exit_with(XvnExit::NotFound)?;
 
     // Shape-only validation first (keep existing error behaviour for
-    // callers that don't pass --scenario --json).
+    // callers that don't pass --scenario --json). The no-Filter
+    // soft-warning prints alongside the "ok" line — exit code stays 0
+    // regardless of how many warnings fire so scripted callers can
+    // still grep for "ok".
     if scenario_id.is_none() && !json {
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+        for warning in no_filter_warnings(&strategy) {
+            println!("warning: {warning}");
+        }
         println!("ok");
         return Ok(());
     }
@@ -992,6 +1093,7 @@ async fn add_agent(strategy_id: &str, agent_id: &str, role: &str) -> CliResult<(
             strategy_id: strategy_id.to_string(),
             agent_id: agent_id.to_string(),
             role: role.to_string(),
+            activates: None,
         },
     )
     .await
@@ -1042,6 +1144,261 @@ async fn set_pipeline(strategy_id: &str, kind: &str, edges: &[String]) -> CliRes
         "{}",
         serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
     );
+    Ok(())
+}
+
+/// `xvn strategy add-filter <strategy_id> --filter-agent <id> --gates <role> --when <json>`
+///
+/// Wires a Filter-capable library agent in front of an existing
+/// strategy AgentRef so its dispatch is gated by the Filter's signal.
+/// See contract `team/contracts/agent-firing-filter-cli-verbs.md`.
+///
+/// Errors (XvnExit::Usage):
+/// - `--filter-agent` doesn't exist in the agent library.
+/// - The agent has no slot with `Capability::Filter` in its capabilities set.
+/// - `--gates` doesn't match any existing AgentRef on the strategy.
+/// - `--role` collides with an existing role on the strategy.
+/// - `--when` doesn't parse as `EdgePredicate`.
+async fn add_filter(
+    strategy_id: &str,
+    filter_agent_id: &str,
+    gates: &str,
+    when: &str,
+    role: &str,
+) -> CliResult<()> {
+    let filter_role = canonical_role(role);
+    if filter_role.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--role must be non-empty")));
+    }
+    let gates_role = canonical_role(gates);
+    if gates_role.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--gates must be non-empty")));
+    }
+    if filter_role == gates_role {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--role and --gates must be different (`{filter_role}` was passed for both)"
+        )));
+    }
+
+    // Parse the predicate first — a malformed `--when` should fail
+    // before we touch the agent store or the strategy file.
+    let predicate: EdgePredicate = serde_json::from_str(when).map_err(|e| {
+        CliError::usage(anyhow::anyhow!(
+            "--when must be a JSON literal matching EdgePredicate ({{\"eq\":{{\"signal_field\":\"...\",\"value\":...}}}}, neq/gte/lte/in, or all/any/not): {e}"
+        ))
+    })?;
+
+    let ctx = open_ctx().await?;
+
+    // Validate the filter agent exists AND is Filter-capable.
+    let filter_agent = api_agents::get(&ctx, filter_agent_id)
+        .await
+        .map_err(|e| api_to_cli("strategy add-filter (load filter agent)", e))?;
+    let is_filter_capable = filter_agent
+        .slots
+        .iter()
+        .any(|s| s.capabilities.contains(&Capability::Filter));
+    if !is_filter_capable {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "agent `{filter_agent_id}` (\"{}\") is not Filter-capable — its slots do not advertise Capability::Filter. Create the agent with `xvn agent create --capability filter ...`.",
+            filter_agent.name,
+        )));
+    }
+
+    let store = store();
+    let mut strategy = store.load(strategy_id).await.map_err(|e| CliError {
+        exit: XvnExit::NotFound,
+        source: anyhow::anyhow!("strategy `{strategy_id}` not found: {e}"),
+    })?;
+
+    // --gates must already exist on the strategy.
+    if !strategy
+        .agents
+        .iter()
+        .any(|a| canonical_role(&a.role) == gates_role)
+    {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--gates role `{gates_role}` does not match any existing AgentRef on strategy `{strategy_id}`. Add it via `xvn strategy add-agent` first."
+        )));
+    }
+    // --role must not collide.
+    if strategy
+        .agents
+        .iter()
+        .any(|a| canonical_role(&a.role) == filter_role)
+    {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "role `{filter_role}` is already present on strategy `{strategy_id}` — pass `--role <unique>` to disambiguate."
+        )));
+    }
+
+    // Promote the pipeline to Graph BEFORE inserting the Filter so we
+    // can materialize the existing sequential chain (if any) from the
+    // pre-insertion agent order. For Single-pipeline strategies the
+    // chain is empty; for Sequential, we record the existing order as
+    // explicit edges so the Phase B dispatcher still walks them.
+    if strategy.pipeline.kind != PipelineKind::Graph {
+        let mut materialized_edges: Vec<PipelineEdge> = Vec::new();
+        if strategy.pipeline.kind == PipelineKind::Sequential && strategy.agents.len() > 1 {
+            let roles: Vec<String> = strategy.agents.iter().map(|a| canonical_role(&a.role)).collect();
+            for window in roles.windows(2) {
+                materialized_edges.push(PipelineEdge {
+                    from_role: window[0].clone(),
+                    to_role: window[1].clone(),
+                    condition: None,
+                });
+            }
+        }
+        strategy.pipeline = PipelineDef {
+            kind: PipelineKind::Graph,
+            edges: materialized_edges,
+        };
+    }
+
+    // Insert the Filter AgentRef immediately BEFORE the gated role
+    // (DAG-strict: predicate edges must target a strictly later agent
+    // in `strategy.agents` order, so the Filter must be upstream of
+    // `--gates`). The dispatcher reads `activates` to pick the Filter
+    // handler regardless of position.
+    let gates_idx = strategy
+        .agents
+        .iter()
+        .position(|a| canonical_role(&a.role) == gates_role)
+        .expect("gates_role membership was just validated");
+    strategy.agents.insert(
+        gates_idx,
+        AgentRef {
+            agent_id: filter_agent_id.to_string(),
+            role: filter_role.clone(),
+            activates: Some(Capability::Filter),
+        },
+    );
+
+    // Append the conditional edge filter→gates.
+    strategy.pipeline.edges.push(PipelineEdge {
+        from_role: filter_role.clone(),
+        to_role: gates_role.clone(),
+        condition: Some(predicate),
+    });
+
+    // Shape-validate before persisting — surfaces e.g. BackwardEdge,
+    // PredicateWithoutUpstreamFilter, UnknownPipelineRole.
+    validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+
+    store.save(&strategy).await.exit_with(XvnExit::Upstream)?;
+
+    let out = serde_json::json!({
+        "strategy_id": strategy_id,
+        "filter_agent_id": filter_agent_id,
+        "filter_role": filter_role,
+        "gates": gates_role,
+        "agents": strategy.agents,
+        "pipeline": strategy.pipeline,
+    });
+    crate::io::print_json(&out)?;
+    Ok(())
+}
+
+/// `xvn strategy remove-filter <strategy_id> --role <filter_role>` —
+/// idempotent counterpart to `add-filter`. Removes the AgentRef whose
+/// role matches and every `PipelineEdge` originating from that role.
+/// Missing role is a stderr warning + exit 0, not an error.
+async fn remove_filter(strategy_id: &str, role: &str) -> CliResult<()> {
+    let target_role = canonical_role(role);
+    if target_role.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--role must be non-empty")));
+    }
+
+    let store = store();
+    let mut strategy = store.load(strategy_id).await.map_err(|e| CliError {
+        exit: XvnExit::NotFound,
+        source: anyhow::anyhow!("strategy `{strategy_id}` not found: {e}"),
+    })?;
+
+    let before_agents = strategy.agents.len();
+    strategy.agents.retain(|a| canonical_role(&a.role) != target_role);
+    let removed_agent = strategy.agents.len() < before_agents;
+
+    let before_edges = strategy.pipeline.edges.len();
+    strategy
+        .pipeline
+        .edges
+        .retain(|e| canonical_role(&e.from_role) != target_role);
+    let removed_edges = before_edges - strategy.pipeline.edges.len();
+
+    if !removed_agent && removed_edges == 0 {
+        eprintln!(
+            "warning: role `{target_role}` not present on strategy `{strategy_id}` — nothing to remove"
+        );
+        let out = serde_json::json!({
+            "strategy_id": strategy_id,
+            "removed_role": target_role,
+            "agent_removed": false,
+            "edges_removed": 0,
+        });
+        crate::io::print_json(&out)?;
+        return Ok(());
+    }
+
+    // If the strategy is back down to ≤1 agent, collapse the pipeline
+    // to its default `Single` shape so legacy single-agent strategies
+    // round-trip byte-stable.
+    if strategy.agents.len() <= 1 && strategy.pipeline.edges.is_empty() {
+        strategy.pipeline = PipelineDef::default();
+    }
+
+    validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+    store.save(&strategy).await.exit_with(XvnExit::Upstream)?;
+
+    let out = serde_json::json!({
+        "strategy_id": strategy_id,
+        "removed_role": target_role,
+        "agent_removed": removed_agent,
+        "edges_removed": removed_edges,
+        "agents": strategy.agents,
+        "pipeline": strategy.pipeline,
+    });
+    crate::io::print_json(&out)?;
+    Ok(())
+}
+
+/// `xvn strategy edit <id> [--no-filter-warning | --clear-no-filter-warning]`
+///
+/// Minimal edit verb shipped alongside the firing-filter CLI surface.
+/// v1 toggles `acknowledge_no_filter` only; other strategy edits go
+/// through the dedicated authoring verbs (`add-agent`, `set-pipeline`,
+/// etc.) so the JSON-stored Strategy shape stays the source of truth.
+async fn edit_strategy(
+    strategy_id: &str,
+    no_filter_warning: bool,
+    clear_no_filter_warning: bool,
+) -> CliResult<()> {
+    if !no_filter_warning && !clear_no_filter_warning {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "`xvn strategy edit` requires one of `--no-filter-warning` or `--clear-no-filter-warning`"
+        )));
+    }
+
+    let store = store();
+    let mut strategy = store.load(strategy_id).await.map_err(|e| CliError {
+        exit: XvnExit::NotFound,
+        source: anyhow::anyhow!("strategy `{strategy_id}` not found: {e}"),
+    })?;
+
+    if no_filter_warning {
+        strategy.acknowledge_no_filter = true;
+    } else if clear_no_filter_warning {
+        strategy.acknowledge_no_filter = false;
+    }
+
+    validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+    store.save(&strategy).await.exit_with(XvnExit::Upstream)?;
+
+    let out = serde_json::json!({
+        "strategy_id": strategy_id,
+        "acknowledge_no_filter": strategy.acknowledge_no_filter,
+    });
+    crate::io::print_json(&out)?;
     Ok(())
 }
 
@@ -1170,6 +1527,7 @@ async fn clone(
                     t
                 },
                 slots: new_slots,
+                scope_strategy_id: None,
             },
         )
         .await
@@ -1228,6 +1586,7 @@ async fn clone(
         mechanical_params: new_mechanical_params,
         activation_mode: source.activation_mode,
         filter: source.filter.clone(),
+        acknowledge_no_filter: source.acknowledge_no_filter,
     };
 
     // 5. Shape-validate the cloned strategy. A bad clone surfaces here
@@ -1323,6 +1682,7 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
                         strategy.manifest.template.clone(),
                     ],
                     slots: vec![slot_to_agent_slot(&slot, None, None)],
+                    scope_strategy_id: None,
                 },
             )
             .await

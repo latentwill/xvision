@@ -57,6 +57,7 @@ pub struct ListQuery {
     pub q: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub scope: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -96,6 +97,7 @@ pub async fn list(
             q: q.q,
             limit: Some(limit),
             offset: Some(offset),
+            scope: q.scope,
         },
     )
     .await?;
@@ -226,6 +228,7 @@ pub mod get {
                     capabilities: xvision_engine::agents::default_capabilities(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await
@@ -250,6 +253,7 @@ pub mod get {
                 strategy_id: strategy.id.clone(),
                 agent_id: agent.agent_id.clone(),
                 role: "main".into(),
+                activates: None,
             },
         )
         .await

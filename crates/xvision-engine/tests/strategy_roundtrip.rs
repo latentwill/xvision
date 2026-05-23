@@ -47,6 +47,7 @@ fn sample_strategy() -> Strategy {
         mechanical_params: serde_json::json!({"rsi_oversold": 30, "rsi_overbought": 70}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 
