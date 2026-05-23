@@ -4,3 +4,6 @@ export * from "./ScenarioChartV2";
 export * from "./StrategyChartV2";
 export * from "./LiveChartV2";
 export * from "./WizardPreviewChartV2";
+
+// Track B dashboard surfaces (chart-rework spec B1+).
+export * from "./DarkMinimalDashboard";

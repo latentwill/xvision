@@ -26,3 +26,11 @@ export type { SyncBridge } from "./sync-bridge";
 
 export { createStreamingBuffer } from "./streaming";
 export type { StreamingBuffer } from "./streaming";
+
+export {
+  xvnLastDot,
+  xvnAreaFill,
+  xvnRegimeBands,
+  xvnGradientFill,
+  xvnSheen,
+} from "./uplot-plugins";

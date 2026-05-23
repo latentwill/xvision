@@ -20,3 +20,10 @@ export * from "./EmptyState";
 export * from "./DataTable";
 export * from "./PaneStack";
 export * from "./SyncCursor";
+
+// Track B dashboard primitives (chart-rework spec B1+).
+export * from "./MultiStrategyEquityPane";
+export * from "./KpiCard";
+export * from "./Topbar";
+export * from "./MonthlyReturnsHeatmap";
+export * from "./DrawdownCard";

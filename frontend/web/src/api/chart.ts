@@ -63,6 +63,20 @@ export function openRunStream(runId: string): EventSource {
   return new EventSource(path);
 }
 
+// Charts dashboard section (chart-rework Track B).
+
+import type { MultiStrategyEquityBundle } from "@/components/chart/v2/types";
+
+export const dashboardChartKeys = {
+  overview: () => ["chart", "dashboards", "overview"] as const,
+};
+
+export function getDashboardOverview(): Promise<MultiStrategyEquityBundle> {
+  return apiFetch<MultiStrategyEquityBundle>(
+    `/api/v2/charts/dashboards/overview`,
+  );
+}
+
 export async function getScenarioPreview(params: {
   asset: string;
   from: string;

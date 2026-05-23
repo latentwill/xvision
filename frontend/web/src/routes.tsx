@@ -43,6 +43,7 @@ const ChartLabSurfacesIndex = lazy(() => import("./routes/chart-lab/ChartLabSurf
 const ChartLabSurfaceDetail = lazy(() => import("./routes/chart-lab/ChartLabSurfaces").then((m) => ({ default: m.ChartLabSurfaceDetail })));
 const ChartLabTokens = lazy(() => import("./routes/chart-lab/ChartLabTokens").then((m) => ({ default: m.ChartLabTokens })));
 const ChartLabDashboards = lazy(() => import("./routes/chart-lab/ChartLabDashboards").then((m) => ({ default: m.ChartLabDashboards })));
+const ChartLabDashboardOverview = lazy(() => import("./routes/chart-lab/ChartLabDashboardOverview").then((m) => ({ default: m.ChartLabDashboardOverview })));
 const ChartsLayout = lazy(() => import("./routes/charts/ChartsLayout").then((m) => ({ default: m.ChartsLayout })));
 const ChartsOverview = lazy(() => import("./routes/charts/ChartsOverview").then((m) => ({ default: m.ChartsOverview })));
 const ChartsCompare = lazy(() => import("./routes/charts/ChartsCompare").then((m) => ({ default: m.ChartsCompare })));
@@ -130,6 +131,7 @@ export const router = createBrowserRouter([
           },
           { path: "tokens", element: page(<ChartLabTokens />) },
           { path: "dashboards", element: page(<ChartLabDashboards />) },
+          { path: "dashboards/overview", element: page(<ChartLabDashboardOverview />) },
         ],
       },
       // Charts dashboard section (chart-rework spec Track B). B0 mounts
