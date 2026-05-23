@@ -10,7 +10,8 @@ import { strategyKeys, listStrategies } from "@/api/strategies";
 import { scenarioKeys, listScenarios } from "@/api/scenarios";
 import { agentKeys, listAgents } from "@/api/agents";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
-import { RunChart } from "@/components/chart/RunChart";
+import { RunChartV2 } from "@/components/chart/v2/surfaces/RunChartV2";
+import { runChartPayloadToV2 } from "@/components/chart/v2/adapters/run-chart-payload";
 import { isInflightRunStatus } from "@/lib/run-status";
 import {
   displayScenarioName,
@@ -347,7 +348,7 @@ function ControlChartCard({
   loadingRuns: boolean;
   loadingChart: boolean;
   chartError: unknown;
-  chart: Parameters<typeof RunChart>[0]["payload"] | undefined;
+  chart: Awaited<ReturnType<typeof getRunChart>> | undefined;
   latestRun: RunSummary | undefined;
   strategies: StrategyListItem[];
   scenarios: Scenario[];
@@ -396,7 +397,7 @@ function ControlChartCard({
           Chart unavailable.
         </div>
       ) : chart ? (
-        <RunChart payload={chart} />
+        <RunChartV2 payload={runChartPayloadToV2(chart)} />
       ) : null}
     </Card>
   );

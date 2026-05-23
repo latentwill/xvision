@@ -16,19 +16,28 @@ import {
   type Strategy,
 } from "@/api/strategies";
 
-type Format = "toml" | "json";
+const EXAMPLE_FILTER_JSON = `{
+  "id": "filter-upswing-v1",
+  "strategy_id": "strategy-id",
+  "display_name": "Upswing filter",
+  "description": "Wake when fast EMA is above slow EMA.",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "1h",
+  "conditions": {
+    "all": [
+      { "lhs": "ema_20", "op": ">", "rhs": "ema_50" }
+    ]
+  },
+  "cooldown_bars": 3
+}`;
 
 function initialSourceFor(
   filter: Strategy["filter"],
-): { source: string; format: Format } {
+): string {
   if (filter == null) {
-    return { source: "", format: "toml" };
+    return "";
   }
-  // Engine canonicalizes the filter into a JSON object on read; we
-  // round-trip as pretty-printed JSON until a TOML serializer ships
-  // for the existing value. Operators can still author + save TOML —
-  // the format radio drives what gets sent on Save.
-  return { source: JSON.stringify(filter, null, 2), format: "json" };
+  return JSON.stringify(filter, null, 2);
 }
 
 export function FilterCard({ strategy }: { strategy: Strategy }) {
@@ -38,8 +47,7 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
     () => initialSourceFor(strategy.filter ?? null),
     [strategy.filter],
   );
-  const [source, setSource] = useState<string>(initial.source);
-  const [format, setFormat] = useState<Format>(initial.format);
+  const [source, setSource] = useState<string>(initial);
   const [savedFlash, setSavedFlash] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -47,16 +55,15 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
   // an invalidate + refetch). Without this, the textarea would stay
   // stuck on the last-edited value after a successful save.
   useEffect(() => {
-    setSource(initial.source);
-    setFormat(initial.format);
+    setSource(initial);
     setLocalError(null);
-  }, [initial.source, initial.format]);
+  }, [initial]);
 
   const hasFilter = strategy.filter != null;
 
   const saveMut = useMutation({
     mutationFn: () =>
-      setStrategyFilter(strategyId, { source, format }),
+      setStrategyFilter(strategyId, { source, format: "json" }),
     onSuccess: () => {
       setLocalError(null);
       setSavedFlash(true);
@@ -100,12 +107,11 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
                 : "border-warn/35 bg-warn/[0.08] text-warn"
             }`}
           >
-            {hasFilter ? "Filter artifact attached" : "No filter artifact attached"}
+            {hasFilter ? "Saved filter" : "No saved filter"}
           </span>
         </div>
         <div className="text-[12px] text-text-2 mt-0.5">
-          Deterministic gate that fires the strategy on selected bars only.
-          Prompt wording alone is not an XVN filter artifact.
+          Deterministic JSON gate that fires the strategy on selected bars only.
         </div>
       </header>
 
@@ -117,42 +123,10 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
             setSource(e.target.value);
             setLocalError(null);
           }}
-          placeholder={
-            format === "toml"
-              ? '# Example\n# rule = "rsi(14) < 30"\n'
-              : '{\n  "rule": "rsi(14) < 30"\n}'
-          }
+          placeholder={EXAMPLE_FILTER_JSON}
           rows={10}
           className="w-full min-h-[180px] bg-surface-elev border border-border rounded px-3 py-2 text-[12px] text-text font-mono leading-relaxed focus:outline-none focus:border-text-3"
         />
-
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-text-2">
-          <span className="text-[11px] uppercase tracking-wide text-text-3">
-            Format
-          </span>
-          <label className="inline-flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="radio"
-              name={`filter-format-${strategyId}`}
-              value="toml"
-              checked={format === "toml"}
-              onChange={() => setFormat("toml")}
-              className="accent-gold"
-            />
-            <span className="font-mono">toml</span>
-          </label>
-          <label className="inline-flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="radio"
-              name={`filter-format-${strategyId}`}
-              value="json"
-              checked={format === "json"}
-              onChange={() => setFormat("json")}
-              className="accent-gold"
-            />
-            <span className="font-mono">json</span>
-          </label>
-        </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -162,6 +136,17 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
           >
             {saveMut.isPending ? "Saving…" : "Save filter"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSource(EXAMPLE_FILTER_JSON.replace("strategy-id", strategyId));
+              setLocalError(null);
+            }}
+            disabled={busy}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 disabled:opacity-40 transition-colors"
+          >
+            Insert JSON example
           </button>
           {hasFilter ? (
             <button

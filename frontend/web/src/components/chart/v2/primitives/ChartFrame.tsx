@@ -4,6 +4,8 @@ export type RangePreset = "1d" | "1w" | "1m" | "3m" | "All";
 
 const RANGE_PRESETS: RangePreset[] = ["1d", "1w", "1m", "3m", "All"];
 
+export const CHART_V2_ZOOM_EVENT = "xvn:chart-v2:zoom";
+
 type Props = {
   title?: string;
   range: RangePreset;
@@ -50,6 +52,30 @@ export function ChartFrame({
 
         {/* Right controls */}
         <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Zoom in chart"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent(CHART_V2_ZOOM_EVENT, { detail: "in" }),
+              )
+            }
+            className="inline-flex h-6 w-6 items-center justify-center rounded border border-border text-[14px] leading-none text-text-3 hover:text-text-2 transition-colors"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            aria-label="Zoom out chart"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent(CHART_V2_ZOOM_EVENT, { detail: "out" }),
+              )
+            }
+            className="inline-flex h-6 w-6 items-center justify-center rounded border border-border text-[14px] leading-none text-text-3 hover:text-text-2 transition-colors"
+          >
+            -
+          </button>
           {layersPanel !== undefined && (
             <button
               type="button"

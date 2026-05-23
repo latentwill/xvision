@@ -245,7 +245,7 @@ function StrategiesListView() {
     { key: "template", label: "Template" },
     { key: "shape", label: "Shape" },
     { key: "tags", label: "Tags" },
-    { key: "cadence", label: "Cadence" },
+    { key: "cadence", label: "Time frame" },
     { key: "model", label: "Model" },
     { key: "status", label: "Status" },
     { key: "actions", label: "" },

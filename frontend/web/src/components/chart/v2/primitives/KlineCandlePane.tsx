@@ -22,6 +22,7 @@ import { columnarToKLineData } from "../adapters/columnar-to-klinedata";
 import { themeToKlinechartsStyles } from "../adapters/theme-to-klinecharts";
 import { v2MarkersToKlineOverlay } from "../adapters/markers";
 import { useChart2Theme } from "../hooks/useChart2Theme";
+import { CHART_V2_ZOOM_EVENT } from "./ChartFrame";
 
 export interface KlineCandlePaneProps {
   candles: CandleColumns;
@@ -99,8 +100,32 @@ export function KlineCandlePane({
     });
     obs.observe(el);
 
+    const onZoom = (event: Event) => {
+      const detail = (event as CustomEvent<"in" | "out">).detail;
+      const current = chartRef.current;
+      if (!current || (detail !== "in" && detail !== "out")) return;
+      const chartAny = current as unknown as {
+        zoomAtCoordinate?: (
+          scale: number,
+          coordinate: { x: number; y: number },
+          animationDuration?: number,
+        ) => void;
+      };
+      try {
+        chartAny.zoomAtCoordinate?.(
+          detail === "in" ? 1.18 : 0.84,
+          { x: el.clientWidth / 2, y: height / 2 },
+          160,
+        );
+      } catch (err) {
+        console.warn("[KlineCandlePane] zoomAtCoordinate threw:", err);
+      }
+    };
+    window.addEventListener(CHART_V2_ZOOM_EVENT, onZoom);
+
     return () => {
       obs.disconnect();
+      window.removeEventListener(CHART_V2_ZOOM_EVENT, onZoom);
       // Notify the consumer that the chart is being destroyed.
       onReadyRef.current?.(null);
       try {
