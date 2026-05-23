@@ -5,13 +5,13 @@ wave: agent-firing-filter-operator-surface-2026-05-22
 worktree: .worktrees/agent-firing-filter-strategy-composer
 branch: task/agent-firing-filter-strategy-composer
 base: origin/main
-status: deferred
+status: claimed
 depends_on:
-  - agent-graph-capability-schema    # PR #527 — MERGED
-  - agent-graph-capability-dispatch  # Phase B — pending
-  - agent-graph-filter-capability    # Phase C — pending
-  - agent-firing-filter-form-and-docs  # Phase 1 of this wave
-  - agent-firing-filter-cli-verbs    # Phase 2 of this wave (shares validate.rs)
+  - agent-graph-capability-schema    # PR #527 — MERGED 2026-05-22
+  - agent-graph-capability-dispatch  # PR #546 — MERGED 2026-05-22
+  - agent-graph-filter-capability    # PR #551 — MERGED 2026-05-22
+  - agent-firing-filter-form-and-docs  # Phase 1 — closed 2026-05-23 via PR #548
+  - agent-firing-filter-cli-verbs    # Phase 2 — claimed, parallel-runs (shares validate.rs)
 blocks: []
 stacking: declared:agent-firing-filter-cli-verbs
 allowed_paths:

@@ -123,6 +123,7 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
         }),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 
