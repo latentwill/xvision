@@ -159,6 +159,117 @@ The work took longer than necessary because the agent treated a known XVN operat
 
 ---
 
+### 7) Reviewed run did not exercise the real XVN filter system
+
+**Severity:** High  
+**Area:** Filter authoring / eval execution / results interpretation  
+**Type:** Functional / observability
+
+**Observed behavior:**
+- The reviewed filtered run was `01KSAFTFKVXPMCRAD1MS3NGSYE` using strategy `01KSAFKB4AACMXG4FFYVPPPSWT`.
+- The comparison baseline was `01KSAFYWCAB2CPSWXCHND1ER3E`.
+- The run response reported empty `filter_events` and empty `filter_summaries`.
+- Server DB inspection showed `filters` count `0` and `eval_filter_evaluations` count `0`.
+- The strategy JSON had `mechanical_params: {}` and no attached filter artifact.
+- The only filter-like behavior was prompt text in the trader agent that mentioned a strict regime filter.
+
+**Expected behavior:**
+- A filter-functionality test should create or attach a real XVN filter artifact.
+- Filtered evals should emit filter evaluation rows/events so the operator can see pass/block decisions.
+- The dashboard should clearly distinguish “prompt mentions a filter” from “XVN filter system evaluated a filter.”
+
+**Why it matters:**
+- The reviewed run cannot validate filter functionality because the filter subsystem did not participate.
+- Empty filter sections in the strategy UI can make the run look like a filtered strategy while the backend records no filter evaluations.
+
+**Recommendations:**
+- Block or warn when launching a “filtered” comparison if no filter artifact is attached.
+- Show filter status explicitly in the strategy/eval header: `No filter attached`, `Prompt-only filter language`, or `Filter attached and evaluated`.
+- Add a preflight check requiring non-empty filter definition when the eval objective is a filter test.
+- Make the UI/API path for creating and attaching filters first-class; do not rely on agent prompt wording.
+
+---
+
+### 8) Open-position noop skip clamps trader behavior after first entry
+
+**Severity:** High  
+**Area:** Backtest executor / guardrails / portfolio semantics  
+**Type:** Functional correctness
+
+**Observed behavior:**
+- After one `long_open` at decision index `4`, the executor synthesized `hold` decisions with:
+  - `noop_skip: portfolio already carries a position — only hold is legal`
+- This happened `728` times in the reviewed run.
+- Supervisor notes recorded `trader-noop-skip fired ... portfolio already carries a position; the LLM call was skipped and a hold decision was synthesized`.
+- The strategy risk config allowed `max_concurrent_positions: 2`, and XVN has backend multi-asset potential, even if multi-asset is not yet fully surfaced in the UI.
+
+**Expected behavior:**
+- Carrying a position should not make only `hold` legal.
+- The trader or risk layer should still be able to close, reduce, reverse, rebalance, or open another allowed asset/position when configured.
+- At minimum, single-asset mode should allow exit/sell decisions while a position is open.
+
+**Why it matters:**
+- Once the early long opened, the eval mostly stopped asking the trader for real decisions.
+- This makes filtered and unfiltered runs converge and hides whether a strategy can exit correctly.
+- The message is also product-inaccurate for the intended multi-asset / sell-capable backend model.
+
+**Recommendations:**
+- Replace the coarse `portfolio already carries a position` noop rule with legal-action derivation from portfolio, asset universe, position limits, and risk config.
+- Allow at least exit/reduce/reverse actions while a position exists.
+- If a skip optimization remains, restrict it to cases where no legal state-changing action exists and explain the exact reason.
+- Surface a guardrail summary warning when most decisions are synthesized rather than model/risk decisions.
+
+---
+
+### 9) Early-stop policy generated many synthetic flat rows
+
+**Severity:** Medium  
+**Area:** Eval executor / cost guardrails / explainability  
+**Type:** Observability / test quality
+
+**Observed behavior:**
+- Server logs repeatedly showed `early-stop policy fired — inheriting flat decisions` for run `01KSAFTFKVXPMCRAD1MS3NGSYE`.
+- DB notes explained the policy as `early-stop: 8 low-conviction flats; skipping 4 bars`.
+- The run contained `360` decisions with `justification = "inherited from early-stop policy"`.
+- Combined with the noop skip, roughly 75% of decisions were rewritten or synthesized according to the guardrail summary.
+
+**Expected behavior:**
+- Early-stop can be useful for cost control, but eval results should make synthetic rows visually and analytically distinct from real trader decisions.
+- Filter tests should probably disable or clearly annotate early-stop because skipped bars hide filter behavior.
+
+**Why it matters:**
+- Operators cannot infer strategy or filter behavior from rows that were never evaluated by the model/filter.
+- Synthetic rows make headline metrics look cleaner than the underlying decision process.
+
+**Recommendations:**
+- Add result-level counts for model decisions, filter decisions, noop skips, early-stop inherited rows, and guardrail rewrites.
+- Add an eval option to disable early-stop for QA/filter-functionality tests.
+- Exclude synthetic rows from filter-effectiveness metrics unless explicitly requested.
+
+---
+
+### 10) Event recorder emitted a duplicate agent-run warning
+
+**Severity:** Low  
+**Area:** Observability / event recorder  
+**Type:** Data integrity warning
+
+**Observed behavior:**
+- Server logs around the eval included:
+  - `recorder failed to handle event error=sqlite: UNIQUE constraint failed: agent_runs.id`
+
+**Expected behavior:**
+- Event recording should either be idempotent for repeated agent-run events or emit enough context to identify the duplicate source.
+
+**Why it matters:**
+- This did not appear to cause the eval behavior above, but it indicates a separate observability integrity issue.
+
+**Recommendations:**
+- Make agent-run event inserts idempotent or include conflict handling.
+- Attach run id / agent run id context to the warning for faster diagnosis.
+
+---
+
 ## Faster workflow for the next run
 
 Use this when the goal is to test filter functionality, not to research the best possible trading edge:
@@ -166,14 +277,17 @@ Use this when the goal is to test filter functionality, not to research the best
 1. Start API-first on the live node; do not begin with source spelunking.
 2. Pick a cadence-compatible scenario before creating any strategy.
 3. Prefer a 1h mixed-regime scenario while strategy creation defaults to 60-minute cadence.
-4. Create two nearly identical prompts:
+4. Create or attach a real XVN filter artifact; do not treat filter wording in the trader prompt as proof that filter functionality is active.
+5. Confirm preflight/reporting shows non-empty filter definitions and that `filter_events` / `filter_summaries` are expected to populate.
+6. Create two nearly identical prompts:
    - Baseline: breakout/trend-following trader.
-   - Filtered: same trader plus a regime gate that blocks chop/ambiguous breakouts.
-5. Use the same provider/model for both arms.
-6. Attach trader agents before eval launch.
-7. Run both evals on the same scenario.
-8. Compare aggregate metrics plus decision divergence, not return alone.
-9. Only read repo source if the API response is unexplained or blocked.
+   - Filtered: same trader plus the actual filter gate.
+7. Use the same provider/model for both arms.
+8. Attach trader agents before eval launch.
+9. For QA/filter-functionality tests, disable or clearly account for early-stop/noop-skip optimizations if they would suppress real decisions.
+10. Run both evals on the same scenario.
+11. Compare aggregate metrics plus decision divergence, filter evaluations, and synthesized-decision counts, not return alone.
+12. Only read repo source if the API response is unexplained or blocked.
 
 ## Product fixes that would reduce future operator time
 
@@ -183,6 +297,9 @@ Use this when the goal is to test filter functionality, not to research the best
 - Scenario browser exposes regime-diversity and trade-density tags.
 - One-click baseline/variant creation for A/B evals.
 - Eval comparison page shows filter-effectiveness diagnostics.
+- Strategy/eval UI explicitly shows whether a real filter artifact is attached and evaluated.
+- Backtest executor legal-action logic supports exit/sell/reduce/reverse decisions while a position is open.
+- Eval results separate real model/filter decisions from noop-skip, early-stop, and other synthesized rows.
 - A documented “filter stress test” scenario exists and is kept cadence-compatible with the default strategy authoring path.
 
 ## Result from the reviewed run
@@ -191,4 +308,7 @@ Use this when the goal is to test filter functionality, not to research the best
 - Baseline strategy was created with the same model.
 - Both backtests completed on the same BTC 4h scenario.
 - Both runs produced identical headline metrics and action counts.
-- The result is best interpreted as an insufficiently discriminating test setup, not evidence that filtering has no value.
+- Follow-up inspection showed the filtered run had no real XVN filter artifact: `filter_events` and `filter_summaries` were empty, and the server had no `filters` / `eval_filter_evaluations` rows.
+- The run opened one long at decision index `4`; after that, `728` decisions were synthesized by `noop_skip` because the portfolio carried a position.
+- Another `360` rows were synthetic `inherited from early-stop policy` decisions.
+- The result is best interpreted as an invalid filter-functionality test plus executor guardrails clamping behavior, not evidence that filtering has no value.
