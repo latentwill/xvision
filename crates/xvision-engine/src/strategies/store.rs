@@ -13,13 +13,21 @@ use crate::strategies::Strategy;
 /// patch with every field `None` is a valid no-op and round-trips the
 /// stored strategy untouched.
 ///
-/// Scope is deliberately narrow: only the three operator-editable
+/// Scope is deliberately narrow: only the four operator-editable
 /// top-level manifest fields a typo in the create wizard could land
 /// on. The strategy `id`, `creator`, `template`, `published_at`,
 /// `risk_preset_or_config`, `agents`, `pipeline`, `risk`, and
 /// `mechanical_params` are out of scope — they either have dedicated
 /// sub-routes (slot/agents/pipeline/risk) or are immutable
 /// post-create.
+///
+/// # Color clear convention
+///
+/// `color: Some("")` (empty string) is the explicit "clear the color"
+/// signal. The apply function maps empty string → `None`, erasing
+/// whatever was stored. This lets the wire format stay
+/// `Option<String>` (no separate `null` vs. `""` ambiguity) while
+/// giving the UI a clean "unset" affordance.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -34,6 +42,14 @@ pub struct StrategyMetadataPatch {
     pub plain_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_universe: Option<Vec<String>>,
+    /// Optional per-strategy display color. Must be a 7-character CSS
+    /// hex string (`#RRGGBB`, case-insensitive) when non-empty.
+    ///
+    /// `Some("")` (empty string) explicitly clears the stored color
+    /// (maps to `manifest.color = None`). `None` leaves the existing
+    /// color untouched. `Some("#D4A547")` sets the color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 /// Structured errors from [`update_metadata`]. Each variant maps to
@@ -52,6 +68,23 @@ pub enum MetadataPatchError {
     BlankAssetEntry,
     #[error("asset_universe entry '{0}' is not a valid asset symbol — expected SYMBOL/QUOTE (e.g. BTC/USD)")]
     InvalidAssetSymbol(String),
+    #[error("color '{0}' is not a valid hex color — expected 7-character CSS hex (e.g. #D4A547)")]
+    InvalidColor(String),
+}
+
+/// Validates a non-empty color string against the CSS hex format `^#[0-9a-fA-F]{6}$`.
+/// Returns `Ok(value)` unchanged on success, or `Err(InvalidColor)` on failure.
+/// An empty string is not valid and should be converted to `None` before reaching here.
+fn validate_hex_color(value: &str) -> Result<(), MetadataPatchError> {
+    let bytes = value.as_bytes();
+    if bytes.len() == 7
+        && bytes[0] == b'#'
+        && bytes[1..].iter().all(|b| b.is_ascii_hexdigit())
+    {
+        Ok(())
+    } else {
+        Err(MetadataPatchError::InvalidColor(value.to_string()))
+    }
 }
 
 /// Returns `Ok(normalized_assets)` if every entry is a recognizable
@@ -134,6 +167,17 @@ pub fn apply_metadata_patch(
 
     let asset_universe = patch.asset_universe.map(normalize_asset_universe).transpose()?;
 
+    // color: None → leave unchanged; Some("") → clear (map to None);
+    // Some(non-empty) → validate hex and store.
+    let color_action: Option<Option<String>> = match patch.color {
+        None => None,
+        Some(ref s) if s.is_empty() => Some(None), // explicit clear
+        Some(ref s) => {
+            validate_hex_color(s)?;
+            Some(Some(s.clone()))
+        }
+    };
+
     // ── phase 2: apply ────────────────────────────────────────────
     if let Some(name) = display_name {
         strategy.manifest.display_name = name;
@@ -143,6 +187,9 @@ pub fn apply_metadata_patch(
     }
     if let Some(assets) = asset_universe {
         strategy.manifest.asset_universe = assets;
+    }
+    if let Some(color) = color_action {
+        strategy.manifest.color = color;
     }
     Ok(())
 }
@@ -438,6 +485,7 @@ mod tests {
                     display_name: Some("New title".into()),
                     plain_summary: None,
                     asset_universe: Some(vec!["eth/usd".into(), "btc/usd".into()]),
+                    color: None,
                 },
             )
             .await
@@ -487,6 +535,7 @@ mod tests {
                     display_name: Some("   ".into()),
                     plain_summary: None,
                     asset_universe: None,
+                    color: None,
                 },
             )
             .await
@@ -582,6 +631,7 @@ mod tests {
                     display_name: Some("Renamed".into()),
                     plain_summary: Some("New summary".into()),
                     asset_universe: Some(vec!["ETH/USD".into()]),
+                    color: None,
                 },
             )
             .await
@@ -591,5 +641,98 @@ mod tests {
         let reloaded = store.load("01HZSTRATEGYIDSTABLE00001A").await.unwrap();
         assert_eq!(reloaded.manifest.id, "01HZSTRATEGYIDSTABLE00001A");
         assert_eq!(reloaded.manifest.display_name, "Renamed");
+    }
+
+    // ── color patch tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn set_color_then_reload_equals() {
+        let (store, _td) = store_in_tmp();
+        let s = strategy_with_id("01HZSTRATEGYCOLOR00000001A");
+        store.save(&s).await.unwrap();
+
+        let patched = store
+            .update_metadata(
+                "01HZSTRATEGYCOLOR00000001A",
+                StrategyMetadataPatch {
+                    color: Some("#D4A547".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(patched.manifest.color, Some("#D4A547".into()));
+        let reloaded = store.load("01HZSTRATEGYCOLOR00000001A").await.unwrap();
+        assert_eq!(reloaded.manifest.color, Some("#D4A547".into()));
+    }
+
+    #[tokio::test]
+    async fn clear_color_via_empty_string_becomes_none() {
+        let (store, _td) = store_in_tmp();
+        let mut s = strategy_with_id("01HZSTRATEGYCOLOR00000002B");
+        s.manifest.color = Some("#6BAFA8".into());
+        store.save(&s).await.unwrap();
+
+        let patched = store
+            .update_metadata(
+                "01HZSTRATEGYCOLOR00000002B",
+                StrategyMetadataPatch {
+                    color: Some("".into()), // explicit clear signal
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(patched.manifest.color, None);
+        let reloaded = store.load("01HZSTRATEGYCOLOR00000002B").await.unwrap();
+        assert_eq!(reloaded.manifest.color, None);
+    }
+
+    #[tokio::test]
+    async fn invalid_hex_color_returns_error() {
+        let (store, _td) = store_in_tmp();
+        let s = strategy_with_id("01HZSTRATEGYCOLOR00000003C");
+        store.save(&s).await.unwrap();
+
+        for bad in &["#ZZZ", "D4A547", "#D4A54", "#D4A54777", "red", "#"] {
+            let err = store
+                .update_metadata(
+                    "01HZSTRATEGYCOLOR00000003C",
+                    StrategyMetadataPatch {
+                        color: Some((*bad).into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect_err("invalid hex color must be rejected");
+            match err.downcast_ref::<MetadataPatchError>() {
+                Some(MetadataPatchError::InvalidColor(_)) => {}
+                other => panic!("expected InvalidColor for {bad:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn color_none_leaves_existing_color_unchanged() {
+        let (store, _td) = store_in_tmp();
+        let mut s = strategy_with_id("01HZSTRATEGYCOLOR00000004D");
+        s.manifest.color = Some("#E07A3A".into());
+        store.save(&s).await.unwrap();
+
+        // Patch without color field — should leave it alone.
+        let patched = store
+            .update_metadata(
+                "01HZSTRATEGYCOLOR00000004D",
+                StrategyMetadataPatch {
+                    display_name: Some("New name".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(patched.manifest.color, Some("#E07A3A".into()));
     }
 }

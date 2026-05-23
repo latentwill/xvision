@@ -349,6 +349,7 @@ fn classify_metadata_patch_error(err: anyhow::Error, id: &str) -> DashboardError
             MetadataPatchError::EmptyAssetUniverse
             | MetadataPatchError::BlankAssetEntry
             | MetadataPatchError::InvalidAssetSymbol(_) => "asset_universe",
+            MetadataPatchError::InvalidColor(_) => "color",
         };
         return DashboardError::Validation {
             field: field.to_string(),
