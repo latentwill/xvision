@@ -104,7 +104,8 @@ async fn seed_trader_agent(ctx: &ApiContext, provider: &str, model: &str) -> Str
                 system_prompt: "You are a disciplined crypto trader. Use the supplied OHLCV \
                                 history, indicator panel, and scenario metadata to choose an \
                                 action with explicit position sizing and invalidation. Avoid \
-                                placeholders; ground every claim in active data.".into(),
+                                placeholders; ground every claim in active data."
+                    .into(),
                 skill_ids: vec![],
                 max_tokens: Some(1024),
                 temperature: None,
@@ -345,6 +346,87 @@ async fn clone_without_override_creates_verbatim_copy_with_cloned_from_set() {
         cloned_agent.slots[0].system_prompt,
         source_agent.slots[0].system_prompt
     );
+}
+
+#[tokio::test]
+async fn clone_can_run_twice_without_agent_name_collision() {
+    let (ctx, _d) = open_api_context().await;
+    write_default_config(&ctx, &config_with_key_env("OPENROUTER_CLONE_TEST_REPEAT"));
+
+    let agent_id = seed_trader_agent(&ctx, "openrouter", "deepseek/deepseek-chat").await;
+    let source_id = "01HZSTRATEGYCLONEREPEAT01";
+    let strategy = seed_strategy(source_id, &agent_id);
+    persist_strategy(&ctx, &strategy).await;
+
+    let first = api_strategy::clone_strategy_full(
+        &ctx,
+        source_id,
+        CloneStrategyFullReq {
+            display_name: Some("repeat-a".into()),
+            provider: None,
+            model: None,
+        },
+    )
+    .await
+    .expect("first clone should succeed");
+
+    let second = api_strategy::clone_strategy_full(
+        &ctx,
+        source_id,
+        CloneStrategyFullReq {
+            display_name: Some("repeat-b".into()),
+            provider: None,
+            model: None,
+        },
+    )
+    .await
+    .expect("second clone should not collide with first clone's agent name");
+
+    assert_ne!(first.strategy_id, second.strategy_id);
+    assert_ne!(first.agent_ids[0], second.agent_ids[0]);
+
+    let first_agent = agents_api::get(&ctx, &first.agent_ids[0]).await.unwrap();
+    let second_agent = agents_api::get(&ctx, &second.agent_ids[0]).await.unwrap();
+    assert_ne!(first_agent.name, second_agent.name);
+}
+
+#[tokio::test]
+async fn clone_preserves_non_object_metadata_under_legacy_key() {
+    let (ctx, _d) = open_api_context().await;
+    write_default_config(&ctx, &config_with_key_env("OPENROUTER_CLONE_TEST_METADATA"));
+
+    let agent_id = seed_trader_agent(&ctx, "openrouter", "deepseek/deepseek-chat").await;
+    let source_id = "01HZSTRATEGYCLONEMETADATA1";
+    let mut strategy = seed_strategy(source_id, &agent_id);
+    strategy.mechanical_params = serde_json::json!({
+        "metadata": "legacy-note",
+        "execution": { "cadence": "slow" }
+    });
+    persist_strategy(&ctx, &strategy).await;
+
+    let out = api_strategy::clone_strategy_full(
+        &ctx,
+        source_id,
+        CloneStrategyFullReq {
+            display_name: Some("metadata-clone".into()),
+            provider: None,
+            model: None,
+        },
+    )
+    .await
+    .expect("clone should succeed");
+
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let cloned = store.load(&out.strategy_id).await.expect("load clone");
+    assert_eq!(
+        cloned.mechanical_params["metadata"]["_legacy"],
+        serde_json::Value::String("legacy-note".into())
+    );
+    assert_eq!(
+        cloned.mechanical_params["metadata"]["cloned_from"],
+        serde_json::Value::String(source_id.into())
+    );
+    assert_eq!(cloned.mechanical_params["execution"]["cadence"], "slow");
 }
 
 /// Happy path with override: the cloned strategy's paired agent slot

@@ -764,7 +764,9 @@ async fn clone_strategy_full_inner(
     //    refusal.
     if let Some((ref p, ref m)) = override_pair {
         let cfg_path = runtime_config_path(ctx);
-        if let Err(unavailable) = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, p, Some(m)).await {
+        if let Err(unavailable) =
+            crate::api::settings::providers::resolve_provider(ctx, &cfg_path, p, Some(m)).await
+        {
             let model_clause = unavailable
                 .model
                 .as_ref()
@@ -780,13 +782,25 @@ async fn clone_strategy_full_inner(
         }
     }
 
-    // 4. Clone each AgentRef into a fresh library Agent record. Track
+    // 4. Mint the strategy id before cloning Agents so cloned Agent
+    //    names can carry a per-clone suffix. Agent names are globally
+    //    unique, and operators should be able to clone the same source
+    //    strategy more than once.
+    let new_strategy_id = Ulid::new().to_string();
+
+    // 5. Clone each AgentRef into a fresh library Agent record. Track
     //    the resulting ids so the new Strategy.agents Vec lines up in
     //    parallel order with the source.
     let mut cloned_agent_refs: Vec<AgentRef> = Vec::with_capacity(source.agents.len());
     let mut created_agent_ids: Vec<String> = Vec::with_capacity(source.agents.len());
-    for agent_ref in &source.agents {
-        let source_agent = crate::api::agents::get(ctx, &agent_ref.agent_id).await?;
+    for (idx, agent_ref) in source.agents.iter().enumerate() {
+        let source_agent = match crate::api::agents::get(ctx, &agent_ref.agent_id).await {
+            Ok(agent) => agent,
+            Err(err) => {
+                cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+                return Err(err);
+            }
+        };
 
         // Rewrite slots if override supplied; otherwise carry forward
         // verbatim.
@@ -803,13 +817,10 @@ async fn clone_strategy_full_inner(
             })
             .collect();
 
-        let new_agent = crate::api::agents::create(
+        let new_agent = match crate::api::agents::create(
             ctx,
             crate::api::agents::CreateAgentRequest {
-                name: format!(
-                    "{} (clone of {})",
-                    source_agent.name, source.manifest.display_name
-                ),
+                name: clone_agent_name(&source_agent.name, &new_strategy_id, idx),
                 description: format!(
                     "Cloned from agent {} via `xvn strategy clone {}`",
                     agent_ref.agent_id, source_strategy_id
@@ -825,7 +836,14 @@ async fn clone_strategy_full_inner(
                 scope_strategy_id: None,
             },
         )
-        .await?;
+        .await
+        {
+            Ok(agent) => agent,
+            Err(err) => {
+                cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+                return Err(err);
+            }
+        };
 
         created_agent_ids.push(new_agent.agent_id.clone());
         cloned_agent_refs.push(AgentRef {
@@ -835,10 +853,9 @@ async fn clone_strategy_full_inner(
         });
     }
 
-    // 5. Build the new Strategy. Mint a fresh ULID; copy every other
+    // 6. Build the new Strategy. Copy every other
     //    field from the source. Provenance lands in
     //    `mechanical_params.metadata.cloned_from`.
-    let new_strategy_id = Ulid::new().to_string();
     let new_mechanical_params = stash_cloned_from(&source.mechanical_params, source_strategy_id);
     let display_name = req
         .display_name
@@ -852,25 +869,54 @@ async fn clone_strategy_full_inner(
     new_strategy.agents = cloned_agent_refs;
     new_strategy.mechanical_params = new_mechanical_params;
 
-    // 6. Shape validation surfaces here (rather than after a partial
+    // 7. Shape validation surfaces here (rather than after a partial
     //    filesystem write).
     if let Err(e) = crate::strategies::validate::validate_strategy(&new_strategy) {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
         return Err(ApiError::Validation(format!("clone validation failed: {e}")));
     }
 
-    // 7. Persist. Source is untouched; agents we created above already
+    // 8. Persist. Source is untouched; agents we created above already
     //    exist in the library.
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    store
-        .save(&new_strategy)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if let Err(e) = store.save(&new_strategy).await {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+        return Err(ApiError::Internal(e.to_string()));
+    }
 
     Ok(CloneStrategyFullOut {
         strategy_id: new_strategy_id,
         agent_ids: created_agent_ids,
         source_strategy_id: source_strategy_id.to_string(),
     })
+}
+
+fn clone_agent_name(source_name: &str, strategy_id: &str, idx: usize) -> String {
+    let suffix: String = strategy_id
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{source_name} (clone {suffix}-{})", idx + 1)
+}
+
+async fn cleanup_created_clone_agents(ctx: &ApiContext, agent_ids: &[String]) {
+    for agent_id in agent_ids {
+        if let Err(err) = sqlx::query("DELETE FROM agents WHERE agent_id = ?")
+            .bind(agent_id)
+            .execute(&ctx.db)
+            .await
+        {
+            tracing::warn!(
+                agent_id = agent_id.as_str(),
+                error = %err,
+                "failed to clean up partial strategy clone agent",
+            );
+        }
+    }
 }
 
 /// Insert (or overwrite) `metadata.cloned_from` inside a strategy's
@@ -888,7 +934,8 @@ fn stash_cloned_from(source: &serde_json::Value, source_id: &str) -> serde_json:
         .entry("metadata".to_string())
         .or_insert_with(|| serde_json::json!({}));
     if !metadata.is_object() {
-        *metadata = serde_json::json!({});
+        let prior = metadata.clone();
+        *metadata = serde_json::json!({ "_legacy": prior });
     }
     let metadata_obj = metadata.as_object_mut().expect("ensured object above");
     metadata_obj.insert(
