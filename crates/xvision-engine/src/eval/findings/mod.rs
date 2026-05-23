@@ -46,6 +46,8 @@
 //! | `uniform_justification` | `smell:uniformity` (eval-honesty-smell-tests) | critical |
 //! | `uniform_decision` | `smell:uniformity` (eval-honesty-smell-tests) | critical |
 //! | `near_uniform_justification` | `smell:uniformity` (eval-honesty-smell-tests) | warning |
+//! | `memory_recalled_into_bad_decision` | `memory:provenance` (memory-aware-eval-findings) | warning |
+//! | `memory_recalled_into_good_decision` | `memory:provenance` (memory-aware-eval-findings, opt-in) | info |
 //!
 //! ## V2E item 25: `inference_cost_dominates_return`
 //!
@@ -56,6 +58,7 @@
 //! because this is a per-run aggregate finding, not per-cycle.
 
 pub mod extractor;
+pub mod memory;
 pub mod uniformity;
 
 use chrono::{DateTime, Utc};
