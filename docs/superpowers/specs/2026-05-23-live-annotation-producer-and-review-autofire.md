@@ -1,6 +1,6 @@
 # Live annotation producer + review auto-fire setting
 
-Date: 2026-05-23 · **DRAFT** — open questions in §6 need answers before this becomes an executable plan.
+Date: 2026-05-23 · **PARKED** (halt 2026-05-23T17:15Z; resume target ≤ 2026-05-25T17:15Z) — operator halted mid-dispatch; R1 schema commit lives on `origin/feat/charts-followup-live-annotation-r1-PARKED` (one commit, `5eb02ac`). R2–R6 not started. See §10 "Resume protocol" before restarting.
 
 > **Spec author note:** Tied to two adjacent threads:
 > - Chart-rework spec Track B B3 (`/charts/annotated`) currently fetches annotations from a fixture-backed backend stub. Live mode returns `annotations: []`; the surface renders an "annotation producer not configured" EmptyState.
@@ -206,3 +206,43 @@ Ready to dispatch after §6.4/§6.5/§6.7 are answered by code-reading.
 - B3 backend stub: `crates/xvision-engine/src/api/charts_annotated.rs`.
 - Spec where the "producer is out of scope" caveat lives: `docs/superpowers/specs/2026-05-21-chart-rework-klinecharts-uplot.md` §9.
 - User direction 2026-05-23: live annotation should fit into the strategy review agent; graph generated once a review fires from the user decision; setting for review to auto-fire on eval-run completion.
+
+## 10. Resume protocol (added at halt 2026-05-23T17:15Z)
+
+The first dispatch attempt was halted by the operator with **R1 partially landed** and R2–R6 not started. Pick up here in ≤ 48h.
+
+### What's on disk at halt time
+
+| Where | What |
+|---|---|
+| `origin/feat/charts-followup-live-annotation-r1-PARKED` | One commit `5eb02ac feat(charts): R1 — review-annotation schema foundation`. Migration `035_review_annotations_and_eval_autofire.sql` + `_down.sql`, `ReviewAnnotation` Rust type with ts-rs export, `EvalRun` field additions, supporting tests. **Not reviewed; resume agent must verify before stacking on it.** |
+| `.claude/worktrees/charts-followup-live-annotation-r1` (local) | The worktree the killed agent was working in. Stash `halt-2026-05-23` holds the agent's `cargo fmt` sprawl across ~50 unrelated files — **do NOT include those in the resume PR**; they are not the agent's logic changes. Recover the stash only if you actually want the formatting normalization (separate PR). |
+| `.claude/worktrees/charts-followup-live-annotation` (local) | Older empty worktree from the very first dispatch attempt. Safe to remove (`git worktree remove --force`). |
+
+### Resume steps
+
+1. **Review the R1 PARKED branch first.** Open
+   `feat/charts-followup-live-annotation-r1-PARKED` on GitHub; confirm
+   the migration shape, the `ReviewAnnotation` enums (Pattern/Flow/Risk/
+   Reversion/Structure; top/bottom; Watch/Long/Short/Caution), and the
+   `EvalRun` fields (`auto_fire_review: bool`, `review_model:
+   Option<ProviderModelPair>`, `max_annotations_per_review:
+   Option<u32>`). If anything's off, rewrite R1 before fanning out.
+2. **If R1 is good**, open the PR for it
+   (`gh pr create --title "feat(charts): R1 of live-annotation producer — schema foundation" --base feat/charts-followup-b-rollout-b5`)
+   so the parallel agents have a stable base to stack on.
+3. **Fan out R2 / R3 / R4 / R5+R6 as 4 parallel subagents** off the R1
+   branch. The prompts from the halt session (in the parent agent's
+   transcript) include task scopes, allowed paths, and acceptance
+   criteria — reuse them directly.
+4. **Don't redo §6.** The 4 locked operator decisions stand:
+   JSON column on reviews table; per-eval autofire selectable at eval
+   creation; no global settings page; `?source=live` resolves to
+   most-recent stored review for the symbol's most-recent run.
+
+### Why halted
+
+Operator direction 2026-05-23T17:15Z: "Halt process here. Mark as
+incomplete and stash for later." Resume window: 48h (target ≤
+2026-05-25T17:15Z). No technical blocker — the halt was a
+prioritization choice, not a problem with the work.

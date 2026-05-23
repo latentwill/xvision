@@ -54,6 +54,21 @@ folding in the 2026-05-22 Claude design handoff under
 - B-rollout — drop the `xvn.chartv2=1` cookie gate for the Charts sidebar entry.
 - F-CHART-LIQHEAT — followup, Chart 04 Liquidation Heatmap. Not in this wave; tokens + payload type land in B0 so the followup picks up rework-free.
 
+### live-annotation-producer-2026-05-23 — **PARKED 2026-05-23T17:15Z** (resume target ≤ 2026-05-25T17:15Z)
+
+Operator-halted mid-dispatch ("we will complete in 48 hours"). The
+spec is committed; R1 schema work is on a clearly-named PARKED branch;
+R2–R6 are queued but not started. **No work in flight; no agents
+running.** Resume protocol lives in §10 of the spec.
+
+- **Spec:** `docs/superpowers/specs/2026-05-23-live-annotation-producer-and-review-autofire.md` (PR #564).
+- **R1 (schema foundation) — DRAFT ON ORIGIN, not yet PR'd**: branch `feat/charts-followup-live-annotation-r1-PARKED` (one commit `5eb02ac`). Migration 035 + `ReviewAnnotation` types + `EvalRun` field additions. **Resume agent must verify before stacking on it.**
+- **R2 (autofire wiring on eval-finalize) — not started.**
+- **R3 (review prompt + parser extension) — not started.**
+- **R4 (real /api/v2/charts/annotated builders + `note` field) — not started.**
+- **R5+R6 (eval-creation form + Run review button + UI state) — not started.**
+- **Halt-side housekeeping**: stash `halt-2026-05-23` in worktree `.claude/worktrees/charts-followup-live-annotation-r1/` holds the killed R1 agent's `cargo fmt` sprawl across ~50 unrelated files. **Do not include in resume PR** — recover only as a separate formatting commit if desired. Older empty worktree `.claude/worktrees/charts-followup-live-annotation/` is safe to remove.
+
 ## Open PRs (in-flight, not yet merged)
 
 - **#527** — Phase A schema (`agent-graph-capability-schema`).
