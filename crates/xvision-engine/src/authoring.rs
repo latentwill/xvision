@@ -601,8 +601,8 @@ fn parse_filter_payload(
                     .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
                 parse_filter_text(&src, Some("toml"), strategy_id)
             }
-            Some(other) if other.trim().is_empty() => parse_filter_value(other, strategy_id),
-            None => parse_filter_value(other, strategy_id).or_else(|json_err| {
+            Some(s) if s.trim().is_empty() => parse_filter_value(other, strategy_id),
+            None => parse_filter_value(other.clone(), strategy_id).or_else(|json_err| {
                 let src = serde_json::to_string(&other)
                     .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
                 parse_filter_text(&src, Some("toml"), strategy_id)
