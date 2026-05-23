@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
 import {
   addStrategyAgent,
+  deleteStrategy,
   getStrategy,
   patchStrategyMetadata,
   renameStrategyAgentRole,
@@ -29,6 +30,7 @@ import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyHistoryChartV2 } from "@/components/chart/v2/surfaces/StrategyHistoryChartV2";
 import { ModelPicker } from "@/components/ModelPicker";
+import { TimeframeSelect } from "@/components/TimeframeSelect";
 import type { ProviderRow } from "@/api/types.gen";
 import { safeStorageGet, safeStorageSet } from "@/lib/storage";
 
@@ -65,7 +67,7 @@ function InspectorPage({ id }: { id: string }) {
               <span>Strategy inspector</span>
               <span className="mx-1.5 text-text-3">·</span>
               <span>Strategy ID:</span>
-              <span className="break-all font-mono text-[12px] text-text-3">
+              <span className="ml-1 break-all font-mono text-[12px] text-text-3">
                 {id}
               </span>
             </>
@@ -926,7 +928,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
   const [displayName, setDisplayName] = useState(m.display_name);
   const [plainSummary, setPlainSummary] = useState(m.plain_summary);
   const [assetUniverse, setAssetUniverse] = useState(m.asset_universe.join(", "));
-  const [cadence, setCadence] = useState(String(m.decision_cadence_minutes));
+  const [timeframeMinutes, setTimeframeMinutes] = useState(m.decision_cadence_minutes);
   const [savedFlash, setSavedFlash] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -934,15 +936,14 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
     setDisplayName(m.display_name);
     setPlainSummary(m.plain_summary);
     setAssetUniverse(m.asset_universe.join(", "));
-    setCadence(String(m.decision_cadence_minutes));
+    setTimeframeMinutes(m.decision_cadence_minutes);
     setLocalError(null);
   }, [m.display_name, m.plain_summary, m.asset_universe, m.decision_cadence_minutes]);
 
   const patch = useMutation({
     mutationFn: () => {
-      const cadenceMinutes = Number(cadence);
-      if (!Number.isInteger(cadenceMinutes) || cadenceMinutes <= 0) {
-        throw new Error("Cadence must be a positive whole number of minutes.");
+      if (!Number.isInteger(timeframeMinutes) || timeframeMinutes <= 0) {
+        throw new Error("Time frame must be a positive whole number of minutes.");
       }
       const assets = assetUniverse
         .split(",")
@@ -955,7 +956,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
         display_name: displayName,
         plain_summary: plainSummary,
         asset_universe: assets,
-        decision_cadence_minutes: cadenceMinutes,
+        decision_cadence_minutes: timeframeMinutes,
       });
     },
     onSuccess: (updated) => {
@@ -974,7 +975,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
     displayName !== m.display_name ||
     plainSummary !== m.plain_summary ||
     assetUniverse !== m.asset_universe.join(", ") ||
-    cadence !== String(m.decision_cadence_minutes);
+    timeframeMinutes !== m.decision_cadence_minutes;
 
   return (
     <Card>
@@ -1002,12 +1003,11 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
               onChange={(e) => setAssetUniverse(e.target.value)}
             />
           </Field>
-          <Field label="Cadence (minutes)">
-            <input
+          <Field label="Time frame">
+            <TimeframeSelect
+              valueMinutes={timeframeMinutes}
+              onChange={setTimeframeMinutes}
               className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-              inputMode="numeric"
-              value={cadence}
-              onChange={(e) => setCadence(e.target.value)}
             />
           </Field>
           <Field
@@ -1260,12 +1260,43 @@ function InspectorActions({
   strategyId: string;
   strategy: Strategy | null;
 }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const deleteMut = useMutation({
+    mutationFn: () => deleteStrategy(strategyId),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: strategyKeys.all });
+      navigate("/strategies");
+    },
+  });
+
+  function onDelete() {
+    const label = strategy?.manifest.display_name || strategyId;
+    if (!window.confirm(`Delete strategy "${label}"? This cannot be undone.`)) {
+      return;
+    }
+    deleteMut.mutate();
+  }
+
+  const deleteButton = (
+    <button
+      type="button"
+      onClick={onDelete}
+      disabled={deleteMut.isPending}
+      aria-label={`Delete strategy ${strategyId}`}
+      className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-danger/40 text-danger hover:border-danger disabled:opacity-50"
+    >
+      {deleteMut.isPending ? "Deleting..." : "Delete"}
+    </button>
+  );
+
   if (!strategy) {
     return (
       <div className="flex items-center justify-end gap-3 mb-5">
         <span className="text-[12px] text-text-3">
           Checking eval readiness...
         </span>
+        {deleteButton}
       </div>
     );
   }
@@ -1273,6 +1304,11 @@ function InspectorActions({
   if (!hasAttachedAgents(strategy)) {
     return (
       <div className="flex items-center justify-end gap-3 mb-5">
+        {deleteMut.isError ? (
+          <span className="text-[12px] text-danger">
+            {errorMessage(deleteMut.error)}
+          </span>
+        ) : null}
         <span className="text-[12px] text-danger">
           No strategy agent is attached yet.
         </span>
@@ -1282,12 +1318,19 @@ function InspectorActions({
         >
           Go to agents
         </a>
+        {deleteButton}
       </div>
     );
   }
 
   return (
     <div className="flex items-center justify-end gap-3 mb-5">
+      {deleteMut.isError ? (
+        <span className="text-[12px] text-danger">
+          {errorMessage(deleteMut.error)}
+        </span>
+      ) : null}
+      {deleteButton}
       <Link
         to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
         className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"

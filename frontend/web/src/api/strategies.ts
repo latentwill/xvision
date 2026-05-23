@@ -142,7 +142,7 @@ export type Strategy = {
 
 export type SetFilterBody = {
   source: string;
-  format: "toml" | "json";
+  format: "json";
 };
 
 export type SetFilterOut = {
@@ -286,7 +286,7 @@ export function setRiskConfig(
 }
 
 /// Install/replace the per-strategy deterministic filter. `source` is
-/// the raw DSL text (TOML or JSON, picked via `format`); the engine
+/// the raw DSL JSON text; the engine
 /// parses + validates server-side and returns the resolved Filter on
 /// success. Validation/parse failures come back as ApiError (4xx).
 export function setStrategyFilter(
