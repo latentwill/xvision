@@ -7,3 +7,4 @@ export * from "./WizardPreviewChartV2";
 
 // Track B dashboard surfaces (chart-rework spec B1+).
 export * from "./DarkMinimalDashboard";
+export * from "./ComparisonABDashboard";

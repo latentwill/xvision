@@ -27,3 +27,9 @@ export * from "./KpiCard";
 export * from "./Topbar";
 export * from "./MonthlyReturnsHeatmap";
 export * from "./DrawdownCard";
+// B2 — Comparison AB additions.
+export * from "./MiniSparkline";
+export * from "./StrategyRosterPills";
+export * from "./StrategyCardGrid";
+export * from "./StrategyCard";
+export * from "./LeadCardChrome";
