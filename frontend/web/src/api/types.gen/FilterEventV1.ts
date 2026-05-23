@@ -10,33 +10,33 @@ import type { SuppressedReason } from "./SuppressedReason";
  * the run-detail panel (Stage 4), and the golden regression fixtures
  * (Stage 5).
  */
-export type FilterEventV1 = {
+export type FilterEventV1 = { 
 /**
  * Schema version. Always `1` for v1; bumped when the shape
  * changes incompatibly.
  */
-schema_version: number, bar_timestamp: string, filter_id: FilterId,
+schema_version: number, bar_timestamp: string, filter_id: FilterId, 
 /**
  * True iff the runtime returned `Active { transition: Trip }` — the
  * bar an LLM dispatch fired. `false` for Inactive / Warming / Hold
  * and for all suppressed outcomes.
  */
-triggered: boolean,
+triggered: boolean, 
 /**
  * Set when a would-have-triggered bar was suppressed by a runtime
  * gate. `None` means no suppression was active — either a real
  * trip or a no-op bar.
  */
-suppressed_reason: SuppressedReason | null,
+suppressed_reason: SuppressedReason | null, 
 /**
  * Indices (into `ConditionTree::conditions()`) of leaves that
  * evaluated `true` on this bar. Empty during warmup.
  */
-conditions_passed: Array<number>,
+conditions_passed: Array<number>, 
 /**
  * Indices of leaves that evaluated `false`. Empty during warmup.
  */
-conditions_failed: Array<number>,
+conditions_failed: Array<number>, 
 /**
  * Sparse map of `IndicatorRef.to_string()` → bar value
  * (e.g. `"ema_20" → 42_133.12`). Empty during warmup. Includes

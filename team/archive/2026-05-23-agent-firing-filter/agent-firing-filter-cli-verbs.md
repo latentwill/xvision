@@ -5,7 +5,7 @@ wave: agent-firing-filter-operator-surface-2026-05-22
 worktree: .worktrees/agent-firing-filter-cli-verbs
 branch: task/agent-firing-filter-cli-verbs
 base: origin/main
-status: deferred
+status: merged
 depends_on:
   - agent-graph-capability-schema    # PR #527 — MERGED
   - agent-graph-capability-dispatch  # Phase B — pending

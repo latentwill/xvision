@@ -12,4 +12,4 @@ export type VenueSettings = { venue: Venue, fees: Fees, slippage: SlippageModel,
  * Falls through to the scenario defaults when no pattern matches.
  * Added in V2E eval-cost-model-per-bar-and-volume-share.
  */
-overrides?: Array<VenueOverride>, };
+overrides: Array<VenueOverride>, };

@@ -148,6 +148,7 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
         partial_fills: false,
         volume_constraints: null,
       },
+      overrides: [],
     },
     replay_mode: { mode: "Continuous" },
     capital: { initial: 10000, currency: "USD" },
@@ -160,8 +161,14 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
     created_at: "2025-01-01T00:00:00Z",
     created_by: "test",
     archived_at: null,
+    regime_label: null,
+    volatility_label: null,
+    trend_direction: null,
+    regime_derived: false,
+    venue_label: "paper",
+    safety_limits: null,
     ...overrides,
-  };
+  } as Scenario;
 }
 
 function mockReady({
@@ -299,6 +306,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 100,
         actual_output_tokens: 50,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       },
     ]);
 
@@ -329,6 +339,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 1000,
         actual_output_tokens: 250,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       },
     ]);
 
@@ -354,6 +367,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 1200,
         actual_output_tokens: 345,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       } as never,
     ]);
 
@@ -380,6 +396,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 100,
         actual_output_tokens: 50,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       },
       {
         id: "01RUN000000000000000000003",
@@ -395,6 +414,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: null,
         actual_output_tokens: null,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       },
       {
         id: "01RUN000000000000000000002",
@@ -410,6 +432,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 1000,
         actual_output_tokens: 250,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       },
     ] as never);
 
@@ -461,6 +486,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 1200,
         actual_output_tokens: 345,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       } as never,
     ]);
     vi.mocked(evalApi.cancelRun).mockResolvedValue({
@@ -477,6 +505,9 @@ describe("EvalRunsRoute", () => {
       error: "cancelled by user",
       actual_input_tokens: 1200,
       actual_output_tokens: 345,
+      inference_cost_quote_total: null,
+      net_return_pct: null,
+      filter_summaries: [],
     });
 
     renderRoute();
@@ -653,6 +684,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 1000,
         actual_output_tokens: 250,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       },
     ]);
 
@@ -692,6 +726,9 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 1000,
         actual_output_tokens: 250,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
       },
     ]);
 

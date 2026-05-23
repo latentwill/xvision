@@ -5,7 +5,7 @@ wave: agent-firing-filter-operator-surface-2026-05-22
 worktree: .worktrees/agent-firing-filter-strategy-composer
 branch: task/agent-firing-filter-strategy-composer
 base: origin/main
-status: claimed
+status: merged
 depends_on:
   - agent-graph-capability-schema    # PR #527 — MERGED 2026-05-22
   - agent-graph-capability-dispatch  # PR #546 — MERGED 2026-05-22

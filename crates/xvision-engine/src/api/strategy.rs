@@ -85,7 +85,7 @@ pub struct AddAgentReq {
     /// Filter handler at this position even when the referenced agent
     /// advertises more than one capability.
     #[serde(default)]
-    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
     pub activates: Option<crate::agents::Capability>,
 }
 
@@ -512,6 +512,20 @@ pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
     .await;
     if result.is_ok() {
         api_search::delete_strategy(ctx, agent_id).await;
+        // Sweep agents whose `scope_strategy_id` matched the strategy
+        // we just deleted. Phase 3 of agent-firing-filter introduced
+        // strategy-scoped agents (migration 036); without this sweep
+        // they orphan in the agents table when the owning strategy is
+        // removed. Best-effort: if the sweep fails the delete still
+        // succeeds — the rows are inert noise, not a correctness bug.
+        let agent_store = AgentStore::new(ctx.db.clone());
+        if let Err(err) = agent_store.delete_scoped_to(agent_id).await {
+            tracing::warn!(
+                strategy_id = agent_id,
+                error = %err,
+                "scoped-agent sweep failed after strategy delete",
+            );
+        }
     }
     result
 }

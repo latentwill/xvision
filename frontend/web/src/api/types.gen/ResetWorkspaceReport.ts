@@ -2,27 +2,27 @@
 import type { TablePreserved } from "./TablePreserved";
 import type { TableWipe } from "./TableWipe";
 
-export type ResetWorkspaceReport = {
+export type ResetWorkspaceReport = { 
 /**
  * `(table_name, rows_deleted)` for every user table cleared.
  * Ordering matches `sqlite_master` enumeration order.
  */
-tables_cleared: Array<TableWipe>,
+tables_cleared: Array<TableWipe>, 
 /**
  * Rows summed across `tables_cleared`. `u32` so ts-rs emits a TS
  * `number` (no realistic user table approaches 4B rows).
  */
-total_rows_deleted: number,
+total_rows_deleted: number, 
 /**
  * `(table_name, rows_remaining)` for every table preserved per
- * `RESET_WORKSPACE_PRESERVED_TABLES`. Surfaced so the dashboard
+ * [`RESET_WORKSPACE_PRESERVED_TABLES`]. Surfaced so the dashboard
  * can show the operator exactly what survived the reset (rather
  * than just a verbal contract). Canonical-scenario rows count
  * toward the `scenarios` row in `tables_cleared` (they weren't
  * touched but they aren't in this list either — the post-reset
  * `scenarios` row count is implied by the seed contract).
  */
-tables_preserved: Array<TablePreserved>,
+tables_preserved: Array<TablePreserved>, 
 /**
  * Number of files removed from `$XVN_HOME/strategies/`. 0 if the
  * dir didn't exist (filesystem-backed strategies are optional).
