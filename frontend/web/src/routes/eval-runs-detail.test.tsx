@@ -172,9 +172,14 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       actual_input_tokens: null,
       actual_output_tokens: null,
       error: null,
+      inference_cost_quote_total: null,
+      net_return_pct: null,
+      filter_summaries: [],
     },
     decisions: [],
     equity_curve: [],
+    filter_events: [],
+    filter_summaries: [],
     ...overrides,
   };
 }

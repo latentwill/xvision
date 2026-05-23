@@ -2,9 +2,21 @@
 import type { FilterId } from "./FilterId";
 
 /**
- * Aggregate rollup for a single filter across one eval run.
+ * Per-run rollup of `FilterEventV1` rows. One per filter per run.
  *
- * Built from the `FilterEventV1` stream after the run completes and
- * embedded in both `RunSummary` and detailed run export payloads.
+ * Lands in the eval run summary export alongside the existing
+ * token-economics block.
  */
-export type FilterSummary = { filter_id: FilterId, bars_scanned: number, wakeups: number, suppressed_in_position: number, suppressed_daily_cap: number, suppressed_cooldown: number, llm_calls_saved: number, estimated_tokens_saved: number, };
+export type FilterSummary = { filter_id: FilterId, bars_scanned: number, wakeups: number, suppressed_in_position: number, suppressed_cooldown: number, suppressed_daily_cap: number, 
+/**
+ * `bars_scanned - wakeups`. In FilterGated mode every non-wakeup
+ * bar is an LLM call that EveryBar would have paid for; this
+ * counts the savings.
+ */
+llm_calls_saved: number, 
+/**
+ * `llm_calls_saved * AVG_BRIEFING_TOKEN_COST`. v1 uses the global
+ * constant from `crate::AVG_BRIEFING_TOKEN_COST`; v1.5 will make
+ * this per-strategy-measured.
+ */
+estimated_tokens_saved: number, };

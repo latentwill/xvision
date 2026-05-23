@@ -86,7 +86,9 @@ beforeEach(() => {
   vi.mocked(strategyApi.setStrategyPipeline).mockReset();
   vi.mocked(strategyApi.addStrategyAgent).mockReset();
   vi.mocked(agentApi.createAgent).mockReset();
-  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
+      default_model: null,
+  });
 });
 
 afterEach(() => {
@@ -568,6 +570,8 @@ describe("AuthoringRoute agent composition", () => {
           enabled_models: ["deepseek/deepseek-v4-flash"],
         },
       ],
+    
+        default_model: null,
     });
     vi.mocked(strategyApi.getStrategy).mockResolvedValue({
       manifest: {
