@@ -934,6 +934,7 @@ impl XvisionTools {
                 risk_preset_or_config: "balanced".to_string(),
                 published_at: None,
                 min_warmup_bars: None,
+                color: None,
             },
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),
@@ -949,6 +950,7 @@ impl XvisionTools {
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
+        acknowledge_no_filter: false,
         };
 
         // 3. Validate shape.

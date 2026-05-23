@@ -42,6 +42,12 @@ const ChartLabPrimitives = lazy(() => import("./routes/chart-lab/ChartLabPrimiti
 const ChartLabSurfacesIndex = lazy(() => import("./routes/chart-lab/ChartLabSurfaces").then((m) => ({ default: m.ChartLabSurfacesIndex })));
 const ChartLabSurfaceDetail = lazy(() => import("./routes/chart-lab/ChartLabSurfaces").then((m) => ({ default: m.ChartLabSurfaceDetail })));
 const ChartLabTokens = lazy(() => import("./routes/chart-lab/ChartLabTokens").then((m) => ({ default: m.ChartLabTokens })));
+const ChartLabDashboards = lazy(() => import("./routes/chart-lab/ChartLabDashboards").then((m) => ({ default: m.ChartLabDashboards })));
+const ChartsLayout = lazy(() => import("./routes/charts/ChartsLayout").then((m) => ({ default: m.ChartsLayout })));
+const ChartsOverview = lazy(() => import("./routes/charts/ChartsOverview").then((m) => ({ default: m.ChartsOverview })));
+const ChartsCompare = lazy(() => import("./routes/charts/ChartsCompare").then((m) => ({ default: m.ChartsCompare })));
+const ChartsAnnotated = lazy(() => import("./routes/charts/ChartsAnnotated").then((m) => ({ default: m.ChartsAnnotated })));
+const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => ({ default: m.ChartsHero })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -123,6 +129,23 @@ export const router = createBrowserRouter([
             element: page(<ChartLabSurfaceDetail />),
           },
           { path: "tokens", element: page(<ChartLabTokens />) },
+          { path: "dashboards", element: page(<ChartLabDashboards />) },
+        ],
+      },
+      // Charts dashboard section (chart-rework spec Track B). B0 mounts
+      // the route topology with placeholder shells; B1–B4 each replace
+      // a shell with the real surface. Sidebar entry is cookie-gated;
+      // the routes themselves are reachable by deep-link even without
+      // the cookie (lower friction for QA + the chart-lab dashboards tab).
+      {
+        path: "charts",
+        element: page(<ChartsLayout />),
+        children: [
+          { index: true, element: <Navigate to="overview" replace /> },
+          { path: "overview", element: page(<ChartsOverview />) },
+          { path: "compare", element: page(<ChartsCompare />) },
+          { path: "annotated", element: page(<ChartsAnnotated />) },
+          { path: "hero", element: page(<ChartsHero />) },
         ],
       },
       { path: "docs", element: page(<DocsRoute />) },

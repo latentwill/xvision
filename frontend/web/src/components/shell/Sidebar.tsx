@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { NavLink } from "react-router-dom";
 import { Icon, type IconName } from "@/components/primitives/Icon";
 import { useTheme } from "@/theme/useTheme";
@@ -14,9 +15,32 @@ const PRIMARY: Item[] = [
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
+// Charts dashboard section (chart-rework spec Track B). Gated behind
+// the staff cookie `xvn.chartv2=1` during the B0–B4 ramp; placement is
+// after Scenarios, before Eval (spec §11.1 resolution). At B-rollout
+// the gate flips off and the entry becomes unconditional.
+const CHARTS_ITEM: Item = { to: "/charts", label: "Charts", icon: "chartPie" };
+const CHART_V2_COOKIE = "xvn.chartv2";
+
+function chartV2CookieIsSet(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.cookie
+    .split(";")
+    .some((c) => c.trim().startsWith(`${CHART_V2_COOKIE}=1`));
+}
+
 export function Sidebar({ className = "" }: { className?: string }) {
   const { resolvedTheme, setDarkTheme, setLightTheme } = useTheme();
   const isLight = resolvedTheme === "light";
+
+  const items = useMemo<Item[]>(() => {
+    if (!chartV2CookieIsSet()) return PRIMARY;
+    const out = [...PRIMARY];
+    const evalIdx = out.findIndex((i) => i.to === "/eval-runs");
+    if (evalIdx === -1) return [...out, CHARTS_ITEM];
+    out.splice(evalIdx, 0, CHARTS_ITEM);
+    return out;
+  }, []);
 
   return (
     <aside
@@ -32,7 +56,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
       </div>
 
       <nav className="flex-1 flex flex-col">
-        {PRIMARY.map((it) => (
+        {items.map((it) => (
           <div key={it.to}>
             <NavLink
               to={it.to}

@@ -156,6 +156,8 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -171,6 +173,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     strategy_store.save(&strategy).await.unwrap();
@@ -247,6 +250,8 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -262,6 +267,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     strategy_store.save(&strategy).await.unwrap();
@@ -370,6 +376,8 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -385,6 +393,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     bundle_store.save(&bundle).await.unwrap();
@@ -469,6 +478,7 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -484,6 +494,7 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     bundle_store.save(&bundle).await.unwrap();

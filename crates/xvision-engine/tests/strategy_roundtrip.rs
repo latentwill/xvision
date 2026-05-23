@@ -22,6 +22,8 @@ fn sample_strategy() -> Strategy {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -45,6 +47,7 @@ fn sample_strategy() -> Strategy {
         mechanical_params: serde_json::json!({"rsi_oversold": 30, "rsi_overbought": 70}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 
@@ -98,6 +101,7 @@ fn manifest_roundtrip_with_required_fields() {
         risk_preset_or_config: "balanced".to_string(),
         published_at: None,
         min_warmup_bars: None,
+        color: None,
     };
     let json = serde_json::to_string(&m).unwrap();
     let parsed: PublicManifest = serde_json::from_str(&json).unwrap();

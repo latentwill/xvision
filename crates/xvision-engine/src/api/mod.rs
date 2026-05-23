@@ -29,6 +29,7 @@ pub mod audit;
 #[path = "eval/bakeoff.rs"]
 pub mod bakeoff;
 pub mod chart;
+pub mod charts_dashboards;
 pub mod eval;
 pub mod experiment;
 pub mod health;

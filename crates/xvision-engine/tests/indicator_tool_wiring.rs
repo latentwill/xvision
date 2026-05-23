@@ -20,13 +20,9 @@
 //! (b) A fixture trader response invoking `indicator_panel` actually
 //!     routes through the tool registry; the result feeds back into the
 //!     next dispatch turn as a `ToolResult` block.
-//! (c) The tool execution emits a `tool.validate_input` +
-//!     `tool.validate_output` span pair carrying `tool_name =
-//!     "indicator_panel"`. F43 (`trace-dock-emitters`) will add a
-//!     dedicated `tool.call` span; until that lands, the validate
-//!     brackets are the present surface and we assert against them.
-//!     TODO(F43): once `trace-dock-emitters` ships `SpanKind::ToolCall`,
-//!     tighten this test to assert directly on it.
+//! (c) The tool execution emits a dedicated `tool.call` span plus a
+//!     `tool.validate_input` + `tool.validate_output` span pair carrying
+//!     `tool_name = "indicator_panel"`.
 
 use std::sync::Arc;
 
@@ -170,6 +166,7 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -185,6 +182,7 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
         mechanical_params: json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -343,23 +341,90 @@ async fn agent_loop_routes_tool_use_to_indicator_panel_and_feeds_result_back() {
     );
 }
 
+#[tokio::test]
+async fn agent_loop_rejects_unadvertised_indicator_panel_tool_use() {
+    let strategy = strategy_with_required_tools(vec![]);
+    let resolved = ResolvedAgentSlot {
+        role: "trader".into(),
+        slot: trader_slot_with_tools(Vec::new()),
+        system_prompt: "decide".into(),
+        max_tokens: None,
+        temperature: None,
+        inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: "test-agent".into(),
+        capabilities: std::collections::BTreeSet::new(),
+        noop_skip: true,
+    };
+    let dispatch = Arc::new(ToolUseThenEndTurn::new());
+    let (registry, invocations) = registry_with_mock();
+
+    let inputs = PipelineInputs {
+        strategy: &strategy,
+        agent_slots: &[resolved],
+        seed_inputs: json!({}),
+        dispatch: dispatch.clone(),
+        tools: registry,
+        obs: None,
+        memory_recorder: None,
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
+        provider_catalogs: std::collections::HashMap::new(),
+        filter_ctx: None,
+        recorder: None,
+    };
+
+    let outputs = run_pipeline(inputs).await.expect("pipeline runs");
+    assert!(
+        outputs.trader.is_some(),
+        "model should get an error tool_result and recover to a final trader response"
+    );
+
+    let calls = invocations.lock().unwrap().clone();
+    assert!(
+        calls.is_empty(),
+        "unadvertised indicator_panel tool_use must not invoke the registry; got {calls:?}"
+    );
+
+    let requests = dispatch.requests();
+    assert!(
+        requests.len() >= 2,
+        "expected a recovery dispatch after the denied tool_use; got {}",
+        requests.len()
+    );
+    assert!(
+        requests[0].tools.is_empty(),
+        "strategy with no required_tools must not advertise indicator_panel; got {:?}",
+        requests[0].tools
+    );
+    let denied_tool_result = requests[1].messages.iter().any(|m| {
+        m.content.iter().any(|c| match c {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
+                tool_use_id == "tu-indicator-1" && *is_error == Some(true) && content.contains("not allowed")
+            }
+            _ => false,
+        })
+    });
+    assert!(
+        denied_tool_result,
+        "second dispatch must carry an error ToolResult for the denied tool_use; messages={:?}",
+        requests[1].messages
+    );
+}
+
 // ---------------------------------------------------------------------------
 // (c) tool execution emits observability spans carrying the tool name.
-//
-// F43 (`trace-dock-emitters`, in flight) will add a `SpanKind::ToolCall`
-// for the actual invocation. Until that lands, the engine emits
-// `ToolValidateInput` + `ToolValidateOutput` brackets around each
-// `tool_call::invoke` — those carry the tool_name attribute (see
-// `agent_span_taxonomy.rs`). We assert against the present surface and
-// leave a TODO so the test tightens when F43 ships.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn indicator_panel_invocation_emits_validate_spans_for_trace_dock() {
-    // TODO(F43 trace-dock-emitters): once SpanKind::ToolCall lands,
-    // tighten the assertion below to require the dedicated tool.call
-    // span (not just the validate brackets).
-
     let strategy = strategy_with_required_tools(vec!["indicator_panel".into()]);
     let resolved = ResolvedAgentSlot {
         role: "trader".into(),
@@ -410,6 +475,25 @@ async fn indicator_panel_invocation_emits_validate_spans_for_trace_dock() {
     }
     let events = recorder.snapshot().await;
 
+    let tool_call_spans: Vec<&xvision_observability::SpanStartedEvent> = events
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::SpanStarted(s) if matches!(s.kind, SpanKind::ToolCall) => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tool_call_spans.len(),
+        1,
+        "expected one ToolCall span per indicator_panel invocation; got {}",
+        tool_call_spans.len()
+    );
+    assert_eq!(
+        tool_call_spans[0].name, "indicator_panel",
+        "ToolCall span must carry tool name `indicator_panel`; got {:?}",
+        tool_call_spans[0].name
+    );
+
     let validate_spans: Vec<&xvision_observability::SpanStartedEvent> = events
         .iter()
         .filter_map(|e| match e {
@@ -436,26 +520,4 @@ async fn indicator_panel_invocation_emits_validate_spans_for_trace_dock() {
             span.name
         );
     }
-
-    // Belt-and-suspenders: the suppressed F43 surface should not yet
-    // emit a dedicated tool.call span; once it does, the TODO above
-    // points to where to tighten this test.
-    let tool_call_spans: Vec<_> = events
-        .iter()
-        .filter_map(|e| match e {
-            RunEvent::SpanStarted(s) => Some(s),
-            _ => None,
-        })
-        .filter(|s| {
-            // Anything whose name implies "tool.call" landing — the
-            // F43 contract will land a new SpanKind variant; until
-            // then the discriminant test would be flaky. We log the
-            // count for diagnostic purposes only.
-            s.kind == SpanKind::ToolValidateInput && s.name == "indicator_panel"
-        })
-        .collect();
-    assert!(
-        !tool_call_spans.is_empty(),
-        "regression guard: at least one tool-related span must be present (validate brackets)"
-    );
 }

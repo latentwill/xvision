@@ -184,6 +184,8 @@ async fn list_returns_summaries_for_existing_strategys() {
             published_at: None,
 
             min_warmup_bars: None,
+
+            color: None,
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -195,6 +197,7 @@ async fn list_returns_summaries_for_existing_strategys() {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     store.save(&strategy).await.unwrap();
 

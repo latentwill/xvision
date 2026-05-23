@@ -73,6 +73,7 @@ fn minimal_strategy() -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -90,6 +91,7 @@ fn minimal_strategy() -> Strategy {
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 

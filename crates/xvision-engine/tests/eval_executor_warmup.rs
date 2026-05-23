@@ -80,6 +80,7 @@ fn build_strategy(agent_id: &str) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: Some(13),
+            color: None,
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -98,6 +99,7 @@ fn build_strategy(agent_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({"ema_fast": 5, "ema_slow": 13}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 

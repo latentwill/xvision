@@ -1,0 +1,48 @@
+[
+  {
+    "idx": 22,
+    "side": "top",
+    "type": "PATTERN",
+    "title": "Bull Flag",
+    "body": "Flag consolidation after impulse. Breakout > 64,920 likely retests 63,100 wick.",
+    "conf": 0.74,
+    "action": "WATCH"
+  },
+  {
+    "idx": 52,
+    "side": "bottom",
+    "type": "FLOW",
+    "title": "Volume Divergence",
+    "body": "LL price with HH buy volume — accumulation footprint, 3-bar window.",
+    "conf": 0.68,
+    "action": "LONG"
+  },
+  {
+    "idx": 80,
+    "side": "top",
+    "type": "RISK",
+    "title": "Liquidation Wall",
+    "body": "$48M long liq cluster at 65,800. Likely magnet on next vol expansion.",
+    "conf": 0.82,
+    "action": "CAUTION",
+    "danger": true
+  },
+  {
+    "idx": 110,
+    "side": "bottom",
+    "type": "REVERSION",
+    "title": "RSI Reset",
+    "body": "RSI cooled 71 → 47 without breaking trend. Mean-reversion re-entry zone.",
+    "conf": 0.61,
+    "action": "LONG"
+  },
+  {
+    "idx": 144,
+    "side": "top",
+    "type": "STRUCTURE",
+    "title": "Break of Structure",
+    "body": "HL → HH → BoS sequence confirmed. Bias flips bullish on close > 65,200.",
+    "conf": 0.79,
+    "action": "LONG"
+  }
+]

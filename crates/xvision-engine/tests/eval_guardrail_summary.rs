@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use chrono::{Duration, TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
@@ -38,7 +38,11 @@ const MIGRATION_018: &str = include_str!("../migrations/018_agent_run_observabil
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 async fn fresh_store() -> RunStore {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query("PRAGMA foreign_keys = OFF")
         .execute(&pool)
         .await
@@ -190,6 +194,7 @@ fn minimal_strategy(agent_id: &str) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -207,6 +212,7 @@ fn minimal_strategy(agent_id: &str) -> Strategy {
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+        acknowledge_no_filter: false,
     }
 }
 

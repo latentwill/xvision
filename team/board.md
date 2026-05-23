@@ -30,12 +30,36 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 - [memory-aware-eval-findings](contracts/memory-aware-eval-findings.md) — **P2 leaf** · deferred (depends on `memory-provenance-in-decisions-trace`) · per-decision finding extractor.
 
+### agent-firing-filter-operator-surface-2026-05-22 — operator surface for the Filter capability
+
+Phase 1 (`agent-firing-filter-form-and-docs`) merged 2026-05-22 via PR #548; closed 2026-05-23. Phases 2 + 3 dispatched 2026-05-23 — see `team/briefings/2026-05-23-agent-firing-filter-phases-2-3.md`. Engine substrate complete (agent-graph Phases A–E all merged).
+
+- [agent-firing-filter-cli-verbs](contracts/agent-firing-filter-cli-verbs.md) — **P2 CLI** · claimed · `xvn agent create`, `xvn strategy add-filter`, `remove-filter`; soft-warning in `validate`.
+- [agent-firing-filter-strategy-composer](contracts/agent-firing-filter-strategy-composer.md) — **P3 SPA** · claimed · StrategyForm "When does this fire?" section + inline Filter composer; one schema field (`agents.scope_strategy_id`) for the "Save as reusable agent" toggle.
+
 ### cli-operator-safety-wave-b-2026-05-22 — model-bakeoff cluster
 
 Wave A (#530/#531/#532) and Wave B #5/#6 (#538/#537) merged
 2026-05-22. The clone helper remains as the one unshipped Wave B leaf.
 
 - [cli-strategy-clone-model-override](contracts/cli-strategy-clone-model-override.md) — **P1 leaf** · ready · `xvn strategy clone <id> --provider X --model Y --name N`.
+
+### charts-section-2026-05-23 — Track B of chart-rework spec (4 canvases + foundation)
+
+Track B of `docs/superpowers/specs/2026-05-21-chart-rework-klinecharts-uplot.md`,
+folding in the 2026-05-22 Claude design handoff under
+`docs/design/trading-charts/XVN.zip`. Adds a `Charts` left-nav section
+(between Scenarios and Eval) with four dashboard canvases. Chart 04
+(Liquidation Heatmap) is parked as F-CHART-LIQHEAT — not in this wave.
+
+- [charts-section-b0](contracts/charts-section-b0.md) — **P0 foundation** · ready · sidebar entry, `/charts` route topology, `Strategy.color` migration 034, theme-token superset, three fixtures, `/api/v2/charts/dashboards/overview` stub, `/chart-lab/dashboards` tab.
+- B1 (`charts-section-b1`) — Dark Minimal Strategy Dashboard → `/charts/overview`. **Contract authored when B0 lands.** Plan: `docs/superpowers/plans/2026-05-23-charts-section-b1-overview-dashboard.md`.
+- B2 (`charts-section-b2`) — Comparison AB Scalable → `/charts/compare`. Plan: `docs/superpowers/plans/2026-05-23-charts-section-b2-comparison-ab.md`. **Parallel-safe with B3 after B1 lands** (B2 reuses B1's primitives; B3 doesn't).
+- B3 (`charts-section-b3`) — AI Annotation Chart → `/charts/annotated`. Plan: `docs/superpowers/plans/2026-05-23-charts-section-b3-ai-annotation.md`. **Parallel-safe with B1+B2 after B0 lands** (no shared primitives).
+- B4 (`charts-section-b4`) — Gradient Warm Hero → `/charts/hero`. Plan: `docs/superpowers/plans/2026-05-23-charts-section-b4-gradient-hero.md`. Depends on B0 + B1.
+- B5 — Review checkpoint (no code commitment) — decide whether `/` should redirect/alias to `/charts/hero` after all four canvases are in production. Fires after B4 lands.
+- B-rollout — drop the `xvn.chartv2=1` cookie gate for the Charts sidebar entry.
+- F-CHART-LIQHEAT — followup, Chart 04 Liquidation Heatmap. Not in this wave; tokens + payload type land in B0 so the followup picks up rework-free.
 
 ## Open PRs (in-flight, not yet merged)
 

@@ -145,6 +145,20 @@ pub struct Strategy {
     /// adds CRUD). Must be `None` when `activation_mode == EveryBar`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<Filter>,
+
+    /// Suppresses the no-Filter soft-warning that `validate_strategy`
+    /// emits when a Trader/Critic agent has no upstream Filter wired
+    /// into the pipeline. Operators who deliberately want every-bar
+    /// dispatch (e.g. a long-horizon trader where Filter would be over-
+    /// optimization) set this to `true` to acknowledge the cost.
+    ///
+    /// Default `false`; absent from disk for default-false strategies so
+    /// pre-firing-filter-CLI JSON files round-trip byte-stable. Operators
+    /// flip it via `xvn strategy create --no-filter-warning` /
+    /// `xvn strategy edit --no-filter-warning`. See contract
+    /// `team/contracts/agent-firing-filter-cli-verbs.md` Phase 2.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub acknowledge_no_filter: bool,
 }
 
 fn default_activation_mode() -> ActivationMode {
@@ -228,6 +242,8 @@ struct StrategyRaw {
     activation_mode: ActivationMode,
     #[serde(default)]
     filter: Option<Filter>,
+    #[serde(default)]
+    acknowledge_no_filter: bool,
 }
 
 impl<'de> Deserialize<'de> for Strategy {
@@ -248,6 +264,7 @@ impl<'de> Deserialize<'de> for Strategy {
             mechanical_params: raw.mechanical_params,
             activation_mode: raw.activation_mode,
             filter: raw.filter,
+            acknowledge_no_filter: raw.acknowledge_no_filter,
         })
     }
 }
@@ -278,6 +295,7 @@ mod tests {
             mechanical_params: params,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
+            acknowledge_no_filter: false,
         }
     }
 
@@ -347,6 +365,7 @@ mod tests {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         }
     }
 
@@ -437,6 +456,7 @@ mod tests {
             mechanical_params: json!({}),
             activation_mode: ActivationMode::EveryBar,
             filter: None,
+            acknowledge_no_filter: false,
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(!s.contains("\"agents\""), "empty agents omitted: {s}");
@@ -473,6 +493,7 @@ mod tests {
             mechanical_params: json!({}),
             activation_mode: ActivationMode::EveryBar,
             filter: None,
+            acknowledge_no_filter: false,
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(

@@ -74,6 +74,7 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         hypothesis: None,
         agents,
@@ -88,6 +89,7 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     }
 }
 

@@ -77,6 +77,7 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
+            color: None,
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -92,6 +93,7 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
         mechanical_params: json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
+    acknowledge_no_filter: false,
     };
     validate_strategy(&strategy).expect("strategy with AgentRef and no slot prompt validates");
 }

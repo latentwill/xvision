@@ -1,18 +1,16 @@
-//! `xvn agent` — inspect agent records from the workspace agent
-//! library. The agents themselves are authored through the dashboard
-//! (`/agents/new`); this CLI surface exposes a scriptable read path so
-//! eval-runner scripts can fetch an agent's resolved provider/model/
-//! `max_tokens` shape and feed it back into automation.
-//!
-//! v1 surface: `get <id>`. List is intentionally out of scope (see the
-//! q15-object-json-output contract — "List endpoints add separately if
-//! a follow-up QA item requests it"). When that lands, drop `Op::List`
-//! in here alongside the existing dashboard `list` route.
+//! `xvn agent` — inspect and author agent records in the workspace
+//! agent library. v1 was read-only (`get <id>`); the firing-filter
+//! operator surface adds `create` so script-driven setups (notably the
+//! "intern → filter agent" pattern from the capability-first refactor)
+//! don't require the SPA. See contract
+//! `team/contracts/agent-firing-filter-cli-verbs.md`.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
+use xvision_engine::agents::{default_capabilities, AgentSlot, Capability};
 use xvision_engine::api::agents as agents_api;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 
@@ -31,6 +29,12 @@ pub enum Op {
     /// inside `EvalRunExport` — same Rust struct, same Serialize impl.
     #[command(visible_alias = "show")]
     Get(GetArgs),
+    /// Create a new agent record in the workspace agent library.
+    ///
+    /// The created agent is a single-slot `Agent` with `slots[0].capabilities`
+    /// set from `--capability`. `--system-prompt` may be a literal string
+    /// or `@<path>` to read the prompt from a file.
+    Create(CreateArgs),
 }
 
 #[derive(Args, Debug)]
@@ -46,9 +50,81 @@ pub struct GetArgs {
     pub format: ObjectFormat,
 }
 
+/// Wire form of the capability classes. Mirrors
+/// `xvision_engine::agents::Capability` 1:1; kept as a separate clap
+/// enum so the CLI surface owns its own value-help string and we don't
+/// have to derive `ValueEnum` on the engine type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "lowercase")]
+pub enum CapabilityArg {
+    Trader,
+    Filter,
+    Critic,
+    Intern,
+    Router,
+}
+
+impl From<CapabilityArg> for Capability {
+    fn from(arg: CapabilityArg) -> Self {
+        match arg {
+            CapabilityArg::Trader => Capability::Trader,
+            CapabilityArg::Filter => Capability::Filter,
+            CapabilityArg::Critic => Capability::Critic,
+            CapabilityArg::Intern => Capability::Intern,
+            CapabilityArg::Router => Capability::Router,
+        }
+    }
+}
+
+#[derive(Args, Debug)]
+pub struct CreateArgs {
+    /// Display name for the agent.
+    #[arg(long)]
+    pub name: String,
+    /// Capability class the single slot advertises.
+    #[arg(long, value_enum)]
+    pub capability: CapabilityArg,
+    /// LLM provider id (e.g. `anthropic`, `openrouter`).
+    #[arg(long)]
+    pub provider: String,
+    /// Model id (e.g. `claude-haiku-4-5`, `deepseek/deepseek-chat`).
+    #[arg(long)]
+    pub model: String,
+    /// System prompt body. Prefix with `@` to read from a file
+    /// (`--system-prompt @path/to/prompt.md`); otherwise the value is
+    /// used verbatim.
+    #[arg(long)]
+    pub system_prompt: String,
+    /// Optional skill ids (ULIDs into the workspace skill registry).
+    /// Repeatable: `--skills <id> --skills <id>`.
+    #[arg(long = "skills")]
+    pub skills: Vec<String>,
+    /// Optional sampling temperature. Passed through to the provider
+    /// verbatim — no clamping.
+    #[arg(long)]
+    pub temperature: Option<f64>,
+    /// Optional max-tokens override. `None` lets the dispatcher resolve
+    /// it from the model's canonical metadata.
+    #[arg(long)]
+    pub max_tokens: Option<u32>,
+    /// Optional free-form description for the agent record.
+    #[arg(long, default_value = "")]
+    pub description: String,
+    /// Repeatable tag for filtering in the agent library.
+    #[arg(long = "tags")]
+    pub tags: Vec<String>,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Output format for the created agent.
+    #[arg(long, value_enum, default_value_t = ObjectFormat::Json)]
+    pub format: ObjectFormat,
+}
+
 pub async fn run(cmd: AgentCmd) -> CliResult<()> {
     match cmd.op {
         Op::Get(args) => run_get(args).await,
+        Op::Create(args) => run_create(args).await,
     }
 }
 
@@ -59,6 +135,83 @@ async fn run_get(args: GetArgs) -> CliResult<()> {
     let agent = agents_api::get(&ctx, &args.agent_id)
         .await
         .map_err(|e| api_to_cli("agent get", e))?;
+    emit_object(&agent, args.format)
+}
+
+/// Read a `--system-prompt` arg. Values prefixed with `@` are
+/// interpreted as a path relative to the current working directory and
+/// the file contents are returned verbatim; any other value is used
+/// as-is. Mirrors the `@file` convention from other Anthropic SDK
+/// surfaces so operators don't have to remember a custom flag.
+fn read_system_prompt(value: &str) -> CliResult<String> {
+    if let Some(path) = value.strip_prefix('@') {
+        std::fs::read_to_string(path)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("read --system-prompt file `{path}`: {e}")))
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+async fn run_create(args: CreateArgs) -> CliResult<()> {
+    if args.name.trim().is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--name must be non-empty")));
+    }
+    if args.provider.trim().is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--provider must be non-empty")));
+    }
+    if args.model.trim().is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--model must be non-empty")));
+    }
+
+    let system_prompt = read_system_prompt(&args.system_prompt)?;
+    if system_prompt.trim().is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--system-prompt must be non-empty (after reading the file, when prefixed with @)"
+        )));
+    }
+
+    // Capabilities default to {Trader}; explicitly set the requested
+    // capability so the persisted shape matches the operator's intent.
+    let cap: Capability = args.capability.into();
+    let mut capabilities: BTreeSet<Capability> = default_capabilities();
+    capabilities.clear();
+    capabilities.insert(cap);
+
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    let prompt_version = AgentSlot::compute_prompt_version(&system_prompt);
+    let slot = AgentSlot {
+        name: "main".to_string(),
+        provider: args.provider.trim().to_string(),
+        model: args.model.trim().to_string(),
+        system_prompt,
+        skill_ids: args.skills.clone(),
+        max_tokens: args.max_tokens,
+        temperature: args.temperature,
+        prompt_version,
+        inputs_policy: Default::default(),
+        bar_history_limit: None,
+        memory_mode: Default::default(),
+        noop_skip: None,
+        capabilities,
+        delta_briefing: None,
+    };
+
+    let agent = agents_api::create(
+        &ctx,
+        agents_api::CreateAgentRequest {
+            name: args.name,
+            description: args.description,
+            tags: args.tags,
+            slots: vec![slot],
+            scope_strategy_id: None,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("agent create", e))?;
+
     emit_object(&agent, args.format)
 }
 
