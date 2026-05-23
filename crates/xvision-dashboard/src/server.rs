@@ -138,7 +138,7 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, chat_rail, charts_dashboards, cli, docs,
+    agent_runs, agents, bars, chat_rail, charts_annotated, charts_dashboards, cli, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
     health::health,
@@ -192,6 +192,17 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/v2/charts/dashboards/overview",
             get(charts_dashboards::overview),
+        )
+        // B3 — AI annotation chart. Both endpoints fixture-backed; the
+        // live producer is out of scope per spec §9, so /live returns
+        // candles + empty annotations.
+        .route(
+            "/api/v2/charts/annotated/:run_id",
+            get(charts_annotated::run),
+        )
+        .route(
+            "/api/v2/charts/annotated/live/:symbol",
+            get(charts_annotated::live),
         )
         .route("/api/agent-runs/:id", get(agent_runs::get))
         .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))

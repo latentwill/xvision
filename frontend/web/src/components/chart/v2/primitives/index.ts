@@ -33,3 +33,8 @@ export * from "./StrategyRosterPills";
 export * from "./StrategyCardGrid";
 export * from "./StrategyCard";
 export * from "./LeadCardChrome";
+// B3 — AI Annotation additions.
+export * from "./AiEnginePill";
+export * from "./Callout";
+export * from "./AnnotationOverlay";
+export * from "./InsightLog";
