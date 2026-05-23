@@ -25,7 +25,7 @@ pub use model::{default_capabilities, Agent, AgentSlot, InputsPolicy};
 // linking the engine. The engine re-exports the names it consumes.
 pub use xvision_core::providers::{lookup_model, ModelClass, ModelMetadata};
 
-pub use store::{AgentStore, ListFilter, NewAgent, UpdateAgent};
+pub use store::{AgentStore, ListFilter, NewAgent, ScopeFilter, ScopePatch, UpdateAgent};
 pub use templates::{builtin_templates, AgentTemplate};
 pub use validate::{
     validate_agent, validate_agent_for_save, AuditFinding, Severity, ValidationDiagnostic,

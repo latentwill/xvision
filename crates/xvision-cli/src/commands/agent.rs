@@ -138,6 +138,7 @@ pub mod get {
                         capabilities: xvision_engine::agents::default_capabilities(),
                         delta_briefing: None,
                     }],
+                    scope_strategy_id: None,
                 },
             )
             .await

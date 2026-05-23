@@ -29,15 +29,44 @@ export type ProviderModelPair = {
 };
 
 export type PipelineKind = "single" | "sequential" | "graph";
-type AgentRef = {
+
+// Capability the agent slot plays in this strategy. See
+// `frontend/web/src/api/types.gen/Capability.ts` for the canonical
+// generated form; mirror it locally so this module doesn't have to
+// import the generated barrel for one type.
+export type Capability = "trader" | "filter" | "critic" | "intern" | "router";
+
+// Predicate evaluated against an upstream Filter agent's signal. Mirrors
+// `EdgePredicate` from the engine — kept inline so strategies.ts stays
+// self-contained (the strategy module doesn't have ts-rs derives yet).
+export type EdgePredicate =
+  | { eq: { signal_field: string; value: unknown } }
+  | { neq: { signal_field: string; value: unknown } }
+  | { gte: { signal_field: string; value: unknown } }
+  | { lte: { signal_field: string; value: unknown } }
+  | { in: { signal_field: string; values: unknown[] } }
+  | { all: EdgePredicate[] }
+  | { any: EdgePredicate[] }
+  | { not: EdgePredicate };
+
+export type AgentRef = {
   agent_id: string;
   role: string;
+  /// Which capability this position activates. `undefined` (default)
+  /// lets the runtime pick the slot's first capability — `trader` for
+  /// every legacy slot. Set to `"filter"` by the inline composer when
+  /// adding a Filter agent to a strategy.
+  activates?: Capability | null;
 };
-type PipelineEdge = {
+export type PipelineEdge = {
   from_role: string;
   to_role: string;
+  /// Optional firing predicate. `undefined` (default) = unconditional;
+  /// the edge fires every cycle. `Some(p)` gates the edge on the
+  /// upstream Filter agent's most-recent signal.
+  condition?: EdgePredicate | null;
 };
-type PipelineDef = {
+export type PipelineDef = {
   kind: PipelineKind;
   edges?: PipelineEdge[];
 };

@@ -102,6 +102,7 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         },
     )
     .await

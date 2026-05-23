@@ -119,6 +119,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         })
         .await
         .expect("seed trader agent")
@@ -537,6 +538,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 capabilities: xvision_engine::agents::default_capabilities(),
                 delta_briefing: None,
             }],
+            scope_strategy_id: None,
         })
         .await
         .expect("agent_store.create must succeed");

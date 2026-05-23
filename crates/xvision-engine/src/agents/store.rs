@@ -27,6 +27,12 @@ pub struct NewAgent {
     pub description: String,
     pub tags: Vec<String>,
     pub slots: Vec<AgentSlot>,
+    /// Optional strategy id this agent is scoped to. `None` (default)
+    /// = workspace-visible agent. `Some(id)` = hidden from the default
+    /// list, only surfaces when the caller passes
+    /// `ScopeFilter::Strategy(id)` or `ScopeFilter::All`. Migration 036.
+    #[serde(default)]
+    pub scope_strategy_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -35,6 +41,49 @@ pub struct UpdateAgent {
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub slots: Option<Vec<AgentSlot>>,
+    /// Patch the agent's scope. `None` here = "don't touch"; use
+    /// `Some(ScopePatch::Clear)` to promote a scoped agent to the
+    /// workspace or `Some(ScopePatch::Set(id))` to scope it.
+    #[serde(default)]
+    pub scope_strategy_id: Option<ScopePatch>,
+}
+
+/// Three-valued patch for `Agent.scope_strategy_id`. The outer
+/// `Option` distinguishes "leave the column alone" (`None`) from "set
+/// to a value" (`Some(Set(_))`) and "clear to NULL" (`Some(Clear)`).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopePatch {
+    Set(String),
+    Clear,
+}
+
+/// How `AgentStore::list` filters by `scope_strategy_id`.
+///
+/// - `Workspace` (the default) — only rows where the column is NULL.
+///   What `GET /api/agents` returns when the caller doesn't pass a
+///   `scope` query param.
+/// - `Strategy(id)` — rows where the column is NULL OR equals `id`.
+///   The strategy editor uses this so workspace agents and the
+///   strategy's own scoped agents merge into one picker.
+/// - `All` — no filter on the column. Diagnostic / migration use.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopeFilter {
+    Workspace,
+    Strategy(String),
+    All,
+}
+
+impl Default for ScopeFilter {
+    fn default() -> Self {
+        ScopeFilter::Workspace
+    }
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -46,6 +95,11 @@ pub struct ListFilter {
     /// OFFSET without LIMIT, so the store only emits the clause when
     /// both are present.
     pub offset: Option<i64>,
+    /// Scope visibility filter — see `ScopeFilter`. Default is
+    /// `Workspace`: scoped agents (rows with non-NULL
+    /// `scope_strategy_id`) are hidden unless the caller opts in.
+    #[serde(default)]
+    pub scope: ScopeFilter,
 }
 
 impl AgentStore {
@@ -68,6 +122,7 @@ impl AgentStore {
                 archived: false,
                 created_at: now,
                 updated_at: now,
+                scope_strategy_id: new.scope_strategy_id.clone(),
             };
             validate_agent_for_save(&probe)
                 .map_err(|msg| anyhow::anyhow!("save validation failed: {msg}"))?;
@@ -86,8 +141,8 @@ impl AgentStore {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO agents (agent_id, name, description, tags_json, archived, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, 0, ?, ?)",
+            "INSERT INTO agents (agent_id, name, description, tags_json, archived, created_at, updated_at, scope_strategy_id) \
+             VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.name)
@@ -95,6 +150,7 @@ impl AgentStore {
         .bind(&tags_json)
         .bind(&now)
         .bind(&now)
+        .bind(new.scope_strategy_id.as_deref())
         .execute(&mut *tx)
         .await
         .with_context(|| format!("insert agent name={}", new.name))?;
@@ -109,7 +165,7 @@ impl AgentStore {
 
     pub async fn get(&self, agent_id: &str) -> Result<Option<Agent>> {
         let row = sqlx::query(
-            "SELECT agent_id, name, description, tags_json, archived, created_at, updated_at \
+            "SELECT agent_id, name, description, tags_json, archived, created_at, updated_at, scope_strategy_id \
              FROM agents WHERE agent_id = ?",
         )
         .bind(agent_id)
@@ -124,7 +180,7 @@ impl AgentStore {
 
     pub async fn list(&self, filter: ListFilter) -> Result<Vec<Agent>> {
         let mut sql = String::from(
-            "SELECT agent_id, name, description, tags_json, archived, created_at, updated_at \
+            "SELECT agent_id, name, description, tags_json, archived, created_at, updated_at, scope_strategy_id \
              FROM agents WHERE 1=1",
         );
         if !filter.include_archived {
@@ -132,6 +188,16 @@ impl AgentStore {
         }
         if filter.name_contains.is_some() {
             sql.push_str(" AND name LIKE ?");
+        }
+        // Scope filter — see `ScopeFilter`. The default `Workspace`
+        // hides scoped agents; `Strategy(id)` merges workspace +
+        // strategy-scoped; `All` opts out entirely.
+        match &filter.scope {
+            ScopeFilter::Workspace => sql.push_str(" AND scope_strategy_id IS NULL"),
+            ScopeFilter::Strategy(_) => {
+                sql.push_str(" AND (scope_strategy_id IS NULL OR scope_strategy_id = ?)")
+            }
+            ScopeFilter::All => {}
         }
         sql.push_str(" ORDER BY updated_at DESC");
         if filter.limit.is_some() {
@@ -144,6 +210,9 @@ impl AgentStore {
         let mut q = sqlx::query(&sql);
         if let Some(ref needle) = filter.name_contains {
             q = q.bind(format!("%{}%", needle));
+        }
+        if let ScopeFilter::Strategy(id) = &filter.scope {
+            q = q.bind(id.clone());
         }
         if let Some(limit) = filter.limit {
             q = q.bind(limit);
@@ -172,9 +241,19 @@ impl AgentStore {
         if filter.name_contains.is_some() {
             sql.push_str(" AND name LIKE ?");
         }
+        match &filter.scope {
+            ScopeFilter::Workspace => sql.push_str(" AND scope_strategy_id IS NULL"),
+            ScopeFilter::Strategy(_) => {
+                sql.push_str(" AND (scope_strategy_id IS NULL OR scope_strategy_id = ?)")
+            }
+            ScopeFilter::All => {}
+        }
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
         if let Some(ref needle) = filter.name_contains {
             q = q.bind(format!("%{}%", needle));
+        }
+        if let ScopeFilter::Strategy(id) = &filter.scope {
+            q = q.bind(id.clone());
         }
         let n: i64 = q.fetch_one(&self.pool).await.context("count agents")?;
         Ok(n as u64)
@@ -190,6 +269,11 @@ impl AgentStore {
         // Save-gate: build the post-patch view and run content-quality checks
         // before touching the DB. Only the fields being patched need merging.
         {
+            let post_scope = match &patch.scope_strategy_id {
+                None => existing_agent.scope_strategy_id.clone(),
+                Some(ScopePatch::Clear) => None,
+                Some(ScopePatch::Set(id)) => Some(id.clone()),
+            };
             let probe = Agent {
                 agent_id: existing_agent.agent_id.clone(),
                 name: patch.name.clone().unwrap_or_else(|| existing_agent.name.clone()),
@@ -205,6 +289,7 @@ impl AgentStore {
                 archived: existing_agent.archived,
                 created_at: existing_agent.created_at,
                 updated_at: existing_agent.updated_at,
+                scope_strategy_id: post_scope,
             };
             validate_agent_for_save(&probe)
                 .map_err(|msg| anyhow::anyhow!("save validation failed: {msg}"))?;
@@ -237,6 +322,28 @@ impl AgentStore {
                 .bind(agent_id)
                 .execute(&mut *tx)
                 .await?;
+        }
+        match patch.scope_strategy_id {
+            None => {}
+            Some(ScopePatch::Clear) => {
+                sqlx::query(
+                    "UPDATE agents SET scope_strategy_id = NULL, updated_at = ? WHERE agent_id = ?",
+                )
+                .bind(&now)
+                .bind(agent_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            Some(ScopePatch::Set(id)) => {
+                sqlx::query(
+                    "UPDATE agents SET scope_strategy_id = ?, updated_at = ? WHERE agent_id = ?",
+                )
+                .bind(id)
+                .bind(&now)
+                .bind(agent_id)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
         if let Some(slots) = patch.slots {
             // F-5 pre-persist drift gate (same rules as `create`).
@@ -441,6 +548,11 @@ fn row_to_agent(row: sqlx::sqlite::SqliteRow, slots: Vec<AgentSlot>) -> Result<A
     let updated_at_s: String = row.try_get("updated_at")?;
     let created_at = DateTime::parse_from_rfc3339(&created_at_s)?.with_timezone(&Utc);
     let updated_at = DateTime::parse_from_rfc3339(&updated_at_s)?.with_timezone(&Utc);
+    // Migration 036: nullable TEXT column. `try_get` returns
+    // `Err(ColumnNotFound)` on rows from pre-036 schemas (test pools
+    // that forgot to apply the migration); fall back to `None` so the
+    // read path stays robust.
+    let scope_strategy_id: Option<String> = row.try_get("scope_strategy_id").ok().flatten();
 
     Ok(Agent {
         agent_id: row.try_get("agent_id")?,
@@ -451,6 +563,7 @@ fn row_to_agent(row: sqlx::sqlite::SqliteRow, slots: Vec<AgentSlot>) -> Result<A
         archived: archived_int != 0,
         created_at,
         updated_at,
+        scope_strategy_id,
     })
 }
 
@@ -488,6 +601,12 @@ mod tests {
         // `{Trader}` for any row that somehow lacks a stored value.
         let migration_033 = include_str!("../../migrations/033_agent_slot_capabilities.sql");
         sqlx::query(migration_033).execute(&pool).await.unwrap();
+        // 036 adds agents.scope_strategy_id (Phase 3 of
+        // agent-firing-filter). Nullable TEXT — read path falls back
+        // to `None` even when the column is missing, but the write
+        // path needs the column to exist.
+        let migration_036 = include_str!("../../migrations/036_agents_scope_strategy_id.sql");
+        sqlx::query(migration_036).execute(&pool).await.unwrap();
         pool
     }
 
@@ -530,6 +649,7 @@ mod tests {
                 description: "Buys dips on 15m.".to_string(),
                 tags: vec!["mean-rev".to_string(), "btc".to_string()],
                 slots: vec![sample_slot()],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -551,6 +671,7 @@ mod tests {
                 description: String::new(),
                 tags: vec![],
                 slots: vec![sample_slot()],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -560,6 +681,7 @@ mod tests {
                 description: String::new(),
                 tags: vec![],
                 slots: vec![sample_slot()],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -588,6 +710,7 @@ mod tests {
                 description: String::new(),
                 tags: vec![],
                 slots: vec![sample_slot()],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -627,6 +750,7 @@ mod tests {
                 description: String::new(),
                 tags: vec![],
                 slots: vec![sample_slot()],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -655,6 +779,7 @@ mod tests {
                     max_tokens: None,
                     ..sample_slot()
                 }],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -679,6 +804,7 @@ mod tests {
                         inputs_policy: policy,
                         ..sample_slot()
                     }],
+                    scope_strategy_id: None,
                 })
                 .await
                 .unwrap();
@@ -697,6 +823,7 @@ mod tests {
                 description: String::new(),
                 tags: vec![],
                 slots: vec![sample_slot()], // Raw default
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -738,6 +865,7 @@ mod tests {
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -755,6 +883,7 @@ mod tests {
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -773,6 +902,7 @@ mod tests {
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     ..sample_slot()
                 }],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -786,6 +916,7 @@ mod tests {
                 description: String::new(),
                 tags: vec![],
                 slots: vec![sample_slot()],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -826,6 +957,7 @@ mod tests {
                     memory_mode: MemoryMode::Off,
                     ..sample_slot()
                 }],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -842,6 +974,7 @@ mod tests {
                     memory_mode: MemoryMode::Global,
                     ..sample_slot()
                 }],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -858,6 +991,7 @@ mod tests {
                     memory_mode: MemoryMode::AgentScoped,
                     ..sample_slot()
                 }],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -871,6 +1005,7 @@ mod tests {
                 description: String::new(),
                 tags: vec![],
                 slots: vec![sample_slot()],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();
@@ -903,6 +1038,7 @@ mod tests {
                     max_tokens: Some(6000),
                     ..sample_slot()
                 }],
+                scope_strategy_id: None,
             })
             .await
             .unwrap();

@@ -96,6 +96,7 @@ pub async fn list(
             q: q.q,
             limit: Some(limit),
             offset: Some(offset),
+            scope: None,
         },
     )
     .await?;
@@ -226,6 +227,7 @@ pub mod get {
                     capabilities: xvision_engine::agents::default_capabilities(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await

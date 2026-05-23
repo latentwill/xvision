@@ -84,6 +84,7 @@ fn seed_strategy_with_trader(
                     capabilities: xvision_engine::agents::default_capabilities(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await
