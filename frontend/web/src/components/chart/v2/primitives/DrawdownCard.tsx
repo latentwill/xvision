@@ -23,12 +23,18 @@ export interface DrawdownStats {
   recoveryDays: number | null;
 }
 
+export type DrawdownLeadStyle = "default" | "gold-tinted-red";
+
 export interface DrawdownCardProps {
   title?: string;
   /** Time-series drawdown points (≤ 0 values). */
   points: DrawdownPoint[];
   stats: DrawdownStats;
   height?: number;
+  /** Cosmetic variant. `gold-tinted-red` (B4 hero) tints the title
+   *  border + footer dividers with gold; the pane itself stays
+   *  driven by Chart2ThemeDefinition.panes.drawdown. */
+  leadStyle?: DrawdownLeadStyle;
 }
 
 /**
@@ -51,16 +57,40 @@ export function DrawdownCard({
   points,
   stats,
   height = 140,
+  leadStyle = "default",
 }: DrawdownCardProps): ReactElement {
+  const isLead = leadStyle === "gold-tinted-red";
   return (
-    <div className="border border-border rounded-card bg-surface-card overflow-hidden">
-      <header className="px-4 py-3 border-b border-border">
+    <div
+      className={[
+        "border rounded-card overflow-hidden",
+        isLead
+          ? "bg-surface-card"
+          : "border-border bg-surface-card",
+      ].join(" ")}
+      style={isLead ? { borderColor: "rgba(212,165,71,0.32)" } : undefined}
+      data-testid="drawdown-card"
+      data-lead-style={leadStyle}
+    >
+      <header
+        className={[
+          "px-4 py-3 border-b",
+          isLead ? "" : "border-border",
+        ].join(" ")}
+        style={isLead ? { borderBottomColor: "rgba(212,165,71,0.28)" } : undefined}
+      >
         <div className="caps">{title}</div>
       </header>
       <div className="px-4 py-3">
         <UplotDrawdownPane points={points} height={height} />
       </div>
-      <footer className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 py-3 border-t border-border-soft">
+      <footer
+        className={[
+          "grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 py-3 border-t",
+          isLead ? "" : "border-border-soft",
+        ].join(" ")}
+        style={isLead ? { borderTopColor: "rgba(212,165,71,0.20)" } : undefined}
+      >
         <Stat label="Max DD" value={formatPct(stats.maxDrawdownPct)} danger />
         <Stat label="Avg DD" value={formatPct(stats.avgDrawdownPct)} danger />
         <Stat label="Duration" value={formatDays(stats.durationDays)} />

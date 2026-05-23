@@ -38,3 +38,11 @@ export * from "./AiEnginePill";
 export * from "./Callout";
 export * from "./AnnotationOverlay";
 export * from "./InsightLog";
+// B4 — Gradient Hero additions.
+export * from "./AuraBackground";
+export * from "./GrainOverlay";
+export * from "./GlassCard";
+export * from "./GradientHeadline";
+export * from "./HeroGradientEquity";
+export * from "./PerformanceRadar";
+export * from "./MarketContextCard";
