@@ -122,7 +122,7 @@ export function InlineRangeBar({
   }
 
   const handleToggle = () => {
-    if (!open) syncFromParent();
+    syncFromParent();
     setOpen(!open);
   };
 

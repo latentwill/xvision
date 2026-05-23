@@ -127,7 +127,7 @@ fn minimal_strategy(agent_id: &str) -> Strategy {
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -355,6 +355,16 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
         decisions[1].fill_price.is_some(),
         "flip-blocked decision must produce a close fill; got: {:?}",
         decisions[1].fill_price,
+    );
+    let opened = decisions[0]
+        .fill_size
+        .expect("first decision must record opened long size");
+    let closed = decisions[1]
+        .fill_size
+        .expect("flip-blocked decision must record close size");
+    assert!(
+        (opened + closed).abs() < 1e-9,
+        "flip-blocked decision must only close the existing long, not open a new short; opened={opened}, closed={closed}",
     );
 
     // supervisor_notes carries exactly one `one-step flip blocked` row.

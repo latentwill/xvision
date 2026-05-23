@@ -52,7 +52,7 @@ export function MListRow({
           <span className="font-mono font-medium text-[13.5px] text-text truncate">
             {title}
           </span>
-          {badge && (
+          {badge != null && (
             <span
               className={`inline-flex items-center gap-1.5 h-[18px] px-[7px] rounded-[3px] font-mono text-[9.5px] tracking-[0.08em] uppercase border ${BADGE_CLASSES[badgeColor]}`}
             >
@@ -60,27 +60,27 @@ export function MListRow({
             </span>
           )}
         </div>
-        {subtitle && (
+        {subtitle != null && (
           <div className="font-mono text-[12px] text-text-2 truncate">
             {subtitle}
           </div>
         )}
-        {meta && (
+        {meta != null && (
           <div className="font-mono text-[11px] text-text-3 mt-0.5 truncate">
             {meta}
           </div>
         )}
       </div>
-      {(rightTop || rightSub) && (
+      {(rightTop != null || rightSub != null) && (
         <div className="flex flex-col items-end gap-0.5 shrink-0">
-          {rightTop && (
+          {rightTop != null && (
             <div
               className={`font-serif font-medium text-[15px] tracking-tight ${RIGHT_TONE_CLASSES[rightTone]}`}
             >
               {rightTop}
             </div>
           )}
-          {rightSub && (
+          {rightSub != null && (
             <div className="font-mono text-[11px] text-text-3">{rightSub}</div>
           )}
         </div>
