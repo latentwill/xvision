@@ -742,11 +742,6 @@ export function AttachedAgentRow({
   agent,
   onRenameRole,
   onRemove,
-  allRefs,
-  pipeline,
-  filterCandidates,
-  providers,
-  onFiringChanged,
 }: AttachedAgentRowProps) {
   const storageKey = agentCollapseKey(strategyId, agentRef.role);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
