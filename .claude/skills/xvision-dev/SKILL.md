@@ -23,6 +23,7 @@ Don't grep blindly. Canonical docs live in known places:
 - `decisions/` — ADRs. ADR 0010 = 2026-05-05 marketplace pivot. ADR 0011 = CV substrate moved to xvision-play. ADR 0012 = in-app skills surface removed (use `/agents` instead).
 - `FOLLOWUPS.md` — open engineering work. **F-codes** = shared track. **SLF-codes** = Strategy Loom hackathon track (branch `hackathon/turing`, deadline 2026-06-15).
 - `MANUAL.md` — operator-side prerequisites; useful when adding features that need broker creds / Mantle minting.
+- `docs/QA/2026-05-23-qa24-low-priority-followups.md` — parked low-priority QA24 product/API follow-ups.
 - `team/MANIFEST.md` → `team/board.md` + `team/board-v2.md` — current execution board. Read before opening a new track.
 
 ## Build + test (workstation)
@@ -197,6 +198,9 @@ Full deploy mechanics + pitfalls in [`references/deploy.md`](references/deploy.m
 - **Dark mode borders:** never `border-white` / `border-gray-100/200` / `#fff` on cards. Use `border-border` or muted tones with `dark:` variants. (Workspace-wide rule from `/CLAUDE.md`.)
 - **Errors must be root-caused**, not silenced with try/catch or API-contract shims (user feedback memory).
 - **Don't dedupe / normalize provider model lists.** Fix rendering instead (user feedback memory).
+- **Strategy inspector canonical route:** new links should use `/strategies/:id`; `/authoring/:id` is a compatibility alias only.
+- **Real filters are artifacts.** A prompt that says "filter" is not enough. Filter QA must attach a strategy filter and inspect filter summaries/events.
+- **Eval decision provenance matters.** Keep direct model decisions distinguishable from `noop_skip`, graph-gated, and early-stop synthesized rows in UI/API work.
 - **Conductor stays out of feature code.** If you're acting as conductor, only edit `team/**` and `scripts/board-*`. Otherwise you're a worker — claim a contract first.
 
 ## Deeper references
@@ -209,5 +213,5 @@ Full deploy mechanics + pitfalls in [`references/deploy.md`](references/deploy.m
 
 *Skills owner: any track that changes the build/test/deploy story or
 adds a load-bearing invariant is responsible for updating this file in
-the same PR. Last refresh: 2026-05-20 (intake
-`team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`).*
+the same PR. Last refresh: 2026-05-23 (QA24 strategy inspector, filter,
+and eval-readiness pass).*
