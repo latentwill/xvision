@@ -147,6 +147,16 @@ pub struct SetRiskConfigReq {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetFilterReq {
+    pub strategy_id: String,
+    #[serde(default)]
+    pub filter: Option<serde_json::Value>,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetRiskConfigOut {
     pub id: String,
     /// `preset` or `explicit`.
@@ -552,6 +562,136 @@ pub async fn set_mechanical_param(
     // schema validation lands in a future change keyed on the
     // strategies-folder seed library, not on a binary registry.
     store.save(&strategy).await
+}
+
+pub async fn set_filter(
+    store: &dyn StrategyStore,
+    req: SetFilterReq,
+) -> anyhow::Result<Strategy> {
+    let mut strategy = store.load(&req.strategy_id).await?;
+    let filter = parse_filter_payload(req.filter, req.source.as_deref(), &req.strategy_id)?;
+    strategy.filter = filter;
+    strategy.activation_mode = if strategy.filter.is_some() {
+        xvision_filters::ActivationMode::FilterGated
+    } else {
+        xvision_filters::ActivationMode::EveryBar
+    };
+    store.save(&strategy).await?;
+    Ok(strategy)
+}
+
+fn parse_filter_payload(
+    raw_filter: Option<serde_json::Value>,
+    source: Option<&str>,
+    strategy_id: &str,
+) -> anyhow::Result<Option<xvision_filters::Filter>> {
+    let Some(raw_filter) = raw_filter else {
+        return Ok(None);
+    };
+    if raw_filter.is_null() {
+        return Ok(None);
+    }
+    let raw_filter = extract_filter_payload(raw_filter);
+    let maybe_filter = match raw_filter {
+        serde_json::Value::String(src) => parse_filter_text(&src, source, strategy_id),
+        other => match source {
+            Some("json") => parse_filter_value(other, strategy_id),
+            Some("toml") => {
+                let src = serde_json::to_string(&other)
+                    .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+                parse_filter_text(&src, Some("toml"), strategy_id)
+            }
+            Some(other) if other.trim().is_empty() => parse_filter_value(other, strategy_id),
+            None => parse_filter_value(other, strategy_id).or_else(|json_err| {
+                let src = serde_json::to_string(&other)
+                    .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+                parse_filter_text(&src, Some("toml"), strategy_id)
+                    .map_err(|_| json_err)
+            }),
+            Some(_) => parse_filter_text(
+                &serde_json::to_string(&other)
+                    .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+                source,
+                strategy_id,
+            ),
+        },
+    };
+    maybe_filter.map(Some)
+}
+
+fn parse_filter_value(
+    mut raw_filter: serde_json::Value,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let serde_json::Value::Object(mut obj) = raw_filter else {
+        anyhow::bail!("filter parse error: filter payload must be an object");
+    };
+    if obj
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|id| id.trim().is_empty())
+    {
+        obj.insert("id".into(), serde_json::Value::String(Ulid::new().to_string()));
+    }
+    obj.insert(
+        "strategy_id".into(),
+        serde_json::Value::String(strategy_id.to_string()),
+    );
+    let json = serde_json::to_string(&serde_json::Value::Object(obj))
+        .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+    parse_filter_text(&json, Some("json"), strategy_id)
+}
+
+fn parse_filter_text(
+    source_text: &str,
+    source: Option<&str>,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let mut filter = match source.unwrap_or_default() {
+        "toml" => xvision_filters::parse_toml(source_text)
+            .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+        _ => parse_filter_text_preferring_json(source_text, strategy_id)
+            .or_else(|_| {
+                xvision_filters::parse_toml(source_text).map_err(|e| {
+                    anyhow::anyhow!("filter parse error: failed parsing as JSON and TOML: {e}")
+                })
+            })?,
+    };
+    if filter.id.as_str().is_empty() {
+        filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
+    }
+    filter.strategy_id = strategy_id.to_string().into();
+    xvision_filters::validate(&filter)
+        .map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+    Ok(filter)
+}
+
+fn parse_filter_text_preferring_json(
+    source_text: &str,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let mut filter = xvision_filters::parse_json(source_text)
+        .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+    if filter.id.as_str().is_empty() {
+        filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
+    }
+    filter.strategy_id = strategy_id.to_string().into();
+    xvision_filters::validate(&filter)
+        .map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+    Ok(filter)
+}
+
+fn extract_filter_payload(raw_filter: serde_json::Value) -> serde_json::Value {
+    match raw_filter {
+        serde_json::Value::Object(mut obj) => {
+            if let Some(filter) = obj.remove("filter") {
+                filter
+            } else {
+                serde_json::Value::Object(obj)
+            }
+        }
+        other => other,
+    }
 }
 
 pub async fn set_risk_config(

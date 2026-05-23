@@ -15,7 +15,7 @@ use crate::api::{
 };
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
-    RenameAgentRoleRequest, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq,
+    RenameAgentRoleRequest, SetFilterReq, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq,
     SetStrategyFilterOut, SetStrategyFilterReq, UpdateManifestOut, UpdateManifestReq,
     UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
@@ -1012,6 +1012,15 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "graph pipelines cannot contain self-loops",
         "graph pipelines cannot contain duplicate edges",
         "graph pipelines must be acyclic",
+        "filter parse error",
+        "filter validation error",
+        "json parse error",
+        "toml parse error",
+        "failed parsing as JSON and TOML",
+        "missing field `id`",
+        "invalid indicator dsl",
+        "unknown operator",
+        "negative integer for unsigned field",
     ];
     if validation_markers.iter().any(|m| msg.contains(m)) {
         return ApiError::Validation(msg);
@@ -1511,6 +1520,37 @@ pub async fn set_pipeline(ctx: &ApiContext, req: SetPipelineReq) -> ApiResult<St
         ctx,
         "strategy",
         "strategy_set_pipeline",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &strategy_id).await;
+    }
+    result
+}
+
+/// Set or clear a strategy-level filter. Supports JSON/TOML payloads in
+/// both explicit object form and `{ "filter": ... }` form.
+pub async fn set_filter(ctx: &ApiContext, req: SetFilterReq) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_filter(&store, req)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(&strategy_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "strategy_set_filter",
         Some(&strategy_id),
         args_json.as_deref(),
         outcome,
