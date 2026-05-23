@@ -6,6 +6,23 @@
 import { apiFetch } from "./client";
 import type { MemoryMode } from "./types.gen/MemoryMode";
 
+/// Closed set of capability classes an agent slot can advertise. Wire
+/// form matches `xvision_engine::agents::Capability` (Phase A,
+/// migration 033 — see
+/// `docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md`).
+/// Persisted as a JSON array on `agent_slots.capabilities`; the server
+/// defaults a missing or empty array to `["trader"]` so legacy slots
+/// keep today's behavior. Phase A's `ts(type = "Capability[]")` override
+/// on the engine side bypasses the ts-rs import tracker, so this union
+/// is hand-authored alongside the `AgentSlot` shape below until the
+/// override is reworked.
+export type Capability =
+  | "trader"
+  | "filter"
+  | "critic"
+  | "intern"
+  | "router";
+
 export type AgentSlot = {
   name: string;
   provider: string;
@@ -39,6 +56,13 @@ export type AgentSlot = {
   /// `xvision-memory`. Optional on the wire — the server's
   /// `#[serde(default)]` collapses missing values to `"off"`.
   memory_mode?: MemoryMode;
+  /// Capabilities this slot advertises in a strategy pipeline. Optional
+  /// on the wire: legacy slots persisted before Phase A's migration 033
+  /// arrive without the field, and the server collapses missing/empty
+  /// to `["trader"]`. Consumers should treat `undefined` or `[]` as
+  /// `["trader"]` (this is what `FiringConditionsAwareness` in
+  /// `SlotForm.tsx` does).
+  capabilities?: readonly Capability[];
 };
 
 export type Agent = {
