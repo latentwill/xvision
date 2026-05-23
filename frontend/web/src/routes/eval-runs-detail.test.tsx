@@ -307,6 +307,36 @@ describe("EvalRunDetailRoute", () => {
     );
   });
 
+  it("separates model decisions from synthesized eval rows", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        decisions: [
+          decision({ decision_index: 0, justification: "breakout confirmed" }),
+          decision({
+            decision_index: 1,
+            action: "hold",
+            justification: "noop_skip: only hold is available",
+          }),
+          decision({
+            decision_index: 2,
+            action: "flat",
+            justification: "inherited from early-stop policy",
+          }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    expect(await screen.findByText("Decision provenance")).toBeInTheDocument();
+    expect(screen.getByText("Model decisions")).toBeInTheDocument();
+    expect(screen.getByText("Synthesized rows")).toBeInTheDocument();
+    expect(screen.getByText("Noop skip")).toBeInTheDocument();
+    expect(screen.getByText("Early stop")).toBeInTheDocument();
+    expect(screen.getAllByText("1").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(1);
+  });
+
   it("renders the disambiguator label in the metadata strip and drops the strategy/scenario id chips", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(detail());
     vi.mocked(evalApi.listRuns).mockResolvedValue([

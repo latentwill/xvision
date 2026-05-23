@@ -166,11 +166,10 @@ async fn delete_sweeps_scoped_agents_but_leaves_workspace_agents() {
         provider: "anthropic".into(),
         model: "claude-sonnet-4-6".into(),
         // ≥200 chars so the content-quality save-gate passes.
-        system_prompt:
-            "You are a quantitative trading assistant. Analyse OHLCV data, scenario metadata, \
+        system_prompt: "You are a quantitative trading assistant. Analyse OHLCV data, scenario metadata, \
              and risk limits before producing structured output. Avoid placeholders and ground \
              every recommendation in the active market state across the full bar history."
-                .into(),
+            .into(),
         skill_ids: vec![],
         max_tokens: Some(2048),
         temperature: None,
@@ -273,7 +272,7 @@ async fn list_returns_summaries_for_existing_strategys() {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     store.save(&strategy).await.unwrap();
 
@@ -669,6 +668,7 @@ async fn update_metadata_audits_and_refreshes_search_index() {
         display_name: Some("RenamedForSearch".into()),
         plain_summary: None,
         asset_universe: None,
+        decision_cadence_minutes: None,
         color: None,
     };
     let updated = strategy::update_metadata(&ctx, &id, patch)
@@ -716,6 +716,7 @@ async fn update_metadata_failed_validation_records_error_outcome_and_skips_index
         display_name: Some("   ".into()), // whitespace-only triggers EmptyDisplayName
         plain_summary: None,
         asset_universe: None,
+        decision_cadence_minutes: None,
         color: None,
     };
     let err = strategy::update_metadata(&ctx, &id, patch)

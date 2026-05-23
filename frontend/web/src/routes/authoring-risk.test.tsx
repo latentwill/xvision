@@ -21,6 +21,7 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     getStrategy: vi.fn(),
+    patchStrategyMetadata: vi.fn(),
     validateDraft: vi.fn(),
     setRiskConfig: vi.fn(),
     updateSlot: vi.fn(),
@@ -49,8 +50,8 @@ vi.mock("@/api/chart", () => ({
   }),
 }));
 
-vi.mock("@/components/chart/StrategyChart", () => ({
-  StrategyChart: () => <div data-testid="strategy-chart" />,
+vi.mock("@/components/chart/v2/surfaces/StrategyHistoryChartV2", () => ({
+  StrategyHistoryChartV2: () => <div data-testid="strategy-chart" />,
 }));
 
 vi.mock("@/api/settings", () => ({
@@ -81,6 +82,7 @@ function renderRoute() {
 beforeEach(() => {
   vi.mocked(agentApi.listAgents).mockReset();
   vi.mocked(strategyApi.getStrategy).mockReset();
+  vi.mocked(strategyApi.patchStrategyMetadata).mockReset();
   vi.mocked(strategyApi.validateDraft).mockReset();
   vi.mocked(strategyApi.setRiskConfig).mockReset();
   vi.mocked(strategyApi.setStrategyPipeline).mockReset();
@@ -96,7 +98,7 @@ afterEach(() => {
 });
 
 describe("AuthoringRoute risk editor", () => {
-  it("states which strategy fields are Inspector read-only", async () => {
+  it("renders editable manifest fields and hides mechanical params", async () => {
     vi.mocked(agentApi.listAgents).mockResolvedValue([]);
     vi.mocked(strategyApi.getStrategy).mockResolvedValue({
       manifest: {
@@ -130,16 +132,12 @@ describe("AuthoringRoute risk editor", () => {
 
     renderRoute();
 
-    expect(
-      await screen.findByText(
-        "Direct edits are locked in the Inspector. Wizard changes appear here only after a save tool succeeds.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Inspector read-only in v1. Tune through setup tools; this panel shows the saved JSON.",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByLabelText("Display name")).toHaveValue("Trend 4H");
+    expect(screen.getByLabelText("Asset universe")).toHaveValue("BTC/USD");
+    expect(screen.getByLabelText("Cadence (minutes)")).toHaveValue("240");
+    expect(screen.getByLabelText(/Strategy ID 01TEST/)).toHaveValue("01TEST");
+    expect(screen.getByText("No filter artifact attached")).toBeInTheDocument();
+    expect(screen.queryByText("Mechanical params")).not.toBeInTheDocument();
   });
 
   it("does not render the old validation box in the Inspector rail", async () => {
@@ -181,6 +179,7 @@ describe("AuthoringRoute risk editor", () => {
 
     expect(await screen.findByText("Risk per trade (%)")).toBeInTheDocument();
     expect(screen.queryByText("Validation")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check eval readiness" })).toBeInTheDocument();
     expect(screen.queryByText("single-agent pipeline cannot include multiple agents")).not.toBeInTheDocument();
   });
 

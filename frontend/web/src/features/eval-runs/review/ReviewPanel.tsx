@@ -222,6 +222,10 @@ export function GenerateErrorAlert({
   onRetry?: () => void;
 }) {
   const { code, message } = describeReviewError(error);
+  const providerRemediation =
+    message.includes("review skipped") ||
+    message.includes("cannot use provider") ||
+    message.includes("Settings → Providers");
   return (
     <div
       role="alert"
@@ -240,6 +244,12 @@ export function GenerateErrorAlert({
         </span>
       </div>
       <div data-testid="review-generate-error-message">{message}</div>
+      {providerRemediation ? (
+        <div className="mt-2 rounded-sm border border-danger/25 bg-danger/[0.04] px-2 py-1 text-[12px] text-danger/90">
+          Open the gear next to the selected review agent, choose a configured
+          provider and enabled model, save it, then generate the review again.
+        </div>
+      ) : null}
       {onRetry && (
         <button
           type="button"

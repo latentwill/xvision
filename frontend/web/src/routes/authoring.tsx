@@ -7,6 +7,7 @@ import { ApiError } from "@/api/client";
 import {
   addStrategyAgent,
   getStrategy,
+  patchStrategyMetadata,
   renameStrategyAgentRole,
   removeStrategyAgent,
   setRiskConfig,
@@ -26,7 +27,7 @@ import { createAgent, listAgents, type Agent } from "@/api/agents";
 import { FilterCard } from "@/components/strategy";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
-import { StrategyChart } from "@/components/chart/StrategyChart";
+import { StrategyHistoryChartV2 } from "@/components/chart/v2/surfaces/StrategyHistoryChartV2";
 import { ModelPicker } from "@/components/ModelPicker";
 import type { ProviderRow } from "@/api/types.gen";
 import { safeStorageGet, safeStorageSet } from "@/lib/storage";
@@ -56,13 +57,14 @@ function InspectorPage({ id }: { id: string }) {
   return (
     <>
       <Topbar
-        title="Inspector"
+        title={strategyQ.data?.manifest.display_name || "Strategy"}
         back={{ to: "/strategies", label: "Back to strategies" }}
         sub={
           strategyQ.data ? (
             <>
-              <span>{strategyQ.data.manifest.display_name}</span>
+              <span>Strategy inspector</span>
               <span className="mx-1.5 text-text-3">·</span>
+              <span>Strategy ID:</span>
               <span className="break-all font-mono text-[12px] text-text-3">
                 {id}
               </span>
@@ -125,7 +127,7 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
             Could not load chart.
           </div>
         )}
-        {chart.data && <StrategyChart payload={chart.data} />}
+        {chart.data && <StrategyHistoryChartV2 payload={chart.data} />}
       </div>
     </Card>
   );
@@ -139,7 +141,6 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
       <FilterCard strategy={strategy} />
       <AgentsCard strategy={strategy} />
       <RiskCard strategy={strategy} />
-      <MechanicalParamsCard strategy={strategy} />
     </>
   );
 }
@@ -154,6 +155,7 @@ function ValidationCard({ strategy }: { strategy: Strategy }) {
   const validation = useQuery({
     queryKey: strategyKeys.validate(strategy.manifest.id),
     queryFn: () => validateDraft(strategy.manifest.id),
+    enabled: false,
     // The engine path is cheap (in-memory shape check + filesystem
     // load); a 30-second staleTime avoids refetching on every keystroke
     // while still picking up changes after an authoring mutation
@@ -161,9 +163,55 @@ function ValidationCard({ strategy }: { strategy: Strategy }) {
     staleTime: 30_000,
   });
 
-  if (validation.isPending || validation.isError) return null;
+  if (!validation.isFetched) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Eval readiness"
+          hint="Run validation when you are ready to launch or check the strategy."
+        />
+        <div className="px-5 pt-4 pb-5">
+          <button
+            type="button"
+            onClick={() => validation.refetch()}
+            disabled={validation.isFetching}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3 disabled:opacity-50"
+          >
+            {validation.isFetching ? "Checking..." : "Check eval readiness"}
+          </button>
+        </div>
+      </Card>
+    );
+  }
+  if (validation.isPending) return null;
+  if (validation.isError) {
+    return (
+      <Card>
+        <SectionHeader label="Eval readiness" hint="Validation request failed." />
+        <div className="px-5 pt-4 pb-5 text-[13px] text-danger">
+          {errorMessage(validation.error)}
+        </div>
+      </Card>
+    );
+  }
   const { errors = [], warnings = [] } = validation.data ?? {};
-  if (errors.length === 0 && warnings.length === 0) return null;
+  if (errors.length === 0 && warnings.length === 0) {
+    return (
+      <Card>
+        <SectionHeader label="Eval readiness" hint="No blocking validation issues." />
+        <div className="px-5 pt-4 pb-5">
+          <button
+            type="button"
+            onClick={() => validation.refetch()}
+            disabled={validation.isFetching}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3 disabled:opacity-50"
+          >
+            {validation.isFetching ? "Checking..." : "Recheck"}
+          </button>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -873,40 +921,143 @@ export function AttachedAgentRow({
 }
 
 function ManifestCard({ strategy }: { strategy: Strategy }) {
+  const qc = useQueryClient();
   const m = strategy.manifest;
+  const [displayName, setDisplayName] = useState(m.display_name);
+  const [plainSummary, setPlainSummary] = useState(m.plain_summary);
+  const [assetUniverse, setAssetUniverse] = useState(m.asset_universe.join(", "));
+  const [cadence, setCadence] = useState(String(m.decision_cadence_minutes));
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDisplayName(m.display_name);
+    setPlainSummary(m.plain_summary);
+    setAssetUniverse(m.asset_universe.join(", "));
+    setCadence(String(m.decision_cadence_minutes));
+    setLocalError(null);
+  }, [m.display_name, m.plain_summary, m.asset_universe, m.decision_cadence_minutes]);
+
+  const patch = useMutation({
+    mutationFn: () => {
+      const cadenceMinutes = Number(cadence);
+      if (!Number.isInteger(cadenceMinutes) || cadenceMinutes <= 0) {
+        throw new Error("Cadence must be a positive whole number of minutes.");
+      }
+      const assets = assetUniverse
+        .split(",")
+        .map((asset) => asset.trim())
+        .filter(Boolean);
+      if (assets.length === 0) {
+        throw new Error("Asset universe must include at least one SYMBOL/QUOTE pair.");
+      }
+      return patchStrategyMetadata(m.id, {
+        display_name: displayName,
+        plain_summary: plainSummary,
+        asset_universe: assets,
+        decision_cadence_minutes: cadenceMinutes,
+      });
+    },
+    onSuccess: (updated) => {
+      setSavedFlash(true);
+      setLocalError(null);
+      window.setTimeout(() => setSavedFlash(false), 1800);
+      qc.setQueryData(strategyKeys.detail(m.id), updated);
+      qc.invalidateQueries({ queryKey: strategyKeys.validate(m.id) });
+    },
+    onError: (err) => {
+      setLocalError(errorMessage(err));
+    },
+  });
+
+  const dirty =
+    displayName !== m.display_name ||
+    plainSummary !== m.plain_summary ||
+    assetUniverse !== m.asset_universe.join(", ") ||
+    cadence !== String(m.decision_cadence_minutes);
+
   return (
     <Card>
       <SectionHeader
         label="Manifest"
-        hint="Direct edits are locked in the Inspector. Wizard changes appear here only after a save tool succeeds."
+        hint="Editable strategy identity and run defaults. The strategy ID stays stable for eval history."
       />
-      <dl className="grid grid-cols-[160px_1fr] gap-y-2 px-5 pt-4 pb-4 text-[13px]">
-        <DT>Display name</DT>
-        <DD>{m.display_name}</DD>
-        <DT>Template</DT>
-        <DD className="font-mono text-text-2">{m.template}</DD>
-        <DT>Creator</DT>
-        <DD className="font-mono text-text-2">{m.creator}</DD>
-        <DT>Asset universe</DT>
-        <DD>
-          {m.asset_universe.length > 0
-            ? m.asset_universe.map((a) => (
-                <span
-                  key={a}
-                  className="inline-block mr-1.5 px-1.5 py-0.5 bg-surface-elev border border-border-soft rounded text-[12px] font-mono"
-                >
-                  {a}
-                </span>
-              ))
-            : "(none)"}
-        </DD>
-        <DT>Cadence</DT>
-        <DD>
-          every <strong>{m.decision_cadence_minutes}</strong> min
-        </DD>
-        <DT>Risk basis</DT>
-        <DD>{m.risk_preset_or_config}</DD>
-      </dl>
+      <div className="px-5 pt-4 pb-5 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Display name">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Asset universe"
+            hint="Comma-separated SYMBOL/QUOTE pairs, e.g. BTC/USD, ETH/USD"
+          >
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              aria-label="Asset universe"
+              value={assetUniverse}
+              onChange={(e) => setAssetUniverse(e.target.value)}
+            />
+          </Field>
+          <Field label="Cadence (minutes)">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              inputMode="numeric"
+              value={cadence}
+              onChange={(e) => setCadence(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Strategy ID"
+            hint="Stable identifier used by eval runs, traces, and API links."
+          >
+            <input
+              className="w-full bg-surface-elev border border-border-soft rounded px-3 py-2 text-[13px] text-text-2 font-mono"
+              value={m.id}
+              readOnly
+              aria-label={`Strategy ID ${m.id}`}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </Field>
+        </div>
+        <Field label="Description">
+          <textarea
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text leading-relaxed"
+            value={plainSummary}
+            onChange={(e) => setPlainSummary(e.target.value)}
+            rows={3}
+          />
+        </Field>
+        <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-[13px]">
+          <DT>Template</DT>
+          <DD className="font-mono text-text-2">{m.template}</DD>
+          <DT>Creator</DT>
+          <DD className="font-mono text-text-2">{m.creator}</DD>
+          <DT>Risk basis</DT>
+          <DD>{m.risk_preset_or_config}</DD>
+        </dl>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setLocalError(null);
+              patch.mutate();
+            }}
+            disabled={!dirty || patch.isPending}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+          >
+            {patch.isPending ? "Saving..." : "Save manifest"}
+          </button>
+          {savedFlash ? (
+            <span className="text-[12px] text-success">Saved.</span>
+          ) : localError ? (
+            <span className="text-[12px] text-danger">{localError}</span>
+          ) : null}
+        </div>
+      </div>
     </Card>
   );
 }
@@ -1075,34 +1226,6 @@ function riskFormFromConfig(risk: RiskConfig): RiskFormState {
     stop_loss_atr_multiple: String(risk.stop_loss_atr_multiple),
     daily_loss_kill_pct: (risk.daily_loss_kill_pct * 100).toFixed(2),
   };
-}
-
-function MechanicalParamsCard({ strategy }: { strategy: Strategy }) {
-  const json = JSON.stringify(strategy.mechanical_params, null, 2);
-  const empty =
-    strategy.mechanical_params == null ||
-    (typeof strategy.mechanical_params === "object" &&
-      Object.keys(strategy.mechanical_params as object).length === 0);
-
-  return (
-    <Card>
-      <SectionHeader
-        label="Mechanical params"
-        hint="Inspector read-only in v1. Tune through setup tools; this panel shows the saved JSON."
-      />
-      <div className="px-5 pt-4 pb-5">
-        {empty ? (
-          <p className="m-0 text-[13px] text-text-3">
-            No mechanical params on this template.
-          </p>
-        ) : (
-          <pre className="m-0 overflow-x-auto rounded border border-border-soft bg-surface-elev p-3 font-mono text-[12px] text-text-2">
-            {json}
-          </pre>
-        )}
-      </div>
-    </Card>
-  );
 }
 
 function BackLinkCard() {

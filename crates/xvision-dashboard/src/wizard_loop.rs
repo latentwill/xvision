@@ -690,7 +690,7 @@ impl WizardLoop {
                 "Validation stuck — operator review needed".to_string(),
                 InlineAction {
                     label: "Open draft".into(),
-                    href: Some(format!("/authoring/{id}")),
+                    href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
             )
@@ -1952,7 +1952,7 @@ fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<
                 format!("Draft {id} is ready for inspection."),
                 InlineAction {
                     label: "Open draft".into(),
-                    href: Some(format!("/authoring/{id}")),
+                    href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
             )
@@ -2018,7 +2018,7 @@ fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<
                 body,
                 InlineAction {
                     label: "Open draft".into(),
-                    href: Some(format!("/authoring/{id}")),
+                    href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
             )

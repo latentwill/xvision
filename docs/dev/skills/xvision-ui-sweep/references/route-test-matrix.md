@@ -19,16 +19,21 @@ Use this checklist for a full browser sweep.
 ## `/strategies`
 
 - list all strategies
-- open a strategy row and confirm the authoring page loads
-- check attached agents and read-only metadata labels
+- open a strategy row and confirm `/strategies/:id` loads the inspector
+- check attached agents and editable manifest fields
 - verify actions for edit/delete/archive if present
+
+## `/strategies/:id`
+
+- compare manifest fields to the setup/chat result
+- verify display name, description, asset universe, and cadence can save
+- verify filter, attached agents, and risk sections match backend state
+- click **Check eval readiness** before expecting validation errors
+- capture console/network output if the page disagrees with the wizard
 
 ## `/authoring/:id`
 
-- compare manifest fields to the setup/chat result
-- verify slot prompts and attached agents
-- confirm any validation banner matches the real backend state
-- capture console/network output if the page disagrees with the wizard
+- compatibility alias for old links; confirm it renders the same inspector
 
 ## `/scenarios`
 

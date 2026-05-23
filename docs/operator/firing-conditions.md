@@ -79,20 +79,14 @@ tracked in the spec at
 
 ## Authoring a firing condition from the SPA
 
-1. Open the strategy in `/strategies/:id/edit`.
-2. Find the Trader (or Critic, Intern, Router) agent card you want to
-   gate. Each non-Filter agent card has a "When does this fire?"
-   sub-section.
-3. Click **Add filter →**. The inline composer opens.
-4. Either pick an existing Filter agent from the workspace, or author a
-   new one inline (provider, model, system prompt, skills).
-5. Toggle **Save as reusable agent** if you want the new Filter agent
-   to appear in your workspace agent list. Default: on. Toggle off to
-   keep the Filter agent scoped to this one strategy.
-6. Compose the predicate: pick the signal name, the field, the
-   operator (`eq`, `ne`, `gt`, `lt`, `in`), and the value.
-7. Save the strategy. The "When does this fire?" section now shows the
-   active condition: *"Fires when `regime_filter.regime == 'high_vol'`"*.
+1. Open the strategy in `/strategies/:id`.
+2. Use the **Filter** card. Empty means every bar.
+3. Paste or write a deterministic filter in TOML or JSON.
+4. Click **Save filter**. The server parses and validates the filter.
+5. Click **Check eval readiness** only when you want validation feedback.
+
+The old `/authoring/:id` URL still works as a compatibility alias, but
+new UI links should use `/strategies/:id`.
 
 ## Authoring a firing condition from the CLI
 
@@ -132,9 +126,9 @@ The CLI exposes three verbs:
   Filter agents and their edges are untouched.
 
 The `--when` argument takes a JSON-serialized `EdgePredicate`. The
-schema matches what the SPA composer produces — useful when copying a
-predicate out of a working strategy. There is no DSL parser at the
-CLI; for multi-line or complex predicates, use the SPA composer.
+strategy-level deterministic filter editor in the SPA is the preferred
+operator path for the current UI. For DSL examples, see
+`docs/operator/filters.md`.
 
 ## What firing conditions are not
 

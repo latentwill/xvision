@@ -64,7 +64,12 @@ export function AgentPicker({
                   busy ? "opacity-50 cursor-wait" : "",
                 ].join(" ")}
               >
-                {p.label}
+                <span className="block">{p.label}</span>
+                {live ? (
+                  <span className="block max-w-[22ch] truncate font-mono text-[10px] opacity-75">
+                    {live.provider} / {live.model}
+                  </span>
+                ) : null}
               </button>
               <button
                 type="button"
@@ -151,6 +156,10 @@ function ProfileEditor({
   // input so the operator can save without first running through
   // Settings → Providers → Manage models.
   const enabledModels = activeProviderRow?.enabled_models ?? [];
+  const modelIsLaunchable =
+    !!activeProviderRow &&
+    !!model &&
+    (activeProviderRow.kind === "local-candle" || enabledModels.includes(model));
 
   const { code, message } =
     saveMutation.isError ? describeError(saveMutation.error) : { code: "", message: "" };
@@ -232,6 +241,16 @@ function ProfileEditor({
           Couldn't load providers — fix the connection in Settings → Providers.
         </div>
       )}
+      {activeProviderRow && enabledModels.length === 0 && activeProviderRow.kind !== "local-candle" ? (
+        <div className="mt-2 text-warn text-[12px]">
+          No models are enabled for this provider. Open Settings → Providers and enable a model before saving.
+        </div>
+      ) : null}
+      {activeProviderRow && model && !modelIsLaunchable ? (
+        <div className="mt-2 text-warn text-[12px]">
+          This model is not enabled for {provider}. Pick an enabled model before saving.
+        </div>
+      ) : null}
       {saveMutation.isError && (
         <div
           role="alert"
@@ -252,6 +271,7 @@ function ProfileEditor({
             saveMutation.isPending ||
             !provider ||
             !model ||
+            !modelIsLaunchable ||
             (provider === profile?.provider && model === profile?.model)
           }
           className="px-3 py-1.5 rounded-sm text-[12px] border border-gold bg-gold text-bg font-medium disabled:opacity-50"

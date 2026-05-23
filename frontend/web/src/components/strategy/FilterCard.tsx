@@ -89,12 +89,23 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
   return (
     <Card>
       <header className="px-5 pt-4 pb-3 border-b border-border-soft">
-        <div className="text-[12px] uppercase tracking-wide text-text-3">
-          Filter
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-[12px] uppercase tracking-wide text-text-3">
+            Filter
+          </div>
+          <span
+            className={`rounded-sm border px-2 py-0.5 font-mono text-[11px] ${
+              hasFilter
+                ? "border-success/40 bg-success/[0.08] text-success"
+                : "border-warn/35 bg-warn/[0.08] text-warn"
+            }`}
+          >
+            {hasFilter ? "Filter artifact attached" : "No filter artifact attached"}
+          </span>
         </div>
         <div className="text-[12px] text-text-2 mt-0.5">
           Deterministic gate that fires the strategy on selected bars only.
-          Empty means every bar.
+          Prompt wording alone is not an XVN filter artifact.
         </div>
       </header>
 

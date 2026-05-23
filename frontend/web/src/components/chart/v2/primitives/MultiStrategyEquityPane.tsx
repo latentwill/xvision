@@ -25,7 +25,7 @@ export interface MultiStrategyEquitySeries {
   id: string;
   label: string;
   /** % return aligned to the shared `time` array (parallel arrays). */
-  values: number[];
+  values: Array<number | null>;
   color: string;
   dashed?: boolean;
 }

@@ -116,8 +116,9 @@ docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
   ghcr.io/latentwill/xvision:latest
 ```
 
-V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/authoring/:id`,
+V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/strategies/:id`,
 `/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/settings/*`.
+`/authoring/:id` remains as a compatibility alias for old inspector links.
 See `frontend/README.md` for the full route table and `frontend/DESIGN.md` for
 the design synthesis.
 
