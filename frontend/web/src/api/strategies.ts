@@ -121,13 +121,8 @@ type PublicManifest = {
   published_at: string | null;
 };
 
-/// Deterministic per-strategy firing filter. The full DSL/AST shape
-/// is owned by the engine and (eventually) ts-rs-exported as
-/// `frontend/web/src/api/types.gen/Filter.ts`. Until that lands, the
-/// SPA treats the field as an opaque JSON blob — the FilterCard only
-/// needs round-trip semantics (read existing → display as text →
-/// write back through `PUT /api/strategy/:id/filter`).
-export type Filter = unknown;
+export type { Filter } from "./types.gen/Filter";
+import type { Filter } from "./types.gen/Filter";
 
 export type Strategy = {
   manifest: PublicManifest;

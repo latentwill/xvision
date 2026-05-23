@@ -25,6 +25,7 @@
 // 15. PATCH  /api/strategy/:id/agents/:role           strategies::patch_agent_role
 // 16. PUT    /api/strategy/:id/pipeline               strategies::put_pipeline
 // 17. PUT    /api/strategy/:id/risk                   strategies::put_risk
+// 17b. PUT/DELETE /api/strategy/:id/filter            strategies::put_filter / delete_filter
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
@@ -285,6 +286,10 @@ fn mutating_router(state: AppState) -> Router {
         )
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
+        .route(
+            "/api/strategy/:id/filter",
+            put(strategies::put_filter).delete(strategies::delete_filter),
+        )
         .route("/api/strategy/:id/validate", post(strategies::post_validate))
         // ── Strategies folder ─────────────────────────────────────────────
         .route(
