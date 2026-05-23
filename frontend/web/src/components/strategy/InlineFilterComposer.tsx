@@ -21,12 +21,14 @@ import {
   addStrategyAgent,
   setStrategyPipeline,
   type AgentRef,
+  type EdgePredicate,
   type PipelineDef,
 } from "@/api/strategies";
 import { ModelPicker } from "@/components/ModelPicker";
 
 import {
   buildPredicate,
+  describePredicate,
   SCALAR_OPS,
   withAddedEdge,
   type ScalarOp,
@@ -43,15 +45,17 @@ export type InlineFilterComposerProps = {
   /// All existing Filter-capable agents — workspace + this strategy's
   /// own scoped agents. The strategy editor passes the result of
   /// `listAgents({ scope: <strategy_id> })` filtered to those whose
-  /// first slot has `capabilities` containing "filter". (For now we
-  /// don't gate on capabilities here — every workspace agent appears
-  /// in the picker — because the SPA's Agent type doesn't carry
-  /// capabilities yet. The composer pre-selects `activates: "filter"`
-  /// on the new AgentRef regardless, which is what the Phase B
-  /// dispatcher reads at runtime.)
+  /// slots include `capabilities: ["filter"]`.
   filterCandidates: Agent[];
   /// Suggested default role for the new Filter ref (eg. "regime_filter").
   defaultRole?: string;
+  /// Existing upstream Filter ref when editing an already-configured
+  /// firing edge. Edit mode keeps the same ref/role and only rewrites
+  /// the predicate.
+  existingFilterRef?: AgentRef;
+  /// Existing edge condition used to seed the flat predicate editor
+  /// when it is scalar.
+  initialCondition?: EdgePredicate | null;
   /// Available providers for the inline author-new flow.
   providers: ProviderRow[];
   /// Closes the composer (operator hit Cancel, or the parent decided
@@ -70,20 +74,32 @@ export function InlineFilterComposer({
   pipeline,
   filterCandidates,
   defaultRole = "filter",
+  existingFilterRef,
+  initialCondition,
   providers,
   onClose,
   onSaved,
 }: InlineFilterComposerProps) {
+  const editing = existingFilterRef !== undefined;
+  const initialPredicate = initialCondition
+    ? describePredicate(initialCondition)
+    : null;
   const [mode, setMode] = useState<Mode>(
-    filterCandidates.length > 0 ? "pick" : "author",
+    editing || filterCandidates.length > 0 ? "pick" : "author",
   );
   const [pickedAgentId, setPickedAgentId] = useState<string>(
-    filterCandidates[0]?.agent_id ?? "",
+    existingFilterRef?.agent_id ?? filterCandidates[0]?.agent_id ?? "",
   );
-  const [filterRole, setFilterRole] = useState(defaultRole);
-  const [signalField, setSignalField] = useState("regime");
-  const [op, setOp] = useState<ScalarOp>("eq");
-  const [rawValue, setRawValue] = useState("");
+  const [filterRole, setFilterRole] = useState(
+    existingFilterRef?.role ?? defaultRole,
+  );
+  const [signalField, setSignalField] = useState(
+    initialPredicate?.signalField ?? "regime",
+  );
+  const [op, setOp] = useState<ScalarOp>(initialPredicate?.op ?? "eq");
+  const [rawValue, setRawValue] = useState(
+    initialPredicate ? formatRawValue(initialPredicate.value) : "",
+  );
 
   const [newName, setNewName] = useState("");
   const [newProvider, setNewProvider] = useState<string | null>(null);
@@ -107,6 +123,7 @@ export function InlineFilterComposer({
       // an explicit value.
       return false;
     }
+    if (editing) return existingFilterRef?.agent_id === pickedAgentId;
     if (mode === "pick") return pickedAgentId !== "";
     return (
       newName.trim() !== "" &&
@@ -149,14 +166,16 @@ export function InlineFilterComposer({
         });
         agentId = created.agent_id;
       }
-      await addStrategyAgent(strategyId, {
-        agent_id: agentId,
-        role: filterRole.trim(),
-        // Phase A `activates`: this position plays the Filter
-        // capability of the referenced agent, even if the agent also
-        // advertises a Trader capability.
-        activates: "filter",
-      });
+      if (!editing) {
+        await addStrategyAgent(strategyId, {
+          agent_id: agentId,
+          role: filterRole.trim(),
+          // Phase A `activates`: this position plays the Filter
+          // capability of the referenced agent, even if the agent also
+          // advertises a Trader capability.
+          activates: "filter",
+        });
+      }
       const newPipeline = withAddedEdge(pipeline, {
         from_role: filterRole.trim(),
         to_role: target.role,
@@ -181,7 +200,7 @@ export function InlineFilterComposer({
       className="border border-border-soft rounded p-3 space-y-3 bg-surface-elev"
     >
       <div className="text-[12px] uppercase tracking-wide text-text-3">
-        Add filter for {target.role}
+        {editing ? "Edit filter" : "Add filter"} for {target.role}
       </div>
 
       <div className="flex gap-2 text-[12px]">
@@ -189,7 +208,7 @@ export function InlineFilterComposer({
           type="button"
           className={modeButtonClass(mode === "pick")}
           onClick={() => setMode("pick")}
-          disabled={filterCandidates.length === 0}
+          disabled={editing || filterCandidates.length === 0}
         >
           Pick existing
         </button>
@@ -197,6 +216,7 @@ export function InlineFilterComposer({
           type="button"
           className={modeButtonClass(mode === "author")}
           onClick={() => setMode("author")}
+          disabled={editing}
         >
           Author new agent
         </button>
@@ -215,6 +235,7 @@ export function InlineFilterComposer({
               className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
               value={pickedAgentId}
               onChange={(e) => setPickedAgentId(e.target.value)}
+              disabled={editing}
             >
               {filterCandidates.map((a) => (
                 <option key={a.agent_id} value={a.agent_id}>
@@ -281,9 +302,10 @@ export function InlineFilterComposer({
       <div className="border-t border-border-soft pt-3 space-y-2">
         <FieldLabel>Pipeline role for this filter</FieldLabel>
         <input
-          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono disabled:opacity-70"
           value={filterRole}
           onChange={(e) => setFilterRole(e.target.value)}
+          disabled={editing}
         />
 
         <FieldLabel>Fires when</FieldLabel>
@@ -361,4 +383,13 @@ function modeButtonClass(active: boolean): string {
       ? "border-border bg-surface-elev text-text"
       : "border-border-soft text-text-2 hover:text-text",
   ].join(" ");
+}
+
+function formatRawValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === null) return "null";
+  return JSON.stringify(value);
 }

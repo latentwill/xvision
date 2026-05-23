@@ -120,6 +120,8 @@ export function FiringSection({
             target={agentRef}
             pipeline={pipeline}
             filterCandidates={filterCandidates}
+            existingFilterRef={incoming?.upstream}
+            initialCondition={incoming?.edge.condition}
             providers={providers}
             onClose={() => setOpen(false)}
             onSaved={() => {

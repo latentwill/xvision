@@ -21,8 +21,6 @@ use xvision_data::alpaca::AlpacaBarsFetcher;
 
 pub mod agents;
 pub mod audit;
-pub mod chart;
-pub mod eval;
 /// `xvn model bakeoff` orchestrator. File lives at
 /// `api/eval/bakeoff.rs` per contract `cli-model-bakeoff`; routed here
 /// with `#[path]` so the public module path stays `api::bakeoff`
@@ -30,6 +28,8 @@ pub mod eval;
 /// `cli-eval-model-override`).
 #[path = "eval/bakeoff.rs"]
 pub mod bakeoff;
+pub mod chart;
+pub mod eval;
 pub mod experiment;
 pub mod health;
 pub mod memory;
@@ -87,6 +87,8 @@ const MIGRATION_032_FILTERS_AND_EVALUATIONS: &str =
 const MIGRATION_033_AGENT_SLOT_CAPABILITIES: &str =
     include_str!("../../migrations/033_agent_slot_capabilities.sql");
 const MIGRATION_035_EVAL_BAKEOFFS: &str = include_str!("../../migrations/035_eval_bakeoffs.sql");
+const MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID: &str =
+    include_str!("../../migrations/036_agents_scope_strategy_id.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -253,6 +255,7 @@ impl ApiContext {
         migrate_filters_and_evaluations(&pool).await?;
         migrate_agent_slot_capabilities(&pool).await?;
         migrate_eval_bakeoffs(&pool).await?;
+        migrate_agents_scope_strategy_id(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -869,6 +872,17 @@ async fn migrate_filters_and_evaluations(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_agent_slot_capabilities(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agent_slots", "capabilities").await? {
         sqlx::query(MIGRATION_033_AGENT_SLOT_CAPABILITIES)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 036 (agent-firing-filter Phase 3): add
+/// `agents.scope_strategy_id`. Idempotent — gated on column absence.
+async fn migrate_agents_scope_strategy_id(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agents", "scope_strategy_id").await? {
+        sqlx::query(MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID)
             .execute(pool)
             .await?;
     }

@@ -178,6 +178,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
   const available = (agentPool.data ?? []).filter(
     (a) => !attached.some((r) => r.agent_id === a.agent_id),
   );
+  const filterCandidates = (agentPool.data ?? []).filter(agentSupportsFilter);
   const graphEdges = pipeline.edges ?? [];
 
   function invalidateStrategy() {
@@ -346,7 +347,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
                 onRemove={() => removeMut.mutate(a.role)}
                 allRefs={attached}
                 pipeline={pipeline}
-                filterCandidates={agentPool.data ?? []}
+                filterCandidates={filterCandidates}
                 providers={providers.data?.providers ?? []}
                 onFiringChanged={async () => {
                   await qc.invalidateQueries({ queryKey: ["agents", "pool"] });
@@ -1111,6 +1112,10 @@ function InspectorActions({
 
 function hasAttachedAgents(strategy: Strategy | null): boolean {
   return (strategy?.agents ?? []).length > 0;
+}
+
+function agentSupportsFilter(agent: Agent): boolean {
+  return agent.slots.some((slot) => slot.capabilities?.includes("filter"));
 }
 
 function Field({

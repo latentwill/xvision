@@ -57,6 +57,7 @@ pub struct ListQuery {
     pub q: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub scope: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -96,7 +97,7 @@ pub async fn list(
             q: q.q,
             limit: Some(limit),
             offset: Some(offset),
-            scope: None,
+            scope: q.scope,
         },
     )
     .await?;
