@@ -258,6 +258,7 @@ fn mutating_router(state: AppState) -> Router {
         )
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
+        .route("/api/strategy/:id/filter", put(strategies::put_filter))
         .route("/api/strategy/:id/validate", post(strategies::post_validate))
         // ── Strategies folder ─────────────────────────────────────────────
         .route(

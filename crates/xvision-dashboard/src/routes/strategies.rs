@@ -17,7 +17,7 @@ use xvision_engine::api::strategy::{
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
-    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq, TemplateInfo,
+    self, CreateStrategyOut, CreateStrategyReq, SetFilterReq, SetRiskConfigOut, SetRiskConfigReq, TemplateInfo,
     UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use xvision_engine::strategies::risk::RiskConfig;
@@ -298,6 +298,28 @@ pub async fn put_pipeline(
         },
     )
     .await?;
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+pub struct SetFilterBody {
+    #[serde(default)]
+    pub filter: Option<serde_json::Value>,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+pub async fn put_filter(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<SetFilterBody>,
+) -> Result<Json<Strategy>, DashboardError> {
+    let req = SetFilterReq {
+        strategy_id: id,
+        filter: body.filter,
+        source: body.source,
+    };
+    let out = strategy::set_filter(&state.api_context(), req).await?;
     Ok(Json(out))
 }
 
