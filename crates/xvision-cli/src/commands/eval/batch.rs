@@ -570,10 +570,7 @@ fn parse_poll_duration(s: &str) -> Result<Duration> {
 /// Returns the fully-finalized `BatchResult` (including persisted
 /// `batch_id`, per-run entries, and optional review summaries).
 /// Caller is responsible for printing / serializing.
-pub(crate) async fn run_batch_via_env(
-    ctx: &ApiContext,
-    args: &BatchRunArgs,
-) -> CliResult<BatchResult> {
+pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> CliResult<BatchResult> {
     run_batch_via_env_with_assets(ctx, args, None).await
 }
 

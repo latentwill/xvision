@@ -78,7 +78,6 @@ const scenario = {
   tags: [],
   notes: null,
   asset_class: "Crypto",
-  asset: [{ class: "Crypto", symbol: "BTC", venue_symbol: "BTC/USD" }],
   quote_currency: "Usd",
   time_window: { start: "2025-04-01T00:00:00Z", end: "2025-06-30T00:00:00Z" },
   granularity: "Hour4",
@@ -96,6 +95,7 @@ const scenario = {
       partial_fills: false,
       volume_constraints: null,
     },
+    overrides: [],
   },
   replay_mode: { mode: "Continuous" },
   capital: { initial: 10000, currency: "USD" },
@@ -169,7 +169,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     // the operator can amend display_name/description/notes/tags
     // before submitting. `scenario-clone-form-structural-fields`
     // upgraded the inline form to `<ScenarioForm>` so the operator
-    // can also override asset/window/granularity/venue/warmup_bars;
+    // can also override window/granularity/venue/warmup_bars;
     // submit is labelled "Create →" per the shared component.
     fireEvent.click(await screen.findByRole("button", { name: "Clone to edit" }));
     fireEvent.click(await screen.findByRole("button", { name: /Create/i }));
@@ -241,7 +241,6 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     // parent). display_name diverges from parent ("(clone)" suffix
     // pre-filled) so it's a non-null override.
     expect(mutations.granularity).toBeNull();
-    expect(mutations.asset).toBeNull();
     expect(mutations.time_window).toBeNull();
     expect(mutations.venue).toBeNull();
     expect(mutations.warmup_bars).toBeNull();
@@ -336,7 +335,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
           "bars",
           "fetch",
           "--asset",
-          "BTC",
+          "BTC/USD",
           "--granularity",
           "4h",
           "--from",

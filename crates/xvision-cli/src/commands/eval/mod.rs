@@ -1160,7 +1160,9 @@ fn md_cell(s: &str) -> String {
 ///
 /// Groups by asset symbol and sums decision count + trades opened
 /// (long_open + short_open). Returns rows sorted alphabetically by asset.
-fn compute_per_asset_rollup(all_decisions: &[xvision_engine::eval::store::DecisionRow]) -> Vec<AssetRollupRow> {
+fn compute_per_asset_rollup(
+    all_decisions: &[xvision_engine::eval::store::DecisionRow],
+) -> Vec<AssetRollupRow> {
     use std::collections::BTreeMap;
     // BTreeMap gives deterministic alphabetical order by asset key.
     let mut by_asset: BTreeMap<String, (u32, u32)> = BTreeMap::new();
@@ -1173,7 +1175,11 @@ fn compute_per_asset_rollup(all_decisions: &[xvision_engine::eval::store::Decisi
     }
     by_asset
         .into_iter()
-        .map(|(asset, (decisions, trades))| AssetRollupRow { asset, decisions, trades })
+        .map(|(asset, (decisions, trades))| AssetRollupRow {
+            asset,
+            decisions,
+            trades,
+        })
         .collect()
 }
 
@@ -1262,7 +1268,10 @@ fn render_compare_markdown(report: &CompareReport) -> String {
         out.push_str("| Asset | Decisions | Trades |\n");
         out.push_str("|---|---:|---:|\n");
         for row in &report.per_asset {
-            out.push_str(&format!("| {} | {} | {} |\n", row.asset, row.decisions, row.trades));
+            out.push_str(&format!(
+                "| {} | {} | {} |\n",
+                row.asset, row.decisions, row.trades
+            ));
         }
     }
 
@@ -1550,8 +1559,11 @@ mod tests {
         assert_eq!(parsed_symbols, vec![AssetSymbol::Eth, AssetSymbol::Sol]);
 
         // Confirm the request field is populated correctly.
-        let assets_subset: Option<Vec<AssetSymbol>> =
-            if parsed_symbols.is_empty() { None } else { Some(parsed_symbols) };
+        let assets_subset: Option<Vec<AssetSymbol>> = if parsed_symbols.is_empty() {
+            None
+        } else {
+            Some(parsed_symbols)
+        };
         assert_eq!(
             assets_subset,
             Some(vec![AssetSymbol::Eth, AssetSymbol::Sol]),
@@ -1562,16 +1574,22 @@ mod tests {
     /// Empty `--assets` flag (not provided) must map to `assets_subset: None`.
     #[test]
     fn eval_run_no_assets_flag_yields_none_subset() {
-        let parsed = TestEval::try_parse_from([
-            "x", "run", "--strategy", "strat-01", "--scenario", "scen-01",
-        ])
-        .expect("minimal eval run must parse");
+        let parsed =
+            TestEval::try_parse_from(["x", "run", "--strategy", "strat-01", "--scenario", "scen-01"])
+                .expect("minimal eval run must parse");
         let Op::Run(args) = parsed.op else {
             panic!("expected Run subcommand");
         };
         assert!(args.assets.is_empty(), "assets should be empty when not provided");
-        let assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>> = if args.assets.is_empty() { None } else { Some(vec![]) };
-        assert!(assets_subset.is_none(), "assets_subset must be None when --assets not provided");
+        let assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>> = if args.assets.is_empty() {
+            None
+        } else {
+            Some(vec![])
+        };
+        assert!(
+            assets_subset.is_none(),
+            "assets_subset must be None when --assets not provided"
+        );
     }
 
     #[test]

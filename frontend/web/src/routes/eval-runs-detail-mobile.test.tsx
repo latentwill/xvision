@@ -136,6 +136,8 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       id: "01LIVE",
       agent_id: "mean-reversion-v3",
       scenario_id: "flash-crash-2024-08",
+      strategy: null,
+      scenario: null,
       mode: "backtest",
       status: "completed",
       started_at: "2026-05-13T14:00:00Z",

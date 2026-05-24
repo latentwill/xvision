@@ -49,7 +49,6 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
     tags: ["btc", "trend"],
     notes: null,
     asset_class: "Crypto",
-    asset: [{ class: "Crypto", symbol: "BTC/USD", venue_symbol: "BTCUSD" }],
     quote_currency: "Usd",
     time_window: {
       start: "2025-01-01T00:00:00Z",
@@ -150,8 +149,8 @@ describe("ScenariosRoute", () => {
     await screen.findByText("BTC 4h sample");
     // Source pill rendered as a Pill containing the source label.
     expect(screen.getAllByText("User").length).toBeGreaterThan(0);
-    // Asset cell shows symbol.
-    expect(screen.getAllByText(/BTC\/USD/).length).toBeGreaterThan(0);
+    // Market cell shows scenario descriptors; traded assets come from strategies.
+    expect(screen.getAllByText(/Crypto \/ Usd/).length).toBeGreaterThan(0);
   });
 
   it("forwards the include_archived filter to the backend listScenariosPaged call", async () => {
@@ -191,9 +190,6 @@ describe("ScenariosRoute", () => {
         scenario({
           id: "b",
           display_name: "ETH 1h",
-          asset: [
-            { class: "Crypto", symbol: "ETH/USD", venue_symbol: "ETHUSD" },
-          ],
           granularity: "1h",
         }),
       ],

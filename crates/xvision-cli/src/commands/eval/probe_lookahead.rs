@@ -17,7 +17,7 @@ use xvision_core::trading::{AssetSymbol, Regime};
 use xvision_data::fixtures::load_ohlcv_fixture;
 use xvision_engine::api::eval;
 use xvision_engine::api::scenario as api_scenario;
-use xvision_engine::eval::findings::{Finding, KIND_LOOKAHEAD_SUSPECTED};
+use xvision_engine::eval::findings::Finding;
 use xvision_eval::baselines::{AlwaysLong, MaCrossover, MacdMomentum, RsiMeanReversion};
 use xvision_eval::prober::{LookaheadFinding, LookaheadProber, ProberConfig};
 

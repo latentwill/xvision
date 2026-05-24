@@ -64,7 +64,6 @@ use xvision_engine::api::experiment::{CreateExperimentRequest, UpdateExperimentR
 use xvision_engine::api::scenario::ListScenariosFilter;
 use xvision_engine::api::ApiContext;
 use xvision_engine::eval::experiment_store::{Experiment, ExperimentStore};
-use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::BrokerSurface;
@@ -513,7 +512,9 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
     if scenario_ids.is_empty() {
         return Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("no scenarios resolved; check --timeframe / --target-decisions / --count"),
+            source: anyhow::anyhow!(
+                "no scenarios resolved; check --timeframe / --target-decisions / --count"
+            ),
         });
     }
 

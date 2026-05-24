@@ -371,8 +371,7 @@ async fn backtest_asset_subset_excludes_other_assets() {
         .expect("subset backtest must complete");
 
     let decisions = store.read_decisions(&run.id).await.unwrap();
-    let assets: std::collections::BTreeSet<String> =
-        decisions.iter().map(|d| d.asset.clone()).collect();
+    let assets: std::collections::BTreeSet<String> = decisions.iter().map(|d| d.asset.clone()).collect();
 
     // BTC must be absent — the subset excludes it.
     assert!(

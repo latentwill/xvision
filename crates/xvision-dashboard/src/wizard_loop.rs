@@ -3398,7 +3398,10 @@ mod tests {
         assert_eq!(out["description"], "SOL Q1 2026 scenario generated from chat.");
         // Scenarios are asset-free; the normalizer strips any `asset` the
         // agent emits, and the created scenario has no asset field.
-        assert!(out.get("asset").is_none(), "scenario must not carry an asset; got: {out}");
+        assert!(
+            out.get("asset").is_none(),
+            "scenario must not carry an asset; got: {out}"
+        );
         assert_eq!(out["time_window"]["start"], "2026-01-01T00:00:00Z");
         assert_eq!(out["time_window"]["end"], "2026-04-01T00:00:00Z");
     }

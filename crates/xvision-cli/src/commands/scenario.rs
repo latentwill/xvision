@@ -1367,9 +1367,9 @@ pub mod select {
     use chrono::{TimeZone, Utc};
     use xvision_core::Capital;
     use xvision_engine::eval::scenario::{
-        AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
-        FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
-        Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+        AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees, FillModel,
+        LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
+        ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
 
     use std::str::FromStr;
@@ -1529,8 +1529,7 @@ pub mod select {
     #[test]
     fn mode_a_regime_filter_excludes_non_matching() {
         let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["trending_bear"]);
-        let rows =
-            select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -1538,8 +1537,7 @@ pub mod select {
     fn mode_a_regime_filter_includes_partial_match() {
         // "bull" is a substring of "trending_bull" → should match.
         let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["trending_bull"]);
-        let rows =
-            select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
     }
 
@@ -1645,8 +1643,7 @@ pub mod select {
         let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["trending_bull"]);
         assert!(s.regime_label.is_none());
 
-        let rows =
-            select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
         assert_eq!(
             rows.len(),
             1,
@@ -1658,16 +1655,8 @@ pub mod select {
     fn scenario_without_regime_excluded_when_regime_filter_set() {
         // No regime in column AND no regime tag → excluded when filter is active.
         let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
-        let rows = select_scenarios(
-            &[s],
-            None,
-            &["expansion".to_string()],
-            Some(100),
-            false,
-            None,
-            4,
-        )
-        .unwrap();
+        let rows =
+            select_scenarios(&[s], None, &["expansion".to_string()], Some(100), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 

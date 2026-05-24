@@ -91,18 +91,6 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .unwrap();
     apply_agent_migrations(&pool).await;
     sqlx::query(include_str!(
-        "../../xvision-engine/migrations/033_agent_slot_capabilities.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
     .execute(&pool)
@@ -110,6 +98,12 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     .unwrap();
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/016_eval_reviews.sql"
     ))
     .execute(&pool)
     .await
@@ -130,6 +124,18 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     // columns referenced by RunStore::create.
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/027_run_bars_manifest.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/038_eval_runs_live_config.sql"
     ))
     .execute(&pool)
     .await
@@ -272,7 +278,11 @@ async fn batch_run_two_scenarios_both_complete() {
     assert_eq!(result.runs.len(), 2);
 
     for run_result in &result.runs {
-        assert_eq!(run_result.status, "completed", "every run must reach completed");
+        assert_eq!(
+            run_result.status, "completed",
+            "every run must reach completed; error={:?}",
+            run_result.error
+        );
         assert!(run_result.run_id.len() > 0, "run_id must be non-empty");
         // Decisions should be present for a hold-only backtest.
         assert!(
@@ -430,18 +440,6 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
         .unwrap();
     apply_agent_migrations(&pool).await;
     sqlx::query(include_str!(
-        "../../xvision-engine/migrations/033_agent_slot_capabilities.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
     .execute(&pool)
@@ -490,6 +488,18 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
     .unwrap();
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/027_run_bars_manifest.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/038_eval_runs_live_config.sql"
     ))
     .execute(&pool)
     .await

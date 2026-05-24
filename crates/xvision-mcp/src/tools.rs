@@ -2648,8 +2648,8 @@ mod tests {
 
     use std::str::FromStr;
     use xvision_engine::eval::scenario::{
-        AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
-        FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
+        AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees, FillModel,
+        LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
         ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
     use xvision_engine::Capital;

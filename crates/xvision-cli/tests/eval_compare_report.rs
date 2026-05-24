@@ -17,6 +17,7 @@ use chrono::Utc;
 use tempfile::tempdir;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::run::{MetricsSummary, Run, RunMode};
+use xvision_engine::eval::scenario_store;
 use xvision_engine::eval::store::{DecisionRow, RunStore};
 
 // ---- helpers ----------------------------------------------------------------
@@ -483,7 +484,7 @@ fn markdown_render_contains_header_and_per_run_row() {
 
     // Table header row.
     assert!(
-        md.contains("| Run | Scenario | Return % | Sharpe |"),
+        md.contains("| Run | Strategy | Scenario | Return % | Sharpe |"),
         "markdown must contain table header; got:\n{md}"
     );
 
@@ -525,8 +526,16 @@ fn markdown_escapes_pipe_in_scenario_name() {
         )
         .await
         .expect("open ApiContext");
+        let mut scenario = xvision_engine::api::scenario::get(&ctx, "crypto-bull-q1-2025")
+            .await
+            .expect("load canonical scenario");
+        scenario.id = "sol-pipe-scenario".into();
+        scenario.display_name = "SOL|Pipe Scenario".into();
+        scenario_store::insert_scenario(&ctx, &scenario)
+            .await
+            .expect("insert pipe scenario");
         sqlx::query("UPDATE eval_runs SET scenario_id = ? WHERE id = ?")
-            .bind("SOL|Pipe Scenario")
+            .bind(&scenario.id)
             .bind(&id_a)
             .execute(&ctx.db)
             .await
@@ -707,9 +716,10 @@ fn default_text_output_backward_compat() {
     );
 
     let text = String::from_utf8_lossy(&out.stdout);
-    // Legacy header line must still be present.
+    // Header line remains tab-separated; Strategy ID is included separately
+    // from the display label.
     assert!(
-        text.contains("RUN_ID\tSTRATEGY\tSCENARIO"),
+        text.contains("RUN_ID\tSTRATEGY\tSTRATEGY_ID\tSCENARIO"),
         "default text output must contain tab-separated header; got:\n{text}"
     );
     // Both run ids must appear in the output.
