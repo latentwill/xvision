@@ -105,7 +105,7 @@ export function EvalCompareRoute() {
         strategies={strategies.data ?? []}
         scenarios={scenarios.data ?? []}
       />
-      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
+      <h2 className="font-sans font-semibold text-[20px] text-text mt-8 mb-3">
         Equity curves
       </h2>
       <ChartFrame title="Run equity overlay" range="All" onRange={() => undefined}>
@@ -114,7 +114,7 @@ export function EvalCompareRoute() {
           height={260}
         />
       </ChartFrame>
-      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
+      <h2 className="font-sans font-semibold text-[20px] text-text mt-8 mb-3">
         Findings{" "}
         <span className="text-text-3 text-[14px]">
           ({report.findings.length})
@@ -430,7 +430,7 @@ function severityTone(
 function EmptyFindings() {
   return (
     <div className="px-6 py-12 text-center text-text-2">
-      <div className="font-serif italic text-[22px] text-text-3 mb-2">
+      <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
         no findings
       </div>
       <p className="m-0 text-[13px]">
@@ -444,7 +444,7 @@ function EmptyFindings() {
 function NeedTwoOrMore({ given }: { given: number }) {
   return (
     <Card className="px-6 py-12 text-center">
-      <div className="font-serif italic text-[22px] text-text-3 mb-2">
+      <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
         compare needs two or more runs
       </div>
       <p className="m-0 mb-5 text-text-2 text-[13px]">
@@ -474,7 +474,7 @@ function ErrorState({
   if (err instanceof ApiError && err.code === "not_found") {
     return (
       <Card className="px-6 py-12 text-center">
-        <div className="font-serif italic text-[22px] text-text-3 mb-2">
+        <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
           a run is missing
         </div>
         <p className="m-0 mb-5 text-text-2 text-[13px]">
@@ -494,7 +494,7 @@ function ErrorState({
   if (err instanceof ApiError && err.code === "validation") {
     return (
       <Card className="px-6 py-12 text-center">
-        <div className="font-serif italic text-[22px] text-text-3 mb-2">
+        <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
           can't compare these
         </div>
         <p className="m-0 mb-5 text-text-2 text-[13px]">
@@ -517,7 +517,7 @@ function ErrorState({
         : String(err);
   return (
     <Card className="px-6 py-12 text-center">
-      <div className="font-serif italic text-[22px] text-danger mb-3">
+      <div className="font-sans font-semibold text-[22px] text-danger mb-3">
         couldn't load comparison
       </div>
       <p className="m-0 mb-5 text-text-2 text-[13px]">

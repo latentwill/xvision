@@ -1,8 +1,8 @@
 /**
  * KpiCard — one cell in the dashboard's 5-up KPI row.
  *
- * Typography per spec §4A.1 (B1): value in Cormorant 30–32px, label in
- * the `.caps` tracked-uppercase eyebrow, foot in JetBrains Mono 11px
+ * Typography per spec §4A.1 (B1): value in Geist 30–32px, label in
+ * the `.caps` tracked-uppercase eyebrow, foot in Geist Mono 11px
  * tinted to `text-3`. The `intent="danger"` variant tints the value red
  * (used by Max Drawdown). The `cornerGlow` prop is wired up here so B4
  * can apply the radial gold glow to the Total Return card.
@@ -42,25 +42,25 @@ export function KpiCard({
           className="pointer-events-none absolute -top-[30px] -right-[30px] w-[120px] h-[120px]"
           style={{
             background:
-              "radial-gradient(closest-side, rgba(212,165,71,0.30), transparent 70%)",
+              "radial-gradient(closest-side, rgba(0,230,118,0.30), transparent 70%)",
           }}
         />
       )}
       <div className="caps">{label}</div>
       <div
         className={[
-          "mt-2 leading-[1.05] tracking-[-0.015em] font-serif font-medium",
+          "mt-2 leading-[1.05] tracking-[-0.015em] font-sans font-semibold",
           "text-[30px]",
           valueColor,
         ].join(" ")}
-        style={{ fontFamily: '"Cormorant Garamond", serif' }}
+        style={{ fontFamily: 'Geist, sans-serif' }}
       >
         {value}
       </div>
       {foot != null && (
         <div
           className="mt-1.5 text-[11px] text-text-3"
-          style={{ fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, monospace' }}
+          style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
         >
           {foot}
         </div>

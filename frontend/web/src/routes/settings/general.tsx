@@ -8,8 +8,7 @@ import { useTheme } from "@/theme/useTheme";
 import { RestartTourButton } from "@/features/onboarding";
 
 function swatchFor(value: string) {
-  const id: ResolvedTheme =
-    value === "auto" ? "folio-dark" : (value as ResolvedTheme);
+  const id: ResolvedTheme = value === "auto" ? "dark" : (value as ResolvedTheme);
   return themeDefinitions[id].swatch;
 }
 
@@ -20,11 +19,11 @@ export function SettingsGeneralRoute() {
     <div className="space-y-5">
       <Card className="p-5">
         <div className="mb-4">
-          <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+          <h3 className="m-0 font-sans font-semibold text-[18px] tracking-tight">
             Appearance
           </h3>
           <p className="m-0 mt-1 text-text-3 text-[12px] leading-snug max-w-2xl">
-            Choose the dashboard color theme. This changes colors only.
+            Signal theme. Auto follows your system; Light is the cool-white variant; Dark is pure-black Signal.
           </p>
         </div>
         <div
@@ -55,13 +54,20 @@ export function SettingsGeneralRoute() {
                 />
                 <span
                   aria-hidden
-                  className="grid h-7 w-7 grid-cols-2 overflow-hidden rounded border border-border"
+                  className="flex h-7 w-10 overflow-hidden rounded-sm border border-border"
                   style={{ background: swatch.bg }}
                 >
-                  <span style={{ background: swatch.surface }} />
-                  <span style={{ background: swatch.accent }} />
-                  <span style={{ background: swatch.border }} />
-                  <span style={{ background: swatch.text }} />
+                  <span className="flex-1" style={{ background: swatch.surface }} />
+                  <span className="flex-1" style={{ background: swatch.accent }} />
+                  <span
+                    className="flex-1 grid place-items-center"
+                    style={{ background: swatch.bg }}
+                  >
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ background: swatch.text }}
+                    />
+                  </span>
                 </span>
                 <span className="text-[13px]">{option.label}</span>
               </label>
@@ -73,7 +79,7 @@ export function SettingsGeneralRoute() {
       <Card className="p-5">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+            <h3 className="m-0 font-sans font-semibold text-[18px] tracking-tight">
               Guided tour
             </h3>
             <p className="m-0 mt-1 max-w-2xl text-[12px] leading-snug text-text-3">

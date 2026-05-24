@@ -290,7 +290,8 @@ describe("EvalRunDetailRoute", () => {
 
     renderDetail();
 
-    await screen.findByText("no decisions");
+    // Empty-state copy in the redesigned Decisions card.
+    await screen.findByText("No decisions");
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
 
     FakeEventSource.instances[0].emit("decision", {
@@ -298,11 +299,12 @@ describe("EvalRunDetailRoute", () => {
       data: decision(),
     });
 
-    expect(await screen.findByText("long_open")).toBeInTheDocument();
-    // BTC/USD now appears in two places: the Asset column and the
-    // new "Open positions" cell. Both are correct.
-    expect(screen.getAllByText("BTC/USD").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("0.77")).toBeInTheDocument();
+    // The Signal table renders a direction-aware ActionPill (long_open → BUY)
+    // and the engaged PhaseChip. Conviction renders as a rounded percentage
+    // (0.77 → 77%) in the redesigned table.
+    expect((await screen.findAllByText("BUY")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ENGAGED").length).toBeGreaterThan(0);
+    expect(screen.getByText("77%")).toBeInTheDocument();
   });
 
   it("shows an explicit stop control for active runs", async () => {
@@ -357,20 +359,31 @@ describe("EvalRunDetailRoute", () => {
     );
   });
 
-  it("separates model decisions from synthesized eval rows", async () => {
+  it("derives ENGAGED vs FILTERED phase from synthesized-row markers", async () => {
+    // The Signal redesign replaces the old Decision-provenance panel with a
+    // PHASE column. Synthesized rows (noop_skip / early-stop markers) derive to
+    // FILTERED; a real trader decision derives to ENGAGED. No backend phase
+    // field — phase is computed in the adapter from existing fields.
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
+        summary: { ...detail().summary, status: "completed" },
         decisions: [
           decision({ decision_index: 0, justification: "breakout confirmed" }),
           decision({
             decision_index: 1,
             action: "hold",
+            conviction: null,
+            order_size: null,
             justification: "noop_skip: only hold is available",
+            reasoning: null,
           }),
           decision({
             decision_index: 2,
             action: "flat",
+            conviction: null,
+            order_size: null,
             justification: "inherited from early-stop policy",
+            reasoning: null,
           }),
         ],
       }),
@@ -378,13 +391,61 @@ describe("EvalRunDetailRoute", () => {
 
     renderDetail();
 
-    expect(await screen.findByText("Decision provenance")).toBeInTheDocument();
-    expect(screen.getByText("Model decisions")).toBeInTheDocument();
-    expect(screen.getByText("Synthesized rows")).toBeInTheDocument();
-    expect(screen.getByText("Noop skip")).toBeInTheDocument();
-    expect(screen.getByText("Early stop")).toBeInTheDocument();
-    expect(screen.getAllByText("1").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(1);
+    // One engaged (the breakout) + two filtered (the synthesized rows).
+    expect((await screen.findAllByText("ENGAGED")).length).toBe(1);
+    expect(screen.getAllByText("FILTERED").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("dims filtered rows and dashes out their engaged-only cells", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          decision({ decision_index: 0, justification: "breakout confirmed" }),
+          decision({
+            decision_index: 1,
+            action: "hold",
+            conviction: null,
+            order_size: null,
+            justification: "noop_skip: only hold is available",
+            reasoning: null,
+          }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    const filteredChip = await screen.findByText("FILTERED");
+    const row = filteredChip.closest("tr");
+    expect(row).not.toBeNull();
+    // Filtered rows render at reduced opacity (0.78) and replace engaged-only
+    // cells with em dashes.
+    expect(row?.getAttribute("style") ?? "").toMatch(/opacity:\s*0\.78/);
+    expect((row?.querySelectorAll("td") ?? [])).not.toHaveLength(0);
+    expect(row?.textContent ?? "").toMatch(/—/);
+  });
+
+  it("renders the per-decision density strip above the table", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          decision({ decision_index: 0, justification: "breakout confirmed" }),
+          decision({ decision_index: 1, action: "hold", conviction: 0.4, justification: "trim" }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    const strip = await screen.findByTestId("decision-density-strip");
+    expect(strip).toBeInTheDocument();
+    // Each decision is a full-height clickable tick (filtered ticks included).
+    expect(
+      strip.querySelectorAll('[role="button"][aria-label^="Jump to decision"]')
+        .length,
+    ).toBe(2);
   });
 
   it("renders the disambiguator label in the metadata strip and drops the strategy/scenario id chips", async () => {
@@ -886,31 +947,29 @@ describe("EvalRunDetailRoute", () => {
     expect(useTraceDock.getState().activeRunId).toBeNull();
   });
 
-  it("renders status pill from run.status while the run is running", async () => {
+  it("renders the topbar status pill from run.status while the run is running", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(detail());
 
     renderDetail();
 
     // Wait for actual content to render, not the loading skeleton.
     await screen.findByRole("button", { name: /stop eval run/i });
-    // The pill's text content equals run.status — not the trailing
-    // span's state. While running, never "completed".
-    const pill = document.querySelector(".xvn-pill-animated");
-    expect(pill).not.toBeNull();
-    expect(pill?.textContent).toContain("running");
-    expect(pill?.textContent).not.toContain("completed");
+    // The Signal topbar carries the lifecycle status. While running it reads
+    // "EVAL RUNNING" — never "COMPLETED".
+    const status = screen.getByTestId("eval-topbar-status");
+    expect(status.textContent).toContain("EVAL RUNNING");
+    expect(status.textContent).not.toContain("COMPLETED");
   });
 
-  it("animates the running pill via prefers-reduced-motion-aware xvn-pill-animated class", async () => {
+  it("pulses the topbar status dot while the run is running", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(detail());
 
     renderDetail();
 
     await screen.findByRole("button", { name: /stop eval run/i });
-    const pill = document.querySelector(".xvn-pill-animated");
-    expect(pill).not.toBeNull();
-    expect(pill?.getAttribute("data-running")).toBe("true");
-    expect(pill?.getAttribute("aria-busy")).toBe("true");
+    const status = screen.getByTestId("eval-topbar-status");
+    // The running dot animates; terminal statuses do not.
+    expect(status.querySelector(".animate-pulse")).not.toBeNull();
   });
 
   it("does not render a separate streaming capsule alongside the running pill", async () => {
@@ -938,8 +997,11 @@ describe("EvalRunDetailRoute", () => {
     renderDetail();
 
     await screen.findByRole("button", { name: /download eval run/i });
-    // The animated class only attaches while status === "running".
-    expect(document.querySelector(".xvn-pill-animated")).toBeNull();
+    // On a terminal run the topbar reads COMPLETED with a static (non-pulsing)
+    // dot — no animation once the run finishes.
+    const status = screen.getByTestId("eval-topbar-status");
+    expect(status.textContent).toContain("EVAL COMPLETED");
+    expect(status.querySelector(".animate-pulse")).toBeNull();
   });
 
   it("shows a Retry button on failed terminal runs", async () => {
@@ -1138,7 +1200,7 @@ describe("EvalRunDetailRoute", () => {
   });
 });
 
-describe("EvalRunDetailRoute — Open positions cell", () => {
+describe("EvalRunDetailRoute — Signal decisions table", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     FakeEventSource.instances = [];
@@ -1154,44 +1216,29 @@ describe("EvalRunDetailRoute — Open positions cell", () => {
     vi.unstubAllGlobals();
   });
 
-  it("CLOSE row after short_open shows positions=flat (operator repro 2026-05-18)", async () => {
-    // Operator: "a short_open then the next bar is CLOSE flat —
-    // can't tell whether the short is still on". After this fix:
-    // open-positions cell on the CLOSE row reads `flat` explicitly.
+  it("renders absolute Total PnL ($) in the summary card from the equity curve (QA22)", async () => {
+    // Alongside `Net %` the Summary card surfaces the absolute terminal-PnL in
+    // account currency. Equity opens at $10,000, closes at $10,642 → +$642.00.
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
-        summary: { ...detail().summary, status: "completed" },
-        decisions: [
-          decision({
-            decision_index: 0,
-            action: "short_open",
-            fill_size: 0.5,
-            fill_price: 60_000,
-          }),
-          decision({
-            decision_index: 1,
-            action: "flat",
-            fill_size: 0.5,
-            fill_price: 61_000,
-            pnl_realized: -500,
-          }),
+        equity_curve: [
+          { timestamp: "2026-05-13T14:00:00Z", equity_usd: 10000 },
+          { timestamp: "2026-05-13T14:30:00Z", equity_usd: 10642 },
         ],
       }),
     );
-
     renderDetail();
-
-    const shortRow = await screen.findByTestId("decision-open-positions-0");
-    expect(shortRow.textContent).toMatch(/BTC\/USD/);
-    expect(shortRow.textContent).toMatch(/short/i);
-
-    const closeRow = await screen.findByTestId("decision-open-positions-1");
-    expect(closeRow.textContent).toMatch(/flat/i);
-    expect(closeRow.querySelector('[data-testid="decision-open-positions-flat"]')).not
-      .toBeNull();
+    expect(await screen.findByText("TOTAL PNL")).toBeInTheDocument();
+    expect(screen.getByText("+$642.00")).toBeInTheDocument();
   });
 
-  it("HOLD row after CLOSE keeps the positions cell flat (no carry-over from the closed leg)", async () => {
+  it("maps engine actions to the Signal 4-action vocabulary (BUY/SELL/CLOSE/HOLD)", async () => {
+    // Signal collapses the 5-verb table into the 4-action design vocabulary:
+    //   0  long_open            → BUY
+    //   1  flat (prior=long)    → SELL   (exit a long)
+    //   2  short_open           → SELL   (short entry is a sell)
+    //   3  flat (prior=short)   → CLOSE  (cover the short)
+    //   4  hold (reasoned)      → HOLD
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
         summary: { ...detail().summary, status: "completed" },
@@ -1204,29 +1251,19 @@ describe("EvalRunDetailRoute — Open positions cell", () => {
             fill_price: 51_000,
             pnl_realized: 1000,
           }),
-          decision({ decision_index: 2, action: "hold", fill_size: null, fill_price: null }),
-        ],
-      }),
-    );
-
-    renderDetail();
-
-    const holdRow = await screen.findByTestId("decision-open-positions-2");
-    expect(holdRow.textContent).toMatch(/flat/i);
-  });
-
-  it("re-entry after CLOSE shows the new position with the new entry price", async () => {
-    vi.mocked(evalApi.getRun).mockResolvedValue(
-      detail({
-        summary: { ...detail().summary, status: "completed" },
-        decisions: [
-          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
-          decision({ decision_index: 1, action: "flat", fill_size: 1, fill_price: 51_000 }),
+          decision({ decision_index: 2, action: "short_open", fill_size: 0.5, fill_price: 49_000 }),
           decision({
-            decision_index: 2,
-            action: "short_open",
+            decision_index: 3,
+            action: "flat",
             fill_size: 0.5,
-            fill_price: 49_000,
+            fill_price: 48_000,
+            pnl_realized: 250,
+          }),
+          decision({
+            decision_index: 4,
+            action: "hold",
+            conviction: 0.3,
+            justification: "stay flat, chop",
           }),
         ],
       }),
@@ -1234,67 +1271,17 @@ describe("EvalRunDetailRoute — Open positions cell", () => {
 
     renderDetail();
 
-    const reentry = await screen.findByTestId("decision-open-positions-2");
-    expect(reentry.textContent).toMatch(/BTC\/USD/);
-    expect(reentry.textContent).toMatch(/short/i);
-    // Entry price 49_000 renders without grouping (>=1000 → no decimals).
-    expect(reentry.textContent).toMatch(/49,?000/);
-  });
-
-  it("renders absolute Total PnL ($) in the summary panel derived from the equity curve (QA22)", async () => {
-    // QA22 / `eval-inspector-total-pnl-summary`: alongside `Total
-    // return` (%) the panel now shows the absolute terminal-PnL in
-    // account currency. Equity curve opens at $10,000 and closes at
-    // $10,642 → +$642.00.
-    vi.mocked(evalApi.getRun).mockResolvedValue(
-      detail({
-        equity_curve: [
-          { timestamp: "2026-05-13T14:00:00Z", equity_usd: 10000 },
-          { timestamp: "2026-05-13T14:30:00Z", equity_usd: 10642 },
-        ],
-      }),
-    );
-    renderDetail();
-    expect(await screen.findByText("Total PnL")).toBeInTheDocument();
-    expect(screen.getByText("+$642.00")).toBeInTheDocument();
-  });
-
-  it("labels short_open as SHORT, long-close flat as SELL, short-close flat as COVER (QA22)", async () => {
-    // QA22 / `decision-side-label-sell-vs-short`: the earlier mapping
-    // collapsed short_open → 'SELL' and flat → 'CLOSE'. Operators
-    // reported seeing "SHORT" when the agent was just selling. The
-    // refactored labelling derives from the *prior* position so the
-    // verb matches the intent.
-    vi.mocked(evalApi.getRun).mockResolvedValue(
-      detail({
-        summary: { ...detail().summary, status: "completed" },
-        decisions: [
-          // 0: open long → BUY
-          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
-          // 1: flat (prior=long) → SELL
-          decision({ decision_index: 1, action: "flat", fill_size: 1, fill_price: 51_000 }),
-          // 2: open short → SHORT
-          decision({ decision_index: 2, action: "short_open", fill_size: 0.5, fill_price: 49_000 }),
-          // 3: flat (prior=short) → COVER
-          decision({ decision_index: 3, action: "flat", fill_size: 0.5, fill_price: 48_000 }),
-        ],
-      }),
-    );
-
-    renderDetail();
-
-    // Each verb must appear at least once on the table. The presence
-    // of all four (and the absence of the old "SHORT" mislabel on the
-    // long-close row) is the regression we're guarding. Filter buttons
-    // also render "BUY"/"SHORT" etc, so we use getAllByText and assert
-    // at least one match (the row pill).
+    // Each action verb appears at least once across the rows + density legend.
     expect((await screen.findAllByText("BUY")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("SELL").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("SHORT").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("COVER").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("CLOSE").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("HOLD").length).toBeGreaterThan(0);
+    // The old SHORT/COVER vocabulary is gone from the redesigned table.
+    expect(screen.queryByText("SHORT")).not.toBeInTheDocument();
+    expect(screen.queryByText("COVER")).not.toBeInTheDocument();
   });
 
-  it("realized PnL fills in on the close decision row when the engine reports it", async () => {
+  it("shows realized PnL on a close row as a signed $ amount", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
         summary: { ...detail().summary, status: "completed" },
@@ -1313,96 +1300,21 @@ describe("EvalRunDetailRoute — Open positions cell", () => {
 
     renderDetail();
 
-    // The close row's PnL cell shows the engine-reported value
-    // (fmtNumber → fixed 2 decimals).
-    expect(await screen.findByText("999.00")).toBeInTheDocument();
-  });
-});
-
-describe("EvalRunDetailRoute — direction-aware action pill (QA22 round-4)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    FakeEventSource.instances = [];
-    vi.stubGlobal("EventSource", FakeEventSource);
-    vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
-    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
-    vi.mocked(chartApi.openRunStream).mockImplementation(
-      (runId: string) => new EventSource(`/stream/${runId}`),
-    );
-    vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([]);
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
+    // The Signal PnL cell renders a signed currency amount, not a bare number.
+    expect(await screen.findByText("+$999")).toBeInTheDocument();
   });
 
-  it("renders BUY / SELL / SHORT / COVER / HOLD pills resolved against prior position side", async () => {
-    // Sequence:
-    //   0  long_open  → BUY
-    //   1  flat       → SELL  (closing a long)
-    //   2  short_open → SHORT
-    //   3  flat       → COVER (closing a short)
-    //   4  hold       → HOLD
+  it("the mutually-exclusive filter pill row narrows the table to a single action", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
         summary: { ...detail().summary, status: "completed" },
         decisions: [
-          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
+          decision({ decision_index: 0, action: "long_open", justification: "entry" }),
           decision({
             decision_index: 1,
-            action: "flat",
-            fill_size: 1,
-            fill_price: 51_000,
-            pnl_realized: 1000,
-          }),
-          decision({
-            decision_index: 2,
-            action: "short_open",
-            fill_size: 0.5,
-            fill_price: 49_000,
-          }),
-          decision({
-            decision_index: 3,
-            action: "flat",
-            fill_size: 0.5,
-            fill_price: 48_500,
-            pnl_realized: 250,
-          }),
-          decision({ decision_index: 4, action: "hold", fill_size: null, fill_price: null }),
-        ],
-      }),
-    );
-
-    renderDetail();
-
-    // Find each row by the OpenPositions testid (one per decision_index),
-    // then walk up to the table row and assert the pill label inside it.
-    await screen.findByTestId("decision-open-positions-0");
-    const rowFor = (idx: number) => {
-      const cell = screen.getByTestId(`decision-open-positions-${idx}`);
-      const tr = cell.closest("tr");
-      if (!tr) throw new Error(`no <tr> ancestor for decision-open-positions-${idx}`);
-      return tr;
-    };
-
-    expect(rowFor(0).querySelector(".dec-pill__label")?.textContent).toBe("BUY");
-    expect(rowFor(1).querySelector(".dec-pill__label")?.textContent).toBe("SELL");
-    expect(rowFor(2).querySelector(".dec-pill__label")?.textContent).toBe("SHORT");
-    expect(rowFor(3).querySelector(".dec-pill__label")?.textContent).toBe("COVER");
-    expect(rowFor(4).querySelector(".dec-pill__label")?.textContent).toBe("HOLD");
-  });
-
-  it("filter tabs include Short and Cover buckets and count rows by direction-aware kind", async () => {
-    vi.mocked(evalApi.getRun).mockResolvedValue(
-      detail({
-        summary: { ...detail().summary, status: "completed" },
-        decisions: [
-          decision({ decision_index: 0, action: "short_open", fill_size: 0.5, fill_price: 60_000 }),
-          decision({
-            decision_index: 1,
-            action: "flat",
-            fill_size: 0.5,
-            fill_price: 59_000,
-            pnl_realized: 500,
+            action: "hold",
+            conviction: 0.2,
+            justification: "wait",
           }),
         ],
       }),
@@ -1410,12 +1322,15 @@ describe("EvalRunDetailRoute — direction-aware action pill (QA22 round-4)", ()
 
     renderDetail();
 
-    // Both buckets should be present (per-bucket button labels) and
-    // each should report exactly one row. The accessible name is the
-    // concatenation of the label and the count span — match loosely.
-    await screen.findByRole("button", { name: /SHORT.*1/ });
-    expect(screen.getByRole("button", { name: /COVER.*1/ })).toBeInTheDocument();
-    // Sell bucket exists but is empty for this sequence (no flat-after-long).
-    expect(screen.getByRole("button", { name: /SELL.*0/ })).toBeInTheDocument();
+    // The Buy pill carries a count badge; clicking it scopes to the one buy row
+    // and hides the hold row's action pill.
+    const buyPill = await screen.findByRole("button", { name: /Buy\s*1/ });
+    fireEvent.click(buyPill);
+    expect(buyPill).toHaveAttribute("aria-pressed", "true");
+    // After scoping to Buy, the HOLD action pill is no longer in the table body.
+    await waitFor(() =>
+      expect(screen.queryByText("HOLD")).not.toBeInTheDocument(),
+    );
+    expect(screen.getAllByText("BUY").length).toBeGreaterThan(0);
   });
 });

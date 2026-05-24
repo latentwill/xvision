@@ -62,7 +62,7 @@ export function ReviewPanel({
     return (
       <Card className="p-5">
         <PanelHeader />
-        <div className="text-text-3 text-[13px] italic">
+        <div className="text-text-3 text-[13px] font-medium">
           Reviews are available after the run finishes.
         </div>
       </Card>
@@ -122,7 +122,7 @@ export function ReviewPanel({
       )}
 
       {listQuery.isPending && (
-        <div className="text-text-3 text-[13px] italic">
+        <div className="text-text-3 text-[13px] font-medium">
           Loading reviews…
         </div>
       )}
@@ -154,7 +154,7 @@ export function ReviewPanel({
 
       {generate.isPending && (
         <div
-          className="text-text-2 text-[13px] italic"
+          className="text-text-2 text-[13px] font-medium"
           role="status"
           aria-live="polite"
         >
@@ -164,7 +164,7 @@ export function ReviewPanel({
       )}
 
       {detailQuery.isPending && effectiveId && (
-        <div className="text-text-3 text-[13px] italic">Loading review…</div>
+        <div className="text-text-3 text-[13px] font-medium">Loading review…</div>
       )}
 
       {detailQuery.isError && effectiveId && (
@@ -221,7 +221,7 @@ export function ReviewPanel({
           )}
           {(detailReview.status === "queued" ||
             detailReview.status === "running") && (
-            <div className="text-text-3 text-[13px] italic">
+            <div className="text-text-3 text-[13px] font-medium">
               Review in flight ({detailReview.status})…
             </div>
           )}
@@ -346,7 +346,7 @@ function PanelHeader() {
   // inside the card that tells the operator what they're looking at.
   return (
     <div className="flex items-baseline justify-between mb-3">
-      <span className="text-text-3 text-[12px] italic">
+      <span className="text-text-3 text-[12px] font-medium">
         Analytical review by a selected agent persona
       </span>
     </div>

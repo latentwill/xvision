@@ -61,7 +61,7 @@ function DateField({ label, value, active, onClick }: DateFieldProps) {
       </div>
       <div
         style={{
-          fontFamily: "'JetBrains Mono', monospace",
+          fontFamily: 'Geist Mono, ui-monospace, monospace',
           fontSize: 13,
           color: value ? 'var(--text)' : 'var(--text-3)',
         }}
@@ -185,7 +185,7 @@ export function InlineRangeBar({
         border:
           '1px solid ' + (open ? 'var(--gold-soft)' : 'var(--border)'),
         borderRadius: 6,
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'Geist, sans-serif',
         overflow: 'hidden',
         transition: 'border-color .15s',
       }}
@@ -237,7 +237,7 @@ export function InlineRangeBar({
         </div>
         <div
           style={{
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: 'Geist Mono, ui-monospace, monospace',
             fontSize: 13,
             color: 'var(--text)',
             letterSpacing: '0.01em',
@@ -252,10 +252,10 @@ export function InlineRangeBar({
             style={{
               fontSize: 11,
               color: 'var(--gold)',
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               padding: '2px 7px',
               background: 'var(--gold-bg)',
-              border: '1px solid rgba(212,165,71,0.3)',
+              border: '1px solid rgba(0,230,118,0.3)',
               borderRadius: 3,
               letterSpacing: '0.02em',
             }}
@@ -269,7 +269,7 @@ export function InlineRangeBar({
             style={{
               fontSize: 11,
               color: 'var(--text-3)',
-              fontStyle: 'italic',
+              fontWeight: 500,
             }}
           >
             from preset ·{' '}
@@ -523,7 +523,7 @@ export function InlineRangeBar({
                 <span
                   style={{
                     color: 'var(--text-2)',
-                    fontStyle: 'italic',
+                    fontWeight: 600,
                   }}
                 >
                   year
@@ -556,7 +556,7 @@ export function InlineRangeBar({
                     background: 'var(--gold)',
                     border: '1px solid var(--gold-soft)',
                     borderRadius: 4,
-                    color: '#0F0E0C',
+                    color: '#000000',
                     cursor: start && end ? 'pointer' : 'default',
                     opacity: start && end ? 1 : 0.5,
                   }}

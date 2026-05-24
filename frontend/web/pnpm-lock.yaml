@@ -8,15 +8,12 @@ importers:
 
   .:
     dependencies:
-      '@fontsource/cormorant-garamond':
-        specifier: ^5.0.0
-        version: 5.2.11
-      '@fontsource/inter':
-        specifier: ^5.0.0
+      '@fontsource/geist-mono':
+        specifier: ^5.2.8
         version: 5.2.8
-      '@fontsource/jetbrains-mono':
-        specifier: ^5.0.0
-        version: 5.2.8
+      '@fontsource/geist-sans':
+        specifier: ^5.2.5
+        version: 5.2.5
       '@tanstack/react-query':
         specifier: ^5.51.0
         version: 5.100.9(react@18.3.1)
@@ -404,14 +401,11 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@fontsource/cormorant-garamond@5.2.11':
-    resolution: {integrity: sha512-5JjpN023lhA5soijgVT0BdRGzmlijm402ppjccMd6h+vRE0mX2lJnE+41UPfnlidrkV9/rCo1mf58WZlHnB0CA==}
+  '@fontsource/geist-mono@5.2.8':
+    resolution: {integrity: sha512-YqZUb3X42GjRaHkibUNyE8K4Rk9A6I9Ez81YpJYiuJN4ggmTW2ixoQpa9EWCPfXZtIsCQJTyrDoV9OJOZO/UcA==}
 
-  '@fontsource/inter@5.2.8':
-    resolution: {integrity: sha512-P6r5WnJoKiNVV+zvW2xM13gNdFhAEpQ9dQJHt3naLvfg+LkF2ldgSLiF4T41lf1SQCM9QmkqPTn4TH568IRagg==}
-
-  '@fontsource/jetbrains-mono@5.2.8':
-    resolution: {integrity: sha512-6w8/SG4kqvIMu7xd7wt6x3idn1Qux3p9N62s6G3rfldOUYHpWcc2FKrqf+Vo44jRvqWj2oAtTHrZXEP23oSKwQ==}
+  '@fontsource/geist-sans@5.2.5':
+    resolution: {integrity: sha512-anllOHyJbElRs9fV15TeDRqAeb1IKm4bSknPl6ZMoyPTx1BBy7logudcUwpNjmQLkzn4Q0JGQLRCUKJYoyST6A==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -1983,11 +1977,9 @@ snapshots:
 
   '@exodus/bytes@1.15.0': {}
 
-  '@fontsource/cormorant-garamond@5.2.11': {}
+  '@fontsource/geist-mono@5.2.8': {}
 
-  '@fontsource/inter@5.2.8': {}
-
-  '@fontsource/jetbrains-mono@5.2.8': {}
+  '@fontsource/geist-sans@5.2.5': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

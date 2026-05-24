@@ -106,8 +106,8 @@ function Stat({
         ].join(" ")}
         style={
           large
-            ? { fontFamily: '"Cormorant Garamond", serif' }
-            : { fontFamily: '"JetBrains Mono", monospace' }
+            ? { fontFamily: 'Geist, sans-serif' }
+            : { fontFamily: 'Geist Mono, ui-monospace, monospace' }
         }
       >
         {value}

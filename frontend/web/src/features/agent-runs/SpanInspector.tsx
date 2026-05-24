@@ -311,8 +311,8 @@ export function SpanInspector({
             className="ml-auto px-1.5 py-0.5 text-[9px] tracking-[0.16em] font-mono rounded shrink-0"
             style={{
               color: "var(--danger)",
-              background: withAlpha("#c8443a", 0.12),
-              border: `1px solid ${withAlpha("#c8443a", 0.5)}`,
+              background: withAlpha("#FF4D4D", 0.12),
+              border: `1px solid ${withAlpha("#FF4D4D", 0.5)}`,
             }}
           >
             ERROR

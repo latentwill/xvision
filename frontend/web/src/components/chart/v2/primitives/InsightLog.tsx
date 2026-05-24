@@ -120,13 +120,13 @@ export function InsightLog({
               <div className="flex items-baseline justify-between gap-2">
                 <div
                   className="text-[14px] leading-tight text-text"
-                  style={{ fontFamily: '"Cormorant Garamond", serif' }}
+                  style={{ fontFamily: '"Geist, sans-serif"' }}
                 >
                   {a.title}
                 </div>
                 <span
                   className="text-[10.5px] text-text-3 shrink-0"
-                  style={{ fontFamily: '"JetBrains Mono", monospace' }}
+                  style={{ fontFamily: '"Geist Mono, ui-monospace, monospace"' }}
                 >
                   {fmtTimestamp(a.ts)}
                 </span>
@@ -136,7 +136,7 @@ export function InsightLog({
                 <span className="caps" style={{ color: accent }}>
                   {a.type}
                 </span>
-                <span style={{ fontFamily: '"JetBrains Mono", monospace' }}>
+                <span style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}>
                   conf {fmtConfPct(a.conf)}
                 </span>
               </div>

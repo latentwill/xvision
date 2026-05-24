@@ -121,7 +121,7 @@ describe("Callout", () => {
     const card = container.firstChild as HTMLElement;
     // Card border switches to the danger rgba; we assert the inline style.
     // CSSOM normalises rgba() with spaces; match the canonical form.
-    expect(card.style.border).toMatch(/rgba\(200,\s*68,\s*58/);
+    expect(card.style.border).toMatch(/rgba\(255,\s*77,\s*77/);
   });
 });
 

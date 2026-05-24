@@ -81,11 +81,10 @@ describe("SettingsGeneralRoute", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Auto" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Light" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Folio dark" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "Black" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Dark" })).toBeChecked();
 
-    fireEvent.click(screen.getByRole("radio", { name: "Black" }));
-    expect(document.documentElement.dataset.theme).toBe("black");
+    fireEvent.click(screen.getByRole("radio", { name: "Light" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
   });
 
   it("does not render retention mode controls", async () => {

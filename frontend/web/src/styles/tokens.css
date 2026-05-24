@@ -1,117 +1,90 @@
-/* xvision — Folio dark theme.
+/* xvision — Signal theme tokens.
  *
- * Ported verbatim from frontend/prototype/styles.css :root block. Tailwind
- * (tailwind.config.ts) maps utility classes onto these variables, so React
- * components can use either `bg-bg` (Tailwind) or `var(--bg)` (raw CSS).
+ * `:root` defaults to Signal Dark. ThemeProvider sets data-theme="dark|light".
+ * Tailwind (tailwind.config.ts) maps utility classes onto these variables, so
+ * components use either `bg-bg` (Tailwind) or `var(--bg)` (raw CSS).
+ *
+ * Token NAMES are unchanged from the prior theme — `--gold` is the brand accent
+ * (now green) so existing `var(--gold)` / `text-gold` consumers work unchanged.
  */
 
 :root {
-  /* Surfaces — warm, ink-like */
-  --bg: #0f0e0c;
-  --surface-sidebar: #17150f;
-  --surface-card: #14120e;
-  --surface-elev: #1b1810;
-  --surface-panel: #221e14;
-  --surface-hover: #1f1c13;
+  --bg: #000000;
+  --surface-sidebar: #000000;
+  --surface-card: #0a0a0a;
+  --surface-elev: #0e0e0e;
+  --surface-panel: #121212;
+  --surface-hover: rgba(255, 255, 255, 0.04);
 
-  /* Borders — warm slate */
-  --border: #2a2618;
-  --border-strong: #3a3322;
-  --border-soft: #221f15;
+  --border: #1a1a1a;
+  --border-strong: #2a2a2a;
+  --border-soft: #141414;
 
-  /* Text */
-  --text: #f1ecdd;
-  --text-2: #a39a85;
-  --text-3: #6b6553;
-  --text-4: #4a4536;
+  --text: #ffffff;
+  --text-2: #9ca3af;
+  --text-3: #5f6670;
+  --text-4: #3a3f47;
 
-  /* Accents */
-  --gold: #d4a547;
-  --gold-soft: #b8862e;
-  --gold-bg: rgba(212, 165, 71, 0.1);
-  --gold-bg-strong: rgba(212, 165, 71, 0.18);
-  --warn: #db9230;
-  --danger: #c8443a;
-  --info: #6f8fb8;
+  --gold: #00e676;
+  --gold-soft: #00b85f;
+  --gold-bg: rgba(0, 230, 118, 0.1);
+  --gold-bg-strong: rgba(0, 230, 118, 0.18);
+  --warn: #ffb020;
+  --danger: #ff4d4d;
+  --info: #5fa8ff;
 
   --radius-card: 6px;
   --radius-sm: 4px;
 }
 
-[data-theme="folio-dark"] {
-  --bg: #0f0e0c;
-  --surface-sidebar: #17150f;
-  --surface-card: #14120e;
-  --surface-elev: #1b1810;
-  --surface-panel: #221e14;
-  --surface-hover: #1f1c13;
-
-  --border: #2a2618;
-  --border-strong: #3a3322;
-  --border-soft: #221f15;
-
-  --text: #f1ecdd;
-  --text-2: #a39a85;
-  --text-3: #6b6553;
-  --text-4: #4a4536;
-
-  --gold: #d4a547;
-  --gold-soft: #b8862e;
-  --gold-bg: rgba(212, 165, 71, 0.1);
-  --gold-bg-strong: rgba(212, 165, 71, 0.18);
-  --warn: #db9230;
-  --danger: #c8443a;
-  --info: #6f8fb8;
-}
-
-[data-theme="black"] {
+[data-theme="dark"] {
   --bg: #000000;
-  --surface-sidebar: #050505;
-  --surface-card: #080808;
-  --surface-elev: #101010;
-  --surface-panel: #151515;
-  --surface-hover: #181818;
+  --surface-sidebar: #000000;
+  --surface-card: #0a0a0a;
+  --surface-elev: #0e0e0e;
+  --surface-panel: #121212;
+  --surface-hover: rgba(255, 255, 255, 0.04);
 
-  --border: #202020;
-  --border-strong: #343434;
-  --border-soft: #171717;
+  --border: #1a1a1a;
+  --border-strong: #2a2a2a;
+  --border-soft: #141414;
 
-  --text: #f5f5f5;
-  --text-2: #b8b8b8;
-  --text-3: #858585;
-  --text-4: #5f5f5f;
+  --text: #ffffff;
+  --text-2: #9ca3af;
+  --text-3: #5f6670;
+  --text-4: #3a3f47;
 
-  --gold: #f0c75e;
-  --gold-soft: #c99b32;
-  --gold-bg: rgba(240, 199, 94, 0.1);
-  --gold-bg-strong: rgba(240, 199, 94, 0.18);
-  --warn: #e0a03a;
-  --danger: #e05249;
-  --info: #7aa7d9;
+  --gold: #00e676;
+  --gold-soft: #00b85f;
+  --gold-bg: rgba(0, 230, 118, 0.1);
+  --gold-bg-strong: rgba(0, 230, 118, 0.18);
+  --warn: #ffb020;
+  --danger: #ff4d4d;
+  --info: #5fa8ff;
 }
 
 [data-theme="light"] {
-  --bg: #f7f5ef;
-  --surface-sidebar: #ece6d8;
-  --surface-card: #fffaf0;
-  --surface-elev: #f3ecdd;
-  --surface-panel: #e8dfce;
-  --surface-hover: #eee5d5;
+  --bg: #f7f8fa;
+  --surface-sidebar: #ffffff;
+  --surface-card: #ffffff;
+  --surface-elev: #f2f4f7;
+  --surface-panel: #eaedf1;
+  --surface-hover: rgba(0, 0, 0, 0.04);
 
-  --border: #d8d0c2;
-  --border-strong: #b9ad99;
-  --border-soft: #e2d9c8;
+  --border: #e3e6ea;
+  --border-strong: #cbd1d8;
+  --border-soft: #edeff2;
 
-  --text: #201d18;
-  --text-2: #5f584b;
-  --text-3: #817767;
-  --text-4: #a89d8a;
+  --text: #0b0e11;
+  --text-2: #4a5560;
+  --text-3: #6b7682;
+  --text-4: #9aa4ae;
 
-  --gold: #8a5f16;
-  --gold-soft: #a87922;
-  --gold-bg: rgba(138, 95, 22, 0.1);
-  --gold-bg-strong: rgba(138, 95, 22, 0.18);
-  --warn: #a65f00;
-  --danger: #b42318;
-  --info: #2563a8;
+  --gold: #00a15c;
+  --gold-soft: #007a48;
+  --gold-bg: rgba(0, 161, 92, 0.1);
+  --gold-bg-strong: rgba(0, 161, 92, 0.16);
+  --warn: #b45309;
+  --danger: #d92d20;
+  --info: #1d6fd6;
 }

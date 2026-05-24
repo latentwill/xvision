@@ -49,7 +49,7 @@ export function ChatBubble({
         ) : showDots ? (
           <TypingDots />
         ) : (
-          <span className="text-text-3 italic">thinking...</span>
+          <span className="text-text-3 font-medium">thinking...</span>
         )}
       </div>
       {narratives.length > 0 && (

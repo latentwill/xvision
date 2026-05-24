@@ -72,13 +72,13 @@ export function DocsMarkdown({ body }: { body: string }) {
           h1: (p) => (
             <h1
               {...p}
-              className="font-serif font-medium text-[28px] tracking-tight mb-4 mt-0"
+              className="font-sans font-medium text-[28px] tracking-tight mb-4 mt-0"
             />
           ),
           h2: (p) => (
             <h2
               {...p}
-              className="font-serif font-medium text-[20px] tracking-tight mt-8 mb-2"
+              className="font-sans font-medium text-[20px] tracking-tight mt-8 mb-2"
             />
           ),
           h3: (p) => (
@@ -184,7 +184,7 @@ export function DocsMarkdown({ body }: { body: string }) {
           blockquote: (p) => (
             <blockquote
               {...p}
-              className="border-l-2 border-gold/40 pl-4 my-4 text-text-2 italic"
+              className="border-l-2 border-gold/40 pl-4 my-4 text-text-2 font-medium"
             />
           ),
           hr: (p) => <hr {...p} className="my-7 border-border-soft" />,

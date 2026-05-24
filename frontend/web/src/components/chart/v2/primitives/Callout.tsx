@@ -3,7 +3,7 @@
  * ~210px wide. Gold border by default; switches to red when
  * `danger: true`.
  *
- * Inner layout: eyebrow (.callout-head = type · confidence) + Cormorant
+ * Inner layout: eyebrow (.callout-head = type · confidence) + Geist
  * title 14px + body 11.5px in text-2 + foot row (idx · N + action).
  *
  * Positioning is owned by the AnnotationOverlay parent; this component
@@ -26,8 +26,8 @@ function fmtConfPct(conf: number): string {
 export function Callout({ annotation: a }: CalloutProps): ReactElement {
   const isDanger = a.danger === true;
   const border = isDanger
-    ? "rgba(200,68,58,0.32)"
-    : "rgba(212,165,71,0.32)";
+    ? "rgba(255,77,77,0.32)"
+    : "rgba(0,230,118,0.32)";
   const accent = isDanger ? "var(--danger)" : "var(--gold)";
 
   return (
@@ -46,14 +46,14 @@ export function Callout({ annotation: a }: CalloutProps): ReactElement {
         </span>
         <span
           className="text-[10.5px] text-text-3"
-          style={{ fontFamily: '"JetBrains Mono", monospace' }}
+          style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
         >
           conf {fmtConfPct(a.conf)}
         </span>
       </header>
       <div
         className="px-3 text-[14px] leading-tight text-text"
-        style={{ fontFamily: '"Cormorant Garamond", serif' }}
+        style={{ fontFamily: 'Geist, sans-serif' }}
       >
         {a.title}
       </div>
@@ -61,7 +61,7 @@ export function Callout({ annotation: a }: CalloutProps): ReactElement {
         {a.body}
       </p>
       <footer className="px-3 pb-2 flex items-center justify-between text-[10.5px] text-text-3">
-        <span style={{ fontFamily: '"JetBrains Mono", monospace' }}>
+        <span style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}>
           idx · {a.idx}
         </span>
         <span style={{ color: accent }}>{a.action}</span>

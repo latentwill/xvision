@@ -200,7 +200,7 @@ export function DarkMinimalDashboard({
                   style={{ backgroundColor: s.color }}
                   aria-hidden="true"
                 />
-                <span style={{ fontFamily: '"JetBrains Mono", monospace' }}>
+                <span style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}>
                   {s.short}
                 </span>
               </span>

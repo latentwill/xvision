@@ -208,7 +208,7 @@ export function AnnotationOverlay({
       >
         {positioned.map((p) => {
           if (!Number.isFinite(p.ax) || !Number.isFinite(p.ay)) return null;
-          const accent = p.ann.danger ? "rgba(200,68,58,0.85)" : "rgba(212,165,71,0.85)";
+          const accent = p.ann.danger ? "rgba(255,77,77,0.85)" : "rgba(0,230,118,0.85)";
           // Connector terminates at the nearest corner of the callout
           // card: bottom-center for top-row callouts, top-center for
           // bottom-row callouts.

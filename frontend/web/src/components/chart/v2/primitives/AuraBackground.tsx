@@ -38,7 +38,7 @@ export function AuraBackground({
           opacity: 0.45,
           filter: "blur(20px)",
           background:
-            "radial-gradient(closest-side, rgba(212,165,71,0.55), rgba(193,106,58,0.20) 60%, transparent 100%)",
+            "radial-gradient(closest-side, rgba(0,230,118,0.55), rgba(0,184,95,0.20) 60%, transparent 100%)",
         }}
       />
       {/* 680×680 ember/plum wash, bottom-right */}
@@ -52,7 +52,7 @@ export function AuraBackground({
           opacity: 0.40,
           filter: "blur(20px)",
           background:
-            "radial-gradient(closest-side, rgba(193,106,58,0.45), rgba(142,103,137,0.18) 65%, transparent 100%)",
+            "radial-gradient(closest-side, rgba(0,184,95,0.45), rgba(94,234,212,0.18) 65%, transparent 100%)",
         }}
       />
       {/* 380×380 amber wash, top-right */}
@@ -66,7 +66,7 @@ export function AuraBackground({
           opacity: 0.30,
           filter: "blur(20px)",
           background:
-            "radial-gradient(closest-side, rgba(229,184,106,0.45), transparent 70%)",
+            "radial-gradient(closest-side, rgba(94,234,212,0.45), transparent 70%)",
         }}
       />
     </div>

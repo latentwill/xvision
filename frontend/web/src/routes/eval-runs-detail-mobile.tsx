@@ -53,9 +53,9 @@ const STRIP: Record<StripState, { dot: string; label: string; ring: string; bg: 
   red: {
     dot: "var(--danger)",
     label: "ERROR",
-    ring: "0 0 0 3px rgba(200,68,58,0.22)",
-    bg: "rgba(200,68,58,0.06)",
-    bd: "rgba(200,68,58,0.30)",
+    ring: "0 0 0 3px rgba(255,77,77,0.22)",
+    bg: "rgba(255,77,77,0.06)",
+    bd: "rgba(255,77,77,0.30)",
   },
 };
 
@@ -214,8 +214,8 @@ function LiveStrip({
           style={{
             color: "var(--danger)",
             fontWeight: 600,
-            background: "rgba(200,68,58,0.10)",
-            border: "1px solid rgba(200,68,58,0.55)",
+            background: "rgba(255,77,77,0.10)",
+            border: "1px solid rgba(255,77,77,0.55)",
           }}
         >
           ◼ {cancelling ? "STOPPING" : "HALT"}
@@ -299,7 +299,7 @@ function SummaryTab({
     <div className="flex flex-col gap-3 py-3 pb-24">
       {/* Hero */}
       <div>
-        <div className="font-serif italic text-[28px] leading-none text-text font-medium">
+        <div className="font-sans text-[28px] leading-none text-text font-semibold tracking-tight">
           {labels.strategyName}
         </div>
         <div
@@ -707,14 +707,14 @@ function EquityCard({
       >
         <defs>
           <linearGradient id="mEvalRunEquityGrad" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#d4a547" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#d4a547" stopOpacity="0" />
+            <stop offset="0%" stopColor="var(--gold)" stopOpacity="0.5" />
+            <stop offset="100%" stopColor="var(--gold)" stopOpacity="0" />
           </linearGradient>
         </defs>
         <path
           d={path}
           fill="none"
-          stroke="#d4a547"
+          stroke="var(--gold)"
           strokeWidth="0.9"
           vectorEffect="non-scaling-stroke"
         />
@@ -747,7 +747,7 @@ function DecisionsTab({ decisions }: { decisions: DecisionRowDto[] }) {
   if (decisions.length === 0) {
     return (
       <div className="py-10 text-center text-text-2">
-        <div className="font-serif italic text-[20px] text-text-3 mb-1">
+        <div className="font-sans text-[20px] text-text-3 mb-1 font-semibold">
           no decisions
         </div>
         <p className="m-0 text-[12.5px]">
@@ -829,13 +829,13 @@ function ActionPill({ action }: { action: MobileActionLabel }) {
     BUY: { color: "var(--gold)", bg: "var(--gold-bg)", bd: "var(--gold-soft)" },
     SHORT: {
       color: "var(--danger)",
-      bg: "rgba(200,68,58,0.10)",
-      bd: "rgba(200,68,58,0.45)",
+      bg: "rgba(255,77,77,0.10)",
+      bd: "rgba(255,77,77,0.45)",
     },
     SELL: {
       color: "var(--warn)",
-      bg: "rgba(212,165,71,0.10)",
-      bd: "rgba(212,165,71,0.45)",
+      bg: "rgba(255,176,32,0.10)",
+      bd: "rgba(255,176,32,0.45)",
     },
     COVER: {
       color: "var(--info)",
@@ -919,7 +919,7 @@ function ReviewTab({ summary }: { summary: RunSummary }) {
     <div className="flex flex-col gap-2 py-3 pb-24">
       <div className="flex items-baseline justify-between">
         <div>
-          <div className="font-serif italic text-[22px] leading-none text-text font-medium">
+          <div className="font-sans text-[22px] leading-none text-text font-semibold tracking-tight">
             Review
           </div>
           <div className="font-mono text-[10px] text-text-3 mt-1">
@@ -960,7 +960,7 @@ export function MobileEvalRunDetailError({
   if (err instanceof ApiError && err.code === "not_found") {
     return (
       <div className="rounded-card border border-border bg-surface px-5 py-10 text-center">
-        <div className="font-serif italic text-[22px] text-text-3 mb-2">
+        <div className="font-sans text-[22px] text-text-3 mb-2 font-semibold">
           run not found
         </div>
         <p className="m-0 mb-4 text-text-2 text-[13px]">
@@ -983,7 +983,7 @@ export function MobileEvalRunDetailError({
         : String(err);
   return (
     <div className="rounded-card border border-border bg-surface px-5 py-10 text-center">
-      <div className="font-serif italic text-[22px] text-danger mb-2">
+      <div className="font-sans text-[22px] text-danger mb-2 font-semibold">
         couldn't load run
       </div>
       <p className="m-0 mb-4 text-text-2 text-[13px]">

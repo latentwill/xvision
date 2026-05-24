@@ -46,7 +46,7 @@ export function MiniSparkline({
   // (hex-suffix idiom from the handoff). For drawdown: red @22 alpha.
   const fillTop =
     variant === "drawdown"
-      ? "rgba(200,68,58,0.22)"
+      ? "rgba(255,77,77,0.22)"
       : `${color}22`;
 
   // Strip cursor + axes from the base theme options so the sparkline

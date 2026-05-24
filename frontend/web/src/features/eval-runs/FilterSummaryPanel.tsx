@@ -22,9 +22,9 @@ export const FilterSummaryPanel: FC<{ summaries: FilterSummary[] }> = ({
       data-testid="filter-summary-panel"
       className="rounded-card border border-border p-4 mt-6"
     >
-      <h3 className="font-serif italic text-[16px] text-text mb-3">
+      <h3 className="font-sans font-semibold text-[16px] text-text mb-3">
         Filters
-        <span className="text-text-3 text-[12px] not-italic font-sans ml-2">
+        <span className="text-text-3 text-[12px] font-sans ml-2">
           ({summaries.length})
         </span>
       </h3>

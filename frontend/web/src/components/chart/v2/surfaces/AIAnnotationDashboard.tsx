@@ -98,8 +98,8 @@ export function AIAnnotationDashboard({
       <header className="flex items-center justify-between gap-4 px-1">
         <div className="flex items-center gap-4">
           <span
-            className="text-[22px] italic text-text leading-none"
-            style={{ fontFamily: '"Cormorant Garamond", serif' }}
+            className="text-[22px] font-semibold text-text leading-none"
+            style={{ fontFamily: 'Geist, sans-serif' }}
           >
             xvn
           </span>
@@ -113,7 +113,7 @@ export function AIAnnotationDashboard({
               {last != null && (
                 <span
                   className="text-[20px] text-text"
-                  style={{ fontFamily: '"Cormorant Garamond", serif' }}
+                  style={{ fontFamily: 'Geist, sans-serif' }}
                 >
                   {last.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </span>
@@ -122,9 +122,9 @@ export function AIAnnotationDashboard({
                 <span
                   className={[
                     "text-[12px] tabular-nums",
-                    change24 >= 0 ? "text-[#3FAE6B]" : "text-danger",
+                    change24 >= 0 ? "text-gold" : "text-danger",
                   ].join(" ")}
-                  style={{ fontFamily: '"JetBrains Mono", monospace' }}
+                  style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
                 >
                   {change24 >= 0 ? "+" : ""}
                   {change24.toFixed(2)}%
@@ -204,7 +204,7 @@ export function AIAnnotationDashboard({
 
       <footer
         className="text-[10.5px] text-text-3 px-1"
-        style={{ fontFamily: '"JetBrains Mono", monospace' }}
+        style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
       >
         EMA(21) · candle_pane · drag to pan ·{" "}
         {chartInstance ? "callouts pixel-anchored" : "callouts approximate-anchored"} ·{" "}

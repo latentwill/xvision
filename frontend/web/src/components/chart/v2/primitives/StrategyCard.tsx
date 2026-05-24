@@ -78,7 +78,7 @@ export function StrategyCard({
             />
             <div
               className="text-[15.5px] leading-tight text-text truncate"
-              style={{ fontFamily: '"Cormorant Garamond", serif' }}
+              style={{ fontFamily: 'Geist, sans-serif' }}
             >
               {name}
             </div>
@@ -120,7 +120,7 @@ export function StrategyCard({
             <span
               key={c}
               className="inline-flex items-center px-1.5 py-[1px] text-[10.5px] rounded border border-border-soft text-text-3"
-              style={{ fontFamily: '"JetBrains Mono", monospace' }}
+              style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
             >
               {c}
             </span>
@@ -148,7 +148,7 @@ function Stat({
           "tabular-nums",
           danger ? "text-danger" : "text-text",
         ].join(" ")}
-        style={{ fontFamily: '"JetBrains Mono", monospace' }}
+        style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
       >
         {value}
       </span>

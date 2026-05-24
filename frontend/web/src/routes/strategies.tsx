@@ -406,7 +406,7 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
         {formatCadence(row.decision_cadence_minutes)}
       </td>
       <td className="max-w-[180px] px-3 py-3 break-all font-mono text-[12px] text-text-2">
-        {row.model ?? <span className="italic text-text-3">—</span>}
+        {row.model ?? <span className="font-medium text-text-3">—</span>}
       </td>
       <td className="px-3 py-3">
         <Pill>
@@ -443,7 +443,7 @@ function modelSummary(row: StrategyListItem): string {
 
 function TagList({ tags }: { tags: string[] }) {
   if (tags.length === 0) {
-    return <span className="text-[12px] italic text-text-3">—</span>;
+    return <span className="text-[12px] font-medium text-text-3">—</span>;
   }
   const visible = tags.slice(0, 3);
   const extra = tags.length - visible.length;

@@ -216,7 +216,7 @@ function ColorPickerRow({
           <span
             data-testid="color-error"
             role="alert"
-            style={{ fontSize: 11, color: "var(--color-danger, #c8443a)" }}
+            style={{ fontSize: 11, color: "var(--color-danger, #FF4D4D)" }}
           >
             {error}
           </span>

@@ -75,7 +75,7 @@ export function MListRow({
         <div className="flex flex-col items-end gap-0.5 shrink-0">
           {rightTop != null && (
             <div
-              className={`font-serif font-medium text-[15px] tracking-tight ${RIGHT_TONE_CLASSES[rightTone]}`}
+              className={`font-sans font-medium text-[15px] tracking-tight ${RIGHT_TONE_CLASSES[rightTone]}`}
             >
               {rightTop}
             </div>
