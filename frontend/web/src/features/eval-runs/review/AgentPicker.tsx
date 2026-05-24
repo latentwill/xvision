@@ -10,6 +10,7 @@ import type { AgentProfile } from "@/api/eval-review";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { ApiError } from "@/api/client";
 import { ModelPicker } from "@/components/ModelPicker";
+import type { ProviderRow } from "@/api/types.gen/ProviderRow";
 
 export function AgentPicker({
   selected,
@@ -48,17 +49,22 @@ export function AgentPicker({
     [profilesQuery.data],
   );
   const live = profilesById.get(profileId) ?? null;
+  const providerRows = useMemo(
+    () => providersQuery.data?.providers ?? [],
+    [providersQuery.data?.providers],
+  );
 
   useEffect(() => {
     if (selected) setProfileId(selected);
   }, [selected]);
 
   useEffect(() => {
-    setProvider(live?.provider ?? null);
-    setModel(live?.model ?? "");
+    const resolved = defaultReviewModel(providerRows);
+    setProvider(resolved?.provider ?? null);
+    setModel(resolved?.model ?? "");
     setSystemPrompt(live?.system_prompt ?? "");
     setLocalError(null);
-  }, [live?.id, live?.provider, live?.model, live?.system_prompt]);
+  }, [live?.id, live?.system_prompt, providerRows]);
 
   const patchProfile = useMutation({
     mutationFn: ({
@@ -77,28 +83,6 @@ export function AgentPicker({
           : [...rows, updated];
       });
     },
-  });
-
-  const applyAll = useMutation({
-    mutationFn: async () => {
-      if (!provider || !model) {
-        throw new Error("Pick a model before applying it to all review presets.");
-      }
-      const ids = CANONICAL_AGENT_PROFILES.map((p) => p.id);
-      const updated = await Promise.all(
-        ids.map((id) => updateAgentProfile(id, { provider, model })),
-      );
-      return updated;
-    },
-    onSuccess: (updated) => {
-      qc.setQueryData<AgentProfile[]>(agentProfileKeys.list(), (prev) => {
-        const byId = new Map((prev ?? []).map((p) => [p.id, p]));
-        for (const profile of updated) byId.set(profile.id, profile);
-        return Array.from(byId.values());
-      });
-      setLocalError(null);
-    },
-    onError: (err) => setLocalError(describeError(err).message),
   });
 
   async function generateWithSelectedProfile() {
@@ -124,14 +108,33 @@ export function AgentPicker({
     CANONICAL_AGENT_PROFILES.find((p) => p.id === profileId)?.label ??
     live?.name ??
     profileId;
-  const isSaving = patchProfile.isPending || applyAll.isPending;
+  const isSaving = patchProfile.isPending;
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-3">
-        <label className="flex flex-col gap-1 text-[12px] text-text-3">
-          Review prompt preset
+      <label className="flex flex-col gap-1 text-[12px] text-text-3">
+        Review model
+        <ModelPicker
+          rows={providerRows}
+          loading={providersQuery.isPending}
+          provider={provider}
+          model={model}
+          onChange={(nextProvider, nextModel) => {
+            setProvider(nextProvider);
+            setModel(nextModel);
+            setLocalError(null);
+          }}
+          className="bg-bg border border-border rounded-sm px-2 py-1.5 text-text text-[12px] font-mono"
+          ariaLabel="Review model"
+          emptyHint="No enabled review models"
+        />
+      </label>
+
+      <div className="flex flex-col gap-1 text-[12px] text-text-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span>Review prompt</span>
           <select
+            aria-label="Review prompt preset"
             value={profileId}
             onChange={(e) => setProfileId(e.target.value)}
             disabled={busy || isSaving}
@@ -143,30 +146,9 @@ export function AgentPicker({
               </option>
             ))}
           </select>
-        </label>
-
-        <label className="flex flex-col gap-1 text-[12px] text-text-3">
-          Review model
-          <ModelPicker
-            rows={providersQuery.data?.providers ?? []}
-            loading={providersQuery.isPending}
-            provider={provider}
-            model={model}
-            onChange={(nextProvider, nextModel) => {
-              setProvider(nextProvider);
-              setModel(nextModel);
-              setLocalError(null);
-            }}
-            className="bg-bg border border-border rounded-sm px-2 py-1.5 text-text text-[12px] font-mono"
-            ariaLabel="Review model"
-            emptyHint="No enabled review models"
-          />
-        </label>
-      </div>
-
-      <label className="flex flex-col gap-1 text-[12px] text-text-3">
-        Review prompt
+        </div>
         <textarea
+          aria-label="Review prompt"
           value={systemPrompt}
           onChange={(e) => {
             setSystemPrompt(e.target.value);
@@ -176,7 +158,7 @@ export function AgentPicker({
           className="w-full bg-bg border border-border rounded-sm px-2 py-2 text-text text-[12px] font-mono leading-relaxed"
           placeholder={`Prompt for ${profileLabel}`}
         />
-      </label>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <button
@@ -187,19 +169,7 @@ export function AgentPicker({
         >
           {busy || patchProfile.isPending ? "Generating..." : `Generate review`}
         </button>
-        <button
-          type="button"
-          onClick={() => applyAll.mutate()}
-          disabled={busy || isSaving || !provider || !model}
-          className="px-3 py-1.5 rounded-sm text-[12px] border border-border text-text-2 hover:border-gold/60 hover:text-text disabled:opacity-50"
-        >
-          {applyAll.isPending ? "Applying..." : "Apply model to all review presets"}
-        </button>
-        {live ? (
-          <span className="font-mono text-[11px] text-text-3">
-            {live.provider} / {live.model}
-          </span>
-        ) : profilesQuery.isError ? (
+        {profilesQuery.isError ? (
           <span className="text-[11px] text-warn">
             Review presets could not be loaded.
           </span>
@@ -227,4 +197,14 @@ function describeError(error: unknown): { code: string; message: string } {
     return { code: "error", message: error.message };
   }
   return { code: "error", message: String(error) };
+}
+
+function defaultReviewModel(
+  providers: ProviderRow[],
+): { provider: string; model: string } | null {
+  for (const row of providers) {
+    const model = row.enabled_models[0];
+    if (model) return { provider: row.name, model };
+  }
+  return null;
 }

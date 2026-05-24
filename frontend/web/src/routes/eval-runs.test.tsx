@@ -709,7 +709,7 @@ describe("EvalRunsRoute", () => {
     expect(within(listTable).queryByText("01TEST")).not.toBeInTheDocument();
   });
 
-  it("falls back to the short id when the strategy/scenario lookup misses", async () => {
+  it("falls back to the full id when the strategy/scenario lookup misses", async () => {
     mockReady();
     vi.mocked(evalApi.listRuns).mockResolvedValue([
       {
@@ -735,28 +735,20 @@ describe("EvalRunsRoute", () => {
     renderRoute();
 
     await waitFor(() =>
-      expect(screen.getAllByText("Strategy 01ORPHAN...").length).toBeGreaterThan(0),
+      expect(screen.getAllByText("Strategy 01ORPHANSTRAT").length).toBeGreaterThan(0),
     );
     expect(screen.getAllByText("Deleted Scenario").length).toBeGreaterThan(0);
   });
 
-  it("blocks paper eval launch when Alpaca credentials are missing", async () => {
+  it("shows only backtest launch with live disabled", async () => {
     mockReady({ alpaca: broker({ configured: false, stored: false }) });
     vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
     await screen.findByRole("option", { name: /User 4H/ });
-    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
-    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
-    fireEvent.click(screen.getByLabelText("paper"));
-    const startButton = screen.getByRole("button", { name: "Start" });
-    await waitFor(() => expect(startButton).not.toBeDisabled());
-    fireEvent.click(startButton);
-
-    expect(
-      await screen.findByText(/Configure Alpaca paper credentials/),
-    ).toBeInTheDocument();
-    expect(evalApi.startRun).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("paper")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("backtest")).toBeChecked();
+    expect(screen.getByLabelText("live")).toBeDisabled();
   });
 });

@@ -16,8 +16,8 @@ use crate::api::{
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
     RenameAgentRoleRequest, SetFilterReq, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq,
-    SetStrategyFilterOut, SetStrategyFilterReq, UpdateManifestOut, UpdateManifestReq,
-    UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
+    SetStrategyFilterOut, SetStrategyFilterReq, UpdateManifestOut, UpdateManifestReq, UpdateSlotOut,
+    UpdateSlotReq, ValidateDraftOut,
 };
 use crate::strategies::{
     store::{strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore},
@@ -81,10 +81,8 @@ pub struct AddAgentReq {
     pub role: String,
     /// Phase A `AgentRef.activates`. `None` (default) lets the
     /// dispatcher pick the slot's first capability — today's behavior.
-    /// `Some(Capability::Filter)` is what the strategy editor's inline
-    /// Filter composer sends so the Phase B dispatcher picks the
-    /// Filter handler at this position even when the referenced agent
-    /// advertises more than one capability.
+    /// `Some(Capability::Filter)` is rejected; filters are saved JSON
+    /// artifacts on the strategy, not agent refs.
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(optional))]
     pub activates: Option<crate::agents::Capability>,
@@ -999,6 +997,17 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "filter parse error",
         "filter validation error",
         "unknown filter source format",
+        "agent role 'filter' is reserved",
+        "agent type 'filter' is removed",
+        "strategy must have at least one agent",
+        "strategy must have a trader slot",
+        "agent role cannot be empty",
+        "duplicate agent role",
+        "single-agent pipeline cannot include multiple agents",
+        "graph pipeline edge references unknown role",
+        "graph pipeline edge from",
+        "asset universe cannot be empty",
+        "invalid risk config",
         "preset and explicit are mutually exclusive",
         "supply either preset or explicit",
         "unknown template",
@@ -1532,8 +1541,8 @@ pub async fn set_pipeline(ctx: &ApiContext, req: SetPipelineReq) -> ApiResult<St
     result
 }
 
-/// Set or clear a strategy-level filter. Supports JSON/TOML payloads in
-/// both explicit object form and `{ "filter": ... }` form.
+/// Set or clear a strategy-level filter. Supports JSON payloads in both
+/// explicit object form and `{ "filter": ... }` form.
 pub async fn set_filter(ctx: &ApiContext, req: SetFilterReq) -> ApiResult<Strategy> {
     let started = Instant::now();
     let strategy_id = req.strategy_id.clone();
@@ -1629,7 +1638,7 @@ pub async fn set_risk_config(ctx: &ApiContext, req: SetRiskConfigReq) -> ApiResu
 }
 
 /// Set the strategy's deterministic DSL Filter from operator-supplied
-/// source text (TOML or JSON). Parse errors map to `Validation`;
+/// JSON source text. Parse errors map to `Validation`;
 /// missing strategy maps to `NotFound`.
 pub async fn set_strategy_filter(
     ctx: &ApiContext,

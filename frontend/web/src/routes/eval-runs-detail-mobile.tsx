@@ -316,9 +316,11 @@ function SummaryTab({
           data-testid="mobile-eval-run-meta"
           className="mt-1.5 flex flex-wrap gap-x-2 font-mono text-[10px] text-text-3"
         >
-          <span className="text-text-2">{disambiguator}</span>
-          <span className="text-text-4">·</span>
           <span>{summary.mode}</span>
+          <span className="text-text-4">·</span>
+          <span>{summary.status}</span>
+          <span className="text-text-4">·</span>
+          <span className="text-text-2">{disambiguator}</span>
         </div>
       </div>
 
@@ -535,7 +537,7 @@ function MobileContextPill({
       className="inline-flex max-w-full items-center gap-1 rounded-sm border border-border-soft px-2 py-1 font-mono text-[10px] text-text-2 hover:border-gold/50 hover:text-text"
     >
       <span className="uppercase tracking-[0.16em] text-text-3">{kind}</span>
-      <span className="truncate">{label}</span>
+      <span className="break-all">{label}</span>
     </Link>
   );
 }

@@ -932,7 +932,8 @@ fn validate_provider_override_shape(override_value: Option<&ProviderOverride>) -
     }
     if p.is_empty() {
         return Err(ApiError::Validation(
-            "per-launch override has empty `provider`; both `provider` and `model` are required together".into(),
+            "per-launch override has empty `provider`; both `provider` and `model` are required together"
+                .into(),
         ));
     }
     if m.is_empty() {
@@ -948,10 +949,7 @@ fn validate_provider_override_shape(override_value: Option<&ProviderOverride>) -
 /// No-op when the override is `None`. Empty/whitespace overrides are
 /// treated as no-op too — validation must reject those upstream (the
 /// CLI requires both flags together and rejects blank values).
-fn apply_provider_override(
-    agent_slots: &mut [ResolvedAgentSlot],
-    override_value: Option<&ProviderOverride>,
-) {
+fn apply_provider_override(agent_slots: &mut [ResolvedAgentSlot], override_value: Option<&ProviderOverride>) {
     let Some(o) = override_value else { return };
     let p = o.provider.trim();
     let m = o.model.trim();
@@ -1623,13 +1621,9 @@ async fn run_inner(
     // before slot rewriting.
     if let Some(o) = req.provider_override.as_ref() {
         let cfg_path = runtime_config_path(ctx);
-        if let Err(unavailable) = crate::api::settings::providers::resolve_provider(
-            ctx,
-            &cfg_path,
-            &o.provider,
-            Some(&o.model),
-        )
-        .await
+        if let Err(unavailable) =
+            crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &o.provider, Some(&o.model))
+                .await
         {
             let model_clause = unavailable
                 .model
@@ -1693,6 +1687,7 @@ async fn run_inner(
     } else {
         std::collections::HashMap::new()
     };
+    let obs_config = effective_obs_config(ctx);
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // `harness-payload-blob-write`: attach the BlobStore so
         // `emit_model_call_finished_with_payloads` can persist
@@ -1704,7 +1699,7 @@ async fn run_inner(
         let blob_store = xvision_observability::BlobStore::new(ctx.xvn_home.join("agent_runs").join("blobs"));
         crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
             .with_retention(crate::agent::observability::ObsRetentionPolicy::from_config(
-                &ctx.obs_config,
+                &obs_config,
             ))
             .with_blob_store(blob_store)
             .with_catalogs(obs_catalogs.clone())
@@ -1735,7 +1730,10 @@ async fn run_inner(
             // silently dropping back to Backtest.
             let _ = broker; // broker is None today; reserved for the Live wiring track.
             return Err(ApiError::Validation(
-                Executor::live().err().expect("live() always errors today").to_string(),
+                Executor::live()
+                    .err()
+                    .expect("live() always errors today")
+                    .to_string(),
             ));
         }
     };
@@ -1774,7 +1772,7 @@ async fn run_inner(
             mode = req.mode,
             scenario = scenario.id,
         );
-        em.emit_run_started(objective, ctx.obs_config.retention.mode.as_db_str())
+        em.emit_run_started(objective, obs_config.retention.mode.as_db_str())
             .await;
     }
 
@@ -2241,6 +2239,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     } else {
         std::collections::HashMap::new()
     };
+    let obs_config = effective_obs_config(ctx);
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // Mirror the FullDebug-aware emitter wiring above; same
         // blob root so the second eval entry point produces refs
@@ -2248,7 +2247,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         let blob_store = xvision_observability::BlobStore::new(ctx.xvn_home.join("agent_runs").join("blobs"));
         crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
             .with_retention(crate::agent::observability::ObsRetentionPolicy::from_config(
-                &ctx.obs_config,
+                &obs_config,
             ))
             .with_blob_store(blob_store)
             .with_catalogs(obs_catalogs.clone())
@@ -2268,7 +2267,10 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         }
         RunMode::Live => {
             return Err(ApiError::Validation(
-                Executor::live().err().expect("live() always errors today").to_string(),
+                Executor::live()
+                    .err()
+                    .expect("live() always errors today")
+                    .to_string(),
             ));
         }
     };
@@ -2292,7 +2294,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             mode = req.mode,
             scenario = scenario.id,
         );
-        em.emit_run_started(objective, ctx.obs_config.retention.mode.as_db_str())
+        em.emit_run_started(objective, obs_config.retention.mode.as_db_str())
             .await;
     }
 
@@ -2587,6 +2589,17 @@ pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
         .fail_active_runs("daemon restarted before run completed")
         .await
         .map_err(|e| ApiError::Internal(format!("fail orphan runs: {e}")))
+}
+
+fn effective_obs_config(ctx: &ApiContext) -> Arc<xvision_observability::ObservabilityConfig> {
+    let path = ctx.xvn_home.join("config").join("observability.toml");
+    match xvision_observability::ObservabilityConfig::load_from_file(&path) {
+        Ok(cfg) => Arc::new(cfg),
+        Err(err) => {
+            tracing::warn!(error = %err, "using startup observability config");
+            ctx.obs_config.clone()
+        }
+    }
 }
 
 /// Default values for the retention janitor when no env override is set.

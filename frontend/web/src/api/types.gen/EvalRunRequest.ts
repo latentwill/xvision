@@ -13,9 +13,8 @@ agent_id: string,
  */
 scenario_id: string, 
 /**
- * Run mode. `Paper` drives an `AlpacaPaperSurface` against real Alpaca
- * paper credentials; `Backtest` replays the scenario's parquet fixture
- * in-process without any broker.
+ * Run mode. `Backtest` replays the scenario's parquet fixture
+ * in-process without any broker. `Live` is reserved for live execution.
  */
 mode: RunMode, 
 /**

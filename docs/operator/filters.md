@@ -1,77 +1,49 @@
 # Strategy filters
 
-Strategy filters are deterministic gates saved on a strategy. They decide
-whether the strategy should dispatch on a bar before any LLM agent spends
-tokens. Empty filter state means every bar.
+A strategy filter is a deterministic rule that decides whether a strategy
+should run on a candle.
 
-## Dashboard
+Without a saved filter, the strategy runs on every candle. With a saved
+filter, XVN checks the filter first. If the filter passes, the strategy can
+call its model. If the filter does not pass, the strategy skips that candle.
 
-Open `/strategies/:id` and use the **Filter** card.
+## Where to edit
 
-- Choose `toml` or `json`.
-- Save with **Save filter**.
-- Use **Clear filter** to return to every-bar dispatch.
-- Use **Check eval readiness** after saving when you want backend validation.
-- The UI sends the raw filter source as `source` to
-  `PUT /api/strategy/:id/filter` with `format: "json" | "toml"`.
-  Ensure this endpoint receives a non-empty source body; sending only
-  `{ "source": ... }` now saves the parsed deterministic filter and flips
-  `activation_mode` to `FilterGated`.
+Open the strategy page at `/strategies/:id`, then use the **Filter** card.
 
-The strategy inspector also edits asset universe and cadence in the Manifest
-card. Those fields drive multi-asset and timeframe validation; they are not
-prompt-only settings.
+- **Save filter** stores the JSON filter on the strategy.
+- **Insert JSON example** fills the editor with a starter filter.
+- **Clear filter** removes the filter and returns the strategy to every-candle behavior.
 
-## QA checks
+Filters are JSON only.
 
-For filter functionality QA, verify the run exercised the XVN filter system,
-not just prompt wording:
+## Example
 
-- The strategy Filter card says `Filter artifact attached`.
-- The eval detail has non-empty filter summaries/events when the filter should
-  fire or block.
-- Strategy detail returned by `/api/strategy/:id` should show
-  `activation_mode: "FilterGated"` and `filter` populated after a successful
-  save.
-- Decision provenance is checked: high `noop_skip` or early-stop counts mean
-  many rows were synthesized rather than direct model decisions.
-- For filter-specific QA, disable or account for skip optimizations when they
-  would hide whether the filter changed behavior.
-
-## CLI
-
-Current CLI authoring still supports agent-gated filters:
-
-```bash
-xvn agent create \
-  --name regime-filter-v1 \
-  --capability filter \
-  --provider openrouter \
-  --model anthropic/claude-sonnet-4.5 \
-  --system-prompt @prompts/regime-filter.txt
-
-xvn strategy add-filter <strategy_id> \
-  --filter-agent <agent_id> \
-  --gates trader \
-  --when '{"signal":"regime_filter","field":"regime","op":"eq","value":"high_vol"}'
+```json
+{
+  "id": "filter-upswing-v1",
+  "strategy_id": "strategy-id",
+  "display_name": "Upswing filter",
+  "description": "Run only when fast EMA is above slow EMA.",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "1h",
+  "conditions": {
+    "all": [
+      { "lhs": "ema_20", "op": ">", "rhs": "ema_50" }
+    ]
+  },
+  "cooldown_bars": 3
+}
 ```
 
-For new operator QA, prefer the dashboard's strategy-level Filter card unless
-you specifically need to test `AgentRef` and `PipelineEdge` wiring.
+Replace `strategy-id` with the strategy ID shown on the strategy page. Match
+`asset_scope` and `timeframe` to the strategy you intend to evaluate.
 
-## Related commands
+## What to expect
 
-```bash
-xvn strategy create --name "BTC 4h filter test" --prompt @prompt.md \
-  --provider openrouter --model anthropic/claude-sonnet-4.5 \
-  --asset BTC/USD --timeframe 4h
+After saving, the Filter card should show that a filter is saved. Future evals
+for that strategy will use the filter before dispatching the model.
 
-xvn strategy validate <strategy_id> --scenario <scenario_id> --json
-xvn strategy clone <strategy_id> --name "variant" --provider openrouter --model <model>
-xvn eval run --strategy <strategy_id> --scenario <scenario_id> --mode backtest
-xvn eval run --strategy <strategy_id> --scenario <scenario_id> --mode paper
-xvn eval run --strategy <strategy_id> --scenario <scenario_id> --mode live
-```
-
-Provider/model must be explicit on the strategy's attached agent. Workspace
-defaults are not assumed for eval launch.
+If an eval looks like it ignored the filter, check the eval run detail for
+filter events and summaries. A run with no filter events usually means the
+strategy did not have a saved filter when the eval started.

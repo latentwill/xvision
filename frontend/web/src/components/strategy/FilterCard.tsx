@@ -18,7 +18,7 @@ import {
 
 const EXAMPLE_FILTER_JSON = `{
   "id": "filter-upswing-v1",
-  "strategy_id": "<strategy-id>",
+  "strategy_id": "strategy-id",
   "display_name": "Upswing filter",
   "description": "Wake when fast EMA is above slow EMA.",
   "asset_scope": ["BTC/USD"],
@@ -64,9 +64,10 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
   const saveMut = useMutation({
     mutationFn: () =>
       setStrategyFilter(strategyId, { source, format: "json" }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       setLocalError(null);
       setSavedFlash(true);
+      qc.setQueryData<Strategy>(strategyKeys.detail(strategyId), updated);
       window.setTimeout(() => setSavedFlash(false), 1800);
       qc.invalidateQueries({ queryKey: strategyKeys.detail(strategyId) });
       qc.invalidateQueries({ queryKey: strategyKeys.validate(strategyId) });
@@ -81,6 +82,9 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
     onSuccess: () => {
       setLocalError(null);
       setSavedFlash(true);
+      qc.setQueryData<Strategy>(strategyKeys.detail(strategyId), (prev) =>
+        prev ? { ...prev, filter: null } : prev,
+      );
       window.setTimeout(() => setSavedFlash(false), 1800);
       qc.invalidateQueries({ queryKey: strategyKeys.detail(strategyId) });
       qc.invalidateQueries({ queryKey: strategyKeys.validate(strategyId) });

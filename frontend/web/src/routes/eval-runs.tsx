@@ -84,8 +84,8 @@ const MODE_FILTER: FilterDef = {
   label: "Mode",
   options: [
     { value: "all", label: "All modes" },
-    { value: "paper", label: "Paper" },
     { value: "backtest", label: "Backtest" },
+    { value: "live", label: "Live" },
   ],
 };
 
@@ -714,7 +714,6 @@ function StartEvalDialog({
     e.preventDefault();
     if (!ready) return;
     const blocked = evalPreflightError({
-      mode,
       providers,
       brokers,
       strategy: selectedStrategy,
@@ -820,20 +819,6 @@ function StartEvalDialog({
                 <input
                   type="radio"
                   name="mode"
-                  value="paper"
-                  checked={mode === "paper"}
-                  onChange={() => {
-                    setMode("paper");
-                    setPreflightError(null);
-                  }}
-                  className="accent-gold"
-                />
-                paper
-              </label>
-              <label className="inline-flex items-center gap-2 text-[13px] text-text-2">
-                <input
-                  type="radio"
-                  name="mode"
                   value="backtest"
                   checked={mode === "backtest"}
                   onChange={() => {
@@ -844,10 +829,21 @@ function StartEvalDialog({
                 />
                 backtest
               </label>
+              <label className="inline-flex items-center gap-2 text-[13px] text-text-2">
+                <input
+                  type="radio"
+                  name="mode"
+                  value="live"
+                  checked={mode === "live"}
+                  disabled
+                  className="accent-gold"
+                />
+                live
+              </label>
             </div>
             <p className="m-0 mt-1.5 text-[11px] text-text-3 leading-snug">
-              Paper trades against Alpaca paper credentials (Settings → Brokers).
-              Backtest replays the scenario's parquet fixture in-process.
+              Backtest replays the scenario's parquet fixture in-process. Live
+              launch is not enabled yet.
             </p>
           </fieldset>
 
@@ -890,12 +886,10 @@ function StartEvalDialog({
 }
 
 function evalPreflightError({
-  mode,
   providers,
   brokers,
   strategy,
 }: {
-  mode: RunMode;
   providers: UseQueryResult<ProvidersReport>;
   brokers: UseQueryResult<BrokersReport>;
   strategy?: StrategyListItem;
@@ -942,11 +936,6 @@ function evalPreflightError({
         return `model '${pair.model}' is not enabled for provider '${pair.provider}'. Enable it in Settings -> Providers before running eval.`;
       }
     }
-  }
-
-  const alpacaConfigured = brokers.data?.alpaca.configured === true;
-  if (mode === "paper" && !alpacaConfigured) {
-    return "Configure Alpaca paper credentials in Settings -> Brokers before running a paper eval.";
   }
 
   return null;

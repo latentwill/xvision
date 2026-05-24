@@ -8,6 +8,7 @@ import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as evalReviewApi from "@/api/eval-review";
 import * as scenariosApi from "@/api/scenarios";
+import * as settingsApi from "@/api/settings";
 import * as strategyApi from "@/api/strategies";
 import { useTraceDock } from "@/stores/trace-dock";
 import type { DecisionRowDto, RunDetail } from "@/api/types.gen";
@@ -36,6 +37,8 @@ vi.mock("@/api/eval-review", async () => {
     listReviewsForRun: vi.fn(),
     getReview: vi.fn(),
     generateReview: vi.fn(),
+    listAgentProfiles: vi.fn(),
+    updateAgentProfile: vi.fn(),
   };
 });
 
@@ -54,6 +57,16 @@ vi.mock("@/api/scenarios", async () => {
   return {
     ...actual,
     listScenarios: vi.fn(),
+  };
+});
+
+vi.mock("@/api/settings", async () => {
+  const actual = await vi.importActual<typeof import("@/api/settings")>(
+    "@/api/settings",
+  );
+  return {
+    ...actual,
+    listProviders: vi.fn(),
   };
 });
 
@@ -214,6 +227,40 @@ describe("EvalRunDetailRoute", () => {
       review: makeReview(),
       findings: [],
     });
+    const reviewProfiles = evalReviewApi.CANONICAL_AGENT_PROFILES.map((p) => ({
+      id: p.id,
+      name: p.label,
+      type: "review",
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-4.5",
+      temperature: 0.2,
+      max_tokens: 4096,
+      system_prompt: `Review prompt for ${p.label}.`,
+      enabled: true,
+      created_at: "2026-05-23T00:00:00Z",
+      updated_at: "2026-05-23T00:00:00Z",
+    }));
+    vi.mocked(evalReviewApi.listAgentProfiles).mockResolvedValue(reviewProfiles);
+    vi.mocked(evalReviewApi.updateAgentProfile).mockImplementation(
+      async (id, patch) => ({
+        ...reviewProfiles.find((p) => p.id === id)!,
+        ...patch,
+      }),
+    );
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "openrouter",
+          kind: "openai-compat",
+          base_url: "https://openrouter.ai/api/v1",
+          api_key_env: "OPENROUTER_API_KEY",
+          api_key_set: true,
+          synthetic: false,
+          is_default: true,
+          enabled_models: ["google/gemini-3.1-flash-lite"],
+        },
+      ],
+    } as any);
     vi.mocked(strategyApi.listStrategies).mockResolvedValue([
       {
         agent_id: "01AGENT",
@@ -472,17 +519,12 @@ describe("EvalRunDetailRoute", () => {
     expect(
       await screen.findByText(/no review yet for this run/i),
     ).toBeInTheDocument();
-    // Agent picker shows the four canonical personas.
-    expect(
-      screen.getByRole("button", { name: "Fast Trader" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Reasoning" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Risk" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Research" }),
-    ).toBeInTheDocument();
+    const preset = screen.getByLabelText("Review prompt preset");
+    expect(preset).toHaveTextContent("Fast Trader");
+    expect(preset).toHaveTextContent("Reasoning");
+    expect(preset).toHaveTextContent("Risk");
+    expect(preset).toHaveTextContent("Research");
+    expect(screen.queryByText(/claude-sonnet/i)).not.toBeInTheDocument();
   });
 
   it("calls generateReview with force=true when the operator picks an agent", async () => {
@@ -499,7 +541,10 @@ describe("EvalRunDetailRoute", () => {
 
     renderDetail();
 
-    const button = await screen.findByRole("button", { name: "Reasoning" });
+    const preset = await screen.findByLabelText("Review prompt preset");
+    fireEvent.change(preset, { target: { value: "reasoning-agent" } });
+    const button = screen.getByRole("button", { name: /generate review/i });
+    await waitFor(() => expect(button).not.toBeDisabled());
     fireEvent.click(button);
 
     await waitFor(() =>
@@ -507,6 +552,12 @@ describe("EvalRunDetailRoute", () => {
         agent_profile_id: "reasoning-agent",
         force: true,
       }),
+    );
+    expect(evalReviewApi.updateAgentProfile).toHaveBeenCalledWith(
+      "reasoning-agent",
+      {
+        model: "google/gemini-3.1-flash-lite",
+      },
     );
   });
 
@@ -679,9 +730,9 @@ describe("EvalRunDetailRoute", () => {
     expect(
       screen.getByText(/reviews endpoint unreachable/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Reasoning" }),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Review prompt preset")).toHaveTextContent(
+      "Reasoning",
+    );
   });
 
   it("renders the inconclusive-state explanation when verdict is inconclusive with no findings", async () => {

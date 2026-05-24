@@ -14,7 +14,10 @@ describe("AgentRunIndentedTimeline", () => {
         onSelect={() => {}}
       />,
     );
-    expect(screen.getAllByTestId(/^span-row-/)).toHaveLength(MOCK_RUN_COMPLETED.spans.length);
+    expect(screen.getAllByTestId(/^span-row-/)).toHaveLength(
+      MOCK_RUN_COMPLETED.spans.length - 1,
+    );
+    expect(screen.queryByTestId("span-row-s6")).not.toBeInTheDocument();
     const child = screen.getByTestId("span-row-s4");
     expect(child).toHaveAttribute("data-depth", "2");
   });
@@ -59,7 +62,7 @@ describe("AgentRunIndentedTimeline", () => {
     const later = screen.getByTestId("span-waterfall-bar-s4");
     expect(parseFloat(later.style.left)).toBeGreaterThan(parseFloat(earlier.style.left));
 
-    for (const span of MOCK_RUN_COMPLETED.spans) {
+    for (const span of MOCK_RUN_COMPLETED.spans.filter((s) => s.span_id !== "s6")) {
       const bar = screen.getByTestId(`span-waterfall-bar-${span.span_id}`);
       const left = parseFloat(bar.style.left);
       const width = parseFloat(bar.style.width);

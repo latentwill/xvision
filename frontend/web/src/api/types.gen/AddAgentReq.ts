@@ -5,9 +5,7 @@ export type AddAgentReq = { strategy_id: string, agent_id: string, role: string,
 /**
  * Phase A `AgentRef.activates`. `None` (default) lets the
  * dispatcher pick the slot's first capability — today's behavior.
- * `Some(Capability::Filter)` is what the strategy editor's inline
- * Filter composer sends so the Phase B dispatcher picks the
- * Filter handler at this position even when the referenced agent
- * advertises more than one capability.
+ * `Some(Capability::Filter)` is rejected; filters are saved JSON
+ * artifacts on the strategy, not agent refs.
  */
 activates?: Capability, };
