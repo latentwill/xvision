@@ -237,7 +237,7 @@ async fn resolve_scenario_summary(ctx: &ApiContext, run_id: &str) -> Option<Revi
     Some(ReviewScenarioSummary {
         id: scenario.id.clone(),
         name: Some(scenario.display_name.clone()),
-        asset: scenario.asset.first().map(|a| a.symbol.clone()),
+        asset: None,
         granularity: Some(scenario.granularity.to_string()),
         start: Some(scenario.time_window.start.to_rfc3339()),
         end: Some(scenario.time_window.end.to_rfc3339()),

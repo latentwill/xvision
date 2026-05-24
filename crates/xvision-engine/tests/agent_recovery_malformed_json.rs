@@ -147,6 +147,8 @@ fn minimal_strategy() -> Strategy {
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -164,7 +166,7 @@ fn minimal_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -288,13 +290,25 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
     let strategy = minimal_strategy();
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
-        .run(&mut run, &strategy, &scenario, &[trader_agent_slot()], dispatch_dyn, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[trader_agent_slot()],
+            dispatch_dyn,
+            tools,
+            &store,
+        )
         .await;
     assert!(
         res.is_ok(),
@@ -428,13 +442,25 @@ async fn paper_executor_surfaces_original_error_after_two_consecutive_truncation
     let strategy = minimal_strategy();
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let err = executor
-        .run(&mut run, &strategy, &scenario, &[trader_agent_slot()], dispatch_dyn, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[trader_agent_slot()],
+            dispatch_dyn,
+            tools,
+            &store,
+        )
         .await
         .expect_err("second-attempt truncated must surface the original error");
 
@@ -526,13 +552,25 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
     let strategy = minimal_strategy();
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let _ = executor
-        .run(&mut run, &strategy, &scenario, &[trader_agent_slot()], dispatch_dyn, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[trader_agent_slot()],
+            dispatch_dyn,
+            tools,
+            &store,
+        )
         .await
         .expect("repaired run must succeed");
 
@@ -587,7 +625,15 @@ async fn backtest_executor_repairs_invalid_json_on_single_retry() {
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
-        .run(&mut run, &strategy, &scenario, &[trader_agent_slot()], dispatch_dyn, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[trader_agent_slot()],
+            dispatch_dyn,
+            tools,
+            &store,
+        )
         .await;
     assert!(
         res.is_ok(),

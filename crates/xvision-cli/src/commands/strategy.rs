@@ -766,6 +766,8 @@ async fn new_atomic(
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -936,10 +938,11 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     let preflight = preflight_validate(&strategy, Some(&scenario));
     warnings.extend(preflight.warnings);
 
-    let asset_display = scenario
-        .asset
+    let asset_display = strategy
+        .manifest
+        .asset_universe
         .first()
-        .map(|a| a.venue_symbol.clone())
+        .cloned()
         .unwrap_or_default();
     let timeframe_display = scenario.granularity.canonical();
     collect_prompt_mismatch_warnings(&ctx, &strategy, &asset_display, &timeframe_display, &mut warnings)

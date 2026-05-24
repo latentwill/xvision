@@ -133,6 +133,7 @@ mod tests {
             payload,
             granularity: FilterGranularity::Bar,
             ts: Utc::now(),
+            scope: crate::agent::dispatch_capability::SignalScope::Global,
         }
     }
 

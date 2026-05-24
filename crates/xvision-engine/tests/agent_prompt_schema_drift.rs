@@ -37,6 +37,8 @@ async fn fresh_pool() -> SqlitePool {
     sqlx::query(migration_028).execute(&pool).await.unwrap();
     let migration_033 = include_str!("../migrations/033_agent_slot_capabilities.sql");
     sqlx::query(migration_033).execute(&pool).await.unwrap();
+    let migration_036 = include_str!("../migrations/036_agents_scope_strategy_id.sql");
+    sqlx::query(migration_036).execute(&pool).await.unwrap();
     pool
 }
 

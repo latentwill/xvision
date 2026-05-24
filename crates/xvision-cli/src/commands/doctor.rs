@@ -76,8 +76,7 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
     };
 
     if cmd.json {
-        crate::io::print_json(&report)
-            .map_err(|e| anyhow::anyhow!("emit doctor json: {}", e.source))?;
+        crate::io::print_json(&report).map_err(|e| anyhow::anyhow!("emit doctor json: {}", e.source))?;
     } else {
         println!("xvn_home              {}", report.xvn_home);
         println!("db_path               {}", report.db_path);

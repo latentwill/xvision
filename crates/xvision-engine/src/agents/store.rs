@@ -326,23 +326,19 @@ impl AgentStore {
         match patch.scope_strategy_id {
             None => {}
             Some(ScopePatch::Clear) => {
-                sqlx::query(
-                    "UPDATE agents SET scope_strategy_id = NULL, updated_at = ? WHERE agent_id = ?",
-                )
-                .bind(&now)
-                .bind(agent_id)
-                .execute(&mut *tx)
-                .await?;
+                sqlx::query("UPDATE agents SET scope_strategy_id = NULL, updated_at = ? WHERE agent_id = ?")
+                    .bind(&now)
+                    .bind(agent_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
             Some(ScopePatch::Set(id)) => {
-                sqlx::query(
-                    "UPDATE agents SET scope_strategy_id = ?, updated_at = ? WHERE agent_id = ?",
-                )
-                .bind(id)
-                .bind(&now)
-                .bind(agent_id)
-                .execute(&mut *tx)
-                .await?;
+                sqlx::query("UPDATE agents SET scope_strategy_id = ?, updated_at = ? WHERE agent_id = ?")
+                    .bind(id)
+                    .bind(&now)
+                    .bind(agent_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
         }
         if let Some(slots) = patch.slots {

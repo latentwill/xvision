@@ -104,6 +104,8 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -121,7 +123,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
         mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -237,10 +239,7 @@ async fn per_arm_error_does_not_abort_bakeoff() {
         make_arm(s_missing, "mock-provider", "m1"),
     ];
 
-    let params = params_for(
-        vec![s_real.into(), s_missing.into()],
-        vec!["m1".into()],
-    );
+    let params = params_for(vec![s_real.into(), s_missing.into()], vec!["m1".into()]);
 
     let req = BakeoffRunRequest {
         params,

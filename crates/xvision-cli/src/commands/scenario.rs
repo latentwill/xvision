@@ -434,7 +434,6 @@ fn scenario_to_create_request(s: &Scenario) -> api_scenario::CreateScenarioReque
         display_name: s.display_name.clone(),
         description: s.description.clone(),
         asset_class: s.asset_class,
-        asset: s.asset.clone(),
         quote_currency: s.quote_currency,
         time_window: s.time_window.clone(),
         capital: s.capital.clone(),
@@ -476,7 +475,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         return Ok(());
     }
 
-    let asset_sym = AssetSymbol::from_str(&a.asset).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    let _asset_sym = AssetSymbol::from_str(&a.asset).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
     let granularity = parse_granularity(&a.granularity)?;
     let slippage = parse_slippage(&a.slippage)?;
     let venue = parse_venue(&a.venue)?;
@@ -485,7 +484,6 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         display_name: a.name,
         description: String::new(),
         asset_class: AssetClass::Crypto,
-        asset: vec![asset_ref_from_sym(&asset_sym)],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow {
             start: a
@@ -575,14 +573,12 @@ async fn run_ls(ctx: &ApiContext, a: LsArgs) -> CliResult<()> {
         return Ok(());
     }
 
-    println!("ID\tDISPLAY_NAME\tASSET\tWINDOW\tSOURCE");
+    println!("ID\tDISPLAY_NAME\tWINDOW\tSOURCE");
     for s in &rows {
-        let asset = s.asset.first().map(|a| a.symbol.as_str()).unwrap_or("-");
         println!(
-            "{}\t{}\t{}\t{}..{}\t{:?}",
+            "{}\t{}\t{}..{}\t{:?}",
             s.id,
             s.display_name,
-            asset,
             s.time_window.start.format("%Y-%m-%d"),
             s.time_window.end.format("%Y-%m-%d"),
             s.source,
@@ -629,19 +625,15 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
         }
     };
 
-    let asset = a
-        .asset
-        .as_deref()
-        .map(|sym_str| {
-            let sym = AssetSymbol::from_str(sym_str).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
-            Ok::<_, CliError>(vec![asset_ref_from_sym(&sym)])
-        })
-        .transpose()?;
+    if a.asset.is_some() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "clone: --asset is no longer supported; run-layer assets come from strategy asset_universe"
+        )));
+    }
 
     let mutations = api_scenario::ScenarioMutations {
         display_name: a.name,
         time_window,
-        asset,
         description: None,
         granularity: None,
         venue: None,
@@ -739,13 +731,11 @@ async fn run_tree(ctx: &ApiContext, id: String) -> CliResult<()> {
 pub fn format_inspect_card(s: &Scenario, run_count: Option<usize>, best_return_pct: Option<f64>) -> String {
     let mut out = String::new();
 
-    let asset = s.asset.first().map(|a| a.symbol.as_str()).unwrap_or("-");
     let quote = format!("{:?}", s.quote_currency).to_uppercase();
-    let asset_pair = format!("{}/{}", asset, quote);
 
     out.push_str(&format!("id: {}\n", s.id));
     out.push_str(&format!("name: {}\n", s.display_name));
-    out.push_str(&format!("asset: {}\n", asset_pair));
+    out.push_str(&format!("quote_currency: {}\n", quote));
     out.push_str(&format!("timeframe: {}\n", s.granularity));
     out.push_str(&format!(
         "date_window: {}..{}\n",
@@ -905,17 +895,8 @@ pub fn select_scenarios(
     let mut candidates: Vec<&Scenario> = scenarios
         .iter()
         .filter(|s| {
-            // Asset filter: check if any of the scenario's AssetRefs match.
             if !assets.is_empty() {
-                let sym = s.asset.first().map(|a| a.symbol.as_str()).unwrap_or("");
-                // Accept "ETH/USD" or bare "ETH" matches.
-                let matched = assets.iter().any(|want| {
-                    let norm = want.split('/').next().unwrap_or(want);
-                    sym.eq_ignore_ascii_case(norm) || want.eq_ignore_ascii_case(sym)
-                });
-                if !matched {
-                    return false;
-                }
+                return false;
             }
 
             // Timeframe filter: granularity.seconds() / 60 == timeframe_minutes.
@@ -1040,23 +1021,13 @@ pub fn select_scenarios(
 
     // One-per-asset preference: pick the closest-to-target scenario for each
     // distinct asset first, then fill up to `count` from the remaining.
-    let mut seen_assets: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut selected: Vec<&Scenario> = Vec::with_capacity(count);
 
-    // First pass: one per asset.
     for s in &candidates {
         if selected.len() >= count {
             break;
         }
-        let sym = s
-            .asset
-            .first()
-            .map(|a| a.symbol.as_str())
-            .unwrap_or("-")
-            .to_string();
-        if seen_assets.insert(sym) {
-            selected.push(s);
-        }
+        selected.push(s);
     }
 
     // Second pass: fill remaining slots from any asset.
@@ -1074,17 +1045,11 @@ pub fn select_scenarios(
     let rows = selected
         .into_iter()
         .map(|s| {
-            let asset = s
-                .asset
-                .first()
-                .map(|a| a.symbol.as_str())
-                .unwrap_or("-")
-                .to_string();
             let timeframe = s.granularity.to_string();
             SelectRow {
                 id: s.id.clone(),
                 name: s.display_name.clone(),
-                asset,
+                asset: "-".to_string(),
                 timeframe,
                 decision_count: scenario_decision_count(s),
             }
@@ -1212,11 +1177,7 @@ async fn classify_one(ctx: &ApiContext, id: &str, force: bool) -> CliResult<bool
     }
 
     // Try to load bars from cache; if not cached, skip gracefully.
-    let asset_pair = s
-        .asset
-        .first()
-        .map(|a| a.venue_symbol.as_str())
-        .unwrap_or("BTC/USD");
+    let asset_pair = "BTC/USD";
 
     let bars = xvision_engine::eval::bars::load_bars(
         ctx,
@@ -1484,11 +1445,6 @@ pub mod select {
             tags: regime_tags.iter().map(|t| format!("regime:{t}")).collect(),
             notes: None,
             asset_class: AssetClass::Crypto,
-            asset: vec![AssetRef {
-                class: AssetClass::Crypto,
-                symbol: asset_sym.to_string(),
-                venue_symbol: format!("{asset_sym}/USD"),
-            }],
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow { start, end },
             granularity: gran,

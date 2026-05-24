@@ -18,9 +18,7 @@ use crate::error::DashboardError;
 use crate::state::AppState;
 
 /// `GET /api/v2/charts/market-context`
-pub async fn get(
-    State(_state): State<AppState>,
-) -> Result<Json<MarketContextPayload>, DashboardError> {
+pub async fn get(State(_state): State<AppState>) -> Result<Json<MarketContextPayload>, DashboardError> {
     let p = engine::build_market_context_stub()?;
     Ok(Json(p))
 }

@@ -140,8 +140,8 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, chat_rail, charts_annotated, charts_dashboards,
-    charts_market_context, cli, docs,
+    agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail, cli,
+    docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
     health::health,

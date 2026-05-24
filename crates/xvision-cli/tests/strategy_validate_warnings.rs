@@ -73,6 +73,7 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
                     capabilities: [Capability::Trader].into_iter().collect(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await
@@ -94,6 +95,9 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
                 min_warmup_bars: None,
+                color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             hypothesis: None,
             agents: vec![AgentRef {

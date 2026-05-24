@@ -6,8 +6,8 @@
 
 use sqlx::SqlitePool;
 use xvision_engine::agents::{
-    default_capabilities, AgentSlot, AgentStore, InputsPolicy, ListFilter, NewAgent,
-    ScopeFilter, ScopePatch, UpdateAgent,
+    default_capabilities, AgentSlot, AgentStore, InputsPolicy, ListFilter, NewAgent, ScopeFilter, ScopePatch,
+    UpdateAgent,
 };
 
 async fn fresh_pool() -> SqlitePool {
@@ -36,12 +36,11 @@ fn slot() -> AgentSlot {
         provider: "anthropic".into(),
         model: "claude-sonnet-4-6".into(),
         // ≥200 chars so the content-quality gate passes.
-        system_prompt:
-            "You are a quantitative trading assistant. Analyse the provided OHLCV bar context, \
+        system_prompt: "You are a quantitative trading assistant. Analyse the provided OHLCV bar context, \
              scenario metadata, and risk limits before recommending an action. Explain the \
              evidence for the decision, identify invalidation conditions, and return structured \
              output that downstream pipeline stages can consume without further normalisation."
-                .into(),
+            .into(),
         skill_ids: vec![],
         max_tokens: Some(4096),
         temperature: None,
@@ -66,12 +65,10 @@ async fn migration_up_down_round_trip() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query(include_str!(
-        "../migrations/036_agents_scope_strategy_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../migrations/036_agents_scope_strategy_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Sanity: write + read after the round-trip still works.
     let store = AgentStore::new(pool);
@@ -285,10 +282,7 @@ async fn update_scope_patch_promotes_and_demotes() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        store.get(&id).await.unwrap().unwrap().scope_strategy_id,
-        None
-    );
+    assert_eq!(store.get(&id).await.unwrap().unwrap().scope_strategy_id, None);
 
     // Re-scope via ScopePatch::Set.
     store
@@ -406,17 +400,7 @@ async fn delete_scoped_to_is_noop_when_nothing_matches() {
         })
         .await
         .unwrap();
-    let swept = store
-        .delete_scoped_to("01NONESUCH00000000000000")
-        .await
-        .unwrap();
+    let swept = store.delete_scoped_to("01NONESUCH00000000000000").await.unwrap();
     assert_eq!(swept, 0);
-    assert_eq!(
-        store
-            .list(ListFilter::default())
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
+    assert_eq!(store.list(ListFilter::default()).await.unwrap().len(), 1);
 }

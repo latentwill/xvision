@@ -121,10 +121,10 @@ async fn scenarios_returns_canonical_set() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let summaries: Vec<ScenarioSummary> = eval::scenarios(&ctx).await.unwrap();
     assert!(summaries.len() >= 4, "canonical set expected >= 4");
-    // BTC-only constraint surfaces in the summary too.
+    // Scenarios are asset-free now — the traded asset comes from the
+    // strategy, so the summary no longer carries an asset universe.
     for s in &summaries {
         assert!(!s.regime_tags.is_empty());
-        assert!(s.asset_universe.contains(&"BTC/USD".to_string()));
     }
     // Unique IDs.
     let mut ids: Vec<&str> = summaries.iter().map(|s| s.id.as_str()).collect();

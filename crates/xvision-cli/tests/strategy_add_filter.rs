@@ -104,6 +104,8 @@ fn seed_strategy_with_trader(home: &Path) -> (String, String) {
                 published_at: None,
                 min_warmup_bars: None,
                 color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             hypothesis: None,
             agents: vec![AgentRef {

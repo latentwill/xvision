@@ -23,6 +23,8 @@ fn sample_strategy(id: &str) -> Strategy {
             min_warmup_bars: None,
 
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -38,7 +40,7 @@ fn sample_strategy(id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 

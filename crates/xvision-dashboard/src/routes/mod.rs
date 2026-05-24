@@ -1,10 +1,10 @@
 pub mod agent_runs;
 pub mod agents;
 pub mod bars;
-pub mod chat_rail;
 pub mod charts_annotated;
 pub mod charts_dashboards;
 pub mod charts_market_context;
+pub mod chat_rail;
 pub mod cli;
 pub mod docs;
 pub mod eval;

@@ -92,6 +92,8 @@ fn build_strategy(agent_id: &str) -> Strategy {
             min_warmup_bars: None,
 
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -109,7 +111,7 @@ fn build_strategy(agent_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -142,7 +144,11 @@ async fn paper_executor_emits_run_failed_on_unparseable_trader_output() {
         .expect("flash-crash-2024-08 scenario must exist");
     let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000C");
 
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let bus = ProgressBus::new(1024);
@@ -204,7 +210,11 @@ async fn paper_executor_emits_all_progress_event_types() {
         .expect("flash-crash-2024-08 scenario must exist");
     let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000A");
 
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     // Subscribe BEFORE running so RunStarted isn't lost.
@@ -295,7 +305,11 @@ async fn paper_executor_runs_clean_with_no_progress_subscriber() {
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
     let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000B");
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let bus = ProgressBus::new(8);

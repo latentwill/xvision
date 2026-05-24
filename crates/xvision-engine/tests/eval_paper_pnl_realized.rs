@@ -74,6 +74,8 @@ fn minimal_strategy() -> Strategy {
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -91,7 +93,7 @@ fn minimal_strategy() -> Strategy {
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 

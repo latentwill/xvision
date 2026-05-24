@@ -36,11 +36,6 @@ fn valid_request() -> CreateScenarioRequest {
         display_name: "ETH 2024".into(),
         description: "".into(),
         asset_class: AssetClass::Crypto,
-        asset: vec![AssetRef {
-            class: AssetClass::Crypto,
-            symbol: "ETH".into(),
-            venue_symbol: "ETH/USD".into(),
-        }],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow {
             start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
@@ -103,24 +98,14 @@ async fn create_succeeds_with_valid_request() {
 }
 
 #[tokio::test]
-async fn create_accepts_every_supported_single_asset() {
+async fn create_keeps_scenarios_asset_free() {
     let ctx = test_ctx().await;
 
-    for asset in ALPACA_CRYPTO_WHITELIST {
-        let mut req = valid_request();
-        req.display_name = format!("{} single asset 2024", asset.symbol);
-        req.asset = vec![AssetRef {
-            class: AssetClass::Crypto,
-            symbol: asset.symbol.into(),
-            venue_symbol: asset.venue_symbol.into(),
-        }];
+    let mut req = valid_request();
+    req.display_name = "asset-free 2024".into();
 
-        let scenario = create(&ctx, req)
-            .await
-            .unwrap_or_else(|err| panic!("{} should create as a single-asset scenario: {err}", asset.symbol));
-        assert_eq!(scenario.asset[0].symbol, asset.symbol);
-        assert_eq!(scenario.asset[0].venue_symbol, asset.venue_symbol);
-    }
+    let scenario = create(&ctx, req).await.unwrap();
+    assert_eq!(scenario.asset_class, AssetClass::Crypto);
 }
 
 #[tokio::test]
@@ -216,46 +201,6 @@ async fn create_succeeds_with_minute_and_week_granularities() {
 }
 
 #[tokio::test]
-async fn create_accepts_multi_asset_basket() {
-    // Multi-asset Alpaca unlock: the API accepts a scenario whose asset
-    // list carries more than one whitelisted crypto/USD pair. Downstream
-    // execution still consumes `asset[0]` until the portfolio allocator
-    // lands; validation no longer pins scenarios to a single asset.
-    let ctx = test_ctx().await;
-    let mut req = valid_request();
-    req.display_name = "ETH+BTC basket 2024".into();
-    req.asset.push(AssetRef {
-        class: AssetClass::Crypto,
-        symbol: "BTC".into(),
-        venue_symbol: "BTC/USD".into(),
-    });
-    let s = create(&ctx, req).await.unwrap();
-    assert_eq!(s.asset.len(), 2);
-}
-
-#[tokio::test]
-async fn create_rejects_empty_asset_list() {
-    let ctx = test_ctx().await;
-    let mut req = valid_request();
-    req.asset.clear();
-    let err = create(&ctx, req).await.unwrap_err();
-    assert!(matches!(err, ApiError::Validation(_)));
-}
-
-#[tokio::test]
-async fn create_rejects_unwhitelisted_asset_in_basket() {
-    let ctx = test_ctx().await;
-    let mut req = valid_request();
-    req.asset.push(AssetRef {
-        class: AssetClass::Crypto,
-        symbol: "XRP".into(),
-        venue_symbol: "XRP/USD".into(),
-    });
-    let err = create(&ctx, req).await.unwrap_err();
-    assert!(matches!(err, ApiError::Validation(_)));
-}
-
-#[tokio::test]
 async fn create_rejects_history_floor_violation() {
     let ctx = test_ctx().await;
     let mut req = valid_request();
@@ -278,15 +223,6 @@ async fn create_rejects_unsupported_replay_mode() {
     let ctx = test_ctx().await;
     let mut req = valid_request();
     req.replay_mode = ReplayMode::Stepped;
-    let err = create(&ctx, req).await.unwrap_err();
-    assert!(matches!(err, ApiError::Validation(_)));
-}
-
-#[tokio::test]
-async fn create_rejects_unwhitelisted_asset() {
-    let ctx = test_ctx().await;
-    let mut req = valid_request();
-    req.asset[0].symbol = "XRP".into();
     let err = create(&ctx, req).await.unwrap_err();
     assert!(matches!(err, ApiError::Validation(_)));
 }

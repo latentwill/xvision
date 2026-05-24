@@ -1,17 +1,17 @@
 //! Scenario CRUD API — thin layer over `eval::scenario_store` with v1
 //! validation. The store helpers (Task 3) handle persistence; this module
 //! enforces business rules:
-//! - asset.len() == 1 (multi-asset is a v1.1 follow-up)
 //! - asset_class == Crypto, quote_currency == Usd
 //! - granularity is one of the Alpaca-supported bar timeframes
 //! - replay_mode == Continuous
 //! - time_window: start < end, end ≤ now, start ≥ Alpaca crypto history floor
-//! - asset symbol must be in the Alpaca crypto whitelist
 //! - parent_scenario_id (when set) must reference a non-archived scenario
 //!
-//! All scenarios get a deterministic `bar_cache_policy.cache_key` computed
-//! via `eval::bars::compute_cache_key` so the bars cache (migration 005)
-//! keys line up with `xvn bars fetch`.
+//! Scenarios are asset-free — any asset can run against any scenario; the
+//! asset a run trades comes from the strategy's `asset_universe`. Each
+//! scenario gets a deterministic `bar_cache_policy.cache_key` computed via
+//! `eval::bars::compute_scenario_cache_key` (asset-independent); per-asset
+//! bar loads derive their own key via `compute_cache_key`.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::eval::scenario::*;
 use crate::eval::{bars as engine_bars, scenario_store};
 use crate::safety::VenueLabel;
-use xvision_data::asset_whitelist::{alpaca_crypto_history_start, is_alpaca_crypto_supported};
+use xvision_data::asset_whitelist::alpaca_crypto_history_start;
 
 /// Request to create a new scenario. Caller fills in every field; the
 /// engine assigns `id`, `created_at`, `created_by`, and `bar_cache_policy`.
@@ -39,7 +39,6 @@ pub struct CreateScenarioRequest {
     pub display_name: String,
     pub description: String,
     pub asset_class: AssetClass,
-    pub asset: Vec<AssetRef>,
     pub quote_currency: QuoteCurrency,
     pub time_window: TimeWindow,
     #[cfg_attr(feature = "ts-export", ts(type = "{ initial: number, currency: string }"))]
@@ -107,7 +106,6 @@ pub struct ScenarioMutations {
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub time_window: Option<TimeWindow>,
-    pub asset: Option<Vec<AssetRef>>,
     #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub granularity: Option<BarGranularity>,
     pub venue: Option<VenueSettings>,
@@ -126,8 +124,7 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
     validate_request(&req, ctx).await?;
     let display_name = req.display_name.trim().to_string();
     let id = format!("sc_{}", Ulid::new());
-    let cache_key = engine_bars::compute_cache_key(
-        &req.asset[0].venue_symbol,
+    let cache_key = engine_bars::compute_scenario_cache_key(
         req.granularity,
         req.time_window.start,
         req.time_window.end,
@@ -142,7 +139,6 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
         tags: req.tags,
         notes: req.notes,
         asset_class: req.asset_class,
-        asset: req.asset,
         quote_currency: req.quote_currency,
         time_window: req.time_window,
         granularity: req.granularity,
@@ -234,7 +230,6 @@ pub async fn clone(ctx: &ApiContext, parent: &str, mutations: ScenarioMutations)
             .unwrap_or_else(|| format!("{} (clone)", parent_s.display_name)),
         description: mutations.description.unwrap_or(parent_s.description),
         asset_class: parent_s.asset_class,
-        asset: mutations.asset.unwrap_or(parent_s.asset),
         quote_currency: parent_s.quote_currency,
         time_window: mutations.time_window.unwrap_or(parent_s.time_window),
         granularity: mutations.granularity.unwrap_or(parent_s.granularity),
@@ -273,11 +268,6 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
         ));
     }
     ensure_display_name_available(ctx, &req.display_name).await?;
-    if req.asset.is_empty() {
-        return Err(ApiError::Validation(
-            "scenario requires at least one asset".into(),
-        ));
-    }
     if !matches!(req.asset_class, AssetClass::Crypto) {
         return Err(ApiError::Validation("asset_class must be Crypto in v1".into()));
     }
@@ -303,14 +293,6 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
             "time_window.start is before Alpaca crypto history (earliest: {})",
             floor.to_rfc3339()
         )));
-    }
-    for asset in &req.asset {
-        if !is_alpaca_crypto_supported(&asset.symbol) {
-            return Err(ApiError::Validation(format!(
-                "asset '{}' is not in the Alpaca crypto whitelist",
-                asset.symbol
-            )));
-        }
     }
     if let Some(parent) = &req.parent_scenario_id {
         let p = scenario_store::get_scenario(ctx, parent)

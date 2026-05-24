@@ -14,9 +14,7 @@
 mod common;
 
 use common::open_api_context;
-use xvision_engine::api::settings::providers::{
-    self, EffectiveProvider, ProviderUnavailableReason,
-};
+use xvision_engine::api::settings::providers::{self, EffectiveProvider, ProviderUnavailableReason};
 use xvision_engine::api::ApiContext;
 
 const OPENROUTER_NO_KEY_CONFIG: &str = r#"
@@ -80,11 +78,7 @@ async fn effective_providers_marks_no_key_provider_as_not_launchable() {
     assert_eq!(row.provider, "openrouter");
     assert!(row.enabled, "row exists; `enabled` must be true");
     assert!(!row.has_key, "OPENROUTER_API_KEY_PARITY_TEST is unset");
-    assert!(
-        !row.launchable,
-        "no key → launchable must be false ({:?})",
-        row,
-    );
+    assert!(!row.launchable, "no key → launchable must be false ({:?})", row,);
     assert_eq!(row.models.len(), 1);
     assert_eq!(row.models[0].id, "deepseek/deepseek-v4-flash");
 }

@@ -7,7 +7,7 @@ use chrono::{TimeZone, Utc};
 use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel,
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel,
     LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
     ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
@@ -37,11 +37,6 @@ fn make_test_scenario(id: &str) -> Scenario {
         tags: vec!["regression".into()],
         notes: None,
         asset_class: AssetClass::Crypto,
-        asset: vec![AssetRef {
-            class: AssetClass::Crypto,
-            symbol: "ETH".into(),
-            venue_symbol: "ETH/USD".into(),
-        }],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow {
             start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),

@@ -92,6 +92,8 @@ fn minimal_strategy() -> Strategy {
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -109,7 +111,7 @@ fn minimal_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -260,7 +262,11 @@ async fn harness_with_script(
     let strategy = minimal_strategy();
     let scenario = six_hour_scenario();
     let executor = Executor::with_bars(bars_for(&scenario));
-    let run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Backtest);
+    let run = Run::new_queued(
+        "test-strategy-hash".into(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
     let canned = r#"{"action":"long_open","conviction":0.6,"justification":"keep buying"}"#;
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
@@ -477,7 +483,11 @@ async fn hold_between_rejections_resets_strike_counter() {
     let strategy = minimal_strategy();
     let scenario = six_hour_scenario();
     let executor = Executor::with_bars(bars_for(&scenario));
-    let mut run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        "test-strategy-hash".into(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let long_open = r#"{"action":"long_open","conviction":0.6,"justification":"buy"}"#;

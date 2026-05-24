@@ -76,6 +76,8 @@ fn minimal_strategy() -> Strategy {
             min_warmup_bars: None,
 
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -93,7 +95,7 @@ fn minimal_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -150,7 +152,11 @@ async fn paper_harness(
     let strategy = minimal_strategy();
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario));
-    let run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Backtest);
+    let run = Run::new_queued(
+        "test-strategy-hash".into(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned_trader_json));
     let tools = Arc::new(ToolRegistry::empty());
@@ -356,7 +362,11 @@ async fn paper_executor_crypto_short_open_closes_existing_long() {
     let strategy = minimal_strategy();
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario));
-    let mut run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        "test-strategy-hash".into(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::sequence(responses));
     let tools = Arc::new(ToolRegistry::empty());
@@ -514,7 +524,11 @@ async fn paper_harness_with_dispatch(
     let strategy = minimal_strategy();
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario));
-    let run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Backtest);
+    let run = Run::new_queued(
+        "test-strategy-hash".into(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
     let tools = Arc::new(ToolRegistry::empty());
     let _ = dispatch; // value passed into the test only for clarity

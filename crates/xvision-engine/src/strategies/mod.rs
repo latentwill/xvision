@@ -1,4 +1,5 @@
 pub mod agent_ref;
+pub mod exec_mode;
 pub mod id;
 pub mod manifest;
 pub mod mechanical;
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 pub use xvision_filters::{ActivationMode, Filter};
 
 pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
+pub use crate::strategies::exec_mode::{CapitalMode, ExecutionMode};
 use crate::strategies::manifest::PublicManifest;
 pub use crate::strategies::mechanical::MechanicalParams;
 use crate::strategies::risk::RiskConfig;
@@ -366,6 +368,8 @@ mod tests {
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         }
     }
 

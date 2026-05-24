@@ -157,6 +157,8 @@ fn minimal_strategy() -> Strategy {
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -172,7 +174,7 @@ fn minimal_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -309,7 +311,11 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
@@ -461,7 +467,11 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
@@ -550,7 +560,11 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
     let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());

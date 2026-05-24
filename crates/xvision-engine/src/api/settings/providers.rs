@@ -303,10 +303,7 @@ struct ProviderSecret {
 ///
 /// Reads from existing config + secrets + provider catalog. No
 /// persistence side-effects.
-pub async fn effective_providers(
-    ctx: &ApiContext,
-    config_path: &Path,
-) -> ApiResult<Vec<EffectiveProvider>> {
+pub async fn effective_providers(ctx: &ApiContext, config_path: &Path) -> ApiResult<Vec<EffectiveProvider>> {
     effective_providers_with_paths(&ctx.xvn_home, config_path).await
 }
 
@@ -388,7 +385,10 @@ pub async fn resolve_provider(
         let env_hint = if entry.api_key_env.is_empty() {
             "no api_key_env configured for this provider; set one in Settings → Providers".to_string()
         } else {
-            format!("export {} or paste a key in Settings → Providers", entry.api_key_env)
+            format!(
+                "export {} or paste a key in Settings → Providers",
+                entry.api_key_env
+            )
         };
         return Err(ProviderUnavailable {
             provider: name.to_string(),
@@ -406,10 +406,7 @@ pub async fn resolve_provider(
                 let listing = if entry.enabled_models.is_empty() {
                     format!("no models are enabled for `{name}`; enable one in Settings → Providers → Manage models")
                 } else {
-                    format!(
-                        "enabled models for `{name}`: {}",
-                        entry.enabled_models.join(", ")
-                    )
+                    format!("enabled models for `{name}`: {}", entry.enabled_models.join(", "))
                 };
                 return Err(ProviderUnavailable {
                     provider: name.to_string(),
@@ -1291,9 +1288,7 @@ fn effective_from_entry(entry: &ProviderEntry, secrets: &ProvidersSecretsFile) -
     let has_enabled_model = !models.is_empty();
     // Local-candle has no remote catalog — launchability for it skips
     // the per-model gate. For network kinds we require at least one model.
-    let launchable = enabled
-        && has_key
-        && (entry.kind == ProviderKind::LocalCandle || has_enabled_model);
+    let launchable = enabled && has_key && (entry.kind == ProviderKind::LocalCandle || has_enabled_model);
     EffectiveProvider {
         provider: entry.name.clone(),
         kind: kind_to_str(entry.kind).into(),

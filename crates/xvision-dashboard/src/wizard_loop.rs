@@ -1861,11 +1861,7 @@ fn legacy_fixture_exists(scenario: &Scenario) -> bool {
 }
 
 fn fetch_bars_ui_action(scenario: &Scenario) -> serde_json::Value {
-    let asset = scenario
-        .asset
-        .first()
-        .map(|asset| asset.symbol.clone())
-        .unwrap_or_else(|| "BTC".into());
+    let asset = "BTC".to_string();
     serde_json::json!({
         "type": "fetch_bars",
         "label": "Fetch bars",

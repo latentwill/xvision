@@ -100,11 +100,8 @@ pub fn build_dashboard_overview_stub() -> ApiResult<MultiStrategyEquityBundle> {
     const FIXTURE_JSON: &str = include_str!(
         "../../../../frontend/web/src/components/chart/v2/__fixtures__/multi-strategy-equity.json"
     );
-    serde_json::from_str::<MultiStrategyEquityBundle>(FIXTURE_JSON).map_err(|err| {
-        ApiError::Internal(format!(
-            "charts_dashboards stub fixture parse failed: {err}"
-        ))
-    })
+    serde_json::from_str::<MultiStrategyEquityBundle>(FIXTURE_JSON)
+        .map_err(|err| ApiError::Internal(format!("charts_dashboards stub fixture parse failed: {err}")))
 }
 
 /// B1 real builder. Loads all strategies from disk, pairs each with its
@@ -242,7 +239,12 @@ pub async fn build_dashboard_overview(ctx: &ApiContext) -> ApiResult<MultiStrate
 
         // Build % return series baselined at 0 from the raw USD equity curve.
         // Equity series length may differ from `n`; pad with NaN at the tail.
-        let initial_equity = sr.equity.first().map(|(_, v)| *v).unwrap_or(1.0).max(f64::EPSILON);
+        let initial_equity = sr
+            .equity
+            .first()
+            .map(|(_, v)| *v)
+            .unwrap_or(1.0)
+            .max(f64::EPSILON);
 
         let raw_equity_pct: Vec<f64> = sr
             .equity
@@ -365,7 +367,11 @@ fn build_monthly_returns(equity: &[(chrono::DateTime<chrono::Utc>, f64)]) -> Vec
             } else {
                 0.0
             };
-            MonthlyReturnCell { year: y, month: m, value }
+            MonthlyReturnCell {
+                year: y,
+                month: m,
+                value,
+            }
         })
         .collect()
 }
@@ -486,11 +492,19 @@ mod tests {
         let jan = &monthly[0];
         assert_eq!(jan.year, 2024);
         assert_eq!(jan.month, 1);
-        assert!((jan.value - 10.0).abs() < 0.001, "Jan should be ~+10%, got {}", jan.value);
+        assert!(
+            (jan.value - 10.0).abs() < 0.001,
+            "Jan should be ~+10%, got {}",
+            jan.value
+        );
 
         let feb = &monthly[1];
         assert_eq!(feb.year, 2024);
         assert_eq!(feb.month, 2);
-        assert!((feb.value - (-5.0)).abs() < 0.001, "Feb should be ~-5%, got {}", feb.value);
+        assert!(
+            (feb.value - (-5.0)).abs() < 0.001,
+            "Feb should be ~-5%, got {}",
+            feb.value
+        );
     }
 }

@@ -14,7 +14,7 @@
 use chrono::Utc;
 use serde_json::json;
 use xvision_engine::agent::dispatch_capability::{
-    AgentOutput, Critique, CritiqueSeverity, FilterGranularity, FilterSignal,
+    AgentOutput, Critique, CritiqueSeverity, FilterGranularity, FilterSignal, SignalScope,
 };
 use xvision_engine::agent::edge_predicate::{evaluate_against_signal, evaluate_predicate};
 use xvision_engine::strategies::agent_ref::EdgePredicate;
@@ -25,6 +25,7 @@ fn signal_with(payload: serde_json::Value) -> FilterSignal {
         payload,
         granularity: FilterGranularity::Bar,
         ts: Utc::now(),
+        scope: SignalScope::Global,
     }
 }
 

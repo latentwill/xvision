@@ -119,7 +119,8 @@ fn seed(home: &std::path::Path) -> (String, String) {
                     system_prompt: "You are a disciplined crypto trader. Use the supplied OHLCV \
                                     history, indicator panel, and scenario metadata to choose an \
                                     action with explicit position sizing and invalidation. Avoid \
-                                    placeholders; ground every claim in active data.".into(),
+                                    placeholders; ground every claim in active data."
+                        .into(),
                     skill_ids: vec![],
                     max_tokens: Some(1024),
                     temperature: None,
@@ -207,7 +208,10 @@ fn clone_with_provider_and_model_override_creates_paired_agent_with_new_binding(
     let json: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("clone --json must emit valid JSON on stdout");
     let cloned_strategy_id = json["strategy_id"].as_str().expect("strategy_id present");
-    assert_eq!(json["source_strategy_id"], serde_json::Value::String(source_id.clone()));
+    assert_eq!(
+        json["source_strategy_id"],
+        serde_json::Value::String(source_id.clone())
+    );
     let agent_ids = json["agent_ids"].as_array().expect("agent_ids array");
     assert_eq!(agent_ids.len(), 1);
     let cloned_agent_id = agent_ids[0].as_str().expect("agent id string").to_string();
@@ -222,7 +226,10 @@ fn clone_with_provider_and_model_override_creates_paired_agent_with_new_binding(
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
         let cloned = store.load(cloned_strategy_id).await.expect("load clone");
         assert_eq!(cloned.manifest.display_name, "clone-with-override");
-        assert_eq!(cloned_from_from_strategy(&cloned).as_deref(), Some(source_id.as_str()));
+        assert_eq!(
+            cloned_from_from_strategy(&cloned).as_deref(),
+            Some(source_id.as_str())
+        );
         assert_eq!(cloned.agents.len(), 1);
         assert_eq!(cloned.agents[0].role, "trader");
         assert_eq!(cloned.agents[0].agent_id, cloned_agent_id);
@@ -242,7 +249,9 @@ fn clone_with_provider_and_model_override_creates_paired_agent_with_new_binding(
         )
         .await
         .unwrap();
-        let cloned_agent = agents_api::get(&ctx, &cloned_agent_id).await.expect("load cloned agent");
+        let cloned_agent = agents_api::get(&ctx, &cloned_agent_id)
+            .await
+            .expect("load cloned agent");
         assert_eq!(cloned_agent.slots[0].provider, "openrouter");
         assert_eq!(cloned_agent.slots[0].model, "anthropic/claude-3.5-haiku");
 
@@ -305,7 +314,10 @@ fn clone_without_override_is_verbatim_copy() {
 
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
         let cloned = store.load(&cloned_strategy_id).await.unwrap();
-        assert_eq!(cloned_from_from_strategy(&cloned).as_deref(), Some(source_id.as_str()));
+        assert_eq!(
+            cloned_from_from_strategy(&cloned).as_deref(),
+            Some(source_id.as_str())
+        );
     });
 }
 

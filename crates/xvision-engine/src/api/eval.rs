@@ -1090,7 +1090,6 @@ fn scenario_from_live_config(cfg: &LiveConfig) -> Scenario {
         tags: cfg.tags.clone(),
         notes: cfg.notes.clone(),
         asset_class: AssetClass::Crypto,
-        asset: cfg.assets.clone(),
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start: now, end: now },
         granularity: xvision_data::alpaca::BarGranularity::Minute1,
@@ -1919,6 +1918,7 @@ async fn run_inner(
                 ctx,
                 &scenario,
                 from_db,
+                &strategy,
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
@@ -2204,13 +2204,9 @@ async fn resolve_scenario_with_source(ctx: &ApiContext, id: &str) -> ApiResult<(
 async fn load_bars_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
+    asset: xvision_core::trading::AssetSymbol,
 ) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
-    let asset = scenario
-        .asset
-        .first()
-        .ok_or_else(|| ApiError::Validation(format!("scenario '{}' has empty asset list", scenario.id)))?
-        .venue_symbol
-        .clone();
+    let asset = asset.as_alpaca_pair();
     crate::eval::bars::load_bars(
         ctx,
         &crate::eval::bars::BarCacheArgs {
@@ -2233,13 +2229,9 @@ async fn load_bars_for_scenario(
 async fn load_warmup_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
+    asset: xvision_core::trading::AssetSymbol,
 ) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
-    let asset = scenario
-        .asset
-        .first()
-        .ok_or_else(|| ApiError::Validation(format!("scenario '{}' has empty asset list", scenario.id)))?
-        .venue_symbol
-        .clone();
+    let asset = asset.as_alpaca_pair();
     crate::eval::bars::load_warmup_bars(
         ctx,
         &asset,
@@ -2287,55 +2279,62 @@ async fn build_backtest_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
     from_db: bool,
+    strategy: &crate::strategies::Strategy,
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn RunExecutor>> {
+    let active = crate::eval::executor::asset_set::active_assets(&strategy.manifest.asset_universe, None)
+        .map_err(|e| ApiError::Validation(format!("resolve active assets for backtest: {e}")))?;
+    let first_asset = *active
+        .first()
+        .ok_or_else(|| ApiError::Validation("strategy asset_universe resolved empty".into()))?;
     if from_db {
-        match load_bars_for_scenario(ctx, scenario).await {
-            Ok(bars) => {
-                let ohlcv: Vec<xvision_core::market::Ohlcv> = bars
-                    .into_iter()
-                    .map(|b| xvision_core::market::Ohlcv {
-                        timestamp: b.timestamp,
-                        open: b.open,
-                        high: b.high,
-                        low: b.low,
-                        close: b.close,
-                        volume: b.volume,
-                    })
-                    .collect();
-                // Warmup is a hard preflight error when DB-resolved: an
-                // operator who set `warmup_bars > 0` expects real
-                // pre-window context, not silent emptiness.
-                let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?);
-                let mut bt = Executor::with_bars(ohlcv)
-                    .with_warmup(warmup)
-                    .with_event_bus(ctx.event_bus.clone())
-                    .with_provider_catalogs(provider_catalogs);
-                if let Some(emitter) = obs {
-                    bt = bt.with_observability(emitter);
+        let mut asset_bars = std::collections::BTreeMap::new();
+        let mut first_err: Option<String> = None;
+        for asset in &active {
+            match load_bars_for_scenario(ctx, scenario, *asset).await {
+                Ok(bars) => {
+                    asset_bars.insert(*asset, market_bars_to_ohlcv(bars));
                 }
-                // V2D: thread the server-built recorder onto the executor.
-                if let Some(recorder) = ctx.memory_recorder.clone() {
-                    bt = bt.with_memory_recorder(recorder);
+                Err(e) => {
+                    first_err.get_or_insert_with(|| format!("{}: {e}", asset.as_alpaca_pair()));
                 }
-                if let Some(l) = limits {
-                    bt = bt.with_limits(l.clone());
-                }
-                return Ok(Box::new(bt));
-            }
-            Err(e) => {
-                if scenario.warmup_bars > 0 || !legacy_fixture_exists(scenario) {
-                    return Err(missing_bars_validation(scenario, Some(e.to_string())));
-                }
-                tracing::warn!(
-                    scenario_id = %scenario.id,
-                    error = %e,
-                    "load_bars failed; falling back to fixture loader without warmup context",
-                );
             }
         }
+        if first_err.is_none() && !asset_bars.is_empty() {
+            // Warmup is a hard preflight error when DB-resolved: an
+            // operator who set `warmup_bars > 0` expects real
+            // pre-window context, not silent emptiness.
+            let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, first_asset).await?);
+            let mut bt = (if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
+                Executor::with_bars(asset_bars.remove(&first_asset).unwrap())
+            } else {
+                Executor::new().with_asset_bars(asset_bars)
+            })
+            .with_warmup(warmup)
+            .with_event_bus(ctx.event_bus.clone())
+            .with_provider_catalogs(provider_catalogs);
+            if let Some(emitter) = obs {
+                bt = bt.with_observability(emitter);
+            }
+            // V2D: thread the server-built recorder onto the executor.
+            if let Some(recorder) = ctx.memory_recorder.clone() {
+                bt = bt.with_memory_recorder(recorder);
+            }
+            if let Some(l) = limits {
+                bt = bt.with_limits(l.clone());
+            }
+            return Ok(Box::new(bt));
+        }
+        if scenario.warmup_bars > 0 || !legacy_fixture_exists(scenario) {
+            return Err(missing_bars_validation(scenario, first_err));
+        }
+        tracing::warn!(
+            scenario_id = %scenario.id,
+            error = ?first_err,
+            "load_bars failed; falling back to fixture loader without warmup context",
+        );
     } else if !legacy_fixture_exists(scenario) {
         return Err(missing_bars_validation(scenario, None));
     }
@@ -2568,6 +2567,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 ctx,
                 &scenario,
                 from_db,
+                &strategy,
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
@@ -3032,7 +3032,7 @@ pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     let summaries: Vec<ScenarioSummary> = rows
         .into_iter()
         .map(|s| {
-            let asset_universe: Vec<String> = s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
+            let asset_universe: Vec<String> = Vec::new();
             // Old `regime_tags` shape — extract the "regime:*" prefix off the
             // new combined `tags` field. Will go away with Task 6's seed
             // rewrite.
@@ -3366,6 +3366,8 @@ mod tests {
                 template: "custom".into(),
                 regime_fit: Vec::new(),
                 asset_universe: vec!["BTC/USD".into()],
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
                 decision_cadence_minutes: 60,
                 attested_with: Vec::new(),
                 required_tools: Vec::new(),

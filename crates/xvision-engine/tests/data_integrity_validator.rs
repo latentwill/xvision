@@ -530,9 +530,9 @@ fn scenario_data_manifest_derives_from_data_source() {
     use xvision_core::Capital;
     use xvision_data::alpaca::BarGranularity;
     use xvision_engine::eval::scenario::{
-        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
-        LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-        ScenarioSource, TimeWindow, Venue, VenueSettings,
+        AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
+        LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+        TimeWindow, Venue, VenueSettings,
     };
     use xvision_engine::safety::VenueLabel;
 
@@ -545,11 +545,6 @@ fn scenario_data_manifest_derives_from_data_source() {
         tags: vec![],
         notes: None,
         asset_class: AssetClass::Crypto,
-        asset: vec![AssetRef {
-            class: AssetClass::Crypto,
-            symbol: "BTC".into(),
-            venue_symbol: "BTC/USD".into(),
-        }],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow {
             start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),

@@ -41,6 +41,8 @@ const MIGRATION_028: &str = include_str!("../migrations/029_agent_slot_memory_mo
 // JSON-array `capabilities` column on every save, so the test pool
 // must apply 033 before any insert path runs.
 const MIGRATION_033: &str = include_str!("../migrations/033_agent_slot_capabilities.sql");
+// scope_strategy_id column on agents (migration 036).
+const MIGRATION_036: &str = include_str!("../migrations/036_agents_scope_strategy_id.sql");
 
 /// In-memory pool with the agents table and migrations 005 + 019 +
 /// 020 + 025 applied. Mirrors the runtime boot path.
@@ -56,6 +58,7 @@ async fn fresh_pool() -> SqlitePool {
     sqlx::query(MIGRATION_025).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_028).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_033).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_036).execute(&pool).await.unwrap();
     pool
 }
 
@@ -100,6 +103,7 @@ async fn migration_020_up_down_up_preserves_rows() {
     sqlx::query(MIGRATION_025).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_028).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_033).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_036).execute(&pool).await.unwrap();
 
     let store = AgentStore::new(pool.clone());
     let id = store

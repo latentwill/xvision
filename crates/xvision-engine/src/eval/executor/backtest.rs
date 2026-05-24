@@ -15,7 +15,7 @@
 //!   `MetricsSummary.win_rate` is left at 0.0 the same way paper-mode-executor-deleted
 //!   leaves it — Phase 3.C work).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -49,9 +49,7 @@ use crate::eval::early_stop::{self, EarlyStopConfig};
 use crate::eval::executor::live_source::LiveStream;
 use crate::eval::executor::real_broker_fills::RealBrokerFills;
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
-use crate::eval::executor::traits::{
-    BarSource, Clock, FillRecord, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
-};
+use crate::eval::executor::traits::{Clock, FillRecord, FillRequest, FillSink, InstantClock, SimulatedFills};
 use crate::eval::executor::wall_clock::WallClock;
 use crate::eval::executor::RunExecutor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
@@ -143,6 +141,14 @@ pub struct Executor {
     recorder: Option<Arc<dyn xvision_observability::Recorder>>,
     live_runtime: Option<tokio::sync::Mutex<LiveRuntime>>,
     fill_sink_override: Option<tokio::sync::Mutex<Box<dyn FillSink>>>,
+    /// Optional per-run narrowing of the strategy's `asset_universe`.
+    /// `None` runs the full universe. CLI run-layer asset narrowing can
+    /// thread a subset here without putting assets back on scenarios.
+    asset_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
+    /// Optional per-asset injected bars. When set, backtest execution
+    /// builds an aligned multi-asset timeline from this map instead of
+    /// mapping `injected_bars` to the first active asset.
+    injected_asset_bars: Option<BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>>,
 }
 
 impl Executor {
@@ -188,6 +194,8 @@ impl Executor {
                 fill_sink: RealBrokerFills::new(broker),
             })),
             fill_sink_override: None,
+            asset_subset: None,
+            injected_asset_bars: None,
         })
     }
 
@@ -215,6 +223,8 @@ impl Executor {
             recorder: None,
             live_runtime: None,
             fill_sink_override: None,
+            asset_subset: None,
+            injected_asset_bars: None,
         }
     }
 
@@ -238,6 +248,8 @@ impl Executor {
             recorder: None,
             live_runtime: None,
             fill_sink_override: None,
+            asset_subset: None,
+            injected_asset_bars: None,
         }
     }
 
@@ -255,6 +267,8 @@ impl Executor {
             recorder: None,
             live_runtime: None,
             fill_sink_override: None,
+            asset_subset: None,
+            injected_asset_bars: None,
         }
     }
 
@@ -317,6 +331,18 @@ impl Executor {
     /// the per-bar check is a constant-time no-op.
     pub fn with_limits(mut self, limits: super::super::limits::EvalLimits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+
+    /// Narrow a backtest run to a subset of `strategy.manifest.asset_universe`.
+    pub fn with_asset_subset(mut self, subset: Vec<xvision_core::trading::AssetSymbol>) -> Self {
+        self.asset_subset = Some(subset);
+        self
+    }
+
+    /// Inject per-asset bar series for multi-asset backtests.
+    pub fn with_asset_bars(mut self, bars: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>) -> Self {
+        self.injected_asset_bars = Some(bars);
         self
     }
 
@@ -452,13 +478,23 @@ impl Executor {
         tools: Arc<ToolRegistry>,
         store: &RunStore,
     ) -> Result<MetricsSummary> {
-        // TODO(Task 5): pull from Strategy. For v1 we read the first
-        // venue_symbol off the scenario's asset list (BTC/USD for canonicals).
-        let asset = scenario
-            .asset
-            .first()
-            .map(|a| a.venue_symbol.clone())
-            .ok_or_else(|| anyhow!("scenario {} has empty asset list", scenario.id))?;
+        // Multi-asset (B4): scenarios are asset-free; the asset set a run
+        // trades comes from the strategy's `asset_universe` (resolved /
+        // validated by `active_assets`, optionally narrowed by an
+        // `--assets` subset). `PerAsset` execution runs the pipeline once
+        // per active asset each bar, sharing one pooled capital book.
+        use crate::eval::executor::asset_set::active_assets;
+        let active = active_assets(&strategy.manifest.asset_universe, self.asset_subset.as_deref())?;
+        // The first active asset doubles as the single-asset fixture key
+        // (the legacy `load_ohlcv_fixture` path loads by alpaca pair) and
+        // as the default key for the single `injected_bars` vec.
+        let asset_sym = *active.first().ok_or_else(|| {
+            anyhow!(
+                "strategy {} resolved an empty active asset set",
+                strategy.manifest.id
+            )
+        })?;
+        let asset = asset_sym.as_alpaca_pair();
 
         let cadence_min = strategy.manifest.decision_cadence_minutes as i64;
         if cadence_min <= 0 {
@@ -468,87 +504,123 @@ impl Executor {
             );
         }
 
-        // Bars come from one of two sources:
-        // 1. Injected via `with_bars` — Task 8's DB-resolved path goes
-        //    through `eval::bars::load_bars` and hands a pre-loaded
-        //    `Vec<Ohlcv>` to the executor. This is the path the new
-        //    `api::scenario::get`-based eval::run uses.
-        // 2. Legacy fixture loader — the canonical-scenarios fallback
-        //    still reads from `data/probes/<cache_key>.parquet`. Keeps
-        //    pre-Task-8 tests working without a DB / Alpaca creds.
-        let is_live = self.live_runtime.is_some();
-        let mut bars: Vec<Ohlcv> = if is_live {
-            Vec::new()
-        } else if let Some(injected) = self.injected_bars.clone() {
-            injected
-        } else {
-            let data_seed = &scenario.bar_cache_policy.cache_key;
-            load_ohlcv_fixture(data_seed, &asset, usize::MAX)
-                .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
-        };
-        // An N-bar window is expected to produce N decisions
-        // (qa-decisions-30day-count). The final bar fills against its own
-        // close via the `next_bar_open` fallback below, so the only
-        // genuinely-uninterpretable case is an empty bar list. Anything
-        // narrower than that is a contract bug at the loader layer, not
-        // a runtime input the executor should silently tolerate.
-        if !is_live && bars.is_empty() {
+        // Multi-asset (B4): v1 implements `execution_mode = PerAsset` +
+        // `capital_mode = Pooled` only. Other modes parse + validate but
+        // the executor returns a clear not-yet-implemented error so the
+        // operator sees the limit instead of silently-wrong accounting.
+        use crate::strategies::{CapitalMode, ExecutionMode};
+        match &strategy.manifest.execution_mode {
+            ExecutionMode::PerAsset => {}
+            ExecutionMode::Portfolio => anyhow::bail!("execution_mode `portfolio` not yet implemented"),
+            ExecutionMode::Custom(name) => {
+                anyhow::bail!("execution_mode `custom:{name}` not yet implemented")
+            }
+        }
+        if strategy.manifest.capital_mode != CapitalMode::Pooled {
+            anyhow::bail!("capital_mode `per_asset` not yet implemented");
+        }
+
+        // Multi-asset (B4) — per-asset bars. Three sources, in precedence:
+        // 1. `with_asset_bars` — explicit per-asset vecs (multi-asset test
+        //    path; the production API/CLI layer threads resolved bars here).
+        // 2. `with_bars` — a single pre-loaded vec (Task 8 DB-resolved path,
+        //    single-asset). Mapped to the first active asset.
+        // 3. Legacy fixture loader — the canonical-scenarios fallback reads
+        //    `data/probes/<cache_key>.parquet` for the first active asset.
+        //    Keeps pre-Task-8 tests working without a DB / Alpaca creds.
+        //
+        // Sources 2 and 3 are single-asset; they only key the first active
+        // asset, so a single-asset run is byte-identical to the old path.
+        let asset_bars: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>> =
+            if let Some(per_asset) = self.injected_asset_bars.clone() {
+                per_asset
+            } else {
+                let single: Vec<Ohlcv> = if let Some(injected) = self.injected_bars.clone() {
+                    injected
+                } else {
+                    let data_seed = &scenario.bar_cache_policy.cache_key;
+                    load_ohlcv_fixture(data_seed, &asset, usize::MAX)
+                        .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
+                };
+                BTreeMap::from([(asset_sym, single)])
+            };
+        // An empty bar list is the only genuinely-uninterpretable case
+        // (qa-decisions-30day-count). Anything narrower is a loader
+        // contract bug, not a runtime input to silently tolerate.
+        if asset_bars.values().all(|v| v.is_empty()) {
             anyhow::bail!("scenario {} has no bars; nothing to backtest", scenario.id,);
         }
 
-        // executor-trait-extraction (sub-track 1): the per-bar loop is
-        // now driven by the BarSource trait, timestamp progression by
-        // the Clock trait, and fill production by the FillSink trait.
-        // Trait-object dispatch keeps codegen reasonable when sub-track
-        // 3 lands the Live impl on the same `Executor` shape.
-        //
-        // The BarSource owns its own copy of the bars (clone is cheap —
-        // `Ohlcv` is `Copy`-like data); the executor keeps the original
-        // `bars: Vec<Ohlcv>` for indexed T+1 look-ahead and for the
-        // post-loop `compute_baselines` call. The two stay in lockstep
-        // because the BarSource is constructed from the same vector and
-        // is drained in step with the indexed iteration below.
-        let mut bar_source: Option<Box<dyn BarSource>> = if is_live {
-            None
-        } else {
-            Some(Box::new(InjectedBars::new(bars.clone())))
-        };
+        // The fan-out only iterates assets that actually have bars. An
+        // active asset with no injected/loaded bars contributes no
+        // decisions (and carries any open position untouched). For the
+        // single-asset path this is exactly `[asset_sym]`.
+        let active: Vec<xvision_core::trading::AssetSymbol> = active
+            .into_iter()
+            .filter(|a| asset_bars.get(a).is_some_and(|v| !v.is_empty()))
+            .collect();
+        if active.is_empty() {
+            anyhow::bail!("scenario {} has no bars for any active asset", scenario.id,);
+        }
+        // Venue symbols of the active set, surfaced in each seed as
+        // `active_assets` so the trader sees the cross-asset context.
+        let active_venue_symbols: Vec<String> = active.iter().map(|a| a.as_alpaca_pair()).collect();
+
+        // Aligned timeline: outer-join the per-asset bar series by
+        // timestamp. `timeline[ts][asset] = bar_index` — the per-asset
+        // index into `asset_bars[asset]` so the per-decision body can do
+        // T+1 look-ahead and history slicing exactly as the single-asset
+        // path did. An asset missing a bar at `ts` simply isn't present in
+        // the inner map and gets no decision there. BTreeMap keys keep the
+        // timestamp order ascending and the per-timestamp asset order
+        // deterministic (AssetSymbol is `Ord`).
+        let mut timeline: BTreeMap<
+            chrono::DateTime<chrono::Utc>,
+            BTreeMap<xvision_core::trading::AssetSymbol, usize>,
+        > = BTreeMap::new();
+        for a in &active {
+            for (idx, bar) in asset_bars[a].iter().enumerate() {
+                timeline.entry(bar.timestamp).or_default().insert(*a, idx);
+            }
+        }
+
+        // executor-trait-extraction (sub-track 1): fill production routes
+        // through the FillSink trait. The multi-asset fan-out drives the
+        // aligned `timeline` directly (rather than a single BarSource), so
+        // the per-asset T+1 look-ahead can index each asset's own vec; the
+        // Clock + FillSink seams are preserved for the future Live impl.
         let mut clock: Box<dyn Clock> = Box::new(InstantClock::new());
-        let mut local_sim_sink = SimulatedFills::new();
-        let mut override_guard = if let Some(mtx) = self.fill_sink_override.as_ref() {
-            Some(mtx.lock().await)
-        } else {
-            None
-        };
+        let mut fill_sink: Box<dyn FillSink> = Box::new(SimulatedFills::new());
 
-        // Used by RunTick to report bar-clock progress. Cadence can make
-        // actual decisions sparser; the final bar produces a decision too
-        // (it fills against its own close instead of the absent T+1 open —
-        // see the `next_bar_open` fallback in the loop below).
-        let total_decision_bars = run
-            .live_config
-            .as_ref()
-            .and_then(|cfg| cfg.stop_policy.bar_limit)
-            .map(|n| n.max(1) as f64)
-            .unwrap_or_else(|| bars.len().max(1) as f64);
+        // Used by RunTick to report timeline progress. One tick per
+        // distinct timestamp (the bar clock), independent of how many
+        // assets decided at that timestamp.
+        let total_decision_bars = timeline.len().max(1) as f64;
 
-        // Per-decision rolling-history window. Warmup bars are concatenated
-        // in front of the tradable bars so we can surface them in
-        // `market_data.bar_history` while excluding `current_bar`.
-        //
-        // Backtests receive warmup from `eval::bars::load_warmup_bars`.
-        // Live runs receive warmup through their live stream first; those
-        // bars seed history only and never produce decisions or fills.
-        let mut runtime_warmup_bars = self.warmup_bars.clone();
-        let mut live_warmup_remaining = if is_live {
-            run.live_config
-                .as_ref()
-                .and_then(|cfg| cfg.warmup_bars)
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        // Per-decision rolling-history window. Warmup bars (from
+        // `eval::bars::load_warmup_bars`) are concatenated in front of the
+        // first active asset's bars so we can slice the last
+        // `scenario.warmup_bars` bars at each decision and surface them in
+        // the seed as `market_data.bar_history`. v1 warmup is single-asset
+        // (the DB path resolves warmup per the single resolved asset); for
+        // additional assets in a multi-asset run the history window is
+        // built from that asset's own in-window bars with no warmup prefix.
+        let warmup_count = self.warmup_bars.len();
         let history_window = scenario.warmup_bars as usize;
+        // Per-asset combined `[warmup..., bars...]` views for history
+        // slicing. Only the first active asset gets the warmup prefix
+        // (warmup is single-asset in v1); the rest use their bars as-is.
+        let combined_bars_by_asset: BTreeMap<xvision_core::trading::AssetSymbol, Vec<&Ohlcv>> = active
+            .iter()
+            .map(|a| {
+                let combined: Vec<&Ohlcv> = if *a == asset_sym {
+                    self.warmup_bars.iter().chain(asset_bars[a].iter()).collect()
+                } else {
+                    asset_bars[a].iter().collect()
+                };
+                (*a, combined)
+            })
+            .collect();
 
         // F-6: per-run seed-sanitization policy. Mirror of the paper
         // executor path; `Raw` (default) reproduces the pre-F-6 JSON
@@ -598,9 +670,14 @@ impl Executor {
 
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];
-        let mut position: f64 = 0.0; // base-asset units; +long, -short
-        let mut entry_price: f64 = 0.0;
-        let mut realized_total: f64 = 0.0;
+        // Multi-asset (B4): pooled accounting moved from scalar
+        // `position`/`entry_price`/`realized_total` to a `PortfolioBook`
+        // keyed per asset. Single-asset preserved: with ONE asset the
+        // pooled formula `initial + realized + Σ position·(mark−entry)`
+        // reduces to the old scalar formula exactly. Stage-3 fan-out
+        // adds the second key; this stage routes the single resolved
+        // `asset_sym` through the book without changing any numbers.
+        let mut book = crate::eval::executor::book::PortfolioBook::new(initial);
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
         // Lifetime equals the run loop; dropped when the run completes.
@@ -618,13 +695,15 @@ impl Executor {
         // a slow scenario-load doesn't burn the operator's budget.
         let run_started: Instant = Instant::now();
         // engine-trade-guardrails-pyramid-flip-block (F-7):
-        // tracks the trader's most recent emitted open direction on the
-        // asset so the guardrail can detect a same-bar flip even when
-        // the executor's live position is momentarily flat between a
-        // close and an opposite open. Cleared on emitted `flat`. Only
-        // updated from the ORIGINAL trader action — a guardrail-rewritten
-        // `hold` does not bump the direction state.
-        let mut last_open_direction: Option<GuardAction> = None;
+        // tracks the trader's most recent emitted open direction PER ASSET
+        // so the guardrail can detect a same-bar flip even when the
+        // executor's live position is momentarily flat between a close and
+        // an opposite open. Cleared on emitted `flat`. Only updated from
+        // the ORIGINAL trader action — a guardrail-rewritten `hold` does
+        // not bump the direction state. Keyed per asset so a flip on BTC
+        // doesn't leak into ETH's flip detection.
+        let mut last_open_direction: BTreeMap<xvision_core::trading::AssetSymbol, GuardAction> =
+            BTreeMap::new();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
         let mut peak_equity = initial.max(0.0);
@@ -646,11 +725,21 @@ impl Executor {
         // mode. The buffer is flushed when the policy fires (so we don't
         // re-trigger immediately after the skip window ends) and on any
         // reset trigger — non-`flat`/`hold` action or a portfolio change.
+        //
+        // Multi-asset (B4): this state is PER ASSET — each asset has its
+        // own flat-degeneracy streak and skip window. A flat run on BTC
+        // must not skip decisions on ETH. `EarlyStopState::default()` is
+        // the empty single-asset starting point preserved byte-identically.
+        #[derive(Default)]
+        struct EarlyStopState {
+            recent_actions: Vec<early_stop::Action>,
+            recent_convictions: Vec<f64>,
+            inherit_remaining: u32,
+            prev_position: f64,
+        }
         let early_stop_cfg = EarlyStopConfig::from_env_or_default();
-        let mut recent_actions: Vec<early_stop::Action> = Vec::with_capacity(early_stop_cfg.window);
-        let mut recent_convictions: Vec<f64> = Vec::with_capacity(early_stop_cfg.window);
-        let mut inherit_remaining: u32 = 0;
-        let mut prev_position: f64 = position;
+        let mut early_stop_state: BTreeMap<xvision_core::trading::AssetSymbol, EarlyStopState> =
+            active.iter().map(|a| (*a, EarlyStopState::default())).collect();
 
         // track-plan-touches: build the per-run filter hook. Returns
         // `None` for `EveryBar` strategies (the default) — the loop
@@ -664,817 +753,762 @@ impl Executor {
         // parameter so the executor's surface area stays unchanged.
         let pool = store.pool().clone();
 
-        // executor-trait-extraction: per-bar loop is now driven by the
-        // BarSource trait. The indexed access (T+1 look-ahead,
-        // decision_bars push, history slicing) still uses the local
-        // `bars` slice, which is the same data the BarSource was built
-        // from. Clock advancement is driven explicitly inside the loop.
-        let mut i: usize = 0;
-        let live_started = Instant::now();
-        let mut consumed_bars: u32 = 0;
-        loop {
-            let source_bar = if let Some(runtime) = self.live_runtime.as_ref() {
-                let mut runtime = runtime.lock().await;
-                let bar = runtime.bar_source.next_bar().await;
-                if let Some(bar) = bar.as_ref() {
-                    runtime.clock.advance_to(bar.timestamp);
-                }
-                bar
-            } else {
-                bar_source
-                    .as_mut()
-                    .expect("backtest executor has bar source")
-                    .next_bar()
-                    .await
-            };
-            let Some(source_bar) = source_bar else { break };
-            if is_live {
-                if live_warmup_remaining > 0 {
-                    runtime_warmup_bars.push(source_bar);
-                    live_warmup_remaining -= 1;
-                    continue;
-                }
-                bars.push(source_bar);
-            }
-            consumed_bars = consumed_bars.saturating_add(1);
-            let stop_after_this_bar = run
-                .live_config
-                .as_ref()
-                .and_then(|cfg| cfg.stop_policy.bar_limit)
-                .is_some_and(|limit| consumed_bars >= limit);
-            // Sync indexed view of the bar — the `bars` slice and the
-            // BarSource share the same underlying data, so the same
-            // index works for both.
-            debug_assert!(i < bars.len(), "bar_source out of sync with bars vec");
-            // Update the logical clock to this bar's timestamp before
-            // any decision-side work. Live impls will ignore this
-            // (their `WallClock::advance_to` will be a no-op).
-            if !is_live {
-                clock.advance_to(bars[i].timestamp);
-            }
-            let bar = &bars[i];
+        // Multi-asset (B4): the per-bar loop is now driven by the aligned
+        // `timeline` (one outer step per distinct timestamp). At each
+        // timestamp the inner loop fans out over the assets that have a
+        // bar there, running the per-asset decision body for each. Equity
+        // is marked + recorded ONCE per timestamp (pooled NAV) after all
+        // that timestamp's assets have decided — `eval_equity_samples` is
+        // keyed `(run_id, timestamp)`, so there is exactly one pooled
+        // series, not one per asset. For a single-asset run this collapses
+        // to one asset per timestamp and is byte-identical to the old
+        // per-bar path. `timeline_idx` drives the RunTick progress %.
+        let mut timeline_idx: usize = 0;
+        for (&ts, assets_at_ts) in &timeline {
+            // Update the logical clock to this timestamp before any
+            // decision-side work. Live impls ignore this.
+            clock.advance_to(ts);
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
             }
-            if let Some(policy) = run.live_config.as_ref().map(|cfg| &cfg.stop_policy) {
-                if let Some(limit) = policy.time_limit_secs {
-                    if live_started.elapsed().as_secs() >= limit {
-                        break;
-                    }
-                }
-            }
-            // Cadence gate: only fire on bars whose minute-aligned timestamp
-            // is divisible by the strategy's cadence. With hourly bars and
-            // 60-min cadence this always matches.
-            if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
-                i += 1;
-                if stop_after_this_bar {
-                    break;
-                }
+            // Cadence gate: only fire on timestamps whose minute-aligned
+            // value is divisible by the strategy's cadence. Timestamp-level
+            // (shared across all assets at this ts).
+            if (ts.timestamp() / 60) % cadence_min != 0 {
+                timeline_idx += 1;
                 continue;
             }
-            // Track every cadence-gated bar so baselines can replay the same
-            // bar slice post-loop (see `compute_baselines` call below).
-            decision_bars.push(bar.clone());
+            // Track the first active asset's bar at this timestamp so
+            // baselines (a single-series computation) replay the same bar
+            // slice the strategy saw. Single-asset: identical to the old
+            // `decision_bars.push(bar.clone())`.
+            if let Some(&first_idx) = assets_at_ts.get(&asset_sym) {
+                decision_bars.push(asset_bars[&asset_sym][first_idx].clone());
+            }
 
-            // A decision at bar T normally fills at T+1's open. For the
-            // final bar of the window there is no T+1, so the fill source
-            // falls back to the same bar's close. Without this fallback
-            // an N-bar scenario would silently drop the last decision and
-            // produce N-1 rows in `decisions` (operator-reported off-by-
-            // one — `qa-decisions-30day-count`).
-            let next_bar_open = if is_live {
-                bar.close
-            } else {
-                bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close)
-            };
-
-            // RunTick fires before the per-bar pipeline call so dashboards
-            // can advance progress bars even when an LLM round-trip is slow.
-            let scenario_progress_pct = ((i as f64 / total_decision_bars) * 100.0).clamp(0.0, 100.0);
+            // RunTick fires before the per-timestamp pipeline work so
+            // dashboards advance even when an LLM round-trip is slow.
+            let scenario_progress_pct =
+                ((timeline_idx as f64 / total_decision_bars) * 100.0).clamp(0.0, 100.0);
             self.emit(ProgressEvent::RunTick {
                 run_id: run.id.clone(),
                 scenario_progress_pct,
-                current_ts: bar.timestamp,
+                current_ts: ts,
             });
 
-            // track-plan-touches: per-bar filter evaluation. `None`
-            // means EveryBar strategy (no gating). When the outcome's
-            // decision is not `Active`, skip the agent pipeline for
-            // this bar — record the evaluation, emit the event, keep
-            // equity/metrics dense for chart continuity, then `continue`
-            // past pipeline / decision / fill work. The bar is still
-            // counted in `decision_bars` (already pushed above) so
-            // post-loop baselines see the same bar slice the strategy
-            // would have considered.
-            let mut trace_filter_attrs: Option<serde_json::Value> = None;
+            // track-plan-touches: per-bar filter evaluation. `None` means
+            // EveryBar strategy (no gating). The filter is a STRATEGY-level
+            // gate, evaluated once per timestamp on the first active
+            // asset's bar; when not `Active` it skips ALL assets' decisions
+            // this timestamp. `in_position` is true when any leg is open.
+            let mut filter_gated = false;
             if let Some(hook) = filter_hook.as_mut() {
-                let in_position = position.abs() > f64::EPSILON;
-                let evaluation = hook.evaluate(bar, in_position);
-                hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &evaluation)
-                    .await?;
-                trace_filter_attrs = Some(serde_json::json!({
-                    "filter": {
-                        "filter_id": evaluation.event.filter_id.clone(),
-                        "decision": evaluation.outcome.decision.tag(),
-                        "tree_true": evaluation.outcome.tree_true,
-                        "conditions_passed": evaluation
-                            .outcome
-                            .conditions_passed
-                            .iter()
-                            .map(|c| c.passed)
-                            .collect::<Vec<_>>(),
-                        "bar_timestamp": bar.timestamp.to_rfc3339(),
-                        "trigger": evaluation.trigger_context.clone(),
-                    }
-                }));
-                if !evaluation.outcome.decision.is_active() {
-                    equity = initial + realized_total + position * (next_bar_open - entry_price);
-                    store.record_equity(&run.id, bar.timestamp, equity).await?;
-                    self.emit_chart(
-                        &run.id,
-                        RunChartEvent::Equity(ChartEquityPoint {
-                            time: bar.timestamp.timestamp(),
-                            equity_usd: equity,
-                        }),
-                    )
-                    .await;
-                    equity_curve.push(equity);
-
-                    if equity > peak_equity {
-                        peak_equity = equity;
-                    }
-                    let drawdown_pct = if peak_equity > 0.0 {
-                        ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
-                    } else {
-                        0.0
-                    };
-                    self.emit(ProgressEvent::MetricsUpdated {
-                        run_id: run.id.clone(),
-                        equity,
-                        drawdown_pct,
-                        n_trades,
-                    });
-                    i += 1;
-                    if stop_after_this_bar {
-                        break;
-                    }
-                    continue;
-                }
-            }
-
-            // History slice: last `history_window` bars strictly before
-            // the current bar. `combined_idx` points at `bar` inside the
-            // combined `[warmup..., bars...]` series. When the run starts
-            // and `warmup_count` covers it, the slice contains
-            // `history_window` real prior bars (the QA15 fix).
-            let warmup_count = runtime_warmup_bars.len();
-            let combined_bars: Vec<&Ohlcv> = runtime_warmup_bars.iter().chain(bars.iter()).collect();
-            let combined_idx = warmup_count + i;
-            let history_start = combined_idx.saturating_sub(history_window);
-            let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
-            // F-8: optional rolling-window cap. `None` preserves the
-            // pre-022 wire shape; `Some(n)` trims to the most-recent
-            // `n` entries — when the slice is already smaller we
-            // send everything that's there.
-            let history_slice: &[&Ohlcv] = match bar_history_limit {
-                Some(n) if (n as usize) < history_slice.len() => {
-                    let take = n as usize;
-                    &history_slice[history_slice.len() - take..]
-                }
-                _ => history_slice,
-            };
-            let bar_history = build_bar_history(history_slice, inputs_policy);
-
-            // F-6: `Causal` drops `decision_index` + `timestamp` from
-            // both the top-level seed and the current-bar inline.
-            // `Raw` / `Oracle` keep the original shape byte-for-byte
-            // — the regression-guard test pins this.
-            let current_bar_json = ohlcv_to_json(bar, inputs_policy);
-            let mut seed = match inputs_policy {
-                InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
-                    "decision_index": decision_idx,
-                    "asset": asset,
-                    "timestamp": bar.timestamp,
-                    "market_data": {
-                        "asset": asset,
-                        "current_bar": current_bar_json,
-                        "next_bar_open": next_bar_open,
-                        "reference_price_usd": bar.close,
-                        "reference_price_source": "eval_bar.close",
-                        "bar_history": bar_history,
-                    },
-                    "portfolio_state": {
-                        "position_size": position,
-                        "equity": equity,
-                        "mark_price": bar.close,
-                    },
-                }),
-                InputsPolicy::Causal => serde_json::json!({
-                    "asset": asset,
-                    "market_data": {
-                        "asset": asset,
-                        "current_bar": current_bar_json,
-                        "next_bar_open": next_bar_open,
-                        "reference_price_usd": bar.close,
-                        "reference_price_source": "eval_bar.close",
-                        "bar_history": bar_history,
-                    },
-                    "portfolio_state": {
-                        "position_size": position,
-                        "equity": equity,
-                        "mark_price": bar.close,
-                    },
-                }),
-            };
-            if let (Some(seed_obj), Some(filter_attrs)) = (seed.as_object_mut(), trace_filter_attrs.as_ref())
-            {
-                if let Some(trigger) = filter_attrs.pointer("/filter/trigger") {
-                    if !trigger.is_null() {
-                        seed_obj.insert("filter_trigger".to_string(), trigger.clone());
-                    }
-                }
-            }
-
-            // eval-flat-degeneracy-early-stop (F-9): before paying the
-            // LLM tax, check whether we should inherit this decision as
-            // a flat. Two entry paths:
-            //
-            //   (a) `inherit_remaining > 0` — we're mid-skip-window from
-            //       a prior trigger. Keep inheriting until the counter
-            //       drains. No supervisor note here; the entry-row note
-            //       was already written when the policy fired.
-            //
-            //   (b) Policy fires NOW based on the rolling history. Write
-            //       ONE supervisor-note row, set `inherit_remaining`,
-            //       then fall through into the inherit branch.
-            //
-            // Both paths short-circuit `run_pipeline`, write an
-            // `eval_decisions` row with `action=flat, conviction=0.0,
-            // justification="inherited from early-stop policy"`, record
-            // equity (kept dense per bar so the chart series stays
-            // continuous), and `continue` to the next bar.
-            let policy_plan = if inherit_remaining == 0 {
-                early_stop::should_skip_next_decision(
-                    &recent_actions,
-                    &recent_convictions,
-                    position == prev_position,
-                    &early_stop_cfg,
-                )
-            } else {
-                None
-            };
-            if let Some(plan) = policy_plan.as_ref() {
-                tracing::info!(
-                    run_id = %run.id,
-                    decision_index = decision_idx,
-                    skip_count = plan.skip_count,
-                    "early-stop policy fired — inheriting flat decisions"
-                );
-                store
-                    .record_supervisor_note(&run.id, "guard", "info", &plan.reason)
-                    .await?;
-                // F43: also expose the policy fire as an engine event
-                // so the trace dock has a discrete bar tick to render.
-                if let Some(obs) = self.obs_emitter.as_ref() {
-                    let payload = serde_json::json!({
-                        "decision_index": decision_idx,
-                        "skip_count": plan.skip_count,
-                        "reason": plan.reason,
-                    });
-                    obs.emit_engine_event("early_stop_triggered", None, Some(payload.to_string()))
-                        .await;
-                }
-                inherit_remaining = plan.skip_count;
-                // Flush the rolling buffer so the policy can't re-fire
-                // on the next bar without a fresh streak rebuilding.
-                recent_actions.clear();
-                recent_convictions.clear();
-            }
-            if inherit_remaining > 0 {
-                let inherited_row = DecisionRow {
-                    run_id: run.id.clone(),
-                    decision_index: decision_idx,
-                    timestamp: bar.timestamp,
-                    asset: asset.clone(),
-                    action: "flat".into(),
-                    conviction: Some(0.0),
-                    justification: Some("inherited from early-stop policy".into()),
-                    reasoning: None,
-                    order_size: None,
-                    fill_price: None,
-                    fill_size: None,
-                    fee: None,
-                    pnl_realized: None,
-                };
-                store.record_decision(&inherited_row).await?;
-                self.emit_chart(
-                    &run.id,
-                    RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),
-                )
-                .await;
-                self.emit(ProgressEvent::DecisionEmitted {
-                    run_id: run.id.clone(),
-                    action: "flat".into(),
-                    asset: asset.clone(),
-                    size: 0.0,
-                    conviction: 0.0,
-                });
-
-                // Mark equity to next bar's open with no position change
-                // — `flat` on an already-flat or held position is a
-                // no-op fill. The existing `simulate_fill` semantics
-                // already give us this when `pos == 0`; for `pos != 0`
-                // an inherited flat would close the position, which
-                // would BE a portfolio change. We don't want the
-                // inherit branch to mutate position state, so we update
-                // equity in-place from current state instead of going
-                // through simulate_fill.
-                equity = initial + realized_total + position * (next_bar_open - entry_price);
-                store.record_equity(&run.id, bar.timestamp, equity).await?;
-                self.emit_chart(
-                    &run.id,
-                    RunChartEvent::Equity(ChartEquityPoint {
-                        time: bar.timestamp.timestamp(),
-                        equity_usd: equity,
-                    }),
-                )
-                .await;
-                equity_curve.push(equity);
-
-                if equity > peak_equity {
-                    peak_equity = equity;
-                }
-                let drawdown_pct = if peak_equity > 0.0 {
-                    ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
-                } else {
-                    0.0
-                };
-                self.emit(ProgressEvent::MetricsUpdated {
-                    run_id: run.id.clone(),
-                    equity,
-                    drawdown_pct,
-                    n_trades,
-                });
-
-                inherit_remaining -= 1;
-                prev_position = position;
-                decision_idx += 1;
-                i += 1;
-                if stop_after_this_bar {
-                    break;
-                }
-                continue;
-            }
-
-            // The model.call span for the trader is now named
-            // "decision"; keep decision lifecycle as point events
-            // rather than wrapping the call in a redundant agent.decision
-            // span.
-            if let Some(obs) = self.obs_emitter.as_ref() {
-                let payload = serde_json::json!({
-                    "decision_index": decision_idx,
-                    "asset": asset,
-                    "bar_ts": bar.timestamp.to_rfc3339(),
-                });
-                obs.emit_engine_event("decision_started", None, Some(payload.to_string()))
-                    .await;
-            }
-            macro_rules! finish_decision_span_error {
-                ($message:expr) => {};
-            }
-
-            // F-5 phase 2a: keep a copy of the seed so the
-            // malformed-json repair path (below) can rebuild the
-            // original user prompt byte-for-byte. The pipeline consumes
-            // `seed_inputs` by value; cloning here is cheap relative to
-            // the LLM dispatch and keeps the repair turn deterministic
-            // for the A/B-cache pairing acceptance criterion.
-            let seed_for_repair = seed.clone();
-            let outs = run_pipeline(PipelineInputs {
-                strategy,
-                agent_slots,
-                seed_inputs: seed,
-                dispatch: dispatch.clone(),
-                tools: tools.clone(),
-                obs: self.obs_emitter.clone(),
-                memory_recorder: self.memory_recorder.clone(),
-                // V2D Phase 1.5 — backtest dispatches with the scenario
-                // start so the recorder's Pattern recall can exclude
-                // anything trained inside the replay window. Run/scenario
-                // provenance flows down to Observation writes.
-                scenario_start: Some(scenario.time_window.start),
-                run_id: run.id.clone(),
-                scenario_id: scenario.id.clone(),
-                cycle_idx: decision_idx as i64,
-                provider_catalogs: self.provider_catalogs.clone(),
-                // Phase C — Filter capability runtime context. The
-                // executor owns the cache for the run's lifetime; the
-                // pipeline borrows it mutably for this cycle.
-                filter_ctx: Some(crate::agent::pipeline::FilterPipelineCtx {
-                    signal_cache: &mut signal_cache,
-                    bar_period_minutes,
-                    multi_filter_config,
-                    bar_ts: bar.timestamp,
-                    strategy_id: strategy.manifest.id.clone(),
-                }),
-                trace_attrs: trace_filter_attrs,
-                // Phase D — unified Recorder. Wired by callers that
-                // construct an `EvalRecorder` and thread it via
-                // `Executor::with_recorder`. The default `None`
-                // keeps the legacy bus-driven emission path untouched.
-                recorder: self.recorder.as_deref(),
-            })
-            .await?;
-            total_input_tokens += outs.total_input_tokens as u64;
-            total_output_tokens += outs.total_output_tokens as u64;
-            run.actual_input_tokens = Some(total_input_tokens);
-            run.actual_output_tokens = Some(total_output_tokens);
-            store
-                .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
-                .await?;
-
-            // Hard-limit breach check (cli-operator-safety-p0 slice 2/3).
-            // Decisions counter uses `decision_idx + 1` here because this
-            // bar's decision IS counted toward the cap — the next bar
-            // shouldn't run if the cap has just been reached. `is_empty()`
-            // short-circuits the call when no limits are configured.
-            if let Some(limits) = self.limits.as_ref() {
-                if !limits.is_empty() {
-                    if let Some(breach) = limits.check_for_cancel(
-                        decision_idx + 1,
-                        total_input_tokens,
-                        total_output_tokens,
-                        run_started,
-                    ) {
-                        let reason = breach.reason();
-                        let _ = store.cancel_active(&run.id, &reason).await;
-                        finish_decision_span_error!(reason.as_str());
-                        anyhow::bail!(reason);
-                    }
-                }
-            }
-
-            if store.is_terminal(&run.id).await? {
-                finish_decision_span_error!("eval run stopped");
-                anyhow::bail!("eval run stopped");
-            }
-
-            let trader = match outs.trader.as_ref() {
-                Some(t) => t,
-                None => {
-                    let err = TraderOutput::missing_response_error(&run.id, decision_idx);
-                    finish_decision_span_error!(&err.to_string());
-                    return Err(err.into());
-                }
-            };
-            let trader_model_id = trader_model_id(agent_slots, strategy);
-            let parsed = match TraderOutput::parse_response(trader, &run.id, decision_idx) {
-                Ok(p) => p,
-                Err(e) => {
-                    // F-5 phase 2a (`harness-recovery-malformed-json`):
-                    // single-shot repair attempt for the MalformedJson
-                    // family (`InvalidJson` / `Truncated`). All other
-                    // kinds bypass the repair and surface as today (their
-                    // recovery families belong to sibling phase-2
-                    // contracts or are intentionally non-recoverable per
-                    // the audit). The repair propagates the ORIGINAL
-                    // error on second-attempt failure so
-                    // `eval_runs.error` keeps its wire-stable
-                    // `[invalid_json]` / `[truncated]` prefix.
-                    // F-5 phase 2b (`harness-recovery-schema-missing-field`)
-                    // is checked FIRST: targeted-patch retry is cheaper
-                    // than the full repair re-ask. The two families are
-                    // disjoint per `FailureClass::family`, so each error
-                    // walks exactly one branch — no double-repair.
-                    if is_schema_missing_field_recoverable(&e) {
-                        if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
-                            match try_repair_schema_missing_field(
-                                trader,
-                                e,
-                                ctx,
-                                &seed_for_repair,
-                                dispatch.clone(),
-                                self.obs_emitter.as_ref(),
-                                &run.id,
-                                decision_idx,
-                            )
-                            .await
-                            {
-                                Ok(repaired) => repaired,
-                                Err(original) => {
-                                    let err = original.with_model_hint(trader_model_id.as_deref());
-                                    finish_decision_span_error!(&err.to_string());
-                                    return Err(err.into());
-                                }
-                            }
-                        } else {
-                            let err = e.with_model_hint(trader_model_id.as_deref());
-                            finish_decision_span_error!(&err.to_string());
-                            return Err(err.into());
-                        }
-                    } else if is_malformed_json_recoverable(&e) {
-                        if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
-                            match try_repair_malformed_json(
-                                trader,
-                                e,
-                                ctx,
-                                &seed_for_repair,
-                                dispatch.clone(),
-                                self.obs_emitter.as_ref(),
-                                &run.id,
-                                decision_idx,
-                            )
-                            .await
-                            {
-                                Ok(repaired) => repaired,
-                                Err(original) => {
-                                    let err = original.with_model_hint(trader_model_id.as_deref());
-                                    finish_decision_span_error!(&err.to_string());
-                                    return Err(err.into());
-                                }
-                            }
-                        } else {
-                            let err = e.with_model_hint(trader_model_id.as_deref());
-                            finish_decision_span_error!(&err.to_string());
-                            return Err(err.into());
-                        }
-                    } else {
-                        let err = e.with_model_hint(trader_model_id.as_deref());
-                        finish_decision_span_error!(&err.to_string());
-                        return Err(err.into());
-                    }
-                }
-            };
-
-            if store.is_terminal(&run.id).await? {
-                finish_decision_span_error!("eval run stopped");
-                anyhow::bail!("eval run stopped");
-            }
-
-            let pre_fill_position = position;
-
-            // engine-trade-guardrails-pyramid-flip-block (F-7):
-            // Server-side gate at the apply seam. The trader's emitted
-            // action stays in `parsed.action` (preserved verbatim in
-            // `eval_decisions.action` below); `applied_action` is what
-            // drives `simulate_fill` / marker derivation. A `RewriteTo`
-            // also writes a `supervisor_notes` row so the operator sees
-            // the block.
-            let original_action = GuardAction::parse(&parsed.action);
-            let position_state = position_state_from_size(pre_fill_position);
-            let decision = guardrails::classify(original_action, position_state, last_open_direction);
-            let applied_action: String = match &decision {
-                GuardrailDecision::Allow => parsed.action.clone(),
-                GuardrailDecision::RewriteTo { action, reason } => {
-                    let note =
-                        supervisor_note_content(*reason, original_action, *action, &asset, decision_idx);
-                    store
-                        .record_supervisor_note(&run.id, "guard", "warn", &note)
+                if let Some(&first_idx) = assets_at_ts.get(&asset_sym) {
+                    let gate_bar = &asset_bars[&asset_sym][first_idx];
+                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
+                    let evaluation = hook.evaluate(gate_bar, in_position);
+                    hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
                         .await?;
-                    // F43: also emit a `guardrail_fired` engine event
-                    // so the trace dock shows the rewrite as a
-                    // discrete bar-level tick, not just a
-                    // supervisor_notes entry.
+                    if !evaluation.outcome.decision.is_active() {
+                        filter_gated = true;
+                    }
+                }
+            }
+
+            // Per-asset fan-out. Each iteration runs the existing
+            // per-decision body for one asset using that asset's own bar
+            // vec + index (T+1 look-ahead, history slicing). `'asset`
+            // labels the loop so the body's skip paths (early-stop inherit,
+            // filter gate) advance to the next asset rather than the next
+            // timestamp. Skipped via `continue 'asset` after recording the
+            // per-asset decision row.
+            'asset: for (&asset_sym, &i) in assets_at_ts.iter() {
+                let asset = asset_sym.as_alpaca_pair();
+                let bars = &asset_bars[&asset_sym];
+                let bar = &bars[i];
+                let combined_bars = &combined_bars_by_asset[&asset_sym];
+                // Warmup prefix only precedes the first active asset's bars
+                // (v1 warmup is single-asset); others have no warmup offset.
+                let warmup_count = if asset_sym == *active.first().unwrap() {
+                    warmup_count
+                } else {
+                    0
+                };
+
+                // A decision at bar T normally fills at T+1's open. For the
+                // final bar of an asset's window there is no T+1, so the
+                // fill source falls back to the same bar's close
+                // (qa-decisions-30day-count).
+                let next_bar_open = bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close);
+
+                if filter_gated {
+                    // Strategy filter gated this timestamp: skip the agent
+                    // pipeline for this asset. No decision row is written
+                    // (matches the single-asset filter-gate behavior, which
+                    // recorded only the filter evaluation + dense equity).
+                    // Equity is recorded once per timestamp below.
+                    continue 'asset;
+                }
+
+                // History slice: last `history_window` bars strictly before
+                // the current bar. `combined_idx` points at `bar` inside the
+                // combined `[warmup..., bars...]` series. When the run starts
+                // and `warmup_count` covers it, the slice contains
+                // `history_window` real prior bars (the QA15 fix).
+                let combined_idx = warmup_count + i;
+                let history_start = combined_idx.saturating_sub(history_window);
+                let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
+                // F-8: optional rolling-window cap. `None` preserves the
+                // pre-022 wire shape; `Some(n)` trims to the most-recent
+                // `n` entries — when the slice is already smaller we
+                // send everything that's there.
+                let history_slice: &[&Ohlcv] = match bar_history_limit {
+                    Some(n) if (n as usize) < history_slice.len() => {
+                        let take = n as usize;
+                        &history_slice[history_slice.len() - take..]
+                    }
+                    _ => history_slice,
+                };
+                let bar_history = build_bar_history(history_slice, inputs_policy);
+
+                // F-6: `Causal` drops `decision_index` + `timestamp` from
+                // both the top-level seed and the current-bar inline.
+                // `Raw` / `Oracle` keep the original shape byte-for-byte
+                // — the regression-guard test pins this.
+                let current_bar_json = ohlcv_to_json(bar, inputs_policy);
+                let seed = match inputs_policy {
+                    InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+                        "decision_index": decision_idx,
+                        "asset": asset,
+                        "active_assets": active_venue_symbols,
+                        "timestamp": bar.timestamp,
+                        "market_data": {
+                            "asset": asset,
+                            "current_bar": current_bar_json,
+                            "next_bar_open": next_bar_open,
+                            "reference_price_usd": bar.close,
+                            "reference_price_source": "eval_bar.close",
+                            "bar_history": bar_history,
+                        },
+                        "portfolio_state": {
+                            "position_size": book.position(asset_sym),
+                            "equity": equity,
+                            "mark_price": bar.close,
+                        },
+                    }),
+                    InputsPolicy::Causal => serde_json::json!({
+                        "asset": asset,
+                        "active_assets": active_venue_symbols,
+                        "market_data": {
+                            "asset": asset,
+                            "current_bar": current_bar_json,
+                            "next_bar_open": next_bar_open,
+                            "reference_price_usd": bar.close,
+                            "reference_price_source": "eval_bar.close",
+                            "bar_history": bar_history,
+                        },
+                        "portfolio_state": {
+                            "position_size": book.position(asset_sym),
+                            "equity": equity,
+                            "mark_price": bar.close,
+                        },
+                    }),
+                };
+
+                // eval-flat-degeneracy-early-stop (F-9): before paying the
+                // LLM tax, check whether we should inherit this decision as
+                // a flat. Two entry paths:
+                //
+                //   (a) `inherit_remaining > 0` — we're mid-skip-window from
+                //       a prior trigger. Keep inheriting until the counter
+                //       drains. No supervisor note here; the entry-row note
+                //       was already written when the policy fired.
+                //
+                //   (b) Policy fires NOW based on the rolling history. Write
+                //       ONE supervisor-note row, set `inherit_remaining`,
+                //       then fall through into the inherit branch.
+                //
+                // Both paths short-circuit `run_pipeline`, write an
+                // `eval_decisions` row with `action=flat, conviction=0.0,
+                // justification="inherited from early-stop policy"`, record
+                // equity (kept dense per bar so the chart series stays
+                // continuous), and `continue` to the next bar.
+                // Per-asset early-stop streak state. Each asset has its own
+                // skip window so a flat run on one asset can't suppress
+                // decisions on another.
+                let policy_plan = {
+                    let es = early_stop_state
+                        .get(&asset_sym)
+                        .expect("early_stop_state seeded for every active asset");
+                    if es.inherit_remaining == 0 {
+                        early_stop::should_skip_next_decision(
+                            &es.recent_actions,
+                            &es.recent_convictions,
+                            book.position(asset_sym) == es.prev_position,
+                            &early_stop_cfg,
+                        )
+                    } else {
+                        None
+                    }
+                };
+                if let Some(plan) = policy_plan.as_ref() {
+                    tracing::info!(
+                        run_id = %run.id,
+                        decision_index = decision_idx,
+                        asset = %asset,
+                        skip_count = plan.skip_count,
+                        "early-stop policy fired — inheriting flat decisions"
+                    );
+                    store
+                        .record_supervisor_note(&run.id, "guard", "info", &plan.reason)
+                        .await?;
+                    // F43: also expose the policy fire as an engine event
+                    // so the trace dock has a discrete bar tick to render.
                     if let Some(obs) = self.obs_emitter.as_ref() {
                         let payload = serde_json::json!({
                             "decision_index": decision_idx,
                             "asset": asset,
-                            "reason": reason.as_str(),
-                            "original": original_action.as_str(),
-                            "applied": action.as_str(),
+                            "skip_count": plan.skip_count,
+                            "reason": plan.reason,
                         });
-                        obs.emit_engine_event("guardrail_fired", None, Some(payload.to_string()))
+                        obs.emit_engine_event("early_stop_triggered", None, Some(payload.to_string()))
                             .await;
                     }
-                    // Per-decision warn demoted to debug (eval-guardrail-log-collapse):
-                    // the supervisor_notes row is the durable record; a per-run
-                    // summary warn is emitted at finalize by guardrail_summary::fire_guardrail_summary.
-                    tracing::debug!(
-                        run_id = %run.id,
-                        decision_index = decision_idx,
-                        asset = %asset,
-                        reason = reason.as_str(),
-                        original = original_action.as_str(),
-                        applied = action.as_str(),
-                        "eval guardrail rewrote trader action",
-                    );
-                    action.as_str().to_string()
+                    let es = early_stop_state.get_mut(&asset_sym).unwrap();
+                    es.inherit_remaining = plan.skip_count;
+                    // Flush the rolling buffer so the policy can't re-fire
+                    // on the next bar without a fresh streak rebuilding.
+                    es.recent_actions.clear();
+                    es.recent_convictions.clear();
                 }
-            };
+                if early_stop_state.get(&asset_sym).unwrap().inherit_remaining > 0 {
+                    let inherited_row = DecisionRow {
+                        run_id: run.id.clone(),
+                        decision_index: decision_idx,
+                        timestamp: bar.timestamp,
+                        asset: asset.clone(),
+                        action: "flat".into(),
+                        conviction: Some(0.0),
+                        justification: Some("inherited from early-stop policy".into()),
+                        reasoning: None,
+                        order_size: None,
+                        fill_price: None,
+                        fill_size: None,
+                        fee: None,
+                        pnl_realized: None,
+                    };
+                    store.record_decision(&inherited_row).await?;
+                    self.emit_chart(
+                        &run.id,
+                        RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),
+                    )
+                    .await;
+                    self.emit(ProgressEvent::DecisionEmitted {
+                        run_id: run.id.clone(),
+                        action: "flat".into(),
+                        asset: asset.clone(),
+                        size: 0.0,
+                        conviction: 0.0,
+                    });
 
-            // eval-broker-rule-findings: validate new open orders against venue
-            // rules before calling simulate_fill. Only `long_open` and
-            // `short_open` generate new orders at the venue; `hold` and `flat`
-            // do not (they are portfolio-state changes or no-ops).
-            //
-            // Severity-driven behavior (per `BrokerRuleSet::validate` contract):
-            //   - `Critical` (e.g. unsupported_order_type, min_order_size):
-            //     the venue would hard-reject. Order does NOT fill, the
-            //     decision is recorded with no fill data, a finding is
-            //     written, and `broker_rejected_orders` is incremented.
-            //   - `Warning` (e.g. fractional_order_rounding): the venue
-            //     would accept with a soft correction (precision truncation).
-            //     A finding is still written for operator visibility, but the
-            //     fill PROCEEDS — otherwise a benign precision warning would
-            //     silently veto every fill on a crypto scenario where the
-            //     `risk_pct_per_trade × equity / price` quotient has long
-            //     decimal expansion.
-            //
-            // The rule set is built once per run from `scenario.asset_class`;
-            // see the `rule_set_for_asset_class` call above the decision loop.
-            let broker_rejected = if applied_action == "long_open" || applied_action == "short_open" {
-                // Estimate order size using the same risk model as simulate_fill.
-                // The qty estimate is approximate (simulate_fill may arrive at a
-                // slightly different price); it is sufficient for notional /
-                // precision checks.
-                let estimated_qty = {
-                    let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
-                    (usd_at_risk / next_bar_open).max(0.0)
-                };
-                let pending = PendingOrder {
-                    symbol: asset.clone(),
-                    // v1 backtest always emits market orders with GTC TIF.
-                    // Future tracks (intra-bar fill ordering, limit orders) will
-                    // plumb the trader's expressed order kind / TIF through here.
-                    kind: OrderKind::Market,
-                    tif: TimeInForce::Gtc,
-                    qty: estimated_qty,
-                    price: next_bar_open,
-                };
-                match broker_rules.validate(&pending) {
-                    Ok(()) => false, // order accepted; proceed to simulate_fill
-                    Err(violation) => {
-                        // Per `BrokerRuleSet::validate` contract: only
-                        // `Critical` violations skip the fill (the venue would
-                        // hard-reject). `Warning` violations record a finding
-                        // for operator visibility but the fill still proceeds
-                        // — the venue would accept the order after truncating
-                        // precision, so the backtest must mirror that.
-                        let is_blocking = matches!(violation.severity, BrokerViolationSeverity::Critical);
-                        if is_blocking {
-                            broker_rejected_orders += 1;
-                        }
-                        let finding_severity = match violation.severity {
-                            BrokerViolationSeverity::Critical => Severity::Critical,
-                            BrokerViolationSeverity::Warning => Severity::Warning,
-                        };
-                        let summary_lead = if is_blocking {
-                            "Order rejected by broker rule"
-                        } else {
-                            "Broker rule warning"
-                        };
-                        let finding = Finding {
-                            id: Ulid::new().to_string(),
-                            run_id: run.id.clone(),
-                            kind: "broker_rule_violation".into(),
-                            severity: finding_severity,
-                            summary: format!(
-                                "{summary_lead} `{}`: {}",
-                                violation.specific_rule, violation.message
-                            ),
-                            evidence: serde_json::json!({
-                                "specific_rule": violation.specific_rule,
-                                "message": violation.message,
-                                "severity": violation.severity,
-                                "asset": asset,
-                                "action": applied_action,
-                                "estimated_qty": estimated_qty,
-                                "next_bar_open": next_bar_open,
-                                "decision_index": decision_idx,
-                            }),
-                            extracted_at: Utc::now(),
-                            schema_version: crate::eval::findings::FINDING_SCHEMA_VERSION.to_string(),
-                            evidence_cycle_ids: Some(vec![decision_idx.to_string()]),
-                            produced_by_check: Some(format!("broker:{}", violation.specific_rule)),
-                            eval_review_id: None,
-                            review_type: None,
-                            confidence: None,
-                            title: Some(format!("Broker rule violation: {}", violation.specific_rule)),
-                            description: Some(violation.message.clone()),
-                            recommendation: Some(
-                                "Review strategy's order construction logic; \
-                                 ensure order types, TIFs, and sizes are compatible \
-                                 with the target venue."
-                                    .into(),
-                            ),
-                            created_at: None,
-                        };
-                        if is_blocking {
-                            tracing::warn!(
-                                run_id = %run.id,
-                                decision_index = decision_idx,
-                                asset = %asset,
-                                specific_rule = %violation.specific_rule,
-                                action = %applied_action,
-                                "broker rule rejected order — no fill this cycle",
-                            );
-                        } else {
-                            tracing::debug!(
-                                run_id = %run.id,
-                                decision_index = decision_idx,
-                                asset = %asset,
-                                specific_rule = %violation.specific_rule,
-                                action = %applied_action,
-                                "broker rule warning — fill proceeds",
-                            );
-                        }
-                        if let Err(e) = store.record_finding(&finding).await {
-                            tracing::error!(
-                                run_id = %run.id,
-                                decision_index = decision_idx,
-                                error = %e,
-                                "failed to record broker_rule_violation finding",
-                            );
-                        }
-                        // F43 (`trace-dock-emitters`): broker rule
-                        // violations also surface as supervisor_notes +
-                        // an engine event so the trace dock's notes /
-                        // events tabs both reflect the broker push-back
-                        // (the `findings` table is operator-facing only,
-                        // not on the trace dock).
+                    // No position change — `flat` on an already-flat or held
+                    // position is a no-op fill. The inherit branch must NOT
+                    // mutate position state, so the book is left untouched and
+                    // the pooled equity is marked + recorded ONCE at the end of
+                    // this timestamp (after all assets), not here.
+                    let es = early_stop_state.get_mut(&asset_sym).unwrap();
+                    es.inherit_remaining -= 1;
+                    es.prev_position = book.position(asset_sym);
+                    decision_idx += 1;
+                    continue 'asset;
+                }
+
+                // F43 (`trace-dock-emitters`): open a per-decision span so
+                // child model.call / tool.call / broker.call rows have a
+                // visible decision parent on the trace dock. Closed at the
+                // bottom of the iteration with span_finished_ok (or
+                // _error on early bail). Also emits the `decision_started`
+                // engine event so the dashboard timeline shows a per-bar
+                // tick without diffing decision rows.
+                let decision_span_id = crate::agent::observability::fresh_span_id();
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    obs.emit_decision_span_started(
+                        &decision_span_id,
+                        None,
+                        decision_idx as i64,
+                        Some(&asset),
+                    )
+                    .await;
+                    let payload = serde_json::json!({
+                        "decision_index": decision_idx,
+                        "asset": asset,
+                        "bar_ts": bar.timestamp.to_rfc3339(),
+                    });
+                    obs.emit_engine_event(
+                        "decision_started",
+                        Some(decision_span_id.clone()),
+                        Some(payload.to_string()),
+                    )
+                    .await;
+                }
+                macro_rules! finish_decision_span_error {
+                    ($message:expr) => {
                         if let Some(obs) = self.obs_emitter.as_ref() {
-                            let severity = if is_blocking { "error" } else { "warn" };
-                            let note_msg = format!(
-                                "broker rule {} `{}` at decision {decision_idx} ({asset}): {}",
-                                if is_blocking { "rejected order" } else { "warning" },
-                                violation.specific_rule,
-                                violation.message,
-                            );
-                            obs.emit_supervisor_note("guard", severity, &note_msg).await;
+                            obs.emit_span_finished_error(&decision_span_id, $message)
+                                .await;
+                        }
+                    };
+                }
+
+                // F-5 phase 2a: keep a copy of the seed so the
+                // malformed-json repair path (below) can rebuild the
+                // original user prompt byte-for-byte. The pipeline consumes
+                // `seed_inputs` by value; cloning here is cheap relative to
+                // the LLM dispatch and keeps the repair turn deterministic
+                // for the A/B-cache pairing acceptance criterion.
+                let seed_for_repair = seed.clone();
+                let outs = run_pipeline(PipelineInputs {
+                    strategy,
+                    agent_slots,
+                    seed_inputs: seed,
+                    dispatch: dispatch.clone(),
+                    tools: tools.clone(),
+                    obs: self.obs_emitter.clone(),
+                    memory_recorder: self.memory_recorder.clone(),
+                    // V2D Phase 1.5 — backtest dispatches with the scenario
+                    // start so the recorder's Pattern recall can exclude
+                    // anything trained inside the replay window. Run/scenario
+                    // provenance flows down to Observation writes.
+                    scenario_start: Some(scenario.time_window.start),
+                    run_id: run.id.clone(),
+                    scenario_id: scenario.id.clone(),
+                    cycle_idx: decision_idx as i64,
+                    trace_attrs: None,
+                    provider_catalogs: self.provider_catalogs.clone(),
+                    // Phase C — Filter capability runtime context. The
+                    // executor owns the cache for the run's lifetime; the
+                    // pipeline borrows it mutably for this cycle.
+                    filter_ctx: Some(crate::agent::pipeline::FilterPipelineCtx {
+                        signal_cache: &mut signal_cache,
+                        bar_period_minutes,
+                        multi_filter_config,
+                        bar_ts: bar.timestamp,
+                        strategy_id: strategy.manifest.id.clone(),
+                        // Multi-asset (B4): scope each asset's filter signals
+                        // to `Asset(asset)` so two assets at the same bar keep
+                        // independent signal-cache entries. Single-asset runs
+                        // simply key everything under the one asset.
+                        scope: crate::agent::dispatch_capability::SignalScope::Asset(asset_sym),
+                    }),
+                    // Phase D — unified Recorder. Wired by callers that
+                    // construct an `EvalRecorder` and thread it via
+                    // `BacktestExecutor::with_recorder`. The default `None`
+                    // keeps the legacy bus-driven emission path untouched.
+                    recorder: self.recorder.as_deref(),
+                })
+                .await?;
+                total_input_tokens += outs.total_input_tokens as u64;
+                total_output_tokens += outs.total_output_tokens as u64;
+                run.actual_input_tokens = Some(total_input_tokens);
+                run.actual_output_tokens = Some(total_output_tokens);
+                store
+                    .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
+                    .await?;
+
+                // Hard-limit breach check (cli-operator-safety-p0 slice 2/3).
+                // Decisions counter uses `decision_idx + 1` here because this
+                // bar's decision IS counted toward the cap — the next bar
+                // shouldn't run if the cap has just been reached. `is_empty()`
+                // short-circuits the call when no limits are configured.
+                if let Some(limits) = self.limits.as_ref() {
+                    if !limits.is_empty() {
+                        if let Some(breach) = limits.check_for_cancel(
+                            decision_idx + 1,
+                            total_input_tokens,
+                            total_output_tokens,
+                            run_started,
+                        ) {
+                            let reason = breach.reason();
+                            let _ = store.cancel_active(&run.id, &reason).await;
+                            finish_decision_span_error!(reason.as_str());
+                            anyhow::bail!(reason);
+                        }
+                    }
+                }
+
+                if store.is_terminal(&run.id).await? {
+                    finish_decision_span_error!("eval run stopped");
+                    anyhow::bail!("eval run stopped");
+                }
+
+                let trader = match outs.trader.as_ref() {
+                    Some(t) => t,
+                    None => {
+                        let err = TraderOutput::missing_response_error(&run.id, decision_idx);
+                        finish_decision_span_error!(&err.to_string());
+                        return Err(err.into());
+                    }
+                };
+                let trader_model_id = trader_model_id(agent_slots, strategy);
+                let parsed = match TraderOutput::parse_response(trader, &run.id, decision_idx) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        // F-5 phase 2a (`harness-recovery-malformed-json`):
+                        // single-shot repair attempt for the MalformedJson
+                        // family (`InvalidJson` / `Truncated`). All other
+                        // kinds bypass the repair and surface as today (their
+                        // recovery families belong to sibling phase-2
+                        // contracts or are intentionally non-recoverable per
+                        // the audit). The repair propagates the ORIGINAL
+                        // error on second-attempt failure so
+                        // `eval_runs.error` keeps its wire-stable
+                        // `[invalid_json]` / `[truncated]` prefix.
+                        // F-5 phase 2b (`harness-recovery-schema-missing-field`)
+                        // is checked FIRST: targeted-patch retry is cheaper
+                        // than the full repair re-ask. The two families are
+                        // disjoint per `FailureClass::family`, so each error
+                        // walks exactly one branch — no double-repair.
+                        if is_schema_missing_field_recoverable(&e) {
+                            if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
+                                match try_repair_schema_missing_field(
+                                    trader,
+                                    e,
+                                    ctx,
+                                    &seed_for_repair,
+                                    dispatch.clone(),
+                                    self.obs_emitter.as_ref(),
+                                    &run.id,
+                                    decision_idx,
+                                )
+                                .await
+                                {
+                                    Ok(repaired) => repaired,
+                                    Err(original) => {
+                                        let err = original.with_model_hint(trader_model_id.as_deref());
+                                        finish_decision_span_error!(&err.to_string());
+                                        return Err(err.into());
+                                    }
+                                }
+                            } else {
+                                let err = e.with_model_hint(trader_model_id.as_deref());
+                                finish_decision_span_error!(&err.to_string());
+                                return Err(err.into());
+                            }
+                        } else if is_malformed_json_recoverable(&e) {
+                            if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
+                                match try_repair_malformed_json(
+                                    trader,
+                                    e,
+                                    ctx,
+                                    &seed_for_repair,
+                                    dispatch.clone(),
+                                    self.obs_emitter.as_ref(),
+                                    &run.id,
+                                    decision_idx,
+                                )
+                                .await
+                                {
+                                    Ok(repaired) => repaired,
+                                    Err(original) => {
+                                        let err = original.with_model_hint(trader_model_id.as_deref());
+                                        finish_decision_span_error!(&err.to_string());
+                                        return Err(err.into());
+                                    }
+                                }
+                            } else {
+                                let err = e.with_model_hint(trader_model_id.as_deref());
+                                finish_decision_span_error!(&err.to_string());
+                                return Err(err.into());
+                            }
+                        } else {
+                            let err = e.with_model_hint(trader_model_id.as_deref());
+                            finish_decision_span_error!(&err.to_string());
+                            return Err(err.into());
+                        }
+                    }
+                };
+
+                if store.is_terminal(&run.id).await? {
+                    finish_decision_span_error!("eval run stopped");
+                    anyhow::bail!("eval run stopped");
+                }
+
+                let pre_fill_position = book.position(asset_sym);
+                let pre_fill_entry = book.entry_price(asset_sym);
+
+                // engine-trade-guardrails-pyramid-flip-block (F-7):
+                // Server-side gate at the apply seam. The trader's emitted
+                // action stays in `parsed.action` (preserved verbatim in
+                // `eval_decisions.action` below); `applied_action` is what
+                // drives `simulate_fill` / marker derivation. A `RewriteTo`
+                // also writes a `supervisor_notes` row so the operator sees
+                // the block.
+                let original_action = GuardAction::parse(&parsed.action);
+                let position_state = position_state_from_size(pre_fill_position);
+                let decision = guardrails::classify(
+                    original_action,
+                    position_state,
+                    last_open_direction.get(&asset_sym).copied(),
+                );
+                let applied_action: String = match &decision {
+                    GuardrailDecision::Allow => parsed.action.clone(),
+                    GuardrailDecision::RewriteTo { action, reason } => {
+                        let note =
+                            supervisor_note_content(*reason, original_action, *action, &asset, decision_idx);
+                        store
+                            .record_supervisor_note(&run.id, "guard", "warn", &note)
+                            .await?;
+                        // F43: also emit a `guardrail_fired` engine event
+                        // so the trace dock shows the rewrite as a
+                        // discrete bar-level tick, not just a
+                        // supervisor_notes entry.
+                        if let Some(obs) = self.obs_emitter.as_ref() {
                             let payload = serde_json::json!({
                                 "decision_index": decision_idx,
                                 "asset": asset,
-                                "specific_rule": violation.specific_rule,
-                                "severity": if is_blocking { "critical" } else { "warning" },
-                                "action": applied_action,
+                                "reason": reason.as_str(),
+                                "original": original_action.as_str(),
+                                "applied": action.as_str(),
                             });
-                            obs.emit_engine_event("broker_rule_violation", None, Some(payload.to_string()))
-                                .await;
+                            obs.emit_engine_event(
+                                "guardrail_fired",
+                                Some(decision_span_id.clone()),
+                                Some(payload.to_string()),
+                            )
+                            .await;
                         }
-                        is_blocking // Critical → skip simulate_fill; Warning → fill proceeds
+                        // Per-decision warn demoted to debug (eval-guardrail-log-collapse):
+                        // the supervisor_notes row is the durable record; a per-run
+                        // summary warn is emitted at finalize by guardrail_summary::fire_guardrail_summary.
+                        tracing::debug!(
+                            run_id = %run.id,
+                            decision_index = decision_idx,
+                            asset = %asset,
+                            reason = reason.as_str(),
+                            original = original_action.as_str(),
+                            applied = action.as_str(),
+                            "eval guardrail rewrote trader action",
+                        );
+                        action.as_str().to_string()
                     }
-                }
-            } else {
-                false // hold/flat: no venue order, skip broker check
-            };
+                };
 
-            // `simulate_fill` treats any non-(long_open|short_open) action
-            // as `want_flat` (closes any open position). That suits a
-            // trader-emitted `flat` or the guardrail one-step-flip
-            // rewrite, but a guardrail pyramid-block rewrites
-            // `long_open` → `hold` and we MUST NOT close the existing
-            // position in that case. Short-circuit a true no-op fill
-            // for `hold` so the position survives untouched.
-            //
-            // A broker-rejected order also skips simulate_fill: the order is
-            // treated as if it never existed (fail-honest — the strategy sees
-            // the decision in the trace but no fill in outcomes).
-            let fill: FillRecord = if applied_action == "hold" || broker_rejected {
-                FillRecord {
-                    new_pos: pre_fill_position,
-                    new_entry: entry_price,
-                    fill_price: None,
-                    fill_size: None,
-                    fee: None,
-                    realized_pnl: 0.0,
-                    provenance: FillProvenance::default(),
-                    fill_branch: None,
-                    aggressor_side: None,
-                    order_state: None,
-                    volume_cap_hit: None,
-                    broker_error: None,
-                }
-            } else {
-                // Resolve per-bar and per-asset cost overrides.
-                let bar_cost = bar_cost_table.lookup(&bar.timestamp);
-                let asset_override = resolve_asset_override(&scenario.venue.overrides, &asset);
+                // eval-broker-rule-findings: validate new open orders against venue
+                // rules before calling simulate_fill. Only `long_open` and
+                // `short_open` generate new orders at the venue; `hold` and `flat`
+                // do not (they are portfolio-state changes or no-ops).
+                //
+                // Severity-driven behavior (per `BrokerRuleSet::validate` contract):
+                //   - `Critical` (e.g. unsupported_order_type, min_order_size):
+                //     the venue would hard-reject. Order does NOT fill, the
+                //     decision is recorded with no fill data, a finding is
+                //     written, and `broker_rejected_orders` is incremented.
+                //   - `Warning` (e.g. fractional_order_rounding): the venue
+                //     would accept with a soft correction (precision truncation).
+                //     A finding is still written for operator visibility, but the
+                //     fill PROCEEDS — otherwise a benign precision warning would
+                //     silently veto every fill on a crypto scenario where the
+                //     `risk_pct_per_trade × equity / price` quotient has long
+                //     decimal expansion.
+                //
+                // The rule set is built once per run from `scenario.asset_class`;
+                // see the `rule_set_for_asset_class` call above the decision loop.
+                let broker_rejected = if applied_action == "long_open" || applied_action == "short_open" {
+                    // Estimate order size using the same risk model as simulate_fill.
+                    // The qty estimate is approximate (simulate_fill may arrive at a
+                    // slightly different price); it is sufficient for notional /
+                    // precision checks.
+                    let estimated_qty = {
+                        let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                        (usd_at_risk / next_bar_open).max(0.0)
+                    };
+                    let pending = PendingOrder {
+                        symbol: asset.clone(),
+                        // v1 backtest always emits market orders with GTC TIF.
+                        // Future tracks (intra-bar fill ordering, limit orders) will
+                        // plumb the trader's expressed order kind / TIF through here.
+                        kind: OrderKind::Market,
+                        tif: TimeInForce::Gtc,
+                        qty: estimated_qty,
+                        price: next_bar_open,
+                    };
+                    match broker_rules.validate(&pending) {
+                        Ok(()) => false, // order accepted; proceed to simulate_fill
+                        Err(violation) => {
+                            // Per `BrokerRuleSet::validate` contract: only
+                            // `Critical` violations skip the fill (the venue would
+                            // hard-reject). `Warning` violations record a finding
+                            // for operator visibility but the fill still proceeds
+                            // — the venue would accept the order after truncating
+                            // precision, so the backtest must mirror that.
+                            let is_blocking = matches!(violation.severity, BrokerViolationSeverity::Critical);
+                            if is_blocking {
+                                broker_rejected_orders += 1;
+                            }
+                            let finding_severity = match violation.severity {
+                                BrokerViolationSeverity::Critical => Severity::Critical,
+                                BrokerViolationSeverity::Warning => Severity::Warning,
+                            };
+                            let summary_lead = if is_blocking {
+                                "Order rejected by broker rule"
+                            } else {
+                                "Broker rule warning"
+                            };
+                            let finding = Finding {
+                                id: Ulid::new().to_string(),
+                                run_id: run.id.clone(),
+                                kind: "broker_rule_violation".into(),
+                                severity: finding_severity,
+                                summary: format!(
+                                    "{summary_lead} `{}`: {}",
+                                    violation.specific_rule, violation.message
+                                ),
+                                evidence: serde_json::json!({
+                                    "specific_rule": violation.specific_rule,
+                                    "message": violation.message,
+                                    "severity": violation.severity,
+                                    "asset": asset,
+                                    "action": applied_action,
+                                    "estimated_qty": estimated_qty,
+                                    "next_bar_open": next_bar_open,
+                                    "decision_index": decision_idx,
+                                }),
+                                extracted_at: Utc::now(),
+                                schema_version: crate::eval::findings::FINDING_SCHEMA_VERSION.to_string(),
+                                evidence_cycle_ids: Some(vec![decision_idx.to_string()]),
+                                produced_by_check: Some(format!("broker:{}", violation.specific_rule)),
+                                eval_review_id: None,
+                                review_type: None,
+                                confidence: None,
+                                title: Some(format!("Broker rule violation: {}", violation.specific_rule)),
+                                description: Some(violation.message.clone()),
+                                recommendation: Some(
+                                    "Review strategy's order construction logic; \
+                                 ensure order types, TIFs, and sizes are compatible \
+                                 with the target venue."
+                                        .into(),
+                                ),
+                                created_at: None,
+                            };
+                            if is_blocking {
+                                tracing::warn!(
+                                    run_id = %run.id,
+                                    decision_index = decision_idx,
+                                    asset = %asset,
+                                    specific_rule = %violation.specific_rule,
+                                    action = %applied_action,
+                                    "broker rule rejected order — no fill this cycle",
+                                );
+                            } else {
+                                tracing::debug!(
+                                    run_id = %run.id,
+                                    decision_index = decision_idx,
+                                    asset = %asset,
+                                    specific_rule = %violation.specific_rule,
+                                    action = %applied_action,
+                                    "broker rule warning — fill proceeds",
+                                );
+                            }
+                            if let Err(e) = store.record_finding(&finding).await {
+                                tracing::error!(
+                                    run_id = %run.id,
+                                    decision_index = decision_idx,
+                                    error = %e,
+                                    "failed to record broker_rule_violation finding",
+                                );
+                            }
+                            // F43 (`trace-dock-emitters`): broker rule
+                            // violations also surface as supervisor_notes +
+                            // an engine event so the trace dock's notes /
+                            // events tabs both reflect the broker push-back
+                            // (the `findings` table is operator-facing only,
+                            // not on the trace dock).
+                            if let Some(obs) = self.obs_emitter.as_ref() {
+                                let severity = if is_blocking { "error" } else { "warn" };
+                                let note_msg = format!(
+                                    "broker rule {} `{}` at decision {decision_idx} ({asset}): {}",
+                                    if is_blocking { "rejected order" } else { "warning" },
+                                    violation.specific_rule,
+                                    violation.message,
+                                );
+                                obs.emit_supervisor_note("guard", severity, &note_msg).await;
+                                let payload = serde_json::json!({
+                                    "decision_index": decision_idx,
+                                    "asset": asset,
+                                    "specific_rule": violation.specific_rule,
+                                    "severity": if is_blocking { "critical" } else { "warning" },
+                                    "action": applied_action,
+                                });
+                                obs.emit_engine_event(
+                                    "broker_rule_violation",
+                                    Some(decision_span_id.clone()),
+                                    Some(payload.to_string()),
+                                )
+                                .await;
+                            }
+                            is_blocking // Critical → skip simulate_fill; Warning → fill proceeds
+                        }
+                    }
+                } else {
+                    false // hold/flat: no venue order, skip broker check
+                };
 
-                // Override precedence: per-bar array > per-asset override > scenario default.
-                let effective_slip_bps = bar_cost
-                    .and_then(|c| c.slip_bps)
-                    .or_else(|| {
-                        asset_override
-                            .and_then(|o| o.slippage.as_ref())
-                            .and_then(|s| match s {
-                                SlippageModel::Linear { bps } => Some(*bps as f64),
-                                SlippageModel::None => Some(0.0),
-                                SlippageModel::VolumeShare { .. } => None,
-                            })
-                    })
-                    .unwrap_or(default_slip_bps);
+                // `simulate_fill` treats any non-(long_open|short_open) action
+                // as `want_flat` (closes any open position). That suits a
+                // trader-emitted `flat` or the guardrail one-step-flip
+                // rewrite, but a guardrail pyramid-block rewrites
+                // `long_open` → `hold` and we MUST NOT close the existing
+                // position in that case. Short-circuit a true no-op fill
+                // for `hold` so the position survives untouched.
+                //
+                // A broker-rejected order also skips simulate_fill: the order is
+                // treated as if it never existed (fail-honest — the strategy sees
+                // the decision in the trace but no fill in outcomes).
+                let fill: FillRecord = if applied_action == "hold" || broker_rejected {
+                    FillRecord {
+                        new_pos: pre_fill_position,
+                        new_entry: pre_fill_entry,
+                        fill_price: None,
+                        fill_size: None,
+                        fee: None,
+                        realized_pnl: 0.0,
+                        provenance: FillProvenance::default(),
+                        fill_branch: None,
+                        aggressor_side: None,
+                        order_state: None,
+                        broker_error: None,
+                        volume_cap_hit: None,
+                    }
+                } else {
+                    // Resolve per-bar and per-asset cost overrides.
+                    let bar_cost = bar_cost_table.lookup(&bar.timestamp);
+                    let asset_override = resolve_asset_override(&scenario.venue.overrides, &asset);
 
-                let effective_taker_bps = bar_cost
-                    .and_then(|c| c.fee_bps)
-                    .or_else(|| {
-                        asset_override
-                            .and_then(|o| o.fees.as_ref())
-                            .map(|f| f.taker_bps as f64)
-                    })
-                    .unwrap_or(default_taker_bps);
+                    // Override precedence: per-bar array > per-asset override > scenario default.
+                    let effective_slip_bps = bar_cost
+                        .and_then(|c| c.slip_bps)
+                        .or_else(|| {
+                            asset_override
+                                .and_then(|o| o.slippage.as_ref())
+                                .and_then(|s| match s {
+                                    SlippageModel::Linear { bps } => Some(*bps as f64),
+                                    SlippageModel::None => Some(0.0),
+                                    SlippageModel::VolumeShare { .. } => None,
+                                })
+                        })
+                        .unwrap_or(default_slip_bps);
 
-                // Maker fee: per-bar override if present, else per-asset, else scenario default.
-                let effective_maker_bps = bar_cost
+                    let effective_taker_bps = bar_cost
+                        .and_then(|c| c.fee_bps)
+                        .or_else(|| {
+                            asset_override
+                                .and_then(|o| o.fees.as_ref())
+                                .map(|f| f.taker_bps as f64)
+                        })
+                        .unwrap_or(default_taker_bps);
+
+                    // Maker fee: per-bar override if present, else per-asset, else scenario default.
+                    let effective_maker_bps = bar_cost
                     .and_then(|c| c.fee_bps) // when per-bar fee is present, use it for both sides
                     .or_else(|| {
                         asset_override
@@ -1483,253 +1517,327 @@ impl Executor {
                     })
                     .unwrap_or(scenario.venue.fees.maker_bps as f64);
 
-                let effective_spread_bps = bar_cost.and_then(|c| c.spread_bps).unwrap_or(0.0);
+                    let effective_spread_bps = bar_cost.and_then(|c| c.spread_bps).unwrap_or(0.0);
 
-                // Determine the effective slippage model. When a per-bar
-                // slip_bps column is present, treat it as a Linear model
-                // (the value is in effective_slip_bps). Otherwise use the
-                // asset override or scenario default.
-                //
-                // We store an owned fallback value so Rust doesn't reject
-                // a reference to a temporary.
-                let per_bar_slip_present = bar_cost.and_then(|c| c.slip_bps).is_some();
-                let fallback_linear = SlippageModel::Linear { bps: 0 }; // bps ignored; value via effective_slip_bps
-                let effective_slippage_model: &SlippageModel = if per_bar_slip_present {
-                    &fallback_linear
-                } else {
-                    asset_override
-                        .and_then(|o| o.slippage.as_ref())
-                        .unwrap_or(&scenario.venue.slippage)
+                    // Determine the effective slippage model. When a per-bar
+                    // slip_bps column is present, treat it as a Linear model
+                    // (the value is in effective_slip_bps). Otherwise use the
+                    // asset override or scenario default.
+                    //
+                    // We store an owned fallback value so Rust doesn't reject
+                    // a reference to a temporary.
+                    let per_bar_slip_present = bar_cost.and_then(|c| c.slip_bps).is_some();
+                    let fallback_linear = SlippageModel::Linear { bps: 0 }; // bps ignored; value via effective_slip_bps
+                    let effective_slippage_model: &SlippageModel = if per_bar_slip_present {
+                        &fallback_linear
+                    } else {
+                        asset_override
+                            .and_then(|o| o.slippage.as_ref())
+                            .unwrap_or(&scenario.venue.slippage)
+                    };
+
+                    let per_bar_fee_present = bar_cost.and_then(|c| c.fee_bps).is_some();
+                    let per_asset_fee_present = asset_override.and_then(|o| o.fees.as_ref()).is_some();
+                    let fee_source = resolve_fee_source(per_bar_fee_present, per_asset_fee_present);
+
+                    // Fill bar is the next bar — `bars.get(i + 1)` if present,
+                    // else the current bar (terminal-bar fallback). We need its
+                    // O/H/L for intra-bar ordering. When bars[i+1] doesn't exist,
+                    // use current bar's close as a degenerate open and O==H==L.
+                    let fill_bar = bars.get(i + 1);
+                    let (fill_bar_open, fill_bar_high, fill_bar_low) = fill_bar
+                        .map(|b| (b.open, b.high, b.low))
+                        .unwrap_or((bar.close, bar.close, bar.close));
+
+                    // executor-trait-extraction: fill production now routes
+                    // through the FillSink trait. SimulatedFills::submit
+                    // runs the verbatim pre-refactor `simulate_fill` body;
+                    // sub-track 3's broker-backed impl will replace this
+                    // call with a forward-to-broker call without changing
+                    // the surrounding loop. The request is owned (no
+                    // borrowed references) so future async-broker impls
+                    // can hold it across `.await`.
+                    let fill_record: FillRecord = fill_sink
+                        .submit(FillRequest {
+                            pos: pre_fill_position,
+                            entry: pre_fill_entry,
+                            action: applied_action.clone(),
+                            next_open: next_bar_open,
+                            bar_volume: bar.volume,
+                            slip_bps: effective_slip_bps,
+                            spread_bps: effective_spread_bps,
+                            taker_bps: effective_taker_bps,
+                            maker_bps: effective_maker_bps,
+                            equity,
+                            risk_pct: strategy.risk.risk_pct_per_trade,
+                            slippage_model: effective_slippage_model.clone(),
+                            fee_source,
+                            asset: asset.clone(),
+                            bar_ts: bar.timestamp,
+                            bar_open: fill_bar_open,
+                            bar_high: fill_bar_high,
+                            bar_low: fill_bar_low,
+                        })
+                        .await;
+
+                    // Collect volume_share_excess finding if the cap bound.
+                    if let Some((req_qty, bar_vol, cap_qty, fill_share)) = fill_record.volume_cap_hit {
+                        volume_share_findings.push(make_volume_share_excess_finding(
+                            &run.id,
+                            decision_idx,
+                            req_qty,
+                            bar_vol,
+                            cap_qty,
+                            fill_share,
+                        ));
+                    }
+
+                    fill_record
                 };
+                // Apply the fill to the pooled book keyed by this asset.
+                // `set_position(_, 0.0, _)` clears the leg, so a flat fill
+                // leaves `position`/`entry_price` reading 0.0 — identical to
+                // the old scalar `entry_price = fill.new_entry (== 0.0)`.
+                book.set_position(asset_sym, fill.new_pos, fill.new_entry);
+                book.add_realized(fill.realized_pnl);
+                let fill_happened = fill.fill_price.is_some();
+                if fill_happened {
+                    n_trades += 1;
 
-                let per_bar_fee_present = bar_cost.and_then(|c| c.fee_bps).is_some();
-                let per_asset_fee_present = asset_override.and_then(|o| o.fees.as_ref()).is_some();
-                let fee_source = resolve_fee_source(per_bar_fee_present, per_asset_fee_present);
-
-                // Fill bar is the next bar — `bars.get(i + 1)` if present,
-                // else the current bar (terminal-bar fallback). We need its
-                // O/H/L for intra-bar ordering. When bars[i+1] doesn't exist,
-                // use current bar's close as a degenerate open and O==H==L.
-                let fill_bar = bars.get(i + 1);
-                let (fill_bar_open, fill_bar_high, fill_bar_low) = fill_bar
-                    .map(|b| (b.open, b.high, b.low))
-                    .unwrap_or((bar.close, bar.close, bar.close));
-
-                // executor-trait-extraction: fill production now routes
-                // through the FillSink trait. SimulatedFills::submit
-                // runs the verbatim pre-refactor `simulate_fill` body;
-                // sub-track 3's broker-backed impl will replace this
-                // call with a forward-to-broker call without changing
-                // the surrounding loop. The request is owned (no
-                // borrowed references) so future async-broker impls
-                // can hold it across `.await`.
-                let fill_req = FillRequest {
-                    pos: pre_fill_position,
-                    entry: entry_price,
-                    action: applied_action.clone(),
-                    next_open: next_bar_open,
-                    bar_volume: bar.volume,
-                    slip_bps: effective_slip_bps,
-                    spread_bps: effective_spread_bps,
-                    taker_bps: effective_taker_bps,
-                    maker_bps: effective_maker_bps,
-                    equity,
-                    risk_pct: strategy.risk.risk_pct_per_trade,
-                    slippage_model: effective_slippage_model.clone(),
-                    fee_source,
-                    asset: asset.clone(),
-                    bar_ts: bar.timestamp,
-                    bar_open: fill_bar_open,
-                    bar_high: fill_bar_high,
-                    bar_low: fill_bar_low,
-                };
-                let fill_record: FillRecord = if let Some(sink) = override_guard.as_mut() {
-                    sink.submit(fill_req).await
-                } else if let Some(runtime) = self.live_runtime.as_ref() {
-                    runtime.lock().await.fill_sink.submit(fill_req).await
-                } else {
-                    local_sim_sink.submit(fill_req).await
-                };
-
-                // Collect volume_share_excess finding if the cap bound.
-                if let Some((req_qty, bar_vol, cap_qty, fill_share)) = fill_record.volume_cap_hit {
-                    volume_share_findings.push(make_volume_share_excess_finding(
-                        &run.id,
-                        decision_idx,
-                        req_qty,
-                        bar_vol,
-                        cap_qty,
-                        fill_share,
-                    ));
+                    // FillRecorded — only when an actionable decision actually
+                    // crossed the book. For close-to-flat decisions, side is
+                    // derived from the pre-fill position direction.
+                    // Side is derived from the APPLIED action so a
+                    // guardrail-rewritten `flat` (one-step flip block) shows
+                    // as a close, not a phantom short_open.
+                    let side = fill_side_for_action(&applied_action, pre_fill_position);
+                    self.emit(ProgressEvent::FillRecorded {
+                        run_id: run.id.clone(),
+                        side: side.into(),
+                        price: fill.fill_price.unwrap_or(0.0),
+                        qty: fill.fill_size.unwrap_or(0.0),
+                        fee: fill.fee.unwrap_or(0.0),
+                    });
                 }
 
-                fill_record
-            };
-            position = fill.new_pos;
-            entry_price = fill.new_entry;
-            realized_total += fill.realized_pnl;
-            let fill_happened = fill.fill_price.is_some();
-            if fill_happened {
-                n_trades += 1;
-
-                // FillRecorded — only when an actionable decision actually
-                // crossed the book. For close-to-flat decisions, side is
-                // derived from the pre-fill position direction.
-                // Side is derived from the APPLIED action so a
-                // guardrail-rewritten `flat` (one-step flip block) shows
-                // as a close, not a phantom short_open.
-                let side = fill_side_for_action(&applied_action, pre_fill_position);
-                self.emit(ProgressEvent::FillRecorded {
-                    run_id: run.id.clone(),
-                    side: side.into(),
-                    price: fill.fill_price.unwrap_or(0.0),
-                    qty: fill.fill_size.unwrap_or(0.0),
-                    fee: fill.fee.unwrap_or(0.0),
-                });
-            }
-
-            // F43 (`trace-dock-emitters`): emit `fill_attempted` per
-            // decision regardless of whether the fill crossed the book.
-            // The payload distinguishes hold/no-op iterations
-            // (`filled: false`) from real fills so the trace dock can
-            // render a per-bar tick density indicator without joining
-            // `eval_decisions`.
-            if let Some(obs) = self.obs_emitter.as_ref() {
-                let payload = serde_json::json!({
-                    "decision_index": decision_idx,
-                    "asset": asset,
-                    "applied_action": applied_action,
-                    "filled": fill_happened,
-                    "fill_price": fill.fill_price,
-                    "fill_size": fill.fill_size,
-                });
-                obs.emit_engine_event("fill_attempted", None, Some(payload.to_string()))
+                // F43 (`trace-dock-emitters`): emit `fill_attempted` per
+                // decision regardless of whether the fill crossed the book.
+                // The payload distinguishes hold/no-op iterations
+                // (`filled: false`) from real fills so the trace dock can
+                // render a per-bar tick density indicator without joining
+                // `eval_decisions`.
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    let payload = serde_json::json!({
+                        "decision_index": decision_idx,
+                        "asset": asset,
+                        "applied_action": applied_action,
+                        "filled": fill_happened,
+                        "fill_price": fill.fill_price,
+                        "fill_size": fill.fill_size,
+                    });
+                    obs.emit_engine_event(
+                        "fill_attempted",
+                        Some(decision_span_id.clone()),
+                        Some(payload.to_string()),
+                    )
                     .await;
-            }
-
-            // DecisionEmitted fires for every cycle so subscribers see
-            // flat/hold decisions too. Carries the ORIGINAL trader
-            // action — subscribers correlate the emitted intent with the
-            // matching `eval_decisions` row, which also stores the
-            // original. The supervisor_notes table carries the rewrite.
-            self.emit(ProgressEvent::DecisionEmitted {
-                run_id: run.id.clone(),
-                action: parsed.action.clone(),
-                asset: asset.clone(),
-                size: fill.fill_size.unwrap_or(0.0),
-                conviction: parsed.conviction,
-            });
-
-            // Update the per-asset open-direction memory for the
-            // guardrail's next-cycle flip detection. Driven by the
-            // APPLIED action (a guardrail-rewritten `hold` keeps the
-            // existing direction; a `flat` clears it).
-            match GuardAction::parse(&applied_action) {
-                GuardAction::LongOpen => last_open_direction = Some(GuardAction::LongOpen),
-                GuardAction::ShortOpen => last_open_direction = Some(GuardAction::ShortOpen),
-                GuardAction::Flat => last_open_direction = None,
-                GuardAction::Hold | GuardAction::Other => {}
-            }
-
-            // Mark equity to the next bar's open.
-            equity = initial + realized_total + position * (next_bar_open - entry_price);
-
-            let decision_row = DecisionRow {
-                run_id: run.id.clone(),
-                decision_index: decision_idx,
-                timestamp: bar.timestamp,
-                asset: asset.clone(),
-                action: parsed.action.clone(),
-                conviction: Some(parsed.conviction),
-                justification: Some(parsed.justification.clone()),
-                reasoning: Some(parsed.justification.clone()),
-                order_size: fill.fill_size,
-                fill_price: fill.fill_price,
-                fill_size: fill.fill_size,
-                fee: fill.fee,
-                pnl_realized: if fill.realized_pnl != 0.0 {
-                    Some(fill.realized_pnl)
-                } else {
-                    None
-                },
-            };
-            store.record_decision(&decision_row).await?;
-            self.emit_chart(
-                &run.id,
-                RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
-            )
-            .await;
-
-            // Emit a marker event derived from this decision. Mirrors the
-            // action → marker-variant mapping in `chart::split_markers`.
-            // Only emit for actions where fill data is present (same guard
-            // as split_markers uses for trade-like actions).
-            let t = bar.timestamp.timestamp();
-            // Markers reflect what actually hit the portfolio — so they
-            // use the APPLIED action, not the trader's original.
-            // The audit-side trace still has the original in
-            // `eval_decisions.action`.
-            let marker_event = match applied_action.as_str() {
-                "long_open" => {
-                    if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
-                        Some(MarkerEvent::Trade(make_trade_marker(
-                            TradeSide::Buy,
-                            t,
-                            price,
-                            size,
-                            fill.fee,
-                            fill.realized_pnl,
-                            decision_idx,
-                            &parsed.justification,
-                        )))
-                    } else {
-                        None
-                    }
                 }
-                "short_open" | "flat" => {
-                    if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
-                        Some(MarkerEvent::Trade(make_trade_marker(
-                            TradeSide::Sell,
-                            t,
-                            price,
-                            size,
-                            fill.fee,
-                            fill.realized_pnl,
-                            decision_idx,
-                            &parsed.justification,
-                        )))
-                    } else {
-                        None
+
+                // DecisionEmitted fires for every cycle so subscribers see
+                // flat/hold decisions too. Carries the ORIGINAL trader
+                // action — subscribers correlate the emitted intent with the
+                // matching `eval_decisions` row, which also stores the
+                // original. The supervisor_notes table carries the rewrite.
+                self.emit(ProgressEvent::DecisionEmitted {
+                    run_id: run.id.clone(),
+                    action: parsed.action.clone(),
+                    asset: asset.clone(),
+                    size: fill.fill_size.unwrap_or(0.0),
+                    conviction: parsed.conviction,
+                });
+
+                // Update the per-asset open-direction memory for the
+                // guardrail's next-cycle flip detection. Driven by the
+                // APPLIED action (a guardrail-rewritten `hold` keeps the
+                // existing direction; a `flat` clears it).
+                match GuardAction::parse(&applied_action) {
+                    GuardAction::LongOpen => {
+                        last_open_direction.insert(asset_sym, GuardAction::LongOpen);
                     }
+                    GuardAction::ShortOpen => {
+                        last_open_direction.insert(asset_sym, GuardAction::ShortOpen);
+                    }
+                    GuardAction::Flat => {
+                        last_open_direction.remove(&asset_sym);
+                    }
+                    GuardAction::Hold | GuardAction::Other => {}
                 }
-                "hold" => Some(MarkerEvent::Hold(HoldMarker {
-                    time: t,
-                    price: next_bar_open,
-                    conviction: Some(parsed.conviction),
+
+                let decision_row = DecisionRow {
+                    run_id: run.id.clone(),
                     decision_index: decision_idx,
-                })),
-                _ => None,
-            };
-            if let Some(marker) = marker_event {
-                self.emit_chart(&run.id, RunChartEvent::Marker(marker)).await;
+                    timestamp: bar.timestamp,
+                    asset: asset.clone(),
+                    action: parsed.action.clone(),
+                    conviction: Some(parsed.conviction),
+                    justification: Some(parsed.justification.clone()),
+                    reasoning: Some(parsed.justification.clone()),
+                    order_size: fill.fill_size,
+                    fill_price: fill.fill_price,
+                    fill_size: fill.fill_size,
+                    fee: fill.fee,
+                    pnl_realized: if fill.realized_pnl != 0.0 {
+                        Some(fill.realized_pnl)
+                    } else {
+                        None
+                    },
+                };
+                store.record_decision(&decision_row).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
+                )
+                .await;
+
+                // Emit a marker event derived from this decision. Mirrors the
+                // action → marker-variant mapping in `chart::split_markers`.
+                // Only emit for actions where fill data is present (same guard
+                // as split_markers uses for trade-like actions).
+                let t = bar.timestamp.timestamp();
+                // Markers reflect what actually hit the portfolio — so they
+                // use the APPLIED action, not the trader's original.
+                // The audit-side trace still has the original in
+                // `eval_decisions.action`.
+                let marker_event = match applied_action.as_str() {
+                    "long_open" => {
+                        if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
+                            Some(MarkerEvent::Trade(make_trade_marker(
+                                TradeSide::Buy,
+                                t,
+                                price,
+                                size,
+                                fill.fee,
+                                fill.realized_pnl,
+                                decision_idx,
+                                &parsed.justification,
+                            )))
+                        } else {
+                            None
+                        }
+                    }
+                    "short_open" | "flat" => {
+                        if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
+                            Some(MarkerEvent::Trade(make_trade_marker(
+                                TradeSide::Sell,
+                                t,
+                                price,
+                                size,
+                                fill.fee,
+                                fill.realized_pnl,
+                                decision_idx,
+                                &parsed.justification,
+                            )))
+                        } else {
+                            None
+                        }
+                    }
+                    "hold" => Some(MarkerEvent::Hold(HoldMarker {
+                        time: t,
+                        price: next_bar_open,
+                        conviction: Some(parsed.conviction),
+                        decision_index: decision_idx,
+                    })),
+                    _ => None,
+                };
+                if let Some(marker) = marker_event {
+                    self.emit_chart(&run.id, RunChartEvent::Marker(marker)).await;
+                }
+
+                // Equity is the pooled NAV across all assets and is recorded
+                // ONCE per timestamp (after this inner loop), not per asset —
+                // `eval_equity_samples` is keyed `(run_id, timestamp)`.
+
+                // eval-flat-degeneracy-early-stop (F-9): roll this asset's
+                // buffer and apply reset triggers. A portfolio change (position
+                // size delta — open, close, or resize) wipes the streak; so
+                // does any non-flat/non-hold action. Otherwise we append and
+                // truncate to the configured window. Per-asset state.
+                let portfolio_changed =
+                    book.position(asset_sym) != early_stop_state.get(&asset_sym).unwrap().prev_position;
+                let cls = early_stop::Action::classify(&parsed.action);
+                {
+                    let es = early_stop_state.get_mut(&asset_sym).unwrap();
+                    if portfolio_changed
+                        || !matches!(cls, early_stop::Action::Flat | early_stop::Action::Hold)
+                    {
+                        es.recent_actions.clear();
+                        es.recent_convictions.clear();
+                    } else {
+                        es.recent_actions.push(cls);
+                        es.recent_convictions.push(parsed.conviction);
+                        let cap = early_stop_cfg.window;
+                        if es.recent_actions.len() > cap {
+                            let drop_n = es.recent_actions.len() - cap;
+                            es.recent_actions.drain(0..drop_n);
+                            es.recent_convictions.drain(0..drop_n);
+                        }
+                    }
+                    es.prev_position = book.position(asset_sym);
+                }
+
+                // F43 (`trace-dock-emitters`): close the per-decision span
+                // + emit the `decision_completed` engine event so the
+                // trace dock can compute decision-scoped duration.
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    obs.emit_span_finished_ok(&decision_span_id).await;
+                    let payload = serde_json::json!({
+                        "decision_index": decision_idx,
+                        "asset": asset,
+                        "applied_action": applied_action,
+                    });
+                    obs.emit_engine_event(
+                        "decision_completed",
+                        Some(decision_span_id.clone()),
+                        Some(payload.to_string()),
+                    )
+                    .await;
+                }
+
+                decision_idx += 1;
+            } // end 'asset inner loop
+
+            // Pooled NAV mark for this timestamp. Each active asset is
+            // valued at its next-bar open (T+1) when it has a bar at this
+            // timestamp, falling back to its bar close on the terminal bar
+            // — the same per-asset mark price the decision body used. An
+            // asset with no bar at this timestamp keeps its prior leg and
+            // is simply absent from `marks` (the book treats absent marks
+            // as zero unrealized for that leg this tick). Recorded once so
+            // there is a single pooled equity series.
+            let mut marks: BTreeMap<xvision_core::trading::AssetSymbol, f64> = BTreeMap::new();
+            for (&a, &idx) in assets_at_ts.iter() {
+                let abars = &asset_bars[&a];
+                let mark = abars.get(idx + 1).map(|b| b.open).unwrap_or(abars[idx].close);
+                // Carry this asset's last seen mark on its open leg (if any)
+                // so a later timestamp where the asset has no bar falls back
+                // to this value instead of marking to entry. Single-asset:
+                // the one asset is always present, so `mark` only ever sets
+                // the same value `marks` already carries — equity unchanged.
+                book.mark(a, mark);
+                marks.insert(a, mark);
             }
-
-            store.record_equity(&run.id, bar.timestamp, equity).await?;
-
-            // Emit equity event for live-stream subscribers.
+            equity = book.equity(&marks);
+            store.record_equity(&run.id, ts, equity).await?;
             self.emit_chart(
                 &run.id,
                 RunChartEvent::Equity(ChartEquityPoint {
-                    time: bar.timestamp.timestamp(),
+                    time: ts.timestamp(),
                     equity_usd: equity,
                 }),
             )
             .await;
-
             equity_curve.push(equity);
 
-            // Running drawdown — peak updates after each tick so
-            // MetricsUpdated reflects worst-observed-so-far for live UI.
             if equity > peak_equity {
                 peak_equity = equity;
             }
@@ -1745,56 +1853,7 @@ impl Executor {
                 n_trades,
             });
 
-            // eval-flat-degeneracy-early-stop (F-9): roll the buffer and
-            // apply reset triggers. A portfolio change (position size
-            // delta — open, close, or resize) wipes the streak; so does
-            // any non-flat/non-hold action. Otherwise we append and
-            // truncate to the configured window.
-            let portfolio_changed = position != prev_position;
-            let cls = early_stop::Action::classify(&parsed.action);
-            if portfolio_changed || !matches!(cls, early_stop::Action::Flat | early_stop::Action::Hold) {
-                recent_actions.clear();
-                recent_convictions.clear();
-            } else {
-                recent_actions.push(cls);
-                recent_convictions.push(parsed.conviction);
-                let cap = early_stop_cfg.window;
-                if recent_actions.len() > cap {
-                    let drop_n = recent_actions.len() - cap;
-                    recent_actions.drain(0..drop_n);
-                    recent_convictions.drain(0..drop_n);
-                }
-            }
-            prev_position = position;
-
-            // Emit decision completion as a point event; the trader
-            // model.call span itself is named "decision".
-            if let Some(obs) = self.obs_emitter.as_ref() {
-                let payload = serde_json::json!({
-                    "decision_index": decision_idx,
-                    "asset": asset,
-                    "applied_action": applied_action,
-                });
-                obs.emit_engine_event("decision_completed", None, Some(payload.to_string()))
-                    .await;
-            }
-
-            decision_idx += 1;
-            i += 1;
-            if let Some(policy) = run.live_config.as_ref().map(|cfg| &cfg.stop_policy) {
-                if policy.bar_limit.is_some_and(|limit| consumed_bars >= limit) {
-                    break;
-                }
-                if policy.decision_limit.is_some_and(|limit| decision_idx >= limit) {
-                    break;
-                }
-                if policy
-                    .time_limit_secs
-                    .is_some_and(|limit| live_started.elapsed().as_secs() >= limit)
-                {
-                    break;
-                }
-            }
+            timeline_idx += 1;
         }
 
         if store.is_terminal(&run.id).await? {
@@ -2739,6 +2798,8 @@ mod tests {
                 template: "mean_reversion".into(),
                 regime_fit: vec![RegimeFit::RangeBound],
                 asset_universe: vec!["BTC/USD".into()],
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
                 decision_cadence_minutes: 15,
                 attested_with: vec!["m".into()],
                 required_tools: vec!["ohlcv".into()],

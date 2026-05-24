@@ -19,11 +19,11 @@ use chrono::{TimeZone, Utc};
 use xvision_core::Capital;
 use xvision_data::alpaca::BarGranularity;
 
-use crate::eval::bars::compute_cache_key;
+use crate::eval::bars::compute_scenario_cache_key;
 use crate::eval::scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
-    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+    SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use crate::safety::VenueLabel;
 use crate::strategies::manifest::{PublicManifest, RegimeFit};
@@ -82,6 +82,8 @@ pub fn example_strategies() -> Vec<Strategy> {
                 published_at: None,
                 min_warmup_bars: None,
                 color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             hypothesis: None,
             agents: Vec::new(),
@@ -125,6 +127,8 @@ pub fn example_strategies() -> Vec<Strategy> {
                 published_at: None,
                 min_warmup_bars: None,
                 color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             hypothesis: None,
             agents: Vec::new(),
@@ -175,6 +179,8 @@ pub fn example_strategies() -> Vec<Strategy> {
                 published_at: None,
                 min_warmup_bars: None,
                 color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             hypothesis: None,
             agents: Vec::new(),
@@ -239,11 +245,6 @@ fn build_example_scenario(
     end: chrono::DateTime<Utc>,
     extra_tags: &[&str],
 ) -> Scenario {
-    let asset = AssetRef {
-        class: AssetClass::Crypto,
-        symbol: "BTC".into(),
-        venue_symbol: "BTC/USD".into(),
-    };
     let granularity = BarGranularity::Hour1;
     let mut tags: Vec<String> = vec![EXAMPLE_SOURCE_TAG.into()];
     tags.extend(extra_tags.iter().map(|t| t.to_string()));
@@ -258,7 +259,6 @@ fn build_example_scenario(
         tags,
         notes: None,
         asset_class: AssetClass::Crypto,
-        asset: vec![asset.clone()],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start, end },
         granularity,
@@ -289,13 +289,7 @@ fn build_example_scenario(
         replay_mode: ReplayMode::Continuous,
         capital: Capital::default(),
         bar_cache_policy: BarCachePolicy {
-            cache_key: compute_cache_key(
-                &asset.venue_symbol,
-                granularity,
-                start,
-                end,
-                "alpaca-historical-v1",
-            ),
+            cache_key: compute_scenario_cache_key(granularity, start, end, "alpaca-historical-v1"),
             refresh_policy: RefreshPolicy::NeverRefresh,
             data_fetched_at: None,
         },

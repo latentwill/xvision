@@ -935,6 +935,8 @@ impl XvisionTools {
                 published_at: None,
                 min_warmup_bars: None,
                 color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),
@@ -1061,10 +1063,11 @@ impl XvisionTools {
         let pf = preflight_validate(&strategy, Some(&scenario));
         warnings.extend(pf.warnings);
 
-        let asset_display = scenario
-            .asset
+        let asset_display = strategy
+            .manifest
+            .asset_universe
             .first()
-            .map(|a| a.venue_symbol.clone())
+            .cloned()
             .unwrap_or_default();
         let timeframe_display = scenario.granularity.canonical();
 
@@ -1146,6 +1149,7 @@ impl XvisionTools {
                 limits: None,
                 skip_preflight: false,
                 provider_override: None,
+                live_config: None,
                 auto_fire_review: false,
                 review_model: None,
                 max_annotations_per_review: Some(8),
@@ -1456,9 +1460,7 @@ impl XvisionTools {
         };
 
         // Build the card string (mirrors CLI's format_inspect_card).
-        let asset = scenario.asset.first().map(|a| a.symbol.as_str()).unwrap_or("-");
         let quote = format!("{:?}", scenario.quote_currency).to_uppercase();
-        let asset_pair = format!("{}/{}", asset, quote);
         let window_secs = (scenario.time_window.end - scenario.time_window.start).num_seconds() as u64;
         let bar_secs = scenario.granularity.seconds();
         let decision_bars = if bar_secs > 0 {
@@ -1471,7 +1473,7 @@ impl XvisionTools {
         let mut card = String::new();
         card.push_str(&format!("id: {}\n", scenario.id));
         card.push_str(&format!("name: {}\n", scenario.display_name));
-        card.push_str(&format!("asset: {}\n", asset_pair));
+        card.push_str(&format!("quote_currency: {}\n", quote));
         card.push_str(&format!("timeframe: {}\n", scenario.granularity));
         card.push_str(&format!(
             "date_window: {}..{}\n",
@@ -1644,21 +1646,12 @@ fn select_scenarios_mcp(
     max_decisions: Option<u64>,
     count: usize,
 ) -> Result<Vec<SelectRow>, String> {
-    use std::collections::HashSet;
-
     // 1. Pre-filter by asset / timeframe / regime.
     let mut candidates: Vec<&Scenario> = scenarios
         .iter()
         .filter(|s| {
             if !assets.is_empty() {
-                let sym = s.asset.first().map(|a| a.symbol.as_str()).unwrap_or("");
-                let matched = assets.iter().any(|want| {
-                    let norm = want.split('/').next().unwrap_or(want);
-                    sym.eq_ignore_ascii_case(norm) || want.eq_ignore_ascii_case(sym)
-                });
-                if !matched {
-                    return false;
-                }
+                return false;
             }
             if let Some(tf_min) = timeframe_minutes {
                 let bar_min = (s.granularity.seconds() / 60) as u32;
@@ -1732,21 +1725,12 @@ fn select_scenarios_mcp(
     });
 
     // 5. Cap at `count`, one-per-asset preference.
-    let mut seen_assets: HashSet<String> = HashSet::new();
     let mut selected: Vec<&Scenario> = Vec::with_capacity(count);
     for s in &candidates {
         if selected.len() >= count {
             break;
         }
-        let sym = s
-            .asset
-            .first()
-            .map(|a| a.symbol.as_str())
-            .unwrap_or("-")
-            .to_string();
-        if seen_assets.insert(sym) {
-            selected.push(s);
-        }
+        selected.push(s);
     }
     for s in &candidates {
         if selected.len() >= count {
@@ -1760,20 +1744,12 @@ fn select_scenarios_mcp(
     // 6. Build output rows.
     let rows = selected
         .into_iter()
-        .map(|s| {
-            let asset = s
-                .asset
-                .first()
-                .map(|a| a.symbol.as_str())
-                .unwrap_or("-")
-                .to_string();
-            SelectRow {
-                id: s.id.clone(),
-                name: s.display_name.clone(),
-                asset,
-                timeframe: s.granularity.to_string(),
-                decision_count: scenario_decision_count_mcp(s),
-            }
+        .map(|s| SelectRow {
+            id: s.id.clone(),
+            name: s.display_name.clone(),
+            asset: "-".to_string(),
+            timeframe: s.granularity.to_string(),
+            decision_count: scenario_decision_count_mcp(s),
         })
         .collect();
 
@@ -2722,11 +2698,6 @@ mod tests {
             tags: vec![],
             notes: None,
             asset_class: AssetClass::Crypto,
-            asset: vec![AssetRef {
-                class: AssetClass::Crypto,
-                symbol: asset_sym.to_string(),
-                venue_symbol: format!("{asset_sym}/USD"),
-            }],
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow { start, end },
             granularity: gran,

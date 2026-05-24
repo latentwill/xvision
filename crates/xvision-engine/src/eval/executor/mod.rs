@@ -19,7 +19,9 @@
 //! by `RunMode` and call [`RunExecutor::run`] once per `xvn eval run`
 //! invocation.
 
+pub mod asset_set;
 pub mod backtest;
+pub mod book;
 pub mod live_source;
 pub mod real_broker_fills;
 pub mod trace_types;

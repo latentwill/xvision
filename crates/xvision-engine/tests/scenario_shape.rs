@@ -16,7 +16,6 @@ fn valid_crypto_scenario(symbol: &str) -> Scenario {
         tags: vec!["regression".into(), symbol.to_lowercase()],
         notes: None,
         asset_class: AssetClass::Crypto,
-        asset: vec![asset_ref(symbol)],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow {
             start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
@@ -68,14 +67,6 @@ fn valid_crypto_scenario(symbol: &str) -> Scenario {
     }
 }
 
-fn asset_ref(symbol: &str) -> AssetRef {
-    AssetRef {
-        class: AssetClass::Crypto,
-        symbol: symbol.into(),
-        venue_symbol: format!("{symbol}/USD"),
-    }
-}
-
 #[test]
 fn scenario_serde_roundtrip() {
     let s = Scenario {
@@ -87,11 +78,6 @@ fn scenario_serde_roundtrip() {
         tags: vec!["regression".into(), "eth".into()],
         notes: None,
         asset_class: AssetClass::Crypto,
-        asset: vec![AssetRef {
-            class: AssetClass::Crypto,
-            symbol: "ETH".into(),
-            venue_symbol: "ETH/USD".into(),
-        }],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow {
             start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
@@ -150,13 +136,6 @@ fn scenario_serde_roundtrip() {
         "tags": ["regression", "eth"],
         "notes": null,
         "asset_class": "Crypto",
-        "asset": [
-            {
-                "class": "Crypto",
-                "symbol": "ETH",
-                "venue_symbol": "ETH/USD"
-            }
-        ],
         "quote_currency": "Usd",
         "time_window": {
             "start": "2024-02-03T00:00:00Z",
@@ -223,45 +202,6 @@ fn scenario_serde_roundtrip() {
 #[test]
 fn scenario_validation_accepts_valid_crypto_scenario() {
     valid_crypto_scenario("ETH").validate_v1().unwrap();
-}
-
-#[test]
-fn scenario_validation_rejects_unsupported_asset() {
-    let mut scenario = valid_crypto_scenario("ETH");
-    scenario.asset[0].symbol = "XRP".into();
-
-    let err = scenario.validate_v1().unwrap_err();
-
-    assert!(err.to_string().contains("Alpaca crypto whitelist"));
-}
-
-#[test]
-fn scenario_validation_accepts_multi_asset_crypto_usd_basket() {
-    // Multi-asset Alpaca unlock: validate_v1 accepts N>=1 whitelisted
-    // crypto assets in a USD quote. Downstream execution still trades
-    // `asset[0]` until the portfolio allocator lands; the validator just
-    // stops gating multi-asset scenarios from being created.
-    let mut scenario = valid_crypto_scenario("ETH");
-    scenario.asset.push(asset_ref("SOL"));
-    scenario.validate_v1().unwrap();
-}
-
-#[test]
-fn scenario_validation_rejects_empty_asset_list() {
-    let mut scenario = valid_crypto_scenario("ETH");
-    scenario.asset.clear();
-    let err = scenario.validate_v1().unwrap_err();
-    assert!(err.to_string().contains("at least one asset"));
-}
-
-#[test]
-fn scenario_validation_rejects_unwhitelisted_asset_in_basket() {
-    // Every asset in the basket must clear the whitelist — a single bad
-    // entry fails the whole scenario.
-    let mut scenario = valid_crypto_scenario("ETH");
-    scenario.asset.push(asset_ref("XRP"));
-    let err = scenario.validate_v1().unwrap_err();
-    assert!(err.to_string().contains("Alpaca crypto whitelist"));
 }
 
 #[test]

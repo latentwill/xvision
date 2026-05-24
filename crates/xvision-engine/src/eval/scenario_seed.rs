@@ -14,11 +14,11 @@ use xvision_core::Capital;
 use xvision_data::alpaca::BarGranularity;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::eval::bars::compute_cache_key;
+use crate::eval::bars::compute_scenario_cache_key;
 use crate::eval::scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
-    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+    SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use crate::eval::scenario_store;
 use crate::safety::VenueLabel;
@@ -71,11 +71,6 @@ fn seed_btc(id: &str, name: &str, regime_tag: &str, start: DateTime<Utc>, end: D
         tags: vec![regime_tag.into()],
         notes: None,
         asset_class: AssetClass::Crypto,
-        asset: vec![AssetRef {
-            class: AssetClass::Crypto,
-            symbol: "BTC".into(),
-            venue_symbol: "BTC/USD".into(),
-        }],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start, end },
         granularity: BarGranularity::Hour1,
@@ -121,8 +116,7 @@ fn seed_btc(id: &str, name: &str, regime_tag: &str, start: DateTime<Utc>, end: D
         venue_label: VenueLabel::Paper,
         safety_limits: None,
     };
-    s.bar_cache_policy.cache_key = compute_cache_key(
-        &s.asset[0].venue_symbol,
+    s.bar_cache_policy.cache_key = compute_scenario_cache_key(
         s.granularity,
         s.time_window.start,
         s.time_window.end,

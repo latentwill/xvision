@@ -7,9 +7,7 @@
 
 use axum::extract::State;
 use axum::Json;
-use xvision_engine::api::charts_dashboards::{
-    self as engine, MultiStrategyEquityBundle,
-};
+use xvision_engine::api::charts_dashboards::{self as engine, MultiStrategyEquityBundle};
 
 use crate::error::DashboardError;
 use crate::state::AppState;

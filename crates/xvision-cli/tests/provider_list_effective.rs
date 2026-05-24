@@ -120,10 +120,7 @@ fn list_effective_json_emits_canonical_shape() {
     let row = &arr[0];
     assert_eq!(row["provider"], "openrouter");
     assert_eq!(row["enabled"], true);
-    assert_eq!(
-        row["has_key"], false,
-        "XVN_PARITY_CLI_OPENROUTER_KEY is unset",
-    );
+    assert_eq!(row["has_key"], false, "XVN_PARITY_CLI_OPENROUTER_KEY is unset",);
     assert_eq!(row["launchable"], false, "no key → not launchable");
     let models = row["models"].as_array().expect("models array");
     assert_eq!(models.len(), 1);

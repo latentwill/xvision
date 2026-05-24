@@ -16,14 +16,9 @@ use xvision_engine::api::{Actor, ApiContext};
 #[tokio::test]
 async fn xvn_db_pool_uses_wal_and_nonzero_busy_timeout() {
     let dir = tempdir().expect("tempdir");
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .expect("open ApiContext");
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .expect("open ApiContext");
 
     // PRAGMA journal_mode returns the current mode as text. WAL must
     // be active; the prior rollback-journal default is the bug.
