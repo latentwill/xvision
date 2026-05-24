@@ -282,6 +282,8 @@ pub enum Command {
     /// Bounded (strategy × model) bakeoff verb. See
     /// `team/contracts/cli-model-bakeoff.md`.
     Model(commands::model::ModelCmd),
+    /// Trajectory store operations — inspect / validate / purge / reindex.
+    Trajectory(commands::trajectory::TrajectoryCmd),
 }
 
 impl Cli {
@@ -402,6 +404,7 @@ impl Cli {
             Command::Experiment(cmd) => commands::experiment::run(cmd).await,
             Command::Memory(cmd) => commands::memory::run(cmd).await,
             Command::Model(cmd) => commands::model::run(cmd).await,
+            Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
         }
     }
 }
