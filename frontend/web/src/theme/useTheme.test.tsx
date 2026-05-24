@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ThemeProvider } from "./ThemeProvider";
-import { THEME_DARK_KEY, THEME_PREFERENCE_KEY } from "./themes";
+import { THEME_PREFERENCE_KEY } from "./themes";
 import { useTheme } from "./useTheme";
 
 function installMatchMedia(matches: boolean) {
@@ -46,8 +46,8 @@ function Probe() {
     <div>
       <div data-testid="preference">{preference}</div>
       <div data-testid="resolved">{resolvedTheme}</div>
-      <button type="button" onClick={() => setPreference("black")}>
-        Black
+      <button type="button" onClick={() => setPreference("dark")}>
+        Dark
       </button>
       <button type="button" onClick={() => setPreference("auto")}>
         Auto
@@ -69,12 +69,12 @@ afterEach(() => {
   document.documentElement.className = "";
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", "#0F0E0C");
+    ?.setAttribute("content", "#000000");
   vi.restoreAllMocks();
 });
 
 describe("ThemeProvider", () => {
-  it("defaults to folio dark and applies DOM attributes", () => {
+  it("defaults to dark and applies DOM attributes", () => {
     installMatchMedia(true);
 
     render(
@@ -83,12 +83,12 @@ describe("ThemeProvider", () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByTestId("preference")).toHaveTextContent("folio-dark");
-    expect(document.documentElement.dataset.theme).toBe("folio-dark");
+    expect(screen.getByTestId("preference")).toHaveTextContent("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
   });
 
-  it("persists explicit preferences and remembers black as dark theme", () => {
+  it("persists explicit dark preference", () => {
     installMatchMedia(true);
 
     render(
@@ -97,15 +97,13 @@ describe("ThemeProvider", () => {
       </ThemeProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Black" }));
-    expect(localStorage.getItem(THEME_PREFERENCE_KEY)).toBe("black");
-    expect(localStorage.getItem(THEME_DARK_KEY)).toBe("black");
-    expect(document.documentElement.dataset.theme).toBe("black");
+    fireEvent.click(screen.getByRole("button", { name: "Dark" }));
+    expect(localStorage.getItem(THEME_PREFERENCE_KEY)).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
   it("uses sidebar-style sun and moon actions", () => {
     installMatchMedia(true);
-    localStorage.setItem(THEME_DARK_KEY, "black");
 
     render(
       <ThemeProvider>
@@ -116,7 +114,7 @@ describe("ThemeProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sun" }));
     expect(screen.getByTestId("resolved")).toHaveTextContent("light");
     fireEvent.click(screen.getByRole("button", { name: "Moon" }));
-    expect(screen.getByTestId("resolved")).toHaveTextContent("black");
+    expect(screen.getByTestId("resolved")).toHaveTextContent("dark");
   });
 
   it("updates auto when browser color scheme changes", () => {
@@ -133,6 +131,6 @@ describe("ThemeProvider", () => {
     act(() => {
       query.dispatch(true);
     });
-    expect(screen.getByTestId("resolved")).toHaveTextContent("folio-dark");
+    expect(screen.getByTestId("resolved")).toHaveTextContent("dark");
   });
 });

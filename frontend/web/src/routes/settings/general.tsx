@@ -15,8 +15,7 @@ import { useTheme } from "@/theme/useTheme";
 import { RestartTourButton } from "@/features/onboarding";
 
 function swatchFor(value: string) {
-  const id: ResolvedTheme =
-    value === "auto" ? "folio-dark" : (value as ResolvedTheme);
+  const id: ResolvedTheme = value === "auto" ? "dark" : (value as ResolvedTheme);
   return themeDefinitions[id].swatch;
 }
 

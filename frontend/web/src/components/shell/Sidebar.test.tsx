@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { ThemeProvider } from "@/theme/ThemeProvider";
-import { THEME_DARK_KEY } from "@/theme/themes";
+import { THEME_PREFERENCE_KEY } from "@/theme/themes";
 
 function renderSidebar() {
   return render(
@@ -49,14 +49,14 @@ describe("Sidebar theme toggle", () => {
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 
-  it("switches to the remembered dark theme with the moon button", () => {
-    localStorage.setItem(THEME_DARK_KEY, "black");
+  it("switches to dark with the moon button", () => {
+    localStorage.setItem(THEME_PREFERENCE_KEY, "dark");
     renderSidebar();
 
     fireEvent.click(screen.getByRole("button", { name: "Switch to light theme" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch to dark theme" }));
 
-    expect(document.documentElement.dataset.theme).toBe("black");
+    expect(document.documentElement.dataset.theme).toBe("dark");
   });
 });
 
