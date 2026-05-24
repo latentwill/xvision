@@ -131,6 +131,11 @@ pub struct BacktestExecutor {
     /// emission path. The recorder-symmetry regression test wires this
     /// explicitly to assert F-11(f) closure.
     recorder: Option<Arc<dyn xvision_observability::Recorder>>,
+    /// Multi-asset (B4): optional per-run narrowing of the strategy's
+    /// `asset_universe`. `None` (the default) runs the full universe; a
+    /// later CLI task sets `Some(subset)` to honor an `--assets` flag.
+    /// Validated against the universe by `active_assets`.
+    asset_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
 }
 
 impl BacktestExecutor {
@@ -156,6 +161,7 @@ impl BacktestExecutor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            asset_subset: None,
         }
     }
 
@@ -177,6 +183,7 @@ impl BacktestExecutor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            asset_subset: None,
         }
     }
 
@@ -192,6 +199,7 @@ impl BacktestExecutor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            asset_subset: None,
         }
     }
 
@@ -254,6 +262,15 @@ impl BacktestExecutor {
     /// the per-bar check is a constant-time no-op.
     pub fn with_limits(mut self, limits: super::super::limits::EvalLimits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+
+    /// Multi-asset (B4): narrow the run to a subset of the strategy's
+    /// `asset_universe`. Builder-style; chains after `with_bars` etc.
+    /// `None` (the default) runs the full universe. Validated against
+    /// the universe by `active_assets` at run start.
+    pub fn with_asset_subset(mut self, subset: Vec<xvision_core::trading::AssetSymbol>) -> Self {
+        self.asset_subset = Some(subset);
         self
     }
 
@@ -403,6 +420,22 @@ impl BacktestExecutor {
                 "strategy {} has non-positive decision_cadence_minutes",
                 strategy.manifest.id
             );
+        }
+
+        // Multi-asset (B4): v1 implements `execution_mode = PerAsset` +
+        // `capital_mode = Pooled` only. Other modes parse + validate but
+        // the executor returns a clear not-yet-implemented error so the
+        // operator sees the limit instead of silently-wrong accounting.
+        use crate::strategies::{CapitalMode, ExecutionMode};
+        match &strategy.manifest.execution_mode {
+            ExecutionMode::PerAsset => {}
+            ExecutionMode::Portfolio => anyhow::bail!("execution_mode `portfolio` not yet implemented"),
+            ExecutionMode::Custom(name) => {
+                anyhow::bail!("execution_mode `custom:{name}` not yet implemented")
+            }
+        }
+        if strategy.manifest.capital_mode != CapitalMode::Pooled {
+            anyhow::bail!("capital_mode `per_asset` not yet implemented");
         }
 
         // Bars come from one of two sources:
