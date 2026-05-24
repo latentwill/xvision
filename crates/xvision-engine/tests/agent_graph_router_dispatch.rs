@@ -167,6 +167,8 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("pipeline runs");
@@ -221,6 +223,8 @@ async fn dispatch_capability_router_returns_route_selection() {
         activates: Capability::Router,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("router dispatch succeeds");
@@ -268,6 +272,8 @@ async fn dispatch_capability_router_rejects_backward_target() {
         activates: Capability::Router,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .unwrap_err();

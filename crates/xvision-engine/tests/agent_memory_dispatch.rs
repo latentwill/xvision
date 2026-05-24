@@ -595,6 +595,8 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("run_pipeline must succeed");

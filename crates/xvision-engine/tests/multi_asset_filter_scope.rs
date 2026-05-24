@@ -438,6 +438,8 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
                 scope: SignalScope::Asset(asset_sym),
             }),
             recorder: None,
+            runtime: Default::default(),
+            cline: None,
         })
         .await
         .expect("pipeline runs for each asset");
