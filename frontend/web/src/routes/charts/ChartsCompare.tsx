@@ -1,41 +1,64 @@
-// /charts/compare — B2 Comparison AB Scalable.
-//
-// Reuses the B0 backend stub /api/v2/charts/dashboards/overview as the
-// data source (same MultiStrategyEquityBundle). Selection state is
-// URL-synced via useChart2Roster: deep-link with `?ids=fib,ema,brk`.
-
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
-import { ApiError } from "@/api/client";
-import { dashboardChartKeys, getDashboardOverview } from "@/api/chart";
+import { compareRuns, evalKeys } from "@/api/eval";
+import { listStrategies, strategyKeys } from "@/api/strategies";
+import { useCompareSelection } from "@/components/chart/v2/hooks/useCompareSelection";
 import { EmptyState } from "@/components/chart/v2/primitives/EmptyState";
 import { ComparisonABDashboard } from "@/components/chart/v2/surfaces/ComparisonABDashboard";
 
 export function ChartsCompare() {
-  const q = useQuery({
-    queryKey: dashboardChartKeys.overview(),
-    queryFn: () => getDashboardOverview(),
-    staleTime: 30_000,
+  const selection = useCompareSelection();
+  const ids = selection.selectedIds;
+  const compare = useQuery({
+    queryKey: evalKeys.compare(ids),
+    queryFn: () => compareRuns(ids),
+    enabled: ids.length >= 2,
+  });
+  const strategies = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
   });
 
-  if (q.isLoading) {
+  if (ids.length < 2) {
     return (
       <EmptyState
-        title="Loading comparison…"
-        message="Fetching the multi-strategy equity bundle."
+        title="Compare needs two runs"
+        message="Select two or more eval runs from the run list, or open this route with ?ids=<run-a>,<run-b>."
       />
     );
   }
 
-  if (q.isError) {
-    const msg =
-      q.error instanceof ApiError
-        ? `${q.error.code}: ${q.error.message}`
-        : "Failed to load the comparison payload.";
-    return <EmptyState title="Comparison unavailable" message={msg} />;
+  if (compare.isPending) {
+    return (
+      <div className="rounded-card border border-border bg-surface-card p-6">
+        <div className="mb-3 h-6 w-80 animate-pulse rounded-sm bg-surface-elev" />
+        <div className="h-4 w-56 animate-pulse rounded-sm bg-surface-elev" />
+      </div>
+    );
   }
 
-  if (!q.data) return null;
+  if (compare.isError || !compare.data) {
+    return (
+      <EmptyState
+        title="Compare unavailable"
+        message={compare.error instanceof Error ? compare.error.message : "The compare report could not be loaded."}
+      />
+    );
+  }
 
-  return <ComparisonABDashboard payload={q.data} />;
+  return (
+    <div>
+      <ComparisonABDashboard
+        report={compare.data}
+        selection={selection}
+        strategies={strategies.data ?? []}
+      />
+      <div className="mt-4 text-[12px] text-text-3">
+        <Link to="/eval-runs" className="hover:text-text hover:underline">
+          Manage eval runs
+        </Link>
+      </div>
+    </div>
+  );
 }

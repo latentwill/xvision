@@ -18,6 +18,8 @@ Use when you need to:
 - check lists, inspectors, modals, filters, and tabs
 - capture screenshots, console logs, and failed network responses
 - compare visible UI state against API truth
+- verify Compare A/B labels use strategy names while keeping run and strategy
+  ids reachable through secondary text, hover titles, or API/CLI output
 
 Do **not** use this for deep API-contract debugging or chat-rail-only command testing; pair it with the CLI or chat-rail QA skills when those surfaces matter.
 
@@ -28,7 +30,8 @@ Do **not** use this for deep API-contract debugging or chat-rail-only command te
 3. Strategies list, detail, authoring
 4. Scenarios list, new, detail
 5. Eval runs list, launcher, run detail
-6. Settings / providers / brokers / danger zone
+6. Eval compare: `/eval-runs/compare?ids=…` and `/charts/compare?ids=…`
+7. Settings / providers / brokers / danger zone
 
 ## What to Check on Every Page
 

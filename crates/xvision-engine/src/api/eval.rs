@@ -666,7 +666,7 @@ async fn compare_inner(ctx: &ApiContext, req: &CompareRunsRequest) -> ApiResult<
     let options = CompareOptions {
         allow_manifest_mismatch: req.allow_manifest_mismatch,
     };
-    compare_runs(&req.run_ids, &store, &options).await.map_err(|e| {
+    let mut report = compare_runs(&req.run_ids, &store, &options).await.map_err(|e| {
         // anyhow's alternate formatter walks the entire context chain so
         // the underlying "run not found: <id>" surfaces even though
         // `compare_runs` wraps it with `with_context`.
@@ -682,7 +682,23 @@ async fn compare_inner(ctx: &ApiContext, req: &CompareRunsRequest) -> ApiResult<
         } else {
             ApiError::Internal(chain)
         }
-    })
+    })?;
+    enrich_compare_strategy_names(ctx, &mut report).await;
+    Ok(report)
+}
+
+async fn enrich_compare_strategy_names(ctx: &ApiContext, report: &mut ComparisonReport) {
+    for run in &mut report.runs {
+        if run.strategy_name.is_some() {
+            continue;
+        }
+        if let Ok(strategy) = api_strategy::get(ctx, &run.agent_id).await {
+            let name = strategy.manifest.display_name.trim();
+            if !name.is_empty() {
+                run.strategy_name = Some(name.to_string());
+            }
+        }
+    }
 }
 
 /// Full run detail (summary + decisions + equity curve). Maps the engine's

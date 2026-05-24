@@ -128,6 +128,15 @@ Use `experiment` when the operator's question is the unit of work
 ("does this strategy survive across these regimes?"); use a bare `eval batch`
 when you just need N runs and don't need the ledger row.
 
+Compare surfaces:
+
+- `/eval-runs/compare?ids=<run-a>,<run-b>` is run-centric: metrics, findings,
+  behavior, and the full run table.
+- `/charts/compare?ids=<run-a>,<run-b>` is Charts v2 strategy-centric:
+  equity overlay, roster pills, and cards. Roster changes update the URL.
+- CLI and JSON keep ids as the addressing primitive, but labels prefer
+  `strategy_name` from the strategy manifest when available.
+
 ## MCP tool peers for new CLI verbs
 
 The CLI workbench wave landed six new MCP tools that mirror the new verbs,
