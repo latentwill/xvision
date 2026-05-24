@@ -451,6 +451,7 @@ export function TraceDock() {
               simpleMode={!advanced_view}
               hiddenInSimpleMode={selectedSpanHiddenInSimple}
               onRequestAdvanced={() => setAdvancedView(true)}
+              runSummary={q.data?.summary}
               onRerun={(spanId) => {
                 // Phase 4 stub — checkpoint design pending.
                 console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });

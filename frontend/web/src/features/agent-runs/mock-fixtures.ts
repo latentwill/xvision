@@ -135,3 +135,37 @@ export const MOCK_RUN_FULL_DEBUG: AgentRunDetail = {
   model_calls: COMPLETED_MODEL_CALLS,
   tool_calls: COMPLETED_TOOL_CALLS,
 };
+
+/**
+ * A completed run in `replay` mode with a hit ratio, dropped events, and
+ * a recovery reason. Used to verify the TrajectoryModeBadge and
+ * SpanInspector trajectory section.
+ */
+export const MOCK_RUN_REPLAY: AgentRunDetail = {
+  summary: {
+    ...MOCK_RUN_COMPLETED.summary,
+    run_id: "run_replay99",
+    trajectory_mode: "replay",
+    replay_hit_ratio: 0.875,
+    dropped_events: 3,
+    recovery_reason: "replay_divergence",
+  },
+  spans: COMPLETED_SPANS,
+  model_calls: COMPLETED_MODEL_CALLS,
+  tool_calls: COMPLETED_TOOL_CALLS,
+};
+
+/**
+ * A completed run in `record` mode (frames are being written out).
+ * No replay metrics since recording is the live path.
+ */
+export const MOCK_RUN_RECORD: AgentRunDetail = {
+  summary: {
+    ...MOCK_RUN_COMPLETED.summary,
+    run_id: "run_record77",
+    trajectory_mode: "record",
+  },
+  spans: COMPLETED_SPANS,
+  model_calls: COMPLETED_MODEL_CALLS,
+  tool_calls: COMPLETED_TOOL_CALLS,
+};
