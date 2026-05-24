@@ -1742,9 +1742,11 @@ async fn run_inner(
     //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
     //    we fall back to the legacy `data/probes/<cache_key>.parquet`
     //    loader so existing test fixtures keep working.
-    let run_asset = resolve_run_asset(&strategy)?;
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
+            // Paper mode is single-asset in v1 (separate task wires its
+            // fan-out); the backtest path resolves the full universe itself.
+            let run_asset = resolve_run_asset(&strategy)?;
             let b = broker.ok_or_else(|| ApiError::Validation("paper mode requires a broker".into()))?;
             build_paper_executor(
                 ctx,
@@ -1763,7 +1765,7 @@ async fn run_inner(
                 ctx,
                 &scenario,
                 from_db,
-                run_asset,
+                &strategy,
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
@@ -2243,64 +2245,132 @@ fn paper_min_notional_usd(ctx: &ApiContext) -> f64 {
     }
 }
 
+/// Build the backtest executor, fanning out bar-loading over the strategy's
+/// active asset set (multi-asset B7).
+///
+/// The asset set comes from `active_assets(&strategy.manifest.asset_universe,
+/// subset)`; `subset` is `None` here — the CLI `--assets` narrowing is wired
+/// in a later task, which will thread a `Some(subset)` through this seam (and
+/// onward via `BacktestExecutor::with_asset_subset`). For the DB-resolved
+/// path each active asset's bars are loaded via `load_bars_for_scenario` and
+/// injected as a per-asset map (`with_asset_bars`).
+///
+/// Single-asset preservation: when exactly one asset is active the DB path
+/// still calls `with_bars(ohlcv)` and the legacy fixture path still calls
+/// `BacktestExecutor::new()` — byte-identical to the pre-B7 behavior. The
+/// multi-asset map (`with_asset_bars`) is only taken when 2+ assets are
+/// active.
+///
+/// Preflight: for the DB path, missing bars / warmup for ANY active asset is
+/// a hard `ApiError::Validation`, and the message names the offending asset
+/// so the operator knows which `xvn bars fetch` to run. The single-asset
+/// error shape is preserved.
 async fn build_backtest_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
     from_db: bool,
-    asset: xvision_core::trading::AssetSymbol,
+    strategy: &crate::strategies::Strategy,
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
+    use crate::eval::executor::asset_set::active_assets;
+    // Multi-asset (B7): resolve the full active set. `subset = None` until
+    // the CLI `--assets` task threads a narrowing through here. The first
+    // active asset doubles as the single-asset / legacy-fixture key and the
+    // (single-asset) warmup key, exactly as `resolve_run_asset` did before.
+    let active = active_assets(&strategy.manifest.asset_universe, None)
+        .map_err(|e| ApiError::Validation(e.to_string()))?;
+    let first_asset = *active
+        .first()
+        .ok_or_else(|| ApiError::Validation(format!(
+            "strategy '{}' resolved an empty active asset set",
+            strategy.manifest.id
+        )))?;
+
     if from_db {
-        match load_bars_for_scenario(ctx, scenario, asset).await {
-            Ok(bars) => {
-                let ohlcv: Vec<xvision_core::market::Ohlcv> = bars
-                    .into_iter()
-                    .map(|b| xvision_core::market::Ohlcv {
-                        timestamp: b.timestamp,
-                        open: b.open,
-                        high: b.high,
-                        low: b.low,
-                        close: b.close,
-                        volume: b.volume,
-                    })
-                    .collect();
-                // Warmup is a hard preflight error when DB-resolved: an
-                // operator who set `warmup_bars > 0` expects real
-                // pre-window context, not silent emptiness.
-                let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, asset).await?);
-                let mut bt = BacktestExecutor::with_bars(ohlcv)
-                    .with_warmup(warmup)
-                    .with_event_bus(ctx.event_bus.clone())
-                    .with_provider_catalogs(provider_catalogs);
-                if let Some(emitter) = obs {
-                    bt = bt.with_observability(emitter);
+        // Load EVERY active asset's bars. A miss / fetch error on any asset
+        // is a hard preflight failure that names that asset (so the operator
+        // knows which `xvn bars fetch --asset <pair>` to run) — UNLESS this
+        // is a single-asset run with no warmup AND a legacy fixture exists,
+        // in which case we keep the pre-B7 fallback to the fixture loader.
+        let mut asset_bars: std::collections::BTreeMap<
+            xvision_core::trading::AssetSymbol,
+            Vec<xvision_core::market::Ohlcv>,
+        > = std::collections::BTreeMap::new();
+        let mut fixture_fallback = false;
+        for &asset in &active {
+            match load_bars_for_scenario(ctx, scenario, asset).await {
+                Ok(bars) => {
+                    asset_bars.insert(asset, market_bars_to_ohlcv(bars));
                 }
-                // V2D: thread the server-built recorder onto the executor.
-                if let Some(recorder) = ctx.memory_recorder.clone() {
-                    bt = bt.with_memory_recorder(recorder);
+                Err(e) => {
+                    if active.len() == 1 {
+                        // Single-asset: preserve the pre-B7 behavior exactly.
+                        // Fall back to the fixture loader only when no warmup
+                        // is required AND a legacy fixture exists; otherwise
+                        // surface the original `missing_bars_validation` shape
+                        // (the existing preflight tests pin this message).
+                        if scenario.warmup_bars == 0 && legacy_fixture_exists(scenario) {
+                            tracing::warn!(
+                                scenario_id = %scenario.id,
+                                error = %e,
+                                "load_bars failed; falling back to fixture loader without warmup context",
+                            );
+                            fixture_fallback = true;
+                            break;
+                        }
+                        return Err(missing_bars_validation(scenario, Some(e.to_string())));
+                    }
+                    // Multi-asset: no per-asset fixture fallback exists. Any
+                    // missing asset is a hard, asset-named preflight error so
+                    // the operator knows which `xvn bars fetch` to run.
+                    return Err(missing_bars_for_asset(scenario, asset, Some(e.to_string())));
                 }
-                if let Some(l) = limits {
-                    bt = bt.with_limits(l.clone());
-                }
-                return Ok(Box::new(bt));
             }
-            Err(e) => {
-                if scenario.warmup_bars > 0 || !legacy_fixture_exists(scenario) {
-                    return Err(missing_bars_validation(scenario, Some(e.to_string())));
-                }
-                tracing::warn!(
-                    scenario_id = %scenario.id,
-                    error = %e,
-                    "load_bars failed; falling back to fixture loader without warmup context",
-                );
+        }
+
+        if !fixture_fallback {
+            // Warmup is single-asset in v1: only the first active asset gets
+            // a real pre-window (the executor prepends it to that asset's
+            // history). A hard preflight error when DB-resolved — an operator
+            // who set `warmup_bars > 0` expects real pre-window context.
+            let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, first_asset).await?);
+
+            let mut bt = if active.len() == 1 {
+                // Single-asset: byte-identical to the pre-B7 `with_bars` path.
+                let ohlcv = asset_bars
+                    .remove(&first_asset)
+                    .expect("single active asset's bars were loaded above");
+                BacktestExecutor::with_bars(ohlcv)
+            } else {
+                // Multi-asset: fan out over the per-asset map.
+                BacktestExecutor::new().with_asset_bars(asset_bars)
+            };
+            bt = bt
+                .with_warmup(warmup)
+                .with_event_bus(ctx.event_bus.clone())
+                .with_provider_catalogs(provider_catalogs);
+            if let Some(emitter) = obs {
+                bt = bt.with_observability(emitter);
             }
+            // V2D: thread the server-built recorder onto the executor.
+            if let Some(recorder) = ctx.memory_recorder.clone() {
+                bt = bt.with_memory_recorder(recorder);
+            }
+            if let Some(l) = limits {
+                bt = bt.with_limits(l.clone());
+            }
+            return Ok(Box::new(bt));
         }
     } else if !legacy_fixture_exists(scenario) {
         return Err(missing_bars_validation(scenario, None));
     }
 
+    // Legacy fixture path (single-asset only): the executor loads the first
+    // active asset's bars from `data/probes/<cache_key>.parquet`. Multi-asset
+    // universes have no multi-asset fixture, so this stays the first asset's
+    // single series — matching the pre-B7 `resolve_run_asset` behavior.
     let mut bt = BacktestExecutor::new()
         .with_event_bus(ctx.event_bus.clone())
         .with_provider_catalogs(provider_catalogs);
@@ -2342,6 +2412,32 @@ fn missing_bars_validation(scenario: &Scenario, source_error: Option<String>) ->
     let mut msg = format!(
         "scenario '{}' is missing bars cache and legacy fixture for cache key '{}'. Fetch bars for this scenario before starting the backtest.",
         scenario.id, scenario.bar_cache_policy.cache_key
+    );
+    if let Some(e) = source_error {
+        msg.push_str(&format!(" Last cache fetch error: {e}"));
+    }
+    ApiError::Validation(msg)
+}
+
+/// Multi-asset (B7) preflight error: bars for `asset` (one of the strategy's
+/// active universe) could not be sourced for this scenario. Names the asset
+/// and its venue pair so the operator knows exactly which `xvn bars fetch`
+/// to run. For single-asset runs this carries the same actionable shape the
+/// pre-B7 `missing_bars_validation` did, with the asset pair made explicit.
+fn missing_bars_for_asset(
+    scenario: &Scenario,
+    asset: xvision_core::trading::AssetSymbol,
+    source_error: Option<String>,
+) -> ApiError {
+    let pair = asset.as_alpaca_pair();
+    let mut msg = format!(
+        "scenario '{}' is missing bars for asset '{}'. Fetch bars for this asset before starting the backtest, e.g. `xvn bars fetch --asset {} --granularity {} --from {} --to {}`.",
+        scenario.id,
+        pair,
+        pair,
+        scenario.granularity.as_alpaca_str(),
+        scenario.time_window.start.to_rfc3339(),
+        scenario.time_window.end.to_rfc3339(),
     );
     if let Some(e) = source_error {
         msg.push_str(&format!(" Last cache fetch error: {e}"));
@@ -2415,9 +2511,11 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             .with_catalogs(obs_catalogs.clone())
     });
 
-    let run_asset = resolve_run_asset(&strategy)?;
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
+            // Paper mode is single-asset in v1 (separate task wires its
+            // fan-out); the backtest path resolves the full universe itself.
+            let run_asset = resolve_run_asset(&strategy)?;
             let b = broker.expect("paper mode broker built above");
             build_paper_executor(
                 ctx,
@@ -2436,7 +2534,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 ctx,
                 &scenario,
                 from_db,
-                run_asset,
+                &strategy,
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
