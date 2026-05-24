@@ -913,6 +913,7 @@ impl WizardLoop {
                     limits: None,
                     skip_preflight: false,
                     provider_override: None,
+                    assets_subset: None,
                 };
                 let out = api_eval::start_run(
                     &xvision_engine::api::ApiContext::new(

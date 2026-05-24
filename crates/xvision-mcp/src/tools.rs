@@ -1141,6 +1141,7 @@ impl XvisionTools {
                 limits: None,
                 skip_preflight: false,
                 provider_override: None,
+                assets_subset: None,
             };
 
             let entry = match api_eval::run(&ctx, run_req).await {

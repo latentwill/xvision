@@ -308,6 +308,7 @@ async fn run_one_arm(
         },
         skip_preflight: false,
         provider_override,
+        assets_subset: None,
     };
     match api_eval::run_with_deps(
         ctx,

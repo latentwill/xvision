@@ -238,6 +238,7 @@ async fn run_tiny_notional_probe(
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            assets_subset: None,
         },
         broker,
         long_open_dispatch(),

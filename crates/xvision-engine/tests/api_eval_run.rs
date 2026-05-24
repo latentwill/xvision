@@ -199,6 +199,7 @@ fn eval_request_for_scenario(agent_id: &str, scenario_id: &str, mode: RunMode) -
         limits: None,
         skip_preflight: false,
         provider_override: None,
+        assets_subset: None,
     }
 }
 
@@ -622,6 +623,7 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            assets_subset: None,
         },
     )
     .await;

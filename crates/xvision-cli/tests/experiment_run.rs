@@ -252,6 +252,7 @@ async fn experiment_run_creates_experiment_binds_batch_writes_result() {
         tools,
         review_with: None,
         review_dispatch: None,
+        assets_subset: None,
     };
 
     let result = run_experiment(&ctx, req)
@@ -316,6 +317,7 @@ async fn experiment_run_result_json_has_expected_shape() {
         tools,
         review_with: None,
         review_dispatch: None,
+        assets_subset: None,
     };
 
     let result = run_experiment(&ctx, req)
@@ -380,6 +382,7 @@ async fn experiment_run_json_output_shape() {
         tools,
         review_with: None,
         review_dispatch: None,
+        assets_subset: None,
     };
 
     let output = run_experiment(&ctx, req)
@@ -437,6 +440,7 @@ async fn experiment_run_db_row_has_result_json_populated() {
         tools,
         review_with: None,
         review_dispatch: None,
+        assets_subset: None,
     };
 
     let output = run_experiment(&ctx, req)
