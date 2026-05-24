@@ -1757,6 +1757,12 @@ impl BacktestExecutor {
             for (&a, &idx) in assets_at_ts.iter() {
                 let abars = &asset_bars[&a];
                 let mark = abars.get(idx + 1).map(|b| b.open).unwrap_or(abars[idx].close);
+                // Carry this asset's last seen mark on its open leg (if any)
+                // so a later timestamp where the asset has no bar falls back
+                // to this value instead of marking to entry. Single-asset:
+                // the one asset is always present, so `mark` only ever sets
+                // the same value `marks` already carries — equity unchanged.
+                book.mark(a, mark);
                 marks.insert(a, mark);
             }
             equity = book.equity(&marks);

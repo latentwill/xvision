@@ -213,6 +213,109 @@ async fn backtest_fans_out_over_universe_with_shared_nav() {
     );
 }
 
+/// Misaligned timeline: asset B (ETH) is missing a bar at one INTERIOR
+/// timestamp. ETH carries an open long across that gap. The pooled equity at
+/// the gap timestamp must reflect ETH's LAST seen mark, not snap back to
+/// ETH's entry-based / zero unrealized (the `PortfolioBook` last-mark fix).
+///
+/// Prices rise monotonically for both assets and both legs are long, so the
+/// pooled NAV must be non-decreasing across the whole timeline. Under the
+/// pre-fix behavior the gap timestamp drops ETH's accrued unrealized gain
+/// (absent-from-marks → zero unrealized), producing a spurious dip — caught
+/// here by the monotonicity assertion at the gap.
+#[tokio::test]
+async fn backtest_misaligned_timeline_carries_last_mark() {
+    let store = fresh_store().await;
+    let scenario = asset_free_scenario();
+    let strategy = build_strategy("01TESTMISALIGNEDLASTMARK", ExecutionMode::PerAsset);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    // BTC has all 5 daily bars. ETH is missing the interior bar at index 2
+    // (the 3rd timestamp) — it has bars at indices 0,1,3,4 only. ETH opens a
+    // long at its first bar (fills at the next bar's open) and stays long.
+    let btc = daily_bars(5, 50_000.0);
+    let eth_full = daily_bars(5, 3_000.0);
+    let gap_idx = 2usize;
+    let gap_ts = eth_full[gap_idx].timestamp;
+    let eth: Vec<Ohlcv> = eth_full
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| *i != gap_idx)
+        .map(|(_, b)| b)
+        .collect();
+    assert_eq!(eth.len(), 4, "ETH must be missing exactly one interior bar");
+
+    let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> =
+        BTreeMap::from([(AssetSymbol::Btc, btc), (AssetSymbol::Eth, eth)]);
+
+    let executor = BacktestExecutor::new().with_asset_bars(asset_bars);
+    executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("misaligned multi-asset backtest run should complete");
+
+    // 5 distinct timestamps (BTC drives all 5; ETH absent at the gap).
+    let equity = store.read_equity_curve(&run.id).await.unwrap();
+    assert_eq!(
+        equity.len(),
+        5,
+        "pooled NAV records one equity sample per distinct timestamp, got {}",
+        equity.len()
+    );
+
+    // Rising prices + two long legs ⇒ once both legs are open the pooled
+    // NAV must be non-decreasing across every subsequent step (no new fees
+    // accrue — repeated `long_open` on an already-long leg is a no-op fill).
+    // The pre-fix bug would drop ETH's unrealized at the gap timestamp,
+    // producing a spurious dip that this monotonicity check catches.
+    //
+    // We anchor the monotonic check at the timestamp BEFORE the gap (by then
+    // both legs are open and fees are paid). The gap-timestamp equity is the
+    // crux: under the fix ETH is carried at its last mark (its index-1 mark),
+    // BTC's mark rose, so the gap equity must be >= the pre-gap equity.
+    let mut pre_gap_equity: Option<f64> = None;
+    let mut gap_equity: Option<f64> = None;
+    let mut last_before_gap: Option<f64> = None;
+    for (t, eq) in &equity {
+        if *t < gap_ts {
+            pre_gap_equity = last_before_gap;
+            last_before_gap = Some(*eq);
+        } else if *t == gap_ts {
+            // The immediately-preceding sample is the last `< gap_ts` value.
+            pre_gap_equity = last_before_gap;
+            gap_equity = Some(*eq);
+        }
+    }
+
+    let gap_equity = gap_equity.expect("the gap timestamp must appear in the equity series");
+    let pre_gap_equity =
+        pre_gap_equity.expect("there must be at least one timestamp before the gap");
+
+    // The core assertion: ETH's accrued unrealized is CARRIED across the gap
+    // (not reset to entry/zero). With ETH carried flat at its last mark and
+    // BTC's mark rising into the gap, the pooled equity must not dip at the
+    // gap timestamp. The pre-fix behavior would subtract ETH's entire
+    // unrealized gain here, dropping below `pre_gap_equity`.
+    assert!(
+        gap_equity >= pre_gap_equity - 1e-6,
+        "pooled equity dipped at the gap timestamp ({gap_equity} < pre-gap {pre_gap_equity}) \
+         — ETH's last mark was not carried across the gap (snapped to entry/zero unrealized)"
+    );
+}
+
 #[tokio::test]
 async fn portfolio_mode_returns_not_implemented() {
     let store = fresh_store().await;
