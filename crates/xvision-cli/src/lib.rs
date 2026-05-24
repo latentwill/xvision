@@ -230,6 +230,16 @@ pub enum Command {
         /// endpoints that don't require auth.
         #[arg(long, default_value = "OPENAI_API_KEY")]
         trader_api_key_env: String,
+        /// Record trajectories for this run (Stage 3, item 10). Mutually
+        /// exclusive with `--replay`. Default behavior (neither flag) is
+        /// record, preserving prior behavior during the transition.
+        #[arg(long, conflicts_with = "replay")]
+        record: bool,
+        /// Replay a previously-recorded trajectory set by id — deterministic,
+        /// no fresh intern/trader calls, bit-stable across reruns. Mutually
+        /// exclusive with `--record`.
+        #[arg(long)]
+        replay: Option<String>,
     },
     /// Strategy authoring (create / validate / ls / show / templates / run).
     Strategy(commands::strategy::StrategyCmd),
@@ -361,6 +371,8 @@ impl Cli {
                 trader_base_url,
                 trader_model,
                 trader_api_key_env,
+                record,
+                replay,
             } => commands::ab_compare::run(
                 cycles,
                 bars,
@@ -379,6 +391,8 @@ impl Cli {
                 trader_base_url,
                 trader_model,
                 trader_api_key_env,
+                record,
+                replay,
             )
             .await
             .map_err(Into::into),
