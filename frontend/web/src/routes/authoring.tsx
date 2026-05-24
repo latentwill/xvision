@@ -3,7 +3,8 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
-import { ApiError } from "@/api/client";
+import { apiFetch, ApiError } from "@/api/client";
+import { ALPACA_ASSETS, toVenuePair } from "@/lib/assets";
 import {
   addStrategyAgent,
   getStrategy,
@@ -807,8 +808,58 @@ export function AttachedAgentRow({
   );
 }
 
+function patchStrategyMetadata(
+  id: string,
+  patch: { asset_universe?: string[] | null },
+): Promise<Strategy> {
+  return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      display_name: null,
+      plain_summary: null,
+      asset_universe: patch.asset_universe ?? null,
+    }),
+  });
+}
+
 function ManifestCard({ strategy }: { strategy: Strategy }) {
   const m = strategy.manifest;
+  const qc = useQueryClient();
+  const [saveFlash, setSaveFlash] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const patchMut = useMutation({
+    mutationFn: (next: string[]) =>
+      patchStrategyMetadata(m.id, { asset_universe: next }),
+    onSuccess: () => {
+      setSaveFlash(true);
+      setSaveError(null);
+      window.setTimeout(() => setSaveFlash(false), 1800);
+      qc.invalidateQueries({ queryKey: strategyKeys.detail(m.id) });
+    },
+    onError: (err: unknown) => {
+      setSaveError(
+        err instanceof ApiError ? `${err.code}: ${err.message}` : "Save failed.",
+      );
+    },
+  });
+
+  function removeAsset(venue: string) {
+    const next = m.asset_universe.filter((a) => a !== venue);
+    patchMut.mutate(next);
+  }
+
+  function addAsset(ticker: string) {
+    const pair = toVenuePair(ticker);
+    if (m.asset_universe.includes(pair)) return;
+    const next = [...m.asset_universe, pair];
+    patchMut.mutate(next);
+  }
+
+  const addableTickers = ALPACA_ASSETS.filter(
+    (t) => !m.asset_universe.includes(toVenuePair(t)),
+  );
+
   return (
     <Card>
       <SectionHeader
@@ -824,16 +875,60 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
         <DD className="font-mono text-text-2">{m.creator}</DD>
         <DT>Asset universe</DT>
         <DD>
-          {m.asset_universe.length > 0
-            ? m.asset_universe.map((a) => (
-                <span
-                  key={a}
-                  className="inline-block mr-1.5 px-1.5 py-0.5 bg-surface-elev border border-border-soft rounded text-[12px] font-mono"
-                >
-                  {a}
-                </span>
-              ))
-            : "(none)"}
+          <div className="space-y-2">
+            {/* Removable chips for currently selected assets */}
+            <div className="flex flex-wrap gap-1.5">
+              {m.asset_universe.length > 0 ? (
+                m.asset_universe.map((a) => (
+                  <span
+                    key={a}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-surface-elev border border-border-soft rounded text-[12px] font-mono"
+                  >
+                    {a}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${a}`}
+                      onClick={() => removeAsset(a)}
+                      disabled={patchMut.isPending}
+                      className="ml-0.5 text-text-3 hover:text-danger disabled:opacity-40 leading-none"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))
+              ) : (
+                <span className="text-text-3 text-[12px]">(none)</span>
+              )}
+            </div>
+
+            {/* Inline add-asset buttons for unselected tickers */}
+            {addableTickers.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {addableTickers.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => addAsset(t)}
+                    disabled={patchMut.isPending}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded border border-border text-[11px] font-mono text-text-2 hover:border-text-3 hover:text-text disabled:opacity-40 transition-colors"
+                  >
+                    + {t}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Feedback */}
+            {patchMut.isPending && (
+              <span className="text-[11px] text-text-3">Saving…</span>
+            )}
+            {saveFlash && (
+              <span className="text-[11px] text-success">Saved.</span>
+            )}
+            {saveError && (
+              <span className="text-[11px] text-danger">{saveError}</span>
+            )}
+          </div>
         </DD>
         <DT>Cadence</DT>
         <DD>
