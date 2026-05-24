@@ -112,7 +112,7 @@ export const FilterEventTimeline: FC<{
       className="rounded-card border border-border p-4 mt-4"
     >
       {title && (
-        <h4 className="font-serif italic text-[14px] text-text mb-2">{title}</h4>
+        <h4 className="font-sans font-semibold text-[14px] text-text mb-2">{title}</h4>
       )}
 
       <div

@@ -70,7 +70,7 @@ function TemplatePicker({
   return (
     <Card>
       <div className="px-5 py-5">
-        <h2 className="m-0 mb-1 font-serif font-medium text-[22px] tracking-tight text-text">
+        <h2 className="m-0 mb-1 font-sans font-medium text-[22px] tracking-tight text-text">
           Start from a template
         </h2>
         <p className="m-0 mb-5 text-text-3 text-[13px] leading-snug">

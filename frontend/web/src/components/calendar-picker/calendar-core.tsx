@@ -221,7 +221,7 @@ export function MonthGrid({
               color: 'var(--text-3)',
               letterSpacing: '0.12em',
               textTransform: 'uppercase',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Geist, sans-serif',
             }}
           >
             {w}
@@ -309,7 +309,7 @@ export function MonthGrid({
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: '50%',
-                fontFamily: "'JetBrains Mono', monospace",
+                fontFamily: 'Geist Mono, ui-monospace, monospace',
                 fontVariantNumeric: 'tabular-nums',
                 fontSize: dims.font,
                 fontWeight: isEdge ? 600 : 400,
@@ -386,9 +386,8 @@ export function MonthHeader({
         borderRadius: 3,
         padding: '2px 5px 2px 6px',
         cursor: 'pointer',
-        fontFamily: "'Cormorant Garamond', serif",
-        fontStyle: italic ? 'italic' : 'normal',
-        fontWeight: 500,
+        fontFamily: 'Geist, sans-serif',
+        fontWeight: italic ? 600 : 500,
         fontSize: sizes.fs,
         letterSpacing: '-0.01em',
         color: active ? 'var(--gold)' : 'var(--text)',
@@ -434,7 +433,7 @@ export function MonthHeader({
     titleEl = (
       <div
         style={{
-          fontFamily: "'Cormorant Garamond', serif",
+          fontFamily: 'Geist, sans-serif',
           fontWeight: 500,
           fontSize: sizes.fs,
           letterSpacing: '-0.01em',
@@ -443,7 +442,7 @@ export function MonthHeader({
         }}
       >
         {startYear} <span style={{ color: 'var(--text-3)' }}>—</span>{' '}
-        <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }}>
+        <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>
           {startYear + 11}
         </span>
       </div>
@@ -453,7 +452,7 @@ export function MonthHeader({
       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <span
           style={{
-            fontFamily: "'Cormorant Garamond', serif",
+            fontFamily: 'Geist, sans-serif',
             fontWeight: 500,
             fontSize: sizes.fs,
             color: 'var(--text-3)',
@@ -606,7 +605,7 @@ export function MonthsView({
                   ? 'var(--gold)'
                   : 'var(--text-2)',
               borderRadius: 4,
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Geist, sans-serif',
               fontSize: density === 'mobile' ? 14 : 13,
               fontWeight: isSelected ? 600 : 500,
               cursor: 'pointer',
@@ -680,7 +679,7 @@ export function YearsView({
                   ? 'var(--gold)'
                   : 'var(--text-2)',
               borderRadius: 4,
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               fontVariantNumeric: 'tabular-nums',
               fontSize: density === 'mobile' ? 14 : 13,
               fontWeight: isSelected ? 600 : 500,

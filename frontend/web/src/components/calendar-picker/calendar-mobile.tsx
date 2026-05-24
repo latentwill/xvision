@@ -89,7 +89,7 @@ export function MobileInlineCard({
         background: 'var(--surface-card)',
         border: '1px solid var(--border)',
         borderRadius: 6,
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'Geist, sans-serif',
         padding: '12px 14px',
       }}
     >
@@ -126,7 +126,7 @@ export function MobileInlineCard({
           </div>
           <div
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               fontSize: 13,
               color: 'var(--text)',
               marginTop: 2,
@@ -160,7 +160,7 @@ export function MobileInlineCard({
           </div>
           <div
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               fontSize: 13,
               color: 'var(--text)',
               marginTop: 2,
@@ -187,7 +187,7 @@ export function MobileInlineCard({
           </span>
           <span
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               fontSize: 12,
               color: 'var(--gold)',
             }}

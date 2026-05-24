@@ -85,7 +85,7 @@ export function MonthlyReturnsHeatmap({
         className="grid gap-x-px gap-y-px text-[10.5px] text-text-3"
         style={{
           gridTemplateColumns: `minmax(80px, max-content) repeat(${months.length}, minmax(28px, 1fr))`,
-          fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, monospace',
+          fontFamily: 'Geist Mono, ui-monospace, monospace',
         }}
         role="table"
         aria-label="Monthly returns heatmap"

@@ -31,7 +31,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
       ].join(" ")}
     >
       <div className="px-6 pb-8">
-        <span className="font-serif italic font-medium text-[38px] tracking-tight text-text leading-none">
+        <span className="font-sans font-semibold text-[38px] tracking-tight text-text leading-none">
           xvn
         </span>
       </div>

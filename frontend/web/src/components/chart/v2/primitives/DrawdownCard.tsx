@@ -117,7 +117,7 @@ function Stat({
           "mt-1 text-[14px] tabular-nums",
           danger ? "text-danger" : "text-text",
         ].join(" ")}
-        style={{ fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, monospace' }}
+        style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
       >
         {value}
       </div>

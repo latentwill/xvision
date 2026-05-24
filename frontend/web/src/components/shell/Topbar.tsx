@@ -37,7 +37,7 @@ export function Topbar({
             <span>{back.label}</span>
           </Link>
         ) : null}
-        <h1 className="m-0 mb-1 font-serif font-medium text-[30px] xl:text-[38px] tracking-tight leading-none">
+        <h1 className="m-0 mb-1 font-sans font-medium text-[30px] xl:text-[38px] tracking-tight leading-none">
           {title}
         </h1>
         {sub ? (

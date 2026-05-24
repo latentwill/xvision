@@ -1,8 +1,8 @@
 /**
  * GradientHeadline — B4's hero topbar headline. Renders the prefix +
- * suffix in plain Cormorant; the bracketed phrase gets a linear-
- * gradient text fill (`90deg, #E5B86A → #D4A547 → #C16A3A`). An
- * optional emphasised number renders in JetBrains Mono gold beside it.
+ * suffix in Geist; the bracketed phrase gets a linear-gradient text
+ * fill (`90deg, #E5B86A → #D4A547 → #C16A3A`). An optional emphasised
+ * number renders in Geist Mono gold beside it.
  *
  * The text-fill technique uses `background-clip: text` + transparent
  * color; `-webkit-background-clip` for Safari compatibility.
@@ -26,7 +26,7 @@ export function GradientHeadline({
   return (
     <h1
       className="text-[30px] leading-[1.1] tracking-normal text-text font-medium"
-      style={{ fontFamily: '"Cormorant Garamond", serif' }}
+      style={{ fontFamily: 'Geist, sans-serif' }}
     >
       {prefix}
       {prefix ? " " : ""}
@@ -38,7 +38,7 @@ export function GradientHeadline({
           WebkitBackgroundClip: "text",
           backgroundClip: "text",
           color: "transparent",
-          fontStyle: "italic",
+          fontWeight: 600,
         }}
       >
         {bracketed}
@@ -48,7 +48,7 @@ export function GradientHeadline({
       {emphasis && (
         <span
           className="inline-block ml-3 text-[26px] text-gold tabular-nums"
-          style={{ fontFamily: '"JetBrains Mono", monospace' }}
+          style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
         >
           {emphasis}
         </span>

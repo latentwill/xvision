@@ -168,7 +168,7 @@ export function PerformanceRadar({
             textAnchor="middle"
             dominantBaseline="middle"
             style={{
-              fontFamily: '"Inter", sans-serif',
+              fontFamily: 'Geist, sans-serif',
               letterSpacing: "0.08em",
             }}
           >

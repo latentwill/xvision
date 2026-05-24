@@ -269,7 +269,7 @@ function DetailView({
     <div>
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h1 className="text-text font-serif text-[28px] m-0 leading-tight">
+          <h1 className="text-text font-sans text-[28px] m-0 leading-tight">
             {s.display_name}
           </h1>
           <div
@@ -923,7 +923,7 @@ function ErrorState({ err, onRetry }: { err: unknown; onRetry: () => void }) {
   return (
     <Card>
       <div className="px-6 py-12 text-center">
-        <div className="font-serif italic text-[24px] text-danger mb-3">
+        <div className="font-sans font-semibold text-[24px] text-danger mb-3">
           couldn't load scenario
         </div>
         <p className="m-0 mb-5 max-w-md mx-auto text-text-2 leading-snug">

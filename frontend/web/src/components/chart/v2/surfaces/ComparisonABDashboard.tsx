@@ -288,10 +288,10 @@ function ComparisonView({
                   className="inline-block w-2.5 h-[2px]"
                   style={{ backgroundColor: arm.color }}
                 />
-                <span style={{ fontFamily: '"JetBrains Mono", monospace' }}>
+                <span style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}>
                   {arm.short}
                 </span>
-                <span className="text-text-3" style={{ fontFamily: '"JetBrains Mono", monospace' }}>
+                <span className="text-text-3" style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}>
                   {arm.metrics.return >= 0 ? "+" : ""}
                   {arm.metrics.return.toFixed(2)}%
                 </span>

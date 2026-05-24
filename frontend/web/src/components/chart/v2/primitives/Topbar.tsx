@@ -1,7 +1,7 @@
 /**
- * Topbar — dashboard chrome row: tracked-uppercase eyebrow + Cormorant
- * headline + optional Cormorant-italic tagline, with a right-side
- * action slot for env pills, timeframe toggles, export buttons, etc.
+ * Topbar — dashboard chrome row: tracked-uppercase eyebrow + Geist
+ * headline + optional tagline, with a right-side action slot for env
+ * pills, timeframe toggles, export buttons, etc.
  *
  * Used by all four Track-B canvases (B1/B2/B3/B4). Plain DOM — no
  * uPlot or chart-lib dependencies.
@@ -18,9 +18,9 @@ import type { ReactElement, ReactNode } from "react";
 export interface ChartsTopbarProps {
   /** `.caps` eyebrow. Optional — omit for chart-only frames (B3 header). */
   eyebrow?: string;
-  /** Headline in Cormorant. Required. */
+  /** Headline in Geist. Required. */
   headline: ReactNode;
-  /** Italic tagline below the headline, also Cormorant. Optional. */
+  /** Tagline below the headline. Optional. */
   tagline?: ReactNode;
   /** Right-side action cluster (pills, toggles, buttons). */
   actions?: ReactNode;
@@ -37,15 +37,15 @@ export function ChartsTopbar({
       <div className="min-w-0 flex-1">
         {eyebrow && <div className="caps mb-1">{eyebrow}</div>}
         <h1
-          className="text-[30px] leading-[1.1] tracking-[-0.015em] text-text font-medium"
-          style={{ fontFamily: '"Cormorant Garamond", serif' }}
+          className="text-[30px] leading-[1.1] tracking-[-0.015em] text-text font-semibold"
+          style={{ fontFamily: 'Geist, sans-serif' }}
         >
           {headline}
         </h1>
         {tagline != null && (
           <p
-            className="mt-1 text-[15px] text-text-2 italic"
-            style={{ fontFamily: '"Cormorant Garamond", serif' }}
+            className="mt-1 text-[15px] text-text-2 font-medium"
+            style={{ fontFamily: 'Geist, sans-serif' }}
           >
             {tagline}
           </p>
