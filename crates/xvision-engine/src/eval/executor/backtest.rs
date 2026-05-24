@@ -49,7 +49,7 @@ use crate::eval::cost_arrays::BarCostTable;
 use crate::eval::early_stop::{self, EarlyStopConfig};
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::executor::traits::{
-    BarSource, Clock, FillRecord, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
+    Clock, FillRecord, FillRequest, FillSink, InstantClock, SimulatedFills,
 };
 use crate::eval::executor::Executor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
@@ -136,6 +136,13 @@ pub struct BacktestExecutor {
     /// later CLI task sets `Some(subset)` to honor an `--assets` flag.
     /// Validated against the universe by `active_assets`.
     asset_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
+    /// Multi-asset (B4): optional per-asset injected bars. When `Some`,
+    /// the executor builds its aligned timeline from these vecs (one per
+    /// active asset) instead of mapping the single `injected_bars` vec to
+    /// the first active asset. The test path uses this to drive a
+    /// two-asset fan-out; the single-asset production path leaves it
+    /// `None` and keeps the `injected_bars` / fixture behaviour.
+    injected_asset_bars: Option<BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>>,
 }
 
 impl BacktestExecutor {
@@ -162,6 +169,7 @@ impl BacktestExecutor {
             limits: None,
             recorder: None,
             asset_subset: None,
+            injected_asset_bars: None,
         }
     }
 
@@ -184,6 +192,7 @@ impl BacktestExecutor {
             limits: None,
             recorder: None,
             asset_subset: None,
+            injected_asset_bars: None,
         }
     }
 
@@ -200,6 +209,7 @@ impl BacktestExecutor {
             limits: None,
             recorder: None,
             asset_subset: None,
+            injected_asset_bars: None,
         }
     }
 
@@ -271,6 +281,20 @@ impl BacktestExecutor {
     /// the universe by `active_assets` at run start.
     pub fn with_asset_subset(mut self, subset: Vec<xvision_core::trading::AssetSymbol>) -> Self {
         self.asset_subset = Some(subset);
+        self
+    }
+
+    /// Multi-asset (B4): inject per-asset bars for the fan-out timeline.
+    /// Builder-style. Each vec must be in chronological order; the
+    /// executor outer-joins them by timestamp. When set, this takes
+    /// precedence over the single-asset `injected_bars`. Primarily for
+    /// the multi-asset integration test; the production path threads
+    /// per-asset bars here once the API/CLI layer resolves them.
+    pub fn with_asset_bars(
+        mut self,
+        bars: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>,
+    ) -> Self {
+        self.injected_asset_bars = Some(bars);
         self
     }
 
@@ -400,18 +424,19 @@ impl BacktestExecutor {
         tools: Arc<ToolRegistry>,
         store: &RunStore,
     ) -> Result<MetricsSummary> {
-        // Scenarios are asset-free; the asset a run trades comes from the
-        // strategy's `asset_universe` (single-asset for now — a later task
-        // adds the per-asset loop).
-        use std::str::FromStr;
-        let asset_sym = xvision_core::trading::AssetSymbol::from_str(
-            strategy
-                .manifest
-                .asset_universe
-                .first()
-                .ok_or_else(|| anyhow!("strategy {} has empty asset_universe", strategy.manifest.id))?,
-        )
-        .map_err(|e| anyhow!("{e}"))?;
+        // Multi-asset (B4): scenarios are asset-free; the asset set a run
+        // trades comes from the strategy's `asset_universe` (resolved /
+        // validated by `active_assets`, optionally narrowed by an
+        // `--assets` subset). `PerAsset` execution runs the pipeline once
+        // per active asset each bar, sharing one pooled capital book.
+        use crate::eval::executor::asset_set::active_assets;
+        let active = active_assets(&strategy.manifest.asset_universe, self.asset_subset.as_deref())?;
+        // The first active asset doubles as the single-asset fixture key
+        // (the legacy `load_ohlcv_fixture` path loads by alpaca pair) and
+        // as the default key for the single `injected_bars` vec.
+        let asset_sym = *active
+            .first()
+            .ok_or_else(|| anyhow!("strategy {} resolved an empty active asset set", strategy.manifest.id))?;
         let asset = asset_sym.as_alpaca_pair();
 
         let cadence_min = strategy.manifest.decision_cadence_minutes as i64;
@@ -438,64 +463,110 @@ impl BacktestExecutor {
             anyhow::bail!("capital_mode `per_asset` not yet implemented");
         }
 
-        // Bars come from one of two sources:
-        // 1. Injected via `with_bars` — Task 8's DB-resolved path goes
-        //    through `eval::bars::load_bars` and hands a pre-loaded
-        //    `Vec<Ohlcv>` to the executor. This is the path the new
-        //    `api::scenario::get`-based eval::run uses.
-        // 2. Legacy fixture loader — the canonical-scenarios fallback
-        //    still reads from `data/probes/<cache_key>.parquet`. Keeps
-        //    pre-Task-8 tests working without a DB / Alpaca creds.
-        let bars: Vec<Ohlcv> = if let Some(injected) = self.injected_bars.clone() {
-            injected
-        } else {
-            let data_seed = &scenario.bar_cache_policy.cache_key;
-            load_ohlcv_fixture(data_seed, &asset, usize::MAX)
-                .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
-        };
-        // An N-bar window is expected to produce N decisions
-        // (qa-decisions-30day-count). The final bar fills against its own
-        // close via the `next_bar_open` fallback below, so the only
-        // genuinely-uninterpretable case is an empty bar list. Anything
-        // narrower than that is a contract bug at the loader layer, not
-        // a runtime input the executor should silently tolerate.
-        if bars.is_empty() {
+        // Multi-asset (B4) — per-asset bars. Three sources, in precedence:
+        // 1. `with_asset_bars` — explicit per-asset vecs (multi-asset test
+        //    path; the production API/CLI layer threads resolved bars here).
+        // 2. `with_bars` — a single pre-loaded vec (Task 8 DB-resolved path,
+        //    single-asset). Mapped to the first active asset.
+        // 3. Legacy fixture loader — the canonical-scenarios fallback reads
+        //    `data/probes/<cache_key>.parquet` for the first active asset.
+        //    Keeps pre-Task-8 tests working without a DB / Alpaca creds.
+        //
+        // Sources 2 and 3 are single-asset; they only key the first active
+        // asset, so a single-asset run is byte-identical to the old path.
+        let asset_bars: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>> =
+            if let Some(per_asset) = self.injected_asset_bars.clone() {
+                per_asset
+            } else {
+                let single: Vec<Ohlcv> = if let Some(injected) = self.injected_bars.clone() {
+                    injected
+                } else {
+                    let data_seed = &scenario.bar_cache_policy.cache_key;
+                    load_ohlcv_fixture(data_seed, &asset, usize::MAX)
+                        .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
+                };
+                BTreeMap::from([(asset_sym, single)])
+            };
+        // An empty bar list is the only genuinely-uninterpretable case
+        // (qa-decisions-30day-count). Anything narrower is a loader
+        // contract bug, not a runtime input to silently tolerate.
+        if asset_bars.values().all(|v| v.is_empty()) {
             anyhow::bail!("scenario {} has no bars; nothing to backtest", scenario.id,);
         }
 
-        // executor-trait-extraction (sub-track 1): the per-bar loop is
-        // now driven by the BarSource trait, timestamp progression by
-        // the Clock trait, and fill production by the FillSink trait.
-        // Trait-object dispatch keeps codegen reasonable when sub-track
-        // 3 lands the Live impl on the same `BacktestExecutor` shape.
-        //
-        // The BarSource owns its own copy of the bars (clone is cheap —
-        // `Ohlcv` is `Copy`-like data); the executor keeps the original
-        // `bars: Vec<Ohlcv>` for indexed T+1 look-ahead and for the
-        // post-loop `compute_baselines` call. The two stay in lockstep
-        // because the BarSource is constructed from the same vector and
-        // is drained in step with the indexed iteration below.
-        let mut bar_source: Box<dyn BarSource> = Box::new(InjectedBars::new(bars.clone()));
+        // The fan-out only iterates assets that actually have bars. An
+        // active asset with no injected/loaded bars contributes no
+        // decisions (and carries any open position untouched). For the
+        // single-asset path this is exactly `[asset_sym]`.
+        let active: Vec<xvision_core::trading::AssetSymbol> = active
+            .into_iter()
+            .filter(|a| asset_bars.get(a).is_some_and(|v| !v.is_empty()))
+            .collect();
+        if active.is_empty() {
+            anyhow::bail!("scenario {} has no bars for any active asset", scenario.id,);
+        }
+        // Venue symbols of the active set, surfaced in each seed as
+        // `active_assets` so the trader sees the cross-asset context.
+        let active_venue_symbols: Vec<String> = active.iter().map(|a| a.as_alpaca_pair()).collect();
+
+        // Aligned timeline: outer-join the per-asset bar series by
+        // timestamp. `timeline[ts][asset] = bar_index` — the per-asset
+        // index into `asset_bars[asset]` so the per-decision body can do
+        // T+1 look-ahead and history slicing exactly as the single-asset
+        // path did. An asset missing a bar at `ts` simply isn't present in
+        // the inner map and gets no decision there. BTreeMap keys keep the
+        // timestamp order ascending and the per-timestamp asset order
+        // deterministic (AssetSymbol is `Ord`).
+        let mut timeline: BTreeMap<
+            chrono::DateTime<chrono::Utc>,
+            BTreeMap<xvision_core::trading::AssetSymbol, usize>,
+        > = BTreeMap::new();
+        for a in &active {
+            for (idx, bar) in asset_bars[a].iter().enumerate() {
+                timeline.entry(bar.timestamp).or_default().insert(*a, idx);
+            }
+        }
+
+        // executor-trait-extraction (sub-track 1): fill production routes
+        // through the FillSink trait. The multi-asset fan-out drives the
+        // aligned `timeline` directly (rather than a single BarSource), so
+        // the per-asset T+1 look-ahead can index each asset's own vec; the
+        // Clock + FillSink seams are preserved for the future Live impl.
         let mut clock: Box<dyn Clock> = Box::new(InstantClock::new());
         let mut fill_sink: Box<dyn FillSink> = Box::new(SimulatedFills::new());
 
-        // Used by RunTick to report bar-clock progress. Cadence can make
-        // actual decisions sparser; the final bar produces a decision too
-        // (it fills against its own close instead of the absent T+1 open —
-        // see the `next_bar_open` fallback in the loop below).
-        let total_decision_bars = bars.len().max(1) as f64;
+        // Used by RunTick to report timeline progress. One tick per
+        // distinct timestamp (the bar clock), independent of how many
+        // assets decided at that timestamp.
+        let total_decision_bars = timeline.len().max(1) as f64;
 
         // Per-decision rolling-history window. Warmup bars (from
         // `eval::bars::load_warmup_bars`) are concatenated in front of the
-        // scenario bars so we can slice the last `scenario.warmup_bars`
-        // bars at each decision and surface them in the seed as
-        // `market_data.bar_history`. The slice excludes `current_bar`
-        // (already in the seed). This is the mechanism the QA15 fix
-        // relies on: bar 1 of a 30-bar EMA5/EMA13 scenario sees N≥13
-        // prior bars when the scenario has `warmup_bars >= 13`.
+        // first active asset's bars so we can slice the last
+        // `scenario.warmup_bars` bars at each decision and surface them in
+        // the seed as `market_data.bar_history`. v1 warmup is single-asset
+        // (the DB path resolves warmup per the single resolved asset); for
+        // additional assets in a multi-asset run the history window is
+        // built from that asset's own in-window bars with no warmup prefix.
         let warmup_count = self.warmup_bars.len();
-        let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(bars.iter()).collect();
         let history_window = scenario.warmup_bars as usize;
+        // Per-asset combined `[warmup..., bars...]` views for history
+        // slicing. Only the first active asset gets the warmup prefix
+        // (warmup is single-asset in v1); the rest use their bars as-is.
+        let combined_bars_by_asset: BTreeMap<
+            xvision_core::trading::AssetSymbol,
+            Vec<&Ohlcv>,
+        > = active
+            .iter()
+            .map(|a| {
+                let combined: Vec<&Ohlcv> = if *a == asset_sym {
+                    self.warmup_bars.iter().chain(asset_bars[a].iter()).collect()
+                } else {
+                    asset_bars[a].iter().collect()
+                };
+                (*a, combined)
+            })
+            .collect();
 
         // F-6: per-run seed-sanitization policy. Mirror of the paper
         // executor path; `Raw` (default) reproduces the pre-F-6 JSON
@@ -570,13 +641,15 @@ impl BacktestExecutor {
         // a slow scenario-load doesn't burn the operator's budget.
         let run_started: Instant = Instant::now();
         // engine-trade-guardrails-pyramid-flip-block (F-7):
-        // tracks the trader's most recent emitted open direction on the
-        // asset so the guardrail can detect a same-bar flip even when
-        // the executor's live position is momentarily flat between a
-        // close and an opposite open. Cleared on emitted `flat`. Only
-        // updated from the ORIGINAL trader action — a guardrail-rewritten
-        // `hold` does not bump the direction state.
-        let mut last_open_direction: Option<GuardAction> = None;
+        // tracks the trader's most recent emitted open direction PER ASSET
+        // so the guardrail can detect a same-bar flip even when the
+        // executor's live position is momentarily flat between a close and
+        // an opposite open. Cleared on emitted `flat`. Only updated from
+        // the ORIGINAL trader action — a guardrail-rewritten `hold` does
+        // not bump the direction state. Keyed per asset so a flip on BTC
+        // doesn't leak into ETH's flip detection.
+        let mut last_open_direction: BTreeMap<xvision_core::trading::AssetSymbol, GuardAction> =
+            BTreeMap::new();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
         let mut peak_equity = initial.max(0.0);
@@ -598,11 +671,21 @@ impl BacktestExecutor {
         // mode. The buffer is flushed when the policy fires (so we don't
         // re-trigger immediately after the skip window ends) and on any
         // reset trigger — non-`flat`/`hold` action or a portfolio change.
+        //
+        // Multi-asset (B4): this state is PER ASSET — each asset has its
+        // own flat-degeneracy streak and skip window. A flat run on BTC
+        // must not skip decisions on ETH. `EarlyStopState::default()` is
+        // the empty single-asset starting point preserved byte-identically.
+        #[derive(Default)]
+        struct EarlyStopState {
+            recent_actions: Vec<early_stop::Action>,
+            recent_convictions: Vec<f64>,
+            inherit_remaining: u32,
+            prev_position: f64,
+        }
         let early_stop_cfg = EarlyStopConfig::from_env_or_default();
-        let mut recent_actions: Vec<early_stop::Action> = Vec::with_capacity(early_stop_cfg.window);
-        let mut recent_convictions: Vec<f64> = Vec::with_capacity(early_stop_cfg.window);
-        let mut inherit_remaining: u32 = 0;
-        let mut prev_position: f64 = book.position(asset_sym);
+        let mut early_stop_state: BTreeMap<xvision_core::trading::AssetSymbol, EarlyStopState> =
+            active.iter().map(|a| (*a, EarlyStopState::default())).collect();
 
         // track-plan-touches: build the per-run filter hook. Returns
         // `None` for `EveryBar` strategies (the default) — the loop
@@ -616,98 +699,102 @@ impl BacktestExecutor {
         // parameter so the executor's surface area stays unchanged.
         let pool = store.pool().clone();
 
-        // executor-trait-extraction: per-bar loop is now driven by the
-        // BarSource trait. The indexed access (T+1 look-ahead,
-        // decision_bars push, history slicing) still uses the local
-        // `bars` slice, which is the same data the BarSource was built
-        // from. Clock advancement is driven explicitly inside the loop.
-        let mut i: usize = 0;
-        while let Some(bar) = bar_source.next_bar().await {
-            // Sync indexed view of the bar — the `bars` slice and the
-            // BarSource share the same underlying data, so the same
-            // index works for both.
-            debug_assert!(i < bars.len(), "bar_source out of sync with bars vec");
-            // Update the logical clock to this bar's timestamp before
-            // any decision-side work. Live impls will ignore this
-            // (their `WallClock::advance_to` will be a no-op).
-            clock.advance_to(bar.timestamp);
-            let bar = &bars[i];
+        // Multi-asset (B4): the per-bar loop is now driven by the aligned
+        // `timeline` (one outer step per distinct timestamp). At each
+        // timestamp the inner loop fans out over the assets that have a
+        // bar there, running the per-asset decision body for each. Equity
+        // is marked + recorded ONCE per timestamp (pooled NAV) after all
+        // that timestamp's assets have decided — `eval_equity_samples` is
+        // keyed `(run_id, timestamp)`, so there is exactly one pooled
+        // series, not one per asset. For a single-asset run this collapses
+        // to one asset per timestamp and is byte-identical to the old
+        // per-bar path. `timeline_idx` drives the RunTick progress %.
+        let mut timeline_idx: usize = 0;
+        for (&ts, assets_at_ts) in &timeline {
+            // Update the logical clock to this timestamp before any
+            // decision-side work. Live impls ignore this.
+            clock.advance_to(ts);
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
             }
-            // Cadence gate: only fire on bars whose minute-aligned timestamp
-            // is divisible by the strategy's cadence. With hourly bars and
-            // 60-min cadence this always matches.
-            if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
-                i += 1;
+            // Cadence gate: only fire on timestamps whose minute-aligned
+            // value is divisible by the strategy's cadence. Timestamp-level
+            // (shared across all assets at this ts).
+            if (ts.timestamp() / 60) % cadence_min != 0 {
+                timeline_idx += 1;
                 continue;
             }
-            // Track every cadence-gated bar so baselines can replay the same
-            // bar slice post-loop (see `compute_baselines` call below).
-            decision_bars.push(bar.clone());
+            // Track the first active asset's bar at this timestamp so
+            // baselines (a single-series computation) replay the same bar
+            // slice the strategy saw. Single-asset: identical to the old
+            // `decision_bars.push(bar.clone())`.
+            if let Some(&first_idx) = assets_at_ts.get(&asset_sym) {
+                decision_bars.push(asset_bars[&asset_sym][first_idx].clone());
+            }
 
-            // A decision at bar T normally fills at T+1's open. For the
-            // final bar of the window there is no T+1, so the fill source
-            // falls back to the same bar's close. Without this fallback
-            // an N-bar scenario would silently drop the last decision and
-            // produce N-1 rows in `decisions` (operator-reported off-by-
-            // one — `qa-decisions-30day-count`).
-            let next_bar_open = bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close);
-
-            // RunTick fires before the per-bar pipeline call so dashboards
-            // can advance progress bars even when an LLM round-trip is slow.
-            let scenario_progress_pct = ((i as f64 / total_decision_bars) * 100.0).clamp(0.0, 100.0);
+            // RunTick fires before the per-timestamp pipeline work so
+            // dashboards advance even when an LLM round-trip is slow.
+            let scenario_progress_pct =
+                ((timeline_idx as f64 / total_decision_bars) * 100.0).clamp(0.0, 100.0);
             self.emit(ProgressEvent::RunTick {
                 run_id: run.id.clone(),
                 scenario_progress_pct,
-                current_ts: bar.timestamp,
+                current_ts: ts,
             });
 
-            // track-plan-touches: per-bar filter evaluation. `None`
-            // means EveryBar strategy (no gating). When the outcome's
-            // decision is not `Active`, skip the agent pipeline for
-            // this bar — record the evaluation, emit the event, keep
-            // equity/metrics dense for chart continuity, then `continue`
-            // past pipeline / decision / fill work. The bar is still
-            // counted in `decision_bars` (already pushed above) so
-            // post-loop baselines see the same bar slice the strategy
-            // would have considered.
+            // track-plan-touches: per-bar filter evaluation. `None` means
+            // EveryBar strategy (no gating). The filter is a STRATEGY-level
+            // gate, evaluated once per timestamp on the first active
+            // asset's bar; when not `Active` it skips ALL assets' decisions
+            // this timestamp. `in_position` is true when any leg is open.
+            let mut filter_gated = false;
             if let Some(hook) = filter_hook.as_mut() {
-                let in_position = book.position(asset_sym).abs() > f64::EPSILON;
-                let evaluation = hook.evaluate(bar, in_position);
-                hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &evaluation)
-                    .await?;
-                if !evaluation.outcome.decision.is_active() {
-                    equity = book.equity(&BTreeMap::from([(asset_sym, next_bar_open)]));
-                    store.record_equity(&run.id, bar.timestamp, equity).await?;
-                    self.emit_chart(
-                        &run.id,
-                        RunChartEvent::Equity(ChartEquityPoint {
-                            time: bar.timestamp.timestamp(),
-                            equity_usd: equity,
-                        }),
-                    )
-                    .await;
-                    equity_curve.push(equity);
-
-                    if equity > peak_equity {
-                        peak_equity = equity;
+                if let Some(&first_idx) = assets_at_ts.get(&asset_sym) {
+                    let gate_bar = &asset_bars[&asset_sym][first_idx];
+                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
+                    let evaluation = hook.evaluate(gate_bar, in_position);
+                    hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
+                        .await?;
+                    if !evaluation.outcome.decision.is_active() {
+                        filter_gated = true;
                     }
-                    let drawdown_pct = if peak_equity > 0.0 {
-                        ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
-                    } else {
-                        0.0
-                    };
-                    self.emit(ProgressEvent::MetricsUpdated {
-                        run_id: run.id.clone(),
-                        equity,
-                        drawdown_pct,
-                        n_trades,
-                    });
-                    i += 1;
-                    continue;
                 }
             }
+
+            // Per-asset fan-out. Each iteration runs the existing
+            // per-decision body for one asset using that asset's own bar
+            // vec + index (T+1 look-ahead, history slicing). `'asset`
+            // labels the loop so the body's skip paths (early-stop inherit,
+            // filter gate) advance to the next asset rather than the next
+            // timestamp. Skipped via `continue 'asset` after recording the
+            // per-asset decision row.
+            'asset: for (&asset_sym, &i) in assets_at_ts.iter() {
+                let asset = asset_sym.as_alpaca_pair();
+                let bars = &asset_bars[&asset_sym];
+                let bar = &bars[i];
+                let combined_bars = &combined_bars_by_asset[&asset_sym];
+                // Warmup prefix only precedes the first active asset's bars
+                // (v1 warmup is single-asset); others have no warmup offset.
+                let warmup_count = if asset_sym == *active.first().unwrap() {
+                    warmup_count
+                } else {
+                    0
+                };
+
+                // A decision at bar T normally fills at T+1's open. For the
+                // final bar of an asset's window there is no T+1, so the
+                // fill source falls back to the same bar's close
+                // (qa-decisions-30day-count).
+                let next_bar_open = bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close);
+
+                if filter_gated {
+                    // Strategy filter gated this timestamp: skip the agent
+                    // pipeline for this asset. No decision row is written
+                    // (matches the single-asset filter-gate behavior, which
+                    // recorded only the filter evaluation + dense equity).
+                    // Equity is recorded once per timestamp below.
+                    continue 'asset;
+                }
 
             // History slice: last `history_window` bars strictly before
             // the current bar. `combined_idx` points at `bar` inside the
@@ -739,6 +826,7 @@ impl BacktestExecutor {
                 InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
                     "decision_index": decision_idx,
                     "asset": asset,
+                    "active_assets": active_venue_symbols,
                     "timestamp": bar.timestamp,
                     "market_data": {
                         "asset": asset,
@@ -756,6 +844,7 @@ impl BacktestExecutor {
                 }),
                 InputsPolicy::Causal => serde_json::json!({
                     "asset": asset,
+                    "active_assets": active_venue_symbols,
                     "market_data": {
                         "asset": asset,
                         "current_bar": current_bar_json,
@@ -790,20 +879,29 @@ impl BacktestExecutor {
             // justification="inherited from early-stop policy"`, record
             // equity (kept dense per bar so the chart series stays
             // continuous), and `continue` to the next bar.
-            let policy_plan = if inherit_remaining == 0 {
-                early_stop::should_skip_next_decision(
-                    &recent_actions,
-                    &recent_convictions,
-                    book.position(asset_sym) == prev_position,
-                    &early_stop_cfg,
-                )
-            } else {
-                None
+            // Per-asset early-stop streak state. Each asset has its own
+            // skip window so a flat run on one asset can't suppress
+            // decisions on another.
+            let policy_plan = {
+                let es = early_stop_state
+                    .get(&asset_sym)
+                    .expect("early_stop_state seeded for every active asset");
+                if es.inherit_remaining == 0 {
+                    early_stop::should_skip_next_decision(
+                        &es.recent_actions,
+                        &es.recent_convictions,
+                        book.position(asset_sym) == es.prev_position,
+                        &early_stop_cfg,
+                    )
+                } else {
+                    None
+                }
             };
             if let Some(plan) = policy_plan.as_ref() {
                 tracing::info!(
                     run_id = %run.id,
                     decision_index = decision_idx,
+                    asset = %asset,
                     skip_count = plan.skip_count,
                     "early-stop policy fired — inheriting flat decisions"
                 );
@@ -815,19 +913,21 @@ impl BacktestExecutor {
                 if let Some(obs) = self.obs_emitter.as_ref() {
                     let payload = serde_json::json!({
                         "decision_index": decision_idx,
+                        "asset": asset,
                         "skip_count": plan.skip_count,
                         "reason": plan.reason,
                     });
                     obs.emit_engine_event("early_stop_triggered", None, Some(payload.to_string()))
                         .await;
                 }
-                inherit_remaining = plan.skip_count;
+                let es = early_stop_state.get_mut(&asset_sym).unwrap();
+                es.inherit_remaining = plan.skip_count;
                 // Flush the rolling buffer so the policy can't re-fire
                 // on the next bar without a fresh streak rebuilding.
-                recent_actions.clear();
-                recent_convictions.clear();
+                es.recent_actions.clear();
+                es.recent_convictions.clear();
             }
-            if inherit_remaining > 0 {
+            if early_stop_state.get(&asset_sym).unwrap().inherit_remaining > 0 {
                 let inherited_row = DecisionRow {
                     run_id: run.id.clone(),
                     decision_index: decision_idx,
@@ -857,47 +957,16 @@ impl BacktestExecutor {
                     conviction: 0.0,
                 });
 
-                // Mark equity to next bar's open with no position change
-                // — `flat` on an already-flat or held position is a
-                // no-op fill. The existing `simulate_fill` semantics
-                // already give us this when `pos == 0`; for `pos != 0`
-                // an inherited flat would close the position, which
-                // would BE a portfolio change. We don't want the
-                // inherit branch to mutate position state, so we update
-                // equity in-place from current state instead of going
-                // through simulate_fill.
-                equity = book.equity(&BTreeMap::from([(asset_sym, next_bar_open)]));
-                store.record_equity(&run.id, bar.timestamp, equity).await?;
-                self.emit_chart(
-                    &run.id,
-                    RunChartEvent::Equity(ChartEquityPoint {
-                        time: bar.timestamp.timestamp(),
-                        equity_usd: equity,
-                    }),
-                )
-                .await;
-                equity_curve.push(equity);
-
-                if equity > peak_equity {
-                    peak_equity = equity;
-                }
-                let drawdown_pct = if peak_equity > 0.0 {
-                    ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
-                } else {
-                    0.0
-                };
-                self.emit(ProgressEvent::MetricsUpdated {
-                    run_id: run.id.clone(),
-                    equity,
-                    drawdown_pct,
-                    n_trades,
-                });
-
-                inherit_remaining -= 1;
-                prev_position = book.position(asset_sym);
+                // No position change — `flat` on an already-flat or held
+                // position is a no-op fill. The inherit branch must NOT
+                // mutate position state, so the book is left untouched and
+                // the pooled equity is marked + recorded ONCE at the end of
+                // this timestamp (after all assets), not here.
+                let es = early_stop_state.get_mut(&asset_sym).unwrap();
+                es.inherit_remaining -= 1;
+                es.prev_position = book.position(asset_sym);
                 decision_idx += 1;
-                i += 1;
-                continue;
+                continue 'asset;
             }
 
             // F43 (`trace-dock-emitters`): open a per-decision span so
@@ -965,6 +1034,11 @@ impl BacktestExecutor {
                     multi_filter_config,
                     bar_ts: bar.timestamp,
                     strategy_id: strategy.manifest.id.clone(),
+                    // Multi-asset (B4): scope each asset's filter signals
+                    // to `Asset(asset)` so two assets at the same bar keep
+                    // independent signal-cache entries. Single-asset runs
+                    // simply key everything under the one asset.
+                    scope: crate::agent::dispatch_capability::SignalScope::Asset(asset_sym),
                 }),
                 // Phase D — unified Recorder. Wired by callers that
                 // construct an `EvalRecorder` and thread it via
@@ -1111,7 +1185,11 @@ impl BacktestExecutor {
             // the block.
             let original_action = GuardAction::parse(&parsed.action);
             let position_state = position_state_from_size(pre_fill_position);
-            let decision = guardrails::classify(original_action, position_state, last_open_direction);
+            let decision = guardrails::classify(
+                original_action,
+                position_state,
+                last_open_direction.get(&asset_sym).copied(),
+            );
             let applied_action: String = match &decision {
                 GuardrailDecision::Allow => parsed.action.clone(),
                 GuardrailDecision::RewriteTo { action, reason } => {
@@ -1522,14 +1600,17 @@ impl BacktestExecutor {
             // APPLIED action (a guardrail-rewritten `hold` keeps the
             // existing direction; a `flat` clears it).
             match GuardAction::parse(&applied_action) {
-                GuardAction::LongOpen => last_open_direction = Some(GuardAction::LongOpen),
-                GuardAction::ShortOpen => last_open_direction = Some(GuardAction::ShortOpen),
-                GuardAction::Flat => last_open_direction = None,
+                GuardAction::LongOpen => {
+                    last_open_direction.insert(asset_sym, GuardAction::LongOpen);
+                }
+                GuardAction::ShortOpen => {
+                    last_open_direction.insert(asset_sym, GuardAction::ShortOpen);
+                }
+                GuardAction::Flat => {
+                    last_open_direction.remove(&asset_sym);
+                }
                 GuardAction::Hold | GuardAction::Other => {}
             }
-
-            // Mark equity to the next bar's open.
-            equity = book.equity(&BTreeMap::from([(asset_sym, next_bar_open)]));
 
             let decision_row = DecisionRow {
                 run_id: run.id.clone(),
@@ -1611,58 +1692,37 @@ impl BacktestExecutor {
                 self.emit_chart(&run.id, RunChartEvent::Marker(marker)).await;
             }
 
-            store.record_equity(&run.id, bar.timestamp, equity).await?;
+            // Equity is the pooled NAV across all assets and is recorded
+            // ONCE per timestamp (after this inner loop), not per asset —
+            // `eval_equity_samples` is keyed `(run_id, timestamp)`.
 
-            // Emit equity event for live-stream subscribers.
-            self.emit_chart(
-                &run.id,
-                RunChartEvent::Equity(ChartEquityPoint {
-                    time: bar.timestamp.timestamp(),
-                    equity_usd: equity,
-                }),
-            )
-            .await;
-
-            equity_curve.push(equity);
-
-            // Running drawdown — peak updates after each tick so
-            // MetricsUpdated reflects worst-observed-so-far for live UI.
-            if equity > peak_equity {
-                peak_equity = equity;
-            }
-            let drawdown_pct = if peak_equity > 0.0 {
-                ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
-            } else {
-                0.0
-            };
-            self.emit(ProgressEvent::MetricsUpdated {
-                run_id: run.id.clone(),
-                equity,
-                drawdown_pct,
-                n_trades,
-            });
-
-            // eval-flat-degeneracy-early-stop (F-9): roll the buffer and
-            // apply reset triggers. A portfolio change (position size
-            // delta — open, close, or resize) wipes the streak; so does
-            // any non-flat/non-hold action. Otherwise we append and
-            // truncate to the configured window.
-            let portfolio_changed = book.position(asset_sym) != prev_position;
+            // eval-flat-degeneracy-early-stop (F-9): roll this asset's
+            // buffer and apply reset triggers. A portfolio change (position
+            // size delta — open, close, or resize) wipes the streak; so
+            // does any non-flat/non-hold action. Otherwise we append and
+            // truncate to the configured window. Per-asset state.
+            let portfolio_changed = book.position(asset_sym)
+                != early_stop_state.get(&asset_sym).unwrap().prev_position;
             let cls = early_stop::Action::classify(&parsed.action);
-            if portfolio_changed || !matches!(cls, early_stop::Action::Flat | early_stop::Action::Hold) {
-                recent_actions.clear();
-                recent_convictions.clear();
-            } else {
-                recent_actions.push(cls);
-                recent_convictions.push(parsed.conviction);
-                let cap = early_stop_cfg.window;
-                if recent_actions.len() > cap {
-                    let drop_n = recent_actions.len() - cap;
-                    recent_actions.drain(0..drop_n);
-                    recent_convictions.drain(0..drop_n);
+            {
+                let es = early_stop_state.get_mut(&asset_sym).unwrap();
+                if portfolio_changed
+                    || !matches!(cls, early_stop::Action::Flat | early_stop::Action::Hold)
+                {
+                    es.recent_actions.clear();
+                    es.recent_convictions.clear();
+                } else {
+                    es.recent_actions.push(cls);
+                    es.recent_convictions.push(parsed.conviction);
+                    let cap = early_stop_cfg.window;
+                    if es.recent_actions.len() > cap {
+                        let drop_n = es.recent_actions.len() - cap;
+                        es.recent_actions.drain(0..drop_n);
+                        es.recent_convictions.drain(0..drop_n);
+                    }
                 }
+                es.prev_position = book.position(asset_sym);
             }
-            prev_position = book.position(asset_sym);
 
             // F43 (`trace-dock-emitters`): close the per-decision span
             // + emit the `decision_completed` engine event so the
@@ -1683,7 +1743,50 @@ impl BacktestExecutor {
             }
 
             decision_idx += 1;
-            i += 1;
+            } // end 'asset inner loop
+
+            // Pooled NAV mark for this timestamp. Each active asset is
+            // valued at its next-bar open (T+1) when it has a bar at this
+            // timestamp, falling back to its bar close on the terminal bar
+            // — the same per-asset mark price the decision body used. An
+            // asset with no bar at this timestamp keeps its prior leg and
+            // is simply absent from `marks` (the book treats absent marks
+            // as zero unrealized for that leg this tick). Recorded once so
+            // there is a single pooled equity series.
+            let mut marks: BTreeMap<xvision_core::trading::AssetSymbol, f64> = BTreeMap::new();
+            for (&a, &idx) in assets_at_ts.iter() {
+                let abars = &asset_bars[&a];
+                let mark = abars.get(idx + 1).map(|b| b.open).unwrap_or(abars[idx].close);
+                marks.insert(a, mark);
+            }
+            equity = book.equity(&marks);
+            store.record_equity(&run.id, ts, equity).await?;
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Equity(ChartEquityPoint {
+                    time: ts.timestamp(),
+                    equity_usd: equity,
+                }),
+            )
+            .await;
+            equity_curve.push(equity);
+
+            if equity > peak_equity {
+                peak_equity = equity;
+            }
+            let drawdown_pct = if peak_equity > 0.0 {
+                ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
+            } else {
+                0.0
+            };
+            self.emit(ProgressEvent::MetricsUpdated {
+                run_id: run.id.clone(),
+                equity,
+                drawdown_pct,
+                n_trades,
+            });
+
+            timeline_idx += 1;
         }
 
         if store.is_terminal(&run.id).await? {

@@ -155,6 +155,7 @@ async fn run_cycle(
             multi_filter_config: MultiFilterConfig::default(),
             bar_ts,
             strategy_id: strategy.manifest.id.clone(),
+            scope: xvision_engine::agent::dispatch_capability::SignalScope::Global,
         }),
         recorder: None,
     })

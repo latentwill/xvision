@@ -973,6 +973,10 @@ impl PaperExecutor {
                     multi_filter_config,
                     bar_ts: bar.timestamp,
                     strategy_id: strategy.manifest.id.clone(),
+                    // Paper executor is single-asset (v1); keep the
+                    // pre-multi-asset `Global` signal scope so cache keys
+                    // are byte-identical to the existing behaviour.
+                    scope: crate::agent::dispatch_capability::SignalScope::Global,
                 }),
                 // Phase D — unified Recorder. Wired by callers that
                 // construct an `EvalRecorder` and thread it via

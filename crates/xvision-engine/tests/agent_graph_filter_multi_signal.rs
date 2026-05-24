@@ -256,6 +256,7 @@ async fn short_bar_coalesces_both_filter_signals_into_one_trader_call() {
             multi_filter_config: MultiFilterConfig::default(),
             bar_ts: t0,
             strategy_id: strategy.manifest.id.clone(),
+            scope: xvision_engine::agent::dispatch_capability::SignalScope::Global,
         }),
         recorder: None,
     })
@@ -317,6 +318,7 @@ async fn long_bar_multi_fires_trader_per_emitting_filter() {
             multi_filter_config: MultiFilterConfig::default(),
             bar_ts: t0,
             strategy_id: strategy.manifest.id.clone(),
+            scope: xvision_engine::agent::dispatch_capability::SignalScope::Global,
         }),
         recorder: None,
     })
@@ -375,6 +377,7 @@ async fn threshold_zero_forces_multi_fire_on_short_bars() {
             },
             bar_ts: t0,
             strategy_id: strategy.manifest.id.clone(),
+            scope: xvision_engine::agent::dispatch_capability::SignalScope::Global,
         }),
         recorder: None,
     })

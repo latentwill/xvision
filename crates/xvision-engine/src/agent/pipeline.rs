@@ -171,6 +171,14 @@ pub struct FilterPipelineCtx<'a> {
     /// `SignalCacheKey`. Caller typically passes
     /// `strategy.manifest.id.clone()`.
     pub strategy_id: String,
+    /// Multi-asset (B4): scope tagged on the filter signals this cycle
+    /// produces / looks up, forming the third component of the
+    /// `SignalCacheKey`. In the backtest `PerAsset` fan-out the executor
+    /// sets this to `SignalScope::Asset(current_asset)` so each asset's
+    /// filter signals are cached independently; the paper / single-asset
+    /// callers leave it `SignalScope::Global` (the default) so their cache
+    /// keys are byte-identical to the pre-multi-asset shape.
+    pub scope: crate::agent::dispatch_capability::SignalScope,
 }
 
 #[derive(Debug)]
@@ -512,7 +520,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 let key = crate::agent::signal_cache::SignalCacheKey::new(
                     filter_ctx.strategy_id.clone(),
                     role_key.clone(),
-                    crate::agent::dispatch_capability::SignalScope::Global,
+                    filter_ctx.scope.clone(),
                 );
                 if let Some(cached) = filter_ctx.signal_cache.get(&key) {
                     let reuse = match cached.signal.granularity {
@@ -622,7 +630,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 let key = crate::agent::signal_cache::SignalCacheKey::new(
                     filter_ctx.strategy_id.clone(),
                     role_key.clone(),
-                    crate::agent::dispatch_capability::SignalScope::Global,
+                    filter_ctx.scope.clone(),
                 );
                 filter_ctx.signal_cache.insert(key, signal_for_cache);
             }
