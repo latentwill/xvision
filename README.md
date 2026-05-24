@@ -45,6 +45,8 @@ If you are an external or embedded agent using this repo, start here:
 4. For exact CLI usage, run `xvn --help` and read `.claude/skills/xvision-cli/references/cli.md`.
 5. For live-node remote control, use the Tailscale-served dashboard node (`xvn.tail2bb69.ts.net` or `xvnej.tail2bb69.ts.net`) rather than assuming arbitrary SSH access.
 6. For a shell-free remote CLI helper, use `scripts/xvn-remote.py`.
+7. For inline strategy filters, use `docs/operator/filter-dsl-catalog.md`
+   for the exact indicator/operator DSL accepted by `xvn strategy set-filter`.
 
 Hard deployment rules for agents:
 
@@ -116,8 +118,10 @@ docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
   ghcr.io/latentwill/xvision:latest
 ```
 
-V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/authoring/:id`,
-`/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/settings/*`.
+V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/strategies/:id`,
+`/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/charts/compare`,
+`/settings/*`.
+`/authoring/:id` remains as a compatibility alias for old inspector links.
 See `frontend/README.md` for the full route table and `frontend/DESIGN.md` for
 the design synthesis.
 
@@ -180,6 +184,8 @@ opens others:
 ## Documentation
 
 - `MANUAL.md` — operator runbook (commands, daily checklist, scale tiers)
+- `docs/operator/filter-dsl-catalog.md` — inline strategy filter indicators,
+  operators, and examples for chat rail and CLI agents
 - `architecture.md` / `architecture-diagram.mermaid` — current system shape
 - `docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md` — active V2-V4 roadmap
 - `frontend/README.md` and `frontend/DESIGN.md` — shipped dashboard routes and design notes

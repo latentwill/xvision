@@ -1,19 +1,28 @@
-//! Executor trait + concrete impls. Phase 3.B of the Eval Engine plan.
+//! Executor trait + concrete impl. Phase 3.B of the Eval Engine plan,
+//! amended 2026-05-22 (executor-collapse-paper-mode +
+//! executor-live-shell sub-tracks of the Alpaca-Live executor refactor).
 //!
-//! The Executor abstracts over the two run modes:
-//! - **Backtest** — replays a parquet fixture in chronological order,
-//!   simulates fills with slippage + fees. No broker required.
-//! - **Paper** — drives `BrokerSurface::submit_order` against a real or
-//!   mocked broker, suitable for the v1 demo path against Alpaca paper.
+//! A single concrete [`Executor`] struct covers both [`RunMode::Backtest`]
+//! and [`RunMode::Live`] by composing the [`BarSource`] + [`Clock`] +
+//! [`FillSink`] trio at construction:
 //!
-//! Callers (`engine::api::eval::run`, the eval CLI) pick an executor by
-//! `RunMode` and call `run(...)` once per `xvn eval run` invocation.
+//! - **Backtest** — `InjectedBars` + `InstantClock` + `SimulatedFills`.
+//!   Built via [`Executor::backtest`]. Replays a parquet fixture in
+//!   chronological order, simulates fills with slippage + fees. No
+//!   broker required.
+//! - **Live** — `LiveStream` + `WallClock` + `RealBrokerFills`. Built
+//!   via [`Executor::live`], which currently returns a not-implemented
+//!   error pending the `live-bar-source-alpaca` track. The signature
+//!   exists so the API dispatch can route to it once that track lands.
+//!
+//! Callers (`engine::api::eval::run`, the eval CLI) pick a constructor
+//! by `RunMode` and call [`RunExecutor::run`] once per `xvn eval run`
+//! invocation.
 
 pub mod asset_set;
 pub mod backtest;
 pub mod book;
 pub mod live_source;
-pub mod paper;
 pub mod real_broker_fills;
 pub mod trace_types;
 pub mod trader_output;
@@ -32,9 +41,8 @@ use crate::eval::store::RunStore;
 use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
-pub use backtest::BacktestExecutor;
+pub use backtest::Executor;
 pub use live_source::{LiveStream, LiveStreamError};
-pub use paper::PaperExecutor;
 pub use real_broker_fills::RealBrokerFills;
 pub use trace_types::{
     AggressorSide, DecisionTrace, FeeSource, FillBranch, FillTrace, ToolCall, DECISIONS_SCHEMA_VERSION,
@@ -125,8 +133,15 @@ pub(crate) fn format_failure_reason(err: &anyhow::Error) -> String {
     }
 }
 
+/// Engine-side run-driver trait. A single implementor — [`Executor`] —
+/// dispatches both Backtest and Live mode by composing the right
+/// `BarSource` + `Clock` + `FillSink` trio at construction.
+///
+/// The trait is named `RunExecutor` to avoid colliding with the
+/// concrete struct [`Executor`]; legacy doc comments referring to "the
+/// Executor trait" mean this surface.
 #[async_trait]
-pub trait Executor: Send + Sync {
+pub trait RunExecutor: Send + Sync {
     /// Run the strategy against the scenario end-to-end. Mutates `run`
     /// in-place to reflect status transitions (Queued → Running → Completed
     /// or Failed) and the final `MetricsSummary`. Persists every decision

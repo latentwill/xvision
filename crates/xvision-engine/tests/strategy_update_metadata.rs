@@ -103,6 +103,8 @@ async fn update_metadata_applies_in_scope_fields_and_preserves_others() {
                 display_name: Some("After-Edit Title".into()),
                 plain_summary: Some("Updated summary".into()),
                 asset_universe: Some(vec!["BTC/USD".into(), "eth/usd".into()]),
+                decision_cadence_minutes: None,
+                color: None,
             },
         )
         .await
@@ -146,6 +148,8 @@ async fn update_metadata_validation_failure_does_not_partially_mutate_disk() {
                 display_name: Some("Would-Apply".into()),
                 plain_summary: Some("".into()),
                 asset_universe: None,
+                decision_cadence_minutes: None,
+                color: None,
             },
         )
         .await
@@ -182,6 +186,8 @@ async fn update_metadata_keeps_strategy_id_stable_across_completed_run_history()
                 display_name: Some("Renamed After Run".into()),
                 plain_summary: Some("Eval-run history must survive this edit.".into()),
                 asset_universe: Some(vec!["BTC/USD".into()]),
+                decision_cadence_minutes: None,
+                color: None,
             },
         )
         .await

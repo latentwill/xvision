@@ -276,6 +276,38 @@ describe("ScenarioForm", () => {
     );
   });
 
+  it("preserves initial venue overrides when submitting a cloned scenario", () => {
+    const onSubmit = vi.fn();
+    const overrides = [
+      {
+        symbol_pattern: "ETH/*",
+        fees: { maker_bps: 2, taker_bps: 3 },
+        slippage: { model: "none" },
+      },
+    ];
+
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        initial={{
+          ...withDateRange(),
+          venue: { overrides },
+        } as Partial<CreateScenarioRequest>}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH cloned venue overrides" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        venue: expect.objectContaining({ overrides }),
+      }),
+    );
+  });
+
   // ── q15-scenario-warmup-bars ─────────────────────────────────────────
   // The "Context bars" field is the operator surface for the warmup
   // window. These tests pin: (1) the default value, (2) round-trip

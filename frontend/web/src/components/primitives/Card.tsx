@@ -28,7 +28,7 @@ export function CardHeader({
     <div
       className={`flex items-center justify-between px-5 pt-4 pb-3 ${className}`}
     >
-      <h2 className="m-0 font-serif font-medium text-[22px] tracking-tight">
+      <h2 className="m-0 font-sans font-medium text-[22px] tracking-tight">
         {title}
       </h2>
       {actions != null ? (

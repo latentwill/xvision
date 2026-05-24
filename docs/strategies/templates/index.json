@@ -1,7 +1,7 @@
 {
   "schema_version": "xvision.strategy_template_index.v1",
   "source_root": "strategies",
-  "template_count": 44,
+  "template_count": 36,
   "templates": [
     {
       "base_template": "trend_follower",
@@ -208,78 +208,6 @@
       "name": "bb_squeeze_failure_fade",
       "path": "docs/strategies/templates/bollinger/bb_squeeze_failure_fade.json",
       "source_doc": "strategies/bollinger/bb_squeeze_failure_fade.md",
-      "status": "queued"
-    },
-    {
-      "base_template": "onchain_smart_money",
-      "display_name": "CEX Inflow Riskoff",
-      "family": "nansen",
-      "name": "cex_inflow_riskoff",
-      "path": "docs/strategies/templates/nansen/cex_inflow_riskoff.json",
-      "source_doc": "strategies/nansen/cex_inflow_riskoff.md",
-      "status": "queued"
-    },
-    {
-      "base_template": "onchain_smart_money",
-      "display_name": "CEX Outflow Accumulation",
-      "family": "nansen",
-      "name": "cex_outflow_accumulation",
-      "path": "docs/strategies/templates/nansen/cex_outflow_accumulation.json",
-      "source_doc": "strategies/nansen/cex_outflow_accumulation.md",
-      "status": "queued"
-    },
-    {
-      "base_template": "onchain_smart_money",
-      "display_name": "Fresh Money Blowoff Top",
-      "family": "nansen",
-      "name": "fresh_money_blowoff_top",
-      "path": "docs/strategies/templates/nansen/fresh_money_blowoff_top.json",
-      "source_doc": "strategies/nansen/fresh_money_blowoff_top.md",
-      "status": "queued"
-    },
-    {
-      "base_template": "onchain_smart_money",
-      "display_name": "Fund Concentration Signal",
-      "family": "nansen",
-      "name": "fund_concentration_signal",
-      "path": "docs/strategies/templates/nansen/fund_concentration_signal.json",
-      "source_doc": "strategies/nansen/fund_concentration_signal.md",
-      "status": "queued"
-    },
-    {
-      "base_template": "onchain_smart_money",
-      "display_name": "Insider Distribution Riskoff",
-      "family": "nansen",
-      "name": "insider_distribution_riskoff",
-      "path": "docs/strategies/templates/nansen/insider_distribution_riskoff.json",
-      "source_doc": "strategies/nansen/insider_distribution_riskoff.md",
-      "status": "queued"
-    },
-    {
-      "base_template": "onchain_smart_money",
-      "display_name": "Smart Money Accumulation",
-      "family": "nansen",
-      "name": "smart_money_accumulation",
-      "path": "docs/strategies/templates/nansen/smart_money_accumulation.json",
-      "source_doc": "strategies/nansen/smart_money_accumulation.md",
-      "status": "queued"
-    },
-    {
-      "base_template": "mean_reversion",
-      "display_name": "Smart Money Distribution Fade",
-      "family": "nansen",
-      "name": "smart_money_distribution_fade",
-      "path": "docs/strategies/templates/nansen/smart_money_distribution_fade.json",
-      "source_doc": "strategies/nansen/smart_money_distribution_fade.md",
-      "status": "queued"
-    },
-    {
-      "base_template": "onchain_smart_money",
-      "display_name": "Stablecoin Inflow Riskon",
-      "family": "nansen",
-      "name": "stablecoin_inflow_riskon",
-      "path": "docs/strategies/templates/nansen/stablecoin_inflow_riskon.json",
-      "source_doc": "strategies/nansen/stablecoin_inflow_riskon.md",
       "status": "queued"
     },
     {

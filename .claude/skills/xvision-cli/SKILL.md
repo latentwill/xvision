@@ -20,6 +20,7 @@ runbooks.
 
 - `MANUAL.md` — operator-side prerequisites (Alpaca creds, Orderly onboarding, Mantle minting). Tier 2 = forward-paper, Tier 3 = one-time setup.
 - `xvn <verb> --help` — source of truth for any CLI flag.
+- `docs/operator/filters.md` — current strategy-level filter workflow and filter-QA checks.
 - `docs/superpowers/specs/2026-05-12-remote-cli-over-tailscale-design.md` — the shipped remote CLI contract for driving live nodes.
 
 For engineering docs (specs/plans/ADRs/FOLLOWUPS, architecture, team board),
@@ -29,9 +30,10 @@ switch to `xvision-dev`.
 
 `xvn --help` is the source of truth, but the high-traffic verbs:
 
-- `strategy` — author / validate / list / inspect saved `Strategy` artifacts (`$XVN_HOME/strategies/<id>.json`). Atomic mode (`strategy new --prompt`) creates a Strategy + Agent + provider/model binding in one call. `--family / --hypothesis / --target-regime / --avoid-regime` attach a `Hypothesis` to the strategy.
+- `strategy` — author / validate / list / inspect saved `Strategy` artifacts (`$XVN_HOME/strategies/<id>.json`). Atomic mode (`strategy new --prompt`) creates a Strategy + Agent + provider/model binding in one call. Prefer explicit provider/model and asset/timeframe; no workspace default model is assumed for eval launch. `--family / --hypothesis / --target-regime / --avoid-regime` attach a `Hypothesis` to the strategy.
+- `strategy set-filter` / `strategy filter-catalog` — install and inspect the deterministic inline Filter DSL. Always consult `xvn strategy filter-catalog --json` before authoring filters from chat rail; it is the canonical machine-readable catalog.
 - `scenario` — author scenarios. Includes `select` (read-only comparable set query), `inspect --card` (plain-text card), `classify` (auto-derive regime labels from bars), `set-regime` (operator-authored labels).
-- `eval` — `run`, `list`, `show`, `results`, `watch`, `compare` (with `--markdown` table), `batch` (multi-scenario), `attest`, `export` (canonical `EvalRunExport` JSON, q15 §3), `review`, `validate`.
+- `eval` — `run`, `list`, `show`, `results`, `watch`, `compare` (with `--markdown` table), `batch` (multi-scenario), `attest`, `export` (canonical `EvalRunExport` JSON, q15 §3), `review`, `validate`. `xvn eval run --auto-fire-review --max-review-annotations 8` opts the run into completion-time review annotations; `xvn eval show` prints the stored auto-review state.
 - `experiment` — ledger that groups a research question + strategy + scenarios. `experiment run` orchestrates pick → batch → bind → `result_json` in one shot; pair with `--wait --compare --markdown` for a publishable summary.
 - `ab-compare` — N-arm backtest harness; emits `BacktestResult` JSON. Cycles come from `--cycles <json>`; bars come from `--bars <json>` or the SQLite cache via `--from / --to / --granularity`.
 - `metrics` / `gate` — pre-committed metrics + anti-overfit verdict (treatment vs baseline).
@@ -68,6 +70,9 @@ xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
 xvn eval compare <run_id_a> <run_id_b> --markdown --sort sharpe
 xvn eval batch --strategy <id> --scenarios sc_a,sc_b,sc_c --wait
 
+xvn strategy filter-catalog --json
+xvn strategy set-filter <strategy_id> --from-json filter.json
+
 xvn experiment run \
   --name reg-breakout-eth-q1 \
   --question "Does the breakout edge survive across 1h ETH regimes?" \
@@ -78,6 +83,17 @@ xvn provider list
 xvn provider refresh-models --name openrouter
 xvn dashboard serve --bind 127.0.0.1:8788
 ```
+
+## Strategy inspector and filters
+
+- Canonical dashboard inspector route: `/strategies/:id`.
+- `/authoring/:id` still works only as a compatibility alias for older links.
+- The inspector Manifest card edits display name, description, asset universe, and cadence. The stable strategy ID is read-only.
+- Eval readiness validation is manual: click **Check eval readiness** or run `xvn strategy validate <id>` / `xvn eval validate`.
+- Mechanical params are not an operator tuning surface in the current inspector.
+- A real XVN filter is a saved strategy filter artifact, not prompt wording. Prompt text saying "filter" does not prove the filter subsystem ran.
+- For filter QA, confirm the strategy shows a filter artifact and completed eval details include filter summaries/events when expected.
+- Eval details separate direct model decisions from synthesized rows such as `noop_skip` and early-stop inheritance. Treat high synthesized counts as a QA caveat.
 
 ## Pipeline vocabulary (locked 2026-05-10, terminology rename Option B)
 
@@ -115,6 +131,45 @@ dashboard wizard and operator runbooks.
 Use `experiment` when the operator's question is the unit of work
 ("does this strategy survive across these regimes?"); use a bare `eval batch`
 when you just need N runs and don't need the ledger row.
+
+## Inline deterministic Filter DSL
+
+For pure indicator gates, prefer `xvn strategy set-filter <strategy_id>
+--from-json <path>` over an LLM Filter agent. The authoritative catalog
+is `xvn strategy filter-catalog --json`; the human docs are
+`docs/operator/filter-dsl-catalog.md` and `/docs?slug=filter-dsl-catalog`.
+
+Current high-value tokens include ADX/DI (`adx_14`, `di_plus_14`,
+`di_minus_14`), recent/persistent operators (`above_for_<bars>`,
+`crossed_above_<bars>`, `crossed_below_<bars>`), opening range
+(`opening_range_high_30`, `opening_range_low_30`), time-of-day volume
+(`rvol_tod_20`), and `volume_zscore_20`.
+
+Filters may include optional `fire` metadata:
+
+```json
+{
+  "fire": {
+    "reason": "trend_breakout",
+    "priority": 0.85,
+    "tags": ["trend", "breakout", "volume"],
+    "context": ["close", "opening_range_high_30", "adx_14", "rvol_tod_20"]
+  }
+}
+```
+
+`fire` does not change the boolean gate. It adds a compact trigger
+reason/context bundle to traces and trader briefings when the gate is
+active.
+
+Compare surfaces:
+
+- `/eval-runs/compare?ids=<run-a>,<run-b>` is run-centric: metrics, findings,
+  behavior, and the full run table.
+- `/charts/compare?ids=<run-a>,<run-b>` is Charts v2 strategy-centric:
+  equity overlay, roster pills, and cards. Roster changes update the URL.
+- CLI and JSON keep ids as the addressing primitive, but labels prefer
+  `strategy_name` from the strategy manifest when available.
 
 ## MCP tool peers for new CLI verbs
 
@@ -163,6 +218,8 @@ For command-style live-node work, prefer the typed remote CLI job API instead of
 - Don't bind the dashboard wider than loopback outside Tailscale until **F35** (dashboard auth) lands.
 - Don't drive the live nodes through ad-hoc SSH or shell text — use the typed remote-CLI job API or `scripts/xvn-remote.py`.
 - Don't bypass the `xvn provider` / `xvn strategy` / `xvn eval` surfaces by editing `$XVN_HOME` files directly — the CLI knows the right invariants and audit hooks.
+- Don't call a run a filter-functionality test unless a real filter artifact was attached and the eval output shows filter participation.
+- Don't infer strategy behavior from synthesized eval rows without calling out `noop_skip`, graph-gated, or early-stop provenance.
 
 ## Deeper references
 
@@ -174,6 +231,7 @@ Engineering-side deployment + crate-level architecture moved to the
 
 ---
 
-*Skills owner: whichever track ships a new `xvn` verb is responsible
-for updating this file in the same PR. Last refresh: 2026-05-20
-(intake `team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`).*
+*Skills owner: whichever track ships a new `xvn` verb, Filter DSL
+surface, or operator-visible strategy/eval workflow is responsible for
+updating this file in the same PR. Last refresh: 2026-05-24 (Filter DSL
+trigger-context expansion).*

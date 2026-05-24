@@ -142,6 +142,27 @@ describe('InlineRangeBar', () => {
       endIso: '2024-01-25',
     });
   });
+
+  it('collapsing the header discards an unapplied draft range', () => {
+    const onChange = vi.fn();
+    render(
+      <InlineRangeBar
+        startIso="2024-01-15"
+        endIso="2024-01-20"
+        onChange={onChange}
+        defaultOpen
+      />,
+    );
+    const bar = screen.getByTestId('inline-range-bar');
+    fireEvent.click(bar.querySelector('button[data-iso="2024-01-05"]') as HTMLElement);
+    fireEvent.click(bar.querySelector('button[data-iso="2024-01-25"]') as HTMLElement);
+    fireEvent.click(bar.querySelector('button[aria-expanded]') as HTMLElement);
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(bar.dataset.open).toBe('false');
+    expect(bar.textContent).toContain('Jan 15, 2024');
+    expect(bar.textContent).toContain('Jan 20, 2024');
+  });
 });
 
 describe('MobileInlineCard', () => {
@@ -178,5 +199,28 @@ describe('MobileInlineCard', () => {
       startIso: '2024-01-05',
       endIso: '2024-01-25',
     });
+  });
+
+  it('reflects updated parent start and end props', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <MobileInlineCard
+        startIso="2024-01-15"
+        endIso="2024-01-20"
+        onChange={onChange}
+      />,
+    );
+
+    rerender(
+      <MobileInlineCard
+        startIso="2024-02-01"
+        endIso="2024-02-10"
+        onChange={onChange}
+      />,
+    );
+
+    const card = screen.getByTestId('mobile-inline-card');
+    expect(card.textContent).toContain('Feb 1, 2024');
+    expect(card.textContent).toContain('Feb 10, 2024');
   });
 });

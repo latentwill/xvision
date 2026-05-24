@@ -316,5 +316,5 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
 
-  return { data, status };
+  return { data: data?.run_id === runId ? data : undefined, status };
 }

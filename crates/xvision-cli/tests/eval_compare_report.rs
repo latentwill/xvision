@@ -33,6 +33,23 @@ fn code(out: &std::process::Output) -> i32 {
     out.status.code().expect("child terminated by signal")
 }
 
+fn count_unescaped_pipes(line: &str) -> usize {
+    let mut escaped = false;
+    let mut count = 0;
+    for ch in line.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+        } else if ch == '|' {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// Seed two completed runs with distinct metrics and known decisions.
 /// Returns `(run_id_a, run_id_b)` where A has higher return, B has higher sharpe.
 async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
@@ -493,22 +510,28 @@ fn markdown_render_contains_header_and_per_run_row() {
 
 #[test]
 fn markdown_escapes_pipe_in_scenario_name() {
-    // The scenario name comes from api_scenario::get which falls back to the
-    // scenario_id on error. For this test the display_name is the canonical
-    // seeded value ("SOL Bull Run Q1 2025" or similar — no pipe there),
-    // so we just verify the row renders without breaking the table structure
-    // by checking there are no unescaped pipes inside a cell.
-    //
-    // The actual pipe-escape function is unit-tested implicitly here via
-    // the rendered output: if a scenario name contained "|" and we didn't
-    // escape it, the table columns would misalign and the header-column count
-    // check below would differ.
     let dir = tempdir().unwrap();
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     let (id_a, id_b) = rt.block_on(async { seed_two_runs(dir.path()).await });
+    rt.block_on(async {
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "eval-compare-report-test".into(),
+            },
+        )
+        .await
+        .expect("open ApiContext");
+        sqlx::query("UPDATE eval_runs SET scenario_id = ? WHERE id = ?")
+            .bind("SOL|Pipe Scenario")
+            .bind(&id_a)
+            .execute(&ctx.db)
+            .await
+            .expect("update scenario id");
+    });
 
     let out = xvn(
         &[
@@ -527,15 +550,20 @@ fn markdown_escapes_pipe_in_scenario_name() {
     );
 
     let md = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        md.contains("SOL\\|Pipe Scenario"),
+        "markdown must escape pipe characters inside scenario cells; got:\n{md}"
+    );
 
     // Every data row must have the same number of | separators as the header.
     let header_line = md
         .lines()
         .find(|l| l.starts_with("| Run |"))
         .expect("header row not found");
-    let header_cols = header_line.matches('|').count();
+    let header_cols = count_unescaped_pipes(header_line);
 
     // Only check rows that belong to the main run table (before any `###` heading).
+    // The per-asset rollup section has its own column shape.
     let mut in_per_asset_section = false;
     for line in md.lines() {
         if line.starts_with("###") {
@@ -545,7 +573,7 @@ fn markdown_escapes_pipe_in_scenario_name() {
             continue;
         }
         if line.starts_with("| ") && !line.starts_with("| Run |") && !line.starts_with("|---|") {
-            let cols = line.matches('|').count();
+            let cols = count_unescaped_pipes(line);
             assert_eq!(
                 cols, header_cols,
                 "data row has {cols} pipes but header has {header_cols}:\n  {line}"

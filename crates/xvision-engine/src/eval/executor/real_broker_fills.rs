@@ -39,7 +39,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use xvision_execution::broker_surface::{classify_broker_error_message, BrokerSurface, OrderRequest, Side};
+use xvision_execution::broker_surface::{
+    classify_broker_error_message, BrokerErrorClass, BrokerSurface, OrderRequest, Side,
+};
 
 use crate::eval::executor::traits::{FillRecord, FillRequest, FillSink};
 use crate::eval::orders::OrderState;
@@ -114,7 +116,7 @@ impl FillSink for RealBrokerFills {
                 size,
                 "RealBrokerFills: refusing to submit non-positive size"
             );
-            return rejected_no_fill(&req, "size_non_positive");
+            return rejected_no_fill(&req, BrokerErrorClass::Unknown, "size_non_positive".into());
         }
 
         let idempotency_key = format!("live-{}-{}", req.asset, req.bar_ts.timestamp());
@@ -190,6 +192,7 @@ impl FillSink for RealBrokerFills {
                         OrderState::Filled
                     }),
                     volume_cap_hit: None,
+                    broker_error: None,
                 }
             }
             Err(e) => {
@@ -208,7 +211,7 @@ impl FillSink for RealBrokerFills {
                     error_message = %msg,
                     "RealBrokerFills: broker rejected order"
                 );
-                rejected_no_fill(&req, class.as_tag())
+                rejected_no_fill(&req, class, msg)
             }
         }
     }
@@ -231,6 +234,7 @@ fn noop_fill_record(req: &FillRequest) -> FillRecord {
         aggressor_side: None,
         order_state: None,
         volume_cap_hit: None,
+        broker_error: None,
     }
 }
 
@@ -238,7 +242,7 @@ fn noop_fill_record(req: &FillRequest) -> FillRecord {
 /// the snake-case error class from
 /// `BrokerErrorClass::as_tag` (or a custom tag for non-broker
 /// rejections like sizing degeneracies).
-fn rejected_no_fill(req: &FillRequest, _class_tag: &str) -> FillRecord {
+fn rejected_no_fill(req: &FillRequest, class: BrokerErrorClass, reason: String) -> FillRecord {
     FillRecord {
         new_pos: req.pos,
         new_entry: req.entry,
@@ -251,5 +255,6 @@ fn rejected_no_fill(req: &FillRequest, _class_tag: &str) -> FillRecord {
         aggressor_side: None,
         order_state: Some(OrderState::Rejected),
         volume_cap_hit: None,
+        broker_error: Some((class, reason)),
     }
 }

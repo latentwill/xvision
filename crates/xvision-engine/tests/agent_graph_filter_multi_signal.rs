@@ -173,7 +173,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -258,6 +258,7 @@ async fn short_bar_coalesces_both_filter_signals_into_one_trader_call() {
             strategy_id: strategy.manifest.id.clone(),
             scope: xvision_engine::agent::dispatch_capability::SignalScope::Global,
         }),
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -320,6 +321,7 @@ async fn long_bar_multi_fires_trader_per_emitting_filter() {
             strategy_id: strategy.manifest.id.clone(),
             scope: xvision_engine::agent::dispatch_capability::SignalScope::Global,
         }),
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -379,6 +381,7 @@ async fn threshold_zero_forces_multi_fire_on_short_bars() {
             strategy_id: strategy.manifest.id.clone(),
             scope: xvision_engine::agent::dispatch_capability::SignalScope::Global,
         }),
+        trace_attrs: None,
         recorder: None,
     })
     .await

@@ -220,6 +220,8 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     })
     .await
     .expect("execute_slot must succeed with CapturingDispatch");
@@ -312,6 +314,8 @@ async fn recall_wraps_each_pattern_in_caselaw_framing() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     })
     .await
     .unwrap();
@@ -385,6 +389,8 @@ async fn recall_excludes_pattern_when_training_window_overlaps_scenario() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     })
     .await
     .unwrap();
@@ -443,6 +449,8 @@ async fn execute_slot_writes_final_decision_into_namespace() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     })
     .await
     .unwrap();
@@ -497,7 +505,7 @@ fn pipeline_fixture_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -585,6 +593,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -713,6 +722,8 @@ async fn execute_slot_emits_memory_recall_event_with_decision_id() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     })
     .await
     .expect("execute_slot must succeed");

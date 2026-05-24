@@ -98,6 +98,7 @@ mod tests {
                 "mcp",
                 "operator-manual",
                 "firing-conditions",
+                "filter-dsl-catalog",
                 "cli-non-surfaced",
                 "runbook",
             ],

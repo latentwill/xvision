@@ -1,6 +1,6 @@
 //! Integration test for F-5 phase 2b (`harness-recovery-schema-missing-field`).
 //!
-//! Drives `PaperExecutor::run` and `BacktestExecutor::run` through a
+//! Drives `paper-mode-executor-deleted::run` and `Executor::run` through a
 //! canned `LlmDispatch` that emits a schema-violating trader response on
 //! the first call (missing or invalid field) and a targeted-patch
 //! response on the repair attempt. Asserts:
@@ -20,8 +20,8 @@
 //!      families are disjoint per `FailureClass::family` and one repair
 //!      attempt is the contract budget.
 //!
-//!   4. `BacktestExecutor` applies the same patch repair as
-//!      `PaperExecutor`.
+//!   4. `Executor` applies the same patch repair as
+//!      `paper-mode-executor-deleted`.
 //!
 //!   5. A/B cache pairing: the repair-turn dispatch uses the same
 //!      conversation seed as the original call (the `cycle_id`-derived
@@ -49,7 +49,7 @@ use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmRespo
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::agent::pipeline::ResolvedAgentSlot;
 use xvision_engine::agents::InputsPolicy;
-use xvision_engine::eval::executor::{classify_run_failure, BacktestExecutor, Executor, PaperExecutor};
+use xvision_engine::eval::executor::{classify_run_failure, Executor, RunExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
@@ -174,7 +174,7 @@ fn minimal_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -310,8 +310,12 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
     let strategy = minimal_strategy();
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
@@ -462,8 +466,12 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
     let strategy = minimal_strategy();
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
@@ -551,8 +559,12 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
     let strategy = minimal_strategy();
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario)).with_observability(emitter);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
@@ -623,7 +635,7 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
     );
 }
 
-// ─── Case (d): BacktestExecutor applies the patch repair uniformly. ─────
+// ─── Case (d): Executor applies the patch repair uniformly. ─────
 
 #[tokio::test]
 async fn backtest_executor_repairs_missing_field_on_single_patch_retry() {
@@ -647,7 +659,7 @@ async fn backtest_executor_repairs_missing_field_on_single_patch_retry() {
     let strategy = minimal_strategy();
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
-    let executor = BacktestExecutor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),

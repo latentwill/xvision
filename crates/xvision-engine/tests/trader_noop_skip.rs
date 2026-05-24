@@ -1,17 +1,19 @@
 //! Acceptance tests for the `trader-noop-skip` track
 //! (`team/intake/2026-05-21-eval-honesty-and-agent-graph.md`).
 //!
-//! The pre-LLM gate skips the LLM call when `portfolio_state.position_size`
-//! is non-zero AND the trader slot has `noop_skip` enabled (the default).
+//! The pre-LLM gate skips the LLM call when the seed explicitly provides a
+//! `legal_actions` set containing only `hold` AND the trader slot has
+//! `noop_skip` enabled (the default).
 //! A synthesized `TraderDecision` is returned with `noop_skip` provenance so
 //! the trace surface shows the skip.
 //!
-//! Three acceptance scenarios:
+//! Four acceptance scenarios:
 //!
-//! 1. Portfolio long (`position_size > 0`), slot default (`noop_skip = None`
+//! 1. Legal action set is hold-only, slot default (`noop_skip = None`
 //!    → true) → LLM mock never called, decision carries noop_skip provenance.
-//! 2. Portfolio long, `noop_skip = Some(false)` → LLM IS called.
-//! 3. Portfolio flat (`position_size == 0`) → LLM IS called regardless of
+//! 2. Portfolio long without a hold-only allowed-action set → LLM IS called.
+//! 3. Portfolio long, `noop_skip = Some(false)` → LLM IS called.
+//! 4. Portfolio flat (`position_size == 0`) → LLM IS called regardless of
 //!    noop_skip.
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -60,7 +62,7 @@ fn fixture_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -132,16 +134,22 @@ fn seed_with_position(position_size: f64) -> serde_json::Value {
     })
 }
 
+fn seed_with_hold_only_actions(position_size: f64) -> serde_json::Value {
+    let mut seed = seed_with_position(position_size);
+    seed["legal_actions"] = serde_json::json!(["hold"]);
+    seed
+}
+
 // ---------------------------------------------------------------------------
-// Test 1: portfolio long, noop_skip default (None → true) → LLM NOT called
+// Test 1: hold-only allowed-action set, noop_skip default → LLM NOT called
 // ---------------------------------------------------------------------------
 
-/// Acceptance criterion 1: when the portfolio already holds a long position
-/// (`position_size > 0`) and the slot's `noop_skip` is enabled (the default
-/// `None` → true), the LLM provider mock must NEVER be called and the
-/// resulting `PipelineOutputs.trader` must carry `noop_skip` provenance.
+/// Acceptance criterion 1: when the seed explicitly says only `hold` is
+/// available and the slot's `noop_skip` is enabled, the LLM provider mock must
+/// NEVER be called and the resulting `PipelineOutputs.trader` must carry
+/// `noop_skip` provenance.
 #[tokio::test]
-async fn noop_skip_fires_when_portfolio_long_and_skip_enabled() {
+async fn noop_skip_fires_when_seed_allows_only_hold() {
     let strategy = fixture_strategy();
     let agent_slots = vec![trader_slot(/* noop_skip = */ true)];
 
@@ -150,11 +158,10 @@ async fn noop_skip_fires_when_portfolio_long_and_skip_enabled() {
     );
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
-    // Seed with non-zero position_size (long 100 units)
     let outs = run_pipeline(PipelineInputs {
         strategy: &strategy,
         agent_slots: &agent_slots,
-        seed_inputs: seed_with_position(100.0),
+        seed_inputs: seed_with_hold_only_actions(100.0),
         dispatch,
         tools,
         obs: None,
@@ -165,6 +172,7 @@ async fn noop_skip_fires_when_portfolio_long_and_skip_enabled() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -174,7 +182,7 @@ async fn noop_skip_fires_when_portfolio_long_and_skip_enabled() {
     assert_eq!(
         call_count.load(Ordering::SeqCst),
         0,
-        "noop_skip must prevent the LLM from being called when portfolio is long"
+        "noop_skip must prevent the LLM from being called when only hold is available"
     );
 
     // Trader output must be present (not silently dropped).
@@ -204,17 +212,16 @@ async fn noop_skip_fires_when_portfolio_long_and_skip_enabled() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: portfolio long, noop_skip = Some(false) → LLM IS called
+// Test 2: portfolio long, no hold-only allowed-action set → LLM IS called
 // ---------------------------------------------------------------------------
 
-/// Acceptance criterion 2: when `noop_skip` is explicitly disabled
-/// (`Some(false)`), the LLM IS called even in the zero-legal-actions state so
-/// operators who want "what would the model say in a corner?" can opt out.
+/// Acceptance criterion 2: an open position alone is not enough to skip the
+/// trader. Close/flat is still a state-changing decision the model may need to
+/// make.
 #[tokio::test]
-async fn noop_skip_disabled_calls_llm_even_when_portfolio_long() {
+async fn noop_skip_does_not_fire_just_because_portfolio_is_long() {
     let strategy = fixture_strategy();
-    // noop_skip = false → gate disabled
-    let agent_slots = vec![trader_slot(/* noop_skip = */ false)];
+    let agent_slots = vec![trader_slot(/* noop_skip = */ true)];
 
     let (call_count, dispatch) =
         CountingDispatch::new(r#"{"action":"hold","conviction":0.1,"justification":"hold in corner"}"#);
@@ -234,6 +241,7 @@ async fn noop_skip_disabled_calls_llm_even_when_portfolio_long() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -242,15 +250,59 @@ async fn noop_skip_disabled_calls_llm_even_when_portfolio_long() {
     assert_eq!(
         call_count.load(Ordering::SeqCst),
         1,
-        "LLM must be called when noop_skip = false, even with position held"
+        "LLM must be called when position is held but no hold-only allowed-action set is present"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: portfolio flat → LLM IS called regardless of noop_skip
+// Test 3: portfolio long, noop_skip = Some(false) → LLM IS called
 // ---------------------------------------------------------------------------
 
-/// Acceptance criterion 3: when the portfolio is flat (`position_size == 0`)
+/// Acceptance criterion 3: when `noop_skip` is explicitly disabled
+/// (`Some(false)`), the LLM IS called even if the seed says only hold is
+/// available so operators who want "what would the model say in a corner?" can
+/// opt out.
+#[tokio::test]
+async fn noop_skip_disabled_calls_llm_even_when_only_hold_is_available() {
+    let strategy = fixture_strategy();
+    let agent_slots = vec![trader_slot(/* noop_skip = */ false)];
+
+    let (call_count, dispatch) =
+        CountingDispatch::new(r#"{"action":"hold","conviction":0.1,"justification":"hold in corner"}"#);
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    let _outs = run_pipeline(PipelineInputs {
+        strategy: &strategy,
+        agent_slots: &agent_slots,
+        seed_inputs: seed_with_hold_only_actions(100.0),
+        dispatch,
+        tools,
+        obs: None,
+        memory_recorder: None,
+        scenario_start: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
+        provider_catalogs: std::collections::HashMap::new(),
+        filter_ctx: None,
+        recorder: None,
+        trace_attrs: None,
+    })
+    .await
+    .expect("run_pipeline must succeed");
+
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        1,
+        "LLM must be called when noop_skip = false, even when only hold is available"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: portfolio flat → LLM IS called regardless of noop_skip
+// ---------------------------------------------------------------------------
+
+/// Acceptance criterion 4: when the portfolio is flat (`position_size == 0`)
 /// both long_open and short_open are legal, so the gate must NOT fire even
 /// when `noop_skip` is enabled.
 #[tokio::test]
@@ -277,6 +329,7 @@ async fn noop_skip_does_not_fire_when_portfolio_flat() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await

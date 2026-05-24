@@ -5,7 +5,7 @@
 // variant (`MobileBottomSheet`) is also NOT ported — overlay/popup,
 // excluded by the no-popup rule.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   DAY_MS,
   CalendarView,
@@ -46,6 +46,16 @@ export function MobileInlineCard({
   const [hover, setHover] = useState<Date | null>(null);
   const [activePreset, setActivePreset] = useState<string | null>(null);
 
+  useEffect(() => {
+    const nextStart = fromIsoDate(startIso);
+    const nextEnd = fromIsoDate(endIso);
+    setStart(nextStart);
+    setEnd(nextEnd);
+    setAnchor(nextStart ?? today());
+    setHover(null);
+    setActivePreset(null);
+  }, [startIso, endIso]);
+
   const handlePick = (d: Date) => {
     if (!start || (start && end)) {
       setStart(d);
@@ -79,7 +89,7 @@ export function MobileInlineCard({
         background: 'var(--surface-card)',
         border: '1px solid var(--border)',
         borderRadius: 6,
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'Geist, sans-serif',
         padding: '12px 14px',
       }}
     >
@@ -116,7 +126,7 @@ export function MobileInlineCard({
           </div>
           <div
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               fontSize: 13,
               color: 'var(--text)',
               marginTop: 2,
@@ -150,7 +160,7 @@ export function MobileInlineCard({
           </div>
           <div
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               fontSize: 13,
               color: 'var(--text)',
               marginTop: 2,
@@ -177,7 +187,7 @@ export function MobileInlineCard({
           </span>
           <span
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               fontSize: 12,
               color: 'var(--gold)',
             }}
@@ -215,7 +225,7 @@ export function MobileInlineCard({
                 borderRadius: 999,
                 border:
                   '1px solid ' +
-                  (active ? 'rgba(212,165,71,0.5)' : 'var(--border)'),
+                  (active ? 'rgba(0,230,118,0.5)' : 'var(--border)'),
                 background: active ? 'var(--gold-bg)' : 'transparent',
                 color: active ? 'var(--gold)' : 'var(--text-2)',
                 fontFamily: 'inherit',

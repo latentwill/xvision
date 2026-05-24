@@ -76,6 +76,19 @@ async fn get_run_caches_within_ttl_for_queued_runs() {
         "expected cached response (queued) but got fresh fetch ({})",
         second_body["summary"]["status"]
     );
+
+    store
+        .update_status(&run.id, RunStatus::Completed, None)
+        .await
+        .unwrap();
+
+    let terminal = server.get(&format!("/api/eval/runs/{}", run.id)).await;
+    terminal.assert_status(StatusCode::OK);
+    let terminal_body: serde_json::Value = terminal.json();
+    assert_eq!(
+        terminal_body["summary"]["status"], "completed",
+        "terminal transition must bypass the queued cache entry"
+    );
 }
 
 /// Terminal-status runs (`completed | failed | cancelled`) are never

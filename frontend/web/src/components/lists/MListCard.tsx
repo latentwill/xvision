@@ -61,7 +61,7 @@ export function MListCard<T>(props: MListCardProps<T>) {
       <div className="flex items-baseline justify-between gap-2.5 px-4 pt-4 pb-1.5">
         <div className="flex items-baseline gap-2 min-w-0">
           {title && (
-            <h2 className="m-0 font-serif font-medium text-[26px] tracking-tight text-text truncate">
+            <h2 className="m-0 font-sans font-medium text-[26px] tracking-tight text-text truncate">
               {title}
             </h2>
           )}

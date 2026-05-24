@@ -21,7 +21,7 @@ async fn list_returns_persisted_runs() {
     let store = RunStore::new(ctx.db.clone());
     let scenario_id = seeded_scenario_id(&ctx).await;
     let r1 = Run::new_queued("h-A".into(), scenario_id.clone(), RunMode::Backtest);
-    let r2 = Run::new_queued("h-B".into(), scenario_id, RunMode::Paper);
+    let r2 = Run::new_queued("h-B".into(), scenario_id, RunMode::Backtest);
     store.create(&r1).await.unwrap();
     store.create(&r2).await.unwrap();
 
@@ -35,7 +35,7 @@ async fn list_filters_by_agent_id() {
     let store = RunStore::new(ctx.db.clone());
     let scenario_id = seeded_scenario_id(&ctx).await;
     let mut a = Run::new_queued("h-A".into(), scenario_id.clone(), RunMode::Backtest);
-    let mut b = Run::new_queued("h-A".into(), scenario_id.clone(), RunMode::Paper);
+    let mut b = Run::new_queued("h-A".into(), scenario_id.clone(), RunMode::Backtest);
     let mut c = Run::new_queued("h-B".into(), scenario_id, RunMode::Backtest);
     a.agent_id = "h-A".into();
     b.agent_id = "h-A".into();
@@ -83,14 +83,14 @@ async fn get_returns_persisted_run() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
     let scenario_id = seeded_scenario_id(&ctx).await;
-    let run = Run::new_queued("h".into(), scenario_id.clone(), RunMode::Paper);
+    let run = Run::new_queued("h".into(), scenario_id.clone(), RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
     let back = eval::get(&ctx, &id).await.unwrap();
     assert_eq!(back.id, id);
     assert_eq!(back.scenario_id, scenario_id);
-    assert_eq!(back.mode, RunMode::Paper);
+    assert_eq!(back.mode, RunMode::Backtest);
 }
 
 #[tokio::test]
@@ -104,7 +104,7 @@ async fn get_returns_not_found_for_unknown_id() {
 async fn cancel_is_idempotent_after_run_is_cancelled() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let run = Run::new_queued("h".into(), seeded_scenario_id(&ctx).await, RunMode::Paper);
+    let run = Run::new_queued("h".into(), seeded_scenario_id(&ctx).await, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -152,7 +152,7 @@ async fn list_writes_audit_row() {
 async fn get_writes_audit_row() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
-    let run = Run::new_queued("h".into(), seeded_scenario_id(&ctx).await, RunMode::Paper);
+    let run = Run::new_queued("h".into(), seeded_scenario_id(&ctx).await, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
     let _ = eval::get(&ctx, &id).await.unwrap();

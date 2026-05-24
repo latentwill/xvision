@@ -21,9 +21,9 @@ use xvision_data::alpaca::BarGranularity;
 
 use crate::eval::bars::compute_scenario_cache_key;
 use crate::eval::scenario::{
-    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
-    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+    SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use crate::safety::VenueLabel;
 use crate::strategies::manifest::{PublicManifest, RegimeFit};

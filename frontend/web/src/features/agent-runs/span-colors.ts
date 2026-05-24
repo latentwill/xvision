@@ -27,7 +27,7 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
   // Buy / Sell / Close / Short submissions read as a separate column
   // on the flame graph alongside model.call.
   broker:     { hex: "#f472b6", label: "BROKR" },
-  supervisor: { hex: "#d4a547", label: "SUPER" },
+  supervisor: { hex: "#00E676", label: "SUPER" },
   artifact:   { hex: "#a78bfa", label: "ARTIF" },
 };
 

@@ -301,6 +301,7 @@ async fn run_one_arm(
         scenario_id: req.params.scenario_id.clone(),
         mode: req.mode_run,
         params_override: None,
+        live_config: None,
         limits: if req.params.limits.is_empty() {
             None
         } else {
@@ -309,6 +310,9 @@ async fn run_one_arm(
         skip_preflight: false,
         provider_override,
         assets_subset: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     match api_eval::run_with_deps(
         ctx,

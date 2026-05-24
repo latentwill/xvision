@@ -68,7 +68,9 @@ const workspaceScope = { scope: "workspace" } as const;
 
 beforeEach(() => {
   localStorage.clear();
-  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
+      default_model: null,
+  });
   vi.mocked(chatApi.listSessions).mockResolvedValue([
     {
       id: "old-session",

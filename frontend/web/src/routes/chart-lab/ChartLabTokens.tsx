@@ -3,7 +3,7 @@
 
 import { themeDefinitions, type Chart2ThemeDefinition, type ResolvedTheme } from "@/theme/themes";
 
-const THEMES: ResolvedTheme[] = ["light", "folio-dark", "black"];
+const THEMES: ResolvedTheme[] = ["light", "dark"];
 
 function Swatch({ color }: { color: string }) {
   return (

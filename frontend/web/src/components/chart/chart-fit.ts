@@ -13,7 +13,7 @@ import type { IChartApi } from "lightweight-charts";
  * Charts in this app use different price-scale ids:
  *   - RunChart / StrategyChart / ScenarioChart: default `right` scale
  *     (plus `volume` on Scenario)
- *   - CompareChart: `left` scale (it overlays multiple price series)
+ *   - CompareChart: run equity on `right`, optional price backdrop on `left`
  *
  * Pass the ids the caller cares about. Unknown ids return a no-op
  * priceScale handle, so passing a superset is safe but redundant.

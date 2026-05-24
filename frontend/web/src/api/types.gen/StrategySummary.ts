@@ -3,6 +3,11 @@ import type { ProviderModelPair } from "./ProviderModelPair";
 
 export type StrategySummary = { agent_id: string, display_name: string, template: string, decision_cadence_minutes: number, tags: Array<string>, 
 /**
+ * Optional per-strategy display color from the manifest. Chart surfaces
+ * use it before falling back to the stable compare palette.
+ */
+color: string | null, 
+/**
  * Model summary for attached AgentRefs. Falls back to legacy slot config
  * and shows the first unique model plus a count when multiple are present.
  */

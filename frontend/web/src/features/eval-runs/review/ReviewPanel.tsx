@@ -62,7 +62,7 @@ export function ReviewPanel({
     return (
       <Card className="p-5">
         <PanelHeader />
-        <div className="text-text-3 text-[13px] italic">
+        <div className="text-text-3 text-[13px] font-medium">
           Reviews are available after the run finishes.
         </div>
       </Card>
@@ -73,6 +73,17 @@ export function ReviewPanel({
   const hasReviews = reviews.length > 0;
   const detail = detailQuery.data ?? null;
   const detailReview: EvalReview | null = detail?.review ?? null;
+  const [copiedFormat, setCopiedFormat] = useState<"md" | "json" | null>(null);
+
+  async function copyReview(format: "md" | "json", detail: ReviewDetail) {
+    const text =
+      format === "md"
+        ? reviewDetailToMarkdown(detail)
+        : JSON.stringify(detail, null, 2);
+    await navigator.clipboard.writeText(text);
+    setCopiedFormat(format);
+    window.setTimeout(() => setCopiedFormat(null), 1500);
+  }
 
   return (
     <Card className="p-5">
@@ -111,7 +122,7 @@ export function ReviewPanel({
       )}
 
       {listQuery.isPending && (
-        <div className="text-text-3 text-[13px] italic">
+        <div className="text-text-3 text-[13px] font-medium">
           Loading reviews…
         </div>
       )}
@@ -143,7 +154,7 @@ export function ReviewPanel({
 
       {generate.isPending && (
         <div
-          className="text-text-2 text-[13px] italic"
+          className="text-text-2 text-[13px] font-medium"
           role="status"
           aria-live="polite"
         >
@@ -153,7 +164,7 @@ export function ReviewPanel({
       )}
 
       {detailQuery.isPending && effectiveId && (
-        <div className="text-text-3 text-[13px] italic">Loading review…</div>
+        <div className="text-text-3 text-[13px] font-medium">Loading review…</div>
       )}
 
       {detailQuery.isError && effectiveId && (
@@ -183,14 +194,34 @@ export function ReviewPanel({
             </div>
           )}
           {detailReview.status === "completed" && (
-            <ReviewContent
-              review={detailReview}
-              findings={detail.findings}
-            />
+            <>
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="copy-review-md"
+                  onClick={() => void copyReview("md", detail)}
+                  className="rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text"
+                >
+                  {copiedFormat === "md" ? "Copied MD" : "Copy MD"}
+                </button>
+                <button
+                  type="button"
+                  data-testid="copy-review-json"
+                  onClick={() => void copyReview("json", detail)}
+                  className="rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text"
+                >
+                  {copiedFormat === "json" ? "Copied JSON" : "Copy JSON"}
+                </button>
+              </div>
+              <ReviewContent
+                review={detailReview}
+                findings={detail.findings}
+              />
+            </>
           )}
           {(detailReview.status === "queued" ||
             detailReview.status === "running") && (
-            <div className="text-text-3 text-[13px] italic">
+            <div className="text-text-3 text-[13px] font-medium">
               Review in flight ({detailReview.status})…
             </div>
           )}
@@ -198,6 +229,37 @@ export function ReviewPanel({
       )}
     </Card>
   );
+}
+
+function reviewDetailToMarkdown(detail: ReviewDetail): string {
+  const { review, findings } = detail;
+  const lines: string[] = [
+    `# Eval Review ${review.id}`,
+    "",
+    `- Run: ${review.eval_run_id}`,
+    `- Agent profile: ${review.agent_profile_id}`,
+    `- Status: ${review.status}`,
+    `- Verdict: ${review.verdict ?? "n/a"}`,
+    `- Score: ${review.score ?? "n/a"}`,
+    `- Confidence: ${review.confidence ?? "n/a"}`,
+    `- Updated: ${review.updated_at}`,
+  ];
+  if (review.summary?.trim()) {
+    lines.push("", "## Executive Summary", "", review.summary.trim());
+  }
+  lines.push("", `## Findings (${findings.length})`);
+  if (findings.length === 0) {
+    lines.push("", "No findings recorded.");
+  } else {
+    for (const finding of findings) {
+      const title = finding.title || finding.summary || finding.id;
+      lines.push("", `### ${title}`, "", `- Severity: ${finding.severity}`);
+      if (finding.description) lines.push(`- Description: ${finding.description}`);
+      if (finding.recommendation) lines.push(`- Recommendation: ${finding.recommendation}`);
+      if (finding.confidence != null) lines.push(`- Confidence: ${finding.confidence}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 /// Render the `generate` mutation's error in a high-visibility alert
@@ -222,6 +284,10 @@ export function GenerateErrorAlert({
   onRetry?: () => void;
 }) {
   const { code, message } = describeReviewError(error);
+  const providerRemediation =
+    message.includes("review skipped") ||
+    message.includes("cannot use provider") ||
+    message.includes("Settings → Providers");
   return (
     <div
       role="alert"
@@ -240,6 +306,12 @@ export function GenerateErrorAlert({
         </span>
       </div>
       <div data-testid="review-generate-error-message">{message}</div>
+      {providerRemediation ? (
+        <div className="mt-2 rounded-sm border border-danger/25 bg-danger/[0.04] px-2 py-1 text-[12px] text-danger/90">
+          Open the gear next to the selected review agent, choose a configured
+          provider and enabled model, save it, then generate the review again.
+        </div>
+      ) : null}
       {onRetry && (
         <button
           type="button"
@@ -274,7 +346,7 @@ function PanelHeader() {
   // inside the card that tells the operator what they're looking at.
   return (
     <div className="flex items-baseline justify-between mb-3">
-      <span className="text-text-3 text-[12px] italic">
+      <span className="text-text-3 text-[12px] font-medium">
         Analytical review by a selected agent persona
       </span>
     </div>

@@ -18,7 +18,7 @@ use chrono::{Duration, TimeZone, Utc};
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch};
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 #[allow(deprecated)]
 use xvision_engine::eval::scenario::{canonical_scenarios, SlippageModel};
@@ -153,7 +153,7 @@ fn build_strategy(agent_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -203,7 +203,7 @@ async fn run_backtest_with_bars(
 
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     let metrics = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -291,7 +291,7 @@ async fn final_bar_uses_close_as_next_open_fallback() {
         r#"{"action":"long_open","conviction":0.8,"justification":"qa-final-bar-close"}"#,
     ));
     let dispatch_for_run: Arc<dyn LlmDispatch> = dispatch.clone();
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(

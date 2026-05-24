@@ -166,8 +166,7 @@ pub enum WakeInPosition {
 // Indicator catalog + reference
 // ---------------------------------------------------------------------------
 
-/// The closed v1 indicator catalog. New entries (vwap, bbands, macd) land
-/// in v1.5+ alongside the SlotRuntime split.
+/// The closed indicator catalog accepted by the filter DSL.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -176,40 +175,272 @@ pub enum WakeInPosition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IndicatorName {
+    Open,
+    High,
+    Low,
+    Close,
+    Volume,
     Ema,
     Sma,
+    Wma,
     Rsi,
     Atr,
     AtrPct,
-    Close,
+    Roc,
+    Adx,
+    DiPlus,
+    DiMinus,
+    MacdLine,
+    MacdSignal,
+    MacdHist,
+    BbUpper,
+    BbMiddle,
+    BbLower,
+    BbWidth,
+    BbPercentB,
+    DonchianUpper,
+    DonchianMiddle,
+    DonchianLower,
+    StochK,
+    StochD,
+    Cci,
+    Mfi,
+    Obv,
+    Vwap,
+    VolumeSma,
+    StochRsiK,
+    StochRsiD,
+    Rvol,
+    RvolTod,
+    VolumeZscore,
+    Tenkan,
+    Kijun,
+    SenkouA,
+    SenkouB,
+    Chikou,
+    CloudTop,
+    CloudBottom,
+    CloudThickness,
+    PrevDayOpen,
+    PrevDayHigh,
+    PrevDayLow,
+    PrevDayClose,
+    PrevWeekHigh,
+    PrevWeekLow,
+    PrevWeekClose,
+    PrevMonthOpen,
+    PrevMonthHigh,
+    PrevMonthLow,
+    PrevMonthClose,
+    PremarketHigh,
+    PremarketLow,
+    Highest,
+    Lowest,
+    OpeningRangeHigh,
+    OpeningRangeLow,
+    OpeningRangeMid,
+    GapPct,
+    GapUp,
+    GapDown,
+    KeltnerUpper,
+    KeltnerMiddle,
+    KeltnerLower,
+    WilliamsR,
 }
 
 impl IndicatorName {
-    /// True when this indicator carries a `period`. Only `Close` is
-    /// periodless in v1.
+    /// True when this indicator carries a single trailing-window `period`.
+    /// Price/volume primitives, OBV, and default MACD components are
+    /// periodless.
     pub fn has_period(&self) -> bool {
-        !matches!(self, IndicatorName::Close)
+        !matches!(
+            self,
+            IndicatorName::Open
+                | IndicatorName::High
+                | IndicatorName::Low
+                | IndicatorName::Close
+                | IndicatorName::Volume
+                | IndicatorName::Obv
+                | IndicatorName::MacdLine
+                | IndicatorName::MacdSignal
+                | IndicatorName::MacdHist
+                | IndicatorName::Tenkan
+                | IndicatorName::Kijun
+                | IndicatorName::SenkouA
+                | IndicatorName::SenkouB
+                | IndicatorName::Chikou
+                | IndicatorName::CloudTop
+                | IndicatorName::CloudBottom
+                | IndicatorName::CloudThickness
+                | IndicatorName::PrevDayOpen
+                | IndicatorName::PrevDayHigh
+                | IndicatorName::PrevDayLow
+                | IndicatorName::PrevDayClose
+                | IndicatorName::PrevWeekHigh
+                | IndicatorName::PrevWeekLow
+                | IndicatorName::PrevWeekClose
+                | IndicatorName::PrevMonthOpen
+                | IndicatorName::PrevMonthHigh
+                | IndicatorName::PrevMonthLow
+                | IndicatorName::PrevMonthClose
+                | IndicatorName::PremarketHigh
+                | IndicatorName::PremarketLow
+                | IndicatorName::GapPct
+                | IndicatorName::GapUp
+                | IndicatorName::GapDown
+        )
     }
 
     /// DSL prefix written in the indicator token (`ema_20` → `"ema"`).
     pub fn dsl_prefix(&self) -> &'static str {
         match self {
+            IndicatorName::Open => "open",
+            IndicatorName::High => "high",
+            IndicatorName::Low => "low",
+            IndicatorName::Close => "close",
+            IndicatorName::Volume => "volume",
             IndicatorName::Ema => "ema",
             IndicatorName::Sma => "sma",
+            IndicatorName::Wma => "wma",
             IndicatorName::Rsi => "rsi",
             IndicatorName::Atr => "atr",
             IndicatorName::AtrPct => "atr_pct",
-            IndicatorName::Close => "close",
+            IndicatorName::Roc => "roc",
+            IndicatorName::Adx => "adx",
+            IndicatorName::DiPlus => "di_plus",
+            IndicatorName::DiMinus => "di_minus",
+            IndicatorName::MacdLine => "macd_line",
+            IndicatorName::MacdSignal => "macd_signal",
+            IndicatorName::MacdHist => "macd_hist",
+            IndicatorName::BbUpper => "bb_upper",
+            IndicatorName::BbMiddle => "bb_middle",
+            IndicatorName::BbLower => "bb_lower",
+            IndicatorName::BbWidth => "bb_width",
+            IndicatorName::BbPercentB => "bb_pct_b",
+            IndicatorName::DonchianUpper => "donchian_upper",
+            IndicatorName::DonchianMiddle => "donchian_middle",
+            IndicatorName::DonchianLower => "donchian_lower",
+            IndicatorName::StochK => "stoch_k",
+            IndicatorName::StochD => "stoch_d",
+            IndicatorName::Cci => "cci",
+            IndicatorName::Mfi => "mfi",
+            IndicatorName::Obv => "obv",
+            IndicatorName::Vwap => "vwap",
+            IndicatorName::VolumeSma => "volume_sma",
+            IndicatorName::StochRsiK => "stoch_rsi_k",
+            IndicatorName::StochRsiD => "stoch_rsi_d",
+            IndicatorName::Rvol => "rvol",
+            IndicatorName::RvolTod => "rvol_tod",
+            IndicatorName::VolumeZscore => "volume_zscore",
+            IndicatorName::Tenkan => "tenkan",
+            IndicatorName::Kijun => "kijun",
+            IndicatorName::SenkouA => "senkou_a",
+            IndicatorName::SenkouB => "senkou_b",
+            IndicatorName::Chikou => "chikou",
+            IndicatorName::CloudTop => "cloud_top",
+            IndicatorName::CloudBottom => "cloud_bottom",
+            IndicatorName::CloudThickness => "cloud_thickness",
+            IndicatorName::PrevDayOpen => "prev_day_open",
+            IndicatorName::PrevDayHigh => "prev_day_high",
+            IndicatorName::PrevDayLow => "prev_day_low",
+            IndicatorName::PrevDayClose => "prev_day_close",
+            IndicatorName::PrevWeekHigh => "prev_week_high",
+            IndicatorName::PrevWeekLow => "prev_week_low",
+            IndicatorName::PrevWeekClose => "prev_week_close",
+            IndicatorName::PrevMonthOpen => "prev_month_open",
+            IndicatorName::PrevMonthHigh => "prev_month_high",
+            IndicatorName::PrevMonthLow => "prev_month_low",
+            IndicatorName::PrevMonthClose => "prev_month_close",
+            IndicatorName::PremarketHigh => "premarket_high",
+            IndicatorName::PremarketLow => "premarket_low",
+            IndicatorName::Highest => "highest",
+            IndicatorName::Lowest => "lowest",
+            IndicatorName::OpeningRangeHigh => "opening_range_high",
+            IndicatorName::OpeningRangeLow => "opening_range_low",
+            IndicatorName::OpeningRangeMid => "opening_range_mid",
+            IndicatorName::GapPct => "gap_pct",
+            IndicatorName::GapUp => "gap_up",
+            IndicatorName::GapDown => "gap_down",
+            IndicatorName::KeltnerUpper => "keltner_upper",
+            IndicatorName::KeltnerMiddle => "keltner_middle",
+            IndicatorName::KeltnerLower => "keltner_lower",
+            IndicatorName::WilliamsR => "williams_r",
         }
     }
 
     /// Inclusive bounds for `period` per the spec's indicator catalog.
-    /// `None` for `Close` (no period at all).
+    /// `None` for periodless indicators.
     pub fn period_bounds(&self) -> Option<(u32, u32)> {
         match self {
-            IndicatorName::Ema | IndicatorName::Sma => Some((2, 500)),
-            IndicatorName::Rsi | IndicatorName::Atr | IndicatorName::AtrPct => Some((2, 100)),
-            IndicatorName::Close => None,
+            IndicatorName::Open
+            | IndicatorName::High
+            | IndicatorName::Low
+            | IndicatorName::Close
+            | IndicatorName::Volume
+            | IndicatorName::Obv
+            | IndicatorName::MacdLine
+            | IndicatorName::MacdSignal
+            | IndicatorName::MacdHist
+            | IndicatorName::Tenkan
+            | IndicatorName::Kijun
+            | IndicatorName::SenkouA
+            | IndicatorName::SenkouB
+            | IndicatorName::Chikou
+            | IndicatorName::CloudTop
+            | IndicatorName::CloudBottom
+            | IndicatorName::CloudThickness
+            | IndicatorName::PrevDayOpen
+            | IndicatorName::PrevDayHigh
+            | IndicatorName::PrevDayLow
+            | IndicatorName::PrevDayClose
+            | IndicatorName::PrevWeekHigh
+            | IndicatorName::PrevWeekLow
+            | IndicatorName::PrevWeekClose
+            | IndicatorName::PrevMonthOpen
+            | IndicatorName::PrevMonthHigh
+            | IndicatorName::PrevMonthLow
+            | IndicatorName::PrevMonthClose
+            | IndicatorName::PremarketHigh
+            | IndicatorName::PremarketLow
+            | IndicatorName::GapPct
+            | IndicatorName::GapUp
+            | IndicatorName::GapDown => None,
+            IndicatorName::Ema | IndicatorName::Sma | IndicatorName::Wma => Some((2, 500)),
+            IndicatorName::Rsi
+            | IndicatorName::Atr
+            | IndicatorName::AtrPct
+            | IndicatorName::Roc
+            | IndicatorName::Adx
+            | IndicatorName::DiPlus
+            | IndicatorName::DiMinus
+            | IndicatorName::BbUpper
+            | IndicatorName::BbMiddle
+            | IndicatorName::BbLower
+            | IndicatorName::BbWidth
+            | IndicatorName::BbPercentB
+            | IndicatorName::DonchianUpper
+            | IndicatorName::DonchianMiddle
+            | IndicatorName::DonchianLower
+            | IndicatorName::StochK
+            | IndicatorName::StochD
+            | IndicatorName::Cci
+            | IndicatorName::Mfi
+            | IndicatorName::Vwap
+            | IndicatorName::VolumeSma
+            | IndicatorName::StochRsiK
+            | IndicatorName::StochRsiD
+            | IndicatorName::Rvol
+            | IndicatorName::RvolTod
+            | IndicatorName::VolumeZscore
+            | IndicatorName::Highest
+            | IndicatorName::Lowest
+            | IndicatorName::OpeningRangeHigh
+            | IndicatorName::OpeningRangeLow
+            | IndicatorName::OpeningRangeMid
+            | IndicatorName::KeltnerUpper
+            | IndicatorName::KeltnerMiddle
+            | IndicatorName::KeltnerLower
+            | IndicatorName::WilliamsR => Some((2, 200)),
         }
     }
 }
@@ -224,7 +455,7 @@ impl IndicatorName {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IndicatorRef {
     pub name: IndicatorName,
-    /// `None` only when `name == Close`. Validator enforces this.
+    /// `None` only when `name` is periodless. Validator enforces this.
     pub period: Option<u32>,
     /// Bar-relative offset for v1.5 plugins (positive = future). v1 has
     /// no DSL syntax for this; the validator rejects any `Some(n)` with
@@ -253,8 +484,8 @@ impl IndicatorRef {
         }
     }
 
-    /// Parse the DSL token form (`"ema_20"`, `"rsi_14"`, `"atr_pct_14"`,
-    /// `"close"`) into an `IndicatorRef`. Future-bar syntax (`+N`) is
+    /// Parse the DSL token form (`"ema_20"`, `"rsi_14"`, `"macd_line"`,
+    /// `"bb_upper_20"`, `"close"`) into an `IndicatorRef`. Future-bar syntax (`+N`) is
     /// rejected here so the parser layer prevents `E_FILTER_FUTURE_LEAK`
     /// from reaching validation through DSL input.
     pub fn parse_dsl(token: &str) -> Result<Self, ParseError> {
@@ -265,17 +496,93 @@ impl IndicatorRef {
                 token: token.to_string(),
             });
         }
-        if token == "close" {
-            return Ok(Self::close());
+        if let Some(name) = match token {
+            "open" => Some(IndicatorName::Open),
+            "high" => Some(IndicatorName::High),
+            "low" => Some(IndicatorName::Low),
+            "close" => Some(IndicatorName::Close),
+            "volume" => Some(IndicatorName::Volume),
+            "obv" => Some(IndicatorName::Obv),
+            "tenkan" => Some(IndicatorName::Tenkan),
+            "kijun" => Some(IndicatorName::Kijun),
+            "senkou_a" => Some(IndicatorName::SenkouA),
+            "senkou_b" => Some(IndicatorName::SenkouB),
+            "chikou" => Some(IndicatorName::Chikou),
+            "cloud_top" => Some(IndicatorName::CloudTop),
+            "cloud_bottom" => Some(IndicatorName::CloudBottom),
+            "cloud_thickness" => Some(IndicatorName::CloudThickness),
+            "prev_day_open" => Some(IndicatorName::PrevDayOpen),
+            "prev_day_high" => Some(IndicatorName::PrevDayHigh),
+            "prev_day_low" => Some(IndicatorName::PrevDayLow),
+            "prev_day_close" => Some(IndicatorName::PrevDayClose),
+            "prev_week_high" => Some(IndicatorName::PrevWeekHigh),
+            "prev_week_low" => Some(IndicatorName::PrevWeekLow),
+            "prev_week_close" => Some(IndicatorName::PrevWeekClose),
+            "prev_month_open" => Some(IndicatorName::PrevMonthOpen),
+            "prev_month_high" => Some(IndicatorName::PrevMonthHigh),
+            "prev_month_low" => Some(IndicatorName::PrevMonthLow),
+            "prev_month_close" => Some(IndicatorName::PrevMonthClose),
+            "premarket_high" => Some(IndicatorName::PremarketHigh),
+            "premarket_low" => Some(IndicatorName::PremarketLow),
+            "gap_pct" => Some(IndicatorName::GapPct),
+            "gap_up" => Some(IndicatorName::GapUp),
+            "gap_down" => Some(IndicatorName::GapDown),
+            "macd" | "macd_line" | "macd_12_26_9" | "macd_line_12_26_9" => Some(IndicatorName::MacdLine),
+            "macd_signal" | "macd_signal_12_26_9" => Some(IndicatorName::MacdSignal),
+            "macd_hist" | "macd_hist_12_26_9" | "macd_histogram" | "macd_histogram_12_26_9" => {
+                Some(IndicatorName::MacdHist)
+            }
+            _ => None,
+        } {
+            return Ok(Self {
+                name,
+                period: None,
+                bar_offset: None,
+            });
         }
         // Try multi-part prefixes first (longest first) so `atr_pct_14`
         // is matched before `atr_pct` would be misread as `atr` + `pct_14`.
         let candidates: &[(&str, IndicatorName)] = &[
+            ("donchian_middle", IndicatorName::DonchianMiddle),
+            ("donchian_upper", IndicatorName::DonchianUpper),
+            ("donchian_lower", IndicatorName::DonchianLower),
+            ("keltner_middle", IndicatorName::KeltnerMiddle),
+            ("keltner_upper", IndicatorName::KeltnerUpper),
+            ("keltner_lower", IndicatorName::KeltnerLower),
+            ("stoch_rsi_k", IndicatorName::StochRsiK),
+            ("stoch_rsi_d", IndicatorName::StochRsiD),
+            ("stoch_rsi", IndicatorName::StochRsiK),
+            ("volume_sma", IndicatorName::VolumeSma),
+            ("bb_pct_b", IndicatorName::BbPercentB),
+            ("bb_percent_b", IndicatorName::BbPercentB),
+            ("bb_middle", IndicatorName::BbMiddle),
+            ("bb_upper", IndicatorName::BbUpper),
+            ("bb_lower", IndicatorName::BbLower),
+            ("bb_width", IndicatorName::BbWidth),
             ("atr_pct", IndicatorName::AtrPct),
+            ("stoch_k", IndicatorName::StochK),
+            ("stoch_d", IndicatorName::StochD),
+            ("williams_r", IndicatorName::WilliamsR),
+            ("opening_range_high", IndicatorName::OpeningRangeHigh),
+            ("opening_range_low", IndicatorName::OpeningRangeLow),
+            ("opening_range_mid", IndicatorName::OpeningRangeMid),
+            ("volume_zscore", IndicatorName::VolumeZscore),
+            ("rvol_tod", IndicatorName::RvolTod),
+            ("di_plus", IndicatorName::DiPlus),
+            ("di_minus", IndicatorName::DiMinus),
+            ("highest", IndicatorName::Highest),
+            ("lowest", IndicatorName::Lowest),
+            ("rvol", IndicatorName::Rvol),
+            ("vwap", IndicatorName::Vwap),
+            ("wma", IndicatorName::Wma),
             ("ema", IndicatorName::Ema),
             ("sma", IndicatorName::Sma),
             ("rsi", IndicatorName::Rsi),
             ("atr", IndicatorName::Atr),
+            ("adx", IndicatorName::Adx),
+            ("roc", IndicatorName::Roc),
+            ("cci", IndicatorName::Cci),
+            ("mfi", IndicatorName::Mfi),
         ];
         for (prefix, name) in candidates {
             let needle = format!("{}_", prefix);
@@ -327,48 +634,151 @@ impl<'de> Deserialize<'de> for IndicatorRef {
 // Operator
 // ---------------------------------------------------------------------------
 
-/// v1 operator catalog. Serde renames match the DSL form authors write
-/// (`op = ">"` etc.). Unknown DSL strings are rejected at parse time by
-/// serde; `parse.rs` converts those errors into `ParseError::UnknownOperator`
-/// when it can detect the field-shape mismatch.
+/// Operator catalog. Static operators use their literal DSL tokens;
+/// parameterized operators encode the parameter in the token
+/// (`above_for_3`, `crossed_above_5`, `slope_gt_4`,
+/// `within_pct_1.5`, `zscore_gt_20`).
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
-    #[serde(rename = ">")]
     Gt,
-    #[serde(rename = "<")]
     Lt,
-    #[serde(rename = ">=")]
     Gte,
-    #[serde(rename = "<=")]
     Lte,
-    #[serde(rename = "==")]
     Eq,
-    #[serde(rename = "crosses_above")]
     CrossesAbove,
-    #[serde(rename = "crosses_below")]
     CrossesBelow,
-    #[serde(rename = "between")]
     Between,
+    AboveFor(u32),
+    BelowFor(u32),
+    CrossedAbove(u32),
+    CrossedBelow(u32),
+    SlopeGt(u32),
+    SlopeLt(u32),
+    ZscoreGt(u32),
+    ZscoreLt(u32),
+    WithinPct(f64),
 }
 
 impl Operator {
-    pub fn dsl_token(&self) -> &'static str {
+    pub fn dsl_token(&self) -> String {
         match self {
-            Operator::Gt => ">",
-            Operator::Lt => "<",
-            Operator::Gte => ">=",
-            Operator::Lte => "<=",
-            Operator::Eq => "==",
-            Operator::CrossesAbove => "crosses_above",
-            Operator::CrossesBelow => "crosses_below",
-            Operator::Between => "between",
+            Operator::Gt => ">".to_string(),
+            Operator::Lt => "<".to_string(),
+            Operator::Gte => ">=".to_string(),
+            Operator::Lte => "<=".to_string(),
+            Operator::Eq => "==".to_string(),
+            Operator::CrossesAbove => "crosses_above".to_string(),
+            Operator::CrossesBelow => "crosses_below".to_string(),
+            Operator::Between => "between".to_string(),
+            Operator::AboveFor(n) => format!("above_for_{}", n),
+            Operator::BelowFor(n) => format!("below_for_{}", n),
+            Operator::CrossedAbove(n) => format!("crossed_above_{}", n),
+            Operator::CrossedBelow(n) => format!("crossed_below_{}", n),
+            Operator::SlopeGt(n) => format!("slope_gt_{}", n),
+            Operator::SlopeLt(n) => format!("slope_lt_{}", n),
+            Operator::ZscoreGt(n) => format!("zscore_gt_{}", n),
+            Operator::ZscoreLt(n) => format!("zscore_lt_{}", n),
+            Operator::WithinPct(pct) => format!("within_pct_{}", fmt_decimal_token(*pct)),
         }
     }
+
+    pub fn parse_dsl(token: &str) -> Result<Self, ParseError> {
+        let normalized = token.trim().to_ascii_lowercase();
+        let op = match normalized.as_str() {
+            ">" | "gt" | "above" => Some(Operator::Gt),
+            "<" | "lt" | "below" => Some(Operator::Lt),
+            ">=" | "gte" | "above_or_equal" | "at_or_above" => Some(Operator::Gte),
+            "<=" | "lte" | "below_or_equal" | "at_or_below" => Some(Operator::Lte),
+            "==" | "eq" | "equals" => Some(Operator::Eq),
+            "crosses_above" | "crosses_over" => Some(Operator::CrossesAbove),
+            "crosses_below" | "crosses_under" => Some(Operator::CrossesBelow),
+            "between" => Some(Operator::Between),
+            _ => None,
+        };
+        if let Some(op) = op {
+            return Ok(op);
+        }
+        if let Some(n) = parse_u32_suffix(&normalized, "above_for_") {
+            return Ok(Operator::AboveFor(n));
+        }
+        if let Some(n) = parse_u32_suffix(&normalized, "below_for_") {
+            return Ok(Operator::BelowFor(n));
+        }
+        if let Some(n) = parse_u32_suffix(&normalized, "crossed_above_") {
+            return Ok(Operator::CrossedAbove(n));
+        }
+        if let Some(n) = parse_u32_suffix(&normalized, "crossed_below_") {
+            return Ok(Operator::CrossedBelow(n));
+        }
+        if let Some(n) = parse_u32_suffix(&normalized, "slope_gt_") {
+            return Ok(Operator::SlopeGt(n));
+        }
+        if let Some(n) = parse_u32_suffix(&normalized, "slope_lt_") {
+            return Ok(Operator::SlopeLt(n));
+        }
+        if let Some(n) = parse_u32_suffix(&normalized, "zscore_gt_") {
+            return Ok(Operator::ZscoreGt(n));
+        }
+        if let Some(n) = parse_u32_suffix(&normalized, "zscore_lt_") {
+            return Ok(Operator::ZscoreLt(n));
+        }
+        if let Some(pct) = parse_f64_suffix(&normalized, "within_pct_") {
+            return Ok(Operator::WithinPct(pct));
+        }
+        Err(ParseError::UnknownOperator {
+            path: "/conditions/all/0/op".to_string(),
+            token: token.to_string(),
+        })
+    }
+}
+
+impl fmt::Display for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.dsl_token())
+    }
+}
+
+impl Serialize for Operator {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.dsl_token())
+    }
+}
+
+impl<'de> Deserialize<'de> for Operator {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let token = String::deserialize(d)?;
+        Self::parse_dsl(&token).map_err(serde::de::Error::custom)
+    }
+}
+
+fn parse_u32_suffix(token: &str, prefix: &str) -> Option<u32> {
+    let raw = token.strip_prefix(prefix)?;
+    let n: u32 = raw.parse().ok()?;
+    (n > 0).then_some(n)
+}
+
+fn parse_f64_suffix(token: &str, prefix: &str) -> Option<f64> {
+    let raw = token.strip_prefix(prefix)?;
+    let pct: f64 = raw.parse().ok()?;
+    (pct.is_finite() && pct >= 0.0).then_some(pct)
+}
+
+fn fmt_decimal_token(value: f64) -> String {
+    let mut s = value.to_string();
+    if s.contains('.') {
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.ends_with('.') {
+            s.pop();
+        }
+    }
+    s
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +929,29 @@ impl ConditionTree {
 }
 
 // ---------------------------------------------------------------------------
+// LLM fire metadata
+// ---------------------------------------------------------------------------
+
+/// Optional author-facing metadata attached to a filter trip. This does
+/// not change whether a filter fires; it tells downstream agent surfaces
+/// why the gate fired and which compact indicator values should be
+/// surfaced with the trigger.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilterFire {
+    pub reason: String,
+    pub priority: f64,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub context: Vec<IndicatorRef>,
+}
+
+// ---------------------------------------------------------------------------
 // Filter (top-level)
 // ---------------------------------------------------------------------------
 
@@ -543,6 +976,8 @@ pub struct Filter {
     #[serde(default = "default_scan_cadence")]
     pub scan_cadence: ScanCadence,
     pub conditions: ConditionTree,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fire: Option<FilterFire>,
     #[serde(default)]
     pub cooldown_bars: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]

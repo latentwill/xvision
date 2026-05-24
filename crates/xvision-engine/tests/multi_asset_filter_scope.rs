@@ -19,7 +19,7 @@
 //!    ETH-scoped signals — i.e. the `filter_signals` payload in each
 //!    trader call carries the per-asset values, not a mixed/blurred map.
 //!
-//! The test uses the full `BacktestExecutor` path with per-asset injected
+//! The test uses the full backtest `Executor` path with per-asset injected
 //! bars (via `with_asset_bars`), mirroring the integration harness from
 //! `multi_asset_backtest.rs`.
 
@@ -34,7 +34,7 @@ use xvision_core::trading::AssetSymbol;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::signal_cache::{SignalCache, SignalCacheKey};
 use xvision_engine::agents::Capability;
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 #[allow(deprecated)]
 use xvision_engine::eval::scenario::canonical_scenarios;
@@ -78,6 +78,20 @@ async fn fresh_store() -> RunStore {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -138,10 +152,7 @@ impl PerAssetFilterDispatch {
     fn filter_calls_for_asset(&self, asset: &str) -> usize {
         self.requests()
             .iter()
-            .filter(|r| {
-                r.system_prompt.contains("You are a Filter")
-                    && Self::asset_from_request(r) == asset
-            })
+            .filter(|r| r.system_prompt.contains("You are a Filter") && Self::asset_from_request(r) == asset)
             .count()
     }
 }
@@ -158,25 +169,20 @@ impl LlmDispatch for PerAssetFilterDispatch {
         let filter_count_for_asset = self
             .requests()
             .iter()
-            .filter(|r| {
-                r.system_prompt.contains("You are a Filter")
-                    && Self::asset_from_request(r) == asset
-            })
+            .filter(|r| r.system_prompt.contains("You are a Filter") && Self::asset_from_request(r) == asset)
             .count();
 
         let text = if is_filter {
             let (regime_val, vol_val) = match asset {
                 "BTC" => ("trend", "low_vol"),
-                _     => ("chop",  "high_vol"),
+                _ => ("chop", "high_vol"),
             };
             // First filter call for this asset → regime; second → vol.
             match filter_count_for_asset % 2 {
                 0 => format!(
                     r#"{{"name":"regime","payload":{{"regime":"{regime_val}"}},"granularity":"bar"}}"#
                 ),
-                _ => format!(
-                    r#"{{"name":"vol","payload":{{"vol":"{vol_val}"}},"granularity":"bar"}}"#
-                ),
+                _ => format!(r#"{{"name":"vol","payload":{{"vol":"{vol_val}"}},"granularity":"bar"}}"#),
             }
         } else {
             // Trader always returns a simple hold decision.
@@ -390,10 +396,7 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
 
     // Simulate the per-asset fan-out: run the pipeline once for BTC and
     // once for ETH at the same bar timestamp, sharing the cache.
-    for (asset_sym, asset_str) in [
-        (AssetSymbol::Btc, "BTC/USD"),
-        (AssetSymbol::Eth, "ETH/USD"),
-    ] {
+    for (asset_sym, asset_str) in [(AssetSymbol::Btc, "BTC/USD"), (AssetSymbol::Eth, "ETH/USD")] {
         let seed = serde_json::json!({
             "asset": asset_str,
             "active_assets": ["BTC/USD", "ETH/USD"],
@@ -424,6 +427,7 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
             run_id: "test-b6".into(),
             scenario_id: "s".into(),
             cycle_idx: 0,
+            trace_attrs: None,
             provider_catalogs: std::collections::HashMap::new(),
             filter_ctx: Some(FilterPipelineCtx {
                 signal_cache: &mut cache,
@@ -451,15 +455,11 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
     let strategy_id = &strategy.manifest.id;
     for (role, asset) in [
         ("regime", AssetSymbol::Btc),
-        ("vol",    AssetSymbol::Btc),
+        ("vol", AssetSymbol::Btc),
         ("regime", AssetSymbol::Eth),
-        ("vol",    AssetSymbol::Eth),
+        ("vol", AssetSymbol::Eth),
     ] {
-        let key = SignalCacheKey::new(
-            strategy_id.clone(),
-            role,
-            SignalScope::Asset(asset),
-        );
+        let key = SignalCacheKey::new(strategy_id.clone(), role, SignalScope::Asset(asset));
         assert!(
             cache.get(&key).is_some(),
             "cache must hold an entry for (role={role}, asset={asset:?})"
@@ -489,11 +489,11 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
         // Each coalesced trader call sees BOTH signals from its own asset.
         let (expected_regime, forbidden_regime) = match asset {
             "BTC" => ("trend", "chop"),
-            _     => ("chop",  "trend"),
+            _ => ("chop", "trend"),
         };
         let (expected_vol, forbidden_vol) = match asset {
-            "BTC" => ("low_vol",  "high_vol"),
-            _     => ("high_vol", "low_vol"),
+            "BTC" => ("low_vol", "high_vol"),
+            _ => ("high_vol", "low_vol"),
         };
 
         assert!(
@@ -520,7 +520,7 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
 }
 
 // ---------------------------------------------------------------------------
-// Full executor integration test (via BacktestExecutor) — mirrors the
+// Full executor integration test (via backtest Executor) — mirrors the
 // multi_asset_backtest harness and adds filter signal assertions.
 // ---------------------------------------------------------------------------
 
@@ -542,12 +542,10 @@ async fn backtest_executor_per_asset_filter_signals_do_not_bleed() {
     // 2 bars per asset — gives 2 decision bars (bar[0] fills at bar[1]).
     let btc_bars = daily_bars(2, 50_000.0);
     let eth_bars = daily_bars(2, 3_000.0);
-    let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> = BTreeMap::from([
-        (AssetSymbol::Btc, btc_bars),
-        (AssetSymbol::Eth, eth_bars),
-    ]);
+    let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> =
+        BTreeMap::from([(AssetSymbol::Btc, btc_bars), (AssetSymbol::Eth, eth_bars)]);
 
-    let executor = BacktestExecutor::new().with_asset_bars(asset_bars);
+    let executor = Executor::new().with_asset_bars(asset_bars);
 
     executor
         .run(
@@ -564,8 +562,7 @@ async fn backtest_executor_per_asset_filter_signals_do_not_bleed() {
 
     // The run must have produced decisions for both assets.
     let decisions = store.read_decisions(&run.id).await.unwrap();
-    let asset_set: std::collections::BTreeSet<String> =
-        decisions.iter().map(|d| d.asset.clone()).collect();
+    let asset_set: std::collections::BTreeSet<String> = decisions.iter().map(|d| d.asset.clone()).collect();
     assert!(asset_set.contains("BTC/USD"), "BTC decisions missing");
     assert!(asset_set.contains("ETH/USD"), "ETH decisions missing");
 
@@ -614,12 +611,12 @@ async fn backtest_executor_per_asset_filter_signals_do_not_bleed() {
         // unique to the OTHER asset. If any appear in this asset's
         // trader briefing, signal bleed occurred.
         let (forbidden_regime, forbidden_vol) = match asset {
-            "BTC" => ("chop",    "high_vol"), // ETH's values
-            _     => ("trend",   "low_vol"),  // BTC's values
+            "BTC" => ("chop", "high_vol"), // ETH's values
+            _ => ("trend", "low_vol"),     // BTC's values
         };
         let (expected_regime, expected_vol) = match asset {
-            "BTC" => ("trend",  "low_vol"),
-            _     => ("chop",   "high_vol"),
+            "BTC" => ("trend", "low_vol"),
+            _ => ("chop", "high_vol"),
         };
 
         assert!(

@@ -1022,7 +1022,7 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
                     "function": {
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.input_schema,
+                        "parameters": sanitize_openai_tool_schema(&t.input_schema),
                     },
                 })
             })
@@ -1045,6 +1045,63 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
         maybe_log_openai_cache_skipped("openai-compat", &req.model);
     }
     body
+}
+
+fn sanitize_openai_tool_schema(schema: &serde_json::Value) -> serde_json::Value {
+    let Some(obj) = schema.as_object() else {
+        return schema.clone();
+    };
+    let mut out = serde_json::Map::new();
+    for (key, value) in obj {
+        let sanitized = match key.as_str() {
+            "properties" => {
+                let mut props = serde_json::Map::new();
+                if let Some(prop_map) = value.as_object() {
+                    for (prop_name, prop_schema) in prop_map {
+                        props.insert(prop_name.clone(), sanitize_openai_tool_schema(prop_schema));
+                    }
+                }
+                serde_json::Value::Object(props)
+            }
+            "items" => sanitize_openai_tool_schema(value),
+            "anyOf" | "oneOf" | "allOf" => {
+                let values = value
+                    .as_array()
+                    .map(|items| items.iter().map(sanitize_openai_tool_schema).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                serde_json::Value::Array(values)
+            }
+            "required" => continue,
+            _ => value.clone(),
+        };
+        out.insert(key.clone(), sanitized);
+    }
+
+    if schema.get("type").and_then(|v| v.as_str()) == Some("object") && !out.contains_key("properties") {
+        out.insert(
+            "properties".to_string(),
+            serde_json::Value::Object(serde_json::Map::new()),
+        );
+    }
+
+    if let Some(required) = obj.get("required").and_then(|v| v.as_array()) {
+        let property_names = obj
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .map(|props| props.keys().cloned().collect::<HashSet<_>>())
+            .unwrap_or_default();
+        let filtered = required
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|name| property_names.contains(*name))
+            .map(|name| serde_json::Value::String(name.to_string()))
+            .collect::<Vec<_>>();
+        if !filtered.is_empty() {
+            out.insert("required".to_string(), serde_json::Value::Array(filtered));
+        }
+    }
+
+    serde_json::Value::Object(out)
 }
 
 /// Outcome of a single `OpenaiCompatDispatch` HTTP attempt. The retry
@@ -1413,5 +1470,26 @@ mod max_tokens_body_tests {
             body["max_tokens"], 200_000,
             "operator's max_tokens must pass through verbatim — no ceiling clamp",
         );
+    }
+
+    #[test]
+    fn openai_compat_tool_schema_drops_required_entries_without_properties() {
+        let mut req = req_with("google/gemini-test", None);
+        req.tools = vec![ToolDefinition {
+            name: "bad_tool".into(),
+            description: "bad schema fixture".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "required": ["defined", "missing"],
+                "properties": {
+                    "defined": { "type": "string" }
+                }
+            }),
+        }];
+        let body = openai_compat_request_body(&req);
+        let required = body["tools"][0]["function"]["parameters"]["required"]
+            .as_array()
+            .expect("required array should remain for defined fields");
+        assert_eq!(required, &[serde_json::json!("defined")]);
     }
 }

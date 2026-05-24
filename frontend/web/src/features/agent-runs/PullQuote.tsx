@@ -31,13 +31,13 @@ export function PullQuote({
         style={{ background: "var(--surface-elev)", borderLeft: `2px solid ${accent}`, borderRadius: 4 }}
       >
         <span
-          className="absolute -top-1 left-1 text-[22px] leading-none font-serif select-none"
+          className="absolute -top-1 left-1 text-[22px] leading-none font-sans font-semibold select-none"
           style={{ color: accent, opacity: 0.45 }}
           aria-hidden
         >
           {glyph}
         </span>
-        <div className={`pl-2 text-[12px] leading-relaxed ${italic ? "font-serif italic" : "font-mono"}`} style={{ color: "var(--text)" }}>
+        <div className={`pl-2 text-[12px] leading-relaxed ${italic ? "font-sans font-semibold" : "font-mono"}`} style={{ color: "var(--text)" }}>
           {body}
           {streaming ? (
             <span

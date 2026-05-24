@@ -51,6 +51,20 @@ describe("FilterEventTimeline", () => {
     expect(ticks).toHaveLength(3);
   });
 
+  it("renders a visible date range for the timeline", () => {
+    render(
+      <FilterEventTimeline
+        events={[
+          makeEvent({ bar_timestamp: "2026-05-21T00:00:00Z" }),
+          makeEvent({ bar_timestamp: "2026-05-22T01:00:00Z" }),
+        ]}
+      />,
+    );
+    const range = screen.getByTestId("filter-event-timeline-range");
+    expect(range).toHaveTextContent(/May 21/);
+    expect(range).toHaveTextContent(/May 22/);
+  });
+
   it("classifies each suppression reason with a distinct data-kind/data-reason marker", () => {
     render(
       <FilterEventTimeline

@@ -948,7 +948,7 @@ impl XvisionTools {
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         };
 
         // 3. Validate shape.
@@ -1142,6 +1142,10 @@ impl XvisionTools {
                 skip_preflight: false,
                 provider_override: None,
                 assets_subset: None,
+                live_config: None,
+                auto_fire_review: false,
+                review_model: None,
+                max_annotations_per_review: Some(8),
             };
 
             let entry = match api_eval::run(&ctx, run_req).await {
@@ -1449,6 +1453,7 @@ impl XvisionTools {
         };
 
         // Build the card string (mirrors CLI's format_inspect_card).
+        let quote = format!("{:?}", scenario.quote_currency).to_uppercase();
         let window_secs = (scenario.time_window.end - scenario.time_window.start).num_seconds() as u64;
         let bar_secs = scenario.granularity.seconds();
         let decision_bars = if bar_secs > 0 {
@@ -1461,6 +1466,7 @@ impl XvisionTools {
         let mut card = String::new();
         card.push_str(&format!("id: {}\n", scenario.id));
         card.push_str(&format!("name: {}\n", scenario.display_name));
+        card.push_str(&format!("quote_currency: {}\n", quote));
         card.push_str(&format!("timeframe: {}\n", scenario.granularity));
         card.push_str(&format!(
             "date_window: {}..{}\n",

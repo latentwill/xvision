@@ -93,12 +93,7 @@ fn compact_action_cell(counts: &ActionCounts) -> String {
     }
     format!(
         "{}L/{}S/{}F/{}H/{}LC/{}SC",
-        counts.long_open,
-        counts.short_open,
-        counts.flat,
-        counts.hold,
-        counts.long_close,
-        counts.short_close,
+        counts.long_open, counts.short_open, counts.flat, counts.hold, counts.long_close, counts.short_close,
     )
 }
 
@@ -168,7 +163,10 @@ fn markdown_row(run: &ComparisonRunSummary) -> String {
         (None, None) => "—".into(),
     };
 
-    let wall_s = run.wall_clock_ms.map(fmt_wall_clock).unwrap_or_else(|| "—".into());
+    let wall_s = run
+        .wall_clock_ms
+        .map(fmt_wall_clock)
+        .unwrap_or_else(|| "—".into());
 
     let cost_s = match run.cost_usd_estimate {
         Some(c) => {
@@ -220,6 +218,7 @@ mod tests {
         ComparisonRunSummary {
             id: format!("run_{scenario_id}"),
             agent_id: "strat_abc".into(),
+            strategy_name: Some("Strategy ABC".into()),
             scenario_id: scenario_id.into(),
             mode: RunMode::Backtest,
             status: RunStatus::Completed,
@@ -344,7 +343,10 @@ mod tests {
         assert!(md.contains("$0.0420"), "cost cell missing: {md}");
         assert!(md.contains("12.3s"), "wall-clock cell missing: {md}");
         // Compact action cell: `<long_open>L/<short_open>S/<flat>F/<hold>H/<lc>LC/<sc>SC`
-        assert!(md.contains("L/") && md.contains("F/") && md.contains("H/"), "action cell missing: {md}");
+        assert!(
+            md.contains("L/") && md.contains("F/") && md.contains("H/"),
+            "action cell missing: {md}"
+        );
     }
 
     #[test]
@@ -352,6 +354,7 @@ mod tests {
         let run = ComparisonRunSummary {
             id: "run_x".into(),
             agent_id: "strat_abc".into(),
+            strategy_name: None,
             scenario_id: "sc_no_metrics".into(),
             mode: RunMode::Backtest,
             status: RunStatus::Failed,

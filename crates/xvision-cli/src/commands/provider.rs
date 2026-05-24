@@ -117,7 +117,10 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("open ApiContext: {e}"))?;
 
     match cmd.action {
-        ProviderAction::List { effective: _, json: _ } => {
+        ProviderAction::List {
+            effective: _,
+            json: _,
+        } => {
             // Legacy human table — falls through here (the `--effective`
             // / `--json` branches were handled above without an
             // ApiContext open).
@@ -154,11 +157,7 @@ fn resolve_xvn_home() -> Result<PathBuf> {
 /// Canonical "is this provider launchable" view. Path-only — does not
 /// open `ApiContext`, so JSON output is uncontaminated by audit-pool
 /// migration tracing.
-async fn list_effective(
-    xvn_home: &std::path::Path,
-    config_path: &std::path::Path,
-    json: bool,
-) -> Result<()> {
+async fn list_effective(xvn_home: &std::path::Path, config_path: &std::path::Path, json: bool) -> Result<()> {
     let rows = providers::effective_providers_with_paths(xvn_home, config_path)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

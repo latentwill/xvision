@@ -21,19 +21,18 @@ use xvision_engine::eval::store::RunStore;
 
 async fn open_ctx() -> (ApiContext, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "report-test".into() })
-        .await
-        .expect("open xvn_home");
+    let ctx = ApiContext::open(
+        dir.path(),
+        Actor::Cli {
+            user: "report-test".into(),
+        },
+    )
+    .await
+    .expect("open xvn_home");
     (ctx, dir)
 }
 
-async fn insert_decision(
-    pool: &SqlitePool,
-    run_id: &str,
-    idx: i64,
-    asset: &str,
-    action: &str,
-) {
+async fn insert_decision(pool: &SqlitePool, run_id: &str, idx: i64, asset: &str, action: &str) {
     sqlx::query(
         "INSERT INTO eval_decisions \
          (run_id, decision_index, timestamp, asset, action) \
@@ -136,7 +135,7 @@ async fn action_counts_tally_all_six_variants() {
     let mix: &[(&str, &str)] = &[
         ("BTC", "long_open"),
         ("BTC", "hold"),
-        ("BTC", "long_open"),  // a repeated open
+        ("BTC", "long_open"), // a repeated open
         ("BTC", "long_close"),
         ("BTC", "short_open"),
         ("BTC", "hold"),

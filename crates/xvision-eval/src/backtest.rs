@@ -1,6 +1,6 @@
 //! Phase 6.4 — in-process backtest simulator.
 //!
-//! `BacktestExecutor` implements the `Executor` trait from `xvision-execution`
+//! `BacktestExecutor` implements the `BacktestExecutor` trait from `xvision-execution`
 //! so Phase 8's harness can swap it in transparently. The sim is driven forward
 //! in time by the harness via `tick(next_bar)`, which advances the clock, marks
 //! open positions, and fires stop/target orders when bars cross the levels.
@@ -92,7 +92,7 @@ impl Default for BacktestConfig {
 // ---------------------------------------------------------------------------
 
 /// All mutable state for one backtest run. Wrapped in `Arc<Mutex<…>>` inside
-/// `BacktestExecutor` because the `Executor` trait methods take `&self`.
+/// `BacktestExecutor` because the `BacktestExecutor` trait methods take `&self`.
 #[derive(Debug)]
 pub struct BacktestState {
     /// Current portfolio snapshot (equity, open positions, etc.).
@@ -250,10 +250,10 @@ impl BacktestState {
 }
 
 // ---------------------------------------------------------------------------
-// Executor
+// BacktestExecutor
 // ---------------------------------------------------------------------------
 
-/// Stateful in-process backtest simulator. Implements `Executor` so it can be
+/// Stateful in-process backtest simulator. Implements `BacktestExecutor` so it can be
 /// swapped in wherever a live executor is expected (Phase 8 harness).
 pub struct BacktestExecutor {
     state: Arc<Mutex<BacktestState>>,

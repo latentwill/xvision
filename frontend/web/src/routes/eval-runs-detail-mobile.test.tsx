@@ -146,6 +146,12 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       actual_input_tokens: 12500,
       actual_output_tokens: 1820,
       error: null,
+      inference_cost_quote_total: null,
+      net_return_pct: null,
+      filter_summaries: [],
+      auto_fire_review: false,
+      review_model: null,
+      max_annotations_per_review: 8,
     },
     decisions: [decision()],
     equity_curve: [
@@ -153,6 +159,8 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       { timestamp: "2026-05-13T14:10:00Z", equity_usd: 10250 },
       { timestamp: "2026-05-13T14:30:00Z", equity_usd: 10642 },
     ],
+    filter_events: [],
+    filter_summaries: [],
     ...overrides,
   };
 }
@@ -407,9 +415,10 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
         name: /download eval run 01LIVE as json/i,
       }),
     ).toBeInTheDocument();
-    // Mobile tablist must not appear in desktop layout
+    // Mobile tablist must not appear in desktop layout; the desktop Signal
+    // topbar (mobile uses a LIVE strip instead) is the positive sentinel.
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
-    expect(screen.queryByText("PNL")).not.toBeInTheDocument();
+    expect(screen.getByTestId("eval-topbar")).toBeInTheDocument();
   });
 
   it("DECISIONS tab renders SHORT / COVER pills resolved against prior side (QA22 round-4)", async () => {

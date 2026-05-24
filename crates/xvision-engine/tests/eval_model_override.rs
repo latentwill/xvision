@@ -186,7 +186,7 @@ async fn save_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -204,6 +204,7 @@ async fn provider_override_partial_provider_only_rejects_as_validation() {
         scenario_id: "flash-crash-2024-08".into(),
         mode: RunMode::Backtest,
         params_override: None,
+        live_config: None,
         limits: None,
         skip_preflight: false,
         provider_override: Some(ProviderOverride {
@@ -211,6 +212,9 @@ async fn provider_override_partial_provider_only_rejects_as_validation() {
             model: String::new(),
         }),
         assets_subset: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -245,6 +249,7 @@ async fn provider_override_unknown_provider_refuses_with_provider_unknown_reason
         scenario_id: "flash-crash-2024-08".into(),
         mode: RunMode::Backtest,
         params_override: None,
+        live_config: None,
         limits: None,
         skip_preflight: true, // bypass network preflight; resolver still runs
         provider_override: Some(ProviderOverride {
@@ -252,6 +257,9 @@ async fn provider_override_unknown_provider_refuses_with_provider_unknown_reason
             model: "no-such-model".into(),
         }),
         assets_subset: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -296,6 +304,7 @@ async fn provider_override_missing_key_refuses_with_key_missing_reason() {
         scenario_id: "flash-crash-2024-08".into(),
         mode: RunMode::Backtest,
         params_override: None,
+        live_config: None,
         limits: None,
         skip_preflight: true,
         provider_override: Some(ProviderOverride {
@@ -303,6 +312,9 @@ async fn provider_override_missing_key_refuses_with_key_missing_reason() {
             model: "deepseek/deepseek-v4-flash".into(),
         }),
         assets_subset: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -341,6 +353,7 @@ async fn provider_override_disabled_model_refuses_with_model_disabled_reason() {
         scenario_id: "flash-crash-2024-08".into(),
         mode: RunMode::Backtest,
         params_override: None,
+        live_config: None,
         limits: None,
         skip_preflight: true,
         provider_override: Some(ProviderOverride {
@@ -349,6 +362,9 @@ async fn provider_override_disabled_model_refuses_with_model_disabled_reason() {
             model: "claude-haiku-not-enabled".into(),
         }),
         assets_subset: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -392,6 +408,7 @@ async fn provider_override_receipt_round_trips_via_load_provider_override() {
         scenario_id: "flash-crash-2024-08".into(),
         mode: RunMode::Backtest,
         params_override: None,
+        live_config: None,
         limits: None,
         skip_preflight: true,
         provider_override: Some(ProviderOverride {
@@ -401,6 +418,9 @@ async fn provider_override_receipt_round_trips_via_load_provider_override() {
             model: "deepseek/deepseek-v4-flash".into(),
         }),
         assets_subset: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"override-receipt"}"#,
@@ -441,10 +461,14 @@ async fn no_provider_override_leaves_load_provider_override_none() {
         scenario_id: "flash-crash-2024-08".into(),
         mode: RunMode::Backtest,
         params_override: None,
+        live_config: None,
         limits: None,
         skip_preflight: true,
         provider_override: None,
         assets_subset: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"no-override"}"#,

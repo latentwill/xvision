@@ -32,6 +32,7 @@ fn base_filter(conditions: ConditionTree) -> Filter {
         timeframe: "1h".into(),
         scan_cadence: xvision_filters::ScanCadence::BarClose,
         conditions,
+        fire: None,
         cooldown_bars: 0,
         max_wakeups_per_day: None,
         wake_when_in_position: WakeInPosition::Always,

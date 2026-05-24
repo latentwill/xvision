@@ -4,7 +4,13 @@ import type { MetricsSummary } from "./MetricsSummary";
 import type { RunMode } from "./RunMode";
 import type { RunStatus } from "./RunStatus";
 
-export type ComparisonRunSummary = { id: string, agent_id: string, scenario_id: string, mode: RunMode, status: RunStatus, started_at: string, completed_at: string | null, metrics: MetricsSummary | null, error: string | null, 
+export type ComparisonRunSummary = { id: string, agent_id: string, 
+/**
+ * Human-readable strategy name resolved by the API layer when it has
+ * access to the workspace strategy store. `None` for legacy payloads or
+ * direct in-process callers that only have a `RunStore`.
+ */
+strategy_name: string | null, scenario_id: string, mode: RunMode, status: RunStatus, started_at: string, completed_at: string | null, metrics: MetricsSummary | null, error: string | null, 
 /**
  * Derived action-distribution + behaviour summary for this run.
  * Populated by `compare_runs`; `None` only when the decision store

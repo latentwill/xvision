@@ -156,6 +156,10 @@ pub struct EvalReview {
     /// in.
     #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub raw_output_json: Option<String>,
+    /// Structured chart annotations produced by the review. Stored as JSON
+    /// on `eval_reviews.annotations_json` and consumed by `/charts/annotated`.
+    #[serde(default)]
+    pub annotations: Vec<ReviewAnnotation>,
     pub error: Option<String>,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub created_at: DateTime<Utc>,
@@ -180,9 +184,33 @@ impl EvalReview {
             score: None,
             summary: None,
             raw_output_json: None,
+            annotations: Vec::new(),
             error: None,
             created_at: now,
             updated_at: now,
         }
     }
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReviewAnnotation {
+    pub idx: u32,
+    pub side: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    pub conf: f64,
+    pub action: String,
+    #[serde(default)]
+    pub danger: bool,
+    /// Unix seconds for the annotation anchor. Optional because legacy
+    /// reviews and sparse payloads may not have candle timestamps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ts: Option<f64>,
 }

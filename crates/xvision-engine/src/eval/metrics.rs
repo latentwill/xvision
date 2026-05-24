@@ -1,13 +1,13 @@
 //! Pure-compute metrics over an evaluation run's equity curve.
 //!
-//! The Phase 3.B-paper PaperExecutor records one equity sample per cadence
+//! The Phase 3.B-paper paper-mode-executor-deleted records one equity sample per cadence
 //! tick. This module turns that curve into Sharpe ratio, max drawdown, and
 //! total return — replacing the 0.0 placeholders the paper executor used
 //! before this module existed.
 //!
 //! Bootstrap CI helpers + per-decision-driven win-rate computation come
 //! later (Phase 3.C compare + Phase 3.D); they need a real PnL-realized
-//! pipeline that PaperExecutor does not yet emit.
+//! pipeline that paper-mode-executor-deleted does not yet emit.
 //!
 //! ## Net-of-inference-cost (V2E item 25)
 //!

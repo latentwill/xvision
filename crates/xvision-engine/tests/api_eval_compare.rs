@@ -8,7 +8,9 @@ mod common;
 
 use common::{open_api_context as ctx_with_eval_tables, seeded_scenario_id};
 use xvision_engine::api::eval::{self, CompareRunsRequest};
+use xvision_engine::api::strategy as api_strategy;
 use xvision_engine::api::ApiError;
+use xvision_engine::authoring::CreateStrategyReq;
 use xvision_engine::eval::findings::{Finding, Severity};
 use xvision_engine::eval::run::{MetricsSummary, RunMode};
 use xvision_engine::eval::{DecisionRow, Run, RunStore};
@@ -139,6 +141,48 @@ async fn compare_returns_two_runs_with_curves_and_findings() {
     for w in samples_a.windows(2) {
         assert!(w[0].timestamp < w[1].timestamp);
     }
+}
+
+#[tokio::test]
+async fn compare_populates_strategy_name_from_manifest() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+    let store = RunStore::new(ctx.db.clone());
+    let scenario_id = seeded_scenario_id(&ctx).await;
+
+    let strategy_a = api_strategy::create_strategy(
+        &ctx,
+        CreateStrategyReq {
+            name: "Readable Alpha".into(),
+            creator: Some("@tester".into()),
+        },
+    )
+    .await
+    .unwrap();
+    let strategy_b = api_strategy::create_strategy(
+        &ctx,
+        CreateStrategyReq {
+            name: "Readable Beta".into(),
+            creator: Some("@tester".into()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let run_a = seed_completed_run(&store, &strategy_a.id, &scenario_id, metrics(15.0, 1.2), 5).await;
+    let run_b = seed_completed_run(&store, &strategy_b.id, &scenario_id, metrics(8.5, 0.7), 5).await;
+
+    let report = eval::compare(
+        &ctx,
+        CompareRunsRequest {
+            run_ids: vec![run_a.id, run_b.id],
+            allow_manifest_mismatch: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.runs[0].strategy_name.as_deref(), Some("Readable Alpha"));
+    assert_eq!(report.runs[1].strategy_name.as_deref(), Some("Readable Beta"));
 }
 
 #[tokio::test]

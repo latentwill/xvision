@@ -148,7 +148,7 @@ export function ScenariosDetailRoute() {
   return (
     <>
       <Topbar
-        title={q.data?.display_name ?? "Scenario"}
+        title="Scenario"
         sub={q.isPending ? "Loading…" : q.isError ? "Error" : id}
         back={{ to: "/scenarios", label: "Back to scenarios" }}
       />
@@ -267,11 +267,9 @@ function DetailView({
 
   return (
     <div>
-      <Breadcrumb scenario={s} />
-
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h1 className="text-text font-serif text-[28px] m-0 leading-tight">
+          <h1 className="text-text font-sans text-[28px] m-0 leading-tight">
             {s.display_name}
           </h1>
           <div
@@ -281,6 +279,17 @@ function DetailView({
           >
             {s.id}
           </div>
+          {s.parent_scenario_id ? (
+            <div className="mt-1 text-[12px] text-text-3">
+              forked from{" "}
+              <Link
+                to={`/scenarios/${s.parent_scenario_id}`}
+                className="font-mono hover:text-text transition-colors"
+              >
+                {s.parent_scenario_id}
+              </Link>
+            </div>
+          ) : null}
           {s.description && (
             <p className="text-text-2 text-[13px] mt-1 mb-0">{s.description}</p>
           )}
@@ -381,33 +390,6 @@ function DetailView({
         )}
       </Card>
     </div>
-  );
-}
-
-// ── breadcrumb ─────────────────────────────────────────────────────────────
-
-function Breadcrumb({ scenario }: { scenario: Scenario }) {
-  return (
-    <nav className="text-[12px] text-text-3 mb-3">
-      <Link
-        to="/scenarios"
-        className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text"
-      >
-        ← Back to scenarios
-      </Link>
-      {scenario.parent_scenario_id && (
-        <>
-          <span className="mx-1.5">·</span>
-          <span>forked from{" "}</span>
-          <Link
-            to={`/scenarios/${scenario.parent_scenario_id}`}
-            className="hover:text-text transition-colors"
-          >
-            {scenario.parent_scenario_id}
-          </Link>
-        </>
-      )}
-    </nav>
   );
 }
 
@@ -581,7 +563,7 @@ const RUNS_MODE_FILTER: FilterDef = {
   options: [
     { value: "all", label: "All modes" },
     { value: "backtest", label: "Backtest" },
-    { value: "paper", label: "Paper" },
+    { value: "live", label: "Live" },
   ],
 };
 
@@ -941,7 +923,7 @@ function ErrorState({ err, onRetry }: { err: unknown; onRetry: () => void }) {
   return (
     <Card>
       <div className="px-6 py-12 text-center">
-        <div className="font-serif italic text-[24px] text-danger mb-3">
+        <div className="font-sans font-semibold text-[24px] text-danger mb-3">
           couldn't load scenario
         </div>
         <p className="m-0 mb-5 max-w-md mx-auto text-text-2 leading-snug">

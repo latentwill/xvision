@@ -85,7 +85,7 @@ function EvalLine({
     <div
       className="relative h-9 w-full flex items-center gap-3 px-3 text-left transition-colors"
       style={{
-        background: focused ? "rgba(212,165,71,0.06)" : "transparent",
+        background: focused ? "rgba(0,230,118,0.06)" : "transparent",
         borderLeft: `2px solid ${focused ? "var(--gold)" : "transparent"}`,
         cursor: focused ? "default" : "pointer",
         border: "none",
@@ -264,7 +264,7 @@ export function EvalCapsule({
               className="h-7 px-2 mx-0.5 flex items-center gap-1.5 rounded-full text-[10px] font-mono tracking-[0.16em]"
               style={{
                 background: anyError
-                  ? "rgba(200,68,58,0.10)"
+                  ? "rgba(255,77,77,0.10)"
                   : expanded
                     ? "var(--gold-bg)"
                     : "var(--surface-card)",

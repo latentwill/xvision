@@ -388,6 +388,14 @@ async fn sqlite_recorder_persists_positive_cost_usd_for_priced_runs() {
     }
 
     // Sum cost_usd across the rows the recorder persisted.
+    let (row_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM model_calls")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row_count, 3,
+        "all emitted model call rows must be persisted before cost aggregation"
+    );
     let (sum,): (Option<f64>,) = sqlx::query_as("SELECT SUM(cost_usd) FROM model_calls")
         .fetch_one(&pool)
         .await

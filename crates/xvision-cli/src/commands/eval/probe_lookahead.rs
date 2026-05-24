@@ -84,7 +84,7 @@ pub async fn run_probe_lookahead(args: ProbeLookaheadArgs) -> CliResult<()> {
         .await
         .map_err(|e| super::api_to_cli("probe-lookahead get run", e))?;
 
-    // 2. Load the scenario to get the bar cache key and asset info.
+    // 2. Load the scenario to get the bar cache key.
     let scenario = api_scenario::get(&ctx, &run.scenario_id)
         .await
         .map_err(|e| super::api_to_cli("probe-lookahead get scenario", e))?;

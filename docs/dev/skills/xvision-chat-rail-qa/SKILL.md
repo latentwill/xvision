@@ -26,7 +26,7 @@ Do **not** use this for full app redesign or broad unrelated feature sweeps; sta
    - Note visible actions, read-only labels, and missing affordances.
 
 2. **Drive one chat-rail mutation at a time**
-   - Strategy: create via wizard, then verify list + authoring page.
+   - Strategy: create via wizard, then verify list + `/strategies/:id` inspector.
    - Scenario: create via UI or chat, then verify list + detail page.
    - Eval: launch only after prerequisites are satisfied.
 
@@ -47,12 +47,14 @@ Do **not** use this for full app redesign or broad unrelated feature sweeps; sta
 ### Strategy
 - Create a draft from chat rail.
 - Confirm the strategy appears in `/strategies`.
-- Open the authoring page and verify:
+- Open `/strategies/:id` and verify:
   - name
   - asset universe
   - cadence
   - risk basis
+  - filter artifact status (`No filter artifact attached` vs `Filter artifact attached`)
   - attached agents / provider-model readiness
+- If testing filters, confirm a real XVN filter artifact is attached. Prompt text that says "filter" is not enough.
 - Try edit and delete if exposed.
 
 ### Scenario
@@ -67,6 +69,7 @@ Do **not** use this for full app redesign or broad unrelated feature sweeps; sta
 - Confirm the UI blocks runs when prerequisites are missing.
 - Start the eval only when the strategy has an agent/model attached.
 - Verify the run appears in `/eval-runs` and that status/details update.
+- On run detail, check filter summaries/events and decision provenance. High `noop_skip` or early-stop counts mean the run includes synthesized rows, not just direct model decisions.
 - Test delete if available.
 
 ## What to Record
@@ -89,6 +92,8 @@ For each issue, capture:
 - eval blocked too late, after the user already invested time
 - read-only metadata is presented as if it were editable
 - assistant output implies capability the toolset does not actually have
+- "filtered" strategy claims that only exist in prompt text, with no attached filter artifact
+- eval conclusions based on synthesized `noop_skip` / early-stop rows without calling that out
 
 ## Quick Checklist
 
@@ -111,10 +116,15 @@ Use this mode when you need to verify the app without any browser UI at all.
 - create/edit/delete routes return the correct HTTP semantics (`201`, `200`, `204`, `404`, `405`, `422`)
 - strategy validation catches manifest-vs-slot drift instead of only checking syntax
 - eval scheduling uses the resolved provider/model actually configured for the strategy
+- filter QA confirms non-empty filter artifacts and, when expected, filter events/summaries
+- eval result analysis separates direct model decisions from synthesized rows
 - duplicate records are not present in list endpoints
 
 ### Especially important xvision pitfalls
 - A strategy can validate successfully while still being internally inconsistent.
+- `/strategies/:id` is the canonical inspector route. `/authoring/:id` is a compatibility alias.
+- Strategy manifest display name, description, asset universe, and cadence are editable in the inspector; the stable strategy ID is not.
+- A strategy can mention filters in prompts without exercising the XVN filter subsystem. Confirm the filter artifact and result events.
 - A strategy may attach an agent successfully, but eval can still fail if model resolution points at an invalid upstream ID.
 - Duplicate scenario rows in selectors often originate from duplicate records already present in the API list response.
 - If the API exposes agent mutation but not strategy entity deletion, document that as a lifecycle gap rather than assuming a hidden route exists.

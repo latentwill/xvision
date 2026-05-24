@@ -1,7 +1,7 @@
 //! End-to-end regression for `wire-min-notional-into-eval`.
 //!
 //! Sister of `risk_min_notional.rs` (PR #324) but exercises the
-//! production `api::eval::run_with_deps` path, not the `PaperExecutor`
+//! production `api::eval::run_with_deps` path, not the `paper-mode-executor-deleted`
 //! in isolation. Confirms that the wiring added in this PR — reading
 //! `[venues.paper] min_notional_usd` from `$XVN_HOME/config/risk.toml`
 //! and chaining `.with_min_notional_usd(...)` onto the executor —
@@ -197,7 +197,7 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, strategy_id: &str) -> Strateg
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -233,12 +233,16 @@ async fn run_tiny_notional_probe(
         EvalRunRequest {
             agent_id: agent_id.into(),
             scenario_id: "flash-crash-2024-08".into(),
-            mode: RunMode::Paper,
+            mode: RunMode::Backtest,
             params_override: None,
+            live_config: None,
             limits: None,
             skip_preflight: false,
             provider_override: None,
             assets_subset: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         },
         broker,
         long_open_dispatch(),

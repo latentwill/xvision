@@ -97,6 +97,8 @@ pub async fn run_llm_filter(input: DispatchInput<'_>) -> Result<FilterDispatchRe
         catalog: input.catalog,
         delta_briefing: input.delta_briefing,
         prev_briefing: input.prev_briefing,
+        trace_name: input.trace_name,
+        trace_attrs: input.trace_attrs,
     })
     .await?;
 

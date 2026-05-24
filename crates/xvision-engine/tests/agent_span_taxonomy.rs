@@ -109,6 +109,8 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     };
 
     // Drive one tool-use iteration. The tool itself fails (registry

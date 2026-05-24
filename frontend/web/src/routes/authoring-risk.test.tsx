@@ -21,7 +21,9 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     getStrategy: vi.fn(),
+    patchStrategyMetadata: vi.fn(),
     validateDraft: vi.fn(),
+    deleteStrategy: vi.fn(),
     setRiskConfig: vi.fn(),
     updateSlot: vi.fn(),
     setStrategyPipeline: vi.fn(),
@@ -49,8 +51,8 @@ vi.mock("@/api/chart", () => ({
   }),
 }));
 
-vi.mock("@/components/chart/StrategyChart", () => ({
-  StrategyChart: () => <div data-testid="strategy-chart" />,
+vi.mock("@/components/chart/v2/surfaces/StrategyHistoryChartV2", () => ({
+  StrategyHistoryChartV2: () => <div data-testid="strategy-chart" />,
 }));
 
 vi.mock("@/api/settings", () => ({
@@ -81,12 +83,17 @@ function renderRoute() {
 beforeEach(() => {
   vi.mocked(agentApi.listAgents).mockReset();
   vi.mocked(strategyApi.getStrategy).mockReset();
+  vi.mocked(strategyApi.patchStrategyMetadata).mockReset();
   vi.mocked(strategyApi.validateDraft).mockReset();
+  vi.mocked(strategyApi.deleteStrategy).mockReset();
   vi.mocked(strategyApi.setRiskConfig).mockReset();
   vi.mocked(strategyApi.setStrategyPipeline).mockReset();
   vi.mocked(strategyApi.addStrategyAgent).mockReset();
   vi.mocked(agentApi.createAgent).mockReset();
-  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
+      default_model: null,
+  });
+  vi.mocked(strategyApi.deleteStrategy).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -94,7 +101,7 @@ afterEach(() => {
 });
 
 describe("AuthoringRoute risk editor", () => {
-  it("states which strategy fields are Inspector read-only", async () => {
+  it("renders editable manifest fields and hides mechanical params", async () => {
     vi.mocked(agentApi.listAgents).mockResolvedValue([]);
     vi.mocked(strategyApi.getStrategy).mockResolvedValue({
       manifest: {
@@ -128,16 +135,12 @@ describe("AuthoringRoute risk editor", () => {
 
     renderRoute();
 
-    expect(
-      await screen.findByText(
-        "Direct edits are locked in the Inspector. Wizard changes appear here only after a save tool succeeds.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Inspector read-only in v1. Tune through setup tools; this panel shows the saved JSON.",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByLabelText("Display name")).toHaveValue("Trend 4H");
+    expect(screen.getByLabelText("Asset universe")).toHaveValue("BTC/USD");
+    expect(screen.getByLabelText("Time frame")).toHaveValue("240");
+    expect(screen.getByLabelText(/Strategy ID 01TEST/)).toHaveValue("01TEST");
+    expect(screen.getByText("No saved filter")).toBeInTheDocument();
+    expect(screen.queryByText("Mechanical params")).not.toBeInTheDocument();
   });
 
   it("does not render the old validation box in the Inspector rail", async () => {
@@ -179,7 +182,49 @@ describe("AuthoringRoute risk editor", () => {
 
     expect(await screen.findByText("Risk per trade (%)")).toBeInTheDocument();
     expect(screen.queryByText("Validation")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check eval readiness" })).toBeInTheDocument();
     expect(screen.queryByText("single-agent pipeline cannot include multiple agents")).not.toBeInTheDocument();
+  });
+
+  it("deletes a strategy from the inspector action bar", async () => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([]);
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Trend 4H",
+        template: "trend_follower",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: ["BTC/USD"],
+        decision_cadence_minutes: 240,
+        attested_with: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {},
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Delete strategy 01TEST/ }));
+
+    await waitFor(() => {
+      expect(strategyApi.deleteStrategy).toHaveBeenCalledWith("01TEST");
+    });
+    confirm.mockRestore();
   });
 
   it("edits explicit risk fields and saves them", async () => {
@@ -568,6 +613,8 @@ describe("AuthoringRoute agent composition", () => {
           enabled_models: ["deepseek/deepseek-v4-flash"],
         },
       ],
+    
+        default_model: null,
     });
     vi.mocked(strategyApi.getStrategy).mockResolvedValue({
       manifest: {

@@ -16,7 +16,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_core::trading::AssetSymbol;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 #[allow(deprecated)]
 use xvision_engine::eval::scenario::canonical_scenarios;
@@ -56,6 +56,20 @@ async fn fresh_store() -> RunStore {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -160,7 +174,7 @@ async fn backtest_fans_out_over_universe_with_shared_nav() {
     let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> =
         BTreeMap::from([(AssetSymbol::Btc, btc), (AssetSymbol::Eth, eth)]);
 
-    let executor = BacktestExecutor::new().with_asset_bars(asset_bars);
+    let executor = Executor::new().with_asset_bars(asset_bars);
 
     let metrics = executor
         .run(
@@ -177,8 +191,7 @@ async fn backtest_fans_out_over_universe_with_shared_nav() {
 
     // Decisions must exist for BOTH assets.
     let decisions = store.read_decisions(&run.id).await.unwrap();
-    let assets: std::collections::BTreeSet<String> =
-        decisions.iter().map(|d| d.asset.clone()).collect();
+    let assets: std::collections::BTreeSet<String> = decisions.iter().map(|d| d.asset.clone()).collect();
     assert!(
         assets.contains("BTC/USD"),
         "expected BTC decisions, got assets: {assets:?}"
@@ -253,7 +266,7 @@ async fn backtest_misaligned_timeline_carries_last_mark() {
     let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> =
         BTreeMap::from([(AssetSymbol::Btc, btc), (AssetSymbol::Eth, eth)]);
 
-    let executor = BacktestExecutor::new().with_asset_bars(asset_bars);
+    let executor = Executor::new().with_asset_bars(asset_bars);
     executor
         .run(
             &mut run,
@@ -301,8 +314,7 @@ async fn backtest_misaligned_timeline_carries_last_mark() {
     }
 
     let gap_equity = gap_equity.expect("the gap timestamp must appear in the equity series");
-    let pre_gap_equity =
-        pre_gap_equity.expect("there must be at least one timestamp before the gap");
+    let pre_gap_equity = pre_gap_equity.expect("there must be at least one timestamp before the gap");
 
     // The core assertion: ETH's accrued unrealized is CARRIED across the gap
     // (not reset to entry/zero). With ETH carried flat at its last mark and
@@ -341,7 +353,7 @@ async fn backtest_asset_subset_excludes_other_assets() {
         BTreeMap::from([(AssetSymbol::Btc, btc), (AssetSymbol::Eth, eth)]);
 
     // Apply subset: only ETH should trade.
-    let executor = BacktestExecutor::new()
+    let executor = Executor::new()
         .with_asset_bars(asset_bars)
         .with_asset_subset(vec![AssetSymbol::Eth]);
 
@@ -398,7 +410,7 @@ async fn portfolio_mode_returns_not_implemented() {
         (AssetSymbol::Btc, daily_bars(3, 50_000.0)),
         (AssetSymbol::Eth, daily_bars(3, 3_000.0)),
     ]);
-    let executor = BacktestExecutor::new().with_asset_bars(asset_bars);
+    let executor = Executor::new().with_asset_bars(asset_bars);
 
     let err = executor
         .run(

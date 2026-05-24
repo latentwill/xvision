@@ -160,7 +160,7 @@ function StrategiesListView() {
         creator: null,
       }),
     onSuccess: (out) => {
-      navigate(`/authoring/${encodeURIComponent(out.id)}`);
+      navigate(`/strategies/${encodeURIComponent(out.id)}`);
     },
   });
   // QA-round-7 backend-pagination follow-up (#386 gap): page-size +
@@ -245,7 +245,7 @@ function StrategiesListView() {
     { key: "template", label: "Template" },
     { key: "shape", label: "Shape" },
     { key: "tags", label: "Tags" },
-    { key: "cadence", label: "Cadence" },
+    { key: "cadence", label: "Time frame" },
     { key: "model", label: "Model" },
     { key: "status", label: "Status" },
     { key: "actions", label: "" },
@@ -307,7 +307,7 @@ function StrategiesListView() {
           <MListRow
             key={row.agent_id}
             onClick={() => {
-              window.location.href = `/authoring/${encodeURIComponent(row.agent_id)}`;
+              window.location.href = `/strategies/${encodeURIComponent(row.agent_id)}`;
             }}
             title={row.display_name || "Untitled strategy"}
             badge={shapeOf(row) === "multi" ? "multi-agent" : "trader-only"}
@@ -385,7 +385,7 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
     >
       <td className="px-3 py-3 text-text">
         <Link
-          to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+          to={`/strategies/${encodeURIComponent(row.agent_id)}`}
           className="break-all text-text hover:underline"
         >
           {row.display_name || "Untitled strategy"}
@@ -406,7 +406,7 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
         {formatCadence(row.decision_cadence_minutes)}
       </td>
       <td className="max-w-[180px] px-3 py-3 break-all font-mono text-[12px] text-text-2">
-        {row.model ?? <span className="italic text-text-3">—</span>}
+        {row.model ?? <span className="font-medium text-text-3">—</span>}
       </td>
       <td className="px-3 py-3">
         <Pill>
@@ -415,7 +415,7 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
       </td>
       <td className="px-5 py-3 text-right text-text-3">
         <Link
-          to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+          to={`/strategies/${encodeURIComponent(row.agent_id)}`}
           className="text-text-3 hover:text-text"
           aria-label={`Open inspector for ${displayName(row)}`}
         >
@@ -443,7 +443,7 @@ function modelSummary(row: StrategyListItem): string {
 
 function TagList({ tags }: { tags: string[] }) {
   if (tags.length === 0) {
-    return <span className="text-[12px] italic text-text-3">—</span>;
+    return <span className="text-[12px] font-medium text-text-3">—</span>;
   }
   const visible = tags.slice(0, 3);
   const extra = tags.length - visible.length;

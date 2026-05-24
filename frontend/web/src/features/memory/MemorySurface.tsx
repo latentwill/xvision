@@ -378,7 +378,7 @@ function AddPatternDialog(props: AddPatternDialogProps) {
       >
         <form onSubmit={onSubmit} className="p-5 space-y-4">
           <div>
-            <h2 className="m-0 font-serif font-medium text-[20px] tracking-tight text-text">
+            <h2 className="m-0 font-sans font-medium text-[20px] tracking-tight text-text">
               Add Pattern
             </h2>
             <p className="m-0 mt-1 text-text-3 text-[12px]">
@@ -671,7 +671,7 @@ function ForgetDialog(props: ForgetDialogProps) {
       >
         <div className="p-5 space-y-4">
           <div>
-            <h2 className="m-0 font-serif font-medium text-[18px] tracking-tight text-text">
+            <h2 className="m-0 font-sans font-medium text-[18px] tracking-tight text-text">
               {title}
             </h2>
             <p className="m-0 mt-2 text-text-2 text-[13px]">

@@ -179,7 +179,7 @@ pub fn no_filter_warnings(strategy: &Strategy) -> Vec<String> {
             continue;
         }
         warnings.push(format!(
-            "strategy '{}' has a Trader agent with no upstream Filter — it will dispatch on every bar. Consider adding a Filter to reduce LLM cost. (See: xvn agent create --capability filter)",
+            "strategy '{}' has a Trader agent with no saved JSON filter — it will dispatch on every bar. Attach a strategy filter to reduce LLM cost.",
             strategy.manifest.display_name,
         ));
     }
@@ -413,9 +413,9 @@ fn predicate_has_upstream_filter(strategy: &Strategy, from_idx: usize, _predicat
 mod preflight_tests {
     use super::*;
     use crate::eval::scenario::{
-        AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
-        LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-        ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+        AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
+        LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+        SlippageModel, TimeWindow, Venue, VenueSettings,
     };
     use crate::safety::VenueLabel;
     use crate::strategies::{manifest::PublicManifest, risk::RiskPreset, AgentRef, PipelineDef, Strategy};

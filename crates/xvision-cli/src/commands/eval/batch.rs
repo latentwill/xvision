@@ -81,7 +81,7 @@ pub struct BatchRunArgs {
     #[arg(long, value_delimiter = ',', required = true)]
     pub scenarios: Vec<String>,
 
-    /// Run mode: `backtest` (default) or `paper`.
+    /// Run mode: `backtest` (default) or `live` (`paper` is a legacy alias for `backtest`).
     #[arg(long, default_value = "backtest")]
     pub mode: String,
 
@@ -270,10 +270,14 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
             scenario_id: scenario_id.clone(),
             mode: req.mode,
             params_override: None,
+            live_config: None,
             limits: None,
             skip_preflight: false,
             provider_override: None,
             assets_subset: req.assets_subset.clone(),
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         };
 
         let entry = match eval::run_with_deps(
@@ -583,7 +587,10 @@ pub(crate) async fn run_batch_via_env_with_assets(
 ) -> CliResult<BatchResult> {
     let mode = xvision_engine::eval::run::RunMode::parse(&args.mode).ok_or_else(|| CliError {
         exit: XvnExit::Usage,
-        source: anyhow::anyhow!("unknown mode {:?}; expected one of: paper | backtest", args.mode),
+        source: anyhow::anyhow!(
+            "unknown mode {:?}; expected one of: backtest | live (legacy alias: paper)",
+            args.mode
+        ),
     })?;
 
     // --wait is required in v1 (non-wait path is a follow-on when async
@@ -628,10 +635,14 @@ pub(crate) async fn run_batch_via_env_with_assets(
             scenario_id: scenario_id.clone(),
             mode,
             params_override: None,
+            live_config: None,
             limits: None,
             skip_preflight: false,
             provider_override: None,
             assets_subset: assets_subset.clone(),
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         };
 
         let entry = match eval::run(ctx, run_req).await {
@@ -788,8 +799,7 @@ pub async fn run_batch_status_cmd(args: BatchStatusArgs) -> CliResult<()> {
     let mut run_reports: Vec<serde_json::Value> = Vec::with_capacity(detail.run_ids.len());
     for run_id in &detail.run_ids {
         if let Ok(run) = store.get(run_id).await {
-            let (report, _behavior) =
-                xvision_engine::eval::report::compute_run_report(&ctx.db, &run).await;
+            let (report, _behavior) = xvision_engine::eval::report::compute_run_report(&ctx.db, &run).await;
             run_reports.push(serde_json::json!({
                 "run_id": run.id,
                 "status": run.status.as_str(),

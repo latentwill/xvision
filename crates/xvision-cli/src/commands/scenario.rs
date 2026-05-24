@@ -705,8 +705,11 @@ async fn run_tree(ctx: &ApiContext, id: String) -> CliResult<()> {
 pub fn format_inspect_card(s: &Scenario, run_count: Option<usize>, best_return_pct: Option<f64>) -> String {
     let mut out = String::new();
 
+    let quote = format!("{:?}", s.quote_currency).to_uppercase();
+
     out.push_str(&format!("id: {}\n", s.id));
     out.push_str(&format!("name: {}\n", s.display_name));
+    out.push_str(&format!("quote_currency: {}\n", quote));
     out.push_str(&format!("timeframe: {}\n", s.granularity));
     out.push_str(&format!(
         "date_window: {}..{}\n",

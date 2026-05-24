@@ -9,7 +9,7 @@
 use chrono::Utc;
 use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use xvision_engine::eval::findings::{Finding, Severity};
-use xvision_engine::eval::review::{EvalReview, ReviewStatus, ReviewVerdict};
+use xvision_engine::eval::review::{EvalReview, ReviewAnnotation, ReviewStatus, ReviewVerdict};
 use xvision_engine::eval::{MetricsSummary, Run, RunMode, RunStatus, RunStore};
 
 /// Build an in-memory pool with every migration that touches eval state
@@ -30,6 +30,7 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/027_run_bars_manifest.sql"),
         // V2E trace-surface: evidence_cycle_ids_json + produced_by_check columns.
         include_str!("../migrations/026_trace_surface_foundation.sql"),
+        include_str!("../migrations/037_review_annotations_and_autofire.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -231,6 +232,47 @@ async fn review_status_machine_transitions() {
     // Terminal reviews never revive.
     let revived = store.begin_review_running(&done.id).await.unwrap();
     assert!(!revived);
+}
+
+#[tokio::test]
+async fn complete_review_with_annotations_round_trips() {
+    let pool = pool_with_migrations().await;
+    let store = RunStore::new(pool);
+    let run = finalized_run(&store).await;
+
+    let review = EvalReview::new_queued(run.id.clone(), "risk-agent".into());
+    store.create_review(&review).await.unwrap();
+    store.begin_review_running(&review.id).await.unwrap();
+
+    let annotations = vec![ReviewAnnotation {
+        idx: 42,
+        side: "top".into(),
+        kind: "RISK".into(),
+        title: "Drawdown cluster".into(),
+        body: "Consecutive loss cluster after volatility expansion.".into(),
+        conf: 0.81,
+        action: "CAUTION".into(),
+        danger: true,
+        ts: Some(1_738_368_000.0),
+    }];
+
+    let completed = store
+        .complete_review_with_annotations(
+            &review.id,
+            ReviewVerdict::Weak,
+            0.74,
+            41,
+            "Review emitted chart annotations.",
+            r#"{"verdict":"weak","annotations":[]}"#,
+            &annotations,
+        )
+        .await
+        .unwrap();
+    assert!(completed);
+
+    let done = store.get_review(&review.id).await.unwrap().unwrap();
+    assert_eq!(done.status, ReviewStatus::Completed);
+    assert_eq!(done.annotations, annotations);
 }
 
 #[tokio::test]
@@ -606,6 +648,7 @@ async fn row_to_review_fails_on_corrupted_score_overflow() {
             score INTEGER,
             summary TEXT,
             raw_output_json TEXT,
+            annotations_json TEXT NOT NULL DEFAULT '[]',
             error TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL

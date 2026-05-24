@@ -6,12 +6,29 @@
  * patch with every field `None` is a valid no-op and round-trips the
  * stored strategy untouched.
  *
- * Scope is deliberately narrow: only the three operator-editable
+ * Scope is deliberately narrow: only the four operator-editable
  * top-level manifest fields a typo in the create wizard could land
  * on. The strategy `id`, `creator`, `template`, `published_at`,
  * `risk_preset_or_config`, `agents`, `pipeline`, `risk`, and
  * `mechanical_params` are out of scope — they either have dedicated
  * sub-routes (slot/agents/pipeline/risk) or are immutable
  * post-create.
+ *
+ * # Color clear convention
+ *
+ * `color: Some("")` (empty string) is the explicit "clear the color"
+ * signal. The apply function maps empty string → `None`, erasing
+ * whatever was stored. This lets the wire format stay
+ * `Option<String>` (no separate `null` vs. `""` ambiguity) while
+ * giving the UI a clean "unset" affordance.
  */
-export type StrategyMetadataPatch = { display_name: string | null, plain_summary: string | null, asset_universe: Array<string> | null, };
+export type StrategyMetadataPatch = { display_name: string | null, plain_summary: string | null, asset_universe: Array<string> | null, decision_cadence_minutes: number | null, 
+/**
+ * Optional per-strategy display color. Must be a 7-character CSS
+ * hex string (`#RRGGBB`, case-insensitive) when non-empty.
+ *
+ * `Some("")` (empty string) explicitly clears the stored color
+ * (maps to `manifest.color = None`). `None` leaves the existing
+ * color untouched. `Some("#D4A547")` sets the color.
+ */
+color: string | null, };

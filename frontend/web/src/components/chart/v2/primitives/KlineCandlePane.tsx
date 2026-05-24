@@ -22,6 +22,7 @@ import { columnarToKLineData } from "../adapters/columnar-to-klinedata";
 import { themeToKlinechartsStyles } from "../adapters/theme-to-klinecharts";
 import { v2MarkersToKlineOverlay } from "../adapters/markers";
 import { useChart2Theme } from "../hooks/useChart2Theme";
+import { CHART_V2_ZOOM_EVENT } from "./ChartFrame";
 
 export interface KlineCandlePaneProps {
   candles: CandleColumns;
@@ -40,6 +41,12 @@ export interface KlineCandlePaneProps {
   markers?: V2Marker[];
   positions?: PositionSpan[];
   height?: number;
+  /**
+   * Called once with the live `Chart` instance after `init()` succeeds,
+   * and once with `null` on unmount/cleanup. Consumers may use this to
+   * drive pixel-precise annotation anchoring via `createKlineAnchor`.
+   */
+  onReady?: (chart: Chart | null) => void;
 }
 
 export function KlineCandlePane({
@@ -48,9 +55,16 @@ export function KlineCandlePane({
   markers,
   positions,
   height = 380,
+  onReady,
 }: KlineCandlePaneProps): React.ReactElement {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<Chart | null>(null);
+  // Keep a stable ref to onReady so the init effect doesn't re-run when
+  // the callback identity changes between renders.
+  const onReadyRef = useRef<((chart: Chart | null) => void) | undefined>(onReady);
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  });
   const theme = useChart2Theme();
 
   // ── Init / Destroy ─────────────────────────────────────────────────────────
@@ -74,6 +88,9 @@ export function KlineCandlePane({
     chart.setSymbol({ ticker: "chart-v2", pricePrecision: 4, volumePrecision: 2 });
     chart.setPeriod({ type: "minute", span: 1 });
 
+    // Notify the consumer that the chart is ready.
+    onReadyRef.current?.(chart);
+
     const obs = new ResizeObserver(() => {
       try {
         chartRef.current?.resize();
@@ -83,8 +100,34 @@ export function KlineCandlePane({
     });
     obs.observe(el);
 
+    const onZoom = (event: Event) => {
+      const detail = (event as CustomEvent<"in" | "out">).detail;
+      const current = chartRef.current;
+      if (!current || (detail !== "in" && detail !== "out")) return;
+      const chartAny = current as unknown as {
+        zoomAtCoordinate?: (
+          scale: number,
+          coordinate: { x: number; y: number },
+          animationDuration?: number,
+        ) => void;
+      };
+      try {
+        chartAny.zoomAtCoordinate?.(
+          detail === "in" ? 1.18 : 0.84,
+          { x: el.clientWidth / 2, y: height / 2 },
+          160,
+        );
+      } catch (err) {
+        console.warn("[KlineCandlePane] zoomAtCoordinate threw:", err);
+      }
+    };
+    window.addEventListener(CHART_V2_ZOOM_EVENT, onZoom);
+
     return () => {
       obs.disconnect();
+      window.removeEventListener(CHART_V2_ZOOM_EVENT, onZoom);
+      // Notify the consumer that the chart is being destroyed.
+      onReadyRef.current?.(null);
       try {
         dispose(el);
       } catch (err) {

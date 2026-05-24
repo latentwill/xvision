@@ -10,7 +10,8 @@ import { strategyKeys, listStrategies } from "@/api/strategies";
 import { scenarioKeys, listScenarios } from "@/api/scenarios";
 import { agentKeys, listAgents } from "@/api/agents";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
-import { RunChart } from "@/components/chart/RunChart";
+import { RunChartV2 } from "@/components/chart/v2/surfaces/RunChartV2";
+import { runChartPayloadToV2 } from "@/components/chart/v2/adapters/run-chart-payload";
 import { isInflightRunStatus } from "@/lib/run-status";
 import {
   displayScenarioName,
@@ -170,7 +171,7 @@ function AttentionCard({
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="m-0 font-serif font-medium text-[24px] tracking-tight">
+        <h2 className="m-0 font-sans font-medium text-[24px] tracking-tight">
           Needs attention
         </h2>
         <span className="text-[12px] text-text-3">
@@ -247,7 +248,7 @@ function RecentRunsCard({
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="m-0 font-serif font-medium text-[24px] tracking-tight">
+        <h2 className="m-0 font-sans font-medium text-[24px] tracking-tight">
           Recent runs
         </h2>
         <Link
@@ -347,7 +348,7 @@ function ControlChartCard({
   loadingRuns: boolean;
   loadingChart: boolean;
   chartError: unknown;
-  chart: Parameters<typeof RunChart>[0]["payload"] | undefined;
+  chart: Awaited<ReturnType<typeof getRunChart>> | undefined;
   latestRun: RunSummary | undefined;
   strategies: StrategyListItem[];
   scenarios: Scenario[];
@@ -364,7 +365,7 @@ function ControlChartCard({
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-1">
-        <h2 className="m-0 font-serif font-medium text-[24px] tracking-tight">
+        <h2 className="m-0 font-sans font-medium text-[24px] tracking-tight">
           Chart snapshot
         </h2>
         <Link
@@ -396,7 +397,10 @@ function ControlChartCard({
           Chart unavailable.
         </div>
       ) : chart ? (
-        <RunChart payload={chart} />
+        <RunChartV2
+          payload={runChartPayloadToV2(chart)}
+          showMarkerDock={false}
+        />
       ) : null}
     </Card>
   );
@@ -423,7 +427,7 @@ function CountCard({
           {link.label} →
         </Link>
       </div>
-      <div className="font-serif text-[36px] tracking-tight leading-none text-text">
+      <div className="font-sans text-[36px] tracking-tight leading-none text-text">
         {value}
       </div>
       {sub ? (

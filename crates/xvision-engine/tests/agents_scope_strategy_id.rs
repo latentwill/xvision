@@ -6,8 +6,8 @@
 
 use sqlx::SqlitePool;
 use xvision_engine::agents::{
-    default_capabilities, AgentSlot, AgentStore, InputsPolicy, ListFilter, NewAgent,
-    ScopeFilter, ScopePatch, UpdateAgent,
+    default_capabilities, AgentSlot, AgentStore, InputsPolicy, ListFilter, NewAgent, ScopeFilter, ScopePatch,
+    UpdateAgent,
 };
 
 async fn fresh_pool() -> SqlitePool {
@@ -36,12 +36,11 @@ fn slot() -> AgentSlot {
         provider: "anthropic".into(),
         model: "claude-sonnet-4-6".into(),
         // ≥200 chars so the content-quality gate passes.
-        system_prompt:
-            "You are a quantitative trading assistant. Analyse the provided OHLCV bar context, \
+        system_prompt: "You are a quantitative trading assistant. Analyse the provided OHLCV bar context, \
              scenario metadata, and risk limits before recommending an action. Explain the \
              evidence for the decision, identify invalidation conditions, and return structured \
              output that downstream pipeline stages can consume without further normalisation."
-                .into(),
+            .into(),
         skill_ids: vec![],
         max_tokens: Some(4096),
         temperature: None,
@@ -66,12 +65,10 @@ async fn migration_up_down_round_trip() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query(include_str!(
-        "../migrations/036_agents_scope_strategy_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../migrations/036_agents_scope_strategy_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Sanity: write + read after the round-trip still works.
     let store = AgentStore::new(pool);
@@ -285,10 +282,7 @@ async fn update_scope_patch_promotes_and_demotes() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        store.get(&id).await.unwrap().unwrap().scope_strategy_id,
-        None
-    );
+    assert_eq!(store.get(&id).await.unwrap().unwrap().scope_strategy_id, None);
 
     // Re-scope via ScopePatch::Set.
     store
@@ -326,4 +320,87 @@ async fn update_scope_patch_promotes_and_demotes() {
     let loaded = store.get(&id).await.unwrap().unwrap();
     assert_eq!(loaded.scope_strategy_id.as_deref(), Some(target.as_str()));
     assert_eq!(loaded.tags, vec!["touched".to_string()]);
+}
+
+#[tokio::test]
+async fn delete_scoped_to_removes_only_matching_rows() {
+    // Janitor: when a strategy is deleted, every agent with
+    // scope_strategy_id == that strategy id must be swept. Workspace
+    // agents (scope_strategy_id IS NULL) and agents scoped to a
+    // different strategy must be left alone. Migration 036 +
+    // `AgentStore::delete_scoped_to`, called from the strategy delete
+    // handler in `api::strategy::delete`.
+    let store = AgentStore::new(fresh_pool().await);
+    let target = "01TARGET00000000000000000".to_string();
+    let other = "01OTHER000000000000000000".to_string();
+
+    let _workspace = store
+        .create(NewAgent {
+            name: "in-workspace".into(),
+            description: String::new(),
+            tags: vec![],
+            slots: vec![slot()],
+            scope_strategy_id: None,
+        })
+        .await
+        .unwrap();
+    let scoped_to_target = store
+        .create(NewAgent {
+            name: "scoped-to-target".into(),
+            description: String::new(),
+            tags: vec![],
+            slots: vec![slot()],
+            scope_strategy_id: Some(target.clone()),
+        })
+        .await
+        .unwrap();
+    let _scoped_to_other = store
+        .create(NewAgent {
+            name: "scoped-to-other".into(),
+            description: String::new(),
+            tags: vec![],
+            slots: vec![slot()],
+            scope_strategy_id: Some(other.clone()),
+        })
+        .await
+        .unwrap();
+
+    let swept = store.delete_scoped_to(&target).await.unwrap();
+    assert_eq!(swept, 1);
+
+    // Verify the row is gone and the others survived.
+    assert!(store.get(&scoped_to_target).await.unwrap().is_none());
+    let remaining = store
+        .list(ListFilter {
+            scope: ScopeFilter::All,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let names: Vec<_> = remaining.iter().map(|a| a.name.as_str()).collect();
+    assert!(names.contains(&"in-workspace"), "names: {names:?}");
+    assert!(names.contains(&"scoped-to-other"), "names: {names:?}");
+    assert_eq!(remaining.len(), 2);
+}
+
+#[tokio::test]
+async fn delete_scoped_to_is_noop_when_nothing_matches() {
+    // Strategy with no scoped agents → delete_scoped_to returns 0
+    // and leaves the table untouched. Defends the janitor against the
+    // common case where the operator never used the inline composer's
+    // toggle-OFF flow.
+    let store = AgentStore::new(fresh_pool().await);
+    let _id = store
+        .create(NewAgent {
+            name: "only-agent".into(),
+            description: String::new(),
+            tags: vec![],
+            slots: vec![slot()],
+            scope_strategy_id: None,
+        })
+        .await
+        .unwrap();
+    let swept = store.delete_scoped_to("01NONESUCH00000000000000").await.unwrap();
+    assert_eq!(swept, 0);
+    assert_eq!(store.list(ListFilter::default()).await.unwrap().len(), 1);
 }

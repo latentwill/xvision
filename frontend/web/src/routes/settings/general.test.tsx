@@ -4,7 +4,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -82,41 +81,19 @@ describe("SettingsGeneralRoute", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Auto" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Light" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Folio dark" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "Black" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Dark" })).toBeChecked();
 
-    fireEvent.click(screen.getByRole("radio", { name: "Black" }));
-    expect(document.documentElement.dataset.theme).toBe("black");
+    fireEvent.click(screen.getByRole("radio", { name: "Light" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
   });
 
-  it("renders all three retention modes and reflects the loaded value", async () => {
+  it("does not render retention mode controls", async () => {
     renderRoute();
 
     expect(
-      screen.getByRole("heading", { name: "Trace data retention" }),
-    ).toBeInTheDocument();
-
-    const fullDebug = await screen.findByRole("radio", {
-      name: /Full debug/,
-    });
-    const redacted = await screen.findByRole("radio", { name: /Redacted/ });
-    const hashOnly = await screen.findByRole("radio", { name: /Hash only/ });
-
-    expect(fullDebug).toBeChecked();
-    expect(redacted).not.toBeChecked();
-    expect(hashOnly).not.toBeChecked();
-  });
-
-  it("sends a PUT when a different retention mode is picked", async () => {
-    renderRoute();
-
-    const hashOnly = await screen.findByRole("radio", { name: /Hash only/ });
-    fireEvent.click(hashOnly);
-
-    await waitFor(() => {
-      expect(settingsApi.setObservabilityMode).toHaveBeenCalledWith(
-        "hash_only",
-      );
-    });
+      screen.queryByRole("heading", { name: "Trace data retention" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Full debug/ })).not.toBeInTheDocument();
+    expect(settingsApi.setObservabilityMode).not.toHaveBeenCalled();
   });
 });

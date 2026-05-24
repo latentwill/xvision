@@ -361,33 +361,36 @@ pub(crate) mod tests_common {
         p
     }
 
-    /// Whitelist mirroring `config/whitelist.toml`: BTC enabled, ETH/SOL disabled.
+    /// Whitelist mirroring the single-asset crypto set exposed by
+    /// scenario creation and the dashboard picker.
     pub fn test_whitelist() -> Whitelist {
         let mut assets = BTreeMap::new();
-        assets.insert(
+        for sym in [
             AssetSymbol::Btc,
-            AssetEntry {
-                enabled: true,
-                cluster: "btc".into(),
-                venues: BTreeMap::new(),
-            },
-        );
-        assets.insert(
             AssetSymbol::Eth,
-            AssetEntry {
-                enabled: false,
-                cluster: "eth".into(),
-                venues: BTreeMap::new(),
-            },
-        );
-        assets.insert(
+            AssetSymbol::Ltc,
             AssetSymbol::Sol,
-            AssetEntry {
-                enabled: false,
-                cluster: "sol".into(),
-                venues: BTreeMap::new(),
-            },
-        );
+            AssetSymbol::Avax,
+            AssetSymbol::Link,
+            AssetSymbol::Aave,
+            AssetSymbol::Uni,
+            AssetSymbol::Dot,
+            AssetSymbol::Doge,
+            AssetSymbol::Shib,
+            AssetSymbol::Matic,
+            AssetSymbol::Bch,
+            AssetSymbol::Usdt,
+            AssetSymbol::Usdc,
+        ] {
+            assets.insert(
+                sym,
+                AssetEntry {
+                    enabled: true,
+                    cluster: sym.as_str().to_ascii_lowercase(),
+                    venues: BTreeMap::new(),
+                },
+            );
+        }
         Whitelist::from_raw(assets)
     }
 
@@ -517,7 +520,7 @@ mod integration {
     // ── Additional integration scenarios ─────────────────────────────────────
 
     #[test]
-    fn disabled_asset_is_vetoed() {
+    fn eth_is_approved_from_repo_whitelist() {
         use tests_common::{flat_portfolio, make_decision};
 
         let layer = layer_from_files();
@@ -525,14 +528,8 @@ mod integration {
         decision.asset = AssetSymbol::Eth;
         let result = layer.evaluate(decision, &flat_portfolio());
         assert!(
-            matches!(
-                result,
-                RiskDecision::Vetoed {
-                    reason: VetoReason::AssetNotWhitelisted,
-                    ..
-                }
-            ),
-            "ETH is disabled; expected Vetoed(AssetNotWhitelisted), got {result:?}"
+            matches!(result, RiskDecision::Approved { .. }),
+            "ETH should be enabled for single-asset flows, got {result:?}"
         );
     }
 

@@ -1,8 +1,8 @@
 //! Phase 8.2 — `BacktestRunner` drives multiple `Algorithm` arms through a
-//! synchronised OHLCV window via independent `BacktestExecutor` instances.
+//! synchronised OHLCV window via independent `Executor` instances.
 //!
 //! ## Design notes
-//! - Each arm gets its own `BacktestExecutor` with independent portfolio state
+//! - Each arm gets its own `Executor` with independent portfolio state
 //!   (Tier 1 fix #1: pairing is performed upstream via the cached briefing /
 //!   snapshot; the executor portfolios stay independent).
 //! - `step_hours >= horizon_hours` is enforced at construction time
@@ -112,7 +112,7 @@ impl BacktestRunner {
     }
 
     /// Run all arms over the provided `snapshots` (decision points) and `bars`
-    /// (the OHLCV time grid that the `BacktestExecutor` is ticked through).
+    /// (the OHLCV time grid that the `Executor` is ticked through).
     ///
     /// The bars must fully cover all snapshot timestamps; otherwise
     /// `HarnessError::BarCoverage` is returned.

@@ -130,7 +130,7 @@ fn seed_strategy_with_trader(
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));

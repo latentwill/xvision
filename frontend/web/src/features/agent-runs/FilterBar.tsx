@@ -17,7 +17,7 @@ const STATUS_DEF: Array<{ k: StatusFilter; glyph: string; tint: string; bg: stri
   { k: "green", glyph: "✓", tint: "var(--gold)",   bg: "var(--gold-bg)",         bd: "var(--gold-soft)" },
   { k: "blue",  glyph: "▶", tint: "var(--info)",   bg: "rgba(111,143,184,0.14)", bd: "rgba(111,143,184,0.45)" },
   { k: "amber", glyph: "⚠", tint: "var(--warn)",   bg: "rgba(219,146,48,0.10)",  bd: "rgba(219,146,48,0.45)" },
-  { k: "red",   glyph: "✕", tint: "var(--danger)", bg: "rgba(200,68,58,0.10)",   bd: "rgba(200,68,58,0.45)" },
+  { k: "red",   glyph: "✕", tint: "var(--danger)", bg: "rgba(255,77,77,0.10)",   bd: "rgba(255,77,77,0.45)" },
 ];
 
 export function FilterBar({

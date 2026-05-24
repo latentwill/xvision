@@ -134,7 +134,7 @@ export function SettingsSkillsRoute() {
       {/* Card-level title + add-button + intro stays as chrome above the list. */}
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+          <h3 className="m-0 font-sans font-medium text-[20px] tracking-tight">
             Skills
           </h3>
           <p className="m-0 mt-1 text-text-3 text-[12px] leading-snug max-w-2xl">
@@ -267,7 +267,7 @@ function SkillRow({
       </td>
       <td className="py-2 pr-3 text-text-2 text-[13px]">
         {skill.description || (
-          <span className="text-text-3 italic text-[12px]">no description</span>
+          <span className="text-text-3 font-medium text-[12px]">no description</span>
         )}
       </td>
       <td className="py-2 px-3 text-right">

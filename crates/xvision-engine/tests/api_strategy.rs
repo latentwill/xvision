@@ -148,6 +148,81 @@ async fn delete_removes_strategy_from_store_and_list() {
 }
 
 #[tokio::test]
+async fn delete_sweeps_scoped_agents_but_leaves_workspace_agents() {
+    // End-to-end janitor: when a strategy is deleted, agents whose
+    // `scope_strategy_id` matched that strategy must be swept from
+    // the agents table; workspace agents (scope_strategy_id IS NULL)
+    // must be untouched. Phase 3 of agent-firing-filter (migration
+    // 036) — the orphan-row class flagged in the contract's Risks
+    // block.
+    use xvision_engine::agents::{AgentStore, ListFilter, NewAgent, ScopeFilter};
+    let (ctx, _dir) = test_context().await;
+    let strategy = create_sample_strategy(&ctx).await;
+    let strategy_id = strategy.manifest.id.clone();
+
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let filter_slot = || xvision_engine::agents::AgentSlot {
+        name: "main".into(),
+        provider: "anthropic".into(),
+        model: "claude-sonnet-4-6".into(),
+        // ≥200 chars so the content-quality save-gate passes.
+        system_prompt: "You are a quantitative trading assistant. Analyse OHLCV data, scenario metadata, \
+             and risk limits before producing structured output. Avoid placeholders and ground \
+             every recommendation in the active market state across the full bar history."
+            .into(),
+        skill_ids: vec![],
+        max_tokens: Some(2048),
+        temperature: None,
+        prompt_version: String::new(),
+        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+        bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::default(),
+        noop_skip: None,
+        capabilities: xvision_engine::agents::default_capabilities(),
+        delta_briefing: None,
+    };
+    let workspace_id = agent_store
+        .create(NewAgent {
+            name: "workspace-survivor".into(),
+            description: "trader for the workspace".into(),
+            tags: vec![],
+            slots: vec![filter_slot()],
+            scope_strategy_id: None,
+        })
+        .await
+        .unwrap();
+    let scoped_id = agent_store
+        .create(NewAgent {
+            name: "scoped-victim".into(),
+            description: "regime filter for the strategy under test".into(),
+            tags: vec![],
+            slots: vec![filter_slot()],
+            scope_strategy_id: Some(strategy_id.clone()),
+        })
+        .await
+        .unwrap();
+
+    strategy::delete(&ctx, &strategy_id).await.unwrap();
+    assert!(
+        agent_store.get(&workspace_id).await.unwrap().is_some(),
+        "workspace agent should survive strategy delete",
+    );
+    assert!(
+        agent_store.get(&scoped_id).await.unwrap().is_none(),
+        "scoped agent should be swept after strategy delete",
+    );
+    let listed = agent_store
+        .list(ListFilter {
+            scope: ScopeFilter::All,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].agent_id, workspace_id);
+}
+
+#[tokio::test]
 async fn delete_unknown_strategy_returns_not_found() {
     let (ctx, _dir) = test_context().await;
     let err = strategy::delete(&ctx, "01TOTALLYMISSINGAGENTID000")
@@ -199,7 +274,7 @@ async fn list_returns_summaries_for_existing_strategys() {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     store.save(&strategy).await.unwrap();
 
@@ -595,6 +670,8 @@ async fn update_metadata_audits_and_refreshes_search_index() {
         display_name: Some("RenamedForSearch".into()),
         plain_summary: None,
         asset_universe: None,
+        decision_cadence_minutes: None,
+        color: None,
     };
     let updated = strategy::update_metadata(&ctx, &id, patch)
         .await
@@ -641,6 +718,8 @@ async fn update_metadata_failed_validation_records_error_outcome_and_skips_index
         display_name: Some("   ".into()), // whitespace-only triggers EmptyDisplayName
         plain_summary: None,
         asset_universe: None,
+        decision_cadence_minutes: None,
+        color: None,
     };
     let err = strategy::update_metadata(&ctx, &id, patch)
         .await
