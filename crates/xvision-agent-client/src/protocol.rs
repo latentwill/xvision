@@ -186,6 +186,49 @@ pub struct EndRunResult {
     pub ended: bool,
 }
 
+/// Params for the `session.replay_load` JSON-RPC method.
+///
+/// The caller sends a recorded run id and the full ordered list of
+/// trajectory frames (serialized as raw JSON values so this crate
+/// does not impose a particular deserialization shape on the sidecar).
+/// In practice the values are `TrajectoryFrame` variants from
+/// `xvision-observability` serialized with their `#[serde(tag = "kind")]`
+/// discriminator, but the wire representation is `serde_json::Value` so
+/// callers can pass pre-serialized blobs without round-tripping.
+///
+/// Wire shape:
+/// ```json
+/// {
+///   "run_id": "01J...",
+///   "frames": [
+///     { "kind": "Request",  "ts_ms": 1, "messages": [], "tools": [], "system_prompt": "..." },
+///     { "kind": "TextDelta", "ts_ms": 2, "text": "..." },
+///     { "kind": "Usage",    "ts_ms": 3, "input_tokens": 10, ... },
+///     { "kind": "Finish",   "ts_ms": 4, "reason": "stop" }
+///   ]
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize)]
+pub struct ReplayLoadParams {
+    pub run_id: String,
+    /// Ordered trajectory frames.  Each element is a JSON object with a
+    /// `"kind"` discriminator field (matching the `TrajectoryFrame` serde tag).
+    pub frames: Vec<serde_json::Value>,
+}
+
+/// Result from `session.replay_load`.
+///
+/// `loaded` is the count of frames the sidecar accepted and stored for
+/// subsequent `session.step` replay.  A mismatch with the number of
+/// frames sent should be treated as a protocol error by the caller.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplayLoadResult {
+    /// Number of frames loaded by the sidecar.  Defaults to 0 if the
+    /// field is absent (forward-compat: older sidecars may omit it).
+    #[serde(default)]
+    pub loaded: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +357,81 @@ mod tests {
 
         let r = sample("failed", None);
         assert!(!r.is_budget_aborted());
+    }
+
+    // ------------------------------------------------------------------
+    // ReplayLoadParams / ReplayLoadResult
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn replay_load_params_serializes_to_expected_shape() {
+        let params = ReplayLoadParams {
+            run_id: "01HZ".into(),
+            frames: vec![
+                serde_json::json!({ "kind": "Request", "ts_ms": 1, "messages": [], "tools": [], "system_prompt": "sp" }),
+                serde_json::json!({ "kind": "TextDelta", "ts_ms": 2, "text": "hello" }),
+                serde_json::json!({ "kind": "Usage", "ts_ms": 3, "input_tokens": 10, "output_tokens": 2,
+                                    "cache_read_tokens": 0, "cache_write_tokens": 0, "total_cost": 0.0 }),
+                serde_json::json!({ "kind": "Finish", "ts_ms": 4, "reason": "stop" }),
+            ],
+        };
+        let v = serde_json::to_value(&params).unwrap();
+
+        // run_id field present
+        assert_eq!(v["run_id"], "01HZ");
+
+        // frames array with correct length and kind tags
+        let frames = v["frames"].as_array().unwrap();
+        assert_eq!(frames.len(), 4);
+        assert_eq!(frames[0]["kind"], "Request");
+        assert_eq!(frames[1]["kind"], "TextDelta");
+        assert_eq!(frames[2]["kind"], "Usage");
+        assert_eq!(frames[3]["kind"], "Finish");
+    }
+
+    #[test]
+    fn replay_load_result_deserializes_with_loaded_field() {
+        let json = r#"{ "loaded": 4 }"#;
+        let r: ReplayLoadResult = serde_json::from_str(json).unwrap();
+        assert_eq!(r.loaded, 4);
+    }
+
+    #[test]
+    fn replay_load_result_defaults_loaded_to_zero_when_absent() {
+        // Forward-compat: a sidecar that omits the field should parse cleanly.
+        let json = r#"{}"#;
+        let r: ReplayLoadResult = serde_json::from_str(json).unwrap();
+        assert_eq!(r.loaded, 0);
+    }
+
+    #[test]
+    fn replay_load_params_round_trip_preserves_frame_values() {
+        // The frames Vec<Value> must pass through serialization without mutation.
+        let original_frame = serde_json::json!({
+            "kind": "ToolCallDelta",
+            "ts_ms": 99,
+            "tool_call_id": "c1",
+            "tool_name": "submit_decision",
+            "input": { "action": "buy", "qty": 1.0 }
+        });
+        let params = ReplayLoadParams {
+            run_id: "r2".into(),
+            frames: vec![original_frame.clone()],
+        };
+        let serialized = serde_json::to_value(&params).unwrap();
+        let frame_back = &serialized["frames"][0];
+        assert_eq!(frame_back, &original_frame);
+    }
+
+    #[test]
+    fn replay_load_params_with_empty_frames_is_valid() {
+        // An empty frame list is technically valid on the wire (corrupt recording
+        // detection is the sidecar's job).
+        let params = ReplayLoadParams {
+            run_id: "empty".into(),
+            frames: vec![],
+        };
+        let v = serde_json::to_value(&params).unwrap();
+        assert_eq!(v["frames"].as_array().unwrap().len(), 0);
     }
 }
