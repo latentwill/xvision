@@ -166,8 +166,7 @@ pub enum WakeInPosition {
 // Indicator catalog + reference
 // ---------------------------------------------------------------------------
 
-/// The closed v1 indicator catalog. New entries (vwap, bbands, macd) land
-/// in v1.5+ alongside the SlotRuntime split.
+/// The closed indicator catalog accepted by the filter DSL.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -176,40 +175,125 @@ pub enum WakeInPosition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IndicatorName {
+    Open,
+    High,
+    Low,
+    Close,
+    Volume,
     Ema,
     Sma,
+    Wma,
     Rsi,
     Atr,
     AtrPct,
-    Close,
+    Roc,
+    MacdLine,
+    MacdSignal,
+    MacdHist,
+    BbUpper,
+    BbMiddle,
+    BbLower,
+    BbWidth,
+    BbPercentB,
+    DonchianUpper,
+    DonchianMiddle,
+    DonchianLower,
+    StochK,
+    StochD,
+    Cci,
+    Mfi,
+    Obv,
+    Vwap,
+    VolumeSma,
 }
 
 impl IndicatorName {
-    /// True when this indicator carries a `period`. Only `Close` is
-    /// periodless in v1.
+    /// True when this indicator carries a single trailing-window `period`.
+    /// Price/volume primitives, OBV, and default MACD components are
+    /// periodless.
     pub fn has_period(&self) -> bool {
-        !matches!(self, IndicatorName::Close)
+        !matches!(
+            self,
+            IndicatorName::Open
+                | IndicatorName::High
+                | IndicatorName::Low
+                | IndicatorName::Close
+                | IndicatorName::Volume
+                | IndicatorName::Obv
+                | IndicatorName::MacdLine
+                | IndicatorName::MacdSignal
+                | IndicatorName::MacdHist
+        )
     }
 
     /// DSL prefix written in the indicator token (`ema_20` → `"ema"`).
     pub fn dsl_prefix(&self) -> &'static str {
         match self {
+            IndicatorName::Open => "open",
+            IndicatorName::High => "high",
+            IndicatorName::Low => "low",
+            IndicatorName::Close => "close",
+            IndicatorName::Volume => "volume",
             IndicatorName::Ema => "ema",
             IndicatorName::Sma => "sma",
+            IndicatorName::Wma => "wma",
             IndicatorName::Rsi => "rsi",
             IndicatorName::Atr => "atr",
             IndicatorName::AtrPct => "atr_pct",
-            IndicatorName::Close => "close",
+            IndicatorName::Roc => "roc",
+            IndicatorName::MacdLine => "macd_line",
+            IndicatorName::MacdSignal => "macd_signal",
+            IndicatorName::MacdHist => "macd_hist",
+            IndicatorName::BbUpper => "bb_upper",
+            IndicatorName::BbMiddle => "bb_middle",
+            IndicatorName::BbLower => "bb_lower",
+            IndicatorName::BbWidth => "bb_width",
+            IndicatorName::BbPercentB => "bb_pct_b",
+            IndicatorName::DonchianUpper => "donchian_upper",
+            IndicatorName::DonchianMiddle => "donchian_middle",
+            IndicatorName::DonchianLower => "donchian_lower",
+            IndicatorName::StochK => "stoch_k",
+            IndicatorName::StochD => "stoch_d",
+            IndicatorName::Cci => "cci",
+            IndicatorName::Mfi => "mfi",
+            IndicatorName::Obv => "obv",
+            IndicatorName::Vwap => "vwap",
+            IndicatorName::VolumeSma => "volume_sma",
         }
     }
 
     /// Inclusive bounds for `period` per the spec's indicator catalog.
-    /// `None` for `Close` (no period at all).
+    /// `None` for periodless indicators.
     pub fn period_bounds(&self) -> Option<(u32, u32)> {
         match self {
-            IndicatorName::Ema | IndicatorName::Sma => Some((2, 500)),
-            IndicatorName::Rsi | IndicatorName::Atr | IndicatorName::AtrPct => Some((2, 100)),
-            IndicatorName::Close => None,
+            IndicatorName::Open
+            | IndicatorName::High
+            | IndicatorName::Low
+            | IndicatorName::Close
+            | IndicatorName::Volume
+            | IndicatorName::Obv
+            | IndicatorName::MacdLine
+            | IndicatorName::MacdSignal
+            | IndicatorName::MacdHist => None,
+            IndicatorName::Ema | IndicatorName::Sma | IndicatorName::Wma => Some((2, 500)),
+            IndicatorName::Rsi
+            | IndicatorName::Atr
+            | IndicatorName::AtrPct
+            | IndicatorName::Roc
+            | IndicatorName::BbUpper
+            | IndicatorName::BbMiddle
+            | IndicatorName::BbLower
+            | IndicatorName::BbWidth
+            | IndicatorName::BbPercentB
+            | IndicatorName::DonchianUpper
+            | IndicatorName::DonchianMiddle
+            | IndicatorName::DonchianLower
+            | IndicatorName::StochK
+            | IndicatorName::StochD
+            | IndicatorName::Cci
+            | IndicatorName::Mfi
+            | IndicatorName::Vwap
+            | IndicatorName::VolumeSma => Some((2, 200)),
         }
     }
 }
@@ -224,7 +308,7 @@ impl IndicatorName {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IndicatorRef {
     pub name: IndicatorName,
-    /// `None` only when `name == Close`. Validator enforces this.
+    /// `None` only when `name` is periodless. Validator enforces this.
     pub period: Option<u32>,
     /// Bar-relative offset for v1.5 plugins (positive = future). v1 has
     /// no DSL syntax for this; the validator rejects any `Some(n)` with
@@ -253,8 +337,8 @@ impl IndicatorRef {
         }
     }
 
-    /// Parse the DSL token form (`"ema_20"`, `"rsi_14"`, `"atr_pct_14"`,
-    /// `"close"`) into an `IndicatorRef`. Future-bar syntax (`+N`) is
+    /// Parse the DSL token form (`"ema_20"`, `"rsi_14"`, `"macd_line"`,
+    /// `"bb_upper_20"`, `"close"`) into an `IndicatorRef`. Future-bar syntax (`+N`) is
     /// rejected here so the parser layer prevents `E_FILTER_FUTURE_LEAK`
     /// from reaching validation through DSL input.
     pub fn parse_dsl(token: &str) -> Result<Self, ParseError> {
@@ -265,17 +349,51 @@ impl IndicatorRef {
                 token: token.to_string(),
             });
         }
-        if token == "close" {
-            return Ok(Self::close());
+        if let Some(name) = match token {
+            "open" => Some(IndicatorName::Open),
+            "high" => Some(IndicatorName::High),
+            "low" => Some(IndicatorName::Low),
+            "close" => Some(IndicatorName::Close),
+            "volume" => Some(IndicatorName::Volume),
+            "obv" => Some(IndicatorName::Obv),
+            "macd" | "macd_line" | "macd_12_26_9" | "macd_line_12_26_9" => Some(IndicatorName::MacdLine),
+            "macd_signal" | "macd_signal_12_26_9" => Some(IndicatorName::MacdSignal),
+            "macd_hist" | "macd_hist_12_26_9" | "macd_histogram" | "macd_histogram_12_26_9" => {
+                Some(IndicatorName::MacdHist)
+            }
+            _ => None,
+        } {
+            return Ok(Self {
+                name,
+                period: None,
+                bar_offset: None,
+            });
         }
         // Try multi-part prefixes first (longest first) so `atr_pct_14`
         // is matched before `atr_pct` would be misread as `atr` + `pct_14`.
         let candidates: &[(&str, IndicatorName)] = &[
+            ("donchian_middle", IndicatorName::DonchianMiddle),
+            ("donchian_upper", IndicatorName::DonchianUpper),
+            ("donchian_lower", IndicatorName::DonchianLower),
+            ("volume_sma", IndicatorName::VolumeSma),
+            ("bb_pct_b", IndicatorName::BbPercentB),
+            ("bb_percent_b", IndicatorName::BbPercentB),
+            ("bb_middle", IndicatorName::BbMiddle),
+            ("bb_upper", IndicatorName::BbUpper),
+            ("bb_lower", IndicatorName::BbLower),
+            ("bb_width", IndicatorName::BbWidth),
             ("atr_pct", IndicatorName::AtrPct),
+            ("stoch_k", IndicatorName::StochK),
+            ("stoch_d", IndicatorName::StochD),
+            ("vwap", IndicatorName::Vwap),
+            ("wma", IndicatorName::Wma),
             ("ema", IndicatorName::Ema),
             ("sma", IndicatorName::Sma),
             ("rsi", IndicatorName::Rsi),
             ("atr", IndicatorName::Atr),
+            ("roc", IndicatorName::Roc),
+            ("cci", IndicatorName::Cci),
+            ("mfi", IndicatorName::Mfi),
         ];
         for (prefix, name) in candidates {
             let needle = format!("{}_", prefix);
@@ -338,19 +456,19 @@ impl<'de> Deserialize<'de> for IndicatorRef {
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Operator {
-    #[serde(rename = ">")]
+    #[serde(rename = ">", alias = "gt", alias = "above")]
     Gt,
-    #[serde(rename = "<")]
+    #[serde(rename = "<", alias = "lt", alias = "below")]
     Lt,
-    #[serde(rename = ">=")]
+    #[serde(rename = ">=", alias = "gte", alias = "above_or_equal", alias = "at_or_above")]
     Gte,
-    #[serde(rename = "<=")]
+    #[serde(rename = "<=", alias = "lte", alias = "below_or_equal", alias = "at_or_below")]
     Lte,
-    #[serde(rename = "==")]
+    #[serde(rename = "==", alias = "eq", alias = "equals")]
     Eq,
-    #[serde(rename = "crosses_above")]
+    #[serde(rename = "crosses_above", alias = "crosses_over")]
     CrossesAbove,
-    #[serde(rename = "crosses_below")]
+    #[serde(rename = "crosses_below", alias = "crosses_under")]
     CrossesBelow,
     #[serde(rename = "between")]
     Between,

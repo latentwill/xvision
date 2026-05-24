@@ -136,6 +136,27 @@ schema matches what the SPA composer produces — useful when copying a
 predicate out of a working strategy. There is no DSL parser at the
 CLI; for multi-line or complex predicates, use the SPA composer.
 
+## Inline deterministic Filter DSL
+
+Strategies can also carry an inline deterministic filter under
+`strategy.filter`, installed by `xvn strategy set-filter <strategy_id>
+--from-json <path>`. This is the path used when the filter is pure
+indicator logic rather than a Filter-capable LLM agent.
+
+The authoritative indicator/operator catalog and copyable JSON
+examples live at `docs/operator/filter-dsl-catalog.md`. The important
+contracts are:
+
+- operators are `>`, `<`, `>=`, `<=`, `==`, `crosses_above`,
+  `crosses_below`, and `between`
+- `crosses_above` and `crosses_below` require indicator operands on
+  both sides
+- use canonical tokens such as `ema_12`, `macd_hist`, `macd_12_26_9`,
+  `bb_pct_b_20`, `donchian_upper_20`, `stoch_k_14`, `mfi_14`,
+  `vwap_20`, and `volume_sma_20`
+- every inline filter must include `display_name`, `asset_scope`,
+  `timeframe`, and a non-empty `conditions` tree
+
 ## What firing conditions are not
 
 - **Not risk gates.** Risk lives in the executor stage (`RiskDecision`
@@ -171,5 +192,7 @@ measurement so the savings number tracks actual briefing sizes.
   and `PipelineEdge.condition`.
 - `docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md` —
   the operator-surface spec this page accompanies.
+- `docs/operator/filter-dsl-catalog.md` — inline deterministic filter
+  indicators, operators, and examples.
 - `crates/xvision-filters/` — the deterministic DSL filter substrate;
   used by Filter-capable agents and (eventually) authorable directly.

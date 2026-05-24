@@ -1,4 +1,4 @@
-//! Incremental indicator math for the six v1 indicators.
+//! Incremental indicator math for the filter DSL indicator catalog.
 //!
 //! Each indicator is fed one bar at a time via [`IndicatorEngine::push`].
 //! After enough bars have been consumed (the indicator's warmup), values
@@ -25,7 +25,7 @@
 //! observed. This module is internally 1-based (counts of bars
 //! consumed); the runtime translates to/from bar indices as needed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use crate::types::{IndicatorName, IndicatorRef};
 
@@ -38,15 +38,21 @@ pub struct Bar {
     pub high: f64,
     pub low: f64,
     pub close: f64,
+    pub volume: f64,
 }
 
 impl Bar {
     pub fn new(open: f64, high: f64, low: f64, close: f64) -> Self {
+        Self::with_volume(open, high, low, close, 0.0)
+    }
+
+    pub fn with_volume(open: f64, high: f64, low: f64, close: f64, volume: f64) -> Self {
         Self {
             open,
             high,
             low,
             close,
+            volume,
         }
     }
 }
@@ -76,20 +82,32 @@ impl IndicatorKey {
 pub struct IndicatorEngine {
     instances: HashMap<IndicatorKey, Instance>,
     bars_seen: u64,
-    /// Last close — held outside the per-instance state because every
-    /// `IndicatorKey { Close, 0 }` query returns the same value, and
-    /// because ATR needs the previous bar's close to compute true
-    /// range on the next push.
+    last_open: Option<f64>,
+    last_high: Option<f64>,
+    last_low: Option<f64>,
     last_close: Option<f64>,
+    last_volume: Option<f64>,
+    obv_value: f64,
+    obv_started: bool,
 }
 
 #[derive(Debug)]
 enum Instance {
     Sma(SmaState),
     Ema(EmaState),
+    Wma(WindowState),
     Rsi(RsiState),
     Atr(AtrState),
     AtrPct(AtrState),
+    Roc(RocState),
+    Macd(MacdState),
+    Bollinger(BollingerState),
+    Donchian(DonchianState),
+    Stoch(StochState),
+    Cci(CciState),
+    Mfi(MfiState),
+    Vwap(VwapState),
+    VolumeSma(SmaState),
 }
 
 impl IndicatorEngine {
@@ -110,17 +128,48 @@ impl IndicatorEngine {
             let inst = match r.name {
                 IndicatorName::Sma => Instance::Sma(SmaState::new(key.period as usize)),
                 IndicatorName::Ema => Instance::Ema(EmaState::new(key.period as usize)),
+                IndicatorName::Wma => Instance::Wma(WindowState::new(key.period as usize)),
                 IndicatorName::Rsi => Instance::Rsi(RsiState::new(key.period as usize)),
                 IndicatorName::Atr => Instance::Atr(AtrState::new(key.period as usize)),
                 IndicatorName::AtrPct => Instance::AtrPct(AtrState::new(key.period as usize)),
-                IndicatorName::Close => continue, // no per-instance state
+                IndicatorName::Roc => Instance::Roc(RocState::new(key.period as usize)),
+                IndicatorName::MacdLine | IndicatorName::MacdSignal | IndicatorName::MacdHist => {
+                    Instance::Macd(MacdState::default())
+                }
+                IndicatorName::BbUpper
+                | IndicatorName::BbMiddle
+                | IndicatorName::BbLower
+                | IndicatorName::BbWidth
+                | IndicatorName::BbPercentB => Instance::Bollinger(BollingerState::new(key.period as usize)),
+                IndicatorName::DonchianUpper
+                | IndicatorName::DonchianMiddle
+                | IndicatorName::DonchianLower => Instance::Donchian(DonchianState::new(key.period as usize)),
+                IndicatorName::StochK | IndicatorName::StochD => {
+                    Instance::Stoch(StochState::new(key.period as usize))
+                }
+                IndicatorName::Cci => Instance::Cci(CciState::new(key.period as usize)),
+                IndicatorName::Mfi => Instance::Mfi(MfiState::new(key.period as usize)),
+                IndicatorName::Vwap => Instance::Vwap(VwapState::new(key.period as usize)),
+                IndicatorName::VolumeSma => Instance::VolumeSma(SmaState::new(key.period as usize)),
+                IndicatorName::Open
+                | IndicatorName::High
+                | IndicatorName::Low
+                | IndicatorName::Close
+                | IndicatorName::Volume
+                | IndicatorName::Obv => continue, // no per-instance state
             };
             instances.insert(key, inst);
         }
         Self {
             instances,
             bars_seen: 0,
+            last_open: None,
+            last_high: None,
+            last_low: None,
             last_close: None,
+            last_volume: None,
+            obv_value: 0.0,
+            obv_started: false,
         }
     }
 
@@ -131,11 +180,33 @@ impl IndicatorEngine {
             match inst {
                 Instance::Sma(s) => s.push(bar.close),
                 Instance::Ema(s) => s.push(bar.close),
+                Instance::Wma(s) => s.push(bar.close),
                 Instance::Rsi(s) => s.push(bar.close),
                 Instance::Atr(s) | Instance::AtrPct(s) => s.push(bar.high, bar.low, bar.close, prev_close),
+                Instance::Roc(s) => s.push(bar.close),
+                Instance::Macd(s) => s.push(bar.close),
+                Instance::Bollinger(s) => s.push(bar.close),
+                Instance::Donchian(s) => s.push(bar.high, bar.low),
+                Instance::Stoch(s) => s.push(bar.high, bar.low, bar.close),
+                Instance::Cci(s) => s.push(bar.high, bar.low, bar.close),
+                Instance::Mfi(s) => s.push(bar.high, bar.low, bar.close, bar.volume),
+                Instance::Vwap(s) => s.push(bar.high, bar.low, bar.close, bar.volume),
+                Instance::VolumeSma(s) => s.push(bar.volume),
             }
         }
+        if let Some(prev) = prev_close {
+            if bar.close > prev {
+                self.obv_value += bar.volume;
+            } else if bar.close < prev {
+                self.obv_value -= bar.volume;
+            }
+        }
+        self.obv_started = true;
+        self.last_open = Some(bar.open);
+        self.last_high = Some(bar.high);
+        self.last_low = Some(bar.low);
         self.last_close = Some(bar.close);
+        self.last_volume = Some(bar.volume);
         self.bars_seen += 1;
     }
 
@@ -143,19 +214,56 @@ impl IndicatorEngine {
     /// instance is still warming up. `Close` always returns the latest
     /// close once at least one bar has been pushed.
     pub fn value(&self, r: &IndicatorRef) -> Option<f64> {
-        if matches!(r.name, IndicatorName::Close) {
-            return self.last_close;
+        match r.name {
+            IndicatorName::Open => return self.last_open,
+            IndicatorName::High => return self.last_high,
+            IndicatorName::Low => return self.last_low,
+            IndicatorName::Close => return self.last_close,
+            IndicatorName::Volume => return self.last_volume,
+            IndicatorName::Obv => return self.obv_started.then_some(self.obv_value),
+            _ => {}
         }
         let key = IndicatorKey::from_ref(r);
         match self.instances.get(&key)? {
             Instance::Sma(s) => s.value(),
             Instance::Ema(s) => s.value(),
+            Instance::Wma(s) => s.wma(),
             Instance::Rsi(s) => s.value(),
             Instance::Atr(s) => s.value(),
             Instance::AtrPct(s) => match (s.value(), self.last_close) {
                 (Some(atr), Some(close)) if close.abs() > f64::EPSILON => Some(100.0 * atr / close),
                 _ => None,
             },
+            Instance::Roc(s) => s.value(),
+            Instance::Macd(s) => match r.name {
+                IndicatorName::MacdLine => s.line(),
+                IndicatorName::MacdSignal => s.signal(),
+                IndicatorName::MacdHist => s.hist(),
+                _ => None,
+            },
+            Instance::Bollinger(s) => match r.name {
+                IndicatorName::BbUpper => s.upper(),
+                IndicatorName::BbMiddle => s.middle(),
+                IndicatorName::BbLower => s.lower(),
+                IndicatorName::BbWidth => s.width(),
+                IndicatorName::BbPercentB => s.percent_b(),
+                _ => None,
+            },
+            Instance::Donchian(s) => match r.name {
+                IndicatorName::DonchianUpper => s.upper(),
+                IndicatorName::DonchianMiddle => s.middle(),
+                IndicatorName::DonchianLower => s.lower(),
+                _ => None,
+            },
+            Instance::Stoch(s) => match r.name {
+                IndicatorName::StochK => s.k(),
+                IndicatorName::StochD => s.d(),
+                _ => None,
+            },
+            Instance::Cci(s) => s.value(),
+            Instance::Mfi(s) => s.value(),
+            Instance::Vwap(s) => s.value(),
+            Instance::VolumeSma(s) => s.value(),
         }
     }
 
@@ -167,8 +275,19 @@ impl IndicatorEngine {
         let mut max_warmup: u32 = 0;
         for (key, inst) in &self.instances {
             let bars_needed = match inst {
-                Instance::Sma(_) | Instance::Ema(_) => key.period,
+                Instance::Sma(_)
+                | Instance::Ema(_)
+                | Instance::Wma(_)
+                | Instance::Bollinger(_)
+                | Instance::Donchian(_)
+                | Instance::Vwap(_)
+                | Instance::VolumeSma(_) => key.period,
                 Instance::Rsi(_) | Instance::Atr(_) | Instance::AtrPct(_) => key.period + 1,
+                Instance::Roc(_) => key.period + 1,
+                Instance::Macd(_) => 35,
+                Instance::Stoch(_) => key.period + 3,
+                Instance::Cci(_) => key.period,
+                Instance::Mfi(_) => key.period + 1,
             };
             if bars_needed > max_warmup {
                 max_warmup = bars_needed;
@@ -388,6 +507,420 @@ fn true_range(high: f64, low: f64, prev_close: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Shared rolling-window helpers and standard indicator components
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct WindowState {
+    period: usize,
+    window: VecDeque<f64>,
+    sum: f64,
+}
+
+impl WindowState {
+    fn new(period: usize) -> Self {
+        Self {
+            period,
+            window: VecDeque::with_capacity(period),
+            sum: 0.0,
+        }
+    }
+
+    fn push(&mut self, value: f64) {
+        self.window.push_back(value);
+        self.sum += value;
+        if self.window.len() > self.period {
+            self.sum -= self.window.pop_front().expect("window non-empty");
+        }
+    }
+
+    fn is_full(&self) -> bool {
+        self.window.len() == self.period
+    }
+
+    fn mean(&self) -> Option<f64> {
+        self.is_full().then_some(self.sum / self.period as f64)
+    }
+
+    fn stddev(&self) -> Option<f64> {
+        let mean = self.mean()?;
+        let var = self
+            .window
+            .iter()
+            .map(|v| {
+                let d = *v - mean;
+                d * d
+            })
+            .sum::<f64>()
+            / self.period as f64;
+        Some(var.sqrt())
+    }
+
+    fn min(&self) -> Option<f64> {
+        self.is_full()
+            .then(|| self.window.iter().fold(f64::INFINITY, |a, b| a.min(*b)))
+    }
+
+    fn max(&self) -> Option<f64> {
+        self.is_full()
+            .then(|| self.window.iter().fold(f64::NEG_INFINITY, |a, b| a.max(*b)))
+    }
+
+    fn wma(&self) -> Option<f64> {
+        if !self.is_full() {
+            return None;
+        }
+        let (weighted, denom) =
+            self.window
+                .iter()
+                .enumerate()
+                .fold((0.0, 0.0), |(sum, weight_sum), (idx, value)| {
+                    let weight = (idx + 1) as f64;
+                    (sum + *value * weight, weight_sum + weight)
+                });
+        Some(weighted / denom)
+    }
+}
+
+#[derive(Debug)]
+struct RocState {
+    period: usize,
+    window: VecDeque<f64>,
+    value: Option<f64>,
+}
+
+impl RocState {
+    fn new(period: usize) -> Self {
+        Self {
+            period,
+            window: VecDeque::with_capacity(period + 1),
+            value: None,
+        }
+    }
+
+    fn push(&mut self, close: f64) {
+        self.window.push_back(close);
+        if self.window.len() > self.period + 1 {
+            self.window.pop_front();
+        }
+        if self.window.len() == self.period + 1 {
+            let prior = self.window.front().copied().unwrap_or(0.0);
+            self.value = if prior.abs() > f64::EPSILON {
+                Some(100.0 * (close - prior) / prior)
+            } else {
+                None
+            };
+        }
+    }
+
+    fn value(&self) -> Option<f64> {
+        self.value
+    }
+}
+
+#[derive(Debug)]
+struct MacdState {
+    fast: EmaState,
+    slow: EmaState,
+    signal: EmaState,
+    line: Option<f64>,
+}
+
+impl Default for MacdState {
+    fn default() -> Self {
+        Self {
+            fast: EmaState::new(12),
+            slow: EmaState::new(26),
+            signal: EmaState::new(9),
+            line: None,
+        }
+    }
+}
+
+impl MacdState {
+    fn push(&mut self, close: f64) {
+        self.fast.push(close);
+        self.slow.push(close);
+        self.line = match (self.fast.value(), self.slow.value()) {
+            (Some(fast), Some(slow)) => {
+                let line = fast - slow;
+                self.signal.push(line);
+                Some(line)
+            }
+            _ => None,
+        };
+    }
+
+    fn line(&self) -> Option<f64> {
+        self.line
+    }
+
+    fn signal(&self) -> Option<f64> {
+        self.signal.value()
+    }
+
+    fn hist(&self) -> Option<f64> {
+        Some(self.line()? - self.signal()?)
+    }
+}
+
+#[derive(Debug)]
+struct BollingerState {
+    window: WindowState,
+    last_close: Option<f64>,
+}
+
+impl BollingerState {
+    fn new(period: usize) -> Self {
+        Self {
+            window: WindowState::new(period),
+            last_close: None,
+        }
+    }
+
+    fn push(&mut self, close: f64) {
+        self.window.push(close);
+        self.last_close = Some(close);
+    }
+
+    fn middle(&self) -> Option<f64> {
+        self.window.mean()
+    }
+
+    fn upper(&self) -> Option<f64> {
+        Some(self.middle()? + 2.0 * self.window.stddev()?)
+    }
+
+    fn lower(&self) -> Option<f64> {
+        Some(self.middle()? - 2.0 * self.window.stddev()?)
+    }
+
+    fn width(&self) -> Option<f64> {
+        let middle = self.middle()?;
+        if middle.abs() <= f64::EPSILON {
+            return None;
+        }
+        Some((self.upper()? - self.lower()?) / middle)
+    }
+
+    fn percent_b(&self) -> Option<f64> {
+        let lower = self.lower()?;
+        let upper = self.upper()?;
+        let denom = upper - lower;
+        if denom.abs() <= f64::EPSILON {
+            return None;
+        }
+        Some((self.last_close? - lower) / denom)
+    }
+}
+
+#[derive(Debug)]
+struct DonchianState {
+    highs: WindowState,
+    lows: WindowState,
+}
+
+impl DonchianState {
+    fn new(period: usize) -> Self {
+        Self {
+            highs: WindowState::new(period),
+            lows: WindowState::new(period),
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64) {
+        self.highs.push(high);
+        self.lows.push(low);
+    }
+
+    fn upper(&self) -> Option<f64> {
+        self.highs.max()
+    }
+
+    fn lower(&self) -> Option<f64> {
+        self.lows.min()
+    }
+
+    fn middle(&self) -> Option<f64> {
+        Some((self.upper()? + self.lower()?) / 2.0)
+    }
+}
+
+#[derive(Debug)]
+struct StochState {
+    highs: WindowState,
+    lows: WindowState,
+    d_sma: SmaState,
+    k: Option<f64>,
+}
+
+impl StochState {
+    fn new(period: usize) -> Self {
+        Self {
+            highs: WindowState::new(period),
+            lows: WindowState::new(period),
+            d_sma: SmaState::new(3),
+            k: None,
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64, close: f64) {
+        self.highs.push(high);
+        self.lows.push(low);
+        self.k = match (self.highs.max(), self.lows.min()) {
+            (Some(hh), Some(ll)) if (hh - ll).abs() > f64::EPSILON => Some(100.0 * (close - ll) / (hh - ll)),
+            _ => None,
+        };
+        if let Some(k) = self.k {
+            self.d_sma.push(k);
+        }
+    }
+
+    fn k(&self) -> Option<f64> {
+        self.k
+    }
+
+    fn d(&self) -> Option<f64> {
+        self.d_sma.value()
+    }
+}
+
+#[derive(Debug)]
+struct CciState {
+    window: WindowState,
+    current_tp: Option<f64>,
+}
+
+impl CciState {
+    fn new(period: usize) -> Self {
+        Self {
+            window: WindowState::new(period),
+            current_tp: None,
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64, close: f64) {
+        let tp = typical_price(high, low, close);
+        self.window.push(tp);
+        self.current_tp = Some(tp);
+    }
+
+    fn value(&self) -> Option<f64> {
+        if !self.window.is_full() {
+            return None;
+        }
+        let sma = self.window.mean()?;
+        let mean_dev =
+            self.window.window.iter().map(|v| (*v - sma).abs()).sum::<f64>() / self.window.period as f64;
+        if mean_dev.abs() <= f64::EPSILON {
+            return Some(0.0);
+        }
+        Some((self.current_tp? - sma) / (0.015 * mean_dev))
+    }
+}
+
+#[derive(Debug)]
+struct MfiState {
+    period: usize,
+    prev_tp: Option<f64>,
+    pos: VecDeque<f64>,
+    neg: VecDeque<f64>,
+    pos_sum: f64,
+    neg_sum: f64,
+}
+
+impl MfiState {
+    fn new(period: usize) -> Self {
+        Self {
+            period,
+            prev_tp: None,
+            pos: VecDeque::with_capacity(period),
+            neg: VecDeque::with_capacity(period),
+            pos_sum: 0.0,
+            neg_sum: 0.0,
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64, close: f64, volume: f64) {
+        let tp = typical_price(high, low, close);
+        if let Some(prev) = self.prev_tp {
+            let flow = tp * volume;
+            let (pos, neg) = if tp > prev {
+                (flow, 0.0)
+            } else if tp < prev {
+                (0.0, flow)
+            } else {
+                (0.0, 0.0)
+            };
+            self.pos.push_back(pos);
+            self.neg.push_back(neg);
+            self.pos_sum += pos;
+            self.neg_sum += neg;
+            if self.pos.len() > self.period {
+                self.pos_sum -= self.pos.pop_front().unwrap_or(0.0);
+                self.neg_sum -= self.neg.pop_front().unwrap_or(0.0);
+            }
+        }
+        self.prev_tp = Some(tp);
+    }
+
+    fn value(&self) -> Option<f64> {
+        if self.pos.len() < self.period {
+            return None;
+        }
+        if self.neg_sum.abs() <= f64::EPSILON {
+            return Some(100.0);
+        }
+        let ratio = self.pos_sum / self.neg_sum;
+        Some(100.0 - 100.0 / (1.0 + ratio))
+    }
+}
+
+#[derive(Debug)]
+struct VwapState {
+    period: usize,
+    pv: VecDeque<f64>,
+    vol: VecDeque<f64>,
+    pv_sum: f64,
+    vol_sum: f64,
+}
+
+impl VwapState {
+    fn new(period: usize) -> Self {
+        Self {
+            period,
+            pv: VecDeque::with_capacity(period),
+            vol: VecDeque::with_capacity(period),
+            pv_sum: 0.0,
+            vol_sum: 0.0,
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64, close: f64, volume: f64) {
+        let pv = typical_price(high, low, close) * volume;
+        self.pv.push_back(pv);
+        self.vol.push_back(volume);
+        self.pv_sum += pv;
+        self.vol_sum += volume;
+        if self.pv.len() > self.period {
+            self.pv_sum -= self.pv.pop_front().unwrap_or(0.0);
+            self.vol_sum -= self.vol.pop_front().unwrap_or(0.0);
+        }
+    }
+
+    fn value(&self) -> Option<f64> {
+        if self.pv.len() < self.period || self.vol_sum.abs() <= f64::EPSILON {
+            return None;
+        }
+        Some(self.pv_sum / self.vol_sum)
+    }
+}
+
+fn typical_price(high: f64, low: f64, close: f64) -> f64 {
+    (high + low + close) / 3.0
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -497,5 +1030,62 @@ mod tests {
         let r2 = IndicatorRef::periodic(IndicatorName::Sma, 5);
         let e = IndicatorEngine::new([&r1, &r2]);
         assert_eq!(e.instances.len(), 1);
+    }
+
+    #[test]
+    fn expanded_catalog_indicators_produce_values() {
+        let refs = [
+            IndicatorRef::periodic(IndicatorName::Wma, 5),
+            IndicatorRef::periodic(IndicatorName::Roc, 5),
+            IndicatorRef::periodic(IndicatorName::BbUpper, 20),
+            IndicatorRef::periodic(IndicatorName::BbMiddle, 20),
+            IndicatorRef::periodic(IndicatorName::BbLower, 20),
+            IndicatorRef::periodic(IndicatorName::BbWidth, 20),
+            IndicatorRef::periodic(IndicatorName::BbPercentB, 20),
+            IndicatorRef::periodic(IndicatorName::DonchianUpper, 20),
+            IndicatorRef::periodic(IndicatorName::DonchianMiddle, 20),
+            IndicatorRef::periodic(IndicatorName::DonchianLower, 20),
+            IndicatorRef::periodic(IndicatorName::StochK, 14),
+            IndicatorRef::periodic(IndicatorName::StochD, 14),
+            IndicatorRef::periodic(IndicatorName::Cci, 20),
+            IndicatorRef::periodic(IndicatorName::Mfi, 14),
+            IndicatorRef::periodic(IndicatorName::Vwap, 20),
+            IndicatorRef::periodic(IndicatorName::VolumeSma, 20),
+            IndicatorRef {
+                name: IndicatorName::MacdLine,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::MacdSignal,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::MacdHist,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::Obv,
+                period: None,
+                bar_offset: None,
+            },
+        ];
+        let mut e = IndicatorEngine::new(refs.iter());
+        for i in 1..=60 {
+            let close = 100.0 + i as f64 + ((i % 7) as f64 - 3.0);
+            e.push(&Bar::with_volume(
+                close - 0.5,
+                close + 2.0,
+                close - 2.0,
+                close,
+                1_000.0 + i as f64,
+            ));
+        }
+
+        for r in &refs {
+            assert!(e.value(r).is_some(), "{} should have a value after warmup", r);
+        }
     }
 }

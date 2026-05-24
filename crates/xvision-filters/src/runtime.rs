@@ -188,17 +188,23 @@ impl<'f> RuntimeFilter<'f> {
         // Evaluate every condition leaf using the current indicator values.
         let leaves = self.filter.conditions.conditions();
         let mut results: Vec<ConditionResult> = Vec::with_capacity(leaves.len());
+        let mut current_pairs: Vec<Option<(f64, f64)>> = Vec::with_capacity(leaves.len());
 
         for (i, cond) in leaves.iter().enumerate() {
-            let prev = state.prev_conditions.get(i).copied().unwrap_or(None);
-            let passed = eval_condition(cond, prev, &state.indicators);
+            let prev_pair = state.prev_numeric_pairs.get(i).copied().unwrap_or(None);
+            let current_pair = numeric_pair(cond, &state.indicators);
+            let passed = eval_condition(cond, prev_pair, current_pair);
             results.push(ConditionResult { passed });
+            current_pairs.push(current_pair);
         }
 
-        // Cache for next bar's crosses_* detection.
+        // Cache for next bar's diagnostics and crosses_* detection.
         for (i, r) in results.iter().enumerate() {
             if let Some(slot) = state.prev_conditions.get_mut(i) {
                 *slot = Some(r.passed);
+            }
+            if let Some(slot) = state.prev_numeric_pairs.get_mut(i) {
+                *slot = current_pairs[i];
             }
         }
 
@@ -291,47 +297,39 @@ fn combine_tree(tree: &ConditionTree, results: &[ConditionResult]) -> bool {
     }
 }
 
-/// Evaluate one condition leaf against current indicator values, using
-/// the previous-bar leaf result to detect crosses.
-fn eval_condition(
-    cond: &Condition,
-    prev_leaf_result: Option<bool>,
-    engine: &crate::indicators::IndicatorEngine,
-) -> bool {
+/// Evaluate one condition leaf against current indicator values.
+fn eval_condition(cond: &Condition, prev_pair: Option<(f64, f64)>, current_pair: Option<(f64, f64)>) -> bool {
     match cond.op {
-        Operator::Gt => numeric_pair(cond, engine).map(|(a, b)| a > b).unwrap_or(false),
-        Operator::Lt => numeric_pair(cond, engine).map(|(a, b)| a < b).unwrap_or(false),
-        Operator::Gte => numeric_pair(cond, engine).map(|(a, b)| a >= b).unwrap_or(false),
-        Operator::Lte => numeric_pair(cond, engine).map(|(a, b)| a <= b).unwrap_or(false),
-        Operator::Eq => numeric_pair(cond, engine)
+        Operator::Gt => current_pair.map(|(a, b)| a > b).unwrap_or(false),
+        Operator::Lt => current_pair.map(|(a, b)| a < b).unwrap_or(false),
+        Operator::Gte => current_pair.map(|(a, b)| a >= b).unwrap_or(false),
+        Operator::Lte => current_pair.map(|(a, b)| a <= b).unwrap_or(false),
+        Operator::Eq => current_pair
             .map(|(a, b)| (a - b).abs() < f64::EPSILON)
             .unwrap_or(false),
-        Operator::Between => match (resolve_numeric(&cond.lhs, engine), &cond.rhs) {
-            (Some(v), Operand::Range(lo, hi)) => v >= *lo && v <= *hi,
+        Operator::Between => match (current_pair, &cond.rhs) {
+            (Some((v, _)), Operand::Range(lo, hi)) => v >= *lo && v <= *hi,
             _ => false,
         },
-        Operator::CrossesAbove => {
-            // Defined as: prev leaf result was false (lhs <= rhs) AND
-            // current strict `>`. We don't have the prior numeric pair
-            // available (we'd need to keep a 1-bar lag on every
-            // indicator); instead we use the leaf cache: a strict ">"
-            // result on this bar combined with prev_leaf_result == false
-            // implies the cross. If prev_leaf_result is None we cannot
-            // detect — return false.
-            let now = numeric_pair(cond, engine).map(|(a, b)| a > b).unwrap_or(false);
-            matches!((prev_leaf_result, now), (Some(false), true))
-        }
-        Operator::CrossesBelow => {
-            let now = numeric_pair(cond, engine).map(|(a, b)| a < b).unwrap_or(false);
-            matches!((prev_leaf_result, now), (Some(false), true))
-        }
+        Operator::CrossesAbove => match (prev_pair, current_pair) {
+            (Some((prev_lhs, prev_rhs)), Some((lhs, rhs))) => prev_lhs <= prev_rhs && lhs > rhs,
+            _ => false,
+        },
+        Operator::CrossesBelow => match (prev_pair, current_pair) {
+            (Some((prev_lhs, prev_rhs)), Some((lhs, rhs))) => prev_lhs >= prev_rhs && lhs < rhs,
+            _ => false,
+        },
     }
 }
 
-/// Resolve both sides of a condition to numerics. Returns `None` if any
-/// referenced indicator is still warming up.
+/// Resolve a condition to the numeric pair needed by its operator. For
+/// `between`, only the LHS is dynamic; the RHS range stays on the
+/// condition itself.
 fn numeric_pair(cond: &Condition, engine: &crate::indicators::IndicatorEngine) -> Option<(f64, f64)> {
     let a = resolve_numeric(&cond.lhs, engine)?;
+    if matches!(cond.op, Operator::Between) {
+        return Some((a, 0.0));
+    }
     let b = resolve_numeric(&cond.rhs, engine)?;
     Some((a, b))
 }
@@ -551,6 +549,36 @@ mod tests {
         // Cooldown armed = 2; next true bar reports Cooldown.
         let o = rt.evaluate(&mut state, &bar(60.0), ctx);
         assert!(matches!(o.decision, ActivationDecision::Cooldown { .. }));
+    }
+
+    #[test]
+    fn crosses_above_fires_once_on_actual_numeric_cross() {
+        let f = mk_filter(
+            ConditionTree::All(vec![Condition {
+                lhs: Operand::Indicator(IndicatorRef::close()),
+                op: Operator::CrossesAbove,
+                rhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Sma, 2)),
+            }]),
+            0,
+            None,
+        );
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        let decisions = [10.0, 10.0, 9.0, 12.0, 13.0, 14.0]
+            .into_iter()
+            .map(|close| rt.evaluate(&mut state, &bar(close), ctx).decision)
+            .collect::<Vec<_>>();
+
+        let trips = decisions.iter().filter(|decision| decision.is_trip()).count();
+        assert_eq!(
+            trips, 1,
+            "sustained close > sma_2 must not retrigger crosses_above"
+        );
     }
 
     #[test]

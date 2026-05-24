@@ -155,11 +155,11 @@ fn validate_indicator_ref(ind: &IndicatorRef, path: &str) -> Result<(), Validati
 
     // Rule 1: indicator name + period in catalog.
     match ind.name {
-        IndicatorName::Close => {
+        name if !name.has_period() => {
             if ind.period.is_some() {
                 return Err(ValidationError::UnknownIndicator {
                     path: path.to_string(),
-                    detail: "indicator 'close' must not carry a period".to_string(),
+                    detail: format!("indicator '{}' must not carry a period", name.dsl_prefix()),
                 });
             }
         }
@@ -310,10 +310,23 @@ fn check_numeric_for_indicator(ind: &IndicatorRef, value: f64, path: &str) -> Re
         });
     }
     match ind.name {
-        IndicatorName::Rsi if !(0.0..=100.0).contains(&value) => Err(ValidationError::NumericBounds {
+        IndicatorName::Rsi | IndicatorName::StochK | IndicatorName::StochD | IndicatorName::Mfi
+            if !(0.0..=100.0).contains(&value) =>
+        {
+            Err(ValidationError::NumericBounds {
+                path: path.to_string(),
+                detail: format!(
+                    "{} threshold must be in [0, 100]; got {} for '{}'",
+                    ind.name.dsl_prefix(),
+                    value,
+                    ind.to_dsl()
+                ),
+            })
+        }
+        IndicatorName::BbPercentB if !(-5.0..=5.0).contains(&value) => Err(ValidationError::NumericBounds {
             path: path.to_string(),
             detail: format!(
-                "rsi threshold must be in [0, 100]; got {} for '{}'",
+                "bb_pct_b threshold must be in [-5, 5]; got {} for '{}'",
                 value,
                 ind.to_dsl()
             ),

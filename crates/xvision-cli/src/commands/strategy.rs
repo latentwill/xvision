@@ -243,6 +243,9 @@ enum StrategyAction {
     /// path used by the Strategy Inspector. The strategy id comes from
     /// the positional argument; if the JSON omits `filter.id`, the CLI
     /// preserves the existing inline filter id or assigns a new one.
+    /// Indicator/operator catalog and examples: see
+    /// `docs/operator/filter-dsl-catalog.md` or the in-app docs page
+    /// "Filter DSL Catalog".
     SetFilter {
         /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
@@ -250,6 +253,17 @@ enum StrategyAction {
         /// or `{ "filter": {...filter fields...} }`.
         #[arg(long = "from-json")]
         from_json: PathBuf,
+    },
+    /// Print the inline deterministic Filter DSL catalog.
+    ///
+    /// This is the machine-readable companion to
+    /// `docs/operator/filter-dsl-catalog.md`, intended for chat rail and
+    /// CLI agents that need exact indicator/operator tokens before
+    /// constructing a `strategy.filter` payload.
+    FilterCatalog {
+        /// Emit JSON instead of plain text.
+        #[arg(long)]
+        json: bool,
     },
     /// Remove a Filter agent (and every PipelineEdge it originates) by
     /// role. Idempotent — removing a non-existent role prints a warning
@@ -416,6 +430,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             strategy_id,
             from_json,
         } => set_filter(&strategy_id, &from_json).await,
+        StrategyAction::FilterCatalog { json } => filter_catalog(json),
         StrategyAction::RemoveFilter { strategy_id, role } => remove_filter(&strategy_id, &role).await,
         StrategyAction::SetPipeline {
             strategy_id,
@@ -1350,6 +1365,108 @@ async fn set_filter(strategy_id: &str, from_json: &PathBuf) -> CliResult<()> {
         "filter": filter,
     });
     crate::io::print_json(&out)?;
+    Ok(())
+}
+
+fn filter_catalog(json: bool) -> CliResult<()> {
+    let catalog = serde_json::json!({
+        "docs": {
+            "repo": "docs/operator/filter-dsl-catalog.md",
+            "dashboard": "/docs?slug=filter-dsl-catalog"
+        },
+        "required_fields": ["display_name", "asset_scope", "timeframe", "conditions"],
+        "operators": [
+            {"token": ">", "aliases": ["gt", "above"], "rhs": "indicator_or_numeric"},
+            {"token": "<", "aliases": ["lt", "below"], "rhs": "indicator_or_numeric"},
+            {"token": ">=", "aliases": ["gte", "above_or_equal", "at_or_above"], "rhs": "indicator_or_numeric"},
+            {"token": "<=", "aliases": ["lte", "below_or_equal", "at_or_below"], "rhs": "indicator_or_numeric"},
+            {"token": "==", "aliases": ["eq", "equals"], "rhs": "indicator_or_numeric"},
+            {"token": "crosses_above", "aliases": ["crosses_over"], "rhs": "indicator_only"},
+            {"token": "crosses_below", "aliases": ["crosses_under"], "rhs": "indicator_only"},
+            {"token": "between", "aliases": [], "rhs": "range"}
+        ],
+        "indicators": {
+            "price_volume": ["open", "high", "low", "close", "volume"],
+            "moving_average": ["sma_<period>", "ema_<period>", "wma_<period>"],
+            "trend": [
+                "donchian_upper_<period>",
+                "donchian_middle_<period>",
+                "donchian_lower_<period>"
+            ],
+            "momentum": [
+                "rsi_<period>",
+                "roc_<period>",
+                "stoch_k_<period>",
+                "stoch_d_<period>",
+                "cci_<period>",
+                "mfi_<period>"
+            ],
+            "volatility_bands": [
+                "atr_<period>",
+                "atr_pct_<period>",
+                "bb_upper_<period>",
+                "bb_middle_<period>",
+                "bb_lower_<period>",
+                "bb_width_<period>",
+                "bb_pct_b_<period>"
+            ],
+            "macd": [
+                "macd_line",
+                "macd",
+                "macd_12_26_9",
+                "macd_signal",
+                "macd_hist",
+                "macd_histogram"
+            ],
+            "volume_aware": ["vwap_<period>", "volume_sma_<period>", "obv"]
+        },
+        "examples": {
+            "ema_cross_cooldown": {
+                "display_name": "BTC 15m EMA cross",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "15m",
+                "conditions": {
+                    "any": [
+                        {"lhs": "ema_12", "op": "crosses_above", "rhs": "ema_26"},
+                        {"lhs": "ema_12", "op": "crosses_below", "rhs": "ema_26"}
+                    ]
+                },
+                "cooldown_bars": 16
+            },
+            "macd_bb_pullback": {
+                "display_name": "MACD BB pullback",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        {"lhs": "bb_pct_b_20", "op": "<", "rhs": 0.2},
+                        {"lhs": "macd_hist", "op": ">", "rhs": 0},
+                        {"lhs": "rsi_14", "op": "between", "rhs": [30, 70]}
+                    ]
+                },
+                "cooldown_bars": 8
+            }
+        }
+    });
+
+    if json {
+        crate::io::print_json(&catalog)?;
+        return Ok(());
+    }
+
+    println!("Inline Filter DSL catalog");
+    println!("Docs: docs/operator/filter-dsl-catalog.md and /docs?slug=filter-dsl-catalog");
+    println!("Required fields: display_name, asset_scope, timeframe, conditions");
+    println!("Operators: >, <, >=, <=, ==, crosses_above, crosses_below, between");
+    println!("Accepted aliases: gt above lt below gte lte eq equals crosses_over crosses_under");
+    println!(
+        "Indicators: open high low close volume; sma_<period> ema_<period> wma_<period>; \
+         rsi_<period> roc_<period> stoch_k_<period> stoch_d_<period> cci_<period> mfi_<period>; \
+         atr_<period> atr_pct_<period>; bb_upper/middle/lower/width/pct_b_<period>; \
+         donchian_upper/middle/lower_<period>; macd_line macd_signal macd_hist; \
+         vwap_<period> volume_sma_<period> obv",
+    );
+    println!("Use --json for a machine-readable catalog with examples.");
     Ok(())
 }
 

@@ -265,6 +265,97 @@ fn all_indicators_and_operators_parse() {
 }
 
 #[test]
+fn expanded_indicator_catalog_parses_and_validates() {
+    let tokens: &[(&str, f64)] = &[
+        ("open", 100.0),
+        ("high", 100.0),
+        ("low", 100.0),
+        ("volume", 100.0),
+        ("obv", 0.0),
+        ("wma_20", 100.0),
+        ("roc_12", 0.0),
+        ("macd_line", 0.0),
+        ("macd", 0.0),
+        ("macd_12_26_9", 0.0),
+        ("macd_signal", 0.0),
+        ("macd_hist", 0.0),
+        ("bb_upper_20", 100.0),
+        ("bb_middle_20", 100.0),
+        ("bb_lower_20", 100.0),
+        ("bb_width_20", 0.02),
+        ("bb_pct_b_20", 0.5),
+        ("donchian_upper_20", 100.0),
+        ("donchian_middle_20", 100.0),
+        ("donchian_lower_20", 100.0),
+        ("stoch_k_14", 50.0),
+        ("stoch_d_14", 50.0),
+        ("cci_20", 0.0),
+        ("mfi_14", 50.0),
+        ("vwap_20", 100.0),
+        ("volume_sma_20", 100.0),
+    ];
+
+    for (token, threshold) in tokens {
+        let toml_doc = format!(
+            "[filter]\n\
+             id = \"f_01\"\n\
+             strategy_id = \"s_01\"\n\
+             display_name = \"t\"\n\
+             asset_scope = [\"BTC/USD\"]\n\
+             timeframe = \"1h\"\n\
+             \n\
+             [[filter.conditions.all]]\n\
+             lhs = \"{token}\"\n\
+             op  = \">\"\n\
+             rhs = {threshold}\n",
+        );
+        let f = parse_toml(&toml_doc).unwrap_or_else(|e| panic!("parse failed for {token}: {e}"));
+        validate(&f).unwrap_or_else(|e| panic!("validate failed for {token}: {e}"));
+    }
+}
+
+#[test]
+fn common_operator_aliases_parse_to_canonical_operators() {
+    let aliases = [
+        ("gt", Operator::Gt),
+        ("above", Operator::Gt),
+        ("lt", Operator::Lt),
+        ("below", Operator::Lt),
+        ("gte", Operator::Gte),
+        ("lte", Operator::Lte),
+        ("eq", Operator::Eq),
+        ("equals", Operator::Eq),
+        ("crosses_over", Operator::CrossesAbove),
+        ("crosses_under", Operator::CrossesBelow),
+    ];
+
+    for (alias, expected) in aliases {
+        let rhs = if matches!(expected, Operator::CrossesAbove | Operator::CrossesBelow) {
+            "\"ema_26\""
+        } else {
+            "100.0"
+        };
+        let toml_doc = format!(
+            "[filter]\n\
+             id = \"f_01\"\n\
+             strategy_id = \"s_01\"\n\
+             display_name = \"t\"\n\
+             asset_scope = [\"BTC/USD\"]\n\
+             timeframe = \"1h\"\n\
+             \n\
+             [[filter.conditions.all]]\n\
+             lhs = \"ema_12\"\n\
+             op  = \"{alias}\"\n\
+             rhs = {rhs}\n",
+        );
+        let f =
+            parse_toml(&toml_doc).unwrap_or_else(|e| panic!("parse failed for operator alias {alias}: {e}"));
+        assert_eq!(f.conditions.conditions()[0].op, expected);
+        validate(&f).unwrap_or_else(|e| panic!("validate failed for operator alias {alias}: {e}"));
+    }
+}
+
+#[test]
 fn any_tree_parses() {
     // Quick smoke test that ConditionTree::Any deserializes from TOML.
     let toml_doc = "[filter]\n\

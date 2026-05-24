@@ -8015,6 +8015,7 @@ dependencies = [
  "xvision-engine",
  "xvision-eval",
  "xvision-execution",
+ "xvision-filters",
  "xvision-harness",
  "xvision-intern",
  "xvision-observability",

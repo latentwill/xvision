@@ -5,7 +5,7 @@
 //! model. Stage 2 (this expansion — see
 //! `team/contracts/track-plan-touches.md`) adds:
 //!
-//! * `indicators` — incremental math for the six v1 indicators.
+//! * `indicators` — incremental math for the filter DSL catalog.
 //! * `state` — per-filter mutable runtime state (warmup, cooldown,
 //!   daily wakeup counter, previous-bar leaf cache for `crosses_*`).
 //! * `runtime` — the per-bar evaluator. Given a validated `Filter`,

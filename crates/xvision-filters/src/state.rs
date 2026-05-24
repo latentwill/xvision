@@ -43,6 +43,10 @@ pub struct FilterState {
     /// flat condition list returned by [`ConditionTree::conditions`]).
     /// `None` until the first bar after warmup.
     pub(crate) prev_conditions: Vec<Option<bool>>,
+    /// Previous resolved numeric pair for each condition. This is what
+    /// `crosses_*` needs: previous `lhs <= rhs` / `lhs >= rhs` plus the
+    /// current strict comparison.
+    pub(crate) prev_numeric_pairs: Vec<Option<(f64, f64)>>,
     /// Previous tree result (the rollup of the per-condition results
     /// under All/Any). `None` until after the first post-warmup bar.
     pub(crate) prev_tree: Option<bool>,
@@ -65,6 +69,7 @@ impl FilterState {
         Self {
             indicators,
             prev_conditions: vec![None; n_conditions],
+            prev_numeric_pairs: vec![None; n_conditions],
             prev_tree: None,
             cooldown_left: 0,
             wakeup_day: None,

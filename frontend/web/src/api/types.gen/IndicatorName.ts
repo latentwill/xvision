@@ -1,10 +1,34 @@
-// Filter v1 frontend type — hand-typed pending Stage 3 ts-rs export.
-// Mirrors `xvision_filters::IndicatorName`. v1 catalog is closed at 6.
+// Filter frontend type - hand-typed pending Stage 3 ts-rs export.
+// Mirrors `xvision_filters::IndicatorName`.
 
 export type IndicatorName =
+  | "open"
+  | "high"
+  | "low"
+  | "close"
+  | "volume"
   | "ema"
   | "sma"
+  | "wma"
   | "rsi"
   | "atr"
   | "atr_pct"
-  | "close";
+  | "roc"
+  | "macd_line"
+  | "macd_signal"
+  | "macd_hist"
+  | "bb_upper"
+  | "bb_middle"
+  | "bb_lower"
+  | "bb_width"
+  | "bb_pct_b"
+  | "donchian_upper"
+  | "donchian_middle"
+  | "donchian_lower"
+  | "stoch_k"
+  | "stoch_d"
+  | "cci"
+  | "mfi"
+  | "obv"
+  | "vwap"
+  | "volume_sma";
