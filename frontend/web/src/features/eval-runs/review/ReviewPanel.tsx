@@ -73,6 +73,17 @@ export function ReviewPanel({
   const hasReviews = reviews.length > 0;
   const detail = detailQuery.data ?? null;
   const detailReview: EvalReview | null = detail?.review ?? null;
+  const [copiedFormat, setCopiedFormat] = useState<"md" | "json" | null>(null);
+
+  async function copyReview(format: "md" | "json", detail: ReviewDetail) {
+    const text =
+      format === "md"
+        ? reviewDetailToMarkdown(detail)
+        : JSON.stringify(detail, null, 2);
+    await navigator.clipboard.writeText(text);
+    setCopiedFormat(format);
+    window.setTimeout(() => setCopiedFormat(null), 1500);
+  }
 
   return (
     <Card className="p-5">
@@ -183,10 +194,30 @@ export function ReviewPanel({
             </div>
           )}
           {detailReview.status === "completed" && (
-            <ReviewContent
-              review={detailReview}
-              findings={detail.findings}
-            />
+            <>
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="copy-review-md"
+                  onClick={() => void copyReview("md", detail)}
+                  className="rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text"
+                >
+                  {copiedFormat === "md" ? "Copied MD" : "Copy MD"}
+                </button>
+                <button
+                  type="button"
+                  data-testid="copy-review-json"
+                  onClick={() => void copyReview("json", detail)}
+                  className="rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text"
+                >
+                  {copiedFormat === "json" ? "Copied JSON" : "Copy JSON"}
+                </button>
+              </div>
+              <ReviewContent
+                review={detailReview}
+                findings={detail.findings}
+              />
+            </>
           )}
           {(detailReview.status === "queued" ||
             detailReview.status === "running") && (
@@ -198,6 +229,37 @@ export function ReviewPanel({
       )}
     </Card>
   );
+}
+
+function reviewDetailToMarkdown(detail: ReviewDetail): string {
+  const { review, findings } = detail;
+  const lines: string[] = [
+    `# Eval Review ${review.id}`,
+    "",
+    `- Run: ${review.eval_run_id}`,
+    `- Agent profile: ${review.agent_profile_id}`,
+    `- Status: ${review.status}`,
+    `- Verdict: ${review.verdict ?? "n/a"}`,
+    `- Score: ${review.score ?? "n/a"}`,
+    `- Confidence: ${review.confidence ?? "n/a"}`,
+    `- Updated: ${review.updated_at}`,
+  ];
+  if (review.summary?.trim()) {
+    lines.push("", "## Executive Summary", "", review.summary.trim());
+  }
+  lines.push("", `## Findings (${findings.length})`);
+  if (findings.length === 0) {
+    lines.push("", "No findings recorded.");
+  } else {
+    for (const finding of findings) {
+      const title = finding.title || finding.summary || finding.id;
+      lines.push("", `### ${title}`, "", `- Severity: ${finding.severity}`);
+      if (finding.description) lines.push(`- Description: ${finding.description}`);
+      if (finding.recommendation) lines.push(`- Recommendation: ${finding.recommendation}`);
+      if (finding.confidence != null) lines.push(`- Confidence: ${finding.confidence}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 /// Render the `generate` mutation's error in a high-visibility alert

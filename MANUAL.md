@@ -17,6 +17,9 @@ Cross-references for operator-facing concepts that have their own docs:
 - **Agent memory** — see `docs/v2d-memory-overview.md` for how the
   per-slot memory toggle works and why backtest replays don't leak
   future knowledge.
+- **Inline filter DSL** — see `docs/operator/filter-dsl-catalog.md` for
+  the exact indicators, operators, and JSON examples accepted by
+  `xvn strategy set-filter`.
 
 ---
 

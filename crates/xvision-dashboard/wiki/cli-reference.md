@@ -21,6 +21,8 @@ experiment orchestration.
 | `validate <id> [--scenario <id>] [--json]` | Shape-only check without `--scenario`; full preflight with `--scenario` (checks agents, provider/model, asset/timeframe alignment). Returns `{eval_ready: bool, warnings: [], errors: [], expected_decisions, asset, timeframe, warmup_bars}`. Non-zero exit when not eval-ready. |
 | `add-agent <strategy-id> <agent-id> --role <role>` | Attach a library agent reference to a strategy. |
 | `remove-agent <strategy-id> --role <role>` | Detach an agent reference by role. |
+| `set-filter <strategy-id> --from-json <path>` | Install an inline deterministic Filter DSL payload and switch the strategy to `filter_gated`. See [Filter DSL Catalog](/docs?slug=filter-dsl-catalog). |
+| `filter-catalog [--json]` | Print the inline Filter DSL indicator/operator catalog and examples for CLI/chat agents. |
 | `set-pipeline <strategy-id> --kind single\|sequential\|graph [--edge from:to …]` | Set the strategy pipeline shape; repeat `--edge` for graph edges. |
 | `run <id> --fixture <name> [--decisions <n>] [--mock]` | Run a strategy inline against a fixture parquet; `--mock` uses deterministic dispatch with no API calls. |
 | `migrate-agents [--dry-run]` | Migrate legacy slot-shaped strategies into agent references; `--dry-run` previews without writing. |

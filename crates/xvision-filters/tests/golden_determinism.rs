@@ -217,7 +217,7 @@ fn build_golden_filter_events() -> (Vec<FilterEventV1>, FilterSummary) {
         let ts = DateTime::parse_from_rfc3339(&bar.ts)
             .expect("bar ts must be RFC3339")
             .with_timezone(&Utc);
-        let runtime_bar = RuntimeBar::new(bar.open, bar.high, bar.low, bar.close);
+        let runtime_bar = RuntimeBar::with_volume(bar.open, bar.high, bar.low, bar.close, bar.volume);
         let outcome = runtime.evaluate(
             &mut state,
             &runtime_bar,

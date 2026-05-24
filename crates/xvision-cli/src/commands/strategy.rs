@@ -243,6 +243,9 @@ enum StrategyAction {
     /// path used by the Strategy Inspector. The strategy id comes from
     /// the positional argument; if the JSON omits `filter.id`, the CLI
     /// preserves the existing inline filter id or assigns a new one.
+    /// Indicator/operator catalog and examples: see
+    /// `docs/operator/filter-dsl-catalog.md` or the in-app docs page
+    /// "Filter DSL Catalog".
     SetFilter {
         /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
@@ -250,6 +253,17 @@ enum StrategyAction {
         /// or `{ "filter": {...filter fields...} }`.
         #[arg(long = "from-json")]
         from_json: PathBuf,
+    },
+    /// Print the inline deterministic Filter DSL catalog.
+    ///
+    /// This is the machine-readable companion to
+    /// `docs/operator/filter-dsl-catalog.md`, intended for chat rail and
+    /// CLI agents that need exact indicator/operator tokens before
+    /// constructing a `strategy.filter` payload.
+    FilterCatalog {
+        /// Emit JSON instead of plain text.
+        #[arg(long)]
+        json: bool,
     },
     /// Remove a Filter agent (and every PipelineEdge it originates) by
     /// role. Idempotent — removing a non-existent role prints a warning
@@ -416,6 +430,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             strategy_id,
             from_json,
         } => set_filter(&strategy_id, &from_json).await,
+        StrategyAction::FilterCatalog { json } => filter_catalog(json),
         StrategyAction::RemoveFilter { strategy_id, role } => remove_filter(&strategy_id, &role).await,
         StrategyAction::SetPipeline {
             strategy_id,
@@ -1353,6 +1368,207 @@ async fn set_filter(strategy_id: &str, from_json: &PathBuf) -> CliResult<()> {
     Ok(())
 }
 
+fn filter_catalog(json: bool) -> CliResult<()> {
+    let catalog = serde_json::json!({
+        "docs": {
+            "repo": "docs/operator/filter-dsl-catalog.md",
+            "dashboard": "/docs?slug=filter-dsl-catalog"
+        },
+        "required_fields": ["display_name", "asset_scope", "timeframe", "conditions"],
+        "optional_fields": {
+            "fire": {
+                "shape": {
+                    "reason": "string",
+                    "priority": "number_0_to_1",
+                    "tags": "string[]",
+                    "context": "indicator[]"
+                },
+                "effect": "adds compact trigger metadata/context to traces and trader briefings when the filter is active"
+            }
+        },
+        "operators": [
+            {"token": ">", "aliases": ["gt", "above"], "rhs": "indicator_or_numeric"},
+            {"token": "<", "aliases": ["lt", "below"], "rhs": "indicator_or_numeric"},
+            {"token": ">=", "aliases": ["gte", "above_or_equal", "at_or_above"], "rhs": "indicator_or_numeric"},
+            {"token": "<=", "aliases": ["lte", "below_or_equal", "at_or_below"], "rhs": "indicator_or_numeric"},
+            {"token": "==", "aliases": ["eq", "equals"], "rhs": "indicator_or_numeric"},
+            {"token": "crosses_above", "aliases": ["crosses_over"], "rhs": "indicator_only"},
+            {"token": "crosses_below", "aliases": ["crosses_under"], "rhs": "indicator_only"},
+            {"token": "between", "aliases": [], "rhs": "range"},
+            {"token": "above_for_<bars>", "aliases": [], "rhs": "indicator_or_numeric"},
+            {"token": "below_for_<bars>", "aliases": [], "rhs": "indicator_or_numeric"},
+            {"token": "crossed_above_<bars>", "aliases": [], "rhs": "indicator_only"},
+            {"token": "crossed_below_<bars>", "aliases": [], "rhs": "indicator_only"},
+            {"token": "slope_gt_<bars>", "aliases": [], "rhs": "numeric"},
+            {"token": "slope_lt_<bars>", "aliases": [], "rhs": "numeric"},
+            {"token": "zscore_gt_<period>", "aliases": [], "rhs": "numeric"},
+            {"token": "zscore_lt_<period>", "aliases": [], "rhs": "numeric"},
+            {"token": "within_pct_<pct>", "aliases": [], "rhs": "indicator_or_numeric"}
+        ],
+        "indicators": {
+            "price_volume": ["open", "high", "low", "close", "volume"],
+            "moving_average": ["sma_<period>", "ema_<period>", "wma_<period>"],
+            "trend": [
+                "adx_<period>",
+                "di_plus_<period>",
+                "di_minus_<period>",
+                "donchian_upper_<period>",
+                "donchian_middle_<period>",
+                "donchian_lower_<period>",
+                "highest_<period>",
+                "lowest_<period>",
+                "tenkan",
+                "kijun",
+                "senkou_a",
+                "senkou_b",
+                "chikou",
+                "cloud_top",
+                "cloud_bottom",
+                "cloud_thickness"
+            ],
+            "momentum": [
+                "rsi_<period>",
+                "roc_<period>",
+                "stoch_k_<period>",
+                "stoch_d_<period>",
+                "stoch_rsi_<period>",
+                "stoch_rsi_k_<period>",
+                "stoch_rsi_d_<period>",
+                "cci_<period>",
+                "mfi_<period>",
+                "williams_r_<period>"
+            ],
+            "volatility_bands": [
+                "atr_<period>",
+                "atr_pct_<period>",
+                "bb_upper_<period>",
+                "bb_middle_<period>",
+                "bb_lower_<period>",
+                "bb_width_<period>",
+                "bb_pct_b_<period>",
+                "keltner_upper_<period>",
+                "keltner_middle_<period>",
+                "keltner_lower_<period>"
+            ],
+            "macd": [
+                "macd_line",
+                "macd",
+                "macd_12_26_9",
+                "macd_signal",
+                "macd_hist",
+                "macd_histogram"
+            ],
+            "volume_aware": [
+                "vwap_<period>",
+                "volume_sma_<period>",
+                "rvol_<period>",
+                "rvol_tod_<period>",
+                "volume_zscore_<period>",
+                "obv"
+            ],
+            "session_levels": [
+                "prev_day_open",
+                "prev_day_high",
+                "prev_day_low",
+                "prev_day_close",
+                "prev_week_high",
+                "prev_week_low",
+                "prev_week_close",
+                "prev_month_open",
+                "prev_month_high",
+                "prev_month_low",
+                "prev_month_close",
+                "premarket_high",
+                "premarket_low",
+                "opening_range_high_<minutes>",
+                "opening_range_low_<minutes>",
+                "opening_range_mid_<minutes>",
+                "gap_pct",
+                "gap_up",
+                "gap_down"
+            ]
+        },
+        "examples": {
+            "ema_cross_cooldown": {
+                "display_name": "BTC 15m EMA cross",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "15m",
+                "conditions": {
+                    "any": [
+                        {"lhs": "ema_12", "op": "crosses_above", "rhs": "ema_26"},
+                        {"lhs": "ema_12", "op": "crosses_below", "rhs": "ema_26"}
+                    ]
+                },
+                "cooldown_bars": 16
+            },
+            "macd_bb_pullback": {
+                "display_name": "MACD BB pullback",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        {"lhs": "bb_pct_b_20", "op": "<", "rhs": 0.2},
+                        {"lhs": "macd_hist", "op": ">", "rhs": 0},
+                        {"lhs": "rsi_14", "op": "between", "rhs": [30, 70]}
+                    ]
+                },
+                "cooldown_bars": 8
+            },
+            "llm_fire_trend_breakout": {
+                "display_name": "LLM trend breakout fire",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "15m",
+                "conditions": {
+                    "all": [
+                        {"lhs": "adx_14", "op": ">", "rhs": 25},
+                        {"lhs": "di_plus_14", "op": "above_for_3", "rhs": "di_minus_14"},
+                        {"lhs": "close", "op": "crossed_above_3", "rhs": "opening_range_high_30"},
+                        {"lhs": "rvol_tod_20", "op": ">", "rhs": 1.5}
+                    ]
+                },
+                "fire": {
+                    "reason": "trend_breakout",
+                    "priority": 0.85,
+                    "tags": ["trend", "breakout", "volume"],
+                    "context": ["close", "opening_range_high_30", "adx_14", "di_plus_14", "di_minus_14", "rvol_tod_20", "volume_zscore_20"]
+                },
+                "cooldown_bars": 16
+            }
+        }
+    });
+
+    if json {
+        crate::io::print_json(&catalog)?;
+        return Ok(());
+    }
+
+    println!("Inline Filter DSL catalog");
+    println!("Docs: docs/operator/filter-dsl-catalog.md and /docs?slug=filter-dsl-catalog");
+    println!("Required fields: display_name, asset_scope, timeframe, conditions");
+    println!(
+        "Operators: >, <, >=, <=, ==, crosses_above, crosses_below, between, \
+         above_for_<bars>, below_for_<bars>, crossed_above_<bars>, crossed_below_<bars>, \
+         slope_gt_<bars>, slope_lt_<bars>, zscore_gt_<period>, zscore_lt_<period>, within_pct_<pct>"
+    );
+    println!("Accepted aliases: gt above lt below gte lte eq equals crosses_over crosses_under");
+    println!(
+        "Indicators: open high low close volume; sma_<period> ema_<period> wma_<period>; \
+         adx_<period> di_plus_<period> di_minus_<period>; \
+         rsi_<period> roc_<period> stoch_k_<period> stoch_d_<period> stoch_rsi_<period> cci_<period> mfi_<period>; \
+         atr_<period> atr_pct_<period>; bb_upper/middle/lower/width/pct_b_<period>; \
+         keltner_upper/middle/lower_<period>; donchian_upper/middle/lower_<period>; \
+         highest_<period> lowest_<period>; opening_range_high/low/mid_<minutes>; \
+         macd_line macd_signal macd_hist; ichimoku tenkan/kijun/cloud_*; \
+         vwap_<period> volume_sma_<period> rvol_<period> rvol_tod_<period> volume_zscore_<period> obv; \
+         prev_day_* prev_week_* prev_month_* premarket_* gap_*",
+    );
+    println!(
+        "Optional fire metadata: fire.reason, fire.priority 0..1, fire.tags, fire.context indicator list."
+    );
+    println!("Use --json for a machine-readable catalog with examples.");
+    Ok(())
+}
+
 fn filter_from_strategy_json(
     raw: serde_json::Value,
     strategy_id: &str,
@@ -1869,6 +2085,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             cycle_idx: 0,
             provider_catalogs: std::collections::HashMap::new(),
             filter_ctx: None,
+            trace_attrs: None,
             recorder: None,
         })
         .await

@@ -190,6 +190,8 @@ pub struct DispatchInput<'a> {
     pub catalog: Option<Arc<Catalog>>,
     pub delta_briefing: bool,
     pub prev_briefing: Option<serde_json::Value>,
+    pub trace_name: Option<String>,
+    pub trace_attrs: Option<serde_json::Value>,
     /// Position of this agent in `Strategy.agents`. Router uses this to
     /// bound `target_agent_ref_index > current_index`.
     pub current_index: usize,
@@ -362,6 +364,8 @@ async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
         catalog: input.catalog,
         delta_briefing: input.delta_briefing,
         prev_briefing: input.prev_briefing,
+        trace_name: input.trace_name,
+        trace_attrs: input.trace_attrs,
     })
     .await?;
 
@@ -430,6 +434,8 @@ async fn dispatch_router(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
         catalog: input.catalog,
         delta_briefing: input.delta_briefing,
         prev_briefing: input.prev_briefing,
+        trace_name: input.trace_name,
+        trace_attrs: input.trace_attrs,
     })
     .await?;
 

@@ -11,10 +11,11 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 use crate::errors::ValidationError;
 use crate::indicators::Bar;
-use crate::state::FilterState;
+use crate::state::{FilterState, CONDITION_HISTORY_CAP};
 use crate::types::{Condition, ConditionTree, Filter, IndicatorRef, Operand, Operator, WakeInPosition};
 use crate::validate::validate;
 
@@ -188,17 +189,33 @@ impl<'f> RuntimeFilter<'f> {
         // Evaluate every condition leaf using the current indicator values.
         let leaves = self.filter.conditions.conditions();
         let mut results: Vec<ConditionResult> = Vec::with_capacity(leaves.len());
+        let mut current_pairs: Vec<Option<(f64, f64)>> = Vec::with_capacity(leaves.len());
 
         for (i, cond) in leaves.iter().enumerate() {
-            let prev = state.prev_conditions.get(i).copied().unwrap_or(None);
-            let passed = eval_condition(cond, prev, &state.indicators);
+            let prev_pair = state.prev_numeric_pairs.get(i).copied().unwrap_or(None);
+            let current_pair = numeric_pair(cond, &state.indicators);
+            let (passed, raw_signal) = eval_condition(
+                cond,
+                prev_pair,
+                current_pair,
+                state.numeric_pair_history.get(i),
+                state.condition_history.get(i),
+            );
             results.push(ConditionResult { passed });
+            current_pairs.push(current_pair);
+            push_bool_history(&mut state.condition_history[i], raw_signal);
+            if let Some(pair) = current_pair {
+                push_pair_history(&mut state.numeric_pair_history[i], pair);
+            }
         }
 
-        // Cache for next bar's crosses_* detection.
+        // Cache for next bar's diagnostics and crosses_* detection.
         for (i, r) in results.iter().enumerate() {
             if let Some(slot) = state.prev_conditions.get_mut(i) {
                 *slot = Some(r.passed);
+            }
+            if let Some(slot) = state.prev_numeric_pairs.get_mut(i) {
+                *slot = current_pairs[i];
             }
         }
 
@@ -291,47 +308,164 @@ fn combine_tree(tree: &ConditionTree, results: &[ConditionResult]) -> bool {
     }
 }
 
-/// Evaluate one condition leaf against current indicator values, using
-/// the previous-bar leaf result to detect crosses.
+/// Evaluate one condition leaf against current indicator values.
 fn eval_condition(
     cond: &Condition,
-    prev_leaf_result: Option<bool>,
-    engine: &crate::indicators::IndicatorEngine,
-) -> bool {
-    match cond.op {
-        Operator::Gt => numeric_pair(cond, engine).map(|(a, b)| a > b).unwrap_or(false),
-        Operator::Lt => numeric_pair(cond, engine).map(|(a, b)| a < b).unwrap_or(false),
-        Operator::Gte => numeric_pair(cond, engine).map(|(a, b)| a >= b).unwrap_or(false),
-        Operator::Lte => numeric_pair(cond, engine).map(|(a, b)| a <= b).unwrap_or(false),
-        Operator::Eq => numeric_pair(cond, engine)
+    prev_pair: Option<(f64, f64)>,
+    current_pair: Option<(f64, f64)>,
+    pair_history: Option<&VecDeque<(f64, f64)>>,
+    signal_history: Option<&VecDeque<bool>>,
+) -> (bool, bool) {
+    let raw = match cond.op {
+        Operator::Gt => current_pair.map(|(a, b)| a > b).unwrap_or(false),
+        Operator::Lt => current_pair.map(|(a, b)| a < b).unwrap_or(false),
+        Operator::Gte => current_pair.map(|(a, b)| a >= b).unwrap_or(false),
+        Operator::Lte => current_pair.map(|(a, b)| a <= b).unwrap_or(false),
+        Operator::Eq => current_pair
             .map(|(a, b)| (a - b).abs() < f64::EPSILON)
             .unwrap_or(false),
-        Operator::Between => match (resolve_numeric(&cond.lhs, engine), &cond.rhs) {
-            (Some(v), Operand::Range(lo, hi)) => v >= *lo && v <= *hi,
+        Operator::Between => match (current_pair, &cond.rhs) {
+            (Some((v, _)), Operand::Range(lo, hi)) => v >= *lo && v <= *hi,
             _ => false,
         },
-        Operator::CrossesAbove => {
-            // Defined as: prev leaf result was false (lhs <= rhs) AND
-            // current strict `>`. We don't have the prior numeric pair
-            // available (we'd need to keep a 1-bar lag on every
-            // indicator); instead we use the leaf cache: a strict ">"
-            // result on this bar combined with prev_leaf_result == false
-            // implies the cross. If prev_leaf_result is None we cannot
-            // detect — return false.
-            let now = numeric_pair(cond, engine).map(|(a, b)| a > b).unwrap_or(false);
-            matches!((prev_leaf_result, now), (Some(false), true))
+        Operator::CrossesAbove => match (prev_pair, current_pair) {
+            (Some((prev_lhs, prev_rhs)), Some((lhs, rhs))) => prev_lhs <= prev_rhs && lhs > rhs,
+            _ => false,
+        },
+        Operator::CrossesBelow => match (prev_pair, current_pair) {
+            (Some((prev_lhs, prev_rhs)), Some((lhs, rhs))) => prev_lhs >= prev_rhs && lhs < rhs,
+            _ => false,
+        },
+        Operator::AboveFor(_) => current_pair.map(|(a, b)| a > b).unwrap_or(false),
+        Operator::BelowFor(_) => current_pair.map(|(a, b)| a < b).unwrap_or(false),
+        Operator::CrossedAbove(_) => match (prev_pair, current_pair) {
+            (Some((prev_lhs, prev_rhs)), Some((lhs, rhs))) => prev_lhs <= prev_rhs && lhs > rhs,
+            _ => false,
+        },
+        Operator::CrossedBelow(_) => match (prev_pair, current_pair) {
+            (Some((prev_lhs, prev_rhs)), Some((lhs, rhs))) => prev_lhs >= prev_rhs && lhs < rhs,
+            _ => false,
+        },
+        Operator::SlopeGt(n) => slope(pair_history, current_pair, n)
+            .map(|(s, b)| s > b)
+            .unwrap_or(false),
+        Operator::SlopeLt(n) => slope(pair_history, current_pair, n)
+            .map(|(s, b)| s < b)
+            .unwrap_or(false),
+        Operator::ZscoreGt(n) => zscore(pair_history, current_pair, n)
+            .map(|(z, b)| z > b)
+            .unwrap_or(false),
+        Operator::ZscoreLt(n) => zscore(pair_history, current_pair, n)
+            .map(|(z, b)| z < b)
+            .unwrap_or(false),
+        Operator::WithinPct(pct) => current_pair
+            .map(|(a, b)| b.abs() > f64::EPSILON && ((a - b).abs() / b.abs()) * 100.0 <= pct)
+            .unwrap_or(false),
+    };
+
+    let passed = match cond.op {
+        Operator::AboveFor(n) | Operator::BelowFor(n) => {
+            raw && all_recent(signal_history, n.saturating_sub(1))
         }
-        Operator::CrossesBelow => {
-            let now = numeric_pair(cond, engine).map(|(a, b)| a < b).unwrap_or(false);
-            matches!((prev_leaf_result, now), (Some(false), true))
+        Operator::CrossedAbove(n) | Operator::CrossedBelow(n) => {
+            raw || any_recent(signal_history, n.saturating_sub(1))
         }
+        _ => raw,
+    };
+    (passed, raw)
+}
+
+fn all_recent(history: Option<&VecDeque<bool>>, n: u32) -> bool {
+    if n == 0 {
+        return true;
+    }
+    let Some(history) = history else {
+        return false;
+    };
+    if history.len() < n as usize {
+        return false;
+    }
+    history.iter().rev().take(n as usize).all(|v| *v)
+}
+
+fn any_recent(history: Option<&VecDeque<bool>>, n: u32) -> bool {
+    if n == 0 {
+        return false;
+    }
+    history
+        .map(|h| h.iter().rev().take(n as usize).any(|v| *v))
+        .unwrap_or(false)
+}
+
+fn slope(
+    history: Option<&VecDeque<(f64, f64)>>,
+    current_pair: Option<(f64, f64)>,
+    n: u32,
+) -> Option<(f64, f64)> {
+    let (current_lhs, rhs) = current_pair?;
+    let history = history?;
+    let n = n as usize;
+    if history.len() < n {
+        return None;
+    }
+    let prior = history.get(history.len() - n)?.0;
+    Some((current_lhs - prior, rhs))
+}
+
+fn zscore(
+    history: Option<&VecDeque<(f64, f64)>>,
+    current_pair: Option<(f64, f64)>,
+    n: u32,
+) -> Option<(f64, f64)> {
+    let (current_lhs, rhs) = current_pair?;
+    let n = n as usize;
+    if n < 2 {
+        return None;
+    }
+    let history = history?;
+    if history.len() + 1 < n {
+        return None;
+    }
+    let mut values: Vec<f64> = history.iter().rev().take(n - 1).map(|(lhs, _)| *lhs).collect();
+    values.push(current_lhs);
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    let var = values
+        .iter()
+        .map(|v| {
+            let d = *v - mean;
+            d * d
+        })
+        .sum::<f64>()
+        / values.len() as f64;
+    let stddev = var.sqrt();
+    if stddev <= f64::EPSILON {
+        return None;
+    }
+    Some(((current_lhs - mean) / stddev, rhs))
+}
+
+fn push_bool_history(history: &mut VecDeque<bool>, value: bool) {
+    history.push_back(value);
+    if history.len() > CONDITION_HISTORY_CAP {
+        history.pop_front();
     }
 }
 
-/// Resolve both sides of a condition to numerics. Returns `None` if any
-/// referenced indicator is still warming up.
+fn push_pair_history(history: &mut VecDeque<(f64, f64)>, value: (f64, f64)) {
+    history.push_back(value);
+    if history.len() > CONDITION_HISTORY_CAP {
+        history.pop_front();
+    }
+}
+
+/// Resolve a condition to the numeric pair needed by its operator. For
+/// `between`, only the LHS is dynamic; the RHS range stays on the
+/// condition itself.
 fn numeric_pair(cond: &Condition, engine: &crate::indicators::IndicatorEngine) -> Option<(f64, f64)> {
     let a = resolve_numeric(&cond.lhs, engine)?;
+    if matches!(cond.op, Operator::Between) {
+        return Some((a, 0.0));
+    }
     let b = resolve_numeric(&cond.rhs, engine)?;
     Some((a, b))
 }
@@ -468,6 +602,10 @@ mod tests {
         Bar::new(c, c + 0.5, c - 0.5, c)
     }
 
+    fn bar_with_open(open: f64, close: f64) -> Bar {
+        Bar::new(open, open.max(close) + 0.5, open.min(close) - 0.5, close)
+    }
+
     fn mk_filter(tree: ConditionTree, cooldown: u32, max_wake: Option<u32>) -> Filter {
         Filter {
             id: FilterId::new("01H".to_string()),
@@ -479,6 +617,7 @@ mod tests {
             timeframe: Timeframe::new("1h".to_string()),
             scan_cadence: ScanCadence::BarClose,
             conditions: tree,
+            fire: None,
             cooldown_bars: cooldown,
             max_wakeups_per_day: max_wake,
             wake_when_in_position: WakeInPosition::Always,
@@ -492,6 +631,15 @@ mod tests {
         let tree = ConditionTree::All(vec![Condition {
             lhs: Operand::Indicator(IndicatorRef::close()),
             op: Operator::Gt,
+            rhs: Operand::Numeric(threshold),
+        }]);
+        mk_filter(tree, 0, None)
+    }
+
+    fn close_op_threshold(op: Operator, threshold: f64) -> Filter {
+        let tree = ConditionTree::All(vec![Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op,
             rhs: Operand::Numeric(threshold),
         }]);
         mk_filter(tree, 0, None)
@@ -529,6 +677,132 @@ mod tests {
     }
 
     #[test]
+    fn above_for_requires_consecutive_true_bars() {
+        let f = close_op_threshold(Operator::AboveFor(3), 50.0);
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        assert_eq!(
+            rt.evaluate(&mut state, &bar(51.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
+        assert_eq!(
+            rt.evaluate(&mut state, &bar(52.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
+        let o = rt.evaluate(&mut state, &bar(53.0), ctx);
+        assert!(matches!(o.decision, ActivationDecision::Active { .. }));
+    }
+
+    #[test]
+    fn crossed_above_remains_true_inside_recent_window() {
+        let tree = ConditionTree::All(vec![Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::CrossedAbove(3),
+            rhs: Operand::Indicator(IndicatorRef {
+                name: IndicatorName::Open,
+                period: None,
+                bar_offset: None,
+            }),
+        }]);
+        let f = mk_filter(tree, 0, None);
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        assert_eq!(
+            rt.evaluate(&mut state, &bar_with_open(10.0, 9.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
+        assert!(matches!(
+            rt.evaluate(&mut state, &bar_with_open(10.0, 11.0), ctx).decision,
+            ActivationDecision::Active { .. }
+        ));
+        assert!(matches!(
+            rt.evaluate(&mut state, &bar_with_open(10.0, 12.0), ctx).decision,
+            ActivationDecision::Active { .. }
+        ));
+    }
+
+    #[test]
+    fn transform_operators_use_condition_history() {
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        let slope = close_op_threshold(Operator::SlopeGt(2), 3.0);
+        let rt = RuntimeFilter::new(&slope).unwrap();
+        let mut state = rt.fresh_state();
+        assert_eq!(
+            rt.evaluate(&mut state, &bar(10.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
+        assert_eq!(
+            rt.evaluate(&mut state, &bar(12.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
+        assert!(matches!(
+            rt.evaluate(&mut state, &bar(15.0), ctx).decision,
+            ActivationDecision::Active { .. }
+        ));
+
+        let zscore = close_op_threshold(Operator::ZscoreGt(3), 1.0);
+        let rt = RuntimeFilter::new(&zscore).unwrap();
+        let mut state = rt.fresh_state();
+        assert_eq!(
+            rt.evaluate(&mut state, &bar(100.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
+        assert_eq!(
+            rt.evaluate(&mut state, &bar(100.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
+        assert!(matches!(
+            rt.evaluate(&mut state, &bar(110.0), ctx).decision,
+            ActivationDecision::Active { .. }
+        ));
+    }
+
+    #[test]
+    fn within_pct_compares_distance_to_rhs() {
+        let tree = ConditionTree::All(vec![Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::WithinPct(1.0),
+            rhs: Operand::Indicator(IndicatorRef {
+                name: IndicatorName::Open,
+                period: None,
+                bar_offset: None,
+            }),
+        }]);
+        let f = mk_filter(tree, 0, None);
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        assert!(matches!(
+            rt.evaluate(&mut state, &bar_with_open(100.0, 100.8), ctx)
+                .decision,
+            ActivationDecision::Active { .. }
+        ));
+        assert_eq!(
+            rt.evaluate(&mut state, &bar_with_open(100.0, 103.0), ctx)
+                .decision,
+            ActivationDecision::Inactive
+        );
+    }
+
+    #[test]
     fn cooldown_suppresses_re_trip() {
         let f = mk_filter(
             ConditionTree::All(vec![Condition {
@@ -551,6 +825,36 @@ mod tests {
         // Cooldown armed = 2; next true bar reports Cooldown.
         let o = rt.evaluate(&mut state, &bar(60.0), ctx);
         assert!(matches!(o.decision, ActivationDecision::Cooldown { .. }));
+    }
+
+    #[test]
+    fn crosses_above_fires_once_on_actual_numeric_cross() {
+        let f = mk_filter(
+            ConditionTree::All(vec![Condition {
+                lhs: Operand::Indicator(IndicatorRef::close()),
+                op: Operator::CrossesAbove,
+                rhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Sma, 2)),
+            }]),
+            0,
+            None,
+        );
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        let decisions = [10.0, 10.0, 9.0, 12.0, 13.0, 14.0]
+            .into_iter()
+            .map(|close| rt.evaluate(&mut state, &bar(close), ctx).decision)
+            .collect::<Vec<_>>();
+
+        let trips = decisions.iter().filter(|decision| decision.is_trip()).count();
+        assert_eq!(
+            trips, 1,
+            "sustained close > sma_2 must not retrigger crosses_above"
+        );
     }
 
     #[test]

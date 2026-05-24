@@ -246,7 +246,7 @@ export function EvalRunDetailRoute() {
     <>
       <Topbar
         title="Eval run"
-        sub={`${labels.subtitle} · ${disambiguator} · ${detail.summary.id}`}
+        sub={`${labels.subtitle} · ${disambiguator}`}
       />
 
       <InspectorContextStrip
@@ -513,6 +513,12 @@ function SummaryCard({
             <span>{summary.mode}</span>
             <span>{summary.status}</span>
             <span className="text-text-2">{disambiguator}</span>
+            <Link
+              to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
+              className="text-info hover:underline"
+            >
+              View agent trace →
+            </Link>
           </div>
         </div>
         {/*
@@ -1171,6 +1177,7 @@ function ContextPill({
     <Link
       to={to}
       aria-label={`Open ${kind} ${label} (${idForAria})`}
+      title={`${kind}: ${label} (${idForAria})`}
       className={`inline-flex items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-text-2 hover:border-gold/50 hover:text-text dark:hover:border-gold/40 ${
         compact ? "text-[11px]" : "text-[11px]"
       }`}

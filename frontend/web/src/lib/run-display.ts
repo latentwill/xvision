@@ -26,12 +26,16 @@ export function evalRunLabels(
   strategies: NamedStrategy[] = [],
   scenarios: NamedScenario[] = [],
 ): EvalRunLabels {
-  const strategyName = displayStrategyName(summary.agent_id, strategies);
-  const scenarioName = displayScenarioName(summary.scenario_id, scenarios);
+  const strategyName =
+    summary.strategy?.display_name?.trim() ||
+    displayStrategyName(summary.agent_id, strategies);
+  const scenarioName =
+    summary.scenario?.display_name?.trim() ||
+    displayScenarioName(summary.scenario_id, scenarios);
   return {
     strategyName,
     scenarioName,
-    title: `${strategyName} on ${scenarioName}`,
+    title: strategyName,
     subtitle: `${summary.mode} · ${summary.status}`,
     runId: summary.id,
     strategyId: summary.agent_id,

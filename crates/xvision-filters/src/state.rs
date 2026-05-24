@@ -12,12 +12,14 @@
 //! * Daily wakeup counter, with the day the count belongs to (UTC).
 //! * Whether the filter has ever fired at all.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use chrono::{DateTime, Datelike, Utc};
 
 use crate::indicators::IndicatorEngine;
 use crate::types::{Condition, ConditionTree, Filter, IndicatorRef, Operand};
+
+pub(crate) const CONDITION_HISTORY_CAP: usize = 512;
 
 /// Internal record of one UTC day for the daily-wakeup cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,17 @@ pub struct FilterState {
     /// flat condition list returned by [`ConditionTree::conditions`]).
     /// `None` until the first bar after warmup.
     pub(crate) prev_conditions: Vec<Option<bool>>,
+    /// Previous resolved numeric pair for each condition. This is what
+    /// `crosses_*` needs: previous `lhs <= rhs` / `lhs >= rhs` plus the
+    /// current strict comparison.
+    pub(crate) prev_numeric_pairs: Vec<Option<(f64, f64)>>,
+    /// Recent raw per-condition operator signals. Parameterized
+    /// operators such as `above_for_3` and `crossed_above_5` use this
+    /// to express persistence without expanding the condition tree.
+    pub(crate) condition_history: Vec<VecDeque<bool>>,
+    /// Recent resolved numeric pairs for each condition, newest at the
+    /// back. Used by slope/z-score operator transforms.
+    pub(crate) numeric_pair_history: Vec<VecDeque<(f64, f64)>>,
     /// Previous tree result (the rollup of the per-condition results
     /// under All/Any). `None` until after the first post-warmup bar.
     pub(crate) prev_tree: Option<bool>,
@@ -59,12 +72,19 @@ impl FilterState {
     /// pre-seeded with every `IndicatorRef` mentioned in the filter's
     /// conditions.
     pub fn new(filter: &Filter) -> Self {
-        let refs = collect_indicator_refs(&filter.conditions);
+        let refs = collect_filter_indicator_refs(filter);
         let indicators = IndicatorEngine::new(refs.iter());
         let n_conditions = filter.conditions.conditions().len();
         Self {
             indicators,
             prev_conditions: vec![None; n_conditions],
+            prev_numeric_pairs: vec![None; n_conditions],
+            condition_history: (0..n_conditions)
+                .map(|_| VecDeque::with_capacity(CONDITION_HISTORY_CAP.min(64)))
+                .collect(),
+            numeric_pair_history: (0..n_conditions)
+                .map(|_| VecDeque::with_capacity(CONDITION_HISTORY_CAP.min(64)))
+                .collect(),
             prev_tree: None,
             cooldown_left: 0,
             wakeup_day: None,
@@ -104,7 +124,7 @@ impl FilterState {
     /// by `filter`, keyed by the stable DSL string (`ema_20`, `close`,
     /// etc.). Indicators still in warmup are omitted.
     pub fn indicator_snapshot(&self, filter: &Filter) -> BTreeMap<String, f64> {
-        collect_indicator_refs(&filter.conditions)
+        collect_filter_indicator_refs(filter)
             .into_iter()
             .filter_map(|r| self.indicators.value(&r).map(|v| (r.to_string(), v)))
             .collect()
@@ -154,6 +174,22 @@ pub fn collect_indicator_refs(tree: &ConditionTree) -> Vec<IndicatorRef> {
     seen
 }
 
+/// Collect every indicator a filter needs at runtime: condition operands
+/// plus optional fire-context indicators.
+pub fn collect_filter_indicator_refs(filter: &Filter) -> Vec<IndicatorRef> {
+    let mut out = collect_indicator_refs(&filter.conditions);
+    if let Some(fire) = &filter.fire {
+        out.extend(fire.context.iter().cloned());
+    }
+    let mut seen: Vec<IndicatorRef> = Vec::new();
+    for r in out {
+        if !seen.iter().any(|s| s == &r) {
+            seen.push(r);
+        }
+    }
+    seen
+}
+
 fn collect_from_condition(c: &Condition, out: &mut Vec<IndicatorRef>) {
     collect_from_operand(&c.lhs, out);
     collect_from_operand(&c.rhs, out);
@@ -184,6 +220,7 @@ mod tests {
             timeframe: Timeframe::new("1h"),
             scan_cadence: crate::types::ScanCadence::BarClose,
             conditions: tree,
+            fire: None,
             cooldown_bars: cooldown,
             max_wakeups_per_day: max_wake,
             wake_when_in_position: crate::types::WakeInPosition::Always,

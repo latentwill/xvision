@@ -297,19 +297,38 @@ async fn collect_strategy_ids(
 }
 
 /// Load each strategy file in `ids` and build the wire summary for it.
-/// Failures on individual files surface as `Internal` so a bad JSON
-/// blob takes down the whole list (consistent with the previous
-/// behaviour of `list_inner`).
+/// A single malformed or partially-deleted strategy must not take down
+/// the dashboard list page; skip that row and leave a structured warning
+/// for local diagnosis.
 async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResult<Vec<StrategySummary>> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let agent_store = AgentStore::new(ctx.db.clone());
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
-        let strategy = store
-            .load(id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let inventory = provider_model_inventory(ctx, &agent_store, &strategy).await?;
+        let strategy = match store.load(id).await {
+            Ok(strategy) => strategy,
+            Err(err) => {
+                tracing::warn!(
+                    strategy_id = %id,
+                    actor = ?&ctx.actor,
+                    error = %err,
+                    "strategy list skipped unreadable strategy file"
+                );
+                continue;
+            }
+        };
+        let inventory = match provider_model_inventory(ctx, &agent_store, &strategy).await {
+            Ok(inventory) => inventory,
+            Err(err) => {
+                tracing::warn!(
+                    strategy_id = %strategy.manifest.id,
+                    actor = ?&ctx.actor,
+                    error = %err,
+                    "strategy list skipped strategy with unreadable agent metadata"
+                );
+                continue;
+            }
+        };
         let model = model_summary(&inventory.models);
         let tags = strategy_tags(&strategy);
         out.push(StrategySummary {

@@ -56,7 +56,7 @@ fn build_strategy(activation_mode: ActivationMode, filter: Option<Filter>) -> St
         mechanical_params: serde_json::json!({}),
         activation_mode,
         filter,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -73,6 +73,31 @@ scan_cadence = "bar_close"
 cooldown_bars = 0
 wake_when_in_position = "always"
 agent_context_template = "compact_trade_context_v1"
+
+[[filter.conditions.all]]
+lhs = "close"
+op  = ">"
+rhs = 0.0
+"#,
+    )
+    .unwrap()
+}
+
+fn fire_context_filter() -> Filter {
+    parse_toml(
+        r#"
+[filter]
+id = "f_filter_hook_fire"
+strategy_id = "s_filter_hook_fire"
+display_name = "Close fire context"
+asset_scope = ["BTC/USD"]
+timeframe = "1h"
+
+[filter.fire]
+reason = "close_breakout"
+priority = 0.8
+tags = ["breakout"]
+context = ["close", "volume_zscore_3"]
 
 [[filter.conditions.all]]
 lhs = "close"
@@ -147,4 +172,21 @@ async fn hook_records_filter_event_json_and_summary() {
     assert_eq!(summaries[0].bars_scanned, 1);
     assert_eq!(summaries[0].wakeups, 1);
     assert_eq!(summaries[0].llm_calls_saved, 0);
+}
+
+#[test]
+fn active_filter_builds_fire_trigger_context() {
+    let filter = fire_context_filter();
+    let strategy = build_strategy(ActivationMode::FilterGated, Some(filter));
+    let mut hook = FilterHook::new(&strategy).unwrap().expect("filter hook");
+
+    assert!(!hook.evaluate(&bar(100.0), false).outcome.decision.is_active());
+    assert!(!hook.evaluate(&bar(101.0), false).outcome.decision.is_active());
+    let active = hook.evaluate(&bar(102.0), false);
+    assert!(active.outcome.decision.is_active());
+    let trigger = active.trigger_context.expect("trigger context");
+    assert_eq!(trigger["reason"], "close_breakout");
+    assert_eq!(trigger["priority"], 0.8);
+    assert_eq!(trigger["tags"], serde_json::json!(["breakout"]));
+    assert_eq!(trigger["context"]["close"], 102.0);
 }

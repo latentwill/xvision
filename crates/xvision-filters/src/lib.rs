@@ -5,7 +5,7 @@
 //! model. Stage 2 (this expansion — see
 //! `team/contracts/track-plan-touches.md`) adds:
 //!
-//! * `indicators` — incremental math for the six v1 indicators.
+//! * `indicators` — incremental math for the filter DSL catalog.
 //! * `state` — per-filter mutable runtime state (warmup, cooldown,
 //!   daily wakeup counter, previous-bar leaf cache for `crosses_*`).
 //! * `runtime` — the per-bar evaluator. Given a validated `Filter`,
@@ -33,10 +33,10 @@ pub use runtime::{
     dsl_to_filter_signal, referenced_indicators, ActivationDecision, BridgedFilterSignal, ConditionResult,
     EvalContext, FilterEvalOutcome, RuntimeFilter, Transition,
 };
-pub use state::{collect_indicator_refs, FilterState};
+pub use state::{collect_filter_indicator_refs, collect_indicator_refs, FilterState};
 pub use types::{
-    ActivationMode, AgentContextTemplateId, Condition, ConditionTree, Filter, FilterId, FilterStatus,
-    IndicatorName, IndicatorRef, Operand, Operator, ScanCadence, StrategyId, Symbol, Timeframe,
+    ActivationMode, AgentContextTemplateId, Condition, ConditionTree, Filter, FilterFire, FilterId,
+    FilterStatus, IndicatorName, IndicatorRef, Operand, Operator, ScanCadence, StrategyId, Symbol, Timeframe,
     WakeInPosition, DEFAULT_AGENT_CONTEXT_TEMPLATE,
 };
 pub use validate::validate;

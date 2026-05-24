@@ -63,26 +63,22 @@ describe("AgentRunDetailRoute", () => {
     );
   });
 
-  test("renders the retention badge with the run's retention_mode", async () => {
+  test("does not render retention mode UI", async () => {
     renderAt("/agent-runs/run_abc1234");
-    const badge = await screen.findByTestId("retention-badge");
-    expect(badge).toHaveTextContent(/hash_only/);
+    await waitFor(() => expect(screen.getByText(/Improve BTC/)).toBeInTheDocument());
+    expect(screen.queryByTestId("retention-badge")).not.toBeInTheDocument();
   });
 
   test("does not render the loud full_debug banner for hash_only runs", async () => {
     renderAt("/agent-runs/run_abc1234");
-    await screen.findByTestId("retention-badge");
+    await waitFor(() => expect(screen.getByText(/Improve BTC/)).toBeInTheDocument());
     expect(screen.queryByTestId("retention-banner")).not.toBeInTheDocument();
   });
 
-  test("never renders the loud full_debug banner — badge is the only surface", async () => {
-    // qa-ui-polish-round2 #10: the role="alert" Card was removed. The
-    // retention mode is communicated by the minimal Pill above, and
-    // Settings → Retention is the canonical control. Confirm the banner
-    // does NOT render even for a full_debug run.
+  test("never renders retention surfaces for full_debug runs", async () => {
     renderAt("/agent-runs/run_debug42");
-    const badge = await screen.findByTestId("retention-badge");
-    expect(badge).toHaveTextContent(/full_debug/);
+    await waitFor(() => expect(screen.getByText(/Improve BTC/)).toBeInTheDocument());
+    expect(screen.queryByTestId("retention-badge")).not.toBeInTheDocument();
     expect(screen.queryByTestId("retention-banner")).not.toBeInTheDocument();
   });
 });
