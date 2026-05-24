@@ -2,6 +2,7 @@ pub mod briefing;
 pub mod dispatch_capability;
 pub mod edge_predicate;
 pub mod execute;
+pub mod execute_cline;
 pub mod filter_dispatch;
 pub mod llm;
 pub mod memory_recorder;
