@@ -214,7 +214,6 @@ For command-style live-node work, prefer the typed remote CLI job API instead of
 
 ## Don'ts (operator-facing)
 
-- Don't recommend `AcpxIntern` for backtest pairing — agentic intern breaks deterministic cache pairing per `cycle_id`. Use `OpenAICompatIntern` or `AnthropicIntern` for backtests.
 - Don't bind the dashboard wider than loopback outside Tailscale until **F35** (dashboard auth) lands.
 - Don't drive the live nodes through ad-hoc SSH or shell text — use the typed remote-CLI job API or `scripts/xvn-remote.py`.
 - Don't bypass the `xvn provider` / `xvn strategy` / `xvn eval` surfaces by editing `$XVN_HOME` files directly — the CLI knows the right invariants and audit hooks.

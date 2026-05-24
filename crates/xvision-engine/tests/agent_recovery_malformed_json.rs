@@ -125,7 +125,7 @@ async fn pool_with_migrations() -> SqlitePool {
 
 fn minimal_strategy() -> Strategy {
     // OpenAI-compat trader by default so the repair path does not
-    // depend on AcpxIntern (which can't be A/B-cache paired). Anthropic
+    // depend on an agentic intern (which can't be A/B-cache paired). Anthropic
     // / OpenAI fixtures both go through the same dispatch trait — the
     // scripted dispatcher above intercepts before any provider code
     // runs, so the provider/model choice is purely cosmetic for the

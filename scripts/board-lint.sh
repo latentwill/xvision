@@ -151,5 +151,8 @@ if [ "$violations" -gt 0 ]; then
   exit 1
 fi
 
+# ACPX purge guard (Cline runtime unification, Stage 0).
+bash scripts/guard-no-acpx.sh || exit 1
+
 echo
 echo "board-lint: clean"

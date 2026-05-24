@@ -208,38 +208,6 @@ with the configured Alpaca paper account.
   ```
   (M4's headline run reads from the Q8 dir.)
 
-### M11.5. Wire the MCP indicator server (only when `INTERN=acpx`)
-
-- **Trigger:** running the Stage 1 Intern through the ACPX agent harness
-  (`XVN_INTERN_PROVIDER=acpx`) and you want the agent to recompute
-  indicators at parameter sets the snapshot doesn't pre-bake (e.g. RSI(7)
-  when the snapshot only carries RSI(14)). Skip otherwise — the MCP server
-  is irrelevant to the OpenAI-compat / Anthropic Intern paths.
-- **What:** `crates/xvision-mcp/` builds a stateless stdio MCP server,
-  `xvn-mcp`, that exposes `xvision-data`'s indicator surface (rsi · sma ·
-  ema · bollinger · atr · macd · donchian · fib_retracements · health) as
-  agent-callable tools. ACPX advertises it to every agent session via
-  `mcpServers: [...]` in `acpx.config.json`.
-- **Setup steps** (auto-run by `scripts/setup_runpod.sh` when
-  `INTERN=acpx`):
-  1. `cargo build --release -p xvision-mcp` (produces `target/release/xvn-mcp`).
-  2. Write `<acpx-workspace>/acpx.config.json` registering the binary as a
-     stdio MCP server. The setup script does this for you; otherwise
-     install ACPX (`npm install -g acpx@latest`) and add the stanza by
-     hand. Each ACPX-driven agent (claude / codex / openclaw / hermes /
-     etc.) has its own install + auth flow on top — see the relevant agent
-     CLI for those.
-- **Verify:** from inside the chosen ACPX agent session, ask it to call
-  the `xvn_health` tool. Expected response: `{"ok": true, "name":
-  "xvision-mcp", "version": "<x.y.z>"}`. Any other indicator (`xvn_rsi` on
-  a small synthetic price series) is a fine smoke too.
-- **Exit:** `xvn_health` returns `ok: true` from the agent's tool channel.
-- **Unblocks:** F21 (ACPX-driven Intern), and any future agent-harness
-  caller that needs the indicator surface (F23 pluggable Trader).
-- **Caveat:** live-data tools (funding rates, onchain panel reads) are not
-  in this MCP yet — the agent must supply input series from prompt
-  context. Determinism for backtest stays via that constraint.
-
 ### M12. Source paired setups + bars JSON for the backtest
 
 - **What:** the `xvn ab-compare` runner needs:
@@ -455,17 +423,11 @@ export HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"     # huggingface-cli also reads this
 
 # Stage 1 Intern — pick one provider and set the matching key
 # Persisted by setup_runpod.sh based on the INTERN= choice:
-export XVN_INTERN_PROVIDER=anthropic          # | openai-compat | acpx
+export XVN_INTERN_PROVIDER=anthropic          # | openai-compat
 export XVN_INTERN_BASE_URL=https://api.anthropic.com
 export XVN_INTERN_MODEL=claude-haiku-4-5
 export XVN_INTERN_KEY_ENV=ANTHROPIC_API_KEY   # name of the var that holds the key
 export ANTHROPIC_API_KEY=...                  # M8 (or OPENAI_API_KEY etc. — M9)
-# ACPX path only (XVN_INTERN_PROVIDER=acpx):
-export XVN_INTERN_ACPX_AGENT=claude           # | codex | openclaw | hermes | ...
-# export XVN_INTERN_ACPX_CUSTOM_CMD="hermes acp"   # escape hatch for Hermes
-# export XVN_INTERN_ACPX_BIN=acpx                  # override binary name
-# export XVN_INTERN_ACPX_TIMEOUT_SECS=300          # default 300s
-# export XVN_INTERN_ACPX_MAX_OUTPUT_BYTES=2097152  # default 2 MiB
 
 # Local Trader (Stage 2) — persisted by setup_runpod.sh from the model menu
 export XVN_MODEL_KIND=gguf                    # | fp16
