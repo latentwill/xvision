@@ -29,3 +29,10 @@ export {
   type RosterValue,
   type UseChart2RosterOpts,
 } from "./useChart2Roster";
+export {
+  MAX_COMPARE_IDS,
+  MIN_COMPARE_IDS,
+  parseCompareIds,
+  useCompareSelection,
+  type CompareSelection,
+} from "./useCompareSelection";

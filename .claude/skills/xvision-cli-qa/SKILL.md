@@ -112,11 +112,13 @@ Watch for:
 - `POST /api/eval/batch` — multi-scenario batch
 - `DELETE /api/eval/runs/:id`
 - `GET /api/eval/compare?ids=…` — `ComparisonReport`; includes
-  baseline (buy_hold) column when present
+  `strategy_name` when the strategy manifest is available, while retaining
+  `id` and `agent_id` for addressing
 
 CLI peers:
 - `xvn eval run / list / show / results / watch / scenarios`
-- `xvn eval compare … --markdown --sort sharpe`
+- `xvn eval compare … --markdown --sort sharpe` — table and markdown modes
+  show readable strategy labels plus adjacent ids
 - `xvn eval batch --strategy <id> --scenarios sc_a,sc_b,sc_c --wait`
 - `xvn eval validate / attest / export / review`
 
@@ -131,6 +133,7 @@ Watch for:
 - batch endpoint returning success when a subset of runs failed to enqueue
 - compare `Baseline (buy_hold)` column missing or NaN for runs that
   should have a baseline arm
+- compare views showing raw strategy ids where `strategy_name` is populated
 - short run id labels (`shortRunId`) collapsing two distinct runs to
   the same display string
 

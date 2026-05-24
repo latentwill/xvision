@@ -824,6 +824,7 @@ mod tests {
             template: "mean-reversion".into(),
             decision_cadence_minutes: 60,
             tags: vec!["btc".into()],
+            color: Some("#D4A547".into()),
             model: Some("claude".into()),
             providers: vec!["anthropic".into()],
             models: vec!["claude".into()],
@@ -901,6 +902,7 @@ mod tests {
         ComparisonRunSummary {
             id: id.into(),
             agent_id: "agent-a".into(),
+            strategy_name: Some("Agent A".into()),
             scenario_id: "scenario-a".into(),
             mode: RunMode::Backtest,
             status: RunStatus::Completed,

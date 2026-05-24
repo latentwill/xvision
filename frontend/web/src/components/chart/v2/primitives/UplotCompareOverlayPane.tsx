@@ -22,6 +22,7 @@ export interface CompareOverlayArm {
   id: string;
   label: string;
   equity: EquityPoint[];
+  color?: string;
 }
 
 export interface UplotCompareOverlayPaneProps {
@@ -59,7 +60,7 @@ export function UplotCompareOverlayPane({
     {},
     ...arms.map((arm, idx) => ({
       label: arm.label,
-      stroke: theme.compare.palette[idx % theme.compare.palette.length],
+      stroke: arm.color ?? theme.compare.palette[idx % theme.compare.palette.length],
       width: 1.5,
       points: { show: false },
     })),

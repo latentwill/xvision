@@ -398,6 +398,12 @@ xvn eval results <run_id> [--json]
 xvn eval compare <run_id_a> <run_id_b>
 ```
 
+Compare labels prefer the strategy display name when the run's strategy
+manifest is available, while keeping the run id and strategy id visible in
+CLI output and dashboard secondary text. The run-centric dashboard is
+`/eval-runs/compare?ids=<run-a>,<run-b>`; the Charts v2 comparison dashboard
+is `/charts/compare?ids=<run-a>,<run-b>`.
+
 `xvn eval run` is part of the current surface. Use `xvn scenario ls` to find
 scenario ids; `xvn eval scenarios` remains available but is deprecated.
 

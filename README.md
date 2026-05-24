@@ -117,7 +117,8 @@ docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
 ```
 
 V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/strategies/:id`,
-`/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/settings/*`.
+`/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/charts/compare`,
+`/settings/*`.
 `/authoring/:id` remains as a compatibility alias for old inspector links.
 See `frontend/README.md` for the full route table and `frontend/DESIGN.md` for
 the design synthesis.

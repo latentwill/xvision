@@ -42,6 +42,10 @@ pub struct StrategySummary {
     pub decision_cadence_minutes: u32,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Optional per-strategy display color from the manifest. Chart surfaces
+    /// use it before falling back to the stable compare palette.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     /// Model summary for attached AgentRefs. Falls back to legacy slot config
     /// and shows the first unique model plus a count when multiple are present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -312,6 +316,7 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             template: strategy.manifest.template.clone(),
             decision_cadence_minutes: strategy.manifest.decision_cadence_minutes,
             tags,
+            color: strategy.manifest.color.clone(),
             model,
             providers: inventory.providers,
             models: inventory.models,

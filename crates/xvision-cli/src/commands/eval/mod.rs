@@ -20,7 +20,9 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
-use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride};
+use xvision_engine::api::eval::{
+    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride,
+};
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
@@ -269,6 +271,7 @@ pub struct CompareRunRow {
     pub scenario_id: String,
     pub scenario_name: String,
     pub strategy_id: String,
+    pub strategy_name: Option<String>,
     pub status: String,
     pub return_pct: Option<f64>,
     pub sharpe: Option<f64>,
@@ -1011,6 +1014,7 @@ async fn build_compare_report(
             scenario_id: run.scenario_id.clone(),
             scenario_name,
             strategy_id: run.agent_id.clone(),
+            strategy_name: run.strategy_name.clone(),
             status: run.status.as_str().to_string(),
             return_pct,
             sharpe,
@@ -1036,22 +1040,36 @@ fn render_compare_markdown(report: &CompareReport) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Eval comparison ({} runs)\n\n", report.runs.len()));
     out.push_str(
-        "| Run | Scenario | Return % | Sharpe | DD % | Decisions | Trades | Actions | Failure mode |\n",
+        "| Run | Strategy | Scenario | Return % | Sharpe | DD % | Decisions | Trades | Actions | Failure mode |\n",
     );
-    out.push_str("|---|---|---|---|---|---|---|---|---|\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
     for row in &report.runs {
         let run_prefix: String = row.run_id.chars().take(8).collect();
+        let strategy_cell = md_cell(&compare_strategy_label(row));
         let scenario_cell = md_cell(&row.scenario_name);
         let return_cell = row.return_pct.map_or("-".into(), |v| format!("{v:.2}"));
         let sharpe_cell = row.sharpe.map_or("-".into(), |v| format!("{v:.2}"));
         let dd_cell = row.max_drawdown_pct.map_or("-".into(), |v| format!("{v:.2}"));
         let actions_cell = md_cell(&format_action_distribution(&row.action_distribution));
         out.push_str(&format!(
-            "| {run_prefix}... | {scenario_cell} | {return_cell} | {sharpe_cell} | {dd_cell} | {} | {} | {actions_cell} | {} |\n",
+            "| {run_prefix}... | {strategy_cell} | {scenario_cell} | {return_cell} | {sharpe_cell} | {dd_cell} | {} | {} | {actions_cell} | {} |\n",
             row.decisions, row.trades_opened, row.primary_failure_mode
         ));
     }
     out
+}
+
+fn compare_strategy_label(row: &CompareRunRow) -> String {
+    let short_id: String = row.strategy_id.chars().take(8).collect();
+    match row
+        .strategy_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(name) => format!("{name} ({short_id}...)"),
+        None => row.strategy_id.clone(),
+    }
 }
 
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
@@ -1135,7 +1153,7 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
     }
 
     // Headline metrics table — one column per run, one row per metric.
-    println!("RUN_ID\tSTRATEGY\tSCENARIO\tSTATUS\tTOTAL_RETURN_%\tSHARPE\tMAX_DD_%\tWIN_RATE\tN_TRADES\tN_DECISIONS");
+    println!("RUN_ID\tSTRATEGY\tSTRATEGY_ID\tSCENARIO\tSTATUS\tTOTAL_RETURN_%\tSHARPE\tMAX_DD_%\tWIN_RATE\tN_TRADES\tN_DECISIONS");
     for r in &report.runs {
         let (tr, sh, dd, wr, nt, nd) = match &r.metrics {
             Some(m) => (
@@ -1156,8 +1174,9 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
             ),
         };
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.id,
+            r.strategy_name.as_deref().unwrap_or(&r.agent_id),
             r.agent_id,
             r.scenario_id,
             r.status.as_str(),
