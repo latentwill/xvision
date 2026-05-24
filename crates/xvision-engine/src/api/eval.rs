@@ -1732,15 +1732,53 @@ fn resolve_provider_api_key(entry: &ProviderEntry) -> ApiResult<Option<String>> 
     Ok(Some(key))
 }
 
-/// Read the selected agent runtime from the runtime config. Defaults to
-/// `LlmDispatch` (the flag's `#[default]` until Task 9 flips it) on any
-/// config-load failure — a missing/broken config must not silently switch
-/// runtimes.
+/// Read the effective agent runtime for an eval run.
+///
+/// The flag default is `Cline` (Task 9 flip). But the Cline path can only
+/// physically run when the `xvision-agentd` sidecar binary is available, so
+/// the eval entry point gates the effective runtime on `XVN_AGENTD_BIN`:
+///
+/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` set → `Cline`.
+/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` UNSET →
+///   `Cline` is still returned, so `spawn_cline_ctx` produces the typed
+///   "set XVN_AGENTD_BIN" error — an operator who explicitly asked for
+///   Cline gets a clear failure, never a silent downgrade (design
+///   decision 5 / failure contract).
+/// * config omits the field (resolves to the `Cline` serde default) but
+///   `XVN_AGENTD_BIN` is UNSET → `LlmDispatch`. This is the safe migration
+///   behavior: an environment that hasn't provisioned the sidecar (most
+///   tests, fresh installs) keeps running through the proven raw-dispatch
+///   path until the operator opts in by provisioning the sidecar.
+/// * config fails to load (no file / parse error) → `LlmDispatch`.
+///
+/// The distinction between "explicitly cline" and "defaulted cline" is read
+/// from the raw config text (the `agent_runtime` key's presence) because
+/// serde collapses both to the same deserialized value.
 async fn resolve_agent_runtime(ctx: &ApiContext) -> AgentRuntime {
     let cfg_path = runtime_config_path(ctx);
-    match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+    let sidecar_available = std::env::var("XVN_AGENTD_BIN").map(|v| !v.is_empty()).unwrap_or(false);
+
+    let raw = tokio::fs::read_to_string(&cfg_path).await.ok();
+    let explicitly_set = raw
+        .as_deref()
+        .map(|s| {
+            s.lines()
+                .map(str::trim_start)
+                .any(|l| l.starts_with("agent_runtime") && l.contains('='))
+        })
+        .unwrap_or(false);
+
+    let configured = match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
         Ok(Ok(cfg)) => cfg.agent_runtime,
-        _ => AgentRuntime::default(),
+        _ => return AgentRuntime::LlmDispatch,
+    };
+
+    match configured {
+        AgentRuntime::Cline if explicitly_set || sidecar_available => AgentRuntime::Cline,
+        // Defaulted-to-Cline without a provisioned sidecar: stay on the
+        // proven raw-dispatch path until the operator opts in.
+        AgentRuntime::Cline => AgentRuntime::LlmDispatch,
+        AgentRuntime::LlmDispatch => AgentRuntime::LlmDispatch,
     }
 }
 
