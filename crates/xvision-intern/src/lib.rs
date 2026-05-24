@@ -3,9 +3,8 @@
 //! The Intern receives a [`MarketSnapshot`] and writes an
 //! [`InternBriefing`]. It must NOT recommend a direction.
 //!
-//! Backends speak either OpenAI-compat or Anthropic wire formats. The cache
-//! layer ensures that paired arms read the SAME briefing per `cycle_id`
-//! (Tier 1 fix #1).
+//! Backends speak either OpenAI-compat or Anthropic wire formats; replay
+//! determinism is handled by the eval/trajectory layer.
 
 pub mod backend;
 pub mod prompt;

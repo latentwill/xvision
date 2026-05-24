@@ -8,9 +8,6 @@
 //! ## What is measured
 //!
 //! - **frames/sec** — end-to-end throughput of `append_frame`.
-//! - **channel max depth** — how deep the `FrameChannel` queue got during the
-//!   run.  A value > 0 confirms backpressure engaged; a value == 0 means the
-//!   consumer was always keeping up.
 //! - **dropped frames** — must be 0.  A non-zero count is a test failure.
 //! - **p50 / p95 per-frame latency** (ms).
 //!
@@ -25,10 +22,9 @@
 //! `docs/superpowers/specs/2026-05-24-cline-record-throughput-target.md`.
 
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Semaphore;
+use std::time::Instant;
 use uuid::Uuid;
 use xvision_observability::{
     blobs::BlobStore,
@@ -36,7 +32,7 @@ use xvision_observability::{
     trajectory::{
         channel::{FrameChannel, DEFAULT_FRAME_CHANNEL_CAPACITY},
         frame::TrajectoryFrame,
-        key::{RecordingId, TrajectoryKey, TrajectoryKeyBuilder, TRAJECTORY_SCHEMA_VERSION},
+        key::{TrajectoryKey, TrajectoryKeyBuilder, TRAJECTORY_SCHEMA_VERSION},
         store::TrajectoryStore,
     },
 };
@@ -132,13 +128,12 @@ fn percentiles(mut samples: Vec<u64>) -> (u64, u64) {
 // ── core driver ───────────────────────────────────────────────────────────────
 
 /// Drive `n_frames` appends through a real `TrajectoryStore` backed by an
-/// in-memory SQLite pool.  Returns (frames_per_sec, max_channel_depth,
-/// dropped, p50_us, p95_us).
+/// in-memory SQLite pool. Returns (frames_per_sec, dropped, p50_us, p95_us).
 async fn drive_record_pass(
     n_frames: usize,
     frames_per_step: usize,
     channel_capacity: usize,
-) -> (f64, usize, usize, u64, u64) {
+) -> (f64, usize, u64, u64) {
     let pool = migrated_pool().await;
     let blob_dir = tempfile::tempdir().unwrap();
     let blob = BlobStore::new(blob_dir.path().to_path_buf());
@@ -150,13 +145,8 @@ async fn drive_record_pass(
 
     let (tx, mut rx) = FrameChannel::new(channel_capacity).split();
 
-    // Track max depth by polling `capacity - len` approach: we observe
-    // the queue depth each time the producer sends. This is an
-    // approximation (not exact) but gives a useful signal.
-    let max_depth = Arc::new(AtomicU64::new(0));
     let dropped = Arc::new(AtomicU64::new(0));
     let dropped_c = dropped.clone();
-    let max_depth_c = max_depth.clone();
 
     // Producer task — sends frames and records per-frame timestamps.
     let n = n_frames;
@@ -208,13 +198,8 @@ async fn drive_record_pass(
     let frames_per_sec = n_frames as f64 / elapsed.as_secs_f64();
     let (p50, p95) = percentiles(latencies);
     let drops = dropped.load(Ordering::Relaxed) as usize;
-    // max_depth_c is an AtomicU64 tracking max observed; here we just read
-    // its final value (it stays 0 if we never explicitly set it — the
-    // channel itself doesn't expose a current-length API, so we use a
-    // proxy: the test will note the channel capacity used).
-    let md = max_depth_c.load(Ordering::Relaxed) as usize;
 
-    (frames_per_sec, md, drops, p50, p95)
+    (frames_per_sec, drops, p50, p95)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,14 +221,12 @@ async fn record_throughput_baseline() {
     const FRAMES_PER_STEP: usize = 20; // 100 steps of 20 frames each
     const CHANNEL_CAP: usize = DEFAULT_FRAME_CHANNEL_CAPACITY; // 1024
 
-    let (fps, max_depth, dropped, p50_us, p95_us) =
-        drive_record_pass(N_FRAMES, FRAMES_PER_STEP, CHANNEL_CAP).await;
+    let (fps, dropped, p50_us, p95_us) = drive_record_pass(N_FRAMES, FRAMES_PER_STEP, CHANNEL_CAP).await;
 
     println!("\n========== record_throughput_baseline ==========");
     println!("  frames       : {N_FRAMES}");
     println!("  channel cap  : {CHANNEL_CAP}");
     println!("  frames/sec   : {fps:.0}");
-    println!("  max depth    : {max_depth} (0 = consumer never fell behind)");
     println!("  dropped      : {dropped}");
     println!("  p50 (µs/send): {p50_us}");
     println!("  p95 (µs/send): {p95_us}");
@@ -256,10 +239,12 @@ async fn record_throughput_baseline() {
 /// load without needing `--ignored` (runs in CI).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn record_throughput_1000_frames_no_drops() {
-    let (fps, _depth, dropped, _p50, _p95) =
-        drive_record_pass(1000, 20, DEFAULT_FRAME_CHANNEL_CAPACITY).await;
+    let (fps, dropped, _p50, _p95) = drive_record_pass(1000, 20, DEFAULT_FRAME_CHANNEL_CAPACITY).await;
 
-    assert_eq!(dropped, 0, "zero frames dropped at 1000-frame load; got {dropped}");
+    assert_eq!(
+        dropped, 0,
+        "zero frames dropped at 1000-frame load; got {dropped}"
+    );
     assert!(fps > 0.0, "measured fps must be positive");
     // No throughput floor asserted here — the floor is set by the
     // `record_throughput_baseline` run and transcribed into the spec doc.
@@ -271,6 +256,6 @@ async fn record_throughput_1000_frames_no_drops() {
 async fn backpressure_holds_at_tiny_capacity() {
     // Use capacity=4 so the producer is forced to wait for the consumer
     // on almost every frame.
-    let (_fps, _depth, dropped, _p50, _p95) = drive_record_pass(200, 10, 4).await;
+    let (_fps, dropped, _p50, _p95) = drive_record_pass(200, 10, 4).await;
     assert_eq!(dropped, 0, "zero frames dropped even with capacity=4");
 }
