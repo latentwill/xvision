@@ -12,7 +12,7 @@
  * adapter (DEFAULT_BOUNDS-based — B3 ships without pan/zoom
  * re-anchoring; tracked as a follow-up).
  */
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import type { Chart } from "klinecharts";
 
 import type { AnnotatedChartPayload, Annotation } from "../types";
@@ -74,12 +74,7 @@ export function AIAnnotationDashboard({
 
   // Hold the live klinecharts instance so AnnotationOverlay can use
   // pixel-precise anchoring. Null until KlineCandlePane fires onReady.
-  const chartRef = useRef<Chart | null>(null);
   const [chartInstance, setChartInstance] = useState<Chart | null>(null);
-  const handleChartReady = useCallback((chart: Chart | null) => {
-    chartRef.current = chart;
-    setChartInstance(chart);
-  }, []);
 
   const visibleTypes = typesForFilter(filter);
   const last = lastClose(payload);
@@ -97,15 +92,6 @@ export function AIAnnotationDashboard({
     (payload.source === "live"
       ? "Start a live run with review annotations enabled to populate this chart."
       : "Run review for this eval to populate AI callouts.");
-
-  // Insight log is filtered by the same type set as the chart overlay.
-  const filteredAnnotations = useMemo(
-    () =>
-      visibleTypes
-        ? payload.annotations.filter((a) => visibleTypes.has(a.type))
-        : payload.annotations,
-    [payload.annotations, visibleTypes],
-  );
 
   return (
     <div className="flex flex-col gap-3">
@@ -190,7 +176,7 @@ export function AIAnnotationDashboard({
           <KlineCandlePane
             candles={payload.candles}
             height={480}
-            onReady={handleChartReady}
+            onReady={setChartInstance}
           />
           {isEmpty ? (
             <div className="absolute inset-0 flex items-center justify-center p-6">
@@ -209,7 +195,8 @@ export function AIAnnotationDashboard({
           )}
         </div>
         <InsightLog
-          annotations={filteredAnnotations}
+          annotations={payload.annotations}
+          visibleTypes={visibleTypes}
           open={logOpen}
           onToggle={() => setLogOpen((v) => !v)}
         />
@@ -220,7 +207,7 @@ export function AIAnnotationDashboard({
         style={{ fontFamily: '"JetBrains Mono", monospace' }}
       >
         EMA(21) · candle_pane · drag to pan ·{" "}
-        {chartRef.current ? "callouts pixel-anchored" : "callouts approximate-anchored"} ·{" "}
+        {chartInstance ? "callouts pixel-anchored" : "callouts approximate-anchored"} ·{" "}
         {payload.annotations.length} annotations · source: {payload.source}
       </footer>
     </div>

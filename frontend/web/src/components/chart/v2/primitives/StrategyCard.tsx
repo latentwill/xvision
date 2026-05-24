@@ -24,7 +24,6 @@ export interface StrategyCardMetrics {
 export interface StrategyCardProps {
   id: string;
   name: string;
-  short: string;
   /** Display caption under the name; e.g. "Trend · 50/200". */
   caption: string;
   color: string;
@@ -53,7 +52,6 @@ function fmtRatio(n: number): string {
 export function StrategyCard({
   id,
   name,
-  short: _short,
   caption,
   color,
   metrics,
