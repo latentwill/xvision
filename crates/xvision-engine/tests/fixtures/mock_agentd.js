@@ -23,6 +23,24 @@
 //   crashOnStep    when true, the process exits hard on the first
 //                  `session.step` (sidecar crash mid-step).
 //
+// Stage 3 (replay) additions:
+//   requireReplay  when true, a `session.step` that has NOT been preceded by
+//                  a `session.replay_load` for that run_id panics the process
+//                  (exit 9). This is the no-live-provider guard the replay
+//                  bit-stability test relies on: if the executor ever drove a
+//                  live step during replay, the mock would crash loudly.
+//   replayInjectError  when set to "replay_frames_exhausted" or
+//                  "replay_divergence", a replayed `session.step` returns that
+//                  reason on `error` (and omits decision_json) so the Rust
+//                  side can exercise the exhaustion / divergence aborts.
+//
+// On `session.replay_load` the mock stores the supplied frames keyed by
+// run_id. On a subsequent `session.step` for a run that has loaded frames,
+// the mock REPLAYS: it extracts the recorded `submit_decision` tool-call
+// input from the frames and returns it verbatim as decision_json, with
+// usage summed from any `Usage` frames — deterministically, with no
+// "live provider" code path touched.
+//
 // The mock enforces run_id idempotency: a second `session.start_run` with a
 // run_id already seen returns a JSON-RPC error (the Stage 1 item-2 dedup
 // contract the real store.ts implements).
@@ -52,8 +70,38 @@ try {
 const decisionJson = cfg.decisionJson ?? '{"action":"hold","conviction":0.5,"justification":"mock cline decision"}';
 const stepStatus = cfg.stepStatus ?? "completed";
 const crashOnStep = cfg.crashOnStep === true;
+const requireReplay = cfg.requireReplay === true;
+const replayInjectError = cfg.replayInjectError ?? null;
 
 const seenRunIds = new Set();
+// run_id -> { frames: [...] } loaded via session.replay_load.
+const loadedReplays = new Map();
+
+// Extract the recorded submit_decision payload from a frame list — the
+// last ToolCallDelta whose tool_name is "submit_decision".
+function recordedDecision(frames) {
+  for (let i = frames.length - 1; i >= 0; i--) {
+    const f = frames[i];
+    if (f && f.kind === "ToolCallDelta" && f.tool_name === "submit_decision" && f.input) {
+      return f.input;
+    }
+  }
+  return null;
+}
+
+// Sum token usage from Usage frames.
+function replayUsage(frames) {
+  const usage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
+  for (const f of frames) {
+    if (f && f.kind === "Usage") {
+      usage.input_tokens += f.input_tokens ?? 0;
+      usage.output_tokens += f.output_tokens ?? 0;
+      usage.cache_read_tokens += f.cache_read_tokens ?? 0;
+      usage.cache_write_tokens += f.cache_write_tokens ?? 0;
+    }
+  }
+  return usage;
+}
 
 function ok(id, result) {
   return JSON.stringify({ jsonrpc: "2.0", id, result });
@@ -99,6 +147,13 @@ const server = net.createServer((conn) => {
         resp = ok(id, { run_id: runId, started_at_ms: 1 });
         break;
       }
+      case "session.replay_load": {
+        const runId = req.params?.run_id;
+        const frames = req.params?.frames ?? [];
+        loadedReplays.set(runId, { frames });
+        resp = ok(id, { loaded: frames.length });
+        break;
+      }
       case "session.step": {
         if (crashOnStep) {
           // Sidecar crash mid-step: drop the connection and exit hard so the
@@ -106,6 +161,48 @@ const server = net.createServer((conn) => {
           conn.destroy();
           process.exit(7);
         }
+        const runId = req.params?.run_id;
+        const replay = loadedReplays.get(runId);
+
+        if (replay) {
+          // REPLAY PATH — deterministic, no live provider touched.
+          if (replayInjectError) {
+            // Simulate frame exhaustion / divergence detected by the
+            // replay model: aborted step with a replay-specific reason,
+            // no decision_json.
+            resp = ok(id, {
+              status: "aborted",
+              output_text: "",
+              iterations: 1,
+              usage: replayUsage(replay.frames),
+              error: replayInjectError,
+            });
+            break;
+          }
+          const decision = recordedDecision(replay.frames);
+          const result = {
+            status: "completed",
+            output_text: "",
+            iterations: 1,
+            usage: replayUsage(replay.frames),
+          };
+          if (decision !== null) {
+            result.decision_json = JSON.stringify(decision);
+          }
+          resp = ok(id, result);
+          break;
+        }
+
+        if (requireReplay) {
+          // No frames were loaded for this run yet a step was issued: the
+          // executor took a LIVE path during a replay test. Crash loudly so
+          // the bit-stability test fails hard instead of silently passing.
+          process.stderr.write(
+            "mock_agentd: live step during replay (no frames loaded for run " + runId + ")\n"
+          );
+          process.exit(9);
+        }
+
         const usage = {
           input_tokens: 11,
           output_tokens: 7,

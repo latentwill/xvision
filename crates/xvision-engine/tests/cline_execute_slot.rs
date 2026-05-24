@@ -93,6 +93,7 @@ fn slot_input<'a>(
         max_tokens: Some(4096),
         run_id: run_id.into(),
         cline_client: client,
+        trajectory_mode: xvision_engine::agent::execute_cline::TrajectoryMode::Record,
     }
 }
 

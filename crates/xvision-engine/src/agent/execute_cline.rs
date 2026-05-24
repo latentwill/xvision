@@ -38,8 +38,65 @@ use crate::agent::llm::{ContentBlock, LlmResponse, ResponseSchema, StopReason};
 use crate::strategies::slot::LLMSlot;
 use std::sync::Arc;
 use xvision_agent_client::provider_map::{map_provider, ProviderMapError};
-use xvision_agent_client::{AgentClient, BudgetLimits, EndRunParams, StartRunParams, StepParams};
+use xvision_agent_client::{
+    AgentClient, BudgetLimits, EndRunParams, ReplayLoadParams, StartRunParams, StepParams,
+};
 use xvision_core::config::ProviderEntry;
+use xvision_observability::trajectory::frame::TrajectoryFrame;
+use xvision_observability::trajectory::key::RecordingId;
+use xvision_observability::trajectory::store::TrajectoryStore;
+
+/// `recovery_reason` written to the recording row when a replay aborts
+/// because the recorded frame feed ran out before the agent finished its
+/// loop (item 4 — bounded replay feed). NEVER a live fallback.
+pub const RECOVERY_REPLAY_FRAMES_EXHAUSTED: &str = "replay_frames_exhausted";
+
+/// `recovery_reason` written when the replayed control flow diverges from
+/// the recorded transcript (item 2 — live-vs-replay divergence).
+pub const RECOVERY_REPLAY_DIVERGENCE: &str = "replay_divergence";
+
+/// Which trajectory mode drives this slot invocation (Stage 3, Task 3).
+///
+/// * `Record` is the normal live path: the agent calls the real provider
+///   and the sidecar emits `event.trajectory_frame` notifications that the
+///   event sink persists into a [`TrajectoryStore`] (Task 0). No replay.
+/// * `Replay` re-drives the SAME Cline loop from a recorded trajectory:
+///   the frames are read from the store, shipped to the sidecar via
+///   `session.replay_load`, and `session.step` consumes them deterministically
+///   — zero network cost, byte-identical decision. On frame exhaustion or
+///   control-flow divergence the run aborts with a typed error and the
+///   recording is marked corrupt (items 2 + 4). NEVER a silent live fallback.
+#[derive(Clone)]
+pub enum TrajectoryMode {
+    /// Live/record path (default). Frame persistence is handled by the
+    /// event sink, not by this executor.
+    Record,
+    /// Replay an existing recording deterministically.
+    Replay {
+        /// The recording to replay. Frames are read from `store` keyed by
+        /// `(recording_id, slot_role, step_index)`.
+        recording_id: RecordingId,
+        /// The trajectory store the recording lives in. Shared across slots.
+        store: Arc<TrajectoryStore>,
+    },
+}
+
+impl Default for TrajectoryMode {
+    fn default() -> Self {
+        TrajectoryMode::Record
+    }
+}
+
+impl std::fmt::Debug for TrajectoryMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TrajectoryMode::Record => write!(f, "Record"),
+            TrajectoryMode::Replay { recording_id, .. } => {
+                write!(f, "Replay {{ recording_id: {recording_id} }}")
+            }
+        }
+    }
+}
 
 /// The built-in lifecycle tool the Cline agent calls exactly once to emit
 /// its structured decision. MUST be in the run's `allowed_tools` or the
@@ -116,6 +173,44 @@ pub enum ClineRuntimeError {
         #[source]
         source: serde_json::Error,
     },
+
+    /// Replay was requested but the recording could not be read from the
+    /// store (missing recording, missing slot/step frames, decode error).
+    /// A replay run NEVER falls back to a live provider — a bad recording
+    /// is a hard abort (item 4 reconstitution rule).
+    #[error("cline runtime: replay frames unavailable for recording_id={recording_id} (role={role}): {source}")]
+    ReplayFramesUnavailable {
+        recording_id: String,
+        role: String,
+        #[source]
+        source: xvision_observability::trajectory::store::StoreError,
+    },
+
+    /// The recorded frame feed was exhausted before the replayed agent
+    /// reached a terminal decision (item 4). The recording is marked
+    /// `corrupt` with `recovery_reason = replay_frames_exhausted`; the
+    /// cycle fails. NEVER a live fallback.
+    #[error("cline runtime: replay frames exhausted for recording_id={recording_id} (role={role}, step={step}): {detail}")]
+    ReplayFramesExhausted {
+        recording_id: String,
+        role: String,
+        step: i64,
+        detail: String,
+    },
+
+    /// The replayed control flow diverged from the recorded transcript
+    /// (item 2). The recording is marked `corrupt` with
+    /// `recovery_reason = replay_divergence`; the cycle fails. The
+    /// divergence point (slot, step) and the expected/actual values are
+    /// carried so an operator can see exactly where the replay drifted.
+    #[error("cline runtime: replay divergence for recording_id={recording_id} (slot={slot}, step={step}): expected {expected}, actual {actual}")]
+    ReplayDivergence {
+        recording_id: String,
+        slot: String,
+        step: i64,
+        expected: String,
+        actual: String,
+    },
 }
 
 /// Inputs to a single [`execute_slot_cline`] invocation. Its OWN struct
@@ -153,6 +248,10 @@ pub struct ClineSlotInput<'a> {
     pub run_id: String,
     /// The live Cline sidecar client, shared across slots in a run.
     pub cline_client: Arc<AgentClient>,
+    /// Record (live) vs Replay (deterministic re-run) — Stage 3, Task 3.
+    /// Defaults to [`TrajectoryMode::Record`] so existing call sites that
+    /// don't opt into replay keep the live path.
+    pub trajectory_mode: TrajectoryMode,
 }
 
 impl ClineSlotInput<'_> {
@@ -227,6 +326,20 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
             source,
         })?;
 
+    // Replay branch (item 1 / Task 3): after start_run and before the
+    // first step, ship the recorded frames to the sidecar so the agent
+    // re-runs its loop from the recording instead of a live provider.
+    // The recorded frames are validated for sufficiency here (item 4
+    // bounds) before they go over the wire — a recording that has no
+    // frames for this slot/step is corrupt and aborts the cycle.
+    if let TrajectoryMode::Replay {
+        recording_id,
+        store,
+    } = &input.trajectory_mode
+    {
+        load_replay_frames(&input, &role, recording_id, store).await?;
+    }
+
     // One step drives the agent's tool loop to completion. The step result
     // is computed first, then `end_run` is ALWAYS attempted so the sidecar
     // session is reclaimed even when the step errored (item 2).
@@ -252,6 +365,25 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         role: role.clone(),
         source,
     })?;
+
+    // Replay divergence + exhaustion detection (items 2 + 4). The sidecar
+    // surfaces a replay-specific abort reason on `error` when the replayed
+    // control flow drifts from the recorded transcript or the frame feed
+    // is exhausted; map those to the typed errors and mark the recording
+    // corrupt. This runs BEFORE the generic `status != completed` gate so a
+    // replay-specific abort surfaces as the typed `ReplayFramesExhausted` /
+    // `ReplayDivergence` (not a generic `StepNotCompleted`). We also
+    // Rust-side compare the recorded terminal decision against the replayed
+    // one as a belt-and-suspenders divergence gate so a "replay model
+    // yields recorded frame, therefore matches itself" false-green cannot
+    // slip through.
+    if let TrajectoryMode::Replay {
+        recording_id,
+        store,
+    } = &input.trajectory_mode
+    {
+        check_replay_outcome(&role, recording_id, store, &step).await?;
+    }
 
     if step.status != "completed" {
         return Err(ClineRuntimeError::StepNotCompleted {
@@ -292,6 +424,189 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     })
 }
 
+/// Sidecar `StepResult.error` reason code: the replay frame feed was
+/// exhausted before the agent reached a terminal decision. Mirrors the
+/// `REPLAY_FRAMES_EXHAUSTED` reason the replay model raises in
+/// `xvision-agentd/src/session/replay-model.ts`.
+pub const STEP_ERR_REPLAY_FRAMES_EXHAUSTED: &str = "replay_frames_exhausted";
+
+/// Sidecar `StepResult.error` reason code: the replayed control flow
+/// diverged from the recorded transcript (a tool result / reconstructed
+/// request did not match the recording).
+pub const STEP_ERR_REPLAY_DIVERGENCE: &str = "replay_divergence";
+
+/// Read the recorded frames for this slot's first step, validate they are
+/// sufficient to start a replay (item 4 bounds — a recording with no
+/// frames is corrupt), and ship them to the sidecar via `replay_load`.
+///
+/// A failure to read frames is a HARD abort — a replay run never falls
+/// back to a live provider. When the recording has zero usable frames the
+/// recording is marked corrupt with `replay_frames_exhausted` so a later
+/// inspect surfaces the reason.
+async fn load_replay_frames(
+    input: &ClineSlotInput<'_>,
+    role: &str,
+    recording_id: &RecordingId,
+    store: &TrajectoryStore,
+) -> anyhow::Result<()> {
+    // Step 0 holds the slot's first model call. Multi-step slots address
+    // later steps by step_index; v1 replay drives one step (matching the
+    // single-step live path in this executor).
+    let frames = store
+        .read_frames(recording_id, role, 0)
+        .await
+        .map_err(|source| ClineRuntimeError::ReplayFramesUnavailable {
+            recording_id: recording_id.to_string(),
+            role: role.to_string(),
+            source,
+        })?;
+
+    if frames.is_empty() {
+        // No frames for this slot/step — bounded feed has nothing to
+        // replay. Mark corrupt and abort (item 4 reconstitution rule).
+        let _ = store
+            .mark_corrupt(recording_id, RECOVERY_REPLAY_FRAMES_EXHAUSTED)
+            .await;
+        return Err(ClineRuntimeError::ReplayFramesExhausted {
+            recording_id: recording_id.to_string(),
+            role: role.to_string(),
+            step: 0,
+            detail: "recording has no frames for this slot/step".to_string(),
+        }
+        .into());
+    }
+
+    let frame_values: Vec<serde_json::Value> = frames
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<_, _>>()
+        .map_err(|e| ClineRuntimeError::ReplayFramesExhausted {
+            recording_id: recording_id.to_string(),
+            role: role.to_string(),
+            step: 0,
+            detail: format!("frame serialization failed: {e}"),
+        })?;
+
+    input
+        .cline_client
+        .replay_load(ReplayLoadParams {
+            run_id: input.run_id.clone(),
+            frames: frame_values,
+        })
+        .await
+        .map_err(|source| ClineRuntimeError::StartRun {
+            run_id: input.run_id.clone(),
+            role: role.to_string(),
+            source,
+        })?;
+
+    Ok(())
+}
+
+/// After a replay step, detect divergence + exhaustion (items 2 + 4).
+///
+/// 1. If the sidecar aborted with a replay-specific reason, map it to the
+///    typed error and mark the recording corrupt with the matching
+///    `recovery_reason`.
+/// 2. Belt-and-suspenders: compare the replayed step's decision against
+///    the recorded terminal `submit_decision` tool call. A mismatch is a
+///    divergence — the replay drifted from the recording (changed tool
+///    result, reconstitution drift). This avoids the false-green where a
+///    replay model simply echoes the recorded frame and "matches" itself.
+async fn check_replay_outcome(
+    role: &str,
+    recording_id: &RecordingId,
+    store: &TrajectoryStore,
+    step: &xvision_agent_client::StepResult,
+) -> anyhow::Result<()> {
+    // (1) Sidecar-signalled replay abort.
+    if let Some(reason) = step.error.as_deref() {
+        if reason == STEP_ERR_REPLAY_FRAMES_EXHAUSTED {
+            let _ = store
+                .mark_corrupt(recording_id, RECOVERY_REPLAY_FRAMES_EXHAUSTED)
+                .await;
+            return Err(ClineRuntimeError::ReplayFramesExhausted {
+                recording_id: recording_id.to_string(),
+                role: role.to_string(),
+                step: 0,
+                detail: "sidecar reported replay frame exhaustion".to_string(),
+            }
+            .into());
+        }
+        if reason == STEP_ERR_REPLAY_DIVERGENCE {
+            let _ = store
+                .mark_corrupt(recording_id, RECOVERY_REPLAY_DIVERGENCE)
+                .await;
+            return Err(ClineRuntimeError::ReplayDivergence {
+                recording_id: recording_id.to_string(),
+                slot: role.to_string(),
+                step: 0,
+                expected: "recorded transcript".to_string(),
+                actual: "sidecar reported divergent tool result / request".to_string(),
+            }
+            .into());
+        }
+    }
+
+    // (2) Rust-side terminal-decision divergence gate. Recompute the
+    // recorded decision from the trajectory frames and compare against the
+    // replayed step's decision. Both are normalized through serde_json so
+    // the comparison is structural (key order independent), not byte-naive.
+    if let Some(replayed) = step.decision_json.as_deref() {
+        if let Some(recorded) = recorded_decision_from_store(store, recording_id, role).await {
+            let replayed_val: serde_json::Value = match serde_json::from_str(replayed) {
+                Ok(v) => v,
+                // A non-JSON replayed decision is handled by the
+                // DecisionNotJson gate downstream; skip the divergence
+                // comparison here.
+                Err(_) => return Ok(()),
+            };
+            if recorded != replayed_val {
+                let _ = store
+                    .mark_corrupt(recording_id, RECOVERY_REPLAY_DIVERGENCE)
+                    .await;
+                return Err(ClineRuntimeError::ReplayDivergence {
+                    recording_id: recording_id.to_string(),
+                    slot: role.to_string(),
+                    step: 0,
+                    expected: recorded.to_string(),
+                    actual: replayed_val.to_string(),
+                }
+                .into());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Reconstruct the recorded terminal decision from a recording's frames:
+/// the `input` of the last `ToolCallDelta` whose `tool_name` is
+/// `submit_decision`. Returns `None` when the recording has no such frame
+/// (e.g. hash-only retention, or a recording that predates the lifecycle
+/// tool) — in that case the Rust-side divergence gate is skipped and the
+/// sidecar-side gate (1) is authoritative.
+async fn recorded_decision_from_store(
+    store: &TrajectoryStore,
+    recording_id: &RecordingId,
+    role: &str,
+) -> Option<serde_json::Value> {
+    let frames = store.read_frames(recording_id, role, 0).await.ok()?;
+    recorded_decision_from_frames(&frames)
+}
+
+/// Pure helper: pull the `submit_decision` payload from a frame list.
+fn recorded_decision_from_frames(frames: &[TrajectoryFrame]) -> Option<serde_json::Value> {
+    frames.iter().rev().find_map(|f| match f {
+        TrajectoryFrame::ToolCallDelta {
+            tool_name: Some(name),
+            input: Some(input),
+            ..
+        } if name == SUBMIT_DECISION_TOOL => Some(input.clone()),
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,6 +634,7 @@ mod tests {
             max_tokens,
             run_id: "cycle-1::trader".into(),
             cline_client: client,
+            trajectory_mode: TrajectoryMode::default(),
         }
     }
 
@@ -372,6 +688,53 @@ mod tests {
 
         let already = plus(vec![SUBMIT_DECISION_TOOL.into()]);
         assert_eq!(already.iter().filter(|t| *t == SUBMIT_DECISION_TOOL).count(), 1);
+    }
+
+    #[test]
+    fn recorded_decision_extracts_last_submit_decision_input() {
+        let frames = vec![
+            TrajectoryFrame::Request {
+                ts_ms: 1,
+                messages: serde_json::json!([]),
+                tools: serde_json::json!([]),
+                system_prompt: None,
+            },
+            TrajectoryFrame::ToolCallDelta {
+                ts_ms: 2,
+                tool_call_id: Some("c1".into()),
+                tool_name: Some("indicators.rsi".into()),
+                input: Some(serde_json::json!({"window": 14})),
+            },
+            TrajectoryFrame::ToolCallDelta {
+                ts_ms: 3,
+                tool_call_id: Some("c2".into()),
+                tool_name: Some(SUBMIT_DECISION_TOOL.into()),
+                input: Some(serde_json::json!({"action": "long_open", "conviction": 0.8})),
+            },
+            TrajectoryFrame::Finish {
+                ts_ms: 4,
+                reason: "stop".into(),
+                error: None,
+            },
+        ];
+        let decision = recorded_decision_from_frames(&frames).expect("submit_decision present");
+        assert_eq!(decision["action"], "long_open");
+    }
+
+    #[test]
+    fn recorded_decision_none_when_no_submit_decision() {
+        let frames = vec![TrajectoryFrame::ToolCallDelta {
+            ts_ms: 1,
+            tool_call_id: Some("c1".into()),
+            tool_name: Some("indicators.rsi".into()),
+            input: Some(serde_json::json!({"window": 14})),
+        }];
+        assert!(recorded_decision_from_frames(&frames).is_none());
+    }
+
+    #[test]
+    fn trajectory_mode_defaults_to_record() {
+        assert!(matches!(TrajectoryMode::default(), TrajectoryMode::Record));
     }
 
     #[test]

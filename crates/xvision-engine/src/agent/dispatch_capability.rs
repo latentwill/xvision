@@ -442,6 +442,10 @@ async fn execute_slot_for_runtime(
             max_tokens: input.max_tokens,
             run_id,
             cline_client: ctx.client.clone(),
+            // Eval/live dispatch always records; replay is driven from the
+            // dedicated CLI record/replay entry points (Stage 3 Task 8),
+            // not the per-cycle pipeline dispatch.
+            trajectory_mode: crate::agent::execute_cline::TrajectoryMode::Record,
         })
         .await;
     }
