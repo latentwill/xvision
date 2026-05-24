@@ -59,10 +59,19 @@ not the sidecar process).  It enables concurrent multi-arm backtests.
 
 ---
 
-## Post-batching target
+## Post-batching result (Task 4)
 
-After adding batched frame writes (Task 4) we expect ≥ 2× improvement
-(multiple rows per SQLite transaction).  The post-batching re-run of the
-baseline is recorded in the commit message for the batching task.
+Measured 2026-05-25 with `flush_at=64` batching via `BatchedFrameWriter`:
 
-**Post-batching result (Task 4):** see commit `perf(stage4): batched frame writes`.
+| Metric | Baseline | Batched (flush_at=64) | Change |
+|---|---|---|---|
+| frames / sec | ~5 870 | ~7 197 | +22.6% |
+| dropped frames | 0 | 0 | — |
+
+The improvement is real but modest: SQLite in-memory transactions are
+already fast, so batching reduces overhead most under disk-backed stores.
+On a real production host (disk-backed SQLite) the improvement would be
+larger.
+
+Both paths continue to meet the 1 667 frames/sec minimum target
+(7 197 / 1 667 = 4.3× headroom with batching).

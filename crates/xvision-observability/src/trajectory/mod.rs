@@ -23,6 +23,6 @@ pub use channel::{
 pub use frame::TrajectoryFrame;
 pub use key::{RecordingId, TrajectoryKey, TrajectoryKeyBuilder, TRAJECTORY_SCHEMA_VERSION};
 pub use store::{
-    FrameCount, RecordingInfo, StoreError, TrajectoryStore, STATUS_COMPLETE, STATUS_CORRUPT,
-    STATUS_INCOMPLETE, STATUS_OPEN,
+    BatchedFrameWriter, FrameCount, RecordingInfo, StoreError, TrajectoryStore, STATUS_COMPLETE,
+    STATUS_CORRUPT, STATUS_INCOMPLETE, STATUS_OPEN,
 };
