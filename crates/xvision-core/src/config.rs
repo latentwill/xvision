@@ -112,15 +112,17 @@ fn validate_provider_name(name: &str, _ctx: &()) -> garde::Result {
 /// Which agent runtime drives LLM-backed slots.
 ///
 /// `Cline` routes each slot through the `xvision-agentd` sidecar (the unified
-/// live + eval path). `LlmDispatch` is the legacy raw-reqwest dispatch, kept as
-/// a flag-gated fallback during the Cline migration (runtime-unification spec,
-/// invariant 6). Defaults to `LlmDispatch` during Stage 1 build-out and is
-/// flipped to `Cline` once the live path is proven.
+/// live + eval path) and is the DEFAULT as of Stage 1's final task — the live
+/// path is proven (engine integration tests green) so new runs go through the
+/// sidecar. `LlmDispatch` is the legacy raw-reqwest dispatch, retained as a
+/// flag-gated fallback during the Cline migration (runtime-unification spec,
+/// invariant 6): operators select it explicitly via `agent_runtime =
+/// "llm-dispatch"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentRuntime {
-    #[default]
     LlmDispatch,
+    #[default]
     Cline,
 }
 
@@ -923,15 +925,19 @@ rate_limit_rpm = 600
 
     #[test]
     fn agent_runtime_defaults_to_llm_dispatch_until_flipped() {
-        // Default stays LlmDispatch during Stage 1 build-out; Stage 1's final
-        // task flips it to Cline once the live path is proven.
-        assert_eq!(AgentRuntime::default(), AgentRuntime::LlmDispatch);
+        // Stage 1's final task (Task 9) flipped the default to Cline now that
+        // the live path is proven. LlmDispatch stays reachable as the
+        // flag-gated fallback (asserted in `agent_runtime_parses_from_str`).
+        // The test name is kept stable for the contract's audit trail.
+        assert_eq!(AgentRuntime::default(), AgentRuntime::Cline);
     }
 
     #[test]
     fn agent_runtime_parses_from_str() {
         use std::str::FromStr;
         assert_eq!(AgentRuntime::from_str("cline").unwrap(), AgentRuntime::Cline);
+        // LlmDispatch remains a valid, reachable flag value (the fallback per
+        // runtime-unification invariant 6) even after the default flipped.
         assert_eq!(AgentRuntime::from_str("llm-dispatch").unwrap(), AgentRuntime::LlmDispatch);
         assert_eq!(AgentRuntime::from_str("llm_dispatch").unwrap(), AgentRuntime::LlmDispatch);
         assert!(AgentRuntime::from_str("bogus").is_err());

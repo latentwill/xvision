@@ -149,6 +149,16 @@ pub struct Executor {
     /// builds an aligned multi-asset timeline from this map instead of
     /// mapping `injected_bars` to the first active asset.
     injected_asset_bars: Option<BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>>,
+    /// Stage 1 (Cline runtime unification) — which runtime drives the
+    /// LLM-backed slots for this run. Defaults to `LlmDispatch`; the eval
+    /// entry point sets it from `RuntimeConfig.agent_runtime` and pairs it
+    /// with `cline` when `Cline` is selected. Threaded into every
+    /// `run_pipeline` invocation via `PipelineInputs.runtime`.
+    agent_runtime: xvision_core::config::AgentRuntime,
+    /// The live sidecar context, present only when the eval entry point
+    /// spawned a Cline client for this run. `None` keeps dispatch on
+    /// `LlmDispatch` regardless of `agent_runtime`.
+    cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
 }
 
 impl Executor {
@@ -196,6 +206,8 @@ impl Executor {
             fill_sink_override: None,
             asset_subset: None,
             injected_asset_bars: None,
+            agent_runtime: Default::default(),
+            cline: None,
         })
     }
 
@@ -225,6 +237,8 @@ impl Executor {
             fill_sink_override: None,
             asset_subset: None,
             injected_asset_bars: None,
+            agent_runtime: Default::default(),
+            cline: None,
         }
     }
 
@@ -250,6 +264,8 @@ impl Executor {
             fill_sink_override: None,
             asset_subset: None,
             injected_asset_bars: None,
+            agent_runtime: Default::default(),
+            cline: None,
         }
     }
 
@@ -269,6 +285,8 @@ impl Executor {
             fill_sink_override: None,
             asset_subset: None,
             injected_asset_bars: None,
+            agent_runtime: Default::default(),
+            cline: None,
         }
     }
 
@@ -349,6 +367,24 @@ impl Executor {
     #[doc(hidden)]
     pub fn with_fill_sink(mut self, sink: Box<dyn FillSink>) -> Self {
         self.fill_sink_override = Some(tokio::sync::Mutex::new(sink));
+        self
+    }
+
+    /// Stage 1 (Cline runtime unification) — select the agent runtime and,
+    /// for `Cline`, the live sidecar context. Builder-style so the eval
+    /// entry point can chain after `with_bars` / `with_observability`:
+    ///   `Executor::with_bars(bars).with_cline_runtime(runtime, Some(ctx))`.
+    ///
+    /// When `runtime == Cline` but `cline` is `None`, the dispatcher falls
+    /// back to `LlmDispatch` (the `should_use_cline` guard), so a flag flip
+    /// without a wired client never silently drops a decision.
+    pub fn with_cline_runtime(
+        mut self,
+        runtime: xvision_core::config::AgentRuntime,
+        cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
+    ) -> Self {
+        self.agent_runtime = runtime;
+        self.cline = cline;
         self
     }
 
@@ -1105,6 +1141,11 @@ impl Executor {
                     // `BacktestExecutor::with_recorder`. The default `None`
                     // keeps the legacy bus-driven emission path untouched.
                     recorder: self.recorder.as_deref(),
+                    // Stage 1 — Cline runtime selection. `LlmDispatch` by
+                    // default; `Cline` + the spawned sidecar ctx when the
+                    // eval entry point selected it.
+                    runtime: self.agent_runtime,
+                    cline: self.cline.clone(),
                 })
                 .await?;
                 total_input_tokens += outs.total_input_tokens as u64;
