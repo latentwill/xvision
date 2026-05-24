@@ -169,6 +169,11 @@ impl TrajectoryStore {
     /// within the recording.  `frame_index` must be monotonically increasing
     /// within a `(recording_id, slot_role, step_index)` group; the store
     /// does not enforce this (the validator does).
+    ///
+    /// For sustained high-throughput record passes use
+    /// [`BatchedFrameWriter`] instead: it buffers frames and flushes
+    /// multiple rows in a single SQLite transaction, significantly
+    /// reducing per-frame overhead.
     pub async fn append_frame(
         &self,
         recording_id: &RecordingId,
@@ -204,6 +209,102 @@ impl TrajectoryStore {
         .execute(&self.pool)
         .await?;
 
+        Ok(())
+    }
+
+    /// Append a batch of pre-serialized frames in a single SQLite transaction.
+    ///
+    /// This is the high-throughput write path used by [`BatchedFrameWriter`].
+    /// The public contract matches [`append_frame`] semantics: all frames
+    /// land in order and the operation is atomic (all-or-nothing).
+    ///
+    /// `rows` is `(slot_role, step_index, frame_index, frame)`.
+    pub async fn append_frame_batch(
+        &self,
+        recording_id: &RecordingId,
+        rows: &[(&str, i64, i64, TrajectoryFrame)],
+    ) -> Result<(), StoreError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        // Serialize all frames (including blob writes) before opening the
+        // SQLite transaction so the lock duration is minimised.
+        #[derive(Debug)]
+        struct Prepared {
+            slot_role: String,
+            step_index: i64,
+            frame_index: i64,
+            kind: &'static str,
+            ts_ms: i64,
+            payload_hash: String,
+            payload_ref: Option<String>,
+        }
+
+        let mut prepared: Vec<Prepared> = Vec::with_capacity(rows.len());
+        for (slot_role, step_index, frame_index, frame) in rows {
+            let payload = serde_json::to_vec(frame)?;
+            let payload_hash = hex::encode(Sha256::digest(&payload));
+            let payload_ref = if self.retention_mode != RetentionMode::HashOnly {
+                let blob_ref = self.blob.write(&payload)?;
+                Some(blob_ref.0)
+            } else {
+                None
+            };
+            prepared.push(Prepared {
+                slot_role: slot_role.to_string(),
+                step_index: *step_index,
+                frame_index: *frame_index,
+                kind: frame.kind_str(),
+                ts_ms: frame.ts_ms() as i64,
+                payload_hash,
+                payload_ref,
+            });
+        }
+
+        // Single transaction for all rows.
+        let mut tx = self.pool.begin().await?;
+        for p in &prepared {
+            sqlx::query(
+                "INSERT INTO trajectory_frames \
+                 (recording_id, slot_role, step_index, frame_index, \
+                  frame_kind, ts_ms, payload_hash, payload_ref) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(recording_id.as_str())
+            .bind(&p.slot_role)
+            .bind(p.step_index)
+            .bind(p.frame_index)
+            .bind(p.kind)
+            .bind(p.ts_ms)
+            .bind(&p.payload_hash)
+            .bind(&p.payload_ref)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    /// Mark a recording as `incomplete`.  Called when the sidecar crashes
+    /// mid-run; the in-flight recording is permanently marked as unusable
+    /// for replay but can still be inspected.
+    pub async fn mark_incomplete(
+        &self,
+        recording_id: &RecordingId,
+        reason: &str,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "UPDATE trajectory_recordings \
+             SET status = ?, recovery_reason = ? \
+             WHERE recording_id = ?",
+        )
+        .bind(STATUS_INCOMPLETE)
+        .bind(reason)
+        .bind(recording_id.as_str())
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -615,4 +716,98 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BatchedFrameWriter — buffer + flush for high-throughput record passes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A wrapper around [`TrajectoryStore`] that buffers frame appends and flushes
+/// them in a single SQLite transaction on either:
+///
+/// 1. the buffer reaching `flush_at` frames, or
+/// 2. a call to [`BatchedFrameWriter::flush`].
+///
+/// The `lossless` and `order-preserving` invariants from the [`TrajectoryStore`]
+/// contract are maintained: frames arrive in the same order they were buffered,
+/// and the consumer is never allowed to lose a frame silently.
+///
+/// ## Usage
+///
+/// ```ignore
+/// let mut bw = BatchedFrameWriter::new(Arc::clone(&store), recording_id, flush_at: 64);
+/// while let Some((slot_role, step_index, frame_index, frame)) = channel.recv().await {
+///     bw.push(slot_role, step_index, frame_index, frame);
+///     bw.flush_if_needed().await?;
+/// }
+/// bw.flush().await?; // flush remaining frames
+/// ```
+pub struct BatchedFrameWriter {
+    store: std::sync::Arc<TrajectoryStore>,
+    recording_id: RecordingId,
+    /// Flush when the buffer reaches this many frames.
+    flush_at: usize,
+    /// Pending frames: (slot_role, step_index, frame_index, frame).
+    buffer: Vec<(String, i64, i64, TrajectoryFrame)>,
+}
+
+impl BatchedFrameWriter {
+    /// Create a new batched writer.
+    ///
+    /// `flush_at` is the batch size threshold.  64 is a reasonable default
+    /// that maps to roughly one SQLite transaction per 64 frames.
+    pub fn new(
+        store: std::sync::Arc<TrajectoryStore>,
+        recording_id: RecordingId,
+        flush_at: usize,
+    ) -> Self {
+        Self {
+            store,
+            recording_id,
+            flush_at: flush_at.max(1),
+            buffer: Vec::with_capacity(flush_at.max(1)),
+        }
+    }
+
+    /// Buffer a frame.  Does not write to the store.
+    pub fn push(
+        &mut self,
+        slot_role: impl Into<String>,
+        step_index: i64,
+        frame_index: i64,
+        frame: TrajectoryFrame,
+    ) {
+        self.buffer.push((slot_role.into(), step_index, frame_index, frame));
+    }
+
+    /// Flush if the buffer has reached `flush_at` frames.
+    pub async fn flush_if_needed(&mut self) -> Result<(), StoreError> {
+        if self.buffer.len() >= self.flush_at {
+            self.flush().await
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Flush the buffer unconditionally.  After this call the buffer is empty.
+    pub async fn flush(&mut self) -> Result<(), StoreError> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let rows: Vec<(&str, i64, i64, TrajectoryFrame)> = self
+            .buffer
+            .iter()
+            .map(|(r, s, f, fr)| (r.as_str(), *s, *f, fr.clone()))
+            .collect();
+        self.store
+            .append_frame_batch(&self.recording_id, &rows)
+            .await?;
+        self.buffer.clear();
+        Ok(())
+    }
+
+    /// Number of frames currently buffered (not yet flushed).
+    pub fn buffered_count(&self) -> usize {
+        self.buffer.len()
+    }
 }
