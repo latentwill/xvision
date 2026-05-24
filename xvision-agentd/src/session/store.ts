@@ -16,6 +16,12 @@ export interface StartRunConfig {
   system_prompt: string
   allowed_tools: string[]
   budget_limits: BudgetLimits
+  /**
+   * JSON schema the agent's `submit_decision` payload must match. Required by
+   * the start_run validator whenever `allowed_tools` includes `submit_decision`;
+   * used as the lifecycle tool's `inputSchema`.
+   */
+  decision_schema?: Record<string, unknown>
 }
 
 export interface Session {
@@ -29,6 +35,12 @@ export interface Session {
    * against `config.budget_limits` to enforce the per-run token caps.
    */
   usage: CumulativeUsage
+  /**
+   * JSON the agent submitted via the `submit_decision` lifecycle tool, if any.
+   * Captured locally by build-agent.ts's tool callback; surfaced on
+   * `StepResult.decision_json` after the step completes.
+   */
+  decisionJson?: string
 }
 
 export interface SessionStore {
@@ -41,6 +53,10 @@ export interface SessionStore {
    * are then checked against the new totals.
    */
   addUsage(run_id: string, delta: Partial<CumulativeUsage>): CumulativeUsage
+  /** Store the JSON submitted via `submit_decision` for this run. */
+  setDecisionJson(run_id: string, json: string): void
+  /** Read the `submit_decision` JSON captured for this run, if any. */
+  getDecisionJson(run_id: string): string | undefined
   /**
    * Current monotonic clock for this store. Budget enforcement reads
    * this so the same clock that stamped `created_at_ms` also computes
@@ -95,6 +111,14 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
         s.usage.output_tokens += delta.output_tokens
       }
       return { ...s.usage }
+    },
+    setDecisionJson(run_id, json) {
+      const s = sessions.get(run_id)
+      if (!s) throw new Error(`session not found: ${run_id}`)
+      s.decisionJson = json
+    },
+    getDecisionJson(run_id) {
+      return sessions.get(run_id)?.decisionJson
     },
     now() {
       return now()

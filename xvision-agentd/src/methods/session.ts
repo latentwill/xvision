@@ -28,6 +28,7 @@ import {
   clearActiveRun,
 } from "../session/active-run.js"
 import { MOCK_PROVIDER_ID } from "../testing/mock-provider.js"
+import { SUBMIT_DECISION_TOOL } from "../session/submit-decision.js"
 
 let store: SessionStore = getDefaultStore()
 
@@ -63,6 +64,7 @@ interface StartRunParams {
   system_prompt?: unknown
   allowed_tools?: unknown
   budget_limits?: unknown
+  decision_schema?: unknown
 }
 
 interface StartRunResult {
@@ -85,6 +87,8 @@ export function handleSessionStartRun(raw: unknown): StartRunResult {
   const reg = handleToolRegistryGet()
   const known = new Set(reg.tools.map(t => t.name))
   for (const name of config.allowed_tools) {
+    // submit_decision is a built-in lifecycle tool, not registry-backed.
+    if (name === SUBMIT_DECISION_TOOL) continue
     if (!known.has(name)) throw new TypeError(`unknown tool in allowed_tools: ${name}`)
   }
   const s = store.create(p.run_id as string, config)
@@ -131,6 +135,17 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
   for (const t of p.allowed_tools) {
     if (typeof t !== "string") throw new TypeError("allowed_tools entries must be strings")
   }
+  // `submit_decision` requires a non-array object `decision_schema` describing
+  // the structured decision the agent must submit.
+  const wantsSubmitDecision = (p.allowed_tools as string[]).includes(SUBMIT_DECISION_TOOL)
+  const decisionSchemaOk =
+    typeof p.decision_schema === "object" &&
+    p.decision_schema !== null &&
+    !Array.isArray(p.decision_schema)
+  if (wantsSubmitDecision && !decisionSchemaOk)
+    throw new TypeError(
+      "params.decision_schema must be a non-array object when allowed_tools includes submit_decision",
+    )
   if (p.api_key !== undefined && typeof p.api_key !== "string")
     throw new TypeError("params.api_key must be a string when present")
   if (p.base_url !== undefined && typeof p.base_url !== "string")
@@ -145,6 +160,7 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     system_prompt: p.system_prompt,
     allowed_tools: p.allowed_tools as string[],
     budget_limits: limits,
+    ...(decisionSchemaOk ? { decision_schema: p.decision_schema as Record<string, unknown> } : {}),
   }
 }
 
@@ -180,6 +196,8 @@ interface StepResult {
     total_cost?: number
   }
   error?: string
+  /** JSON the agent submitted via `submit_decision`, if it called the tool. */
+  decision_json?: string
 }
 
 /**
@@ -228,9 +246,12 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
   const remaining = remainingWallMs(session.created_at_ms, limits, store.now())
   if (remaining <= 0) return abortedStepResult("budget_wall_ms_exceeded")
 
-  // Lazy: build the Agent on first step.
+  // Lazy: build the Agent on first step. Wire submit_decision's local capture
+  // to this run's store slot so the decision lands on the StepResult.
   if (!session.agent) {
-    const agent = buildAgent(session.config)
+    const agent = buildAgent(session.config, {
+      captureDecision: (json) => store.setDecisionJson(p.run_id as string, json),
+    })
     store.attachAgent(p.run_id, agent)
   }
   const agent = session.agent!
@@ -326,7 +347,8 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
       })
     }
 
-    // exactOptionalPropertyTypes: omit total_cost / error when undefined.
+    const decisionJson = store.getDecisionJson(runId)
+    // exactOptionalPropertyTypes: omit total_cost / error / decision_json when undefined.
     return {
       status,
       output_text: result.outputText,
@@ -339,6 +361,7 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
         ...(typeof result.usage.totalCost === "number" ? { total_cost: result.usage.totalCost } : {}),
       },
       ...(errorMsg ? { error: errorMsg } : {}),
+      ...(decisionJson ? { decision_json: decisionJson } : {}),
     }
   } catch (err) {
     emitError({

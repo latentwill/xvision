@@ -1,15 +1,39 @@
-import { Agent } from "@cline/sdk"
+import { Agent, type AgentTool } from "@cline/sdk"
 import { shimRegistryToTools } from "./tool-shim.js"
 import { handleToolRegistryGet } from "../methods/tool-registry.js"
 import { MOCK_PROVIDER_ID, buildMockModel } from "../testing/mock-provider.js"
 import { wrapAgentModel } from "./model-wrapper.js"
+import { SUBMIT_DECISION_TOOL, buildSubmitDecisionTool } from "./submit-decision.js"
 import type { StartRunConfig } from "./store.js"
 
-export function buildAgent(config: StartRunConfig, opts: { allowWrites?: boolean } = {}): Agent {
+export interface BuildAgentOptions {
+  allowWrites?: boolean
+  /**
+   * When the run's `allowed_tools` includes `submit_decision`, this callback
+   * receives the JSON the agent submits. The decision is captured locally in
+   * the sidecar (not routed to Rust via `callRust`) and the call completes the
+   * run. See `submit-decision.ts`.
+   */
+  captureDecision?: (json: string) => void
+}
+
+export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {}): Agent {
   const reg = handleToolRegistryGet()
-  const tools = shimRegistryToTools(reg.tools, config.allowed_tools, {
+  // `submit_decision` is a built-in lifecycle tool, not a registry-backed Rust
+  // callback — exclude it from the registry shim (which would throw on an
+  // unknown name) and append it separately so it captures locally.
+  const registryNames = config.allowed_tools.filter((n) => n !== SUBMIT_DECISION_TOOL)
+  const tools: AgentTool[] = shimRegistryToTools(reg.tools, registryNames, {
     allowWrites: opts.allowWrites ?? false,
   })
+  if (config.allowed_tools.includes(SUBMIT_DECISION_TOOL) && opts.captureDecision) {
+    tools.push(
+      buildSubmitDecisionTool(
+        config.decision_schema ?? { type: "object", additionalProperties: true },
+        opts.captureDecision,
+      ),
+    )
+  }
 
   if (config.provider_id === MOCK_PROVIDER_ID) {
     // Wrap the mock model with the observability tap so `text-delta`,
@@ -27,22 +51,12 @@ export function buildAgent(config: StartRunConfig, opts: { allowWrites?: boolean
     })
   }
 
-  // Real-provider path: Cline's `Agent` constructs an internal
-  // `AgentModel` from `providerId` + `modelId` via its per-instance
-  // `DefaultGateway` (see `mock-provider.ts` for the registry
-  // discovery note). We cannot pre-build the model and pass it via
-  // `model:` here without re-registering every provider handler on
-  // our own `createGateway()` instance — that's a larger Cline
-  // integration deferred to a follow-up.
-  //
-  // The wrapper code itself (`wrapAgentModel`) is provider-agnostic
-  // and ready to use as soon as we have a pre-built model in hand;
-  // the gap is purely the registration plumbing on the Cline side.
-  // For now, real-provider runs emit a per-step aggregate
-  // ModelCallStarted + ModelCallFinished pair from methods/session.ts
-  // after `agent.run()` / `agent.continue()` returns. That preserves
-  // production model-call coverage until the gateway model can be
-  // wrapped directly.
+  // Real-provider path: Cline's `Agent` constructs an internal `AgentModel`
+  // from `providerId` + `modelId`. Stage 2 replaces this with a pre-built,
+  // wrappable model via the (confirmed public) `createGateway()` /
+  // `DefaultGateway.createAgentModel(selection)` API in `@cline/llms`, so the
+  // model-wrapper tap can record real-provider frames. Until then, real runs
+  // emit a per-step aggregate ModelCall span from `methods/session.ts`.
   return new Agent({
     providerId: config.provider_id,
     modelId: config.model_id,
