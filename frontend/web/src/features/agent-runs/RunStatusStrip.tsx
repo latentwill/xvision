@@ -45,7 +45,7 @@ const TONE: Record<
     label: "COMPLETED",
     pulse: false,
     dotGlow: "0 0 0 3px var(--gold-bg)",
-    capsuleGlow: "0 0 24px 2px rgba(212,165,71,0.22), 0 0 0 1px rgba(212,165,71,0.35)",
+    capsuleGlow: "0 0 24px 2px rgba(0,230,118,0.22), 0 0 0 1px rgba(0,230,118,0.35)",
   },
   live: {
     dot: "var(--info)",
@@ -65,8 +65,8 @@ const TONE: Record<
     dot: "var(--danger)",
     label: "ERROR",
     pulse: false,
-    dotGlow: "0 0 0 3px rgba(200,68,58,0.25)",
-    capsuleGlow: "0 0 28px 2px rgba(200,68,58,0.32), 0 0 0 1px rgba(200,68,58,0.50)",
+    dotGlow: "0 0 0 3px rgba(255,77,77,0.25)",
+    capsuleGlow: "0 0 28px 2px rgba(255,77,77,0.32), 0 0 0 1px rgba(255,77,77,0.50)",
   },
 };
 
@@ -262,12 +262,12 @@ export function RunStatusStrip({
           flexShrink: 0,
         }}
       >
-        <span style={{ color: "rgba(212,165,71,0.95)" }}>▓</span>
-        <span style={{ color: "rgba(212,165,71,0.70)" }}>▓</span>
-        <span style={{ color: "rgba(212,165,71,0.55)" }}>▓</span>
-        <span style={{ color: "rgba(212,165,71,0.40)" }}>▒</span>
-        <span style={{ color: "rgba(212,165,71,0.28)" }}>▒</span>
-        <span style={{ color: "rgba(212,165,71,0.18)" }}>░</span>
+        <span style={{ color: "rgba(0,230,118,0.95)" }}>▓</span>
+        <span style={{ color: "rgba(0,230,118,0.70)" }}>▓</span>
+        <span style={{ color: "rgba(0,230,118,0.55)" }}>▓</span>
+        <span style={{ color: "rgba(0,230,118,0.40)" }}>▒</span>
+        <span style={{ color: "rgba(0,230,118,0.28)" }}>▒</span>
+        <span style={{ color: "rgba(0,230,118,0.18)" }}>░</span>
         <span style={{ color: "var(--text-4)" }}>░</span>
       </div>
 
@@ -374,8 +374,8 @@ export function RunStatusStrip({
       {tone === "error" && (
         <TonePill
           dotColor="var(--danger)"
-          background="rgba(200,68,58,0.14)"
-          border="rgba(200,68,58,0.45)"
+          background="rgba(255,77,77,0.14)"
+          border="rgba(255,77,77,0.45)"
           textColor="var(--danger)"
         >
           {summary.error_count} error{summary.error_count !== 1 ? "s" : ""}

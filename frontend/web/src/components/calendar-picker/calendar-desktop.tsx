@@ -255,7 +255,7 @@ export function InlineRangeBar({
               fontFamily: 'Geist Mono, ui-monospace, monospace',
               padding: '2px 7px',
               background: 'var(--gold-bg)',
-              border: '1px solid rgba(212,165,71,0.3)',
+              border: '1px solid rgba(0,230,118,0.3)',
               borderRadius: 3,
               letterSpacing: '0.02em',
             }}
@@ -556,7 +556,7 @@ export function InlineRangeBar({
                     background: 'var(--gold)',
                     border: '1px solid var(--gold-soft)',
                     borderRadius: 4,
-                    color: '#0F0E0C',
+                    color: '#000000',
                     cursor: start && end ? 'pointer' : 'default',
                     opacity: start && end ? 1 : 0.5,
                   }}

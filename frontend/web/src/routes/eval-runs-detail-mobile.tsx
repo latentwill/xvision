@@ -53,9 +53,9 @@ const STRIP: Record<StripState, { dot: string; label: string; ring: string; bg: 
   red: {
     dot: "var(--danger)",
     label: "ERROR",
-    ring: "0 0 0 3px rgba(200,68,58,0.22)",
-    bg: "rgba(200,68,58,0.06)",
-    bd: "rgba(200,68,58,0.30)",
+    ring: "0 0 0 3px rgba(255,77,77,0.22)",
+    bg: "rgba(255,77,77,0.06)",
+    bd: "rgba(255,77,77,0.30)",
   },
 };
 
@@ -214,8 +214,8 @@ function LiveStrip({
           style={{
             color: "var(--danger)",
             fontWeight: 600,
-            background: "rgba(200,68,58,0.10)",
-            border: "1px solid rgba(200,68,58,0.55)",
+            background: "rgba(255,77,77,0.10)",
+            border: "1px solid rgba(255,77,77,0.55)",
           }}
         >
           ◼ {cancelling ? "STOPPING" : "HALT"}
@@ -829,8 +829,8 @@ function ActionPill({ action }: { action: MobileActionLabel }) {
     BUY: { color: "var(--gold)", bg: "var(--gold-bg)", bd: "var(--gold-soft)" },
     SHORT: {
       color: "var(--danger)",
-      bg: "rgba(200,68,58,0.10)",
-      bd: "rgba(200,68,58,0.45)",
+      bg: "rgba(255,77,77,0.10)",
+      bd: "rgba(255,77,77,0.45)",
     },
     SELL: {
       color: "var(--warn)",

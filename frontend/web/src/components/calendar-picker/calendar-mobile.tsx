@@ -225,7 +225,7 @@ export function MobileInlineCard({
                 borderRadius: 999,
                 border:
                   '1px solid ' +
-                  (active ? 'rgba(212,165,71,0.5)' : 'var(--border)'),
+                  (active ? 'rgba(0,230,118,0.5)' : 'var(--border)'),
                 background: active ? 'var(--gold-bg)' : 'transparent',
                 color: active ? 'var(--gold)' : 'var(--text-2)',
                 fontFamily: 'inherit',

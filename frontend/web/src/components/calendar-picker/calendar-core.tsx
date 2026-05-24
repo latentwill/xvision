@@ -314,7 +314,7 @@ export function MonthGrid({
                 fontSize: dims.font,
                 fontWeight: isEdge ? 600 : 400,
                 color: isEdge
-                  ? '#0F0E0C'
+                  ? '#000000'
                   : !isCur
                     ? 'var(--text-4)'
                     : isToday
@@ -323,7 +323,7 @@ export function MonthGrid({
                 background: isEdge ? 'var(--gold)' : 'transparent',
                 border:
                   isToday && !isEdge
-                    ? '1px solid rgba(212,165,71,0.55)'
+                    ? '1px solid rgba(0,230,118,0.55)'
                     : '1px solid transparent',
                 transition: 'background .12s, color .12s',
               }}
@@ -593,14 +593,14 @@ export function MonthsView({
               height: rowH,
               border:
                 '1px solid ' +
-                (isSelected ? 'rgba(212,165,71,0.5)' : 'var(--border)'),
+                (isSelected ? 'rgba(0,230,118,0.5)' : 'var(--border)'),
               background: isSelected
                 ? 'var(--gold)'
                 : isCurrent
                   ? 'var(--gold-bg)'
                   : 'transparent',
               color: isSelected
-                ? '#0F0E0C'
+                ? '#000000'
                 : isCurrent
                   ? 'var(--gold)'
                   : 'var(--text-2)',
@@ -664,9 +664,9 @@ export function YearsView({
               border:
                 '1px solid ' +
                 (isSelected
-                  ? 'rgba(212,165,71,0.5)'
+                  ? 'rgba(0,230,118,0.5)'
                   : isToday && !isSelected
-                    ? 'rgba(212,165,71,0.35)'
+                    ? 'rgba(0,230,118,0.35)'
                     : 'var(--border)'),
               background: isSelected
                 ? 'var(--gold)'
@@ -674,7 +674,7 @@ export function YearsView({
                   ? 'var(--gold-bg)'
                   : 'transparent',
               color: isSelected
-                ? '#0F0E0C'
+                ? '#000000'
                 : isCurrent || isToday
                   ? 'var(--gold)'
                   : 'var(--text-2)',
