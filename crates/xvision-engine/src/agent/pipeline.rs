@@ -512,6 +512,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 let key = crate::agent::signal_cache::SignalCacheKey::new(
                     filter_ctx.strategy_id.clone(),
                     role_key.clone(),
+                    crate::agent::dispatch_capability::SignalScope::Global,
                 );
                 if let Some(cached) = filter_ctx.signal_cache.get(&key) {
                     let reuse = match cached.signal.granularity {
@@ -621,6 +622,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 let key = crate::agent::signal_cache::SignalCacheKey::new(
                     filter_ctx.strategy_id.clone(),
                     role_key.clone(),
+                    crate::agent::dispatch_capability::SignalScope::Global,
                 );
                 filter_ctx.signal_cache.insert(key, signal_for_cache);
             }

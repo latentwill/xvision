@@ -5,10 +5,12 @@
 //! completes — there is no SQLite persistence (operator Q5 resolution
 //! 2026-05-22). Live trading scenarios rebuild the cache from cycle 1.
 //!
-//! Cache key is the tuple `(strategy_id, agent_ref_role)`. Both
+//! Cache key is the tuple `(strategy_id, agent_ref_role, scope)`. All
 //! components are normalised by the caller (`canonical_role` is the
 //! single source of truth for role keys across the engine, so callers
-//! should hand in the canonicalised role string).
+//! should hand in the canonicalised role string). The `scope` field
+//! prevents per-asset signals from colliding with global signals or with
+//! signals for a different asset when the executor fans out per-asset.
 //!
 //! Lookup semantics — see the contract acceptance section:
 //!
@@ -32,29 +34,35 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::agent::dispatch_capability::FilterSignal;
+use crate::agent::dispatch_capability::{FilterSignal, SignalScope};
 
-/// Tuple key — see module-level doc. Both components are owned strings
-/// so the cache can outlive the strategy borrow (the executor owns the
+/// Tuple key — see module-level doc. All three components are owned so
+/// the cache can outlive the strategy borrow (the executor owns the
 /// cache for the duration of the run; the strategy reference is
 /// per-cycle).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SignalCacheKey {
     pub strategy_id: String,
     pub role: String,
+    pub scope: SignalScope,
 }
 
 impl SignalCacheKey {
-    pub fn new(strategy_id: impl Into<String>, role: impl Into<String>) -> Self {
+    pub fn new(
+        strategy_id: impl Into<String>,
+        role: impl Into<String>,
+        scope: SignalScope,
+    ) -> Self {
         Self {
             strategy_id: strategy_id.into(),
             role: role.into(),
+            scope,
         }
     }
 }
 
 /// One cached entry — the most recent `FilterSignal` we computed for
-/// this `(strategy, role)`, plus the bar timestamp it was computed on.
+/// this `(strategy, role, scope)`, plus the bar timestamp it was computed on.
 /// `last_evaluated_ts` mirrors `FilterSignal.ts`; we duplicate it here
 /// so cache consumers don't have to clone the signal just to peek at
 /// the freshness.
@@ -127,7 +135,7 @@ pub fn minute_cache_is_fresh(cached_ts: DateTime<Utc>, now: DateTime<Utc>) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::dispatch_capability::FilterGranularity;
+    use crate::agent::dispatch_capability::{FilterGranularity, SignalScope};
     use chrono::TimeZone;
     use serde_json::json;
 
@@ -152,7 +160,7 @@ mod tests {
     fn cache_insert_then_get_round_trips() {
         let mut c = SignalCache::new();
         let ts = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
-        let key = SignalCacheKey::new("sid", "regime_filter");
+        let key = SignalCacheKey::new("sid", "regime_filter", SignalScope::Global);
         c.insert(key.clone(), signal_at("regime_filter", ts));
         let got = c.get(&key).expect("signal present");
         assert_eq!(got.signal.name, "regime_filter");
@@ -164,11 +172,26 @@ mod tests {
         let mut c = SignalCache::new();
         let t1 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 31, 0).unwrap();
-        let key = SignalCacheKey::new("sid", "f");
+        let key = SignalCacheKey::new("sid", "f", SignalScope::Global);
         c.insert(key.clone(), signal_at("f", t1));
         c.insert(key.clone(), signal_at("f", t2));
         assert_eq!(c.len(), 1);
         assert_eq!(c.get(&key).unwrap().last_evaluated_ts, t2);
+    }
+
+    #[test]
+    fn keys_differ_by_scope() {
+        use crate::agent::dispatch_capability::SignalScope;
+        use xvision_core::trading::AssetSymbol;
+        let mut c = SignalCache::new();
+        let ts = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
+        let btc = SignalCacheKey::new("sid", "regime", SignalScope::Asset(AssetSymbol::Btc));
+        let eth = SignalCacheKey::new("sid", "regime", SignalScope::Asset(AssetSymbol::Eth));
+        c.insert(btc.clone(), signal_at("regime", ts));
+        c.insert(eth.clone(), signal_at("regime", ts));
+        assert_eq!(c.len(), 2, "same role, different asset scope must not collide");
+        assert!(c.get(&btc).is_some());
+        assert!(c.get(&eth).is_some());
     }
 
     #[test]
