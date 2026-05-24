@@ -301,6 +301,7 @@ async fn run_one_arm(
         scenario_id: req.params.scenario_id.clone(),
         mode: req.mode_run,
         params_override: None,
+        live_config: None,
         limits: if req.params.limits.is_empty() {
             None
         } else {

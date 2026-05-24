@@ -836,7 +836,7 @@ describe("EvalRunsRoute", () => {
     expect(screen.getAllByText("Deleted Scenario").length).toBeGreaterThan(0);
   });
 
-  it("shows only backtest launch with live disabled", async () => {
+  it("shows Live Alpaca launch controls when live is selected", async () => {
     mockReady({ alpaca: broker({ configured: false, stored: false }) });
     vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
 
@@ -845,6 +845,11 @@ describe("EvalRunsRoute", () => {
     await screen.findByRole("option", { name: /User 4H/ });
     expect(screen.queryByLabelText("paper")).not.toBeInTheDocument();
     expect(screen.getByLabelText("backtest")).toBeChecked();
-    expect(screen.getByLabelText("live")).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("live"));
+    expect(screen.getByLabelText("live")).toBeChecked();
+    expect(screen.getByLabelText("Live asset")).toBeVisible();
+    expect(screen.getByLabelText("Live capital")).toBeVisible();
+    expect(screen.getByLabelText("Live bar limit")).toBeVisible();
+    expect(screen.getByLabelText("Live warmup bars")).toBeVisible();
   });
 });

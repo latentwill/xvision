@@ -910,6 +910,7 @@ impl WizardLoop {
                     scenario_id: scenario.id,
                     mode,
                     params_override: None,
+                    live_config: None,
                     limits: None,
                     skip_preflight: false,
                     provider_override: None,

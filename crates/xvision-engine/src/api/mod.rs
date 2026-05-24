@@ -92,6 +92,8 @@ const MIGRATION_033_AGENT_SLOT_CAPABILITIES: &str =
 const MIGRATION_035_EVAL_BAKEOFFS: &str = include_str!("../../migrations/035_eval_bakeoffs.sql");
 const MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID: &str =
     include_str!("../../migrations/036_agents_scope_strategy_id.sql");
+const MIGRATION_038_EVAL_RUNS_LIVE_CONFIG: &str =
+    include_str!("../../migrations/038_eval_runs_live_config.sql");
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -259,6 +261,7 @@ impl ApiContext {
         migrate_eval_bakeoffs(&pool).await?;
         migrate_agents_scope_strategy_id(&pool).await?;
         migrate_review_annotations_and_autofire(&pool).await?;
+        migrate_eval_runs_live_config(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -494,6 +497,16 @@ async fn table_has_column(pool: &SqlitePool, table: &str, column: &str) -> ApiRe
     let rows: Vec<(i64, String, String, i64, Option<String>, i64)> =
         sqlx::query_as(&sql).fetch_all(pool).await?;
     Ok(rows.iter().any(|(_, name, _, _, _, _)| name == column))
+}
+
+async fn table_column_notnull(pool: &SqlitePool, table: &str, column: &str) -> ApiResult<Option<bool>> {
+    let sql = format!("PRAGMA table_info({table})");
+    let rows: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        sqlx::query_as(&sql).fetch_all(pool).await?;
+    Ok(rows
+        .iter()
+        .find(|(_, name, _, _, _, _)| name == column)
+        .map(|(_, _, _, notnull, _, _)| *notnull != 0))
 }
 
 fn legacy_eval_strategy_column() -> String {
@@ -915,6 +928,93 @@ async fn migrate_review_annotations_and_autofire(pool: &SqlitePool) -> ApiResult
             .execute(pool)
             .await?;
     }
+    Ok(())
+}
+
+/// Apply migration 038: persist LiveConfig and allow scenario-less Live rows.
+async fn migrate_eval_runs_live_config(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "live_config_json").await? {
+        sqlx::query(MIGRATION_038_EVAL_RUNS_LIVE_CONFIG)
+            .execute(pool)
+            .await?;
+    }
+
+    if table_column_notnull(pool, "eval_runs", "scenario_id").await? != Some(true) {
+        return Ok(());
+    }
+
+    sqlx::query("DROP TRIGGER IF EXISTS runs_scenario_id_fk_insert")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TRIGGER IF EXISTS runs_scenario_id_fk_update")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE eval_runs RENAME TO eval_runs_old_live_migration")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "CREATE TABLE eval_runs (
+            id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            agents_agent_id TEXT,
+            scenario_id TEXT,
+            params_override_json TEXT,
+            mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            metrics_json TEXT,
+            error TEXT,
+            estimated_total_tokens INTEGER,
+            actual_input_tokens INTEGER,
+            actual_output_tokens INTEGER,
+            batch_id TEXT REFERENCES eval_batches(batch_id),
+            bars_content_hash TEXT,
+            manifest_canonical TEXT,
+            bars_manifest TEXT,
+            venue_label TEXT NOT NULL DEFAULT 'paper',
+            auto_fire_review INTEGER NOT NULL DEFAULT 0,
+            review_model_json TEXT,
+            max_annotations_per_review INTEGER,
+            live_config_json TEXT
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO eval_runs (
+            id, agent_id, agents_agent_id, scenario_id, params_override_json, mode, status,
+            started_at, completed_at, metrics_json, error,
+            estimated_total_tokens, actual_input_tokens, actual_output_tokens,
+            batch_id, bars_content_hash, manifest_canonical, bars_manifest, venue_label,
+            auto_fire_review, review_model_json, max_annotations_per_review, live_config_json
+        )
+        SELECT
+            id, agent_id, agents_agent_id, scenario_id, params_override_json, mode, status,
+            started_at, completed_at, metrics_json, error,
+            estimated_total_tokens, actual_input_tokens, actual_output_tokens,
+            batch_id, bars_content_hash, manifest_canonical, bars_manifest, venue_label,
+            auto_fire_review, review_model_json, max_annotations_per_review, live_config_json
+        FROM eval_runs_old_live_migration",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("DROP TABLE eval_runs_old_live_migration")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_scenario ON eval_runs(scenario_id)")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_status ON eval_runs(status)")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_batch ON eval_runs(batch_id)")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_venue_label ON eval_runs(venue_label)")
+        .execute(pool)
+        .await?;
+    sqlx::query(MIGRATION_012_RUNS_FK).execute(pool).await?;
     Ok(())
 }
 

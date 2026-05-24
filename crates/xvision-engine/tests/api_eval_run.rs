@@ -195,6 +195,7 @@ fn eval_request_for_scenario(agent_id: &str, scenario_id: &str, mode: RunMode) -
         scenario_id: scenario_id.into(),
         mode,
         params_override: None,
+        live_config: None,
         limits: None,
         skip_preflight: false,
         provider_override: None,
@@ -477,7 +478,7 @@ async fn backtest_run_cancels_when_max_decisions_breaches_with_legacy_broker_arg
 }
 
 #[tokio::test]
-async fn run_rejects_live_mode_with_stable_not_implemented_error() {
+async fn run_rejects_live_mode_without_live_config() {
     let (ctx, _d) = ctx_with_tables().await;
     let agent_id = "01TESTSTRATEGY000000000000LIV";
     save_test_strategy(&ctx, agent_id).await;
@@ -488,12 +489,8 @@ async fn run_rejects_live_mode_with_stable_not_implemented_error() {
     match r {
         Err(ApiError::Validation(msg)) => {
             assert!(
-                msg.contains("Live mode not yet implemented"),
-                "live-mode validation should expose the stable shell error, got {msg:?}",
-            );
-            assert!(
-                msg.contains("live-bar-source-alpaca"),
-                "live-mode validation should name the follow-up track, got {msg:?}",
+                msg.contains("mode=live requires live_config"),
+                "live-mode validation should require live_config, got {msg:?}",
             );
         }
         other => panic!("live mode must reject as Validation before queueing, got {other:?}"),
@@ -662,6 +659,7 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Backtest,
             params_override: None,
+            live_config: None,
             limits: None,
             skip_preflight: false,
             provider_override: None,

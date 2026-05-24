@@ -57,6 +57,7 @@ import {
 } from "@/lib/run-display";
 import type {
   BrokersReport,
+  LiveConfig,
   ProvidersReport,
   RunDetail,
   RunMode,
@@ -691,6 +692,10 @@ function StartEvalDialog({
   const [agentId, setAgentId] = useState<string>(initialAgentId);
   const [scenarioId, setScenarioId] = useState<string>("");
   const [mode, setMode] = useState<RunMode>("backtest");
+  const [liveAsset, setLiveAsset] = useState("BTC/USD");
+  const [liveCapital, setLiveCapital] = useState("10000");
+  const [liveBarLimit, setLiveBarLimit] = useState("5");
+  const [liveWarmupBars, setLiveWarmupBars] = useState("200");
   const [autoFireReview, setAutoFireReview] = useState<boolean>(false);
   const [reviewProvider, setReviewProvider] = useState<string>("");
   const [reviewModel, setReviewModel] = useState<string>("");
@@ -709,8 +714,15 @@ function StartEvalDialog({
     },
   });
 
+  const liveReady =
+    liveAsset.trim().length > 0 &&
+    Number(liveCapital) > 0 &&
+    Number(liveBarLimit) > 0 &&
+    Number(liveWarmupBars) >= 0;
   const ready =
-    agentId.length > 0 && scenarioId.length > 0 && !start.isPending;
+    agentId.length > 0 &&
+    (mode === "live" ? liveReady : scenarioId.length > 0) &&
+    !start.isPending;
   const selectedStrategy = (strategies.data ?? []).find(
     (s) => s.agent_id === agentId,
   );
@@ -740,10 +752,43 @@ function StartEvalDialog({
       setPreflightError(blocked);
       return;
     }
+    if (mode === "live" && brokers.data?.alpaca.configured !== true) {
+      setPreflightError(
+        "Configure Alpaca paper credentials in Settings -> Brokers before starting Live.",
+      );
+      return;
+    }
     setPreflightError(null);
-    start.mutate({
+    const liveConfig: LiveConfig | null =
+      mode === "live"
+        ? {
+            strategy_id: agentId,
+            assets: [
+              {
+                class: "Crypto",
+                symbol: liveAsset.split("/")[0] || liveAsset,
+                venue_symbol: liveAsset,
+              },
+            ],
+            capital: { initial: Number(liveCapital), currency: "USD" },
+            broker_creds_ref: "alpaca",
+            stop_policy: {
+              time_limit_secs: null,
+              bar_limit: Number(liveBarLimit),
+              decision_limit: null,
+            },
+            venue_label: "paper",
+            warmup_bars: Number(liveWarmupBars),
+            safety_limits: null,
+            display_name: `Live Alpaca ${liveAsset}`,
+            description: null,
+            tags: ["live", "alpaca"],
+            notes: null,
+          }
+        : null;
+    const request: StartRunReq = {
       agent_id: agentId,
-      scenario_id: scenarioId,
+      scenario_id: mode === "live" ? "" : scenarioId,
       mode,
       params_override: null,
       auto_fire_review: autoFireReview,
@@ -752,7 +797,11 @@ function StartEvalDialog({
           ? { provider: activeReviewProvider.name, model: activeReviewModel }
           : null,
       max_annotations_per_review: 8,
-    });
+    };
+    if (liveConfig) {
+      request.live_config = liveConfig;
+    }
+    start.mutate(request);
   }
 
   return (
@@ -859,17 +908,58 @@ function StartEvalDialog({
                   name="mode"
                   value="live"
                   checked={mode === "live"}
-                  disabled
+                  onChange={() => {
+                    setMode("live");
+                    setPreflightError(null);
+                  }}
                   className="accent-gold"
                 />
                 live
               </label>
             </div>
             <p className="m-0 mt-1.5 text-[11px] text-text-3 leading-snug">
-              Backtest replays the scenario's parquet fixture in-process. Live
-              launch is not enabled yet.
+              Backtest replays a scenario. Live uses Alpaca paper credentials
+              and must be bounded by a stop policy.
             </p>
           </fieldset>
+
+          {mode === "live" ? (
+            <fieldset className="grid grid-cols-2 gap-2">
+              <legend className="col-span-2 block text-[12px] text-text-2 mb-1 px-0">
+                Live Alpaca
+              </legend>
+              <input
+                aria-label="Live asset"
+                value={liveAsset}
+                onChange={(e) => setLiveAsset(e.target.value)}
+                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              />
+              <input
+                aria-label="Live capital"
+                type="number"
+                min="1"
+                value={liveCapital}
+                onChange={(e) => setLiveCapital(e.target.value)}
+                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              />
+              <input
+                aria-label="Live bar limit"
+                type="number"
+                min="1"
+                value={liveBarLimit}
+                onChange={(e) => setLiveBarLimit(e.target.value)}
+                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              />
+              <input
+                aria-label="Live warmup bars"
+                type="number"
+                min="0"
+                value={liveWarmupBars}
+                onChange={(e) => setLiveWarmupBars(e.target.value)}
+                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              />
+            </fieldset>
+          ) : null}
 
           <fieldset>
             <legend className="block text-[12px] text-text-2 mb-1.5 px-0">
