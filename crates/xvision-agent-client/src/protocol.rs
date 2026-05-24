@@ -94,6 +94,12 @@ pub struct StartRunParams {
     pub system_prompt: String,
     pub allowed_tools: Vec<String>,
     pub budget_limits: BudgetLimits,
+    /// JSON schema for the structured decision the agent submits via the
+    /// built-in `submit_decision` lifecycle tool. Required by the sidecar
+    /// whenever `allowed_tools` contains `submit_decision`. Additive: omitted
+    /// for runs that don't use the lifecycle tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision_schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -132,6 +138,11 @@ pub struct StepResult {
     /// The field is additive: existing happy-path responses omit it.
     #[serde(default)]
     pub error: Option<String>,
+    /// JSON the agent submitted via the `submit_decision` lifecycle tool, if it
+    /// called the tool. Additive: omitted when the agent didn't submit a
+    /// decision (e.g. budget abort before submission).
+    #[serde(default)]
+    pub decision_json: Option<String>,
 }
 
 /// Reason code surfaced on `StepResult.error` when the sidecar aborted a
@@ -192,6 +203,7 @@ mod tests {
                 total_cost: None,
             },
             error: error.map(str::to_string),
+            decision_json: None,
         }
     }
 
@@ -215,6 +227,51 @@ mod tests {
         assert_eq!(v.status, "completed");
         assert!(v.error.is_none());
         assert!(!v.is_budget_aborted());
+    }
+
+    #[test]
+    fn step_result_carries_decision_json_when_present() {
+        let v: StepResult = serde_json::from_str(
+            r#"{
+                "status": "completed",
+                "output_text": "",
+                "iterations": 1,
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0
+                },
+                "decision_json": "{\"action\":\"buy\"}"
+            }"#,
+        )
+        .expect("step result with decision_json must deserialize");
+        assert_eq!(v.decision_json.as_deref(), Some("{\"action\":\"buy\"}"));
+    }
+
+    #[test]
+    fn start_run_params_skips_decision_schema_when_none() {
+        let base = StartRunParams {
+            run_id: "r".into(),
+            provider_id: "anthropic".into(),
+            model_id: "m".into(),
+            api_key: None,
+            base_url: None,
+            system_prompt: "s".into(),
+            allowed_tools: vec!["submit_decision".into()],
+            budget_limits: BudgetLimits {
+                max_input_tokens: 1,
+                max_output_tokens: 1,
+                max_wall_ms: 1,
+            },
+            decision_schema: Some(serde_json::json!({"type": "object"})),
+        };
+        let with = serde_json::to_value(&base).unwrap();
+        assert!(with.get("decision_schema").is_some());
+
+        let without = StartRunParams { decision_schema: None, ..base };
+        let v = serde_json::to_value(&without).unwrap();
+        assert!(v.get("decision_schema").is_none(), "None must be skipped on the wire");
     }
 
     #[test]
