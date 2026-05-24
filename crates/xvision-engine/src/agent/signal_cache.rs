@@ -25,7 +25,7 @@
 //!   otherwise re-fire the cached signal).
 //!
 //! The cache itself is intentionally tiny — it holds the last
-//! `FilterSignal` per `(strategy_id, role)` key plus the
+//! `FilterSignal` per `(strategy_id, role, scope)` key plus the
 //! `last_evaluated_ts`. The decision of *when* to re-evaluate vs re-fire
 //! lives at the call site in `filter_dispatch.rs` and `pipeline.rs`
 //! (graph reachability is a pipeline concern, not a cache concern).
@@ -87,7 +87,7 @@ impl SignalCache {
     }
 
     /// Read the cached signal for this key, or `None` if no Filter has
-    /// produced a signal for this `(strategy, role)` yet.
+    /// produced a signal for this `(strategy, role, scope)` yet.
     pub fn get(&self, key: &SignalCacheKey) -> Option<&CachedSignal> {
         self.entries.get(key)
     }
@@ -181,7 +181,6 @@ mod tests {
 
     #[test]
     fn keys_differ_by_scope() {
-        use crate::agent::dispatch_capability::SignalScope;
         use xvision_core::trading::AssetSymbol;
         let mut c = SignalCache::new();
         let ts = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
