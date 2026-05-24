@@ -16,7 +16,7 @@
 //!   `MetricsSummary.win_rate` is left at 0.0 the same way PaperExecutor
 //!   leaves it — Phase 3.C work).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -545,9 +545,14 @@ impl BacktestExecutor {
 
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];
-        let mut position: f64 = 0.0; // base-asset units; +long, -short
-        let mut entry_price: f64 = 0.0;
-        let mut realized_total: f64 = 0.0;
+        // Multi-asset (B4): pooled accounting moved from scalar
+        // `position`/`entry_price`/`realized_total` to a `PortfolioBook`
+        // keyed per asset. Single-asset preserved: with ONE asset the
+        // pooled formula `initial + realized + Σ position·(mark−entry)`
+        // reduces to the old scalar formula exactly. Stage-3 fan-out
+        // adds the second key; this stage routes the single resolved
+        // `asset_sym` through the book without changing any numbers.
+        let mut book = crate::eval::executor::book::PortfolioBook::new(initial);
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
         // Lifetime equals the run loop; dropped when the run completes.
@@ -597,7 +602,7 @@ impl BacktestExecutor {
         let mut recent_actions: Vec<early_stop::Action> = Vec::with_capacity(early_stop_cfg.window);
         let mut recent_convictions: Vec<f64> = Vec::with_capacity(early_stop_cfg.window);
         let mut inherit_remaining: u32 = 0;
-        let mut prev_position: f64 = position;
+        let mut prev_position: f64 = book.position(asset_sym);
 
         // track-plan-touches: build the per-run filter hook. Returns
         // `None` for `EveryBar` strategies (the default) — the loop
@@ -668,12 +673,12 @@ impl BacktestExecutor {
             // post-loop baselines see the same bar slice the strategy
             // would have considered.
             if let Some(hook) = filter_hook.as_mut() {
-                let in_position = position.abs() > f64::EPSILON;
+                let in_position = book.position(asset_sym).abs() > f64::EPSILON;
                 let evaluation = hook.evaluate(bar, in_position);
                 hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &evaluation)
                     .await?;
                 if !evaluation.outcome.decision.is_active() {
-                    equity = initial + realized_total + position * (next_bar_open - entry_price);
+                    equity = book.equity(&BTreeMap::from([(asset_sym, next_bar_open)]));
                     store.record_equity(&run.id, bar.timestamp, equity).await?;
                     self.emit_chart(
                         &run.id,
@@ -744,7 +749,7 @@ impl BacktestExecutor {
                         "bar_history": bar_history,
                     },
                     "portfolio_state": {
-                        "position_size": position,
+                        "position_size": book.position(asset_sym),
                         "equity": equity,
                         "mark_price": bar.close,
                     },
@@ -760,7 +765,7 @@ impl BacktestExecutor {
                         "bar_history": bar_history,
                     },
                     "portfolio_state": {
-                        "position_size": position,
+                        "position_size": book.position(asset_sym),
                         "equity": equity,
                         "mark_price": bar.close,
                     },
@@ -789,7 +794,7 @@ impl BacktestExecutor {
                 early_stop::should_skip_next_decision(
                     &recent_actions,
                     &recent_convictions,
-                    position == prev_position,
+                    book.position(asset_sym) == prev_position,
                     &early_stop_cfg,
                 )
             } else {
@@ -861,7 +866,7 @@ impl BacktestExecutor {
                 // inherit branch to mutate position state, so we update
                 // equity in-place from current state instead of going
                 // through simulate_fill.
-                equity = initial + realized_total + position * (next_bar_open - entry_price);
+                equity = book.equity(&BTreeMap::from([(asset_sym, next_bar_open)]));
                 store.record_equity(&run.id, bar.timestamp, equity).await?;
                 self.emit_chart(
                     &run.id,
@@ -889,7 +894,7 @@ impl BacktestExecutor {
                 });
 
                 inherit_remaining -= 1;
-                prev_position = position;
+                prev_position = book.position(asset_sym);
                 decision_idx += 1;
                 i += 1;
                 continue;
@@ -1094,7 +1099,8 @@ impl BacktestExecutor {
                 anyhow::bail!("eval run stopped");
             }
 
-            let pre_fill_position = position;
+            let pre_fill_position = book.position(asset_sym);
+            let pre_fill_entry = book.entry_price(asset_sym);
 
             // engine-trade-guardrails-pyramid-flip-block (F-7):
             // Server-side gate at the apply seam. The trader's emitted
@@ -1323,7 +1329,7 @@ impl BacktestExecutor {
             let fill: FillRecord = if applied_action == "hold" || broker_rejected {
                 FillRecord {
                     new_pos: pre_fill_position,
-                    new_entry: entry_price,
+                    new_entry: pre_fill_entry,
                     fill_price: None,
                     fill_size: None,
                     fee: None,
@@ -1415,7 +1421,7 @@ impl BacktestExecutor {
                 let fill_record: FillRecord = fill_sink
                     .submit(FillRequest {
                         pos: pre_fill_position,
-                        entry: entry_price,
+                        entry: pre_fill_entry,
                         action: applied_action.clone(),
                         next_open: next_bar_open,
                         bar_volume: bar.volume,
@@ -1449,9 +1455,12 @@ impl BacktestExecutor {
 
                 fill_record
             };
-            position = fill.new_pos;
-            entry_price = fill.new_entry;
-            realized_total += fill.realized_pnl;
+            // Apply the fill to the pooled book keyed by this asset.
+            // `set_position(_, 0.0, _)` clears the leg, so a flat fill
+            // leaves `position`/`entry_price` reading 0.0 — identical to
+            // the old scalar `entry_price = fill.new_entry (== 0.0)`.
+            book.set_position(asset_sym, fill.new_pos, fill.new_entry);
+            book.add_realized(fill.realized_pnl);
             let fill_happened = fill.fill_price.is_some();
             if fill_happened {
                 n_trades += 1;
@@ -1520,7 +1529,7 @@ impl BacktestExecutor {
             }
 
             // Mark equity to the next bar's open.
-            equity = initial + realized_total + position * (next_bar_open - entry_price);
+            equity = book.equity(&BTreeMap::from([(asset_sym, next_bar_open)]));
 
             let decision_row = DecisionRow {
                 run_id: run.id.clone(),
@@ -1638,7 +1647,7 @@ impl BacktestExecutor {
             // delta — open, close, or resize) wipes the streak; so does
             // any non-flat/non-hold action. Otherwise we append and
             // truncate to the configured window.
-            let portfolio_changed = position != prev_position;
+            let portfolio_changed = book.position(asset_sym) != prev_position;
             let cls = early_stop::Action::classify(&parsed.action);
             if portfolio_changed || !matches!(cls, early_stop::Action::Flat | early_stop::Action::Hold) {
                 recent_actions.clear();
@@ -1653,7 +1662,7 @@ impl BacktestExecutor {
                     recent_convictions.drain(0..drop_n);
                 }
             }
-            prev_position = position;
+            prev_position = book.position(asset_sym);
 
             // F43 (`trace-dock-emitters`): close the per-decision span
             // + emit the `decision_completed` engine event so the
