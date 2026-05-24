@@ -7986,6 +7986,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "xvision-core",
  "xvision-engine",
  "xvision-observability",
 ]
