@@ -233,6 +233,7 @@ async fn run_tiny_notional_probe(
             scenario_id: "flash-crash-2024-08".into(),
             mode: RunMode::Backtest,
             params_override: None,
+            live_config: None,
             limits: None,
             skip_preflight: false,
             provider_override: None,

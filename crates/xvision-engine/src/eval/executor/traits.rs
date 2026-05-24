@@ -41,6 +41,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 use xvision_core::market::Ohlcv;
+use xvision_execution::broker_surface::BrokerErrorClass;
 
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::orders::OrderState;
@@ -258,6 +259,9 @@ pub struct FillRecord {
     /// the executor uses to emit a `volume_share_excess` finding.
     /// `None` for every other case.
     pub volume_cap_hit: Option<(f64, f64, f64, f64)>,
+    /// Broker error classification for Live fills rejected by the paper
+    /// broker. `None` for simulated backtest fills and successful Live fills.
+    pub broker_error: Option<(BrokerErrorClass, String)>,
 }
 
 /// Order-fill seam.
@@ -338,6 +342,7 @@ pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
             aggressor_side: None,
             order_state: None,
             volume_cap_hit: None,
+            broker_error: None,
         };
     }
 
@@ -479,6 +484,7 @@ pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
         aggressor_side: Some(aggressor_side),
         order_state: Some(order_state),
         volume_cap_hit,
+        broker_error: None,
     }
 }
 

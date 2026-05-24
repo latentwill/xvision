@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use crate::eval::live_config::LiveConfig;
+
 /// Reason a run was aborted by the safety subsystem. Persisted to the
 /// `eval_runs.error` column so the dashboard can render a human-readable
 /// reason alongside the `Cancelled` terminal status.
@@ -181,6 +183,10 @@ pub struct Run {
     /// when absent.
     #[serde(default)]
     pub max_annotations_per_review: Option<u32>,
+    /// Launch envelope for a Live run. Backtests keep this as `None`; Live
+    /// rows persist it in `eval_runs.live_config_json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_config: Option<LiveConfig>,
 }
 
 impl Run {
@@ -207,7 +213,13 @@ impl Run {
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),
+            live_config: None,
         }
+    }
+
+    pub fn with_live_config(mut self, config: LiveConfig) -> Self {
+        self.live_config = Some(config);
+        self
     }
 }
 

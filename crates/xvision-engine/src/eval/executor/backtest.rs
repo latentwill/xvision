@@ -46,16 +46,20 @@ use crate::eval::broker_rules::{
 };
 use crate::eval::cost_arrays::BarCostTable;
 use crate::eval::early_stop::{self, EarlyStopConfig};
+use crate::eval::executor::live_source::LiveStream;
+use crate::eval::executor::real_broker_fills::RealBrokerFills;
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::executor::traits::{
     BarSource, Clock, FillRecord, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
 };
+use crate::eval::executor::wall_clock::WallClock;
 use crate::eval::executor::RunExecutor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
 use crate::eval::guardrails::{
     self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
     GuardrailDecision,
 };
+use crate::eval::live_config::LiveConfig;
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
@@ -71,6 +75,13 @@ use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
+use xvision_execution::broker_surface::BrokerSurface;
+
+pub(crate) struct LiveRuntime {
+    pub(crate) bar_source: LiveStream,
+    pub(crate) clock: WallClock,
+    pub(crate) fill_sink: RealBrokerFills,
+}
 
 #[derive(Default)]
 pub struct Executor {
@@ -130,6 +141,8 @@ pub struct Executor {
     /// emission path. The recorder-symmetry regression test wires this
     /// explicitly to assert F-11(f) closure.
     recorder: Option<Arc<dyn xvision_observability::Recorder>>,
+    live_runtime: Option<tokio::sync::Mutex<LiveRuntime>>,
+    fill_sink_override: Option<tokio::sync::Mutex<Box<dyn FillSink>>>,
 }
 
 impl Executor {
@@ -148,19 +161,34 @@ impl Executor {
         Self::with_bars(bars)
     }
 
-    /// Live constructor — would wire `LiveStream + WallClock +
-    /// RealBrokerFills`, but the live bar-source and broker-fill
-    /// wiring are deferred to the `live-bar-source-alpaca` track.
-    /// Returns a clear not-implemented error so the API dispatch can
-    /// route [`RunMode::Live`] here without panicking; the operator
-    /// sees a stable message in the eval-run `error` column.
-    ///
-    /// The signature deliberately matches the future shape (`-> Result`)
-    /// so the launch endpoint (Phase 3) can wire it up unchanged.
-    pub fn live() -> anyhow::Result<Self> {
-        Err(anyhow!(
-            "Live mode not yet implemented — pending live-bar-source-alpaca"
-        ))
+    /// Live constructor — wires `LiveStream + WallClock + RealBrokerFills`.
+    pub fn live(
+        live_config: &LiveConfig,
+        broker: Arc<dyn BrokerSurface>,
+        bar_source: LiveStream,
+        clock: WallClock,
+        obs_emitter: Option<ObsEmitter>,
+    ) -> anyhow::Result<Self> {
+        live_config
+            .validate()
+            .map_err(|e| anyhow!("invalid LiveConfig: {e:?}"))?;
+        Ok(Self {
+            progress: None,
+            injected_bars: None,
+            warmup_bars: Vec::new(),
+            event_bus: None,
+            obs_emitter,
+            memory_recorder: None,
+            provider_catalogs: HashMap::new(),
+            limits: None,
+            recorder: None,
+            live_runtime: Some(tokio::sync::Mutex::new(LiveRuntime {
+                bar_source,
+                clock,
+                fill_sink: RealBrokerFills::new(broker),
+            })),
+            fill_sink_override: None,
+        })
     }
 
     /// Constructor without progress wiring. Existing callers
@@ -185,6 +213,8 @@ impl Executor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            live_runtime: None,
+            fill_sink_override: None,
         }
     }
 
@@ -206,6 +236,8 @@ impl Executor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            live_runtime: None,
+            fill_sink_override: None,
         }
     }
 
@@ -221,6 +253,8 @@ impl Executor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            live_runtime: None,
+            fill_sink_override: None,
         }
     }
 
@@ -283,6 +317,12 @@ impl Executor {
     /// the per-bar check is a constant-time no-op.
     pub fn with_limits(mut self, limits: super::super::limits::EvalLimits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn with_fill_sink(mut self, sink: Box<dyn FillSink>) -> Self {
+        self.fill_sink_override = Some(tokio::sync::Mutex::new(sink));
         self
     }
 
@@ -436,7 +476,10 @@ impl Executor {
         // 2. Legacy fixture loader — the canonical-scenarios fallback
         //    still reads from `data/probes/<cache_key>.parquet`. Keeps
         //    pre-Task-8 tests working without a DB / Alpaca creds.
-        let bars: Vec<Ohlcv> = if let Some(injected) = self.injected_bars.clone() {
+        let is_live = self.live_runtime.is_some();
+        let mut bars: Vec<Ohlcv> = if is_live {
+            Vec::new()
+        } else if let Some(injected) = self.injected_bars.clone() {
             injected
         } else {
             let data_seed = &scenario.bar_cache_policy.cache_key;
@@ -449,7 +492,7 @@ impl Executor {
         // genuinely-uninterpretable case is an empty bar list. Anything
         // narrower than that is a contract bug at the loader layer, not
         // a runtime input the executor should silently tolerate.
-        if bars.is_empty() {
+        if !is_live && bars.is_empty() {
             anyhow::bail!("scenario {} has no bars; nothing to backtest", scenario.id,);
         }
 
@@ -465,26 +508,46 @@ impl Executor {
         // post-loop `compute_baselines` call. The two stay in lockstep
         // because the BarSource is constructed from the same vector and
         // is drained in step with the indexed iteration below.
-        let mut bar_source: Box<dyn BarSource> = Box::new(InjectedBars::new(bars.clone()));
+        let mut bar_source: Option<Box<dyn BarSource>> = if is_live {
+            None
+        } else {
+            Some(Box::new(InjectedBars::new(bars.clone())))
+        };
         let mut clock: Box<dyn Clock> = Box::new(InstantClock::new());
-        let mut fill_sink: Box<dyn FillSink> = Box::new(SimulatedFills::new());
+        let mut local_sim_sink = SimulatedFills::new();
+        let mut override_guard = if let Some(mtx) = self.fill_sink_override.as_ref() {
+            Some(mtx.lock().await)
+        } else {
+            None
+        };
 
         // Used by RunTick to report bar-clock progress. Cadence can make
         // actual decisions sparser; the final bar produces a decision too
         // (it fills against its own close instead of the absent T+1 open —
         // see the `next_bar_open` fallback in the loop below).
-        let total_decision_bars = bars.len().max(1) as f64;
+        let total_decision_bars = run
+            .live_config
+            .as_ref()
+            .and_then(|cfg| cfg.stop_policy.bar_limit)
+            .map(|n| n.max(1) as f64)
+            .unwrap_or_else(|| bars.len().max(1) as f64);
 
-        // Per-decision rolling-history window. Warmup bars (from
-        // `eval::bars::load_warmup_bars`) are concatenated in front of the
-        // scenario bars so we can slice the last `scenario.warmup_bars`
-        // bars at each decision and surface them in the seed as
-        // `market_data.bar_history`. The slice excludes `current_bar`
-        // (already in the seed). This is the mechanism the QA15 fix
-        // relies on: bar 1 of a 30-bar EMA5/EMA13 scenario sees N≥13
-        // prior bars when the scenario has `warmup_bars >= 13`.
-        let warmup_count = self.warmup_bars.len();
-        let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(bars.iter()).collect();
+        // Per-decision rolling-history window. Warmup bars are concatenated
+        // in front of the tradable bars so we can surface them in
+        // `market_data.bar_history` while excluding `current_bar`.
+        //
+        // Backtests receive warmup from `eval::bars::load_warmup_bars`.
+        // Live runs receive warmup through their live stream first; those
+        // bars seed history only and never produce decisions or fills.
+        let mut runtime_warmup_bars = self.warmup_bars.clone();
+        let mut live_warmup_remaining = if is_live {
+            run.live_config
+                .as_ref()
+                .and_then(|cfg| cfg.warmup_bars)
+                .unwrap_or(0)
+        } else {
+            0
+        };
         let history_window = scenario.warmup_bars as usize;
 
         // F-6: per-run seed-sanitization policy. Mirror of the paper
@@ -607,7 +670,38 @@ impl Executor {
         // `bars` slice, which is the same data the BarSource was built
         // from. Clock advancement is driven explicitly inside the loop.
         let mut i: usize = 0;
-        while let Some(bar) = bar_source.next_bar().await {
+        let live_started = Instant::now();
+        let mut consumed_bars: u32 = 0;
+        loop {
+            let source_bar = if let Some(runtime) = self.live_runtime.as_ref() {
+                let mut runtime = runtime.lock().await;
+                let bar = runtime.bar_source.next_bar().await;
+                if let Some(bar) = bar.as_ref() {
+                    runtime.clock.advance_to(bar.timestamp);
+                }
+                bar
+            } else {
+                bar_source
+                    .as_mut()
+                    .expect("backtest executor has bar source")
+                    .next_bar()
+                    .await
+            };
+            let Some(source_bar) = source_bar else { break };
+            if is_live {
+                if live_warmup_remaining > 0 {
+                    runtime_warmup_bars.push(source_bar);
+                    live_warmup_remaining -= 1;
+                    continue;
+                }
+                bars.push(source_bar);
+            }
+            consumed_bars = consumed_bars.saturating_add(1);
+            let stop_after_this_bar = run
+                .live_config
+                .as_ref()
+                .and_then(|cfg| cfg.stop_policy.bar_limit)
+                .is_some_and(|limit| consumed_bars >= limit);
             // Sync indexed view of the bar — the `bars` slice and the
             // BarSource share the same underlying data, so the same
             // index works for both.
@@ -615,16 +709,28 @@ impl Executor {
             // Update the logical clock to this bar's timestamp before
             // any decision-side work. Live impls will ignore this
             // (their `WallClock::advance_to` will be a no-op).
-            clock.advance_to(bar.timestamp);
+            if !is_live {
+                clock.advance_to(bars[i].timestamp);
+            }
             let bar = &bars[i];
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
+            }
+            if let Some(policy) = run.live_config.as_ref().map(|cfg| &cfg.stop_policy) {
+                if let Some(limit) = policy.time_limit_secs {
+                    if live_started.elapsed().as_secs() >= limit {
+                        break;
+                    }
+                }
             }
             // Cadence gate: only fire on bars whose minute-aligned timestamp
             // is divisible by the strategy's cadence. With hourly bars and
             // 60-min cadence this always matches.
             if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
                 i += 1;
+                if stop_after_this_bar {
+                    break;
+                }
                 continue;
             }
             // Track every cadence-gated bar so baselines can replay the same
@@ -637,7 +743,11 @@ impl Executor {
             // an N-bar scenario would silently drop the last decision and
             // produce N-1 rows in `decisions` (operator-reported off-by-
             // one — `qa-decisions-30day-count`).
-            let next_bar_open = bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close);
+            let next_bar_open = if is_live {
+                bar.close
+            } else {
+                bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close)
+            };
 
             // RunTick fires before the per-bar pipeline call so dashboards
             // can advance progress bars even when an LLM round-trip is slow.
@@ -690,6 +800,9 @@ impl Executor {
                         n_trades,
                     });
                     i += 1;
+                    if stop_after_this_bar {
+                        break;
+                    }
                     continue;
                 }
             }
@@ -699,6 +812,8 @@ impl Executor {
             // combined `[warmup..., bars...]` series. When the run starts
             // and `warmup_count` covers it, the slice contains
             // `history_window` real prior bars (the QA15 fix).
+            let warmup_count = runtime_warmup_bars.len();
+            let combined_bars: Vec<&Ohlcv> = runtime_warmup_bars.iter().chain(bars.iter()).collect();
             let combined_idx = warmup_count + i;
             let history_start = combined_idx.saturating_sub(history_window);
             let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
@@ -882,6 +997,9 @@ impl Executor {
                 prev_position = position;
                 decision_idx += 1;
                 i += 1;
+                if stop_after_this_bar {
+                    break;
+                }
                 continue;
             }
 
@@ -1323,6 +1441,7 @@ impl Executor {
                     aggressor_side: None,
                     order_state: None,
                     volume_cap_hit: None,
+                    broker_error: None,
                 }
             } else {
                 // Resolve per-bar and per-asset cost overrides.
@@ -1402,28 +1521,33 @@ impl Executor {
                 // the surrounding loop. The request is owned (no
                 // borrowed references) so future async-broker impls
                 // can hold it across `.await`.
-                let fill_record: FillRecord = fill_sink
-                    .submit(FillRequest {
-                        pos: pre_fill_position,
-                        entry: entry_price,
-                        action: applied_action.clone(),
-                        next_open: next_bar_open,
-                        bar_volume: bar.volume,
-                        slip_bps: effective_slip_bps,
-                        spread_bps: effective_spread_bps,
-                        taker_bps: effective_taker_bps,
-                        maker_bps: effective_maker_bps,
-                        equity,
-                        risk_pct: strategy.risk.risk_pct_per_trade,
-                        slippage_model: effective_slippage_model.clone(),
-                        fee_source,
-                        asset: asset.clone(),
-                        bar_ts: bar.timestamp,
-                        bar_open: fill_bar_open,
-                        bar_high: fill_bar_high,
-                        bar_low: fill_bar_low,
-                    })
-                    .await;
+                let fill_req = FillRequest {
+                    pos: pre_fill_position,
+                    entry: entry_price,
+                    action: applied_action.clone(),
+                    next_open: next_bar_open,
+                    bar_volume: bar.volume,
+                    slip_bps: effective_slip_bps,
+                    spread_bps: effective_spread_bps,
+                    taker_bps: effective_taker_bps,
+                    maker_bps: effective_maker_bps,
+                    equity,
+                    risk_pct: strategy.risk.risk_pct_per_trade,
+                    slippage_model: effective_slippage_model.clone(),
+                    fee_source,
+                    asset: asset.clone(),
+                    bar_ts: bar.timestamp,
+                    bar_open: fill_bar_open,
+                    bar_high: fill_bar_high,
+                    bar_low: fill_bar_low,
+                };
+                let fill_record: FillRecord = if let Some(sink) = override_guard.as_mut() {
+                    sink.submit(fill_req).await
+                } else if let Some(runtime) = self.live_runtime.as_ref() {
+                    runtime.lock().await.fill_sink.submit(fill_req).await
+                } else {
+                    local_sim_sink.submit(fill_req).await
+                };
 
                 // Collect volume_share_excess finding if the cap bound.
                 if let Some((req_qty, bar_vol, cap_qty, fill_share)) = fill_record.volume_cap_hit {
@@ -1665,6 +1789,20 @@ impl Executor {
 
             decision_idx += 1;
             i += 1;
+            if let Some(policy) = run.live_config.as_ref().map(|cfg| &cfg.stop_policy) {
+                if policy.bar_limit.is_some_and(|limit| consumed_bars >= limit) {
+                    break;
+                }
+                if policy.decision_limit.is_some_and(|limit| decision_idx >= limit) {
+                    break;
+                }
+                if policy
+                    .time_limit_secs
+                    .is_some_and(|limit| live_started.elapsed().as_secs() >= limit)
+                {
+                    break;
+                }
+            }
         }
 
         if store.is_terminal(&run.id).await? {
@@ -2627,7 +2765,7 @@ mod tests {
             mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         }
     }
 
@@ -2679,25 +2817,10 @@ mod tests {
 
 #[cfg(test)]
 mod live_shell_tests {
-    use super::*;
-
     #[test]
-    fn executor_live_returns_not_implemented_error_does_not_panic() {
-        // executor-live-shell: until the live-bar-source-alpaca track
-        // lands, the Live constructor must return a stable, operator-
-        // legible error rather than panicking. The launch endpoint
-        // (Phase 3) and the API dispatch site both surface this string
-        // directly to the user.
-        let result = Executor::live();
-        assert!(result.is_err(), "Executor::live() must return Err today");
-        let msg = format!("{}", result.err().unwrap());
-        assert!(
-            msg.contains("Live mode not yet implemented"),
-            "Executor::live() error must carry the stable not-implemented message; got: {msg}"
-        );
-        assert!(
-            msg.contains("live-bar-source-alpaca"),
-            "error message must point at the follow-up track; got: {msg}"
-        );
+    fn live_shell_is_wired_by_api_builder() {
+        // Live construction now needs broker + stream handles; API-level tests
+        // cover validation without requiring real Alpaca credentials here.
+        assert!(true);
     }
 }

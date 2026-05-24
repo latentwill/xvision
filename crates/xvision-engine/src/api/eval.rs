@@ -33,24 +33,32 @@ use crate::agent::pipeline::{agent_slot_to_llm_slot, ResolvedAgentSlot};
 use crate::agents::AgentStore;
 use crate::api::audit::{self, Outcome};
 use crate::api::scenario as api_scenario;
+use crate::api::settings::brokers as broker_settings;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, CompareOptions, ComparisonReport, ManifestMismatch};
 use crate::eval::cost::aggregate_eval_run_inference_cost;
 use crate::eval::executor::{Executor, RunExecutor};
 use crate::eval::findings::{Finding, InferenceCostDominatesReturnPayload, Severity};
+use crate::eval::live_config::LiveConfig;
 use crate::eval::metrics::{
     compute_net_return_pct, inference_cost_dominates, INFERENCE_COST_DOMINANCE_THRESHOLD,
 };
 use crate::eval::run::{ReviewModel, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 use crate::eval::scenario::canonical_scenarios;
-use crate::eval::scenario::Scenario;
+use crate::eval::scenario::{
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+    SlippageModel, TimeWindow, Venue, VenueSettings,
+};
 use crate::eval::store::{ListFilter, RunStore};
 use crate::tools::ToolRegistry;
 use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
-use xvision_execution::broker_surface::BrokerSurface;
+use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials};
+use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
+use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
 use xvision_filters::{FilterEventV1, FilterSummary};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -595,6 +603,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         scenario_id: source.scenario_id.clone(),
         mode: source.mode,
         params_override: source.params_override.clone(),
+        live_config: source.live_config.clone(),
         limits: None,
         skip_preflight: false,
         provider_override: None,
@@ -862,6 +871,9 @@ pub struct EvalRunRequest {
     /// `eval_runs.params_override_json`.
     #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
+    /// Required for `mode = live`. Backtest runs must leave this unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_config: Option<LiveConfig>,
     /// Optional per-run hard caps (decisions / token totals / wall-clock).
     /// Breach lands the run as `Cancelled` with a stable reason string in
     /// `error`. See `crate::eval::limits::EvalLimits` for shape + semantics.
@@ -929,7 +941,10 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     // fallback for test contexts that haven't applied migration 006).
     validate_provider_override_shape(req.provider_override.as_ref())?;
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
-    let _scenario = resolve_scenario(ctx, &req.scenario_id).await?;
+    validate_live_request_shape(&req)?;
+    if req.mode == RunMode::Backtest {
+        let _scenario = resolve_scenario(ctx, &req.scenario_id).await?;
+    }
 
     // Live mode is reserved for the launch endpoint (Phase 3, see
     // `live-bar-source-alpaca` + `live-eval-launch-and-freeze`). The
@@ -981,6 +996,84 @@ fn validate_provider_override_shape(override_value: Option<&ProviderOverride>) -
         ));
     }
     Ok(())
+}
+
+fn validate_live_request_shape(req: &EvalRunRequest) -> ApiResult<()> {
+    match (&req.mode, req.live_config.as_ref()) {
+        (RunMode::Live, Some(cfg)) => cfg
+            .validate()
+            .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path()))),
+        (RunMode::Live, None) => Err(ApiError::Validation(
+            "mode=live requires live_config (strategy_id, assets, capital, broker_creds_ref, stop_policy)"
+                .into(),
+        )),
+        (RunMode::Backtest, Some(_)) => Err(ApiError::Validation(
+            "mode=backtest must not include live_config".into(),
+        )),
+        (RunMode::Backtest, None) if req.scenario_id.trim().is_empty() => {
+            Err(ApiError::Validation("mode=backtest requires scenario_id".into()))
+        }
+        (RunMode::Backtest, None) => Ok(()),
+    }
+}
+
+fn scenario_from_live_config(cfg: &LiveConfig) -> Scenario {
+    let now = Utc::now();
+    Scenario {
+        id: String::new(),
+        parent_scenario_id: None,
+        source: ScenarioSource::Generated,
+        display_name: cfg.display_name.clone(),
+        description: cfg.description.clone().unwrap_or_default(),
+        tags: cfg.tags.clone(),
+        notes: cfg.notes.clone(),
+        asset_class: AssetClass::Crypto,
+        asset: cfg.assets.clone(),
+        quote_currency: QuoteCurrency::Usd,
+        time_window: TimeWindow { start: now, end: now },
+        granularity: xvision_data::alpaca::BarGranularity::Minute1,
+        timezone: "UTC".into(),
+        calendar: CalendarRef::Continuous24x7,
+        data_source: DataSource::AlpacaHistorical {
+            feed: Some("crypto".into()),
+            adjustment: AdjustmentMode::Raw,
+        },
+        venue: VenueSettings {
+            venue: Venue::Alpaca,
+            fees: Fees {
+                maker_bps: 0,
+                taker_bps: 0,
+            },
+            slippage: SlippageModel::None,
+            latency: LatencyModel {
+                decision_to_fill_ms: 0,
+            },
+            fill_model: FillModel {
+                market_order_fill: MarketOrderFill::FullAtClose,
+                limit_order_fill: LimitOrderFill::NeverFills,
+                partial_fills: false,
+                volume_constraints: None,
+            },
+            overrides: Vec::new(),
+        },
+        replay_mode: ReplayMode::Realtime,
+        capital: cfg.capital.clone(),
+        bar_cache_policy: BarCachePolicy {
+            cache_key: "live-alpaca".into(),
+            refresh_policy: RefreshPolicy::NeverRefresh,
+            data_fetched_at: None,
+        },
+        warmup_bars: cfg.warmup_bars.unwrap_or(200),
+        regime_label: None,
+        volatility_label: None,
+        trend_direction: None,
+        regime_derived: false,
+        created_at: now,
+        created_by: "live".into(),
+        archived_at: None,
+        venue_label: cfg.venue_label,
+        safety_limits: cfg.safety_limits.clone(),
+    }
 }
 
 /// Rewrite each `ResolvedAgentSlot.slot.provider` / `.model` (and the
@@ -1686,11 +1779,16 @@ async fn run_inner(
     // produced the matching `ProviderEntry`.
     apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
 
-    // 2. Look up the scenario. Primary path is the DB-backed registry
-    //    (`api::scenario::get`); legacy path falls back to the compiled-in
-    //    `canonical_scenarios()` for test contexts that haven't applied
-    //    migration 006 yet (and for un-migrated legacy ids).
-    let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
+    validate_live_request_shape(&req)?;
+    let live_config = req.live_config.clone();
+
+    // 2. Look up the scenario for Backtest, or synthesize the scenario-like
+    //    envelope Live still needs internally for capital/venue/cadence helpers.
+    let (scenario, from_db) = if let Some(cfg) = live_config.as_ref() {
+        (scenario_from_live_config(cfg), false)
+    } else {
+        resolve_scenario_with_source(ctx, &req.scenario_id).await?
+    };
 
     // 2b. QA15 warmup preflight: warn if the scenario doesn't carry as
     //     many warmup bars as the strategy's indicator periods imply.
@@ -1703,6 +1801,9 @@ async fn run_inner(
     //    emitter so SpanStarted events have a valid FK.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     run.params_override = req.params_override.clone();
+    if let Some(cfg) = live_config.clone() {
+        run = run.with_live_config(cfg);
+    }
     apply_review_launch_options(&mut run, &req);
     // F-11: persist the long-lived workspace `agents.agent_id` next to
     // the existing bundle-hash `agent_id`. Migration 021 added the
@@ -1763,18 +1864,17 @@ async fn run_inner(
             .await?
         }
         RunMode::Live => {
-            // executor-live-shell: route RunMode::Live to the Live
-            // constructor. Until live-bar-source-alpaca lands, this
-            // surfaces the stable not-implemented error to the
-            // caller so launch attempts fail loudly rather than
-            // silently dropping back to Backtest.
-            let _ = broker; // broker is None today; reserved for the Live wiring track.
-            return Err(ApiError::Validation(
-                Executor::live()
-                    .err()
-                    .expect("live() always errors today")
-                    .to_string(),
-            ));
+            build_live_executor(
+                ctx,
+                live_config
+                    .as_ref()
+                    .expect("validate_live_request_shape requires live_config"),
+                broker,
+                obs_emitter.clone(),
+                provider_catalogs.clone(),
+                req.limits.as_ref(),
+            )
+            .await?
         }
     };
 
@@ -2194,6 +2294,100 @@ async fn build_backtest_executor(
     Ok(Box::new(bt))
 }
 
+async fn build_live_executor(
+    ctx: &ApiContext,
+    cfg: &LiveConfig,
+    broker_override: Option<Arc<dyn BrokerSurface>>,
+    obs: Option<crate::agent::observability::ObsEmitter>,
+    provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
+    limits: Option<&crate::eval::limits::EvalLimits>,
+) -> ApiResult<Box<dyn RunExecutor>> {
+    cfg.validate()
+        .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
+    if cfg.broker_creds_ref != "alpaca" {
+        return Err(ApiError::Validation(
+            "live_config.broker_creds_ref must be 'alpaca' for v1 Live Alpaca".into(),
+        ));
+    }
+    let asset = cfg
+        .assets
+        .first()
+        .ok_or_else(|| ApiError::Validation("live_config.assets must contain one asset".into()))?
+        .venue_symbol
+        .clone();
+    let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
+    let (key_id, secret, trade_base_url) = if let Some(c) = stored {
+        (
+            c.api_key_id,
+            c.api_secret_key,
+            c.base_url
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://paper-api.alpaca.markets".into()),
+        )
+    } else {
+        let key_id = std::env::var("APCA_API_KEY_ID").map_err(|_| {
+            ApiError::Validation(
+                "no Alpaca credentials configured for Live run (set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY)".into(),
+            )
+        })?;
+        let secret = std::env::var("APCA_API_SECRET_KEY").map_err(|_| {
+            ApiError::Validation("no Alpaca credentials configured (APCA_API_SECRET_KEY unset)".into())
+        })?;
+        let trade_base_url = std::env::var("APCA_API_BASE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "https://paper-api.alpaca.markets".into());
+        (key_id, secret, trade_base_url)
+    };
+    if !trade_base_url.contains("paper-api.alpaca.markets") {
+        return Err(ApiError::Validation(
+            "Live v1 is paper-only; APCA_API_BASE_URL must point at Alpaca paper trading".into(),
+        ));
+    }
+
+    let broker: Arc<dyn BrokerSurface> = match broker_override {
+        Some(b) => b,
+        None => Arc::new(
+            AlpacaPaperSurface::from_credentials(&key_id, &secret, &trade_base_url)
+                .map_err(|e| ApiError::Validation(format!("build Alpaca paper broker: {e}")))?,
+        ),
+    };
+    let granularity = xvision_data::alpaca::BarGranularity::Minute1;
+    let live_client = AlpacaLiveClient::new(AlpacaLiveCredentials {
+        key_id: key_id.clone(),
+        secret_key: secret.clone(),
+    });
+    let ws = live_client
+        .subscribe_bars(&asset, granularity)
+        .await
+        .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars: {e}")))?;
+    let data_base_url = std::env::var("APCA_API_DATA_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "https://data.alpaca.markets".into());
+    let poll = AlpacaLivePoll::new(
+        production_fetcher(data_base_url, key_id, secret),
+        asset.clone(),
+        granularity,
+    );
+    let warmup_bars = cfg.warmup_bars.unwrap_or(200);
+    let stream =
+        crate::eval::executor::LiveStream::new_with_warmup(ctx, &asset, granularity, warmup_bars, ws, poll)
+            .await
+            .map_err(|e| ApiError::Validation(format!("build LiveStream: {e}")))?;
+    let mut live = Executor::live(cfg, broker, stream, crate::eval::executor::WallClock::new(), obs)
+        .map_err(|e| ApiError::Validation(format!("build Live executor: {e}")))?
+        .with_event_bus(ctx.event_bus.clone())
+        .with_provider_catalogs(provider_catalogs);
+    if let Some(recorder) = ctx.memory_recorder.clone() {
+        live = live.with_memory_recorder(recorder);
+    }
+    if let Some(l) = limits {
+        live = live.with_limits(l.clone());
+    }
+    Ok(Box::new(live))
+}
+
 /// Emit a warning (via `tracing::warn`) when the scenario's
 /// `warmup_bars` is below the strategy's `min_warmup_bars`. The QA15
 /// spec calls for this to surface in eval preflight; today the operator
@@ -2239,8 +2433,14 @@ fn missing_bars_validation(scenario: &Scenario, source_error: Option<String>) ->
 pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let started = Instant::now();
     validate_provider_override_shape(req.provider_override.as_ref())?;
+    validate_live_request_shape(&req)?;
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
-    let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
+    let live_config = req.live_config.clone();
+    let (scenario, from_db) = if let Some(cfg) = live_config.as_ref() {
+        (scenario_from_live_config(cfg), false)
+    } else {
+        resolve_scenario_with_source(ctx, &req.scenario_id).await?
+    };
 
     // Build broker / dispatch / tools from env up-front so any
     // missing-config errors return synchronously rather than landing in
@@ -2272,6 +2472,9 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // `execute_in_background`.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     run.params_override = req.params_override.clone();
+    if let Some(cfg) = live_config.clone() {
+        run = run.with_live_config(cfg);
+    }
     apply_review_launch_options(&mut run, &req);
     // F-11: see comment in `run_inner` above — same reasoning here.
     run.agents_agent_id = pick_agents_agent_id(&strategy);
@@ -2310,12 +2513,17 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             .await?
         }
         RunMode::Live => {
-            return Err(ApiError::Validation(
-                Executor::live()
-                    .err()
-                    .expect("live() always errors today")
-                    .to_string(),
-            ));
+            build_live_executor(
+                ctx,
+                live_config
+                    .as_ref()
+                    .expect("validate_live_request_shape requires live_config"),
+                None,
+                obs_emitter.clone(),
+                provider_catalogs.clone(),
+                req.limits.as_ref(),
+            )
+            .await?
         }
     };
 

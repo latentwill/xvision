@@ -18,9 +18,18 @@ use xvision_filters::{FilterEventV1, FilterId, FilterSummary};
 
 use crate::eval::attestation::EvalAttestation;
 use crate::eval::findings::{Finding, Severity};
+use crate::eval::live_config::LiveConfig;
 use crate::eval::review::{AgentProfile, EvalReview, ReviewAnnotation, ReviewStatus, ReviewVerdict};
 use crate::eval::run::{MetricsSummary, ReviewModel, Run, RunMode, RunStatus};
 use ulid::Ulid;
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreInvariantError {
+    #[error("store invariant: Live runs require live_config (run id = {run_id})")]
+    LiveModeMissingConfig { run_id: String },
+    #[error("store invariant: Backtest runs cannot carry live_config (run id = {run_id})")]
+    BacktestWithLiveConfig { run_id: String },
+}
 
 #[derive(Debug, Clone)]
 pub struct RunStore {
@@ -83,6 +92,22 @@ impl RunStore {
 
     /// INSERT INTO eval_runs.
     pub async fn create(&self, run: &Run) -> Result<()> {
+        match run.mode {
+            RunMode::Live if run.live_config.is_none() => {
+                return Err(StoreInvariantError::LiveModeMissingConfig {
+                    run_id: run.id.clone(),
+                }
+                .into());
+            }
+            RunMode::Backtest if run.live_config.is_some() => {
+                return Err(StoreInvariantError::BacktestWithLiveConfig {
+                    run_id: run.id.clone(),
+                }
+                .into());
+            }
+            _ => {}
+        }
+
         let params_override_json = run
             .params_override
             .as_ref()
@@ -108,6 +133,16 @@ impl RunStore {
             .map(serde_json::to_string)
             .transpose()
             .context("serialize review_model")?;
+        let live_config_json = run
+            .live_config
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serialize live_config")?;
+        let scenario_id = match run.mode {
+            RunMode::Live => None,
+            RunMode::Backtest => Some(run.scenario_id.as_str()),
+        };
 
         sqlx::query(
             "INSERT INTO eval_runs \
@@ -115,13 +150,13 @@ impl RunStore {
               started_at, completed_at, metrics_json, error, \
               estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
               bars_content_hash, manifest_canonical, bars_manifest, \
-              auto_fire_review, review_model_json, max_annotations_per_review) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              auto_fire_review, review_model_json, max_annotations_per_review, live_config_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&run.id)
         .bind(&run.agent_id)
         .bind(&run.agents_agent_id)
-        .bind(&run.scenario_id)
+        .bind(scenario_id)
         .bind(params_override_json)
         .bind(run.mode.as_str())
         .bind(run.status.as_str())
@@ -138,6 +173,7 @@ impl RunStore {
         .bind(if run.auto_fire_review { 1_i64 } else { 0_i64 })
         .bind(review_model_json)
         .bind(run.max_annotations_per_review.map(|n| n as i64))
+        .bind(live_config_json)
         .execute(&self.pool)
         .await
         .with_context(|| format!("insert eval_runs id={}", run.id))?;
@@ -359,7 +395,7 @@ impl RunStore {
                     mode, status, started_at, completed_at, metrics_json, error, \
                     estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
                     bars_content_hash, manifest_canonical, bars_manifest, \
-                    auto_fire_review, review_model_json, max_annotations_per_review \
+                    auto_fire_review, review_model_json, max_annotations_per_review, live_config_json \
              FROM eval_runs WHERE id = ?",
         )
         .bind(id)
@@ -561,7 +597,7 @@ impl RunStore {
                     mode, status, started_at, completed_at, metrics_json, error, \
                     estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
                     bars_content_hash, manifest_canonical, bars_manifest, \
-                    auto_fire_review, review_model_json, max_annotations_per_review \
+                    auto_fire_review, review_model_json, max_annotations_per_review, live_config_json \
              FROM eval_runs",
         );
         let mut conditions: Vec<&'static str> = Vec::new();
@@ -1557,6 +1593,15 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         .try_get::<Option<i64>, _>("max_annotations_per_review")
         .unwrap_or(None)
         .and_then(|n| u32::try_from(n).ok());
+    let live_config: Option<LiveConfig> = row
+        .try_get::<Option<String>, _>("live_config_json")
+        .unwrap_or(None)
+        .map(|s| serde_json::from_str(&s).context("deserialize live_config_json"))
+        .transpose()?;
+    let scenario_id = row
+        .try_get::<Option<String>, _>("scenario_id")
+        .context("read scenario_id")?
+        .unwrap_or_default();
 
     Ok(Run {
         id: row.try_get("id").context("read id")?,
@@ -1564,7 +1609,7 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         agents_agent_id: row
             .try_get::<Option<String>, _>("agents_agent_id")
             .context("read agents_agent_id")?,
-        scenario_id: row.try_get("scenario_id").context("read scenario_id")?,
+        scenario_id,
         params_override,
         mode,
         status,
@@ -1590,6 +1635,7 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         auto_fire_review,
         review_model,
         max_annotations_per_review,
+        live_config,
     })
 }
 

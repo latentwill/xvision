@@ -29,9 +29,12 @@ use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use xvision_engine::eval::compare::ComparisonEquityCurve;
 use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
+use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::report::compute_run_report;
 use xvision_engine::eval::run::{ReviewModel, RunMode, RunStatus};
+use xvision_engine::eval::scenario::{AssetClass, AssetRef};
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::safety::VenueLabel;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
@@ -111,10 +114,31 @@ pub struct RunArgs {
     pub strategy: String,
     /// Scenario id from `xvn eval scenarios`.
     #[arg(long)]
-    pub scenario: String,
+    pub scenario: Option<String>,
     /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
     #[arg(long, default_value = "backtest")]
     pub mode: String,
+    /// Live Alpaca asset, e.g. BTC/USD. Required for --mode live.
+    #[arg(long)]
+    pub live_asset: Option<String>,
+    /// Initial live paper capital in USD. Required for --mode live.
+    #[arg(long)]
+    pub live_capital: Option<f64>,
+    /// Broker credential reference. v1 accepts only "alpaca".
+    #[arg(long, default_value = "alpaca")]
+    pub live_broker_creds_ref: String,
+    /// Stop after N live bars. At least one live stop flag is required.
+    #[arg(long)]
+    pub live_bar_limit: Option<u32>,
+    /// Stop after N live decisions. At least one live stop flag is required.
+    #[arg(long)]
+    pub live_decision_limit: Option<u32>,
+    /// Stop after N wall-clock seconds. At least one live stop flag is required.
+    #[arg(long)]
+    pub live_time_limit_secs: Option<u64>,
+    /// Historical warmup bars to load before live streaming starts.
+    #[arg(long, default_value_t = 200)]
+    pub live_warmup_bars: u32,
     /// Override the xvn home directory.
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
@@ -506,12 +530,68 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         }
         (None, None) => None,
     };
+    let live_config = if mode == RunMode::Live {
+        let asset = args.live_asset.clone().ok_or_else(|| CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--mode live requires --live-asset"),
+        })?;
+        let capital = args.live_capital.ok_or_else(|| CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--mode live requires --live-capital"),
+        })?;
+        let stop_policy = StopPolicy {
+            time_limit_secs: args.live_time_limit_secs,
+            bar_limit: args.live_bar_limit,
+            decision_limit: args.live_decision_limit,
+        };
+        if stop_policy.is_empty() {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "--mode live requires at least one stop flag: --live-bar-limit, --live-decision-limit, or --live-time-limit-secs"
+                ),
+            });
+        }
+        let symbol = asset.split('/').next().unwrap_or(&asset).to_string();
+        Some(LiveConfig {
+            strategy_id: args.strategy.clone(),
+            assets: vec![AssetRef {
+                class: AssetClass::Crypto,
+                symbol,
+                venue_symbol: asset,
+            }],
+            capital: xvision_core::Capital {
+                initial: capital,
+                currency: "USD".into(),
+            },
+            broker_creds_ref: args.live_broker_creds_ref.clone(),
+            stop_policy,
+            venue_label: VenueLabel::Paper,
+            warmup_bars: Some(args.live_warmup_bars),
+            safety_limits: None,
+            display_name: format!("Live Alpaca {}", args.strategy),
+            description: None,
+            tags: vec!["live".into(), "alpaca".into()],
+            notes: None,
+        })
+    } else {
+        None
+    };
+    let scenario_id = if mode == RunMode::Live {
+        String::new()
+    } else {
+        args.scenario.clone().ok_or_else(|| CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--mode backtest requires --scenario"),
+        })?
+    };
 
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
-        scenario_id: args.scenario.clone(),
+        scenario_id,
         mode,
         params_override: None,
+        live_config,
         limits,
         skip_preflight: args.skip_preflight,
         provider_override,
