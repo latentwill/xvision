@@ -5,6 +5,7 @@ import {
   type StartRunConfig,
   type BudgetLimits,
 } from "../session/store.js"
+import type { TrajectoryFrame } from "../session/frame-types.js"
 import { handleToolRegistryGet } from "./tool-registry.js"
 import { buildAgent } from "../session/build-agent.js"
 import {
@@ -180,6 +181,63 @@ function validateBudget(raw: unknown): BudgetLimits {
   }
 }
 
+// ---------------------------------------------------------------------------
+// session.replay_load
+// ---------------------------------------------------------------------------
+
+interface ReplayLoadParams {
+  run_id?: unknown
+  frames?: unknown
+}
+
+interface ReplayLoadResult {
+  loaded: number
+}
+
+/**
+ * Load recorded TrajectoryFrames onto a session so the next `session.step`
+ * runs the agent against a replay model built from those frames (zero network).
+ *
+ * Contract (SHARED RPC contract — Rust client side must match exactly):
+ *   method:  "session.replay_load"
+ *   params:  { run_id: string, frames: TrajectoryFrame[] }
+ *   result:  { loaded: number }
+ *
+ * After replay_load, `session.step` will call buildAgent with the loaded frames
+ * as `replayFrames`, bypassing any live provider. The Agent re-runs its full
+ * control-flow loop against the replay model.
+ */
+export function handleSessionReplayLoad(raw: unknown): ReplayLoadResult {
+  const p = (raw ?? {}) as ReplayLoadParams
+  if (typeof p.run_id !== "string" || p.run_id.length === 0)
+    throw new TypeError("params.run_id must be a non-empty string")
+  if (!Array.isArray(p.frames))
+    throw new TypeError("params.frames must be an array of TrajectoryFrame objects")
+
+  // Validate each frame has at minimum a `kind` string field; full structural
+  // validation is left to the replay model (it ignores unknown fields).
+  const frames = p.frames as unknown[]
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i]
+    if (typeof f !== "object" || f === null || !("kind" in f) || typeof (f as Record<string, unknown>)["kind"] !== "string") {
+      throw new TypeError(`params.frames[${i}] must be an object with a string "kind" field`)
+    }
+  }
+
+  const session = store.get(p.run_id)
+  if (!session) throw new Error(`session not found: ${p.run_id}`)
+
+  // Store frames on the session. If an agent is already attached (e.g. from a
+  // prior step), null it out so the next step rebuilds with the replay model.
+  store.setReplayFrames(p.run_id, frames as TrajectoryFrame[])
+  // Force agent rebuild on next step so the replay model is installed fresh.
+  if (session.agent !== null) {
+    session.agent = null
+  }
+
+  return { loaded: frames.length }
+}
+
 interface StepParams {
   run_id?: unknown
   prompt?: unknown
@@ -247,11 +305,14 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
   const remaining = remainingWallMs(session.created_at_ms, limits, store.now())
   if (remaining <= 0) return abortedStepResult("budget_wall_ms_exceeded")
 
-  // Lazy: build the Agent on first step. Wire submit_decision's local capture
-  // to this run's store slot so the decision lands on the StepResult.
+  // Lazy: build the Agent on first step (or after replay_load resets it).
+  // Wire submit_decision's local capture to this run's store slot so the
+  // decision lands on the StepResult. Pass replay frames when loaded.
   if (!session.agent) {
+    const replayFrames = store.getReplayFrames(p.run_id)
     const agent = buildAgent(session.config, {
       captureDecision: (json) => store.setDecisionJson(p.run_id as string, json),
+      ...(replayFrames ? { replayFrames } : {}),
     })
     store.attachAgent(p.run_id, agent)
   }
@@ -356,3 +417,4 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
 registerMethod("session.start_run", (p) => handleSessionStartRun(p))
 registerMethod("session.end_run", (p) => handleSessionEndRun(p))
 registerMethod("session.step", (p) => handleSessionStep(p))
+registerMethod("session.replay_load", (p) => handleSessionReplayLoad(p))
