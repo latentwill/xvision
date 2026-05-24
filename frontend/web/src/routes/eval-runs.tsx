@@ -714,15 +714,7 @@ function StartEvalDialog({
     },
   });
 
-  const liveReady =
-    liveAsset.trim().length > 0 &&
-    Number(liveCapital) > 0 &&
-    Number(liveBarLimit) > 0 &&
-    Number(liveWarmupBars) >= 0;
-  const ready =
-    agentId.length > 0 &&
-    (mode === "live" ? liveReady : scenarioId.length > 0) &&
-    !start.isPending;
+  const ready = agentId.length > 0 && !start.isPending;
   const selectedStrategy = (strategies.data ?? []).find(
     (s) => s.agent_id === agentId,
   );
@@ -742,7 +734,41 @@ function StartEvalDialog({
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!ready) return;
+    if (!agentId) {
+      setPreflightError("Pick a strategy before starting eval.");
+      return;
+    }
+    if (mode === "backtest" && !scenarioId) {
+      setPreflightError("Pick a scenario before starting Backtest.");
+      return;
+    }
+    if (mode === "live") {
+      const capital = Number(liveCapital);
+      const barLimit = Number(liveBarLimit);
+      const warmupBars = Number(liveWarmupBars);
+      if (!liveAsset.trim()) {
+        setPreflightError("Enter a live asset before starting Live.");
+        return;
+      }
+      if (!Number.isFinite(capital) || capital <= 0) {
+        setPreflightError("Enter a positive live capital amount.");
+        return;
+      }
+      if (!Number.isFinite(barLimit) || barLimit <= 0) {
+        setPreflightError("Enter a positive live bar limit.");
+        return;
+      }
+      if (!Number.isFinite(warmupBars) || warmupBars < 0) {
+        setPreflightError("Enter a non-negative live warmup bar count.");
+        return;
+      }
+      if (brokers.data?.alpaca.configured !== true) {
+        setPreflightError(
+          "Configure Alpaca paper credentials in Settings -> Brokers before starting Live.",
+        );
+        return;
+      }
+    }
     const blocked = evalPreflightError({
       providers,
       brokers,
@@ -752,13 +778,10 @@ function StartEvalDialog({
       setPreflightError(blocked);
       return;
     }
-    if (mode === "live" && brokers.data?.alpaca.configured !== true) {
-      setPreflightError(
-        "Configure Alpaca paper credentials in Settings -> Brokers before starting Live.",
-      );
-      return;
-    }
     setPreflightError(null);
+    const capitalNum = Number(liveCapital);
+    const barLimitNum = Number(liveBarLimit);
+    const warmupBarsNum = Number(liveWarmupBars);
     const liveConfig: LiveConfig | null =
       mode === "live"
         ? {
@@ -770,15 +793,15 @@ function StartEvalDialog({
                 venue_symbol: liveAsset,
               },
             ],
-            capital: { initial: Number(liveCapital), currency: "USD" },
+            capital: { initial: capitalNum, currency: "USD" },
             broker_creds_ref: "alpaca",
             stop_policy: {
               time_limit_secs: null,
-              bar_limit: Number(liveBarLimit),
+              bar_limit: barLimitNum,
               decision_limit: null,
             },
             venue_label: "paper",
-            warmup_bars: Number(liveWarmupBars),
+            warmup_bars: warmupBarsNum,
             safety_limits: null,
             display_name: `Live Alpaca ${liveAsset}`,
             description: null,
