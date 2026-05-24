@@ -54,9 +54,12 @@ mod tests {
     use super::*;
     #[test]
     fn keys_differ_when_any_identity_field_differs() {
+        // step_index is intentionally NOT part of TrajectoryKey — it keys frames
+        // *within* a recording (trajectory_frames), not the recording identity.
+        // A multi-step slot is one recording containing N steps of frames.
         let base = TrajectoryKey::builder()
             .cycle_id("11111111-1111-1111-1111-111111111111".parse().unwrap())
-            .slot_role("trader").step_index(0)
+            .slot_role("trader")
             .arm_scope(Some("trader_arm")).simulation_id(Some("sim-1"))
             .provider("anthropic").model("claude-opus-4-7")
             .model_version("2026-05").schema_version(TRAJECTORY_SCHEMA_VERSION)
@@ -89,7 +92,6 @@ pub const TRAJECTORY_SCHEMA_VERSION: u32 = 1;
 pub struct TrajectoryKey {
     pub cycle_id: Uuid,
     pub slot_role: String,
-    pub step_index: u32,
     /// `None` means this slot is shared across A/B arms; `Some` means per-arm.
     pub arm_scope: Option<String>,
     pub simulation_id: Option<String>,
@@ -110,7 +112,7 @@ impl TrajectoryKey {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
         for part in [
-            &self.cycle_id.to_string(), &self.slot_role, &self.step_index.to_string(),
+            &self.cycle_id.to_string(), &self.slot_role,
             self.arm_scope.as_deref().unwrap_or(""), self.simulation_id.as_deref().unwrap_or(""),
             &self.provider, &self.model,
             &self.model_version, &self.schema_version.to_string(),
@@ -211,7 +213,6 @@ CREATE TABLE trajectory_recordings (
   key_fingerprint  TEXT NOT NULL UNIQUE,           -- TrajectoryKey.fingerprint() (item 7)
   cycle_id         TEXT NOT NULL,
   slot_role        TEXT NOT NULL,
-  step_index       INTEGER NOT NULL,
   arm_scope        TEXT,                            -- NULL means shared across arms
   simulation_id    TEXT,
   provider         TEXT NOT NULL,
