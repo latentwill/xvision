@@ -2,6 +2,7 @@ pub mod client;
 pub mod errors;
 pub mod event_sink;
 pub mod protocol;
+pub mod provider_map;
 pub(crate) mod supervisor;
 pub mod tool_dispatch;
 /// JSON-RPC over UDS transport. Public for the crate's integration tests

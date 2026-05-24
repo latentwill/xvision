@@ -16,6 +16,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }  # used from Task 6 onwards
 async-trait = { workspace = true }
 xvision-observability = { path = "../xvision-observability" }
+xvision-core = { path = "../xvision-core" }
 chrono = { workspace = true }
 
 [dev-dependencies]

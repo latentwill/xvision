@@ -109,10 +109,41 @@ fn validate_provider_name(name: &str, _ctx: &()) -> garde::Result {
 
 // --- runtime ----------------------------------------------------------------
 
+/// Which agent runtime drives LLM-backed slots.
+///
+/// `Cline` routes each slot through the `xvision-agentd` sidecar (the unified
+/// live + eval path). `LlmDispatch` is the legacy raw-reqwest dispatch, kept as
+/// a flag-gated fallback during the Cline migration (runtime-unification spec,
+/// invariant 6). Defaults to `LlmDispatch` during Stage 1 build-out and is
+/// flipped to `Cline` once the live path is proven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentRuntime {
+    #[default]
+    LlmDispatch,
+    Cline,
+}
+
+impl std::str::FromStr for AgentRuntime {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "cline" => Ok(Self::Cline),
+            "llm-dispatch" | "llm_dispatch" => Ok(Self::LlmDispatch),
+            other => Err(format!("unknown agent runtime: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     #[garde(skip)]
     pub runtime: Runtime,
+    /// Agent runtime selector (Cline sidecar vs legacy LlmDispatch). See
+    /// [`AgentRuntime`]. `#[serde(default)]` so existing configs keep loading.
+    #[serde(default)]
+    #[garde(skip)]
+    pub agent_runtime: AgentRuntime,
     #[serde(default)]
     #[garde(dive)]
     pub providers: Vec<ProviderEntry>,
@@ -886,6 +917,24 @@ rate_limit_rpm = 600
             Err(ConfigError::Parse { .. }) => {}
             other => panic!("expected Parse, got {other:?}"),
         }
+    }
+
+    // --- agent runtime selector (Cline runtime unification, Stage 1) --------
+
+    #[test]
+    fn agent_runtime_defaults_to_llm_dispatch_until_flipped() {
+        // Default stays LlmDispatch during Stage 1 build-out; Stage 1's final
+        // task flips it to Cline once the live path is proven.
+        assert_eq!(AgentRuntime::default(), AgentRuntime::LlmDispatch);
+    }
+
+    #[test]
+    fn agent_runtime_parses_from_str() {
+        use std::str::FromStr;
+        assert_eq!(AgentRuntime::from_str("cline").unwrap(), AgentRuntime::Cline);
+        assert_eq!(AgentRuntime::from_str("llm-dispatch").unwrap(), AgentRuntime::LlmDispatch);
+        assert_eq!(AgentRuntime::from_str("llm_dispatch").unwrap(), AgentRuntime::LlmDispatch);
+        assert!(AgentRuntime::from_str("bogus").is_err());
     }
 
     // --- providers (Plan #7 Phase 1) ----------------------------------------
