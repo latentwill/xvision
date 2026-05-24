@@ -15,6 +15,7 @@ use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{ApiContext, ApiError};
 use xvision_engine::eval::canonical_scenarios;
 use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+use xvision_engine::eval::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
@@ -85,7 +86,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -197,6 +198,9 @@ fn eval_request_for_scenario(agent_id: &str, scenario_id: &str, mode: RunMode) -
         limits: None,
         skip_preflight: false,
         provider_override: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     }
 }
 
@@ -302,6 +306,39 @@ async fn run_with_deps_completes_paper_run_with_mocks() {
     assert_eq!(run.agent_id, agent_id);
     // For hold-only the broker should not have been touched.
     assert_eq!(mock_broker.submitted().len(), 0);
+    let reviews = RunStore::new(ctx.db.clone())
+        .list_reviews_for_run(&run.id)
+        .await
+        .expect("list reviews");
+    assert!(
+        reviews.is_empty(),
+        "auto-review must not fire unless the run opted in"
+    );
+}
+
+#[tokio::test]
+async fn run_with_deps_auto_fires_review_when_opted_in() {
+    let (ctx, _d) = ctx_with_tables().await;
+    ensure_flash_fixture();
+    let agent_id = "01TESTSTRATEGY0000000000AUTO";
+    save_test_strategy(&ctx, agent_id).await;
+
+    let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
+    let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
+    let dispatch = hold_dispatch();
+    let mut req = eval_request_for_scenario(agent_id, FLASH_SCENARIO_ID, RunMode::Backtest);
+    req.auto_fire_review = true;
+
+    let run = run_with_mock_deps(&ctx, req, broker, dispatch)
+        .await
+        .expect("run_with_deps must succeed");
+
+    let reviews = RunStore::new(ctx.db.clone())
+        .list_reviews_for_run(&run.id)
+        .await
+        .expect("list reviews");
+    assert_eq!(reviews.len(), 1, "auto-review should persist one review");
+    assert!(reviews[0].status.is_terminal());
 }
 
 #[tokio::test]
@@ -589,7 +626,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -628,6 +665,9 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         },
     )
     .await;

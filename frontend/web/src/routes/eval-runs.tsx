@@ -427,7 +427,7 @@ export function EvalRunsRoute() {
             badge={row.status}
             badgeColor={badgeColorFor(row.status)}
             subtitle={displayScenarioName(row.scenario_id, scenarios)}
-            meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}`}
+            meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}${row.auto_fire_review ? " · auto review" : ""}`}
             rightTop={fmtPct(row.total_return_pct)}
             rightSub={fmtDuration(row.started_at, row.completed_at, nowMs)}
             rightTone={signedTone(row.total_return_pct)}
@@ -590,6 +590,11 @@ function DesktopRow({
         </div>
         <div className="mt-0.5 text-[11px] text-text-2">
           {evalRunDisambiguator(row, allRows)}
+          {row.auto_fire_review ? (
+            <span className="ml-2 inline-flex rounded border border-gold/40 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-gold">
+              auto review
+            </span>
+          ) : null}
         </div>
         <div
           className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all"
@@ -686,6 +691,9 @@ function StartEvalDialog({
   const [agentId, setAgentId] = useState<string>(initialAgentId);
   const [scenarioId, setScenarioId] = useState<string>("");
   const [mode, setMode] = useState<RunMode>("backtest");
+  const [autoFireReview, setAutoFireReview] = useState<boolean>(false);
+  const [reviewProvider, setReviewProvider] = useState<string>("");
+  const [reviewModel, setReviewModel] = useState<string>("");
   const [preflightError, setPreflightError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -706,6 +714,16 @@ function StartEvalDialog({
   const selectedStrategy = (strategies.data ?? []).find(
     (s) => s.agent_id === agentId,
   );
+  const reviewProviderRows = (providers.data?.providers ?? []).filter(
+    (row) => row.enabled_models.length > 0,
+  );
+  const activeReviewProvider =
+    reviewProviderRows.find((row) => row.name === reviewProvider) ??
+    reviewProviderRows[0];
+  const activeReviewModel =
+    reviewModel ||
+    activeReviewProvider?.enabled_models[0] ||
+    "";
   const displayedError =
     preflightError ?? (start.isError ? errorDetail(start.error) : null);
   const setupAction = preflightSetupAction(displayedError);
@@ -728,6 +746,12 @@ function StartEvalDialog({
       scenario_id: scenarioId,
       mode,
       params_override: null,
+      auto_fire_review: autoFireReview,
+      review_model:
+        autoFireReview && activeReviewProvider && activeReviewModel
+          ? { provider: activeReviewProvider.name, model: activeReviewModel }
+          : null,
+      max_annotations_per_review: 8,
     });
   }
 
@@ -845,6 +869,60 @@ function StartEvalDialog({
               Backtest replays the scenario's parquet fixture in-process. Live
               launch is not enabled yet.
             </p>
+          </fieldset>
+
+          <fieldset>
+            <legend className="block text-[12px] text-text-2 mb-1.5 px-0">
+              Review
+            </legend>
+            <label className="inline-flex items-center gap-2 text-[13px] text-text-2">
+              <input
+                type="checkbox"
+                checked={autoFireReview}
+                onChange={(e) => {
+                  setAutoFireReview(e.target.checked);
+                  setPreflightError(null);
+                }}
+                className="accent-gold"
+              />
+              auto-run review annotations on completion
+            </label>
+            {autoFireReview ? (
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <select
+                  aria-label="Review provider"
+                  value={activeReviewProvider?.name ?? ""}
+                  onChange={(e) => {
+                    setReviewProvider(e.target.value);
+                    const row = reviewProviderRows.find(
+                      (candidate) => candidate.name === e.target.value,
+                    );
+                    setReviewModel(row?.enabled_models[0] ?? "");
+                  }}
+                  disabled={reviewProviderRows.length === 0}
+                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+                >
+                  {reviewProviderRows.map((row) => (
+                    <option key={row.name} value={row.name}>
+                      {row.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Review model"
+                  value={activeReviewModel}
+                  onChange={(e) => setReviewModel(e.target.value)}
+                  disabled={!activeReviewProvider}
+                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+                >
+                  {(activeReviewProvider?.enabled_models ?? []).map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
           </fieldset>
 
           {displayedError ? (

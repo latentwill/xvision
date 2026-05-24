@@ -5,9 +5,8 @@
 //   ?source=live&symbol=...  → /api/v2/charts/annotated/live/:symbol
 //   default                  → ?source=run with `run_id=demo` (B3 stub)
 //
-// When source=live and the response has no annotations, the surface
-// renders an EmptyState explaining the producer is not configured
-// (live producer is out of scope per spec §9).
+// Empty annotation payloads carry a `note` so the surface can distinguish
+// "review not yet run" from live/no-data states.
 
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";

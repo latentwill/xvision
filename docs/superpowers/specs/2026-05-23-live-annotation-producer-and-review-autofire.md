@@ -1,5 +1,16 @@
 # Live annotation producer + review auto-fire setting
 
+## Implementation note — 2026-05-24
+
+Wave 1 shipped the persisted review-annotation path:
+- Migration `037_review_annotations_and_autofire` adds `eval_reviews.annotations_json` plus per-run `eval_runs.auto_fire_review`, `review_model_json`, and `max_annotations_per_review`.
+- LLM review parsing now accepts an optional `annotations` array and stores it with the completed review. The rule-based auto-review path also synthesizes annotations from findings.
+- Auto-review is no longer global. It fires only when the eval run was launched with `auto_fire_review = true`.
+- `/api/v2/charts/annotated/:run_id` reads the newest completed review's persisted annotations. `/demo` remains fixture-backed. Empty run/live states return `annotations: []` plus a `note`.
+- CLI/UI launch surfaces expose the auto-fire flag and annotation budget; run rows/show output surface the stored state.
+
+Still deferred: manual Run Review CTA/model-picker polish on run detail and true symbol-aware live lookup beyond the latest stored live review scan.
+
 Date: 2026-05-23 · **DRAFT** — open questions in §6 need answers before this becomes an executable plan.
 
 > **Spec author note:** Tied to two adjacent threads:

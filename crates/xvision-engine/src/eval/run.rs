@@ -170,6 +170,17 @@ pub struct Run {
     /// `None` for pre-migration rows.
     #[serde(default)]
     pub bars_manifest: Option<serde_json::Value>,
+    /// Per-run opt-in for the post-completion auto review path.
+    #[serde(default)]
+    pub auto_fire_review: bool,
+    /// Provider/model preference to use when an operator manually fires a
+    /// review, or when a future LLM auto-review worker is enabled.
+    #[serde(default)]
+    pub review_model: Option<ReviewModel>,
+    /// Upper bound for review-generated chart annotations. Defaults to 8
+    /// when absent.
+    #[serde(default)]
+    pub max_annotations_per_review: Option<u32>,
 }
 
 impl Run {
@@ -193,8 +204,22 @@ impl Run {
             bars_content_hash: None,
             manifest_canonical: None,
             bars_manifest: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         }
     }
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewModel {
+    pub provider: String,
+    pub model: String,
 }
 
 /// Per-baseline performance numbers for one of the four automatic baselines.

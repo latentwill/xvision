@@ -184,7 +184,7 @@ async fn save_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -208,6 +208,9 @@ async fn provider_override_partial_provider_only_rejects_as_validation() {
             provider: "anthropic".into(),
             model: String::new(),
         }),
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -248,6 +251,9 @@ async fn provider_override_unknown_provider_refuses_with_provider_unknown_reason
             provider: "no-such-provider".into(),
             model: "no-such-model".into(),
         }),
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -298,6 +304,9 @@ async fn provider_override_missing_key_refuses_with_key_missing_reason() {
             provider: "openrouter".into(),
             model: "deepseek/deepseek-v4-flash".into(),
         }),
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -343,6 +352,9 @@ async fn provider_override_disabled_model_refuses_with_model_disabled_reason() {
             // Not in enabled_models = ["claude-sonnet-4.6"].
             model: "claude-haiku-not-enabled".into(),
         }),
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -394,6 +406,9 @@ async fn provider_override_receipt_round_trips_via_load_provider_override() {
             provider: "openrouter".into(),
             model: "deepseek/deepseek-v4-flash".into(),
         }),
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"override-receipt"}"#,
@@ -437,6 +452,9 @@ async fn no_provider_override_leaves_load_provider_override_none() {
         limits: None,
         skip_preflight: true,
         provider_override: None,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: Some(8),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"no-override"}"#,

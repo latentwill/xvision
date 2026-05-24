@@ -16,6 +16,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use super::payload::ReviewPayload;
+use super::ReviewAnnotation;
 
 /// Allowed finding `type` values. Matches the spec contract; the parser
 /// enforces them so a typo'd type fails the review rather than silently
@@ -32,6 +33,9 @@ const ALLOWED_FINDING_TYPES: &[&str] = &[
 ];
 
 const ALLOWED_SEVERITIES: &[&str] = &["low", "medium", "high", "critical"];
+const ALLOWED_ANNOTATION_SIDES: &[&str] = &["top", "bottom"];
+const ALLOWED_ANNOTATION_TYPES: &[&str] = &["PATTERN", "FLOW", "RISK", "REVERSION", "STRUCTURE"];
+const ALLOWED_ANNOTATION_ACTIONS: &[&str] = &["WATCH", "LONG", "SHORT", "CAUTION"];
 
 #[derive(Debug, Error)]
 pub enum ReviewParseError {
@@ -64,6 +68,7 @@ pub struct ParsedReview {
     pub confidence: f64,
     pub score: i32,
     pub findings: Vec<ReviewFinding>,
+    pub annotations: Vec<ReviewAnnotation>,
     pub risks: Vec<String>,
     pub next_tests: Vec<String>,
     pub questions: Vec<String>,
@@ -100,6 +105,7 @@ struct RawReview {
     risks: Option<Vec<String>>,
     next_tests: Option<Vec<String>>,
     questions: Option<Vec<String>>,
+    annotations: Option<Vec<RawAnnotation>>,
 }
 
 #[derive(Deserialize)]
@@ -118,6 +124,19 @@ struct RawFinding {
 struct RawEvidence {
     kind: Option<String>,
     reference: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawAnnotation {
+    idx: Option<u32>,
+    side: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    title: Option<String>,
+    body: Option<String>,
+    conf: Option<f64>,
+    action: Option<String>,
+    danger: Option<bool>,
 }
 
 /// Parse + validate. The caller decides what to do on error:
@@ -148,6 +167,7 @@ pub fn parse_review_output(text: &str, payload: &ReviewPayload) -> Result<Parsed
         .next_tests
         .ok_or(ReviewParseError::MissingField("next_tests"))?;
     let questions = raw.questions.ok_or(ReviewParseError::MissingField("questions"))?;
+    let annotations_raw = raw.annotations.unwrap_or_default();
 
     // Inconclusive verdicts may have zero findings; everything else must
     // hit the 3..=10 band. The engine layer maps a parse failure to a
@@ -172,6 +192,10 @@ pub fn parse_review_output(text: &str, payload: &ReviewPayload) -> Result<Parsed
     for (i, raw) in findings_raw.into_iter().enumerate() {
         findings.push(parse_finding(i, raw, payload)?);
     }
+    let mut annotations = Vec::with_capacity(annotations_raw.len().min(8));
+    for (i, raw) in annotations_raw.into_iter().take(8).enumerate() {
+        annotations.push(parse_annotation(i, raw)?);
+    }
 
     Ok(ParsedReview {
         summary,
@@ -179,10 +203,72 @@ pub fn parse_review_output(text: &str, payload: &ReviewPayload) -> Result<Parsed
         confidence,
         score,
         findings,
+        annotations,
         risks,
         next_tests,
         questions,
         raw_json: slice.to_string(),
+    })
+}
+
+fn parse_annotation(index: usize, raw: RawAnnotation) -> Result<ReviewAnnotation, ReviewParseError> {
+    let idx = raw
+        .idx
+        .ok_or(ReviewParseError::MissingField("annotations[].idx"))?;
+    let side = raw
+        .side
+        .ok_or(ReviewParseError::MissingField("annotations[].side"))?;
+    if !ALLOWED_ANNOTATION_SIDES.contains(&side.as_str()) {
+        return Err(ReviewParseError::InvalidField {
+            field: format!("annotations[{index}].side"),
+            reason: format!("`{side}` not in {ALLOWED_ANNOTATION_SIDES:?}"),
+        });
+    }
+    let kind = raw
+        .kind
+        .ok_or(ReviewParseError::MissingField("annotations[].type"))?;
+    if !ALLOWED_ANNOTATION_TYPES.contains(&kind.as_str()) {
+        return Err(ReviewParseError::InvalidField {
+            field: format!("annotations[{index}].type"),
+            reason: format!("`{kind}` not in {ALLOWED_ANNOTATION_TYPES:?}"),
+        });
+    }
+    let title = raw
+        .title
+        .ok_or(ReviewParseError::MissingField("annotations[].title"))?;
+    let body = raw
+        .body
+        .ok_or(ReviewParseError::MissingField("annotations[].body"))?;
+    let raw_conf = raw
+        .conf
+        .ok_or(ReviewParseError::MissingField("annotations[].conf"))?;
+    if raw_conf.is_nan() {
+        return Err(ReviewParseError::InvalidField {
+            field: format!("annotations[{index}].conf"),
+            reason: "expected number in [0.0, 1.0]".into(),
+        });
+    }
+    let conf = raw_conf.clamp(0.0, 1.0);
+    let action = raw
+        .action
+        .ok_or(ReviewParseError::MissingField("annotations[].action"))?;
+    if !ALLOWED_ANNOTATION_ACTIONS.contains(&action.as_str()) {
+        return Err(ReviewParseError::InvalidField {
+            field: format!("annotations[{index}].action"),
+            reason: format!("`{action}` not in {ALLOWED_ANNOTATION_ACTIONS:?}"),
+        });
+    }
+
+    Ok(ReviewAnnotation {
+        idx,
+        side,
+        kind,
+        title,
+        body,
+        conf,
+        action,
+        danger: raw.danger.unwrap_or(false),
+        ts: None,
     })
 }
 

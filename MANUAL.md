@@ -398,6 +398,14 @@ xvn eval results <run_id> [--json]
 xvn eval compare <run_id_a> <run_id_b>
 ```
 
+Add `--auto-fire-review` to `xvn eval run` when a completed run should
+immediately write a deterministic review and chart annotations. Optional
+review metadata can be recorded with `--review-provider`,
+`--review-model`, and `--max-review-annotations`; `xvn eval show <run_id>`
+prints the stored auto-review state. The dashboard eval launcher exposes
+the same auto-run review checkbox, and `/charts/annotated?run_id=<run_id>`
+renders annotations from the newest completed review for that run.
+
 Compare labels prefer the strategy display name when the run's strategy
 manifest is available, while keeping the run id and strategy id visible in
 CLI output and dashboard secondary text. The run-centric dashboard is

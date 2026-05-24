@@ -269,6 +269,9 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         };
 
         let entry = match eval::run_with_deps(
@@ -612,6 +615,9 @@ pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> 
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         };
 
         let entry = match eval::run(ctx, run_req).await {
@@ -768,8 +774,7 @@ pub async fn run_batch_status_cmd(args: BatchStatusArgs) -> CliResult<()> {
     let mut run_reports: Vec<serde_json::Value> = Vec::with_capacity(detail.run_ids.len());
     for run_id in &detail.run_ids {
         if let Ok(run) = store.get(run_id).await {
-            let (report, _behavior) =
-                xvision_engine::eval::report::compute_run_report(&ctx.db, &run).await;
+            let (report, _behavior) = xvision_engine::eval::report::compute_run_report(&ctx.db, &run).await;
             run_reports.push(serde_json::json!({
                 "run_id": run.id,
                 "status": run.status.as_str(),

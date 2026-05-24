@@ -18,8 +18,8 @@ use xvision_filters::{FilterEventV1, FilterId, FilterSummary};
 
 use crate::eval::attestation::EvalAttestation;
 use crate::eval::findings::{Finding, Severity};
-use crate::eval::review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
-use crate::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+use crate::eval::review::{AgentProfile, EvalReview, ReviewAnnotation, ReviewStatus, ReviewVerdict};
+use crate::eval::run::{MetricsSummary, ReviewModel, Run, RunMode, RunStatus};
 use ulid::Ulid;
 
 #[derive(Debug, Clone)]
@@ -102,14 +102,21 @@ impl RunStore {
             .map(serde_json::to_string)
             .transpose()
             .context("serialize bars_manifest")?;
+        let review_model_json = run
+            .review_model
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serialize review_model")?;
 
         sqlx::query(
             "INSERT INTO eval_runs \
              (id, agent_id, agents_agent_id, scenario_id, params_override_json, mode, status, \
               started_at, completed_at, metrics_json, error, \
               estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
-              bars_content_hash, manifest_canonical, bars_manifest) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              bars_content_hash, manifest_canonical, bars_manifest, \
+              auto_fire_review, review_model_json, max_annotations_per_review) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&run.id)
         .bind(&run.agent_id)
@@ -128,6 +135,9 @@ impl RunStore {
         .bind(&run.bars_content_hash)
         .bind(&run.manifest_canonical)
         .bind(bars_manifest_json)
+        .bind(if run.auto_fire_review { 1_i64 } else { 0_i64 })
+        .bind(review_model_json)
+        .bind(run.max_annotations_per_review.map(|n| n as i64))
         .execute(&self.pool)
         .await
         .with_context(|| format!("insert eval_runs id={}", run.id))?;
@@ -348,7 +358,8 @@ impl RunStore {
             "SELECT id, agent_id, agents_agent_id, scenario_id, params_override_json, \
                     mode, status, started_at, completed_at, metrics_json, error, \
                     estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
-                    bars_content_hash, manifest_canonical, bars_manifest \
+                    bars_content_hash, manifest_canonical, bars_manifest, \
+                    auto_fire_review, review_model_json, max_annotations_per_review \
              FROM eval_runs WHERE id = ?",
         )
         .bind(id)
@@ -549,7 +560,8 @@ impl RunStore {
             "SELECT id, agent_id, agents_agent_id, scenario_id, params_override_json, \
                     mode, status, started_at, completed_at, metrics_json, error, \
                     estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
-                    bars_content_hash, manifest_canonical, bars_manifest \
+                    bars_content_hash, manifest_canonical, bars_manifest, \
+                    auto_fire_review, review_model_json, max_annotations_per_review \
              FROM eval_runs",
         );
         let mut conditions: Vec<&'static str> = Vec::new();
@@ -1143,11 +1155,13 @@ impl RunStore {
     /// `EvalReview::new_queued` and let the engine track advance status
     /// through `update_review_status` / `complete_review` / `fail_review`.
     pub async fn create_review(&self, review: &EvalReview) -> Result<()> {
+        let annotations_json =
+            serde_json::to_string(&review.annotations).context("serialize review annotations")?;
         sqlx::query(
             "INSERT INTO eval_reviews \
              (id, eval_run_id, agent_profile_id, status, verdict, confidence, score, \
-              summary, raw_output_json, error, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              summary, raw_output_json, annotations_json, error, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&review.id)
         .bind(&review.eval_run_id)
@@ -1158,6 +1172,7 @@ impl RunStore {
         .bind(review.score.map(|s| s as i64))
         .bind(&review.summary)
         .bind(&review.raw_output_json)
+        .bind(annotations_json)
         .bind(&review.error)
         .bind(review.created_at.to_rfc3339())
         .bind(review.updated_at.to_rfc3339())
@@ -1171,7 +1186,7 @@ impl RunStore {
     pub async fn get_review(&self, id: &str) -> Result<Option<EvalReview>> {
         let row = sqlx::query(
             "SELECT id, eval_run_id, agent_profile_id, status, verdict, confidence, score, \
-                    summary, raw_output_json, error, created_at, updated_at \
+                    summary, raw_output_json, annotations_json, error, created_at, updated_at \
              FROM eval_reviews WHERE id = ?",
         )
         .bind(id)
@@ -1186,7 +1201,7 @@ impl RunStore {
     pub async fn list_reviews_for_run(&self, eval_run_id: &str) -> Result<Vec<EvalReview>> {
         let rows = sqlx::query(
             "SELECT id, eval_run_id, agent_profile_id, status, verdict, confidence, score, \
-                    summary, raw_output_json, error, created_at, updated_at \
+                    summary, raw_output_json, annotations_json, error, created_at, updated_at \
              FROM eval_reviews WHERE eval_run_id = ? ORDER BY created_at DESC, id DESC",
         )
         .bind(eval_run_id)
@@ -1232,6 +1247,21 @@ impl RunStore {
         summary: &str,
         raw_output_json: &str,
     ) -> Result<bool> {
+        self.complete_review_with_annotations(id, verdict, confidence, score, summary, raw_output_json, &[])
+            .await
+    }
+
+    /// Persist a completed review plus structured annotations.
+    pub async fn complete_review_with_annotations(
+        &self,
+        id: &str,
+        verdict: ReviewVerdict,
+        confidence: f64,
+        score: i32,
+        summary: &str,
+        raw_output_json: &str,
+        annotations: &[ReviewAnnotation],
+    ) -> Result<bool> {
         if !(0.0..=1.0).contains(&confidence) {
             anyhow::bail!(
                 "complete_review: confidence {confidence} out of range [0.0, 1.0] (review id={id})"
@@ -1240,11 +1270,12 @@ impl RunStore {
         if !(0..=100).contains(&score) {
             anyhow::bail!("complete_review: score {score} out of range [0, 100] (review id={id})");
         }
+        let annotations_json = serde_json::to_string(annotations).context("serialize review annotations")?;
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE eval_reviews \
              SET status = 'completed', verdict = ?, confidence = ?, score = ?, \
-                 summary = ?, raw_output_json = ?, error = NULL, updated_at = ? \
+                 summary = ?, raw_output_json = ?, annotations_json = ?, error = NULL, updated_at = ? \
              WHERE id = ? AND status IN ('queued', 'running')",
         )
         .bind(verdict.as_str())
@@ -1252,6 +1283,7 @@ impl RunStore {
         .bind(score as i64)
         .bind(summary)
         .bind(raw_output_json)
+        .bind(annotations_json)
         .bind(&now)
         .bind(id)
         .execute(&self.pool)
@@ -1435,6 +1467,11 @@ fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
     let raw_output_json: Option<String> = row
         .try_get("raw_output_json")
         .context("read eval_review raw_output_json")?;
+    let annotations_json: String = row
+        .try_get("annotations_json")
+        .context("read eval_review annotations_json")?;
+    let annotations: Vec<ReviewAnnotation> =
+        serde_json::from_str(&annotations_json).context("deserialize eval_review annotations_json")?;
     let error: Option<String> = row.try_get("error").context("read eval_review error")?;
     let created_at_str: String = row.try_get("created_at").context("read eval_review created_at")?;
     let created_at = DateTime::parse_from_rfc3339(&created_at_str)
@@ -1454,6 +1491,7 @@ fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
         score,
         summary,
         raw_output_json,
+        annotations,
         error,
         created_at,
         updated_at,
@@ -1506,6 +1544,19 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         .unwrap_or(None)
         .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null))
         .filter(|v| !v.is_null());
+    let auto_fire_review = row
+        .try_get::<i64, _>("auto_fire_review")
+        .map(|n| n != 0)
+        .unwrap_or(false);
+    let review_model: Option<ReviewModel> = row
+        .try_get::<Option<String>, _>("review_model_json")
+        .unwrap_or(None)
+        .map(|s| serde_json::from_str(&s).context("deserialize review_model_json"))
+        .transpose()?;
+    let max_annotations_per_review = row
+        .try_get::<Option<i64>, _>("max_annotations_per_review")
+        .unwrap_or(None)
+        .and_then(|n| u32::try_from(n).ok());
 
     Ok(Run {
         id: row.try_get("id").context("read id")?,
@@ -1536,6 +1587,9 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         bars_content_hash,
         manifest_canonical,
         bars_manifest,
+        auto_fire_review,
+        review_model,
+        max_annotations_per_review,
     })
 }
 

@@ -42,7 +42,7 @@ use crate::eval::findings::{Finding, InferenceCostDominatesReturnPayload, Severi
 use crate::eval::metrics::{
     compute_net_return_pct, inference_cost_dominates, INFERENCE_COST_DOMINANCE_THRESHOLD,
 };
-use crate::eval::run::{Run, RunMode, RunStatus};
+use crate::eval::run::{ReviewModel, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 use crate::eval::scenario::canonical_scenarios;
 use crate::eval::scenario::Scenario;
@@ -124,6 +124,12 @@ pub struct RunSummary {
     pub net_return_pct: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filter_summaries: Vec<FilterSummary>,
+    #[serde(default)]
+    pub auto_fire_review: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_model: Option<ReviewModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_annotations_per_review: Option<u32>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -592,6 +598,9 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         limits: None,
         skip_preflight: false,
         provider_override: None,
+        auto_fire_review: source.auto_fire_review,
+        review_model: source.review_model.clone(),
+        max_annotations_per_review: source.max_annotations_per_review,
     };
     let detail = start_run(ctx, req).await?;
     Ok(RetryOutcome {
@@ -882,6 +891,20 @@ pub struct EvalRunRequest {
     /// Wave B #5: `cli-eval-model-override`.
     #[serde(default)]
     pub provider_override: Option<ProviderOverride>,
+    /// When true, finalizing a successful run fires the rule-based review
+    /// agent and stores chart annotations on `eval_reviews.annotations_json`.
+    /// Default false: auto-review is opt-in per run.
+    #[serde(default)]
+    pub auto_fire_review: bool,
+    /// Optional display override for the review model requested by the
+    /// launcher. The current wave persists this for audit/UI; manual review
+    /// engine routing continues to use the selected agent profile.
+    #[serde(default)]
+    pub review_model: Option<ReviewModel>,
+    /// Maximum annotations the review contract should emit. Stored on the
+    /// run so UI/CLI launches round-trip their annotation budget.
+    #[serde(default)]
+    pub max_annotations_per_review: Option<u32>,
 }
 
 /// Stable role string used on the `supervisor_notes` row that captures
@@ -1680,6 +1703,7 @@ async fn run_inner(
     //    emitter so SpanStarted events have a valid FK.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     run.params_override = req.params_override.clone();
+    apply_review_launch_options(&mut run, &req);
     // F-11: persist the long-lived workspace `agents.agent_id` next to
     // the existing bundle-hash `agent_id`. Migration 021 added the
     // column; `pick_agents_agent_id` returns `None` for legacy
@@ -1869,7 +1893,9 @@ async fn run_inner(
     // LLM call, no dispatch dependency. Best-effort by design —
     // failures log warn! and the run stays successful.
     let store_for_auto = RunStore::new(ctx.db.clone());
-    crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
+    if finalized.auto_fire_review {
+        crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
+    }
 
     // Guardrail rewrite summary (eval-guardrail-log-collapse). Reads
     // guard-role supervisor_notes, emits one tracing::warn! and one
@@ -2245,6 +2271,8 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // behind. The matching `RunFinished` is emitted by
     // `execute_in_background`.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
+    run.params_override = req.params_override.clone();
+    apply_review_launch_options(&mut run, &req);
     // F-11: see comment in `run_inner` above — same reasoning here.
     run.agents_agent_id = pick_agents_agent_id(&strategy);
     // Same catalog-wiring as the synchronous run path above; see the
@@ -2558,7 +2586,9 @@ async fn execute_in_background(
     // Rule-based auto-review postprocess. Best-effort; reads the
     // findings we just persisted and writes a single eval_reviews row.
     let store_for_auto = RunStore::new(ctx.db.clone());
-    crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
+    if finalized.auto_fire_review {
+        crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
+    }
 
     // Guardrail rewrite summary (eval-guardrail-log-collapse). Best-effort.
     let store_for_guard = RunStore::new(ctx.db.clone());
@@ -2771,6 +2801,12 @@ pub fn summarise_run(run: Run) -> RunSummary {
     summarise(run)
 }
 
+fn apply_review_launch_options(run: &mut Run, req: &EvalRunRequest) {
+    run.auto_fire_review = req.auto_fire_review;
+    run.review_model = req.review_model.clone();
+    run.max_annotations_per_review = req.max_annotations_per_review.or(Some(8));
+}
+
 fn summarise(run: Run) -> RunSummary {
     let (sharpe, max_dd, total_return, inference_cost, net_return) = match &run.metrics {
         Some(m) => (
@@ -2802,6 +2838,9 @@ fn summarise(run: Run) -> RunSummary {
         inference_cost_quote_total: inference_cost,
         net_return_pct: net_return,
         filter_summaries: Vec::new(),
+        auto_fire_review: run.auto_fire_review,
+        review_model: run.review_model,
+        max_annotations_per_review: run.max_annotations_per_review,
     }
 }
 
