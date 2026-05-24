@@ -111,13 +111,18 @@ fn validate_provider_name(name: &str, _ctx: &()) -> garde::Result {
 
 /// Which agent runtime drives LLM-backed slots.
 ///
-/// `Cline` routes each slot through the `xvision-agentd` sidecar (the unified
-/// live + eval path) and is the DEFAULT as of Stage 1's final task — the live
-/// path is proven (engine integration tests green) so new runs go through the
-/// sidecar. `LlmDispatch` is the legacy raw-reqwest dispatch, retained as a
-/// flag-gated fallback during the Cline migration (runtime-unification spec,
-/// invariant 6): operators select it explicitly via `agent_runtime =
-/// "llm-dispatch"`.
+/// As of Stage 3 (Cline runtime unification, Task 10), **`Cline` is the
+/// unconditional routine runtime** — every normal run goes through the
+/// `xvision-agentd` sidecar (the unified live + eval + replay path). The
+/// per-config `agent_runtime` selector is no longer the routine knob; new
+/// configs should not set it.
+///
+/// `LlmDispatch` (the legacy raw-reqwest dispatch) is retained ONLY as a
+/// time-boxed **emergency rollback** reachable via the
+/// [`EMERGENCY_LLM_DISPATCH_ENV`] env var (runtime-unification spec,
+/// inheritance item 6 — "keep an off-ramp"). It is opt-in, logged loudly,
+/// and scoped to the process that sets the env var; see [`emergency_llm_dispatch_enabled`]
+/// and `MANUAL.md` (Emergency rollback) for the blast radius + removal date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentRuntime {
@@ -134,6 +139,45 @@ impl std::str::FromStr for AgentRuntime {
             "llm-dispatch" | "llm_dispatch" => Ok(Self::LlmDispatch),
             other => Err(format!("unknown agent runtime: {other}")),
         }
+    }
+}
+
+/// Emergency-rollback env var (Stage 3, Task 10 / inheritance item 6).
+///
+/// When set to `1` / `true` it routes the routine LLM path back through the
+/// legacy [`AgentRuntime::LlmDispatch`] for incident rollback. This is the
+/// ONLY remaining way to reach `LlmDispatch` now that Cline is unconditional:
+/// the per-config `agent_runtime` knob no longer selects the routine path.
+///
+/// Blast radius: the process that sets the var, opt-in only. Documented in
+/// `MANUAL.md` with a stated removal-after-bake-in date.
+pub const EMERGENCY_LLM_DISPATCH_ENV: &str = "XVN_EMERGENCY_LLM_DISPATCH";
+
+/// True iff the operator opted into the emergency `LlmDispatch` rollback via
+/// [`EMERGENCY_LLM_DISPATCH_ENV`] (`1` or `true`, case-insensitive).
+///
+/// Callers should emit a loud `warn!` naming the blast radius when this
+/// returns `true` so the rollback is never silent.
+pub fn emergency_llm_dispatch_enabled() -> bool {
+    std::env::var(EMERGENCY_LLM_DISPATCH_ENV)
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true"
+        })
+        .unwrap_or(false)
+}
+
+/// Resolve the routine agent runtime (Stage 3, Task 10).
+///
+/// Cline is unconditional unless the emergency env override is set, in which
+/// case `LlmDispatch` is returned for incident rollback. This is the routine
+/// resolver — it deliberately ignores the per-config `agent_runtime` field,
+/// which is retired from the routine path.
+pub fn resolve_routine_runtime() -> AgentRuntime {
+    if emergency_llm_dispatch_enabled() {
+        AgentRuntime::LlmDispatch
+    } else {
+        AgentRuntime::Cline
     }
 }
 
@@ -941,6 +985,42 @@ rate_limit_rpm = 600
         assert_eq!(AgentRuntime::from_str("llm-dispatch").unwrap(), AgentRuntime::LlmDispatch);
         assert_eq!(AgentRuntime::from_str("llm_dispatch").unwrap(), AgentRuntime::LlmDispatch);
         assert!(AgentRuntime::from_str("bogus").is_err());
+    }
+
+    // --- Stage 3 Task 10: Cline unconditional + emergency off-ramp ----------
+
+    /// The env-var tests below mutate process-global state, so they are
+    /// serialized behind one `#[test]` to avoid cross-test races.
+    #[test]
+    fn routine_runtime_is_cline_unless_emergency_env_set() {
+        // SAFETY: single test fn, no other test reads this env concurrently.
+        // Clean slate.
+        std::env::remove_var(EMERGENCY_LLM_DISPATCH_ENV);
+        assert!(!emergency_llm_dispatch_enabled());
+        assert_eq!(
+            resolve_routine_runtime(),
+            AgentRuntime::Cline,
+            "Cline is the unconditional routine runtime"
+        );
+
+        // Emergency rollback: explicit opt-in → LlmDispatch.
+        std::env::set_var(EMERGENCY_LLM_DISPATCH_ENV, "1");
+        assert!(emergency_llm_dispatch_enabled());
+        assert_eq!(resolve_routine_runtime(), AgentRuntime::LlmDispatch);
+
+        std::env::set_var(EMERGENCY_LLM_DISPATCH_ENV, "true");
+        assert_eq!(resolve_routine_runtime(), AgentRuntime::LlmDispatch);
+
+        // A non-truthy value is NOT a rollback (avoids accidental triggers).
+        std::env::set_var(EMERGENCY_LLM_DISPATCH_ENV, "0");
+        assert!(!emergency_llm_dispatch_enabled());
+        assert_eq!(resolve_routine_runtime(), AgentRuntime::Cline);
+
+        std::env::set_var(EMERGENCY_LLM_DISPATCH_ENV, "no");
+        assert!(!emergency_llm_dispatch_enabled());
+
+        // Restore clean state for any later test in this process.
+        std::env::remove_var(EMERGENCY_LLM_DISPATCH_ENV);
     }
 
     // --- providers (Plan #7 Phase 1) ----------------------------------------

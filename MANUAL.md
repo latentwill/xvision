@@ -549,6 +549,33 @@ fixed: contain first, diagnose second, communicate third, post-mortem fourth.
 - [ ] Post a one-line status to wherever your status channel is: "Halt at
       <UTC time>; investigating <one-line>." Don't wait for completeness.
 
+#### Emergency rollback: Cline runtime → legacy LlmDispatch
+
+As of the Stage 3 Cline runtime unification, **Cline (the `xvision-agentd`
+sidecar) is the unconditional routine runtime** — every normal run drives
+LLM slots through the sidecar. The per-config `agent_runtime` selector no
+longer chooses the routine path.
+
+If a sidecar-side regression is suspected (the agent loop misbehaves, the
+sidecar wedges, a Cline SDK upgrade broke decisions), you can roll the
+routine LLM path back to the legacy raw-reqwest `LlmDispatch` for the
+incident by setting one env var on the affected process:
+
+```bash
+export XVN_EMERGENCY_LLM_DISPATCH=1   # or =true
+# restart the affected scheduler / xvn process so it re-reads the env
+```
+
+- **Blast radius:** the single process that sets the var (opt-in only).
+  Other processes / hosts are unaffected.
+- **Logged loudly:** the engine emits a `warn!` on every run naming the
+  rollback and the env var to unset; the rollback is never silent.
+- **Restore Cline:** `unset XVN_EMERGENCY_LLM_DISPATCH` and restart.
+- **Time-boxed:** this off-ramp is a temporary incident lever, not a
+  supported steady state. Removal is planned after the Cline path bakes in
+  (target: one release after Stage 3 ships); track the removal under the
+  runtime-unification spec (inheritance item 6).
+
 ### 2. Diagnose (≤ 30 min)
 
 - [ ] Inspect recent eval history with `xvn eval list` and

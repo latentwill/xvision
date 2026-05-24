@@ -1755,6 +1755,23 @@ fn resolve_provider_api_key(entry: &ProviderEntry) -> ApiResult<Option<String>> 
 /// from the raw config text (the `agent_runtime` key's presence) because
 /// serde collapses both to the same deserialized value.
 async fn resolve_agent_runtime(ctx: &ApiContext) -> AgentRuntime {
+    // Stage 3 Task 10 / inheritance item 6 — emergency off-ramp. When the
+    // documented env var is set, route the routine path back through the
+    // legacy LlmDispatch for incident rollback, with a loud warn naming the
+    // blast radius. This is the ONLY remaining knob that selects LlmDispatch;
+    // the per-config `agent_runtime` field no longer drives the routine path.
+    if config::emergency_llm_dispatch_enabled() {
+        tracing::warn!(
+            target: "agent_runtime",
+            env = config::EMERGENCY_LLM_DISPATCH_ENV,
+            "EMERGENCY ROLLBACK ACTIVE: routing LLM slots through legacy LlmDispatch \
+             (blast radius: this process only, opt-in). Cline is the unconditional \
+             routine runtime; unset {} to restore it. See MANUAL.md (Emergency rollback).",
+            config::EMERGENCY_LLM_DISPATCH_ENV,
+        );
+        return AgentRuntime::LlmDispatch;
+    }
+
     let cfg_path = runtime_config_path(ctx);
     let sidecar_available = std::env::var("XVN_AGENTD_BIN").map(|v| !v.is_empty()).unwrap_or(false);
 
