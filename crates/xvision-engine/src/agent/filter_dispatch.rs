@@ -168,6 +168,7 @@ fn parse_filter_response(resp: &LlmResponse, role: &str, ts: DateTime<Utc>) -> a
         payload: parsed.payload,
         granularity: parsed.granularity,
         ts,
+        scope: crate::agent::dispatch_capability::SignalScope::Global,
     })
 }
 

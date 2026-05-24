@@ -137,6 +137,7 @@ mod tests {
             payload: json!({"active": true}),
             granularity: FilterGranularity::Minute,
             ts,
+            scope: crate::agent::dispatch_capability::SignalScope::Global,
         }
     }
 

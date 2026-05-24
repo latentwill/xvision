@@ -6,7 +6,7 @@
 //! predicates on `payload.active` gate the Trader correctly. Confirms
 //! LLM/DSL parity at the predicate layer.
 
-use xvision_engine::agent::dispatch_capability::{AgentOutput, FilterGranularity, FilterSignal};
+use xvision_engine::agent::dispatch_capability::{AgentOutput, FilterGranularity, FilterSignal, SignalScope};
 use xvision_engine::agent::edge_predicate::evaluate_predicate;
 use xvision_engine::strategies::agent_ref::EdgePredicate;
 use xvision_filters::{dsl_to_filter_signal, ActivationDecision, Transition};
@@ -29,6 +29,7 @@ fn dsl_bridge_active_payload_matches_eq_true_predicate() {
         payload: bridged.payload.clone(),
         granularity: FilterGranularity::Bar,
         ts: chrono::Utc::now(),
+        scope: SignalScope::Global,
     };
     let predicate = EdgePredicate::Eq {
         signal_field: "active".into(),
@@ -49,6 +50,7 @@ fn dsl_bridge_inactive_payload_does_not_match_eq_true() {
         payload: bridged.payload.clone(),
         granularity: FilterGranularity::Bar,
         ts: chrono::Utc::now(),
+        scope: SignalScope::Global,
     };
     let predicate = EdgePredicate::Eq {
         signal_field: "active".into(),
@@ -69,6 +71,7 @@ fn dsl_bridge_cooldown_carries_reason_in_payload() {
         payload: bridged.payload,
         granularity: FilterGranularity::Bar,
         ts: chrono::Utc::now(),
+        scope: SignalScope::Global,
     };
     let predicate = EdgePredicate::Eq {
         signal_field: "reason".into(),

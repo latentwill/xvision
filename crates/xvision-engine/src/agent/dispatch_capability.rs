@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use xvision_core::trading::AssetSymbol;
 
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
@@ -45,6 +46,25 @@ use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
 use xvision_core::providers::Catalog;
 use xvision_observability::Recorder;
+
+/// Scope at which a `FilterSignal` is meaningful. First-class so cross-asset
+/// and global signals are not second-class "synthetic asset name" hacks.
+/// In v1's `PerAsset` fan-out the dispatcher tags signals `Asset(current)`;
+/// the other variants exist so future filters emit them with no key migration.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalScope {
+    Global,
+    Asset(AssetSymbol),
+    Pair(AssetSymbol, AssetSymbol),
+    Custom(String),
+}
+
+impl Default for SignalScope {
+    fn default() -> Self {
+        SignalScope::Global
+    }
+}
 
 /// Trader's typed decision output. Phase B wraps the existing `LlmResponse`
 /// so the pre-Phase-B trader path is byte-identical — the trader still
@@ -78,6 +98,10 @@ pub struct FilterSignal {
     /// Bar timestamp the signal was computed on. Used for stale-signal
     /// detection in Phase C's per-granularity cache.
     pub ts: DateTime<Utc>,
+    /// Scope this signal applies to. Defaults to `Global` for back-compat
+    /// with pre-multi-asset signal JSON.
+    #[serde(default)]
+    pub scope: SignalScope,
 }
 
 /// Phase A's spec defines three granularities. Phase B carries the
@@ -280,6 +304,7 @@ async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
             payload: serde_json::Value::Null,
             granularity: FilterGranularity::Bar,
             ts: input.scenario_start.unwrap_or_else(Utc::now),
+            scope: SignalScope::Global,
         };
         return Ok(DispatchOutcome {
             output: AgentOutput::Filter(signal),
@@ -308,6 +333,7 @@ async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
                     payload: serde_json::Value::Null,
                     granularity: FilterGranularity::Bar,
                     ts: Utc::now(),
+                    scope: SignalScope::Global,
                 }),
                 input_tokens: 0,
                 output_tokens: 0,
@@ -522,6 +548,31 @@ mod tests {
     use super::*;
     use crate::agent::llm::{ContentBlock, StopReason};
     use std::collections::BTreeSet;
+
+    #[test]
+    fn signal_scope_round_trips_each_variant() {
+        use xvision_core::trading::AssetSymbol;
+        for scope in [
+            SignalScope::Global,
+            SignalScope::Asset(AssetSymbol::Btc),
+            SignalScope::Pair(AssetSymbol::Btc, AssetSymbol::Eth),
+            SignalScope::Custom("vol_basket".into()),
+        ] {
+            let s = serde_json::to_string(&scope).unwrap();
+            let back: SignalScope = serde_json::from_str(&s).unwrap();
+            assert_eq!(scope, back);
+        }
+    }
+
+    #[test]
+    fn filter_signal_defaults_scope_to_global_when_absent() {
+        let json = serde_json::json!({
+            "name": "regime", "payload": {"regime":"trend"},
+            "granularity": "bar", "ts": "2026-05-24T00:00:00Z"
+        });
+        let sig: FilterSignal = serde_json::from_value(json).unwrap();
+        assert_eq!(sig.scope, SignalScope::Global);
+    }
 
     #[test]
     fn resolve_activates_prefers_explicit_field() {
