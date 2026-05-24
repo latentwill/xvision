@@ -10,11 +10,19 @@ import {
   hashJson,
 } from "./emit.js"
 import { activeRunId } from "./active-run.js"
+import type { FrameRecorder } from "./frame-recorder.js"
 
 export type { ToolDescriptor }
 
 export interface ShimOptions {
   allowWrites: boolean
+  /**
+   * When provided, a ToolResult frame is recorded for every tool execution
+   * (success output OR error-as-data) before the result is returned to Cline.
+   * This is mandatory for Stage 3 replay divergence detection and for
+   * reconstructing the next model request (which embeds tool results).
+   */
+  recorder?: FrameRecorder
 }
 
 export function shimRegistryToTools(
@@ -28,12 +36,12 @@ export function shimRegistryToTools(
     const d = byName.get(name)
     if (!d) throw new Error(`unknown tool in allow-list: ${name}`)
     if (d.side_effect_level === "external_write" && !opts.allowWrites) continue
-    out.push(buildTool(d))
+    out.push(buildTool(d, opts))
   }
   return out
 }
 
-function buildTool(d: ToolDescriptor): AgentTool {
+function buildTool(d: ToolDescriptor, opts: ShimOptions): AgentTool {
   return createTool({
     name: d.name,
     description: d.description,
@@ -48,11 +56,20 @@ function buildTool(d: ToolDescriptor): AgentTool {
     // If a future SDK version drops `signal`, the `?.addEventListener`
     // chain silently no-ops — the path is feature-gated by presence
     // rather than version checks.
-    execute: async (input: unknown, context?: { signal?: AbortSignal }) => {
+    //
+    // `toolCallId` is also available in `AgentToolContext` and is used
+    // to correlate ToolResult frames with the upstream ToolCallDelta.
+    execute: async (
+      input: unknown,
+      context?: { signal?: AbortSignal; toolCallId?: string },
+    ) => {
       const runId = activeRunId()
       const spanId = newSpanId()
       let cancelEmitted = false
       const signal = context?.signal
+      // toolCallId from AgentToolContext — correlates ToolResult with ToolCallDelta.
+      // Falls back to spanId when the SDK doesn't supply one (future-proofing).
+      const toolCallId = context?.toolCallId ?? spanId
       const onAbort = () => {
         if (cancelEmitted || !runId) return
         cancelEmitted = true
@@ -90,6 +107,12 @@ function buildTool(d: ToolDescriptor): AgentTool {
             output_hash: hashJson(out),
           })
         }
+        // Record ToolResult frame BEFORE returning to Cline — mandatory for
+        // replay divergence detection (Stage 3) and request reconstitution.
+        // Recorded even when cancelEmitted so the frame is present for replay.
+        if (opts.recorder) {
+          opts.recorder.recordToolResult(toolCallId, out)
+        }
         return out
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
@@ -102,7 +125,12 @@ function buildTool(d: ToolDescriptor): AgentTool {
         }
         // Per Cline SDK rule: return errors as data, do not throw —
         // throwing counts as a "mistake" against the agent's mistake limit.
-        return { error: message }
+        const errorResult = { error: message }
+        // Record the error-as-data ToolResult so replay sees the same value.
+        if (opts.recorder) {
+          opts.recorder.recordToolResult(toolCallId, errorResult, message)
+        }
+        return errorResult
       } finally {
         if (signal && typeof signal.removeEventListener === "function") {
           signal.removeEventListener("abort", onAbort)

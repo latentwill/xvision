@@ -22,6 +22,18 @@ export interface StartRunConfig {
    * used as the lifecycle tool's `inputSchema`.
    */
   decision_schema?: Record<string, unknown>
+  /**
+   * When true, the model-wrapper tap records a `Request` frame + one frame per
+   * `AgentModelEvent`, and tool-shim records a `ToolResult` frame for every
+   * tool execution. Frames are emitted via `emitFrame` (non-droppable) so the
+   * Rust side can persist them to the trajectory store.
+   *
+   * Opt-in: recording is disabled by default to avoid overhead on runs that
+   * don't need replay fidelity (e.g. paper-trading, live runs where the caller
+   * hasn't opted in). Set to true for backtests and any run requiring Stage 3
+   * replay.
+   */
+  record?: boolean
 }
 
 export interface Session {
