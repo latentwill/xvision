@@ -1,7 +1,7 @@
 // frontend/web/src/features/agent-runs/AgentRunIndentedTimeline.tsx
 import { useMemo } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
-import { spanColor, withAlpha } from "./span-colors";
+import { categoryOf, spanColor, withAlpha } from "./span-colors";
 
 function depthOf(span: RunSpan, byId: Map<string, RunSpan>): number {
   let depth = 0;
@@ -71,7 +71,11 @@ export function AgentRunIndentedTimeline({
   selectedSpanId: string | null;
   onSelect: (spanId: string) => void;
 }) {
-  const rows = useMemo(() => buildRows(spans), [spans]);
+  const visibleSpans = useMemo(
+    () => spans.filter((span) => categoryOf(span.kind) !== "supervisor"),
+    [spans],
+  );
+  const rows = useMemo(() => buildRows(visibleSpans), [visibleSpans]);
 
   if (rows.length === 0) {
     return (

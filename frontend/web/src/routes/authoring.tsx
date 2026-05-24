@@ -598,6 +598,8 @@ type AddAgentAccordionProps = {
 function AddAgentAccordion(props: AddAgentAccordionProps) {
   const [mode, setMode] = useState<"existing" | "create">("existing");
   const [open, setOpen] = useState(true);
+  const existingRoleReserved = isReservedAgentRole(props.newRole);
+  const newAgentRoleReserved = isReservedAgentRole(props.newAgentRole);
 
   return (
     <div
@@ -676,6 +678,11 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                   onChange={(e) => props.setNewRole(e.target.value)}
                   placeholder="Role name (e.g. trader)"
                 />
+                {existingRoleReserved ? (
+                  <div className="mt-1 text-[11px] text-warn">
+                    filter is reserved for saved strategy JSON filters.
+                  </div>
+                ) : null}
               </Field>
               <button
                 type="button"
@@ -683,6 +690,7 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                 disabled={
                   !props.newAgentId ||
                   !props.newRole.trim() ||
+                  existingRoleReserved ||
                   props.attachExistingPending
                 }
                 className="px-3 py-1.5 rounded text-[12px] border border-border disabled:opacity-50"
@@ -708,6 +716,11 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                     onChange={(e) => props.setNewAgentRole(e.target.value)}
                     placeholder="trader"
                   />
+                  {newAgentRoleReserved ? (
+                    <div className="mt-1 text-[11px] text-warn">
+                      filter is reserved for saved strategy JSON filters.
+                    </div>
+                  ) : null}
                 </Field>
               </div>
               <Field label="New agent model">
@@ -740,6 +753,7 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                 disabled={
                   !props.newAgentName.trim() ||
                   !props.newAgentRole.trim() ||
+                  newAgentRoleReserved ||
                   !props.newAgentProvider ||
                   !props.newAgentModel ||
                   props.createPending
@@ -1347,6 +1361,10 @@ function hasAttachedAgents(strategy: Strategy | null): boolean {
 
 function agentSupportsFilter(agent: Agent): boolean {
   return agent.slots.some((slot) => slot.capabilities?.includes("filter"));
+}
+
+function isReservedAgentRole(role: string): boolean {
+  return role.trim().toLowerCase() === "filter";
 }
 
 function Field({

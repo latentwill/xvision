@@ -145,11 +145,6 @@ export type SetFilterBody = {
   format: "json";
 };
 
-export type SetFilterOut = {
-  id: string;
-  filter: Filter;
-};
-
 export type StrategyAgentsOut = {
   strategy_id: string;
   agents: AgentRef[];
@@ -292,8 +287,8 @@ export function setRiskConfig(
 export function setStrategyFilter(
   id: string,
   body: SetFilterBody,
-): Promise<SetFilterOut> {
-  return apiFetch<SetFilterOut>(
+): Promise<Strategy> {
+  return apiFetch<Strategy>(
     `/api/strategy/${encodeURIComponent(id)}/filter`,
     {
       method: "PUT",

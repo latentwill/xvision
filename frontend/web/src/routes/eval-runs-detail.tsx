@@ -245,8 +245,8 @@ export function EvalRunDetailRoute() {
   return (
     <>
       <Topbar
-        title={labels.title}
-        sub={`${labels.subtitle} · ${disambiguator}`}
+        title="Eval run"
+        sub={`${labels.subtitle} · ${disambiguator} · ${detail.summary.id}`}
       />
 
       <InspectorContextStrip
@@ -497,11 +497,11 @@ function SummaryCard({
           </div>
           <div
             data-testid="eval-run-id"
-            className="mt-1 font-mono text-[12px] text-text-2 select-all"
+            className="mt-1 font-mono text-[12px] text-text-2 break-all select-all"
             aria-label={`Eval run id ${summary.id}`}
             title={summary.id}
           >
-            {labels.shortRunId}
+            {summary.id}
           </div>
           <div className="mt-1 text-[14px] text-text-2 truncate">
             {labels.scenarioName}
@@ -510,14 +510,9 @@ function SummaryCard({
             data-testid="eval-run-meta"
             className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-3"
           >
+            <span>{summary.mode}</span>
+            <span>{summary.status}</span>
             <span className="text-text-2">{disambiguator}</span>
-            <span
-              className="font-mono"
-              title={summary.id}
-              aria-label={`Run id ${summary.id}`}
-            >
-              full id available on hover
-            </span>
           </div>
         </div>
         {/*
@@ -1183,7 +1178,7 @@ function ContextPill({
       <span className="text-[9px] font-mono tracking-[0.18em] text-text-3 uppercase">
         {kind}
       </span>
-      <span className="font-mono truncate max-w-[28ch]">{label}</span>
+      <span className="font-mono break-all">{label}</span>
     </Link>
   );
 }

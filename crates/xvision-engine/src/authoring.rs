@@ -22,7 +22,7 @@ use crate::strategies::{
     validate::{no_filter_warnings, validate_strategy},
     AgentRef, PipelineDef, PipelineKind, Strategy,
 };
-use xvision_filters::{parse_json, parse_toml, validate as validate_filter_dsl, ActivationMode, Filter};
+use xvision_filters::{parse_json, validate as validate_filter_dsl, ActivationMode, Filter};
 
 // ---------------------------------------------------------------------------
 // types — request / response shapes shared by both surfaces.
@@ -100,10 +100,8 @@ pub struct AddAgentRefRequest {
     pub role: String,
     /// Phase A `AgentRef.activates`. `None` (default, the back-compat
     /// path) lets the dispatcher pick the slot's first capability.
-    /// `Some(Capability::Filter)` is the value the strategy editor's
-    /// inline Filter composer sets when attaching a Filter agent so
-    /// the Phase B dispatcher picks the Filter handler at this
-    /// position even if the referenced agent also advertises Trader.
+    /// `Some(Capability::Filter)` is rejected; filters are saved JSON
+    /// artifacts on the strategy, not agent refs.
     #[serde(default)]
     pub activates: Option<crate::agents::Capability>,
 }
@@ -165,7 +163,7 @@ pub struct SetRiskConfigOut {
 
 /// Request to set or replace the strategy's deterministic DSL Filter.
 ///
-/// The caller supplies the filter as DSL source text (TOML or JSON) and
+/// The caller supplies the filter as DSL JSON source text and
 /// the server parses + validates it. This keeps the operator's text
 /// editor as the source of truth and avoids round-tripping a deeply
 /// nested JSON tree through every client.
@@ -174,14 +172,14 @@ pub struct SetRiskConfigOut {
 pub struct SetStrategyFilterReq {
     pub id: String,
     pub source: String,
-    /// `"toml"` or `"json"`. Defaults to `"toml"` since the spec's
-    /// canonical authoring form is TOML.
+    /// Must be `"json"`. Kept on the wire so older clients fail with a
+    /// validation error instead of silently sending the wrong source form.
     #[serde(default = "default_filter_format")]
     pub format: String,
 }
 
 fn default_filter_format() -> String {
-    "toml".to_string()
+    "json".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,7 +282,7 @@ pub async fn create_blank_strategy(
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     store.save(&draft).await?;
     Ok(CreateStrategyOut { id })
@@ -376,11 +374,24 @@ pub async fn update_manifest(
     Ok(UpdateManifestOut { id: req.id, updated })
 }
 
+fn reject_reserved_agent_role(role: &str) -> anyhow::Result<()> {
+    if role == "filter" {
+        anyhow::bail!(
+            "agent role 'filter' is reserved for strategy JSON filters; choose a trader, analyst, risk, or reviewer role"
+        );
+    }
+    Ok(())
+}
+
 pub async fn add_agent_ref(store: &dyn StrategyStore, req: AddAgentRefRequest) -> anyhow::Result<Strategy> {
     let mut strategy = store.load(&req.strategy_id).await?;
     let role = canonical_role(&req.role);
     if role.is_empty() {
         anyhow::bail!("role is required");
+    }
+    reject_reserved_agent_role(&role)?;
+    if matches!(req.activates, Some(crate::agents::Capability::Filter)) {
+        anyhow::bail!("agent type 'filter' is removed; attach a strategy JSON filter instead");
     }
     if strategy.agents.iter().any(|a| canonical_role(&a.role) == role) {
         anyhow::bail!("role '{role}' already exists on strategy");
@@ -433,6 +444,7 @@ pub async fn rename_agent_role(
     if new_role.is_empty() {
         anyhow::bail!("new role is required");
     }
+    reject_reserved_agent_role(&new_role)?;
     if strategy
         .agents
         .iter()
@@ -564,10 +576,7 @@ pub async fn set_mechanical_param(
     store.save(&strategy).await
 }
 
-pub async fn set_filter(
-    store: &dyn StrategyStore,
-    req: SetFilterReq,
-) -> anyhow::Result<Strategy> {
+pub async fn set_filter(store: &dyn StrategyStore, req: SetFilterReq) -> anyhow::Result<Strategy> {
     let mut strategy = store.load(&req.strategy_id).await?;
     let filter = parse_filter_payload(req.filter, req.source.as_deref(), &req.strategy_id)?;
     strategy.filter = filter;
@@ -594,22 +603,12 @@ fn parse_filter_payload(
     let raw_filter = extract_filter_payload(raw_filter);
     let maybe_filter = match raw_filter {
         serde_json::Value::String(src) => parse_filter_text(&src, source, strategy_id),
-        other => match source {
-            Some("json") => parse_filter_value(other, strategy_id),
-            Some("toml") => {
-                let src = serde_json::to_string(&other)
-                    .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
-                parse_filter_text(&src, Some("toml"), strategy_id)
-            }
-            Some(s) if s.trim().is_empty() => parse_filter_value(other, strategy_id),
-            None => parse_filter_value(other.clone(), strategy_id).or_else(|json_err| {
-                let src = serde_json::to_string(&other)
-                    .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
-                parse_filter_text(&src, Some("toml"), strategy_id)
-                    .map_err(|_| json_err)
-            }),
+        other_value => match source {
+            Some("json") => parse_filter_value(other_value, strategy_id),
+            Some(source) if source.trim().is_empty() => parse_filter_value(other_value, strategy_id),
+            None => parse_filter_value(other_value, strategy_id),
             Some(_) => parse_filter_text(
-                &serde_json::to_string(&other)
+                &serde_json::to_string(&other_value)
                     .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
                 source,
                 strategy_id,
@@ -620,7 +619,7 @@ fn parse_filter_payload(
 }
 
 fn parse_filter_value(
-    mut raw_filter: serde_json::Value,
+    raw_filter: serde_json::Value,
     strategy_id: &str,
 ) -> anyhow::Result<xvision_filters::Filter> {
     let serde_json::Value::Object(mut obj) = raw_filter else {
@@ -647,22 +646,17 @@ fn parse_filter_text(
     source: Option<&str>,
     strategy_id: &str,
 ) -> anyhow::Result<xvision_filters::Filter> {
-    let mut filter = match source.unwrap_or_default() {
-        "toml" => xvision_filters::parse_toml(source_text)
-            .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
-        _ => parse_filter_text_preferring_json(source_text, strategy_id)
-            .or_else(|_| {
-                xvision_filters::parse_toml(source_text).map_err(|e| {
-                    anyhow::anyhow!("filter parse error: failed parsing as JSON and TOML: {e}")
-                })
-            })?,
-    };
+    if let Some(source) = source {
+        if source != "json" {
+            anyhow::bail!("unknown filter source format `{source}` — must be `json`");
+        }
+    }
+    let mut filter = parse_filter_text_preferring_json(source_text, strategy_id)?;
     if filter.id.as_str().is_empty() {
         filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
     }
     filter.strategy_id = strategy_id.to_string().into();
-    xvision_filters::validate(&filter)
-        .map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+    xvision_filters::validate(&filter).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
     Ok(filter)
 }
 
@@ -670,14 +664,13 @@ fn parse_filter_text_preferring_json(
     source_text: &str,
     strategy_id: &str,
 ) -> anyhow::Result<xvision_filters::Filter> {
-    let mut filter = xvision_filters::parse_json(source_text)
-        .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+    let mut filter =
+        xvision_filters::parse_json(source_text).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
     if filter.id.as_str().is_empty() {
         filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
     }
     filter.strategy_id = strategy_id.to_string().into();
-    xvision_filters::validate(&filter)
-        .map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+    xvision_filters::validate(&filter).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
     Ok(filter)
 }
 
@@ -733,9 +726,8 @@ pub async fn set_strategy_filter(
     req: SetStrategyFilterReq,
 ) -> anyhow::Result<SetStrategyFilterOut> {
     let filter = match req.format.as_str() {
-        "toml" => parse_toml(&req.source).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
         "json" => parse_json(&req.source).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
-        other => anyhow::bail!("unknown filter source format `{other}` — must be `toml` or `json`"),
+        other => anyhow::bail!("unknown filter source format `{other}` — must be `json`"),
     };
     validate_filter_dsl(&filter).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
 
@@ -743,10 +735,7 @@ pub async fn set_strategy_filter(
     strategy.filter = Some(filter.clone());
     strategy.activation_mode = ActivationMode::FilterGated;
     store.save(&strategy).await?;
-    Ok(SetStrategyFilterOut {
-        id: req.id,
-        filter,
-    })
+    Ok(SetStrategyFilterOut { id: req.id, filter })
 }
 
 /// Clear the strategy's filter, reverting `activation_mode` to
@@ -994,14 +983,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_agent_ref_threads_activates_capability_to_pipeline_position() {
-        // Phase 3 of agent-firing-filter: the strategy editor's inline
-        // composer attaches a Filter agent by sending
-        // `activates: Some(Capability::Filter)` on AddAgentRefRequest.
-        // The new AgentRef must carry that value so the Phase B
-        // dispatcher picks the Filter handler at this position even
-        // when the referenced agent advertises more than one
-        // capability. None on the request preserves today's behavior.
+    async fn add_agent_ref_rejects_filter_agent_type() {
         let (store, _td) = store_in_tmp();
         let out = create_strategy(
             &store,
@@ -1027,8 +1009,9 @@ mod tests {
         .unwrap();
         assert_eq!(s.agents[0].activates, None);
 
-        // Some(Filter) → the new AgentRef carries it verbatim.
-        let s = add_agent_ref(
+        // Some(Filter) is no longer a valid agent ref. Filters are saved
+        // JSON artifacts on the strategy, not agents.
+        let err = add_agent_ref(
             &store,
             AddAgentRefRequest {
                 strategy_id: out.id,
@@ -1038,13 +1021,8 @@ mod tests {
             },
         )
         .await
-        .unwrap();
-        let added = s
-            .agents
-            .iter()
-            .find(|r| r.role == "regime_filter")
-            .expect("added");
-        assert_eq!(added.activates, Some(crate::agents::Capability::Filter));
+        .expect_err("filter agent type should be rejected");
+        assert!(err.to_string().contains("agent type 'filter' is removed"));
     }
 
     #[tokio::test]
@@ -1112,7 +1090,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_strategy_filter_parses_toml_and_flips_activation_mode() {
+    async fn set_strategy_filter_parses_json_and_flips_activation_mode() {
         let (store, _td) = store_in_tmp();
         let out = create_strategy(
             &store,
@@ -1129,28 +1107,27 @@ mod tests {
         assert!(strategy.filter.is_none());
         assert!(matches!(strategy.activation_mode, ActivationMode::EveryBar));
 
-        // Set: minimal valid Filter TOML — mirrors the spec example.
-        const FILTER_TOML: &str = r#"
-[filter]
-id = "f_01JX0000000000000000000000"
-strategy_id = "s_01JX0000000000000000000000"
-display_name = "EMA Cross"
-asset_scope = ["BTC/USD"]
-timeframe = "1h"
-scan_cadence = "bar_close"
-cooldown_bars = 3
-
-[[filter.conditions.all]]
-lhs = "ema_20"
-op  = ">"
-rhs = "ema_50"
-"#;
+        // Set: minimal valid Filter JSON — the only accepted authoring form.
+        const FILTER_JSON: &str = r#"{
+  "id": "f_01JX0000000000000000000000",
+  "strategy_id": "s_01JX0000000000000000000000",
+  "display_name": "EMA Cross",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "1h",
+  "scan_cadence": "bar_close",
+  "cooldown_bars": 3,
+  "conditions": {
+    "all": [
+      { "lhs": "ema_20", "op": ">", "rhs": "ema_50" }
+    ]
+  }
+}"#;
         let r = set_strategy_filter(
             &store,
             SetStrategyFilterReq {
                 id: out.id.clone(),
-                source: FILTER_TOML.to_string(),
-                format: "toml".to_string(),
+                source: FILTER_JSON.to_string(),
+                format: "json".to_string(),
             },
         )
         .await
@@ -1159,10 +1136,7 @@ rhs = "ema_50"
 
         let strategy = get_strategy(&store, &out.id).await.unwrap();
         assert!(strategy.filter.is_some());
-        assert!(matches!(
-            strategy.activation_mode,
-            ActivationMode::FilterGated
-        ));
+        assert!(matches!(strategy.activation_mode, ActivationMode::FilterGated));
 
         // Clear: filter goes away, activation mode reverts.
         clear_strategy_filter(&store, &out.id).await.unwrap();
@@ -1188,8 +1162,8 @@ rhs = "ema_50"
             &store,
             SetStrategyFilterReq {
                 id: out.id.clone(),
-                source: "this is not valid toml or json".to_string(),
-                format: "toml".to_string(),
+                source: "this is not valid json".to_string(),
+                format: "json".to_string(),
             },
         )
         .await;
@@ -1233,10 +1207,8 @@ rhs = "ema_50"
 
     #[tokio::test]
     async fn validate_draft_surfaces_no_filter_warning_for_explicit_trader() {
-        // L2 of the firing-filter operator-surface spec — the SPA
-        // validate endpoint must surface the no-Filter soft-warning so
-        // the strategy editor can render it alongside errors. Without
-        // this wiring the CLI sees the warning but the SPA does not.
+        // The validate endpoint must surface the no-filter soft-warning
+        // so the strategy editor can render it alongside errors.
         use crate::agents::Capability;
 
         let (store, _td) = store_in_tmp();
@@ -1263,7 +1235,7 @@ rhs = "ema_50"
 
         let v = validate_draft(&store, &out.id).await.unwrap();
         assert!(
-            v.warnings.iter().any(|w| w.contains("no upstream Filter")),
+            v.warnings.iter().any(|w| w.contains("no saved JSON filter")),
             "expected no-Filter warning in ValidateDraftOut.warnings, got: {:?}",
             v.warnings,
         );
