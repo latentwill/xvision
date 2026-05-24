@@ -81,6 +81,18 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     .await
     .unwrap();
     sqlx::query(include_str!(
+        "../../xvision-engine/migrations/033_agent_slot_capabilities.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
     .execute(&pool)
