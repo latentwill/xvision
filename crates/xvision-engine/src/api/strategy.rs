@@ -19,8 +19,10 @@ use crate::authoring::{
     UpdateManifestReq, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use crate::strategies::{
-    store::{strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore},
-    AgentRef, PipelineDef, PipelineEdge, PipelineKind, Strategy,
+    store::{
+        apply_metadata_patch, strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore,
+    },
+    ActivationMode, AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind, Strategy,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -1011,6 +1013,59 @@ pub async fn update_metadata(
         }
         Err(err) => Err(ApiError::Other(err)),
     }
+}
+
+/// Patch the Strategy Inspector surface in one persisted write.
+///
+/// Metadata fields are applied first in memory, then an optional inline
+/// Filter is installed. The caller owns route-context normalization
+/// (for example filling `filter.strategy_id` from `:id`).
+pub async fn update_inspector(
+    ctx: &ApiContext,
+    id: &str,
+    metadata_patch: StrategyMetadataPatch,
+    filter: Option<Filter>,
+) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result: ApiResult<Strategy> = async {
+        let mut strategy = store
+            .load(id)
+            .await
+            .map_err(|e| map_authoring_error(e, Some(id)))?;
+        apply_metadata_patch(&mut strategy, metadata_patch)
+            .map_err(|e| ApiError::Validation(e.to_string()))?;
+
+        if let Some(filter) = filter {
+            xvision_filters::validate(&filter)
+                .map_err(|e| ApiError::Validation(format!("filter validation error: {e}")))?;
+            strategy.activation_mode = ActivationMode::FilterGated;
+            strategy.filter = Some(filter);
+        }
+
+        store.save(&strategy).await.map_err(ApiError::from)?;
+        Ok(strategy)
+    }
+    .await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "update_inspector",
+        Some(id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, id).await;
+    }
+    result
 }
 
 pub async fn add_agent(ctx: &ApiContext, req: AddAgentReq) -> ApiResult<StrategyAgentsOut> {

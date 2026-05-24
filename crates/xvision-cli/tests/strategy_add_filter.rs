@@ -7,6 +7,7 @@
 //! as a subprocess so the test exercises the same clap surface
 //! operators hit.
 
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -63,6 +64,7 @@ fn seed_strategy_with_trader(home: &Path) -> (String, String) {
                 name: "fixture-trader".into(),
                 description: "add-filter fixture trader".into(),
                 tags: vec!["add-filter-test".into()],
+                scope_strategy_id: None,
                 slots: vec![AgentSlot {
                     name: "main".into(),
                     provider: "anthropic".into(),
@@ -101,6 +103,7 @@ fn seed_strategy_with_trader(home: &Path) -> (String, String) {
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
                 min_warmup_bars: None,
+                color: None,
             },
             hypothesis: None,
             agents: vec![AgentRef {
@@ -155,6 +158,7 @@ fn seed_filter_agent(home: &Path) -> String {
                 name: "fixture-regime-filter".into(),
                 description: "add-filter fixture filter".into(),
                 tags: vec!["add-filter-test".into()],
+                scope_strategy_id: None,
                 slots: vec![AgentSlot {
                     name: "main".into(),
                     provider: "anthropic".into(),
@@ -204,6 +208,7 @@ fn seed_non_filter_agent(home: &Path) -> String {
                 name: "fixture-second-trader".into(),
                 description: "not Filter-capable".into(),
                 tags: vec!["add-filter-test".into()],
+                scope_strategy_id: None,
                 slots: vec![AgentSlot {
                     name: "main".into(),
                     provider: "anthropic".into(),
@@ -281,6 +286,66 @@ fn add_filter_appends_agent_ref_and_conditional_edge() {
     assert_eq!(
         edges[0]["condition"]["eq"]["signal_field"], "regime",
         "predicate must round-trip via EdgePredicate's snake_case shape; got: {edges:?}"
+    );
+}
+
+#[test]
+fn set_filter_from_json_autofills_strategy_scoped_ids() {
+    let dir = tempdir().unwrap();
+    let (strategy_id, _trader_id) = seed_strategy_with_trader(dir.path());
+    let filter_path = dir.path().join("filter.json");
+    fs::write(
+        &filter_path,
+        r#"{
+          "filter": {
+            "display_name": "BTC 15m EMA12>EMA26 + RSI throttle",
+            "asset_scope": ["BTC/USD"],
+            "timeframe": "15m",
+            "scan_cadence": "bar_close",
+            "conditions": {
+              "all": [
+                { "lhs": "ema_12", "op": ">", "rhs": "ema_26" },
+                { "lhs": "close", "op": "crosses_above", "rhs": "ema_12" },
+                { "lhs": "rsi_14", "op": "between", "rhs": [55, 75] }
+              ]
+            },
+            "cooldown_bars": 12,
+            "max_wakeups_per_day": 4,
+            "wake_when_in_position": "on_invalidation_or_target_only",
+            "agent_context_template": "compact_trade_context_v1"
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "set-filter",
+            &strategy_id,
+            "--from-json",
+            filter_path.to_str().unwrap(),
+        ],
+        dir.path(),
+    );
+    assert_eq!(
+        code(&out),
+        0,
+        "expected exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["strategy_id"], strategy_id);
+    assert_eq!(body["activation_mode"], "filter_gated");
+    assert_eq!(body["filter"]["strategy_id"], strategy_id);
+    assert!(
+        body["filter_id"].as_str().unwrap_or_default().len() >= 20,
+        "backend should assign a filter id, got: {}",
+        body["filter_id"]
+    );
+    assert_eq!(
+        body["filter"]["display_name"],
+        "BTC 15m EMA12>EMA26 + RSI throttle"
     );
 }
 

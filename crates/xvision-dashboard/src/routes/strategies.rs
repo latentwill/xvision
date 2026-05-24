@@ -9,11 +9,12 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use ulid::Ulid;
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_metadata,
-    update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq,
-    RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_inspector,
+    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest,
+    RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -23,6 +24,7 @@ use xvision_engine::authoring::{
 use xvision_engine::strategies::risk::RiskConfig;
 use xvision_engine::strategies::store::{MetadataPatchError, StrategyMetadataPatch};
 use xvision_engine::strategies::Strategy;
+use xvision_filters::{parse_json as parse_filter_json, Filter, FilterId, StrategyId};
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -302,6 +304,29 @@ pub async fn put_pipeline(
     Ok(Json(out))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyInspectorPatchBody {
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub plain_summary: Option<String>,
+    #[serde(default)]
+    pub asset_universe: Option<Vec<String>>,
+    #[serde(default)]
+    pub filter: Option<serde_json::Value>,
+}
+
+impl StrategyInspectorPatchBody {
+    fn metadata_patch(&self) -> StrategyMetadataPatch {
+        StrategyMetadataPatch {
+            display_name: self.display_name.clone(),
+            plain_summary: self.plain_summary.clone(),
+            asset_universe: self.asset_universe.clone(),
+        }
+    }
+}
+
 /// `PATCH /api/strategy/:id` — update top-level manifest fields
 /// (display_name, plain_summary, asset_universe). Out of scope:
 /// id/creator/template/published_at and the sub-resources covered by
@@ -314,17 +339,86 @@ pub async fn put_pipeline(
 pub async fn patch_metadata(
     Path(id): Path<String>,
     State(state): State<AppState>,
-    Json(patch): Json<StrategyMetadataPatch>,
+    Json(patch): Json<StrategyInspectorPatchBody>,
 ) -> Result<Json<Strategy>, DashboardError> {
+    let metadata_patch = patch.metadata_patch();
+    if let Some(raw_filter) = patch.filter {
+        let current = strategy::get(&state.api_context(), &id).await?;
+        let filter = filter_from_inspector_value(raw_filter, &id, current.filter.as_ref())?;
+        let updated = update_inspector(&state.api_context(), &id, metadata_patch, Some(filter)).await?;
+        return Ok(Json(updated));
+    }
+
     // Route through the engine API wrapper so the mutation writes an
     // `api_audit` row and refreshes the command-palette/search index
     // — PR #322 review (P2). The wrapper preserves typed store errors
     // via `ApiError::Other(anyhow)`, so the per-field classifier below
     // still gets the original `MetadataPatchError` / IO `NotFound`.
-    match update_metadata(&state.api_context(), &id, patch).await {
+    match update_metadata(&state.api_context(), &id, metadata_patch).await {
         Ok(updated) => Ok(Json(updated)),
         Err(ApiError::Other(err)) => Err(classify_metadata_patch_error(err, &id)),
         Err(other) => Err(DashboardError::from(other)),
+    }
+}
+
+fn filter_from_inspector_value(
+    raw: serde_json::Value,
+    strategy_id: &str,
+    existing: Option<&Filter>,
+) -> Result<Filter, DashboardError> {
+    let mut value = unwrap_filter_value(raw);
+    let obj = value.as_object_mut().ok_or_else(|| DashboardError::Validation {
+        field: "filter".into(),
+        msg: "filter must be a JSON object".into(),
+    })?;
+
+    obj.insert(
+        "strategy_id".into(),
+        serde_json::Value::String(strategy_id.to_string()),
+    );
+
+    let needs_id = obj
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty();
+    if needs_id {
+        let id = existing
+            .map(|filter| filter.id.clone())
+            .unwrap_or_else(|| FilterId::new(Ulid::new().to_string()));
+        obj.insert("id".into(), serde_json::Value::String(id.to_string()));
+    }
+
+    let body = serde_json::to_string(&value).map_err(|e| DashboardError::Validation {
+        field: "filter".into(),
+        msg: format!("filter serialize error: {e}"),
+    })?;
+    let filter = parse_filter_json(&body).map_err(|e| DashboardError::Validation {
+        field: "filter".into(),
+        msg: format!("filter parse error: {e}"),
+    })?;
+    if filter.strategy_id != StrategyId::new(strategy_id) {
+        return Err(DashboardError::Validation {
+            field: "filter.strategy_id".into(),
+            msg: "filter strategy_id did not match the route strategy id".into(),
+        });
+    }
+    xvision_filters::validate(&filter).map_err(|e| DashboardError::Validation {
+        field: "filter".into(),
+        msg: format!("filter validation error: {e}"),
+    })?;
+    Ok(filter)
+}
+
+fn unwrap_filter_value(raw: serde_json::Value) -> serde_json::Value {
+    match raw {
+        serde_json::Value::Object(mut obj)
+            if obj.contains_key("filter") && !obj.contains_key("display_name") =>
+        {
+            obj.remove("filter").unwrap_or(serde_json::Value::Object(obj))
+        }
+        other => other,
     }
 }
 
