@@ -21,7 +21,7 @@ export function MobileTopBar({
       </button>
       <div className="flex-1 min-w-0 flex items-center justify-center">
         {title ? (
-          <div className="font-serif text-[22px] font-medium text-text truncate">
+          <div className="font-sans font-medium text-[22px] text-text truncate">
             {title}
           </div>
         ) : context ? (
@@ -30,7 +30,7 @@ export function MobileTopBar({
             <span className="font-mono truncate">{context}</span>
           </div>
         ) : (
-          <span className="font-serif italic font-medium text-[24px] tracking-tight text-text">
+          <span className="font-sans font-semibold text-[24px] tracking-tight text-text">
             xvn
           </span>
         )}

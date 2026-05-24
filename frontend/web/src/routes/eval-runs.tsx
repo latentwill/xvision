@@ -444,7 +444,7 @@ export function EvalRunsRoute() {
         itemLabel="runs"
       />
 
-      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
+      <h2 className="font-sans font-semibold text-[20px] text-text mt-8 mb-3">
         Latest run chart
       </h2>
       <Card className="p-5">
@@ -746,7 +746,7 @@ function StartEvalDialog({
       >
         <form onSubmit={onSubmit} className="p-5 space-y-4">
           <div>
-            <h2 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+            <h2 className="m-0 font-sans font-semibold text-[20px] tracking-tight">
               Start eval
             </h2>
             <p className="m-0 mt-1 text-text-3 text-[12px]">

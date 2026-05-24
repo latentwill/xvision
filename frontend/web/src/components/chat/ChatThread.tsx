@@ -30,7 +30,7 @@ export function ChatThread({
       className="xvn-scroll xvn-scroll--always rail flex-1 min-h-0 px-4 py-3 flex flex-col gap-2"
     >
       {bubbles.length === 0 ? (
-        <div className="text-text-3 italic text-[13px] text-center py-4">
+        <div className="text-text-3 font-medium text-[13px] text-center py-4">
           No messages yet. Ask the agent something - it has tools for the
           authoring loop.
         </div>

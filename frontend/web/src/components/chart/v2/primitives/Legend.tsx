@@ -2,6 +2,7 @@ type LegendItem = {
   label: string;
   color: string;
   dashed?: boolean;
+  title?: string;
 };
 
 type Props = {
@@ -14,7 +15,7 @@ export function Legend({ items }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       {items.map((item) => (
-        <span key={item.label} className="flex items-center gap-1">
+        <span key={item.label} className="flex items-center gap-1" title={item.title}>
           {/* Color swatch */}
           <span
             className="inline-block w-5 h-0.5 shrink-0 rounded-full"

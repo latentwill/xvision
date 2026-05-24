@@ -40,6 +40,12 @@ vi.mock("@/api/strategies", async () => {
 vi.mock("@/components/chart/CompareChart", () => ({
   CompareChart: () => null,
 }));
+vi.mock("@/components/chart/v2/primitives/ChartFrame", () => ({
+  ChartFrame: ({ children }: { children: unknown }) => <div>{children as never}</div>,
+}));
+vi.mock("@/components/chart/v2/primitives/MultiStrategyEquityPane", () => ({
+  MultiStrategyEquityPane: () => null,
+}));
 
 const evalApi = await import("@/api/eval");
 

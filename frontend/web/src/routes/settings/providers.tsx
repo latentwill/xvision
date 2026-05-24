@@ -189,7 +189,7 @@ export function SettingsProvidersRoute() {
           error / empty / populated states. */}
       <div className="flex items-center justify-between mb-2">
         <div>
-          <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+          <h3 className="m-0 font-sans font-semibold text-[20px] tracking-tight">
             LLM providers
           </h3>
           <p className="m-0 mt-1 text-text-3 text-[12px]">

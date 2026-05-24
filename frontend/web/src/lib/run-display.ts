@@ -3,6 +3,7 @@ import type { RunSummary } from "@/api/types.gen";
 export type NamedStrategy = {
   agent_id: string;
   display_name?: string | null;
+  color?: string | null;
 };
 
 export type NamedScenario = {

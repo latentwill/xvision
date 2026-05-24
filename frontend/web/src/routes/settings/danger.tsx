@@ -164,7 +164,7 @@ function DangerSection<T>({
 
   return (
     <Card className="p-5 border-danger/30">
-      <h3 className="m-0 font-serif font-medium text-[18px] tracking-tight text-text">
+      <h3 className="m-0 font-sans font-semibold text-[18px] tracking-tight text-text">
         {title}
       </h3>
       <p className="m-0 mt-2 text-text-2 text-[13px] leading-snug">

@@ -438,7 +438,7 @@ function Thread({
       className="flex h-[50vh] flex-col gap-2.5 overflow-y-auto px-3 py-3 sm:h-[58vh] sm:gap-3 sm:px-5 sm:py-4"
     >
       {bubbles.length === 0 ? (
-        <div className="text-text-3 italic font-serif text-[15px] text-center py-6">
+        <div className="text-text-3 font-medium text-[15px] text-center py-6">
           Start by describing the strategy in your own words.
         </div>
       ) : (
@@ -461,7 +461,7 @@ function BubbleView({ b }: { b: Bubble }) {
   return (
     <div className="max-w-[92%] self-start sm:max-w-[85%]">
       <div className="whitespace-pre-wrap rounded-md border border-border bg-surface-2/60 px-3 py-2 text-[13px] leading-snug sm:text-[14px]">
-        {b.text ? <MarkdownView text={b.text} /> : <span className="text-text-3 italic">thinking…</span>}
+        {b.text ? <MarkdownView text={b.text} /> : <span className="text-text-3 font-medium">thinking…</span>}
       </div>
       {b.tools.length > 0 && (
         <div className="mt-2 flex flex-col gap-1">

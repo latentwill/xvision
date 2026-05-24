@@ -172,7 +172,7 @@ export function MListSheet({
             aria-hidden
           />
           <div className="flex items-center justify-between px-[18px] pt-1 pb-2.5">
-            <h3 className="m-0 font-serif font-medium text-[22px] italic tracking-tight text-text">
+            <h3 className="m-0 font-sans font-semibold text-[22px] tracking-tight text-text">
               {focusSort ? "Sort by" : "Filter & sort"}
             </h3>
             {clearAll && (

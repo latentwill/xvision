@@ -54,7 +54,7 @@ export function MobileFunctionsSheet() {
       <section className="absolute left-0 right-0 bottom-0 max-h-[86vh] bg-surface-card border-t border-border rounded-t-[18px] flex flex-col">
         <div className="self-center w-9 h-1 rounded-full bg-border-strong mt-2 mb-1" />
         <div className="flex items-center justify-between px-4 py-3">
-          <h2 className="m-0 font-serif font-medium text-[22px] text-text">
+          <h2 className="m-0 font-sans font-semibold text-[22px] text-text">
             All functions
           </h2>
           <button

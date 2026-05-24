@@ -8,6 +8,12 @@ export * from "./UplotHistogramPane";
 export * from "./UplotOscillatorPane";
 export * from "./UplotLinePane";
 export * from "./UplotCompareOverlayPane";
+export * from "./MultiStrategyEquityPane";
+export * from "./MiniSparkline";
+export * from "./LeadCardChrome";
+export * from "./StrategyCard";
+export * from "./StrategyCardGrid";
+export * from "./StrategyRosterPills";
 
 // Chrome primitives
 export * from "./ChartFrame";

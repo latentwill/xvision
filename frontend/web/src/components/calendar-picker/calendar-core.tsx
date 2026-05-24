@@ -386,9 +386,9 @@ export function MonthHeader({
         borderRadius: 3,
         padding: '2px 5px 2px 6px',
         cursor: 'pointer',
-        fontFamily: "'Cormorant Garamond', serif",
-        fontStyle: italic ? 'italic' : 'normal',
-        fontWeight: 500,
+        fontFamily: "'Geist', ui-sans-serif, sans-serif",
+        fontStyle: 'normal',
+        fontWeight: italic ? 600 : 500,
         fontSize: sizes.fs,
         letterSpacing: '-0.01em',
         color: active ? 'var(--gold)' : 'var(--text)',
@@ -434,7 +434,7 @@ export function MonthHeader({
     titleEl = (
       <div
         style={{
-          fontFamily: "'Cormorant Garamond', serif",
+          fontFamily: "'Geist', ui-sans-serif, sans-serif",
           fontWeight: 500,
           fontSize: sizes.fs,
           letterSpacing: '-0.01em',
@@ -443,7 +443,7 @@ export function MonthHeader({
         }}
       >
         {startYear} <span style={{ color: 'var(--text-3)' }}>—</span>{' '}
-        <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }}>
+        <span style={{ color: 'var(--text-3)' }}>
           {startYear + 11}
         </span>
       </div>

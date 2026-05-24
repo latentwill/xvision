@@ -7,6 +7,7 @@ import { CompareChart } from "./CompareChart";
 const chartMocks = vi.hoisted(() => ({
   createChart: vi.fn(),
   createdCharts: [] as Array<ReturnType<typeof createChartStub>>,
+  priceScaleOptions: [] as Array<{ id: string; options: unknown }>,
 }));
 
 function createSeriesStub() {
@@ -20,10 +21,21 @@ function createChartStub() {
     fitContent: vi.fn(),
     setVisibleLogicalRange: vi.fn(),
   };
+  const priceScales = new Map<string, { applyOptions: ReturnType<typeof vi.fn> }>();
   return {
     addCandlestickSeries: vi.fn(() => createSeriesStub()),
     addLineSeries: vi.fn(() => createSeriesStub()),
-    priceScale: vi.fn(() => ({ applyOptions: vi.fn() })),
+    priceScale: vi.fn((id: string) => {
+      const existing = priceScales.get(id);
+      if (existing) return existing;
+      const scale = {
+        applyOptions: vi.fn((options: unknown) => {
+          chartMocks.priceScaleOptions.push({ id, options });
+        }),
+      };
+      priceScales.set(id, scale);
+      return scale;
+    }),
     timeScale: vi.fn(() => timeScaleApi),
     timeScaleApi,
     remove: vi.fn(),
@@ -61,6 +73,7 @@ function comparePayload(pointCount: number): CompareChartPayload {
 describe("CompareChart", () => {
   beforeEach(() => {
     chartMocks.createdCharts.length = 0;
+    chartMocks.priceScaleOptions.length = 0;
     chartMocks.createChart.mockImplementation(() => {
       const chart = createChartStub();
       chartMocks.createdCharts.push(chart);
@@ -83,6 +96,10 @@ describe("CompareChart", () => {
     expect(latestChart().timeScaleApi.setVisibleLogicalRange).toHaveBeenCalledWith({
       from: 24,
       to: 50,
+    });
+    expect(chartMocks.priceScaleOptions).toContainEqual({
+      id: "right",
+      options: { autoScale: true },
     });
     expect(latestChart().timeScaleApi.fitContent).not.toHaveBeenCalled();
 

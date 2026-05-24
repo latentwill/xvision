@@ -170,7 +170,7 @@ function AttentionCard({
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="m-0 font-serif font-medium text-[24px] tracking-tight">
+        <h2 className="m-0 font-sans font-semibold text-[24px] tracking-tight">
           Needs attention
         </h2>
         <span className="text-[12px] text-text-3">
@@ -247,7 +247,7 @@ function RecentRunsCard({
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="m-0 font-serif font-medium text-[24px] tracking-tight">
+        <h2 className="m-0 font-sans font-semibold text-[24px] tracking-tight">
           Recent runs
         </h2>
         <Link
@@ -364,7 +364,7 @@ function ControlChartCard({
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-1">
-        <h2 className="m-0 font-serif font-medium text-[24px] tracking-tight">
+        <h2 className="m-0 font-sans font-semibold text-[24px] tracking-tight">
           Chart snapshot
         </h2>
         <Link
@@ -423,7 +423,7 @@ function CountCard({
           {link.label} →
         </Link>
       </div>
-      <div className="font-serif text-[36px] tracking-tight leading-none text-text">
+      <div className="font-sans font-medium text-[36px] tracking-tight leading-none text-text">
         {value}
       </div>
       {sub ? (

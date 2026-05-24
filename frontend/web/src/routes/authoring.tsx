@@ -1173,7 +1173,7 @@ function ErrorState({ err, onRetry }: { err: unknown; onRetry: () => void }) {
   if (err instanceof ApiError && err.code === "not_found") {
     return (
       <div className="px-6 py-12 text-center">
-        <div className="font-serif italic text-[24px] text-text-3 mb-3">
+        <div className="font-sans font-semibold text-[24px] text-text-3 mb-3">
           draft not found
         </div>
         <p className="m-0 mb-5 max-w-md mx-auto text-text-2 leading-snug">
@@ -1190,7 +1190,7 @@ function ErrorState({ err, onRetry }: { err: unknown; onRetry: () => void }) {
   }
   return (
     <div className="px-6 py-12 text-center">
-      <div className="font-serif italic text-[24px] text-danger mb-3">
+      <div className="font-sans font-semibold text-[24px] text-danger mb-3">
         couldn't load draft
       </div>
       <p className="m-0 mb-5 max-w-md mx-auto text-text-2 leading-snug">

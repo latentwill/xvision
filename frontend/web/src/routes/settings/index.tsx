@@ -107,7 +107,7 @@ function FetchStates<T>({
           : "unknown error";
     return (
       <Card className="p-6">
-        <div className="font-serif italic text-[20px] text-danger mb-2">
+        <div className="font-sans font-semibold text-[20px] text-danger mb-2">
           couldn't load
         </div>
         <p className="m-0 mb-4 text-text-2 text-[13px]">
@@ -201,7 +201,7 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
     <Card className="p-5">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+          <h3 className="m-0 font-sans font-semibold text-[20px] tracking-tight">
             {entry.name}
           </h3>
           {entry.note ? (
@@ -418,7 +418,7 @@ function BrokerCard({ entry }: { entry: BrokerEntry }) {
     <Card className="p-5">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+          <h3 className="m-0 font-sans font-semibold text-[20px] tracking-tight">
             {entry.name}
           </h3>
           {entry.note ? (

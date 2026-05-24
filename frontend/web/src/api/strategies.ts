@@ -17,6 +17,7 @@ export type StrategyListItem = {
   template: string;
   decision_cadence_minutes: number;
   tags?: string[];
+  color?: string | null;
   model?: string;
   providers?: string[];
   models?: string[];

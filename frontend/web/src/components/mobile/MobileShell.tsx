@@ -135,7 +135,7 @@ function MobileChatOverlay({
           <div className="text-[11px] font-mono text-text-3 truncate">
             {context}
           </div>
-          <div className="font-serif text-[20px] leading-tight text-text">
+          <div className="font-sans font-medium text-[20px] leading-tight text-text">
             Chat
           </div>
         </div>

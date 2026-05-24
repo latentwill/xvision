@@ -17,3 +17,10 @@ export {
   type Chart2StreamingResult,
   type UseChart2StreamingOpts,
 } from "./useChart2Streaming";
+export {
+  MAX_COMPARE_IDS,
+  MIN_COMPARE_IDS,
+  parseCompareIds,
+  useCompareSelection,
+  type CompareSelection,
+} from "./useCompareSelection";

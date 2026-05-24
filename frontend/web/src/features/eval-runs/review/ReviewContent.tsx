@@ -23,16 +23,16 @@ function Section({
     Array.isArray(children) ? children.length === 0 : !children;
   return (
     <section className="mt-5">
-      <h3 className="font-serif italic text-[16px] text-text mb-2">
+      <h3 className="font-sans font-semibold text-[16px] text-text mb-2">
         {title}
         {typeof count === "number" && (
-          <span className="text-text-3 text-[12px] not-italic font-sans ml-2">
+          <span className="text-text-3 text-[12px] font-medium ml-2">
             ({count})
           </span>
         )}
       </h3>
       {isEmpty && emptyHint ? (
-        <div className="text-text-3 text-[12px] italic">{emptyHint}</div>
+        <div className="text-text-3 text-[12px] font-medium">{emptyHint}</div>
       ) : (
         children
       )}
@@ -42,7 +42,7 @@ function Section({
 
 function ListBlock({ items, emptyHint }: { items: string[]; emptyHint: string }) {
   if (items.length === 0) {
-    return <div className="text-text-3 text-[12px] italic">{emptyHint}</div>;
+    return <div className="text-text-3 text-[12px] font-medium">{emptyHint}</div>;
   }
   return (
     <ul className="space-y-1.5 text-[13px] text-text-2 list-disc list-inside">
@@ -159,7 +159,7 @@ function EvidenceList({ findings }: { findings: ReviewFinding[] }) {
   }
   if (refs.size === 0) {
     return (
-      <div className="text-text-3 text-[12px] italic">
+      <div className="text-text-3 text-[12px] font-medium">
         No evidence map available.
       </div>
     );

@@ -95,7 +95,7 @@ export const MemoryPanel: FC<{ events: MemoryPanelEvent[] }> = ({ events }) => {
 
   return (
     <section className="rounded-card border border-border p-3 mt-3">
-      <h4 className="mb-2 font-serif italic text-[14px] text-text">Memory</h4>
+      <h4 className="mb-2 font-sans font-semibold text-[14px] text-text">Memory</h4>
       <ul className="space-y-2">
         {memEvents.map((e, i) => {
           if (e.kind === "memory_recall") {

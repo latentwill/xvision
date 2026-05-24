@@ -23,6 +23,14 @@ import { themeToKlinechartsStyles } from "../adapters/theme-to-klinecharts";
 import { v2MarkersToKlineOverlay } from "../adapters/markers";
 import { useChart2Theme } from "../hooks/useChart2Theme";
 
+type KlineChartCompat = Chart & {
+  setSymbol?: (symbol: { ticker: string; pricePrecision: number; volumePrecision: number }) => void;
+  setPeriod?: (period: { type: string; span: number }) => void;
+  setDataLoader?: (loader: {
+    getBars: (args: { callback: (bars: KLineData[], more: boolean) => void }) => void;
+  }) => void;
+};
+
 export interface KlineCandlePaneProps {
   candles: CandleColumns;
   overlays?: {
@@ -71,8 +79,9 @@ export function KlineCandlePane({
     // KlineCharts v10 only invokes DataLoader#getBars once symbol and period
     // are both configured. M0 fixtures are already normalized, so a generic
     // chart-v2 identity is enough until API-backed symbols arrive in M1.
-    chart.setSymbol({ ticker: "chart-v2", pricePrecision: 4, volumePrecision: 2 });
-    chart.setPeriod({ type: "minute", span: 1 });
+    const compat = chart as KlineChartCompat;
+    compat.setSymbol?.({ ticker: "chart-v2", pricePrecision: 4, volumePrecision: 2 });
+    compat.setPeriod?.({ type: "minute", span: 1 });
 
     const obs = new ResizeObserver(() => {
       try {
@@ -105,7 +114,7 @@ export function KlineCandlePane({
       // applyNewData(). We provide a one-shot DataLoader that returns the
       // pre-computed bars and signals no more data (more = false).
       const klineData: KLineData[] = columnarToKLineData(candles);
-      chart.setDataLoader({
+      (chart as KlineChartCompat).setDataLoader?.({
         getBars: ({ callback }) => {
           callback(klineData, false);
         },

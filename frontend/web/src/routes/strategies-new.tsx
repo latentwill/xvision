@@ -34,7 +34,7 @@ export function StrategiesNewRoute() {
       <Card className="p-5 max-w-3xl">
         {create.isError ? (
           <div role="alert">
-            <div className="text-[13px] text-rose-300 font-serif italic mb-1">
+            <div className="text-[13px] text-rose-300 font-sans font-semibold mb-1">
               couldn't create strategy
             </div>
             <code className="text-rose-300/80 font-mono text-[12px]">

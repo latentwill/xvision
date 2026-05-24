@@ -122,7 +122,7 @@ export function InlineRangeBar({
   }
 
   const handleToggle = () => {
-    if (!open) syncFromParent();
+    syncFromParent();
     setOpen(!open);
   };
 
@@ -269,7 +269,7 @@ export function InlineRangeBar({
             style={{
               fontSize: 11,
               color: 'var(--text-3)',
-              fontStyle: 'italic',
+              fontWeight: 500,
             }}
           >
             from preset ·{' '}
@@ -523,7 +523,7 @@ export function InlineRangeBar({
                 <span
                   style={{
                     color: 'var(--text-2)',
-                    fontStyle: 'italic',
+                    fontWeight: 600,
                   }}
                 >
                   year

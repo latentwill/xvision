@@ -6,10 +6,11 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { compareRuns, evalKeys } from "@/api/eval";
-import { chartKeys, getCompareChart } from "@/api/chart";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
-import { listStrategies, strategyKeys } from "@/api/strategies";
-import { CompareChart } from "@/components/chart/CompareChart";
+import { listStrategies, strategyKeys, type StrategyListItem } from "@/api/strategies";
+import { ChartFrame } from "@/components/chart/v2/primitives/ChartFrame";
+import { MultiStrategyEquityPane } from "@/components/chart/v2/primitives/MultiStrategyEquityPane";
+import { useChart2Theme } from "@/components/chart/v2/hooks/useChart2Theme";
 import { isInflightRunStatus } from "@/lib/run-status";
 import { drawdownToneClass } from "@/lib/metric-tone";
 import {
@@ -41,15 +42,11 @@ const CURVE_PALETTE = [
 export function EvalCompareRoute() {
   const [params] = useSearchParams();
   const ids = useMemo(() => parseIds(params.get("ids")), [params]);
+  const theme = useChart2Theme();
 
   const q = useQuery({
     queryKey: evalKeys.compare(ids),
     queryFn: () => compareRuns(ids),
-    enabled: ids.length >= 2,
-  });
-  const chart = useQuery({
-    queryKey: chartKeys.compare(ids),
-    queryFn: () => getCompareChart(ids),
     enabled: ids.length >= 2,
   });
   const strategies = useQuery({
@@ -108,23 +105,16 @@ export function EvalCompareRoute() {
         strategies={strategies.data ?? []}
         scenarios={scenarios.data ?? []}
       />
-      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
+      <h2 className="font-sans font-semibold text-[20px] text-text mt-8 mb-3">
         Equity curves
       </h2>
-      <Card className="p-5">
-        {chart.isPending ? (
-          <p className="m-0 text-text-3 text-[13px] text-center py-6">
-            Loading chart…
-          </p>
-        ) : chart.error ? (
-          <p className="m-0 text-danger text-[13px] text-center py-6">
-            Chart unavailable: {String(chart.error)}
-          </p>
-        ) : chart.data ? (
-          <CompareChart payload={chart.data} />
-        ) : null}
-      </Card>
-      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
+      <ChartFrame title="Run equity overlay" range="All" onRange={() => undefined}>
+        <MultiStrategyEquityPane
+          arms={compareEquityArms(report, strategies.data ?? [], theme.compare.palette)}
+          height={260}
+        />
+      </ChartFrame>
+      <h2 className="font-sans font-semibold text-[20px] text-text mt-8 mb-3">
         Findings{" "}
         <span className="text-text-3 text-[14px]">
           ({report.findings.length})
@@ -217,7 +207,7 @@ function MetricsTable({
   scenarios,
 }: {
   runs: ComparisonRunSummary[];
-  strategies: { agent_id: string; display_name?: string | null }[];
+  strategies: StrategyListItem[];
   scenarios: { id: string; display_name?: string | null }[];
 }) {
   // Sort is the highest-value ergonomic on compare — operator wants to
@@ -276,6 +266,7 @@ function MetricsTable({
             // non-default sort.
             const originalIdx = runs.findIndex((x) => x.id === r.id);
             const palette = CURVE_PALETTE[originalIdx % CURVE_PALETTE.length];
+            const color = strategyColor(r, strategies, palette.stroke);
             return (
               <tr
                 key={r.id}
@@ -284,14 +275,14 @@ function MetricsTable({
                 <td className="py-2.5 px-5">
                   <span
                     className="inline-block w-2 h-2 rounded-full mr-2"
-                    style={{ background: palette.stroke }}
+                    style={{ background: color }}
                     aria-hidden
                   />
                   <Link
                     to={`/eval-runs/${encodeURIComponent(r.id)}`}
                     className="text-text hover:underline"
                   >
-                    {displayStrategyName(r.agent_id, strategies)}
+                    {strategyLabel(r, strategies)}
                   </Link>
                   <div className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all">
                     {r.id}
@@ -362,7 +353,7 @@ function FindingsTable({
 }: {
   findings: Finding[];
   runs: ComparisonRunSummary[];
-  strategies: { agent_id: string; display_name?: string | null }[];
+  strategies: StrategyListItem[];
   scenarios: { id: string; display_name?: string | null }[];
 }) {
   const idToIndex = new Map(runs.map((r, i) => [r.id, i] as const));
@@ -382,6 +373,7 @@ function FindingsTable({
           const idx = idToIndex.get(f.run_id) ?? 0;
           const run = runById.get(f.run_id);
           const palette = CURVE_PALETTE[idx % CURVE_PALETTE.length];
+          const color = run ? strategyColor(run, strategies, palette.stroke) : palette.stroke;
           return (
             <tr
               key={f.id}
@@ -390,7 +382,7 @@ function FindingsTable({
               <td className="py-2.5 px-5">
                 <span
                   className="inline-block w-2 h-2 rounded-full mr-2"
-                  style={{ background: palette.stroke }}
+                  style={{ background: color }}
                   aria-hidden
                 />
                 <Link
@@ -398,7 +390,7 @@ function FindingsTable({
                   className="text-text hover:underline text-[12px]"
                 >
                   {run
-                    ? displayStrategyName(run.agent_id, strategies)
+                    ? strategyLabel(run, strategies)
                     : `Run ${f.run_id}`}
                 </Link>
                 {run ? (
@@ -438,7 +430,7 @@ function severityTone(
 function EmptyFindings() {
   return (
     <div className="px-6 py-12 text-center text-text-2">
-      <div className="font-serif italic text-[22px] text-text-3 mb-2">
+      <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
         no findings
       </div>
       <p className="m-0 text-[13px]">
@@ -452,7 +444,7 @@ function EmptyFindings() {
 function NeedTwoOrMore({ given }: { given: number }) {
   return (
     <Card className="px-6 py-12 text-center">
-      <div className="font-serif italic text-[22px] text-text-3 mb-2">
+      <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
         compare needs two or more runs
       </div>
       <p className="m-0 mb-5 text-text-2 text-[13px]">
@@ -482,7 +474,7 @@ function ErrorState({
   if (err instanceof ApiError && err.code === "not_found") {
     return (
       <Card className="px-6 py-12 text-center">
-        <div className="font-serif italic text-[22px] text-text-3 mb-2">
+        <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
           a run is missing
         </div>
         <p className="m-0 mb-5 text-text-2 text-[13px]">
@@ -502,7 +494,7 @@ function ErrorState({
   if (err instanceof ApiError && err.code === "validation") {
     return (
       <Card className="px-6 py-12 text-center">
-        <div className="font-serif italic text-[22px] text-text-3 mb-2">
+        <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
           can't compare these
         </div>
         <p className="m-0 mb-5 text-text-2 text-[13px]">
@@ -525,7 +517,7 @@ function ErrorState({
         : String(err);
   return (
     <Card className="px-6 py-12 text-center">
-      <div className="font-serif italic text-[22px] text-danger mb-3">
+      <div className="font-sans font-semibold text-[22px] text-danger mb-3">
         couldn't load comparison
       </div>
       <p className="m-0 mb-5 text-text-2 text-[13px]">
@@ -550,6 +542,40 @@ function parseIds(raw: string | null): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+function compareEquityArms(
+  report: { runs: ComparisonRunSummary[]; equity_curves: Array<{ run_id: string; samples: Array<{ timestamp: string; equity_usd: number }> }> },
+  strategies: StrategyListItem[],
+  palette: readonly string[],
+) {
+  const curveByRun = new Map(report.equity_curves.map((curve) => [curve.run_id, curve] as const));
+  return report.runs.map((run, idx) => {
+    const fallback = palette[idx % palette.length] ?? CURVE_PALETTE[idx % CURVE_PALETTE.length].stroke;
+    return {
+      id: run.id,
+      label: strategyLabel(run, strategies),
+      color: strategyColor(run, strategies, fallback),
+      returnPct: run.metrics?.total_return_pct ?? null,
+      equity: (curveByRun.get(run.id)?.samples ?? []).map((sample) => ({
+        time: Date.parse(sample.timestamp) / 1000,
+        value: sample.equity_usd,
+      })),
+    };
+  });
+}
+
+function strategyLabel(run: ComparisonRunSummary, strategies: StrategyListItem[]): string {
+  const name = run.strategy_name?.trim();
+  return name || displayStrategyName(run.agent_id, strategies);
+}
+
+function strategyColor(
+  run: ComparisonRunSummary,
+  strategies: StrategyListItem[],
+  fallback: string,
+): string {
+  return strategies.find((strategy) => strategy.agent_id === run.agent_id)?.color ?? fallback;
 }
 
 function fmtNumber(n: number | null | undefined, digits = 2): string {

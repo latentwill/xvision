@@ -69,7 +69,7 @@ export const ListCard = forwardRef(function ListCard<T>(
         >
           <div className="flex items-baseline gap-2.5 min-w-0">
             {title && (
-              <h2 className="m-0 font-serif font-medium text-[22px] tracking-tight text-text truncate">
+              <h2 className="m-0 font-sans font-semibold text-[22px] tracking-tight text-text truncate">
                 {title}
               </h2>
             )}
