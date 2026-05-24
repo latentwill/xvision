@@ -1,6 +1,7 @@
 import type { Agent } from "@cline/sdk"
 import type { CumulativeUsage } from "./budget.js"
 import { emptyUsage } from "./budget.js"
+import type { TrajectoryFrame } from "./frame-types.js"
 
 export interface BudgetLimits {
   max_input_tokens: number
@@ -53,6 +54,12 @@ export interface Session {
    * `StepResult.decision_json` after the step completes.
    */
   decisionJson?: string
+  /**
+   * Recorded trajectory frames loaded for replay. When set, the next
+   * `session.step` drives the agent with a buildReplayModel instead of
+   * a live provider or mock. Set via `session.replay_load`.
+   */
+  replayFrames?: TrajectoryFrame[]
 }
 
 export interface SessionStore {
@@ -69,6 +76,14 @@ export interface SessionStore {
   setDecisionJson(run_id: string, json: string): void
   /** Read the `submit_decision` JSON captured for this run, if any. */
   getDecisionJson(run_id: string): string | undefined
+  /**
+   * Store replay frames for this run. After calling this, the next
+   * `session.step` will drive the agent with a replay model built from
+   * these frames instead of a live provider.
+   */
+  setReplayFrames(run_id: string, frames: TrajectoryFrame[]): void
+  /** Read the replay frames loaded for this run, if any. */
+  getReplayFrames(run_id: string): TrajectoryFrame[] | undefined
   /**
    * Current monotonic clock for this store. Budget enforcement reads
    * this so the same clock that stamped `created_at_ms` also computes
@@ -131,6 +146,14 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
     },
     getDecisionJson(run_id) {
       return sessions.get(run_id)?.decisionJson
+    },
+    setReplayFrames(run_id, frames) {
+      const s = sessions.get(run_id)
+      if (!s) throw new Error(`session not found: ${run_id}`)
+      s.replayFrames = frames
+    },
+    getReplayFrames(run_id) {
+      return sessions.get(run_id)?.replayFrames
     },
     now() {
       return now()

@@ -6,6 +6,8 @@ import { wrapAgentModel } from "./model-wrapper.js"
 import { buildProviderModel } from "./provider-model.js"
 import { createFrameRecorder } from "./frame-recorder.js"
 import { SUBMIT_DECISION_TOOL, buildSubmitDecisionTool } from "./submit-decision.js"
+import { buildReplayModel } from "./replay-model.js"
+import type { TrajectoryFrame } from "./frame-types.js"
 import type { StartRunConfig } from "./store.js"
 
 export interface BuildAgentOptions {
@@ -17,6 +19,12 @@ export interface BuildAgentOptions {
    * run. See `submit-decision.ts`.
    */
   captureDecision?: (json: string) => void
+  /**
+   * When set, the agent is constructed with a buildReplayModel driven by these
+   * frames instead of a live provider or mock. Zero network — pure in-memory
+   * replay. Takes priority over provider_id / mock detection.
+   */
+  replayFrames?: TrajectoryFrame[]
 }
 
 export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {}): Agent {
@@ -43,6 +51,28 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
         opts.captureDecision,
       ),
     )
+  }
+
+  // -----------------------------------------------------------------------
+  // Replay branch: if replay frames are loaded, drive the agent from
+  // the recording with zero network calls. Takes priority over the mock
+  // and real-provider paths.
+  // -----------------------------------------------------------------------
+  if (opts.replayFrames && opts.replayFrames.length > 0) {
+    const replayModel = buildReplayModel(opts.replayFrames)
+    // Wrap with the observability tap so ModelCallStarted/Finished spans are
+    // still emitted during replay. Pass the recorder if recording is also
+    // enabled (unusual but safe).
+    const wrapped = wrapAgentModel(replayModel, {
+      provider: "xvision-replay",
+      model: config.model_id,
+      ...(recorder ? { recorder } : {}),
+    })
+    return new Agent({
+      model: wrapped,
+      systemPrompt: config.system_prompt,
+      tools,
+    })
   }
 
   if (config.provider_id === MOCK_PROVIDER_ID) {
