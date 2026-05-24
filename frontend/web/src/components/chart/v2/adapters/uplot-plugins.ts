@@ -27,7 +27,7 @@ export function xvnLastDot(
 ): DrawHookPlugin {
   const radius = opts.radius ?? 3.2;
   const drawHalo = opts.halo ?? true;
-  const bg = opts.backgroundFill ?? "#0F0E0C";
+  const bg = opts.backgroundFill ?? "#000000";
   return {
     hooks: {
       draw: (u) => {
@@ -166,10 +166,10 @@ export function xvnGradientFill(
   opts: { stops?: Array<{ offset: number; color: string }>; baseline?: number } = {},
 ): DrawHookPlugin {
   const stops = opts.stops ?? [
-    { offset: 0.0, color: "rgba(212,165,71,0.42)" },
-    { offset: 0.25, color: "rgba(229,184,106,0.30)" },
-    { offset: 0.55, color: "rgba(193,106,58,0.18)" },
-    { offset: 0.85, color: "rgba(140,74,46,0.06)" },
+    { offset: 0.0, color: "rgba(0,230,118,0.42)" },
+    { offset: 0.25, color: "rgba(94,234,212,0.30)" },
+    { offset: 0.55, color: "rgba(0,184,95,0.18)" },
+    { offset: 0.85, color: "rgba(0,120,60,0.06)" },
     { offset: 1.0, color: "rgba(0,0,0,0)" },
   ];
   const baseline = opts.baseline ?? 0;

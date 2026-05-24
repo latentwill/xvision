@@ -38,8 +38,8 @@ export function AiEnginePill({
     <span
       className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[12px]"
       style={{
-        backgroundColor: "rgba(212,165,71,0.10)",
-        border: "1px solid rgba(212,165,71,0.45)",
+        backgroundColor: "rgba(0,230,118,0.10)",
+        border: "1px solid rgba(0,230,118,0.45)",
         color: "var(--text)",
       }}
     >

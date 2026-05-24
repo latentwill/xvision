@@ -68,7 +68,7 @@ export function DrawdownCard({
           ? "bg-surface-card"
           : "border-border bg-surface-card",
       ].join(" ")}
-      style={isLead ? { borderColor: "rgba(212,165,71,0.32)" } : undefined}
+      style={isLead ? { borderColor: "rgba(0,230,118,0.32)" } : undefined}
       data-testid="drawdown-card"
       data-lead-style={leadStyle}
     >
@@ -77,7 +77,7 @@ export function DrawdownCard({
           "px-4 py-3 border-b",
           isLead ? "" : "border-border",
         ].join(" ")}
-        style={isLead ? { borderBottomColor: "rgba(212,165,71,0.28)" } : undefined}
+        style={isLead ? { borderBottomColor: "rgba(0,230,118,0.28)" } : undefined}
       >
         <div className="caps">{title}</div>
       </header>
@@ -89,7 +89,7 @@ export function DrawdownCard({
           "grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 py-3 border-t",
           isLead ? "" : "border-border-soft",
         ].join(" ")}
-        style={isLead ? { borderTopColor: "rgba(212,165,71,0.20)" } : undefined}
+        style={isLead ? { borderTopColor: "rgba(0,230,118,0.20)" } : undefined}
       >
         <Stat label="Max DD" value={formatPct(stats.maxDrawdownPct)} danger />
         <Stat label="Avg DD" value={formatPct(stats.avgDrawdownPct)} danger />

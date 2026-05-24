@@ -113,7 +113,7 @@ export function MonthlyReturnsHeatmap({
             </div>
             {r.cells.map((c, i) => {
               const alpha = cellAlpha(c.value, ceiling, minAlpha, maxAlpha);
-              const baseHex = c.value >= 0 ? "212,165,71" : "200,68,58";
+              const baseHex = c.value >= 0 ? "0,230,118" : "255,77,77";
               return (
                 <div
                   key={`${r.id}-${i}`}
@@ -136,7 +136,7 @@ export function MonthlyReturnsHeatmap({
           className="h-2 flex-1 rounded-sm"
           style={{
             background:
-              "linear-gradient(to right, rgba(200,68,58,0.55), rgba(200,68,58,0.10), rgba(212,165,71,0.10), rgba(212,165,71,0.55))",
+              "linear-gradient(to right, rgba(255,77,77,0.55), rgba(255,77,77,0.10), rgba(0,230,118,0.10), rgba(0,230,118,0.55))",
           }}
           aria-hidden="true"
         />

@@ -122,7 +122,7 @@ export function AIAnnotationDashboard({
                 <span
                   className={[
                     "text-[12px] tabular-nums",
-                    change24 >= 0 ? "text-[#3FAE6B]" : "text-danger",
+                    change24 >= 0 ? "text-gold" : "text-danger",
                   ].join(" ")}
                   style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
                 >

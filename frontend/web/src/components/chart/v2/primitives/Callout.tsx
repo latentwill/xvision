@@ -26,8 +26,8 @@ function fmtConfPct(conf: number): string {
 export function Callout({ annotation: a }: CalloutProps): ReactElement {
   const isDanger = a.danger === true;
   const border = isDanger
-    ? "rgba(200,68,58,0.32)"
-    : "rgba(212,165,71,0.32)";
+    ? "rgba(255,77,77,0.32)"
+    : "rgba(0,230,118,0.32)";
   const accent = isDanger ? "var(--danger)" : "var(--gold)";
 
   return (

@@ -42,7 +42,7 @@ export function KpiCard({
           className="pointer-events-none absolute -top-[30px] -right-[30px] w-[120px] h-[120px]"
           style={{
             background:
-              "radial-gradient(closest-side, rgba(212,165,71,0.30), transparent 70%)",
+              "radial-gradient(closest-side, rgba(0,230,118,0.30), transparent 70%)",
           }}
         />
       )}

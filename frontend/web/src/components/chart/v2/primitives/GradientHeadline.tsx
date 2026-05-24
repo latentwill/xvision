@@ -1,7 +1,7 @@
 /**
  * GradientHeadline — B4's hero topbar headline. Renders the prefix +
  * suffix in Geist; the bracketed phrase gets a linear-gradient text
- * fill (`90deg, #E5B86A → #D4A547 → #C16A3A`). An optional emphasised
+ * fill (`90deg, #5EEAD4 → #00E676 → #00B85F`). An optional emphasised
  * number renders in Geist Mono gold beside it.
  *
  * The text-fill technique uses `background-clip: text` + transparent
@@ -34,7 +34,7 @@ export function GradientHeadline({
         className="not-italic"
         style={{
           background:
-            "linear-gradient(90deg, #E5B86A 0%, #D4A547 35%, #C16A3A 80%)",
+            "linear-gradient(90deg, #5EEAD4 0%, #00E676 35%, #00B85F 80%)",
           WebkitBackgroundClip: "text",
           backgroundClip: "text",
           color: "transparent",

@@ -27,8 +27,8 @@ export function LeadCardChrome({ lead, children }: LeadCardChromeProps): ReactEl
       className="relative overflow-hidden border rounded-card"
       style={{
         background:
-          "linear-gradient(180deg, rgba(212,165,71,0.04), var(--surface-card) 38%)",
-        borderColor: "rgba(212,165,71,0.28)",
+          "linear-gradient(180deg, rgba(0,230,118,0.04), var(--surface-card) 38%)",
+        borderColor: "rgba(0,230,118,0.28)",
       }}
       data-testid="lead-card-chrome"
     >
@@ -37,7 +37,7 @@ export function LeadCardChrome({ lead, children }: LeadCardChromeProps): ReactEl
         className="absolute top-0 left-0 right-0 h-px"
         style={{
           background:
-            "linear-gradient(to right, transparent, rgba(212,165,71,0.7), transparent)",
+            "linear-gradient(to right, transparent, rgba(0,230,118,0.7), transparent)",
         }}
       />
       {children}
