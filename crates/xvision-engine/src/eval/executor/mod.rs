@@ -11,6 +11,7 @@
 
 pub mod asset_set;
 pub mod backtest;
+pub mod book;
 pub mod live_source;
 pub mod paper;
 pub mod real_broker_fills;
