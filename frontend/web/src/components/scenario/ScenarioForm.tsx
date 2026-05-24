@@ -26,7 +26,6 @@ function customLabel(c: CalendarRef): string {
 }
 
 export type ScenarioFormDraft = {
-  asset: string;
   from: string;
   to: string;
   granularity: ScenarioGranularity;
@@ -45,11 +44,6 @@ export type ScenarioFormProps = {
   onDraftChange?: (draft: ScenarioFormDraft) => void;
   layout?: 'wizard' | 'inline';
 };
-
-const ALPACA_ASSETS = [
-  'BTC', 'ETH', 'LTC', 'SOL', 'AVAX', 'LINK', 'AAVE', 'UNI',
-  'DOT', 'DOGE', 'SHIB', 'MATIC', 'BCH', 'USDT', 'USDC',
-];
 
 const ASSET_CLASS: AssetClass = 'Crypto';
 const QUOTE_CURRENCY: QuoteCurrency = 'Usd';
@@ -97,9 +91,6 @@ export function ScenarioForm({
   layout = 'wizard',
 }: ScenarioFormProps) {
   const [name, setName] = useState(initial?.display_name ?? '');
-  const [asset, setAsset] = useState(
-    initial?.asset?.[0]?.symbol ?? 'ETH',
-  );
   const [from, setFrom] = useState(
     initial?.time_window?.start?.slice(0, 10) ?? '',
   );
@@ -143,10 +134,10 @@ export function ScenarioForm({
 
   useEffect(() => {
     if (onDraftChange) {
-      onDraftChange({ asset, from, to, granularity, calendar });
+      onDraftChange({ from, to, granularity, calendar });
     }
     // Intentionally include onDraftChange — parent should memoize if needed.
-  }, [asset, from, to, granularity, calendar, onDraftChange]);
+  }, [from, to, granularity, calendar, onDraftChange]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -192,7 +183,6 @@ export function ScenarioForm({
       display_name: displayName,
       description: '',
       asset_class: ASSET_CLASS,
-      asset: [{ class: ASSET_CLASS, symbol: asset, venue_symbol: `${asset}/USD` }],
       quote_currency: QUOTE_CURRENCY,
       time_window: { start: `${from}T00:00:00Z`, end: `${to}T00:00:00Z` },
       capital: SCENARIO_CAPITAL,
@@ -247,24 +237,6 @@ export function ScenarioForm({
       </Field>
 
       <Section title="Market">
-        <Row>
-          <Field label="Asset">
-            <select
-              className="input"
-              value={asset}
-              onChange={(e) => setAsset(e.target.value)}
-            >
-              {ALPACA_ASSETS.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Quote">
-            <span className="input block">USD</span>
-          </Field>
-        </Row>
         <div className="mt-3 mb-3">
           <div className="hidden sm:block">
             <InlineRangeBar
