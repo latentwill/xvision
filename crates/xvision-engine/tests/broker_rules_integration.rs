@@ -36,7 +36,7 @@ use xvision_engine::eval::executor::{BacktestExecutor, Executor};
 use xvision_engine::eval::findings::Severity;
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, Capital, DataSource,
+    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, Capital, DataSource,
     Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
     Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
 };
@@ -113,7 +113,7 @@ async fn fresh_store() -> RunStore {
 
 /// Build a minimal crypto scenario. `risk_pct` allows forcing below-minimum
 /// orders when set very small.
-fn crypto_scenario(asset_class: AssetClass, symbol: &str, venue_symbol: &str) -> Scenario {
+fn crypto_scenario(asset_class: AssetClass, symbol: &str, _venue_symbol: &str) -> Scenario {
     let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     let end = start + Duration::days(3);
     Scenario {
@@ -125,11 +125,6 @@ fn crypto_scenario(asset_class: AssetClass, symbol: &str, venue_symbol: &str) ->
         tags: vec![],
         notes: None,
         asset_class,
-        asset: vec![AssetRef {
-            class: asset_class,
-            symbol: symbol.into(),
-            venue_symbol: venue_symbol.into(),
-        }],
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start, end },
         granularity: BarGranularity::Day1,
@@ -445,7 +440,6 @@ async fn equity_scenario_no_op_rules_order_always_accepted() {
     let mut scenario = crypto_scenario(AssetClass::Equity, "AAPL", "AAPL");
     // Keep asset_class = Equity to select AlpacaEquityRules (no-op).
     scenario.asset_class = AssetClass::Equity;
-    scenario.asset[0].class = AssetClass::Equity;
 
     // Tiny risk_pct that would trigger min_order_size on crypto.
     let agent_id = "01BROKERRULETEST0000000003";

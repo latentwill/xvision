@@ -293,6 +293,33 @@ const MAX_BARS: usize = 100_000;
 ///
 /// Returns `ApiError::NotFound` when the run or scenario does not exist.
 /// Returns `ApiError::Validation` when the bar count exceeds `MAX_BARS`.
+/// Resolve the asset a run/strategy trades from the strategy's
+/// `asset_universe` (single-asset for now — `asset_universe[0]`). Scenarios
+/// are asset-free, so chart payloads source the asset from the strategy
+/// referenced by the run's `agent_id`.
+async fn resolve_run_asset_for_chart(
+    ctx: &ApiContext,
+    agent_id: &str,
+) -> ApiResult<xvision_core::trading::AssetSymbol> {
+    let strategy = crate::api::strategy::get(ctx, agent_id).await?;
+    let raw = strategy
+        .manifest
+        .asset_universe
+        .first()
+        .ok_or_else(|| {
+            ApiError::Validation(format!(
+                "strategy '{}' has empty asset_universe",
+                strategy.manifest.id
+            ))
+        })?;
+    raw.parse::<xvision_core::trading::AssetSymbol>().map_err(|e| {
+        ApiError::Validation(format!(
+            "strategy '{}' asset_universe entry '{}' is not a recognised asset: {e}",
+            strategy.manifest.id, raw
+        ))
+    })
+}
+
 pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunChartPayload> {
     let store = RunStore::new(ctx.db.clone());
 
@@ -317,17 +344,25 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
             other => other,
         })?;
 
-    let asset_ref = scenario
-        .asset
-        .first()
-        .ok_or_else(|| ApiError::Internal(format!("scenario '{}' has empty asset list", scenario.id)))?;
+    // Scenarios are asset-free; the run's traded asset comes from the
+    // strategy's `asset_universe` (single-asset for now). Per-asset cache
+    // key is computed from that asset over the scenario window.
+    let asset_sym = resolve_run_asset_for_chart(ctx, &run.agent_id).await?;
+    let asset_pair = asset_sym.as_alpaca_pair();
+    let cache_key = crate::eval::bars::compute_cache_key(
+        &asset_pair,
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
 
     // 3. Load bars from the cache (cache-miss triggers an Alpaca fetch).
     let bars = crate::eval::bars::load_bars(
         ctx,
         &crate::eval::bars::BarCacheArgs {
-            cache_key: scenario.bar_cache_policy.cache_key.clone(),
-            asset_pair: asset_ref.venue_symbol.clone(),
+            cache_key,
+            asset_pair: asset_pair.clone(),
             granularity: scenario.granularity,
             start: scenario.time_window.start,
             end: scenario.time_window.end,
@@ -380,7 +415,7 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
     Ok(RunChartPayload {
         run_id: run_id.into(),
         scenario_id: scenario.id.clone(),
-        asset: asset_ref.symbol.clone(),
+        asset: asset_sym.as_short().to_string(),
         granularity: granularity_str,
         time_window: scenario.time_window.clone(),
         bars: chart_bars,
@@ -696,23 +731,21 @@ pub async fn build_scenario_payload_with_granularity(
             .map_err(ApiError::Validation)?,
         _ => scenario.granularity,
     };
-    let asset_ref = scenario
-        .asset
-        .first()
-        .ok_or_else(|| ApiError::Internal(format!("scenario '{}' has empty asset list", scenario.id)))?;
+    // Scenarios are asset-free; a standalone scenario preview has no
+    // strategy to source the asset from, so the backdrop defaults to the
+    // canonical BTC/USD market for v1 crypto scenarios. The bar load needs
+    // an asset-specific cache key (the scenario's stored cache_key is
+    // asset-free), so we always derive it here.
+    let preview_asset = xvision_core::trading::AssetSymbol::Btc;
+    let asset_pair = preview_asset.as_alpaca_pair();
     let data_source_tag = "alpaca-historical-v1";
-    let cache_key = if requested_granularity == scenario.granularity {
-        scenario.bar_cache_policy.cache_key.clone()
-    } else {
-        crate::eval::bars::compute_cache_key(
-            &asset_ref.venue_symbol,
-            requested_granularity,
-            scenario.time_window.start,
-            scenario.time_window.end,
-            data_source_tag,
-        )
-    };
-    let asset_pair = asset_ref.venue_symbol.clone();
+    let cache_key = crate::eval::bars::compute_cache_key(
+        &asset_pair,
+        requested_granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        data_source_tag,
+    );
 
     scenario.granularity = requested_granularity;
     scenario.bar_cache_policy.cache_key = cache_key.clone();
@@ -1062,6 +1095,9 @@ pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiR
     let store = RunStore::new(ctx.db.clone());
     let mut series: Vec<CompareRunSeries> = Vec::new();
     let mut scenario_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Asset for the shared-scenario backdrop comes from the first run's
+    // strategy (scenarios are asset-free). Captured here in run order.
+    let mut backdrop_agent_id: Option<String> = None;
 
     for id in run_ids {
         let run = store.get(id).await.map_err(|e| {
@@ -1074,6 +1110,9 @@ pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiR
         })?;
 
         scenario_ids.insert(run.scenario_id.clone());
+        if backdrop_agent_id.is_none() {
+            backdrop_agent_id = Some(run.agent_id.clone());
+        }
 
         let equity: Vec<ChartEquityPoint> = store
             .read_equity_curve(id)
@@ -1105,16 +1144,24 @@ pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiR
             other => other,
         })?;
 
-        let asset_ref = scenario
-            .asset
-            .first()
-            .ok_or_else(|| ApiError::Internal(format!("scenario '{sid}' has empty asset list")))?;
+        let asset_sym = match &backdrop_agent_id {
+            Some(agent_id) => resolve_run_asset_for_chart(ctx, agent_id).await?,
+            None => xvision_core::trading::AssetSymbol::Btc,
+        };
+        let asset_pair = asset_sym.as_alpaca_pair();
+        let cache_key = crate::eval::bars::compute_cache_key(
+            &asset_pair,
+            scenario.granularity,
+            scenario.time_window.start,
+            scenario.time_window.end,
+            "alpaca-historical-v1",
+        );
 
         let bars = crate::eval::bars::load_bars(
             ctx,
             &crate::eval::bars::BarCacheArgs {
-                cache_key: scenario.bar_cache_policy.cache_key.clone(),
-                asset_pair: asset_ref.venue_symbol.clone(),
+                cache_key,
+                asset_pair,
                 granularity: scenario.granularity,
                 start: scenario.time_window.start,
                 end: scenario.time_window.end,

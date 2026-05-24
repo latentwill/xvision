@@ -64,6 +64,27 @@ pub fn compute_cache_key(
     h.finalize().to_hex().to_string()
 }
 
+/// Cache key for a scenario's window+granularity, independent of asset.
+/// Per-asset bar loads compute their own key via [`compute_cache_key`].
+///
+/// Scenarios are asset-free (the asset a run trades comes from the
+/// strategy's `asset_universe`), so the scenario-level cache key omits the
+/// asset component. Mirrors [`compute_cache_key`]'s blake3 hashing minus
+/// the `asset_pair` input.
+pub fn compute_scenario_cache_key(
+    granularity: BarGranularity,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    source: &str,
+) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(granularity.as_alpaca_str().as_bytes());
+    h.update(start.to_rfc3339().as_bytes());
+    h.update(end.to_rfc3339().as_bytes());
+    h.update(source.as_bytes());
+    h.finalize().to_hex().to_string()
+}
+
 /// Tag distinguishing warmup-window cache rows from the main scenario
 /// window. Used as the `data_source_tag` argument to [`compute_cache_key`]
 /// so warmup and main bars never collide on a shared key.

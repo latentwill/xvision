@@ -163,13 +163,16 @@ async fn build_scenario_payload_loads_cached_bars_and_indicators() {
 
     let ctx = test_ctx().await;
     let scenario = api_scenario::get(&ctx, "crypto-bull-q1-2025").await.unwrap();
-    seed_cached_bars(
-        &ctx,
-        &scenario.bar_cache_policy.cache_key,
-        &scenario.asset[0].venue_symbol,
-        64,
-    )
-    .await;
+    // Scenarios are asset-free; `build_scenario_payload` previews against the
+    // canonical BTC/USD backdrop, so seed bars under that asset-specific key.
+    let preview_key = xvision_engine::eval::bars::compute_cache_key(
+        "BTC/USD",
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
+    seed_cached_bars(&ctx, &preview_key, "BTC/USD", 64).await;
 
     let payload = build_scenario_payload(&ctx, &scenario.id).await.unwrap();
 
@@ -201,7 +204,7 @@ async fn build_scenario_payload_uses_requested_granularity_cache_key() {
     let ctx = test_ctx().await;
     let scenario = api_scenario::get(&ctx, "crypto-bull-q1-2025").await.unwrap();
     let override_key = xvision_engine::eval::bars::compute_cache_key(
-        &scenario.asset[0].venue_symbol,
+        "BTC/USD",
         BarGranularity::Hour4,
         scenario.time_window.start,
         scenario.time_window.end,

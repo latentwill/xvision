@@ -600,14 +600,19 @@ impl PaperExecutor {
         tools: Arc<ToolRegistry>,
         store: &RunStore,
     ) -> Result<MetricsSummary> {
-        // TODO(Task 5): pull from Strategy. For now we read the first
-        // venue_symbol off the scenario's asset list — preserves v1 BTC-only
-        // semantics (canonical scenarios all have asset[0].venue_symbol = "BTC/USD").
-        let asset = scenario
-            .asset
-            .first()
-            .map(|a| a.venue_symbol.clone())
-            .ok_or_else(|| anyhow::anyhow!("scenario {} has empty asset list", scenario.id))?;
+        // Scenarios are asset-free; the asset a run trades comes from the
+        // strategy's `asset_universe` (single-asset for now — a later task
+        // adds the per-asset loop).
+        use std::str::FromStr;
+        let asset_sym = xvision_core::trading::AssetSymbol::from_str(
+            strategy
+                .manifest
+                .asset_universe
+                .first()
+                .ok_or_else(|| anyhow!("strategy {} has empty asset_universe", strategy.manifest.id))?,
+        )
+        .map_err(|e| anyhow!("{e}"))?;
+        let asset = asset_sym.as_alpaca_pair();
 
         let cadence_min = strategy.manifest.decision_cadence_minutes as i64;
         if cadence_min <= 0 {

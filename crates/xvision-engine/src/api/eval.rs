@@ -1742,6 +1742,7 @@ async fn run_inner(
     //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
     //    we fall back to the legacy `data/probes/<cache_key>.parquet`
     //    loader so existing test fixtures keep working.
+    let run_asset = resolve_run_asset(&strategy)?;
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.ok_or_else(|| ApiError::Validation("paper mode requires a broker".into()))?;
@@ -1749,6 +1750,7 @@ async fn run_inner(
                 ctx,
                 &scenario,
                 from_db,
+                run_asset,
                 b,
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
@@ -1761,6 +1763,7 @@ async fn run_inner(
                 ctx,
                 &scenario,
                 from_db,
+                run_asset,
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
@@ -2024,25 +2027,56 @@ async fn resolve_scenario_with_source(ctx: &ApiContext, id: &str) -> ApiResult<(
     }
 }
 
+/// Resolve the single asset a run trades from the strategy's
+/// `asset_universe`. Scenarios are asset-free; the asset comes from the
+/// strategy (single-asset for now — `asset_universe[0]`; multi-asset
+/// fan-out lands in a later task). Errors clearly when the universe is
+/// empty or its first entry is not a recognised asset symbol.
+fn resolve_run_asset(strategy: &crate::strategies::Strategy) -> ApiResult<xvision_core::trading::AssetSymbol> {
+    let raw = strategy
+        .manifest
+        .asset_universe
+        .first()
+        .ok_or_else(|| {
+            ApiError::Validation(format!(
+                "strategy '{}' has empty asset_universe",
+                strategy.manifest.id
+            ))
+        })?;
+    raw.parse::<xvision_core::trading::AssetSymbol>().map_err(|e| {
+        ApiError::Validation(format!(
+            "strategy '{}' asset_universe entry '{}' is not a recognised asset: {e}",
+            strategy.manifest.id, raw
+        ))
+    })
+}
+
 /// Source bars for a DB-resolved scenario via the cache wrapper. The
 /// returned bars feed `BacktestExecutor::with_bars`. Errors surface
 /// fetch / cache failures so the caller can decide whether to fall
 /// back to the legacy fixture loader.
+///
+/// `asset` is the run's asset (resolved from the strategy's
+/// `asset_universe`); the per-asset cache key is derived here so bars for
+/// different assets over the same scenario window never collide.
 async fn load_bars_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
+    asset: xvision_core::trading::AssetSymbol,
 ) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
-    let asset = scenario
-        .asset
-        .first()
-        .ok_or_else(|| ApiError::Validation(format!("scenario '{}' has empty asset list", scenario.id)))?
-        .venue_symbol
-        .clone();
+    let asset_pair = asset.as_alpaca_pair();
+    let cache_key = crate::eval::bars::compute_cache_key(
+        &asset_pair,
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
     crate::eval::bars::load_bars(
         ctx,
         &crate::eval::bars::BarCacheArgs {
-            cache_key: scenario.bar_cache_policy.cache_key.clone(),
-            asset_pair: asset,
+            cache_key,
+            asset_pair,
             granularity: scenario.granularity,
             start: scenario.time_window.start,
             end: scenario.time_window.end,
@@ -2060,13 +2094,9 @@ async fn load_bars_for_scenario(
 async fn load_warmup_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
+    asset: xvision_core::trading::AssetSymbol,
 ) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
-    let asset = scenario
-        .asset
-        .first()
-        .ok_or_else(|| ApiError::Validation(format!("scenario '{}' has empty asset list", scenario.id)))?
-        .venue_symbol
-        .clone();
+    let asset = asset.as_alpaca_pair();
     crate::eval::bars::load_warmup_bars(
         ctx,
         &asset,
@@ -2105,19 +2135,15 @@ async fn load_ohlcv_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
     from_db: bool,
+    asset: xvision_core::trading::AssetSymbol,
 ) -> ApiResult<Vec<Ohlcv>> {
     if from_db {
-        return load_bars_for_scenario(ctx, scenario)
+        return load_bars_for_scenario(ctx, scenario, asset)
             .await
             .map(market_bars_to_ohlcv);
     }
 
-    let asset = scenario
-        .asset
-        .first()
-        .ok_or_else(|| ApiError::Validation(format!("scenario '{}' has empty asset list", scenario.id)))?
-        .venue_symbol
-        .clone();
+    let asset = asset.as_alpaca_pair();
     let mut bars = load_ohlcv_fixture(&scenario.bar_cache_policy.cache_key, &asset, usize::MAX).map_err(|e| {
         ApiError::Validation(format!(
             "scenario '{}' is missing historical bars for paper eval. Fetch/cache bars before starting paper mode: {e}",
@@ -2140,14 +2166,15 @@ async fn build_paper_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
     from_db: bool,
+    asset: xvision_core::trading::AssetSymbol,
     broker: Arc<dyn BrokerSurface>,
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
-    let bars = load_ohlcv_for_scenario(ctx, scenario, from_db).await?;
+    let bars = load_ohlcv_for_scenario(ctx, scenario, from_db, asset).await?;
     let warmup = if from_db {
-        market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?)
+        market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, asset).await?)
     } else {
         // Legacy / fixture path: no separate warmup cache wrapper. The
         // fixture is already a wider window, and the trader sees only the
@@ -2220,12 +2247,13 @@ async fn build_backtest_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
     from_db: bool,
+    asset: xvision_core::trading::AssetSymbol,
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
 ) -> ApiResult<Box<dyn Executor>> {
     if from_db {
-        match load_bars_for_scenario(ctx, scenario).await {
+        match load_bars_for_scenario(ctx, scenario, asset).await {
             Ok(bars) => {
                 let ohlcv: Vec<xvision_core::market::Ohlcv> = bars
                     .into_iter()
@@ -2241,7 +2269,7 @@ async fn build_backtest_executor(
                 // Warmup is a hard preflight error when DB-resolved: an
                 // operator who set `warmup_bars > 0` expects real
                 // pre-window context, not silent emptiness.
-                let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?);
+                let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, asset).await?);
                 let mut bt = BacktestExecutor::with_bars(ohlcv)
                     .with_warmup(warmup)
                     .with_event_bus(ctx.event_bus.clone())
@@ -2387,6 +2415,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             .with_catalogs(obs_catalogs.clone())
     });
 
+    let run_asset = resolve_run_asset(&strategy)?;
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.expect("paper mode broker built above");
@@ -2394,6 +2423,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 ctx,
                 &scenario,
                 from_db,
+                run_asset,
                 b,
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
@@ -2406,6 +2436,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 ctx,
                 &scenario,
                 from_db,
+                run_asset,
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
@@ -2844,7 +2875,10 @@ pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     let summaries: Vec<ScenarioSummary> = rows
         .into_iter()
         .map(|s| {
-            let asset_universe: Vec<String> = s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
+            // Scenarios are asset-free — the traded asset comes from the
+            // strategy's `asset_universe`, not the scenario. Left empty
+            // here; the field is retained for wire-shape stability.
+            let asset_universe: Vec<String> = Vec::new();
             // Old `regime_tags` shape — extract the "regime:*" prefix off the
             // new combined `tags` field. Will go away with Task 6's seed
             // rewrite.

@@ -105,21 +105,10 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
     }
 
     if let Some(sc) = scenario {
-        // Check 5: scenario asset is in strategy's asset_universe.
-        let scenario_venue_symbol = sc.asset.first().map(|a| a.venue_symbol.as_str()).unwrap_or("");
-        let scenario_symbol = sc.asset.first().map(|a| a.symbol.as_str()).unwrap_or("");
-        let in_universe = strategy.manifest.asset_universe.iter().any(|a| {
-            let a_norm = normalize_asset(a);
-            a_norm == normalize_asset(scenario_venue_symbol)
-                || a_norm == normalize_asset(&format!("{scenario_symbol}/USD"))
-                || a_norm == normalize_asset(scenario_symbol)
-        });
-        if !in_universe {
-            let strategy_assets = strategy.manifest.asset_universe.join(", ");
-            result.warnings.push(format!(
-                "scenario asset {scenario_venue_symbol} is not in strategy asset_universe [{strategy_assets}]"
-            ));
-        }
+        // Scenarios are asset-free — the asset a run trades comes from the
+        // strategy's `asset_universe`, so there is no scenario-asset to
+        // cross-check against the universe. (The former "scenario asset
+        // not in strategy asset_universe" warning is removed.)
 
         // Check 6: scenario granularity matches decision_cadence_minutes.
         let scenario_minutes = (sc.granularity.seconds() / 60) as u32;
@@ -325,10 +314,6 @@ fn validate_common(b: &Strategy) -> Result<(), ValidationError> {
     Ok(())
 }
 
-fn normalize_asset(asset: &str) -> String {
-    asset.trim().to_ascii_uppercase()
-}
-
 fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
     // Canonical form across the engine: trim + ASCII lowercase. The
     // serde layer normalizes roles on deserialize/serialize, so most
@@ -428,7 +413,7 @@ fn predicate_has_upstream_filter(strategy: &Strategy, from_idx: usize, _predicat
 mod preflight_tests {
     use super::*;
     use crate::eval::scenario::{
-        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
+        AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
         LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
         ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
@@ -485,11 +470,6 @@ mod preflight_tests {
             tags: vec![],
             notes: None,
             asset_class: AssetClass::Crypto,
-            asset: vec![AssetRef {
-                class: AssetClass::Crypto,
-                symbol: "ETH".into(),
-                venue_symbol: "ETH/USD".into(),
-            }],
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow {
                 start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
@@ -563,39 +543,6 @@ mod preflight_tests {
     }
 
     // ── with-scenario checks ─────────────────────────────────────────────
-
-    #[test]
-    fn preflight_with_scenario_asset_match_produces_no_warnings() {
-        let strategy = make_strategy_with_agent("ETH/USD", 240);
-        let scenario = make_eth_4h_scenario();
-        let result = preflight_validate(&strategy, Some(&scenario));
-        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        // Asset universe ["ETH/USD"] contains scenario asset "ETH/USD" → no warning
-        let asset_warnings: Vec<_> = result.warnings.iter().filter(|w| w.contains("asset")).collect();
-        assert!(
-            asset_warnings.is_empty(),
-            "expected no asset warnings, got: {asset_warnings:?}"
-        );
-    }
-
-    #[test]
-    fn preflight_with_scenario_asset_mismatch_produces_warning() {
-        // Strategy has ETH/USD; scenario has SOL/USD
-        let strategy = make_strategy_with_agent("ETH/USD", 240);
-        let mut scenario = make_eth_4h_scenario();
-        scenario.asset = vec![AssetRef {
-            class: AssetClass::Crypto,
-            symbol: "SOL".into(),
-            venue_symbol: "SOL/USD".into(),
-        }];
-        let result = preflight_validate(&strategy, Some(&scenario));
-        assert!(result.errors.is_empty(), "asset mismatch is a warning, not error");
-        assert!(
-            result.warnings.iter().any(|w| w.contains("SOL/USD")),
-            "expected SOL/USD warning, got: {:?}",
-            result.warnings
-        );
-    }
 
     #[test]
     fn preflight_with_scenario_timeframe_match_produces_no_timeframe_warning() {

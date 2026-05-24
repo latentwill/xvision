@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 // Re-export from xvision-data so consumers don't need a second import.
 pub use xvision_core::Capital;
 pub use xvision_data::alpaca::BarGranularity;
-use xvision_data::asset_whitelist::{alpaca_crypto_asset, alpaca_crypto_history_start_for};
 use xvision_data::manifest::{AdjustmentKind, DataManifest, FeedKind, SessionFilter};
 use xvision_data::validate::CalendarHint;
 
@@ -39,7 +38,6 @@ pub struct Scenario {
     pub notes: Option<String>,
 
     pub asset_class: AssetClass,
-    pub asset: Vec<AssetRef>,
     pub quote_currency: QuoteCurrency,
     pub time_window: TimeWindow,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
@@ -196,11 +194,6 @@ mod warmup_bars_tests {
             tags: vec![],
             notes: None,
             asset_class: AssetClass::Crypto,
-            asset: vec![AssetRef {
-                class: AssetClass::Crypto,
-                symbol: "BTC".into(),
-                venue_symbol: "BTC/USD".into(),
-            }],
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow {
                 start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
@@ -260,11 +253,6 @@ impl Scenario {
     /// request types. This keeps DB-loaded and seed-built scenarios subject
     /// to the same walls as API-created scenarios.
     pub fn validate_v1(&self) -> Result<(), ScenarioValidationError> {
-        if self.asset.is_empty() {
-            return Err(ScenarioValidationError::new(
-                "v1 scenarios require at least one asset",
-            ));
-        }
         if self.asset_class != AssetClass::Crypto {
             return Err(ScenarioValidationError::new(
                 "v1 scenarios support crypto assets only",
@@ -289,50 +277,6 @@ impl Scenario {
             return Err(ScenarioValidationError::new(
                 "time_window.end must be in the past",
             ));
-        }
-
-        // Every declared asset must be on the Alpaca crypto whitelist with a
-        // matching venue_symbol and a history floor compatible with the
-        // scenario's start. Downstream executors still consume `asset[0]`
-        // (cross-asset allocation lands with the portfolio allocator track),
-        // but the validator no longer pins scenarios to a single asset.
-        for asset in &self.asset {
-            if asset.class != AssetClass::Crypto {
-                return Err(ScenarioValidationError::new(format!(
-                    "asset '{}' must be crypto in a v1 scenario",
-                    asset.symbol
-                )));
-            }
-            let Some(whitelisted) = alpaca_crypto_asset(&asset.symbol) else {
-                return Err(ScenarioValidationError::new(format!(
-                    "asset '{}' is not in the Alpaca crypto whitelist",
-                    asset.symbol
-                )));
-            };
-            let Some(venue_asset) = alpaca_crypto_asset(&asset.venue_symbol) else {
-                return Err(ScenarioValidationError::new(format!(
-                    "asset '{}' venue_symbol must be '{}'",
-                    asset.symbol, whitelisted.venue_symbol
-                )));
-            };
-            if venue_asset.symbol != whitelisted.symbol {
-                return Err(ScenarioValidationError::new(format!(
-                    "asset '{}' venue_symbol must be '{}'",
-                    asset.symbol, whitelisted.venue_symbol
-                )));
-            }
-            let Some(history_start) = alpaca_crypto_history_start_for(&asset.symbol) else {
-                return Err(ScenarioValidationError::new(format!(
-                    "asset '{}' is not in the Alpaca crypto whitelist",
-                    asset.symbol
-                )));
-            };
-            if self.time_window.start < history_start {
-                return Err(ScenarioValidationError::new(format!(
-                    "time_window.start is before Alpaca crypto history for asset '{}'",
-                    asset.symbol
-                )));
-            }
         }
         Ok(())
     }
@@ -825,14 +769,6 @@ pub enum RefreshPolicy {
 // Task 6 when scenarios live in the DB.
 // ---------------------------------------------------------------------------
 
-fn canonical_btc_asset() -> Vec<AssetRef> {
-    vec![AssetRef {
-        class: AssetClass::Crypto,
-        symbol: "BTC".into(),
-        venue_symbol: "BTC/USD".into(),
-    }]
-}
-
 fn default_fill_model() -> FillModel {
     FillModel {
         market_order_fill: MarketOrderFill::NextBarOpen,
@@ -886,7 +822,6 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
             tags: regime_tags.iter().map(|t| format!("regime:{}", t)).collect(),
             notes: None,
             asset_class: AssetClass::Crypto,
-            asset: canonical_btc_asset(),
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow { start, end },
             granularity: BarGranularity::Hour1,

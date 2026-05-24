@@ -98,7 +98,9 @@ pub async fn upsert_scenarios(ctx: &ApiContext) {
     #[allow(deprecated)]
     let scenarios = canonical_scenarios();
     for s in scenarios {
-        let asset_universe: Vec<String> = s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
+        // Scenarios are asset-free — the traded asset comes from the
+        // strategy, not the scenario — so the search summary no longer
+        // carries an asset prefix.
         // Extract legacy regime tags off the new combined `tags` field so the
         // ⌘K palette text stays consistent during the refactor.
         let regime_tags: Vec<String> = s
@@ -111,8 +113,7 @@ pub async fn upsert_scenarios(ctx: &ApiContext) {
             kind: SearchKind::Scenario,
             title: s.display_name.clone(),
             summary: format!(
-                "{} · {} days · regimes: {}",
-                asset_universe.join(", "),
+                "{} days · regimes: {}",
                 (s.time_window.end - s.time_window.start).num_days(),
                 regime_tags.join(", ")
             ),

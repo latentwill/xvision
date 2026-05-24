@@ -2,6 +2,56 @@ use chrono::{TimeZone, Utc};
 use tempfile::tempdir;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::{DecisionRow, Run, RunMode, RunStore};
+use xvision_engine::strategies::manifest::PublicManifest;
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+use xvision_engine::strategies::Strategy;
+
+/// Save a minimal BTC/USD strategy to disk so `build_run_payload` can
+/// resolve the run's traded asset (scenarios are asset-free; the asset
+/// comes from the strategy's `asset_universe`).
+async fn seed_btc_strategy(ctx: &ApiContext, id: &str) {
+    let strategy = Strategy {
+        manifest: PublicManifest {
+            id: id.into(),
+            display_name: "chart hold marker strategy".into(),
+            plain_summary: "fixture".into(),
+            creator: "@tester".into(),
+            template: "mean_reversion".into(),
+            regime_fit: vec![],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            attested_with: vec![],
+            required_tools: vec![],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+            min_warmup_bars: None,
+            color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
+        },
+        hypothesis: None,
+        agents: Vec::new(),
+        pipeline: Default::default(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: Some(LLMSlot {
+            role: "trader".into(),
+            attested_with: "anthropic.claude-sonnet-4.6+".into(),
+            allowed_tools: vec![],
+            provider: None,
+            model: None,
+        }),
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
+        acknowledge_no_filter: false,
+    };
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    store.save(&strategy).await.unwrap();
+}
 
 struct TestCtx {
     ctx: ApiContext,
@@ -93,17 +143,22 @@ async fn hold_marker_with_missing_bar_timestamp_is_skipped_not_zero_priced() {
     let scenario = xvision_engine::api::scenario::get(&ctx, "crypto-bull-q1-2025")
         .await
         .unwrap();
-    seed_cached_bars(
-        &ctx,
-        &scenario.bar_cache_policy.cache_key,
-        &scenario.asset[0].venue_symbol,
-        3,
-    )
-    .await;
+    let strategy_id = "01CHARTHOLDMARKERSTRATEGY00";
+    seed_btc_strategy(&ctx, strategy_id).await;
+    // Scenarios are asset-free; the run trades the strategy's BTC/USD asset,
+    // so seed bars (and key them) under that asset-specific cache key.
+    let cache_key = xvision_engine::eval::bars::compute_cache_key(
+        "BTC/USD",
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
+    seed_cached_bars(&ctx, &cache_key, "BTC/USD", 3).await;
 
     let store = RunStore::new(ctx.db.clone());
     let run = Run::new_queued(
-        "chart-hold-marker-agent".into(),
+        strategy_id.into(),
         scenario.id.clone(),
         RunMode::Backtest,
     );

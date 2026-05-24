@@ -51,7 +51,16 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
 }
 
 async fn seed_bars_for_scenario(ctx: &ApiContext, scenario: &xvision_engine::eval::Scenario) {
-    let asset = scenario.asset[0].venue_symbol.as_str();
+    // Scenarios are asset-free; the run trades the strategy's asset
+    // (BTC/USD here), so seed bars under that asset-specific cache key.
+    let asset = "BTC/USD";
+    let cache_key = xvision_engine::eval::bars::compute_cache_key(
+        asset,
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
     let mut blob = Vec::new();
     let mut ts = scenario.time_window.start;
     let mut count = 0usize;
@@ -77,7 +86,7 @@ async fn seed_bars_for_scenario(ctx: &ApiContext, scenario: &xvision_engine::eva
           data_source, fetched_at, bar_count, bars_blob, compression) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(&scenario.bar_cache_policy.cache_key)
+    .bind(&cache_key)
     .bind(asset)
     .bind(scenario.granularity.as_alpaca_str())
     .bind(scenario.time_window.start.to_rfc3339())
@@ -109,8 +118,6 @@ async fn fresh_xvn_home_seeds_canonical_scenarios_in_db() {
         .expect("canonical bull scenario must be seeded");
     assert_eq!(s.id, "crypto-bull-q1-2025");
     assert!(!s.bar_cache_policy.cache_key.is_empty());
-    assert_eq!(s.asset.len(), 1);
-    assert_eq!(s.asset[0].venue_symbol, "BTC/USD");
 }
 
 #[tokio::test]
