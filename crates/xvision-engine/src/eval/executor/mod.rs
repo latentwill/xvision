@@ -9,6 +9,7 @@
 //! Callers (`engine::api::eval::run`, the eval CLI) pick an executor by
 //! `RunMode` and call `run(...)` once per `xvn eval run` invocation.
 
+pub mod asset_set;
 pub mod backtest;
 pub mod live_source;
 pub mod paper;
