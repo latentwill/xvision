@@ -19,9 +19,12 @@ import { useChart2Sync } from "../hooks/useChart2Sync";
 import { useChart2Theme } from "../hooks/useChart2Theme";
 import type { RunChartV2Payload } from "../types";
 
-type Props = { payload: RunChartV2Payload };
+type Props = {
+  payload: RunChartV2Payload;
+  showMarkerDock?: boolean;
+};
 
-export function RunChartV2({ payload }: Props) {
+export function RunChartV2({ payload, showMarkerDock = true }: Props) {
   const [range, setRange] = useState<RangePreset>("All");
   const { layers, toggle } = useChart2Layers("run");
   const syncKey = useChart2Sync("run");
@@ -170,7 +173,7 @@ export function RunChartV2({ payload }: Props) {
           <div className="ml-auto"><CacheStatusBadge state="fresh" /></div>
         </div>
       </ChartFrame>
-      <MarkerDock markers={markers} />
+      {showMarkerDock ? <MarkerDock markers={markers} /> : null}
     </div>
   );
 }

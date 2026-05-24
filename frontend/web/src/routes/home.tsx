@@ -397,7 +397,10 @@ function ControlChartCard({
           Chart unavailable.
         </div>
       ) : chart ? (
-        <RunChartV2 payload={runChartPayloadToV2(chart)} />
+        <RunChartV2
+          payload={runChartPayloadToV2(chart)}
+          showMarkerDock={false}
+        />
       ) : null}
     </Card>
   );
