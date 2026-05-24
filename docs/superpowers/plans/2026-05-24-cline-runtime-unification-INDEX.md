@@ -8,7 +8,7 @@ Five stage plans decompose the umbrella. Each opens with an **"Inherited contrac
 | Stage | Plan file | Scope |
 |---|---|---|
 | 0 | `2026-05-24-cline-stage0-acpx-purge.md` | ACPX purge + API-key-only license guard |
-| 1 | `2026-05-24-cline-stage1-live-path.md` | Deferred Wave 3 — live/forward-paper through the Cline sidecar |
+| 1 | `2026-05-24-cline-stage1-live-path.md` | Deferred Wave 3 — live Cline sidecar path; backtest uses the same runtime via Stage 3 record/replay |
 | 2 | `2026-05-24-cline-stage2-trajectory-record.md` | Frame-level trajectory persistence (versioned store) |
 | 3 | `2026-05-24-cline-stage3-replay-unify-eval.md` | Replay model; unify eval; retire `BriefingCache` + `LlmDispatch` flag |
 | 4 | `2026-05-24-cline-stage4-throughput-hardening.md` | Profiling-gated record-pass scaling (sidecar pool, batching) |
