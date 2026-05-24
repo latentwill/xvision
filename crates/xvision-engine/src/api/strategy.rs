@@ -61,6 +61,12 @@ pub struct StrategySummary {
     /// Explicit provider-model pairs required by this strategy's executable slots.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_models: Vec<ProviderModelPair>,
+    /// Asset universe from the strategy manifest (e.g. `["BTC/USD", "ETH/USD"]`).
+    #[serde(default)]
+    pub asset_universe: Vec<String>,
+    /// Execution mode as a snake_case string (e.g. `"per_asset"`, `"portfolio"`).
+    #[serde(default)]
+    pub execution_mode: String,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -331,6 +337,7 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
         };
         let model = model_summary(&inventory.models);
         let tags = strategy_tags(&strategy);
+        let execution_mode = execution_mode_string(&strategy.manifest.execution_mode);
         out.push(StrategySummary {
             agent_id: strategy.manifest.id.clone(),
             display_name: strategy.manifest.display_name.clone(),
@@ -342,6 +349,8 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             providers: inventory.providers,
             models: inventory.models,
             provider_models: inventory.provider_models,
+            asset_universe: strategy.manifest.asset_universe.clone(),
+            execution_mode,
         });
     }
     Ok(out)
@@ -504,6 +513,16 @@ fn strategy_tags(strategy: &Strategy) -> Vec<String> {
         push_unique_tag(&mut tags, tool.clone());
     }
     tags
+}
+
+/// Convert `ExecutionMode` to its serde snake_case string representation.
+/// `Custom(name)` becomes the inner string directly (no JSON object wrapping).
+fn execution_mode_string(mode: &crate::strategies::ExecutionMode) -> String {
+    match mode {
+        crate::strategies::ExecutionMode::PerAsset => "per_asset".to_string(),
+        crate::strategies::ExecutionMode::Portfolio => "portfolio".to_string(),
+        crate::strategies::ExecutionMode::Custom(name) => name.clone(),
+    }
 }
 
 fn push_unique_tag(tags: &mut Vec<String>, tag: String) {
@@ -2103,5 +2122,47 @@ mod tests {
         let (ctx, _d) = ctx_with_audit().await;
         let r = delete(&ctx, "01TOTALLYMISSINGAGENTID000").await;
         assert!(matches!(r, Err(ApiError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn strategy_summary_carries_asset_universe_and_execution_mode() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "multi-asset-test".into(),
+                creator: Some("@tester".into()),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Set asset_universe via update_manifest.
+        update_manifest(
+            &ctx,
+            crate::authoring::UpdateManifestReq {
+                id: created.id.clone(),
+                asset_universe: Some(vec!["BTC/USD".into(), "ETH/USD".into()]),
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let summaries = list(&ctx).await.unwrap();
+        let summary = summaries
+            .iter()
+            .find(|s| s.agent_id == created.id)
+            .expect("strategy in list");
+
+        assert_eq!(
+            summary.asset_universe,
+            vec!["BTC/USD".to_string(), "ETH/USD".to_string()],
+            "asset_universe must flow through to StrategySummary"
+        );
+        assert_eq!(
+            summary.execution_mode, "per_asset",
+            "default execution_mode must be 'per_asset'"
+        );
     }
 }

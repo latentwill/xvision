@@ -86,8 +86,18 @@ enum StrategyAction {
         role: Option<String>,
         /// Primary asset the strategy trades (e.g. `ETH/USD`).
         /// Only used in atomic mode (--prompt). Populates `asset_universe`.
+        /// Superseded by `--assets` when both are supplied.
         #[arg(long)]
         asset: Option<String>,
+        /// Comma-separated assets the strategy trades, e.g. `BTC,ETH,SOL`.
+        /// Populates `asset_universe`. Supersedes `--asset` (kept as a 1-elem alias).
+        /// Only used in atomic mode (--prompt).
+        #[arg(long, value_delimiter = ',')]
+        assets: Vec<String>,
+        /// How the harness drives the universe. `per-asset` (default) | `portfolio`.
+        /// Only used in atomic mode (--prompt).
+        #[arg(long, default_value = "per-asset")]
+        execution_mode: String,
         /// Decision timeframe / bar granularity.
         /// Accepted: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
         /// Only used in atomic mode (--prompt). Maps to `decision_cadence_minutes`.
@@ -373,6 +383,8 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             prompt,
             role,
             asset,
+            assets,
+            execution_mode,
             timeframe,
             family,
             hypothesis_statement,
@@ -398,6 +410,8 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
                 prompt,
                 role,
                 asset,
+                assets,
+                execution_mode,
                 timeframe,
                 hypothesis_flags,
                 no_filter_warning,
@@ -616,6 +630,8 @@ async fn new(
     prompt: Option<PathBuf>,
     role: Option<String>,
     asset: Option<String>,
+    assets: Vec<String>,
+    execution_mode: String,
     timeframe: Option<String>,
     _hypothesis_flags: HypothesisFlags,
     no_filter_warning: bool,
@@ -630,6 +646,8 @@ async fn new(
             model_override,
             role,
             asset,
+            assets,
+            execution_mode,
             timeframe,
             json,
             no_filter_warning,
@@ -689,18 +707,54 @@ async fn new_atomic(
     model: Option<String>,
     role: Option<String>,
     asset: Option<String>,
+    assets: Vec<String>,
+    execution_mode: String,
     timeframe: Option<String>,
     json: bool,
     no_filter_warning: bool,
 ) -> CliResult<()> {
+    use std::str::FromStr as _;
+    use xvision_core::trading::AssetSymbol;
+    use xvision_engine::strategies::exec_mode::ExecutionMode;
+
     // Validate required atomic-mode fields.
     let name = name.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --name")))?;
     let provider =
         provider.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --provider")))?;
     let model = model.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --model")))?;
     let role = role.unwrap_or_else(|| "trader".to_string());
-    let asset = asset
-        .ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --asset (e.g. ETH/USD)")))?;
+
+    // Build asset_universe: --assets (multi) takes priority over --asset (1-elem).
+    // Each bare ticker or venue-pair is normalized to "SYM/USD" form.
+    let raw_assets: Vec<String> = if !assets.is_empty() {
+        assets
+    } else if let Some(a) = asset {
+        vec![a]
+    } else {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "atomic mode requires --assets (e.g. `BTC,ETH,SOL`) or --asset (e.g. `ETH/USD`)"
+        )));
+    };
+    let asset_universe: Vec<String> = raw_assets
+        .iter()
+        .map(|s| {
+            AssetSymbol::from_str(s)
+                .map(|sym| sym.as_alpaca_pair())
+                .map_err(|e| CliError::usage(anyhow::anyhow!("invalid asset '{s}': {e}")))
+        })
+        .collect::<CliResult<Vec<_>>>()?;
+
+    // Parse execution_mode flag.
+    let exec_mode = match execution_mode.as_str() {
+        "per-asset" | "per_asset" => ExecutionMode::PerAsset,
+        "portfolio" => ExecutionMode::Portfolio,
+        other => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "unknown --execution-mode '{other}' - expected per-asset | portfolio"
+            )));
+        }
+    };
+
     let timeframe = timeframe
         .ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --timeframe (e.g. 4h)")))?;
 
@@ -758,7 +812,7 @@ async fn new_atomic(
             creator,
             template: "custom".to_string(),
             regime_fit: Vec::new(),
-            asset_universe: vec![asset.clone()],
+            asset_universe,
             decision_cadence_minutes: cadence_minutes,
             attested_with: Vec::new(),
             required_tools: Vec::new(),
@@ -766,7 +820,7 @@ async fn new_atomic(
             published_at: None,
             min_warmup_bars: None,
             color: None,
-            execution_mode: Default::default(),
+            execution_mode: exec_mode,
             capital_mode: Default::default(),
         },
         hypothesis: None,
@@ -938,15 +992,8 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     let preflight = preflight_validate(&strategy, Some(&scenario));
     warnings.extend(preflight.warnings);
 
-    let asset_display = strategy
-        .manifest
-        .asset_universe
-        .first()
-        .cloned()
-        .unwrap_or_default();
     let timeframe_display = scenario.granularity.canonical();
-    collect_prompt_mismatch_warnings(&ctx, &strategy, &asset_display, &timeframe_display, &mut warnings)
-        .await;
+    collect_prompt_mismatch_warnings(&ctx, &strategy, &timeframe_display, &mut warnings).await;
 
     if scenario.warmup_bars == 0 {
         warnings.push("scenario warmup_bars is 0 - strategy may lack context bars at bar 1".to_string());
@@ -967,7 +1014,9 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
         strategy_id: id.to_string(),
         eval_ready: errors.is_empty() && warnings.is_empty(),
         expected_decisions: Some(expected_decisions),
-        asset: Some(asset_display),
+        // Scenarios are asset-free; the asset is chosen at the run layer, so
+        // preflight no longer reports a scenario-derived asset.
+        asset: None,
         timeframe: Some(timeframe_display),
         warmup_bars: Some(scenario.warmup_bars),
         warnings,
@@ -988,19 +1037,13 @@ async fn load_provider_names(ctx: &ApiContext) -> Option<Vec<String>> {
 async fn collect_prompt_mismatch_warnings(
     ctx: &ApiContext,
     strategy: &xvision_engine::strategies::Strategy,
-    asset_display: &str,
     timeframe_display: &str,
     warnings: &mut Vec<String>,
 ) {
-    let known_symbols = [
-        "BTC", "ETH", "SOL", "AVAX", "DOGE", "LINK", "MATIC", "DOT", "ADA", "XRP",
-    ];
+    // Scenarios are asset-free; asset-vs-prompt mismatch checking no longer
+    // applies (there is no scenario asset to compare against). The
+    // timeframe-vs-prompt check below remains valid.
     let known_timeframes = ["1m", "5m", "15m", "1h", "4h", "6h", "1d", "1w"];
-    let scenario_symbol = asset_display
-        .split('/')
-        .next()
-        .unwrap_or(asset_display)
-        .to_ascii_uppercase();
 
     let mut all_prompt_text = String::new();
     for agent_ref in &strategy.agents {
@@ -1013,23 +1056,6 @@ async fn collect_prompt_mismatch_warnings(
     }
     if all_prompt_text.is_empty() {
         return;
-    }
-
-    let prompt_tokens: Vec<String> = all_prompt_text
-        .split_whitespace()
-        .map(|w| {
-            w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
-                .to_ascii_uppercase()
-        })
-        .filter(|w| !w.is_empty())
-        .collect();
-
-    for symbol in &known_symbols {
-        if prompt_tokens.iter().any(|t| t == symbol) && *symbol != scenario_symbol.as_str() {
-            warnings.push(format!(
-                "prompt mentions {symbol} but scenario asset is {asset_display}"
-            ));
-        }
     }
 
     let prompt_tokens_lower: Vec<String> = all_prompt_text

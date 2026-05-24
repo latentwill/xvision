@@ -144,15 +144,14 @@ fn seed_strategy_with_trader(
 /// Uses a 6-month window (Jan–Jul 2025) so that 200 warmup bars still leaves
 /// a positive `expected_decisions` count even at 4h granularity:
 ///   181 days × 6 bars/day − 200 warmup = 886 − 200 = 686 decisions.
-fn create_scenario(home: &Path, asset: &str, granularity: &str, name: &str) -> String {
+fn create_scenario(home: &Path, granularity: &str, name: &str) -> String {
+    // Scenarios are asset-free; `scenario create` no longer accepts `--asset`.
     let out = xvn(
         &[
             "scenario",
             "create",
             "--name",
             name,
-            "--asset",
-            asset,
             "--from",
             "2025-01-01",
             "--to",
@@ -288,66 +287,13 @@ fn validate_missing_scenario_id_errors_in_json() {
     );
 }
 
-/// Asset mismatch heuristic: a prompt that mentions ETH while the scenario
-/// uses SOL should surface a warning (not a hard error).
-#[test]
-fn validate_asset_mismatch_prompt_surfaces_warning() {
-    let dir = tempdir().unwrap();
-
-    // Strategy whose trader prompt explicitly mentions ETH.
-    let (strategy_id, _) = seed_strategy_with_trader(
-        dir.path(),
-        "asset-mismatch-strategy",
-        "trader",
-        "Trade ETH carefully based on market signals from the 4h chart.",
-    );
-
-    // Scenario is SOL — mismatch.
-    let scenario_id = create_scenario(dir.path(), "SOL", "4h", "asset-mismatch-sol-scenario");
-
-    let out = xvn(
-        &[
-            "strategy",
-            "validate",
-            &strategy_id,
-            "--scenario",
-            &scenario_id,
-            "--json",
-        ],
-        dir.path(),
-    );
-
-    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| {
-        panic!(
-            "stdout not JSON; stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        )
-    });
-
-    assert_eq!(
-        code(&out),
-        0,
-        "asset mismatch should be warning-only; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(
-        result["eval_ready"], true,
-        "warning must not block eval readiness"
-    );
-
-    // The asset mismatch is a warning — it must appear in the warnings array.
-    let warnings = result["warnings"].as_array().expect("warnings must be array");
-    assert!(
-        warnings.iter().any(|w| {
-            let s = w.as_str().unwrap_or("");
-            s.contains("ETH") && (s.contains("SOL") || s.contains("asset"))
-        }),
-        "expected asset mismatch warning mentioning ETH and SOL;\nwarnings: {warnings:?}\nresult: {result}"
-    );
-}
+// NOTE: the asset-vs-prompt mismatch warning test was removed when scenarios
+// became asset-free — there is no longer a scenario asset to compare a prompt
+// against, so `collect_prompt_mismatch_warnings` no longer emits that warning.
+// (The timeframe-vs-prompt mismatch check remains, covered elsewhere.)
 
 /// Happy path: strategy with a trader agent and a matching scenario → `eval_ready: true`,
-/// `expected_decisions` populated, correct asset/timeframe/warmup_bars, no errors.
+/// `expected_decisions` populated, correct timeframe/warmup_bars, no errors.
 #[test]
 fn validate_happy_path_eval_ready() {
     let dir = tempdir().unwrap();
@@ -360,8 +306,8 @@ fn validate_happy_path_eval_ready() {
         "Evaluate the market on each bar and decide: buy, sell, or hold.",
     );
 
-    // BTC / 4h scenario to match the seeded strategy asset universe.
-    let scenario_id = create_scenario(dir.path(), "BTC", "4h", "happy-path-btc-scenario");
+    // 4h scenario (scenarios are asset-free).
+    let scenario_id = create_scenario(dir.path(), "4h", "happy-path-btc-scenario");
 
     let out = xvn(
         &[
@@ -405,10 +351,10 @@ fn validate_happy_path_eval_ready() {
         "expected_decisions must be positive; got {ed}; result: {result}"
     );
 
-    // Asset must reference BTC.
+    // Scenarios are asset-free; preflight no longer reports a scenario asset.
     assert!(
-        result["asset"].as_str().unwrap_or("").contains("BTC"),
-        "asset must mention BTC; got: {}; result: {result}",
+        result.get("asset").is_none() || result["asset"].is_null(),
+        "asset must be absent (scenarios are asset-free); got: {}; result: {result}",
         result["asset"]
     );
 

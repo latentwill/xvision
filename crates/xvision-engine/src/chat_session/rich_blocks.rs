@@ -829,6 +829,8 @@ mod tests {
             providers: vec!["anthropic".into()],
             models: vec!["claude".into()],
             provider_models: vec![],
+            asset_universe: vec!["BTC/USD".into()],
+            execution_mode: "per_asset".into(),
         };
 
         let block = inline_strategy_card_from_summary(&summary).expect("strategy card");

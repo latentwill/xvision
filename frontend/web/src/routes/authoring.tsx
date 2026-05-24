@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
+import { ALPACA_ASSETS, toVenuePair } from "@/lib/assets";
 import {
   addStrategyAgent,
   deleteStrategy,
@@ -941,7 +942,9 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
   const m = strategy.manifest;
   const [displayName, setDisplayName] = useState(m.display_name);
   const [plainSummary, setPlainSummary] = useState(m.plain_summary);
-  const [assetUniverse, setAssetUniverse] = useState(m.asset_universe.join(", "));
+  // Asset universe is held as the parsed pair array so the multi-asset chip
+  // editor can add/remove pairs; it is comma-joined only at render/compare.
+  const [assetUniverse, setAssetUniverse] = useState<string[]>(m.asset_universe);
   const [timeframeMinutes, setTimeframeMinutes] = useState(m.decision_cadence_minutes);
   const [savedFlash, setSavedFlash] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -949,27 +952,36 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
   useEffect(() => {
     setDisplayName(m.display_name);
     setPlainSummary(m.plain_summary);
-    setAssetUniverse(m.asset_universe.join(", "));
+    setAssetUniverse(m.asset_universe);
     setTimeframeMinutes(m.decision_cadence_minutes);
     setLocalError(null);
   }, [m.display_name, m.plain_summary, m.asset_universe, m.decision_cadence_minutes]);
+
+  function removeAsset(venue: string) {
+    setAssetUniverse((prev) => prev.filter((a) => a !== venue));
+  }
+
+  function addAsset(ticker: string) {
+    const pair = toVenuePair(ticker);
+    setAssetUniverse((prev) => (prev.includes(pair) ? prev : [...prev, pair]));
+  }
+
+  const addableTickers = ALPACA_ASSETS.filter(
+    (t) => !assetUniverse.includes(toVenuePair(t)),
+  );
 
   const patch = useMutation({
     mutationFn: () => {
       if (!Number.isInteger(timeframeMinutes) || timeframeMinutes <= 0) {
         throw new Error("Time frame must be a positive whole number of minutes.");
       }
-      const assets = assetUniverse
-        .split(",")
-        .map((asset) => asset.trim())
-        .filter(Boolean);
-      if (assets.length === 0) {
+      if (assetUniverse.length === 0) {
         throw new Error("Asset universe must include at least one SYMBOL/QUOTE pair.");
       }
       return patchStrategyMetadata(m.id, {
         display_name: displayName,
         plain_summary: plainSummary,
-        asset_universe: assets,
+        asset_universe: assetUniverse,
         decision_cadence_minutes: timeframeMinutes,
       });
     },
@@ -985,10 +997,13 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
     },
   });
 
+  const sameAssets =
+    assetUniverse.length === m.asset_universe.length &&
+    assetUniverse.every((a, i) => a === m.asset_universe[i]);
   const dirty =
     displayName !== m.display_name ||
     plainSummary !== m.plain_summary ||
-    assetUniverse !== m.asset_universe.join(", ") ||
+    !sameAssets ||
     timeframeMinutes !== m.decision_cadence_minutes;
 
   return (
@@ -1004,17 +1019,6 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
               className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-            />
-          </Field>
-          <Field
-            label="Asset universe"
-            hint="Comma-separated SYMBOL/QUOTE pairs, e.g. BTC/USD, ETH/USD"
-          >
-            <input
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-              aria-label="Asset universe"
-              value={assetUniverse}
-              onChange={(e) => setAssetUniverse(e.target.value)}
             />
           </Field>
           <Field label="Time frame">
@@ -1037,6 +1041,55 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
             />
           </Field>
         </div>
+        {/* Multi-asset universe editor: removable chips + add buttons. */}
+        <Field
+          label="Asset universe"
+          hint="The SYMBOL/QUOTE pairs this strategy may trade. Add or remove below; saved with the manifest."
+        >
+          <div className="space-y-2">
+            {/* Removable chips for currently selected assets */}
+            <div className="flex flex-wrap gap-1.5">
+              {assetUniverse.length > 0 ? (
+                assetUniverse.map((a) => (
+                  <span
+                    key={a}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-surface-elev border border-border-soft rounded text-[12px] font-mono"
+                  >
+                    {a}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${a}`}
+                      onClick={() => removeAsset(a)}
+                      disabled={patch.isPending}
+                      className="ml-0.5 text-text-3 hover:text-danger disabled:opacity-40 leading-none"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))
+              ) : (
+                <span className="text-text-3 text-[12px]">(none)</span>
+              )}
+            </div>
+
+            {/* Inline add-asset buttons for unselected tickers */}
+            {addableTickers.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {addableTickers.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => addAsset(t)}
+                    disabled={patch.isPending}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded border border-border text-[11px] font-mono text-text-2 hover:border-text-3 hover:text-text disabled:opacity-40 transition-colors"
+                  >
+                    + {t}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </Field>
         <Field label="Description">
           <textarea
             className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text leading-relaxed"

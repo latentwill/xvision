@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use xvision_core::market::MarketSnapshot;
-use xvision_core::trading::{Action, AssetSymbol, Direction, PortfolioState, TraderDecision};
+use xvision_core::trading::{Action, Direction, PortfolioState, TraderDecision};
 use xvision_intern::backend::{AnthropicIntern, InternBackend, OpenAICompatIntern};
 use xvision_intern::prompt::{build_intern_prompt, PromptOpts};
 

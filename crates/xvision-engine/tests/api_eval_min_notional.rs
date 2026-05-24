@@ -239,6 +239,7 @@ async fn run_tiny_notional_probe(
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            assets_subset: None,
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),

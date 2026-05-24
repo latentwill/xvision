@@ -286,6 +286,7 @@ async fn noop_skip_disabled_calls_llm_even_when_only_hold_is_available() {
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
         recorder: None,
+        trace_attrs: None,
     })
     .await
     .expect("run_pipeline must succeed");
