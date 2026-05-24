@@ -14,12 +14,15 @@ use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+use xvision_engine::strategies::store::{
+    strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore,
+};
 use xvision_engine::strategies::validate::{no_filter_warnings, preflight_validate, validate_strategy};
 use xvision_engine::strategies::Hypothesis;
-use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
+use xvision_engine::strategies::{AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 use xvision_engine::tools::ToolRegistry;
+use xvision_filters::{parse_json as parse_filter_json, FilterId, StrategyId};
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 use crate::json::{emit_object, ObjectFormat};
@@ -234,6 +237,20 @@ enum StrategyAction {
         #[arg(long, default_value = "filter")]
         role: String,
     },
+    /// Install an inline DSL Filter on a strategy from a JSON file.
+    ///
+    /// This is the `strategy.filter` / `activation_mode = filter_gated`
+    /// path used by the Strategy Inspector. The strategy id comes from
+    /// the positional argument; if the JSON omits `filter.id`, the CLI
+    /// preserves the existing inline filter id or assigns a new one.
+    SetFilter {
+        /// Strategy id returned from `xvn strategy create`.
+        strategy_id: String,
+        /// Path to a JSON object. Accepts either `{...filter fields...}`
+        /// or `{ "filter": {...filter fields...} }`.
+        #[arg(long = "from-json")]
+        from_json: PathBuf,
+    },
     /// Remove a Filter agent (and every PipelineEdge it originates) by
     /// role. Idempotent — removing a non-existent role prints a warning
     /// and exits 0.
@@ -395,6 +412,10 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             when,
             role,
         } => add_filter(&strategy_id, &filter_agent, &gates, &when, &role).await,
+        StrategyAction::SetFilter {
+            strategy_id,
+            from_json,
+        } => set_filter(&strategy_id, &from_json).await,
         StrategyAction::RemoveFilter { strategy_id, role } => remove_filter(&strategy_id, &role).await,
         StrategyAction::SetPipeline {
             strategy_id,
@@ -1297,6 +1318,93 @@ async fn add_filter(
     });
     crate::io::print_json(&out)?;
     Ok(())
+}
+
+async fn set_filter(strategy_id: &str, from_json: &PathBuf) -> CliResult<()> {
+    let ctx = open_ctx().await?;
+    let current = api_strategy::get(&ctx, strategy_id)
+        .await
+        .map_err(|e| api_to_cli("strategy set-filter (load strategy)", e))?;
+    let raw = std::fs::read_to_string(from_json).map_err(|e| {
+        CliError::usage(anyhow::anyhow!(
+            "failed to read filter JSON `{}`: {e}",
+            from_json.display()
+        ))
+    })?;
+    let raw_value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("--from-json must contain valid JSON: {e}")))?;
+    let filter = filter_from_strategy_json(raw_value, strategy_id, current.filter.as_ref())?;
+
+    let updated =
+        api_strategy::update_inspector(&ctx, strategy_id, StrategyMetadataPatch::default(), Some(filter))
+            .await
+            .map_err(|e| api_to_cli("strategy set-filter", e))?;
+    let filter = updated
+        .filter
+        .as_ref()
+        .expect("update_inspector returned without installed filter");
+    let out = serde_json::json!({
+        "strategy_id": strategy_id,
+        "filter_id": filter.id,
+        "activation_mode": updated.activation_mode,
+        "filter": filter,
+    });
+    crate::io::print_json(&out)?;
+    Ok(())
+}
+
+fn filter_from_strategy_json(
+    raw: serde_json::Value,
+    strategy_id: &str,
+    existing: Option<&Filter>,
+) -> CliResult<Filter> {
+    let mut value = unwrap_filter_value(raw);
+    let obj = value.as_object_mut().ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "--from-json must contain a filter object or {{\"filter\": {{...}}}}"
+        ))
+    })?;
+
+    obj.insert(
+        "strategy_id".into(),
+        serde_json::Value::String(strategy_id.to_string()),
+    );
+
+    let needs_id = obj
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty();
+    if needs_id {
+        let id = existing
+            .map(|filter| filter.id.clone())
+            .unwrap_or_else(|| FilterId::new(Ulid::new().to_string()));
+        obj.insert("id".into(), serde_json::Value::String(id.to_string()));
+    }
+
+    let body = serde_json::to_string(&value).exit_with(XvnExit::Upstream)?;
+    let filter =
+        parse_filter_json(&body).map_err(|e| CliError::usage(anyhow::anyhow!("filter parse error: {e}")))?;
+    if filter.strategy_id != StrategyId::new(strategy_id) {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "filter strategy_id did not match strategy `{strategy_id}`"
+        )));
+    }
+    xvision_filters::validate(&filter)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("filter validation error: {e}")))?;
+    Ok(filter)
+}
+
+fn unwrap_filter_value(raw: serde_json::Value) -> serde_json::Value {
+    match raw {
+        serde_json::Value::Object(mut obj)
+            if obj.contains_key("filter") && !obj.contains_key("display_name") =>
+        {
+            obj.remove("filter").unwrap_or(serde_json::Value::Object(obj))
+        }
+        other => other,
+    }
 }
 
 /// `xvn strategy remove-filter <strategy_id> --role <filter_role>` —

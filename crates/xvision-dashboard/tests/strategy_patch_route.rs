@@ -26,7 +26,6 @@ async fn create_strategy(server: &TestServer) -> String {
     let response = server
         .post("/api/strategies")
         .json(&serde_json::json!({
-            "template": "mean_reversion",
             "name": "PatchMe",
             "creator": "@operator"
         }))
@@ -89,6 +88,49 @@ async fn patch_metadata_with_empty_body_is_noop_returning_200() {
         after_body["manifest"]["asset_universe"]
     );
     assert_eq!(before_body["manifest"]["id"], after_body["manifest"]["id"]);
+}
+
+#[tokio::test]
+async fn patch_filter_autofills_strategy_scoped_ids() {
+    let (server, _tmp) = boot().await;
+    let id = create_strategy(&server).await;
+
+    let response = server
+        .patch(&format!("/api/strategy/{id}"))
+        .json(&serde_json::json!({
+            "filter": {
+                "display_name": "BTC 15m EMA12>EMA26 + RSI throttle",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "15m",
+                "scan_cadence": "bar_close",
+                "conditions": {
+                    "all": [
+                        { "lhs": "ema_12", "op": ">", "rhs": "ema_26" },
+                        { "lhs": "close", "op": "crosses_above", "rhs": "ema_12" },
+                        { "lhs": "rsi_14", "op": "between", "rhs": [55, 75] }
+                    ]
+                },
+                "cooldown_bars": 12,
+                "max_wakeups_per_day": 4,
+                "wake_when_in_position": "on_invalidation_or_target_only",
+                "agent_context_template": "compact_trade_context_v1"
+            }
+        }))
+        .await;
+    response.assert_status_ok();
+    let updated: serde_json::Value = response.json();
+
+    assert_eq!(updated["activation_mode"], "filter_gated");
+    assert_eq!(updated["filter"]["strategy_id"], id);
+    assert!(
+        updated["filter"]["id"].as_str().unwrap_or_default().len() >= 20,
+        "backend should assign a persisted filter id, got: {}",
+        updated["filter"]["id"]
+    );
+    assert_eq!(
+        updated["filter"]["display_name"],
+        "BTC 15m EMA12>EMA26 + RSI throttle"
+    );
 }
 
 #[tokio::test]
