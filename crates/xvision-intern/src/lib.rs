@@ -8,11 +8,9 @@
 //! (Tier 1 fix #1).
 
 pub mod backend;
-pub mod cache;
 pub mod prompt;
 pub mod reasoning;
 
 pub use backend::{AnthropicIntern, InternBackend, InternError, OpenAICompatIntern};
-pub use cache::BriefingCache;
 pub use prompt::{build_intern_prompt, PromptOpts};
 pub use reasoning::strip_reasoning;

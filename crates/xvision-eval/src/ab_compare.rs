@@ -1,10 +1,34 @@
 //! A/B orchestration. Composes a shared Intern + Trader HTTP backend +
-//! BriefingCache across N arms (one `TraderArm` plus optional baselines)
-//! and drives them through `BacktestRunner` over historical OHLCV.
+//! trajectory-keyed briefing replay across N arms (one `TraderArm` plus
+//! optional baselines) and drives them through `BacktestRunner` over
+//! historical OHLCV.
 //!
 //! Post-CV-extraction (ADR 0011) the arm split is no longer "vectors on /
 //! off / random / orthogonal" — there is one TraderArm (LLM-without-
 //! steering) and any number of classical baselines.
+//!
+//! ## A/B pairing under trajectories (Stage 3, Task 6 — three modes)
+//!
+//! Each slot's recording is keyed by `TrajectoryKey.fingerprint()`. There
+//! are three possible pairing modes:
+//!
+//! 1. **shared-briefing** — one recording per cycle regardless of arm
+//!    (historical pre-trajectory behavior for the intern briefing).
+//! 2. **shared-slot, fingerprint-driven** — arms that resolve to the SAME
+//!    slot identity (provider + model) share a recording (`arm_scope =
+//!    None`); arms with a DIFFERENT identity get distinct recordings purely
+//!    because their fingerprint differs (the model is part of the key). No
+//!    `arm_scope` plumbing needed.
+//! 3. **per-arm per-slot** — `arm_scope = Some(arm_id)` forces isolation
+//!    even when the slot identity is the same.
+//!
+//! **xvision uses mode 2 (shared-slot, fingerprint-driven) for the intern
+//! briefing.** Two trader arms with the same intern provider/model share one
+//! intern recording (preserving the old shared-briefing pairing exactly);
+//! arms whose trader model differs but whose intern model matches still
+//! share the intern recording — divergence then reflects the trader, not
+//! intern non-determinism. An arm that pins a distinct intern model records
+//! its own briefing automatically (its fingerprint differs).
 
 use std::sync::Arc;
 
@@ -12,15 +36,14 @@ use anyhow::anyhow;
 
 use xvision_core::market::MarketSnapshot;
 use xvision_core::slot::SlotRef;
-use xvision_intern::BriefingCache;
 use xvision_risk::RiskLayer;
 use xvision_trader::TraderParams;
 
 use crate::algorithm::Algorithm;
 use crate::backtest::MarketBar;
 use crate::baselines::{
-    AlwaysLong, AlwaysShort, BuyAndHold, MaCrossover, MacdMomentum, PortfolioProvider, RandomDirection,
-    RsiMeanReversion, TraderArm,
+    AlwaysLong, AlwaysShort, BriefingReplay, BuyAndHold, MaCrossover, MacdMomentum, PortfolioProvider,
+    RandomDirection, RsiMeanReversion, TraderArm,
 };
 use crate::harness::{ArmConfig, BacktestRunConfig, BacktestRunner};
 use crate::provider_registry::ProviderRegistry;
@@ -262,7 +285,11 @@ pub async fn run_ab_compare(
     portfolio_provider: PortfolioProvider,
     risk: &RiskLayer,
 ) -> anyhow::Result<BacktestResult> {
-    let cache = Arc::new(BriefingCache::new());
+    // Shared briefing-replay store (replaces the old in-memory
+    // `BriefingCache`). Pairing falls out of `TrajectoryKey.fingerprint()`:
+    // arms with the same intern identity share one recording, arms with a
+    // distinct intern model record independently (Task 6, mode 2).
+    let replay = Arc::new(BriefingReplay::new());
 
     let arm_configs: Vec<ArmConfig> = arms
         .into_iter()
@@ -300,7 +327,13 @@ pub async fn run_ab_compare(
                         intern_backend,
                         resolved_intern.provider.clone(),
                         resolved_intern.model.clone(),
-                        Arc::clone(&cache),
+                        // Mode 2 (shared-slot, fingerprint-driven): the
+                        // intern slot is shared across arms — `arm_scope =
+                        // None`. Distinctness for arms that pin a different
+                        // intern model flows from the model being part of the
+                        // fingerprint, so no per-arm scope is needed here.
+                        None,
+                        Arc::clone(&replay),
                         trader_backend,
                         trader_params.clone(),
                         Arc::clone(&portfolio_provider),
