@@ -60,6 +60,8 @@ CLI peers:
 - `xvn strategy new --family … --hypothesis … --target-regime … --avoid-regime …`
 - `xvn strategy add-agent / remove-agent / set-pipeline / migrate-agents`
 - `xvn strategy validate <id>`
+- `xvn strategy filter-catalog --json`
+- `xvn strategy set-filter <id> --from-json <path>`
 
 Watch for:
 - manifest fields disagreeing with slot prompts
@@ -127,6 +129,35 @@ Watch for:
   should have a baseline arm
 - short run id labels (`shortRunId`) collapsing two distinct runs to
   the same display string
+
+### Inline Filter DSL
+- `xvn strategy filter-catalog --json` — machine-readable catalog for
+  chat rail and CLI agents
+- `xvn strategy set-filter <strategy_id> --from-json <path>` — installs
+  a deterministic inline gate and switches the strategy to `filter_gated`
+
+QA payloads should include required fields `display_name`,
+`asset_scope`, `timeframe`, and `conditions`. For LLM-triggered gates,
+also exercise optional `fire` metadata:
+
+```json
+{
+  "fire": {
+    "reason": "trend_breakout",
+    "priority": 0.85,
+    "tags": ["trend", "breakout"],
+    "context": ["close", "opening_range_high_30", "adx_14", "rvol_tod_20"]
+  }
+}
+```
+
+Watch for:
+- invalid indicator aliases not normalized to catalog tokens
+- `crosses_above` / `crosses_below` accepting numeric RHS
+- missing top-level filter fields returning vague "internal error"
+- `fire.context` indicators missing from trace attrs or trader briefing
+- catalog JSON missing new tokens such as `rvol_tod_<period>`,
+  `volume_zscore_<period>`, and `opening_range_high_<minutes>`
 
 ### Experiment ledger
 - `POST /api/experiments`
@@ -209,7 +240,7 @@ See `references/xvision-api-quirks.md` for the concrete endpoint quirks, payload
 
 ---
 
-*Skills owner: any track that adds or changes an `/api/*` route or
-the corresponding `xvn` verb is responsible for updating this file in
-the same PR. Last refresh: 2026-05-20 (intake
-`team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`).*
+*Skills owner: any track that adds or changes an `/api/*` route,
+corresponding `xvn` verb, or Filter DSL contract is responsible for
+updating this file in the same PR. Last refresh: 2026-05-24 (Filter DSL
+trigger-context expansion).*

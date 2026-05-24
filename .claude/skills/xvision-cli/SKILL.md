@@ -30,6 +30,7 @@ switch to `xvision-dev`.
 `xvn --help` is the source of truth, but the high-traffic verbs:
 
 - `strategy` — author / validate / list / inspect saved `Strategy` artifacts (`$XVN_HOME/strategies/<id>.json`). Atomic mode (`strategy new --prompt`) creates a Strategy + Agent + provider/model binding in one call. `--family / --hypothesis / --target-regime / --avoid-regime` attach a `Hypothesis` to the strategy.
+- `strategy set-filter` / `strategy filter-catalog` — install and inspect the deterministic inline Filter DSL. Always consult `xvn strategy filter-catalog --json` before authoring filters from chat rail; it is the canonical machine-readable catalog.
 - `scenario` — author scenarios. Includes `select` (read-only comparable set query), `inspect --card` (plain-text card), `classify` (auto-derive regime labels from bars), `set-regime` (operator-authored labels).
 - `eval` — `run`, `list`, `show`, `results`, `watch`, `compare` (with `--markdown` table), `batch` (multi-scenario), `attest`, `export` (canonical `EvalRunExport` JSON, q15 §3), `review`, `validate`.
 - `experiment` — ledger that groups a research question + strategy + scenarios. `experiment run` orchestrates pick → batch → bind → `result_json` in one shot; pair with `--wait --compare --markdown` for a publishable summary.
@@ -67,6 +68,9 @@ xvn scenario select --asset ETH/USD --timeframe 60 --count 4
 xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
 xvn eval compare <run_id_a> <run_id_b> --markdown --sort sharpe
 xvn eval batch --strategy <id> --scenarios sc_a,sc_b,sc_c --wait
+
+xvn strategy filter-catalog --json
+xvn strategy set-filter <strategy_id> --from-json filter.json
 
 xvn experiment run \
   --name reg-breakout-eth-q1 \
@@ -115,6 +119,36 @@ dashboard wizard and operator runbooks.
 Use `experiment` when the operator's question is the unit of work
 ("does this strategy survive across these regimes?"); use a bare `eval batch`
 when you just need N runs and don't need the ledger row.
+
+## Inline deterministic Filter DSL
+
+For pure indicator gates, prefer `xvn strategy set-filter <strategy_id>
+--from-json <path>` over an LLM Filter agent. The authoritative catalog
+is `xvn strategy filter-catalog --json`; the human docs are
+`docs/operator/filter-dsl-catalog.md` and `/docs?slug=filter-dsl-catalog`.
+
+Current high-value tokens include ADX/DI (`adx_14`, `di_plus_14`,
+`di_minus_14`), recent/persistent operators (`above_for_<bars>`,
+`crossed_above_<bars>`, `crossed_below_<bars>`), opening range
+(`opening_range_high_30`, `opening_range_low_30`), time-of-day volume
+(`rvol_tod_20`), and `volume_zscore_20`.
+
+Filters may include optional `fire` metadata:
+
+```json
+{
+  "fire": {
+    "reason": "trend_breakout",
+    "priority": 0.85,
+    "tags": ["trend", "breakout", "volume"],
+    "context": ["close", "opening_range_high_30", "adx_14", "rvol_tod_20"]
+  }
+}
+```
+
+`fire` does not change the boolean gate. It adds a compact trigger
+reason/context bundle to traces and trader briefings when the gate is
+active.
 
 ## MCP tool peers for new CLI verbs
 
@@ -174,6 +208,6 @@ Engineering-side deployment + crate-level architecture moved to the
 
 ---
 
-*Skills owner: whichever track ships a new `xvn` verb is responsible
-for updating this file in the same PR. Last refresh: 2026-05-20
-(intake `team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`).*
+*Skills owner: whichever track ships a new `xvn` verb or Filter DSL
+surface is responsible for updating this file in the same PR. Last
+refresh: 2026-05-24 (Filter DSL trigger-context expansion).*
