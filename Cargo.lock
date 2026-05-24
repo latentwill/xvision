@@ -8144,6 +8144,7 @@ dependencies = [
  "ulid",
  "uuid",
  "wiremock",
+ "xvision-agent-client",
  "xvision-core",
  "xvision-data",
  "xvision-eval",
