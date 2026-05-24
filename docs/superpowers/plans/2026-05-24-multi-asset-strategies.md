@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-05-24-multi-asset-strategies-design.md`
 
+## Execution revisions (2026-05-24, during implementation)
+
+Discovered while executing — these supersede the original task split:
+
+1. **A5 + A6 merge into one atomic engine task.** Removing `Scenario.asset` breaks ~17 reader sites across 4 crates simultaneously (the field can't be removed in a separate commit from its readers). The removal + asset-free API + engine reader fixes (validate.rs, scenario_seed.rs, executors, `load_bars_for_scenario`) + engine test updates land together as one engine-scoped task. **Crate-leaf-first sequencing:** because `xvision-cli`/`xvision-mcp`/`xvision-dashboard` depend on `xvision-engine` (not vice versa), the engine task leaves `cargo test -p xvision-engine` green while the dependent crates stay red until their phase. The dependent-crate scenario surfaces are fixed in Phase C; the full-workspace green gate is E1.
+
+2. **Scenario asset-filtering moves to the run layer** (operator decision 2026-05-24). `xvn scenario select` drops `--assets` (scenarios selected by regime/window/tags/count only). `xvn experiment run --assets` is reinterpreted as a run-layer subset of the strategy universe (like `eval --assets`), not a scenario filter. The strategy's `asset_universe` is what gets traded; `--assets` subsets it at run time. These CLI changes live in Phase C.
+
+3. **Executors temporarily source the run asset from `strategy.manifest.asset_universe[0]`** (single-asset) in the merged engine task, preserving today's single-asset behavior and keeping the build green. Task B4 replaces that `[0]` with the real per-asset fan-out loop.
+
 **Worktree:** `/Users/edkennedy/Code/xvision/.worktrees/multi-asset` (branch `feat/multi-asset`, off clean `main`). Run all commands from this dir. Before any cargo from this worktree, set a per-worktree target dir to avoid colliding with the main checkout:
 
 ```bash
