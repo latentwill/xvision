@@ -103,4 +103,67 @@ bar_history_limit: number | null,
  * engine's `ts-export` feature in Phase 4, which is when the
  * frontend gains a UI for this knob.
  */
-memory_mode: MemoryMode, };
+memory_mode: MemoryMode, 
+/**
+ * Per-slot opt-out for the `trader-noop-skip` pre-LLM gate
+ * (`team/intake/2026-05-21-eval-honesty-and-agent-graph.md`).
+ *
+ * When `None` (the default) or `Some(true)`, the engine skips the
+ * LLM call entirely for any decision cycle where the current
+ * `portfolio_state` allows **zero legal open actions** (i.e. the
+ * portfolio already holds a position on this asset so both
+ * `long_open` and `short_open` are blocked — the only legal action
+ * is `hold`). A synthesized trader output with `action: hold`,
+ * `conviction: 0`, and `noop_skip` in `justification` is recorded so
+ * the trace and eval review surfaces can see that the skip happened.
+ *
+ * Set to `Some(false)` when you explicitly want the LLM to run even
+ * in a zero-legal-actions state (e.g. "what would the model say in
+ * a corner case?" analysis). This opt-out is intentional model spend
+ * and is honoured without warning.
+ *
+ * Not yet persisted to SQLite (a follow-up migration will add the
+ * column when the UI surfaces this knob). For now the field
+ * round-trips through JSON via `#[serde(default)]`; rows loaded
+ * from the store come back as `None` which is treated the same as
+ * `Some(true)`.
+ */
+noop_skip: boolean | null, 
+/**
+ * Closed set of capability classes this slot can play in a strategy
+ * pipeline (Phase A of the capability-first agent model spec,
+ * `docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md`).
+ *
+ * Default = `{Trader}` so every pre-033 slot keeps today's
+ * behavior on the back-compat path. Persisted as a JSON array on
+ * `agent_slots.capabilities` (migration 033). The Phase B unified
+ * dispatcher reads this set to decide which capability handler
+ * runs; Phase A only persists the shape.
+ */
+capabilities: Capability[], 
+/**
+ * Per-slot opt-in for **delta-briefing mode** (F41 token-efficiency
+ * tail). When `Some(true)`, the trader briefing for bar N+1 is
+ * compressed to **only the delta** from bar N's briefing — changed
+ * indicators, new fills, regime transitions — rather than the full
+ * snapshot. Falls back to the full briefing on cache miss (first
+ * bar of a run; the prev briefing wasn't tracked; or the diff
+ * would be too sparse to be useful).
+ *
+ * Defaults to `None` ≡ `Some(false)`. The full-briefing path is
+ * byte-identical to pre-F41 behaviour so existing eval runs are
+ * unaffected. Operators opt in per slot when they want to lean on
+ * provider prompt caching (Anthropic `cache_control`) **and**
+ * shrink the variable suffix of the prompt — the two combine to
+ * cut per-cycle token spend by ~60% on long horizons.
+ *
+ * Not yet persisted to SQLite (a follow-up migration will add the
+ * column when the UI surfaces this knob). For now the field
+ * round-trips through JSON via `#[serde(default)]`; rows loaded
+ * from the store come back as `None` (full briefing).
+ *
+ * See `team/contracts/eval-token-efficiency-tail.md` and
+ * `crates/xvision-engine/src/agent/briefing.rs` for the diff shape
+ * and `delta(prev, curr)` function.
+ */
+delta_briefing: boolean | null, };

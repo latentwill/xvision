@@ -877,6 +877,7 @@ pub struct EvalRunRequest {
     /// CLI: `--assets ETH,SOL` (comma-separated). `None` (default) trades
     /// the full universe as declared in the strategy manifest.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "Array<string> | null"))]
     pub assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
 }
 
