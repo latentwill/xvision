@@ -12,7 +12,7 @@
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
     font-size: 13px;
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
@@ -35,7 +35,7 @@
   /* Charts dashboard tracked-uppercase eyebrow label.
      Used across B1–B4 dashboard chrome. See chart-rework spec §4A.5. */
   .caps {
-    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
     font-size: 10.5px;
     letter-spacing: 0.10em;
     text-transform: uppercase;
@@ -44,9 +44,10 @@
   }
 
   .serif-i {
-    font-family: "Cormorant Garamond", serif;
-    font-style: italic;
-    font-weight: 500;
+    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+    font-style: normal;
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
   .tnum {
     font-variant-numeric: tabular-nums;
@@ -128,7 +129,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--surface-panel) 82%, transparent);
     color: var(--text-3);
-    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-family: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
     text-align: center;
   }
 
@@ -140,7 +141,7 @@
     border: 1px solid var(--border-soft);
     border-radius: 4px;
     background: var(--surface-elev);
-    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-family: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
     font-size: 11px;
     line-height: 1;
   }
@@ -198,7 +199,7 @@
     border-radius: 4px;
     background: var(--surface-elev);
     color: var(--text-2);
-    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-family: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
     font-size: 11px;
     line-height: 1.1;
     white-space: nowrap;
