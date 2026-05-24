@@ -89,7 +89,8 @@ impl FilterHook {
     /// whether to skip the agent pipeline.
     pub fn evaluate(&mut self, bar: &Ohlcv, in_position: bool) -> FilterEvaluationRecord {
         let runtime = RuntimeFilter::from_validated(&self.filter);
-        let local_bar = Bar::with_volume(bar.open, bar.high, bar.low, bar.close, bar.volume);
+        let local_bar =
+            Bar::with_timestamp(bar.open, bar.high, bar.low, bar.close, bar.volume, bar.timestamp);
         let ctx = EvalContext {
             ts: bar.timestamp,
             in_position,

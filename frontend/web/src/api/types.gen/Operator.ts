@@ -10,4 +10,13 @@ export type Operator =
   | "=="
   | "crosses_above"
   | "crosses_below"
-  | "between";
+  | "between"
+  | `above_for_${number}`
+  | `below_for_${number}`
+  | `crossed_above_${number}`
+  | `crossed_below_${number}`
+  | `slope_gt_${number}`
+  | `slope_lt_${number}`
+  | `zscore_gt_${number}`
+  | `zscore_lt_${number}`
+  | `within_pct_${number}`;

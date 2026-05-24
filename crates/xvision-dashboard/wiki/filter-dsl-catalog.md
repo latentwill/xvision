@@ -1,8 +1,8 @@
 # Filter DSL catalog
 
-This is the deterministic inline filter catalog used by `strategy.filter`
-and `xvn strategy set-filter`. Use these exact tokens when authoring
-filters from chat rail, the CLI, or JSON.
+This is the deterministic inline filter catalog used by
+`strategy.filter` and `xvn strategy set-filter`. Use these exact tokens
+when authoring filters from chat rail, the CLI, or JSON.
 
 ## Required filter shape
 
@@ -15,12 +15,11 @@ strategy id. Required author-facing fields are:
 - `timeframe`
 - `conditions`
 
-Useful optional fields:
-
-- `cooldown_bars`
-- `max_wakeups_per_day`
-- `wake_when_in_position`
-- `description`
+The runtime defaults are `status: "draft"`, `scan_cadence: "bar_close"`,
+`cooldown_bars: 0`, `max_wakeups_per_day: null`,
+`wake_when_in_position: "always"`, and
+`agent_context_template: "compact_trade_context_v1"` when those fields
+are omitted by higher-level authoring surfaces.
 
 ## Operators
 
@@ -34,13 +33,33 @@ Useful optional fields:
 | Crosses above | `crosses_above` | indicator lhs, indicator rhs |
 | Crosses below | `crosses_below` | indicator lhs, indicator rhs |
 | Between inclusive | `between` | indicator lhs, two-number range rhs |
+| Above for N bars | `above_for_<bars>` | indicator lhs, indicator or numeric rhs |
+| Below for N bars | `below_for_<bars>` | indicator lhs, indicator or numeric rhs |
+| Crossed above recently | `crossed_above_<bars>` | indicator lhs, indicator rhs |
+| Crossed below recently | `crossed_below_<bars>` | indicator lhs, indicator rhs |
+| Slope greater than | `slope_gt_<bars>` | indicator lhs, numeric rhs |
+| Slope less than | `slope_lt_<bars>` | indicator lhs, numeric rhs |
+| Z-score greater than | `zscore_gt_<period>` | indicator lhs, numeric rhs |
+| Z-score less than | `zscore_lt_<period>` | indicator lhs, numeric rhs |
+| Within percent | `within_pct_<pct>` | indicator lhs, indicator or numeric rhs |
 
 Filters serialize back to the canonical tokens above. The parser also
 accepts common inbound aliases (`gt`, `above`, `lt`, `below`, `gte`,
 `lte`, `eq`, `equals`, `crosses_over`, `crosses_under`) so chat rail
 repairs can normalize user/model phrasing without another failed tool
 call. `crosses_above` and `crosses_below` never accept numeric
-right-hand sides.
+right-hand sides. For a numeric threshold crossing, compare against a
+bounded oscillator with `>` or `<` and use `cooldown_bars` to limit
+repeats.
+
+Parameterized operator tokens encode the parameter directly. For
+example, `above_for_3` means the lhs must be above the rhs on the current
+bar and the previous two evaluated bars. `crossed_above_5` remains true
+when the cross occurred on the current bar or within the previous four
+evaluated bars. `slope_gt_4` compares the lhs change versus four bars
+ago against the numeric rhs. `zscore_gt_20` computes the lhs z-score over
+the current bar plus the previous 19 evaluated values. `within_pct_1.5`
+tests whether lhs is within 1.5% of rhs.
 
 ## Indicator tokens
 
@@ -57,28 +76,51 @@ Moving averages and trend:
 - `sma_<period>` - 2 to 500
 - `ema_<period>` - 2 to 500
 - `wma_<period>` - 2 to 500
+- `adx_<period>` - 2 to 200, numeric thresholds must be 0 to 100
+- `di_plus_<period>` - 2 to 200, numeric thresholds must be 0 to 100
+- `di_minus_<period>` - 2 to 200, numeric thresholds must be 0 to 100
 - `donchian_upper_<period>` - 2 to 200
 - `donchian_middle_<period>` - 2 to 200
 - `donchian_lower_<period>` - 2 to 200
+- `highest_<period>` - 2 to 200, rolling N-bar high
+- `lowest_<period>` - 2 to 200, rolling N-bar low
+
+Ichimoku:
+
+- `tenkan` - 9-bar conversion line
+- `kijun` - 26-bar base line
+- `senkou_a` - current cloud span A, unshifted for filter evaluation
+- `senkou_b` - current cloud span B, unshifted for filter evaluation
+- `chikou` - close from 26 bars ago
+- `cloud_top` - max of `senkou_a` and `senkou_b`
+- `cloud_bottom` - min of `senkou_a` and `senkou_b`
+- `cloud_thickness` - absolute cloud span distance
 
 Momentum and oscillators:
 
 - `rsi_<period>` - 2 to 200, numeric thresholds must be 0 to 100
-- `roc_<period>` - 2 to 200
+- `roc_<period>` - 2 to 200, percent rate of change
 - `stoch_k_<period>` - 2 to 200, numeric thresholds must be 0 to 100
-- `stoch_d_<period>` - 2 to 200, numeric thresholds must be 0 to 100
+- `stoch_d_<period>` - 2 to 200, 3-bar SMA of stochastic K, numeric thresholds must be 0 to 100
+- `stoch_rsi_<period>` - alias for `stoch_rsi_k_<period>`
+- `stoch_rsi_k_<period>` - 2 to 200, numeric thresholds must be 0 to 100
+- `stoch_rsi_d_<period>` - 2 to 200, 3-bar SMA of StochRSI K, numeric thresholds must be 0 to 100
 - `cci_<period>` - 2 to 200
 - `mfi_<period>` - 2 to 200, numeric thresholds must be 0 to 100
+- `williams_r_<period>` - 2 to 200, numeric thresholds must be -100 to 0
 
 Volatility and bands:
 
 - `atr_<period>` - 2 to 200
 - `atr_pct_<period>` - 2 to 200, numeric thresholds must be greater than 0
-- `bb_upper_<period>` - 2 to 200
-- `bb_middle_<period>` - 2 to 200
-- `bb_lower_<period>` - 2 to 200
-- `bb_width_<period>` - 2 to 200
-- `bb_pct_b_<period>` - 2 to 200
+- `bb_upper_<period>` - 2 to 200, 2 standard deviation Bollinger upper band
+- `bb_middle_<period>` - 2 to 200, Bollinger middle SMA
+- `bb_lower_<period>` - 2 to 200, 2 standard deviation Bollinger lower band
+- `bb_width_<period>` - 2 to 200, `(upper - lower) / middle`
+- `bb_pct_b_<period>` - 2 to 200, `(close - lower) / (upper - lower)`
+- `keltner_upper_<period>` - 2 to 200, EMA middle plus 2 ATR
+- `keltner_middle_<period>` - 2 to 200, EMA middle
+- `keltner_lower_<period>` - 2 to 200, EMA middle minus 2 ATR
 
 MACD:
 
@@ -90,9 +132,24 @@ MACD uses the standard 12/26/9 EMA components.
 
 Volume-aware:
 
-- `vwap_<period>` - 2 to 200
+- `vwap_<period>` - 2 to 200, rolling typical-price VWAP
 - `volume_sma_<period>` - 2 to 200
-- `obv`
+- `rvol_<period>` - current volume divided by same-time-of-day average when timestamps are available, otherwise rolling volume average
+- `obv` - cumulative On-Balance Volume
+
+Session and reference levels:
+
+- `prev_day_open`
+- `prev_day_high`
+- `prev_day_low`
+- `prev_day_close`
+- `prev_week_high`
+- `prev_week_low`
+- `premarket_high`
+- `premarket_low`
+- `gap_pct` - current session open versus previous day close, percent
+- `gap_up` - 1 when `gap_pct > 0`, else 0
+- `gap_down` - 1 when `gap_pct < 0`, else 0
 
 ## Examples
 
@@ -150,7 +207,53 @@ Breakout with trend and liquidity confirmation:
 }
 ```
 
-## See also
+ADX-gated trend persistence:
 
-- [Firing Conditions](/docs?slug=firing-conditions)
-- [CLI Reference](/docs?slug=cli-reference)
+```json
+{
+  "display_name": "ADX trend persistence",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "15m",
+  "conditions": {
+    "all": [
+      { "lhs": "adx_14", "op": ">", "rhs": 25 },
+      { "lhs": "di_plus_14", "op": "above_for_3", "rhs": "di_minus_14" },
+      { "lhs": "close", "op": "crossed_above_5", "rhs": "keltner_upper_20" },
+      { "lhs": "rvol_20", "op": ">", "rhs": 1.5 }
+    ]
+  },
+  "cooldown_bars": 16
+}
+```
+
+Ichimoku cloud confirmation:
+
+```json
+{
+  "display_name": "Ichimoku cloud confirmation",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "1h",
+  "conditions": {
+    "all": [
+      { "lhs": "close", "op": ">", "rhs": "cloud_top" },
+      { "lhs": "tenkan", "op": ">", "rhs": "kijun" },
+      { "lhs": "cloud_thickness", "op": "slope_gt_3", "rhs": 0 }
+    ]
+  },
+  "cooldown_bars": 8
+}
+```
+
+## Research basis
+
+This catalog covers the common strategy components surfaced in
+Freqtrade, Hummingbot, TA-Lib, and Backtrader references: moving
+averages, MACD, RSI, Stochastic/StochRSI, ADX/DI, Ichimoku, Bollinger
+Bands, Keltner Channels, ATR, Donchian/rolling high-low, Williams %R,
+volume flow, RVOL, and VWAP. Relevant public references:
+
+- https://www.freqtrade.io/en/stable/strategy-customization/
+- https://technical.freqtrade.io/1.4.3/
+- https://ta-lib.org/
+- https://backtrader.readthedocs.io/en/latest/api/backtrader.indicators.html
+- https://hummingbot.org/blog/directional-trading-with-macd-and-bollinger-bands/

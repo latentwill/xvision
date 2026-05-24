@@ -27,6 +27,8 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use chrono::{DateTime, Datelike, Timelike, Utc};
+
 use crate::types::{IndicatorName, IndicatorRef};
 
 /// Single OHLCV bar — engine-independent reduction of `xvision_core::market::Ohlcv`.
@@ -39,6 +41,7 @@ pub struct Bar {
     pub low: f64,
     pub close: f64,
     pub volume: f64,
+    pub timestamp: Option<DateTime<Utc>>,
 }
 
 impl Bar {
@@ -53,6 +56,25 @@ impl Bar {
             low,
             close,
             volume,
+            timestamp: None,
+        }
+    }
+
+    pub fn with_timestamp(
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        volume: f64,
+        timestamp: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            open,
+            high,
+            low,
+            close,
+            volume,
+            timestamp: Some(timestamp),
         }
     }
 }
@@ -89,6 +111,7 @@ pub struct IndicatorEngine {
     last_volume: Option<f64>,
     obv_value: f64,
     obv_started: bool,
+    calendar: CalendarLevels,
 }
 
 #[derive(Debug)]
@@ -100,14 +123,20 @@ enum Instance {
     Atr(AtrState),
     AtrPct(AtrState),
     Roc(RocState),
+    Dmi(DmiState),
     Macd(MacdState),
     Bollinger(BollingerState),
     Donchian(DonchianState),
     Stoch(StochState),
+    StochRsi(StochRsiState),
     Cci(CciState),
     Mfi(MfiState),
     Vwap(VwapState),
     VolumeSma(SmaState),
+    Rvol(RvolState),
+    Ichimoku(IchimokuState),
+    Keltner(KeltnerState),
+    WilliamsR(DonchianState),
 }
 
 impl IndicatorEngine {
@@ -133,6 +162,9 @@ impl IndicatorEngine {
                 IndicatorName::Atr => Instance::Atr(AtrState::new(key.period as usize)),
                 IndicatorName::AtrPct => Instance::AtrPct(AtrState::new(key.period as usize)),
                 IndicatorName::Roc => Instance::Roc(RocState::new(key.period as usize)),
+                IndicatorName::Adx | IndicatorName::DiPlus | IndicatorName::DiMinus => {
+                    Instance::Dmi(DmiState::new(key.period as usize))
+                }
                 IndicatorName::MacdLine | IndicatorName::MacdSignal | IndicatorName::MacdHist => {
                     Instance::Macd(MacdState::default())
                 }
@@ -147,16 +179,46 @@ impl IndicatorEngine {
                 IndicatorName::StochK | IndicatorName::StochD => {
                     Instance::Stoch(StochState::new(key.period as usize))
                 }
+                IndicatorName::StochRsiK | IndicatorName::StochRsiD => {
+                    Instance::StochRsi(StochRsiState::new(key.period as usize))
+                }
                 IndicatorName::Cci => Instance::Cci(CciState::new(key.period as usize)),
                 IndicatorName::Mfi => Instance::Mfi(MfiState::new(key.period as usize)),
                 IndicatorName::Vwap => Instance::Vwap(VwapState::new(key.period as usize)),
                 IndicatorName::VolumeSma => Instance::VolumeSma(SmaState::new(key.period as usize)),
+                IndicatorName::Rvol => Instance::Rvol(RvolState::new(key.period as usize)),
+                IndicatorName::Tenkan
+                | IndicatorName::Kijun
+                | IndicatorName::SenkouA
+                | IndicatorName::SenkouB
+                | IndicatorName::Chikou
+                | IndicatorName::CloudTop
+                | IndicatorName::CloudBottom
+                | IndicatorName::CloudThickness => Instance::Ichimoku(IchimokuState::new()),
+                IndicatorName::Highest | IndicatorName::Lowest => {
+                    Instance::Donchian(DonchianState::new(key.period as usize))
+                }
+                IndicatorName::KeltnerUpper | IndicatorName::KeltnerMiddle | IndicatorName::KeltnerLower => {
+                    Instance::Keltner(KeltnerState::new(key.period as usize))
+                }
+                IndicatorName::WilliamsR => Instance::WilliamsR(DonchianState::new(key.period as usize)),
                 IndicatorName::Open
                 | IndicatorName::High
                 | IndicatorName::Low
                 | IndicatorName::Close
                 | IndicatorName::Volume
-                | IndicatorName::Obv => continue, // no per-instance state
+                | IndicatorName::Obv
+                | IndicatorName::PrevDayOpen
+                | IndicatorName::PrevDayHigh
+                | IndicatorName::PrevDayLow
+                | IndicatorName::PrevDayClose
+                | IndicatorName::PrevWeekHigh
+                | IndicatorName::PrevWeekLow
+                | IndicatorName::PremarketHigh
+                | IndicatorName::PremarketLow
+                | IndicatorName::GapPct
+                | IndicatorName::GapUp
+                | IndicatorName::GapDown => continue, // no per-instance state
             };
             instances.insert(key, inst);
         }
@@ -170,6 +232,7 @@ impl IndicatorEngine {
             last_volume: None,
             obv_value: 0.0,
             obv_started: false,
+            calendar: CalendarLevels::default(),
         }
     }
 
@@ -184,14 +247,20 @@ impl IndicatorEngine {
                 Instance::Rsi(s) => s.push(bar.close),
                 Instance::Atr(s) | Instance::AtrPct(s) => s.push(bar.high, bar.low, bar.close, prev_close),
                 Instance::Roc(s) => s.push(bar.close),
+                Instance::Dmi(s) => s.push(bar.high, bar.low, bar.close),
                 Instance::Macd(s) => s.push(bar.close),
                 Instance::Bollinger(s) => s.push(bar.close),
                 Instance::Donchian(s) => s.push(bar.high, bar.low),
                 Instance::Stoch(s) => s.push(bar.high, bar.low, bar.close),
+                Instance::StochRsi(s) => s.push(bar.close),
                 Instance::Cci(s) => s.push(bar.high, bar.low, bar.close),
                 Instance::Mfi(s) => s.push(bar.high, bar.low, bar.close, bar.volume),
                 Instance::Vwap(s) => s.push(bar.high, bar.low, bar.close, bar.volume),
                 Instance::VolumeSma(s) => s.push(bar.volume),
+                Instance::Rvol(s) => s.push(bar.volume, bar.timestamp),
+                Instance::Ichimoku(s) => s.push(bar.high, bar.low, bar.close),
+                Instance::Keltner(s) => s.push(bar.high, bar.low, bar.close, prev_close),
+                Instance::WilliamsR(s) => s.push(bar.high, bar.low),
             }
         }
         if let Some(prev) = prev_close {
@@ -207,6 +276,7 @@ impl IndicatorEngine {
         self.last_low = Some(bar.low);
         self.last_close = Some(bar.close);
         self.last_volume = Some(bar.volume);
+        self.calendar.push(bar);
         self.bars_seen += 1;
     }
 
@@ -221,6 +291,17 @@ impl IndicatorEngine {
             IndicatorName::Close => return self.last_close,
             IndicatorName::Volume => return self.last_volume,
             IndicatorName::Obv => return self.obv_started.then_some(self.obv_value),
+            IndicatorName::PrevDayOpen => return self.calendar.prev_day.map(|d| d.open),
+            IndicatorName::PrevDayHigh => return self.calendar.prev_day.map(|d| d.high),
+            IndicatorName::PrevDayLow => return self.calendar.prev_day.map(|d| d.low),
+            IndicatorName::PrevDayClose => return self.calendar.prev_day.map(|d| d.close),
+            IndicatorName::PrevWeekHigh => return self.calendar.prev_week.map(|w| w.high),
+            IndicatorName::PrevWeekLow => return self.calendar.prev_week.map(|w| w.low),
+            IndicatorName::PremarketHigh => return self.calendar.premarket_high,
+            IndicatorName::PremarketLow => return self.calendar.premarket_low,
+            IndicatorName::GapPct => return self.calendar.gap_pct,
+            IndicatorName::GapUp => return self.calendar.gap_pct.map(|v| if v > 0.0 { 1.0 } else { 0.0 }),
+            IndicatorName::GapDown => return self.calendar.gap_pct.map(|v| if v < 0.0 { 1.0 } else { 0.0 }),
             _ => {}
         }
         let key = IndicatorKey::from_ref(r);
@@ -235,6 +316,12 @@ impl IndicatorEngine {
                 _ => None,
             },
             Instance::Roc(s) => s.value(),
+            Instance::Dmi(s) => match r.name {
+                IndicatorName::Adx => s.adx(),
+                IndicatorName::DiPlus => s.di_plus(),
+                IndicatorName::DiMinus => s.di_minus(),
+                _ => None,
+            },
             Instance::Macd(s) => match r.name {
                 IndicatorName::MacdLine => s.line(),
                 IndicatorName::MacdSignal => s.signal(),
@@ -253,6 +340,8 @@ impl IndicatorEngine {
                 IndicatorName::DonchianUpper => s.upper(),
                 IndicatorName::DonchianMiddle => s.middle(),
                 IndicatorName::DonchianLower => s.lower(),
+                IndicatorName::Highest => s.upper(),
+                IndicatorName::Lowest => s.lower(),
                 _ => None,
             },
             Instance::Stoch(s) => match r.name {
@@ -260,10 +349,39 @@ impl IndicatorEngine {
                 IndicatorName::StochD => s.d(),
                 _ => None,
             },
+            Instance::StochRsi(s) => match r.name {
+                IndicatorName::StochRsiK => s.k(),
+                IndicatorName::StochRsiD => s.d(),
+                _ => None,
+            },
             Instance::Cci(s) => s.value(),
             Instance::Mfi(s) => s.value(),
             Instance::Vwap(s) => s.value(),
             Instance::VolumeSma(s) => s.value(),
+            Instance::Rvol(s) => s.value(),
+            Instance::Ichimoku(s) => match r.name {
+                IndicatorName::Tenkan => s.tenkan(),
+                IndicatorName::Kijun => s.kijun(),
+                IndicatorName::SenkouA => s.senkou_a(),
+                IndicatorName::SenkouB => s.senkou_b(),
+                IndicatorName::Chikou => s.chikou(),
+                IndicatorName::CloudTop => s.cloud_top(),
+                IndicatorName::CloudBottom => s.cloud_bottom(),
+                IndicatorName::CloudThickness => s.cloud_thickness(),
+                _ => None,
+            },
+            Instance::Keltner(s) => match r.name {
+                IndicatorName::KeltnerUpper => s.upper(),
+                IndicatorName::KeltnerMiddle => s.middle(),
+                IndicatorName::KeltnerLower => s.lower(),
+                _ => None,
+            },
+            Instance::WilliamsR(s) => match (s.upper(), s.lower(), self.last_close) {
+                (Some(hh), Some(ll), Some(close)) if (hh - ll).abs() > f64::EPSILON => {
+                    Some(-100.0 * (hh - close) / (hh - ll))
+                }
+                _ => None,
+            },
         }
     }
 
@@ -281,13 +399,19 @@ impl IndicatorEngine {
                 | Instance::Bollinger(_)
                 | Instance::Donchian(_)
                 | Instance::Vwap(_)
-                | Instance::VolumeSma(_) => key.period,
+                | Instance::VolumeSma(_)
+                | Instance::Rvol(_)
+                | Instance::WilliamsR(_) => key.period,
                 Instance::Rsi(_) | Instance::Atr(_) | Instance::AtrPct(_) => key.period + 1,
+                Instance::Dmi(_) => key.period * 2 + 1,
                 Instance::Roc(_) => key.period + 1,
                 Instance::Macd(_) => 35,
                 Instance::Stoch(_) => key.period + 3,
+                Instance::StochRsi(_) => key.period * 2 + 3,
                 Instance::Cci(_) => key.period,
                 Instance::Mfi(_) => key.period + 1,
+                Instance::Ichimoku(_) => 52,
+                Instance::Keltner(_) => key.period + 1,
             };
             if bars_needed > max_warmup {
                 max_warmup = bars_needed;
@@ -582,6 +706,258 @@ impl WindowState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DateKey {
+    year: i32,
+    ordinal: u32,
+}
+
+impl DateKey {
+    fn from_ts(ts: DateTime<Utc>) -> Self {
+        Self {
+            year: ts.year(),
+            ordinal: ts.ordinal(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WeekKey {
+    year: i32,
+    week: u32,
+}
+
+impl WeekKey {
+    fn from_ts(ts: DateTime<Utc>) -> Self {
+        let week = ts.iso_week();
+        Self {
+            year: week.year(),
+            week: week.week(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OhlcRange {
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+}
+
+impl OhlcRange {
+    fn new(bar: &Bar) -> Self {
+        Self {
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+        }
+    }
+
+    fn push(&mut self, bar: &Bar) {
+        self.high = self.high.max(bar.high);
+        self.low = self.low.min(bar.low);
+        self.close = bar.close;
+    }
+}
+
+#[derive(Debug, Default)]
+struct CalendarLevels {
+    current_day_key: Option<DateKey>,
+    current_day: Option<OhlcRange>,
+    prev_day: Option<OhlcRange>,
+    current_week_key: Option<WeekKey>,
+    current_week: Option<OhlcRange>,
+    prev_week: Option<OhlcRange>,
+    premarket_day_key: Option<DateKey>,
+    premarket_high: Option<f64>,
+    premarket_low: Option<f64>,
+    gap_pct: Option<f64>,
+}
+
+impl CalendarLevels {
+    fn push(&mut self, bar: &Bar) {
+        let Some(ts) = bar.timestamp else {
+            return;
+        };
+        let day_key = DateKey::from_ts(ts);
+        if self.current_day_key != Some(day_key) {
+            self.prev_day = self.current_day;
+            self.current_day_key = Some(day_key);
+            self.current_day = Some(OhlcRange::new(bar));
+            self.gap_pct = self.prev_day.and_then(|prev| {
+                if prev.close.abs() > f64::EPSILON {
+                    Some(100.0 * (bar.open - prev.close) / prev.close)
+                } else {
+                    None
+                }
+            });
+            self.premarket_day_key = Some(day_key);
+            self.premarket_high = None;
+            self.premarket_low = None;
+        } else if let Some(day) = self.current_day.as_mut() {
+            day.push(bar);
+        }
+
+        let week_key = WeekKey::from_ts(ts);
+        if self.current_week_key != Some(week_key) {
+            self.prev_week = self.current_week;
+            self.current_week_key = Some(week_key);
+            self.current_week = Some(OhlcRange::new(bar));
+        } else if let Some(week) = self.current_week.as_mut() {
+            week.push(bar);
+        }
+
+        if is_premarket_utc(ts) {
+            self.premarket_high = Some(self.premarket_high.map_or(bar.high, |v| v.max(bar.high)));
+            self.premarket_low = Some(self.premarket_low.map_or(bar.low, |v| v.min(bar.low)));
+        }
+    }
+}
+
+fn is_premarket_utc(ts: DateTime<Utc>) -> bool {
+    let minutes = ts.hour() * 60 + ts.minute();
+    // Equity premarket approximation in UTC. Kept deterministic and
+    // timezone-free inside this engine-independent crate.
+    (4 * 60..9 * 60 + 30).contains(&minutes)
+}
+
+#[derive(Debug)]
+struct DmiState {
+    period: usize,
+    prev_high: Option<f64>,
+    prev_low: Option<f64>,
+    prev_close: Option<f64>,
+    seed_tr: Vec<f64>,
+    seed_plus_dm: Vec<f64>,
+    seed_minus_dm: Vec<f64>,
+    smoothed_tr: Option<f64>,
+    smoothed_plus_dm: Option<f64>,
+    smoothed_minus_dm: Option<f64>,
+    seed_dx: Vec<f64>,
+    adx: Option<f64>,
+}
+
+impl DmiState {
+    fn new(period: usize) -> Self {
+        Self {
+            period,
+            prev_high: None,
+            prev_low: None,
+            prev_close: None,
+            seed_tr: Vec::with_capacity(period),
+            seed_plus_dm: Vec::with_capacity(period),
+            seed_minus_dm: Vec::with_capacity(period),
+            smoothed_tr: None,
+            smoothed_plus_dm: None,
+            smoothed_minus_dm: None,
+            seed_dx: Vec::with_capacity(period),
+            adx: None,
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64, close: f64) {
+        let (Some(prev_high), Some(prev_low), Some(prev_close)) =
+            (self.prev_high, self.prev_low, self.prev_close)
+        else {
+            self.prev_high = Some(high);
+            self.prev_low = Some(low);
+            self.prev_close = Some(close);
+            return;
+        };
+
+        let up_move = high - prev_high;
+        let down_move = prev_low - low;
+        let plus_dm = if up_move > down_move && up_move > 0.0 {
+            up_move
+        } else {
+            0.0
+        };
+        let minus_dm = if down_move > up_move && down_move > 0.0 {
+            down_move
+        } else {
+            0.0
+        };
+        let tr = true_range(high, low, prev_close);
+
+        match (self.smoothed_tr, self.smoothed_plus_dm, self.smoothed_minus_dm) {
+            (Some(tr_s), Some(plus_s), Some(minus_s)) => {
+                let p = self.period as f64;
+                self.smoothed_tr = Some(tr_s - tr_s / p + tr);
+                self.smoothed_plus_dm = Some(plus_s - plus_s / p + plus_dm);
+                self.smoothed_minus_dm = Some(minus_s - minus_s / p + minus_dm);
+                self.update_adx();
+            }
+            _ => {
+                self.seed_tr.push(tr);
+                self.seed_plus_dm.push(plus_dm);
+                self.seed_minus_dm.push(minus_dm);
+                if self.seed_tr.len() == self.period {
+                    self.smoothed_tr = Some(self.seed_tr.iter().sum());
+                    self.smoothed_plus_dm = Some(self.seed_plus_dm.iter().sum());
+                    self.smoothed_minus_dm = Some(self.seed_minus_dm.iter().sum());
+                    self.seed_tr.clear();
+                    self.seed_plus_dm.clear();
+                    self.seed_minus_dm.clear();
+                    self.update_adx();
+                }
+            }
+        }
+
+        self.prev_high = Some(high);
+        self.prev_low = Some(low);
+        self.prev_close = Some(close);
+    }
+
+    fn update_adx(&mut self) {
+        let Some(dx) = self.dx() else {
+            return;
+        };
+        if self.adx.is_none() {
+            self.seed_dx.push(dx);
+            if self.seed_dx.len() == self.period {
+                self.adx = Some(self.seed_dx.iter().sum::<f64>() / self.period as f64);
+                self.seed_dx.clear();
+            }
+        } else {
+            let p = self.period as f64;
+            let prev = self.adx.unwrap();
+            self.adx = Some((prev * (p - 1.0) + dx) / p);
+        }
+    }
+
+    fn di_plus(&self) -> Option<f64> {
+        let tr = self.smoothed_tr?;
+        if tr.abs() <= f64::EPSILON {
+            return Some(0.0);
+        }
+        Some(100.0 * self.smoothed_plus_dm? / tr)
+    }
+
+    fn di_minus(&self) -> Option<f64> {
+        let tr = self.smoothed_tr?;
+        if tr.abs() <= f64::EPSILON {
+            return Some(0.0);
+        }
+        Some(100.0 * self.smoothed_minus_dm? / tr)
+    }
+
+    fn dx(&self) -> Option<f64> {
+        let plus = self.di_plus()?;
+        let minus = self.di_minus()?;
+        let denom = plus + minus;
+        if denom.abs() <= f64::EPSILON {
+            return Some(0.0);
+        }
+        Some(100.0 * (plus - minus).abs() / denom)
+    }
+
+    fn adx(&self) -> Option<f64> {
+        self.adx
+    }
+}
+
 #[derive(Debug)]
 struct RocState {
     period: usize,
@@ -786,6 +1162,50 @@ impl StochState {
 }
 
 #[derive(Debug)]
+struct StochRsiState {
+    rsi: RsiState,
+    rsi_window: WindowState,
+    d_sma: SmaState,
+    k: Option<f64>,
+}
+
+impl StochRsiState {
+    fn new(period: usize) -> Self {
+        Self {
+            rsi: RsiState::new(period),
+            rsi_window: WindowState::new(period),
+            d_sma: SmaState::new(3),
+            k: None,
+        }
+    }
+
+    fn push(&mut self, close: f64) {
+        self.rsi.push(close);
+        if let Some(rsi) = self.rsi.value() {
+            self.rsi_window.push(rsi);
+            self.k = match (self.rsi_window.max(), self.rsi_window.min()) {
+                (Some(max), Some(min)) if (max - min).abs() > f64::EPSILON => {
+                    Some(100.0 * (rsi - min) / (max - min))
+                }
+                (Some(_), Some(_)) => Some(0.0),
+                _ => None,
+            };
+            if let Some(k) = self.k {
+                self.d_sma.push(k);
+            }
+        }
+    }
+
+    fn k(&self) -> Option<f64> {
+        self.k
+    }
+
+    fn d(&self) -> Option<f64> {
+        self.d_sma.value()
+    }
+}
+
+#[derive(Debug)]
 struct CciState {
     window: WindowState,
     current_tp: Option<f64>,
@@ -916,6 +1336,154 @@ impl VwapState {
     }
 }
 
+#[derive(Debug)]
+struct RvolState {
+    period: usize,
+    by_slot: HashMap<u16, (VecDeque<f64>, f64)>,
+    rolling: SmaState,
+    value: Option<f64>,
+}
+
+impl RvolState {
+    fn new(period: usize) -> Self {
+        Self {
+            period,
+            by_slot: HashMap::new(),
+            rolling: SmaState::new(period),
+            value: None,
+        }
+    }
+
+    fn push(&mut self, volume: f64, timestamp: Option<DateTime<Utc>>) {
+        if let Some(ts) = timestamp {
+            let slot = (ts.hour() * 60 + ts.minute()) as u16;
+            let entry = self
+                .by_slot
+                .entry(slot)
+                .or_insert_with(|| (VecDeque::with_capacity(self.period), 0.0));
+            let (window, sum) = entry;
+            self.value = if window.len() == self.period && sum.abs() > f64::EPSILON {
+                Some(volume / (*sum / self.period as f64))
+            } else {
+                None
+            };
+            window.push_back(volume);
+            *sum += volume;
+            if window.len() > self.period {
+                *sum -= window.pop_front().unwrap_or(0.0);
+            }
+            return;
+        }
+
+        self.value = self
+            .rolling
+            .value()
+            .and_then(|avg| (avg.abs() > f64::EPSILON).then_some(volume / avg));
+        self.rolling.push(volume);
+    }
+
+    fn value(&self) -> Option<f64> {
+        self.value
+    }
+}
+
+#[derive(Debug)]
+struct IchimokuState {
+    tenkan: DonchianState,
+    kijun: DonchianState,
+    senkou_b: DonchianState,
+    closes: VecDeque<f64>,
+    close_lag: usize,
+}
+
+impl IchimokuState {
+    fn new() -> Self {
+        Self {
+            tenkan: DonchianState::new(9),
+            kijun: DonchianState::new(26),
+            senkou_b: DonchianState::new(52),
+            closes: VecDeque::with_capacity(27),
+            close_lag: 26,
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64, close: f64) {
+        self.tenkan.push(high, low);
+        self.kijun.push(high, low);
+        self.senkou_b.push(high, low);
+        self.closes.push_back(close);
+        if self.closes.len() > self.close_lag + 1 {
+            self.closes.pop_front();
+        }
+    }
+
+    fn tenkan(&self) -> Option<f64> {
+        self.tenkan.middle()
+    }
+
+    fn kijun(&self) -> Option<f64> {
+        self.kijun.middle()
+    }
+
+    fn senkou_a(&self) -> Option<f64> {
+        Some((self.tenkan()? + self.kijun()?) / 2.0)
+    }
+
+    fn senkou_b(&self) -> Option<f64> {
+        self.senkou_b.middle()
+    }
+
+    fn chikou(&self) -> Option<f64> {
+        (self.closes.len() == self.close_lag + 1)
+            .then(|| self.closes.front().copied())
+            .flatten()
+    }
+
+    fn cloud_top(&self) -> Option<f64> {
+        Some(self.senkou_a()?.max(self.senkou_b()?))
+    }
+
+    fn cloud_bottom(&self) -> Option<f64> {
+        Some(self.senkou_a()?.min(self.senkou_b()?))
+    }
+
+    fn cloud_thickness(&self) -> Option<f64> {
+        Some((self.senkou_a()? - self.senkou_b()?).abs())
+    }
+}
+
+#[derive(Debug)]
+struct KeltnerState {
+    middle: EmaState,
+    atr: AtrState,
+}
+
+impl KeltnerState {
+    fn new(period: usize) -> Self {
+        Self {
+            middle: EmaState::new(period),
+            atr: AtrState::new(period),
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64, close: f64, prev_close: Option<f64>) {
+        self.middle.push(close);
+        self.atr.push(high, low, close, prev_close);
+    }
+
+    fn middle(&self) -> Option<f64> {
+        self.middle.value()
+    }
+
+    fn upper(&self) -> Option<f64> {
+        Some(self.middle()? + 2.0 * self.atr.value()?)
+    }
+
+    fn lower(&self) -> Option<f64> {
+        Some(self.middle()? - 2.0 * self.atr.value()?)
+    }
+}
+
 fn typical_price(high: f64, low: f64, close: f64) -> f64 {
     (high + low + close) / 3.0
 }
@@ -928,6 +1496,7 @@ fn typical_price(high: f64, low: f64, close: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::types::{IndicatorName, IndicatorRef};
+    use chrono::TimeZone;
 
     fn bar(o: f64, h: f64, l: f64, c: f64) -> Bar {
         Bar::new(o, h, l, c)
@@ -1051,6 +1620,113 @@ mod tests {
             IndicatorRef::periodic(IndicatorName::Mfi, 14),
             IndicatorRef::periodic(IndicatorName::Vwap, 20),
             IndicatorRef::periodic(IndicatorName::VolumeSma, 20),
+            IndicatorRef::periodic(IndicatorName::Adx, 14),
+            IndicatorRef::periodic(IndicatorName::DiPlus, 14),
+            IndicatorRef::periodic(IndicatorName::DiMinus, 14),
+            IndicatorRef::periodic(IndicatorName::StochRsiK, 14),
+            IndicatorRef::periodic(IndicatorName::StochRsiD, 14),
+            IndicatorRef::periodic(IndicatorName::Rvol, 3),
+            IndicatorRef::periodic(IndicatorName::Highest, 20),
+            IndicatorRef::periodic(IndicatorName::Lowest, 20),
+            IndicatorRef::periodic(IndicatorName::KeltnerUpper, 20),
+            IndicatorRef::periodic(IndicatorName::KeltnerMiddle, 20),
+            IndicatorRef::periodic(IndicatorName::KeltnerLower, 20),
+            IndicatorRef::periodic(IndicatorName::WilliamsR, 14),
+            IndicatorRef {
+                name: IndicatorName::Tenkan,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::Kijun,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::SenkouA,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::SenkouB,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::Chikou,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::CloudTop,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::CloudBottom,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::CloudThickness,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevDayOpen,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevDayHigh,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevDayLow,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevDayClose,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevWeekHigh,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevWeekLow,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PremarketHigh,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PremarketLow,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::GapPct,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::GapUp,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::GapDown,
+                period: None,
+                bar_offset: None,
+            },
             IndicatorRef {
                 name: IndicatorName::MacdLine,
                 period: None,
@@ -1073,14 +1749,16 @@ mod tests {
             },
         ];
         let mut e = IndicatorEngine::new(refs.iter());
-        for i in 1..=60 {
+        let start = Utc.with_ymd_and_hms(2026, 5, 4, 0, 0, 0).unwrap();
+        for i in 1..=400 {
             let close = 100.0 + i as f64 + ((i % 7) as f64 - 3.0);
-            e.push(&Bar::with_volume(
+            e.push(&Bar::with_timestamp(
                 close - 0.5,
                 close + 2.0,
                 close - 2.0,
                 close,
                 1_000.0 + i as f64,
+                start + chrono::Duration::hours(i as i64),
             ));
         }
 

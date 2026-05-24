@@ -12,12 +12,14 @@
 //! * Daily wakeup counter, with the day the count belongs to (UTC).
 //! * Whether the filter has ever fired at all.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use chrono::{DateTime, Datelike, Utc};
 
 use crate::indicators::IndicatorEngine;
 use crate::types::{Condition, ConditionTree, Filter, IndicatorRef, Operand};
+
+pub(crate) const CONDITION_HISTORY_CAP: usize = 512;
 
 /// Internal record of one UTC day for the daily-wakeup cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +49,13 @@ pub struct FilterState {
     /// `crosses_*` needs: previous `lhs <= rhs` / `lhs >= rhs` plus the
     /// current strict comparison.
     pub(crate) prev_numeric_pairs: Vec<Option<(f64, f64)>>,
+    /// Recent raw per-condition operator signals. Parameterized
+    /// operators such as `above_for_3` and `crossed_above_5` use this
+    /// to express persistence without expanding the condition tree.
+    pub(crate) condition_history: Vec<VecDeque<bool>>,
+    /// Recent resolved numeric pairs for each condition, newest at the
+    /// back. Used by slope/z-score operator transforms.
+    pub(crate) numeric_pair_history: Vec<VecDeque<(f64, f64)>>,
     /// Previous tree result (the rollup of the per-condition results
     /// under All/Any). `None` until after the first post-warmup bar.
     pub(crate) prev_tree: Option<bool>,
@@ -70,6 +79,12 @@ impl FilterState {
             indicators,
             prev_conditions: vec![None; n_conditions],
             prev_numeric_pairs: vec![None; n_conditions],
+            condition_history: (0..n_conditions)
+                .map(|_| VecDeque::with_capacity(CONDITION_HISTORY_CAP.min(64)))
+                .collect(),
+            numeric_pair_history: (0..n_conditions)
+                .map(|_| VecDeque::with_capacity(CONDITION_HISTORY_CAP.min(64)))
+                .collect(),
             prev_tree: None,
             cooldown_left: 0,
             wakeup_day: None,

@@ -1383,23 +1383,49 @@ fn filter_catalog(json: bool) -> CliResult<()> {
             {"token": "==", "aliases": ["eq", "equals"], "rhs": "indicator_or_numeric"},
             {"token": "crosses_above", "aliases": ["crosses_over"], "rhs": "indicator_only"},
             {"token": "crosses_below", "aliases": ["crosses_under"], "rhs": "indicator_only"},
-            {"token": "between", "aliases": [], "rhs": "range"}
+            {"token": "between", "aliases": [], "rhs": "range"},
+            {"token": "above_for_<bars>", "aliases": [], "rhs": "indicator_or_numeric"},
+            {"token": "below_for_<bars>", "aliases": [], "rhs": "indicator_or_numeric"},
+            {"token": "crossed_above_<bars>", "aliases": [], "rhs": "indicator_only"},
+            {"token": "crossed_below_<bars>", "aliases": [], "rhs": "indicator_only"},
+            {"token": "slope_gt_<bars>", "aliases": [], "rhs": "numeric"},
+            {"token": "slope_lt_<bars>", "aliases": [], "rhs": "numeric"},
+            {"token": "zscore_gt_<period>", "aliases": [], "rhs": "numeric"},
+            {"token": "zscore_lt_<period>", "aliases": [], "rhs": "numeric"},
+            {"token": "within_pct_<pct>", "aliases": [], "rhs": "indicator_or_numeric"}
         ],
         "indicators": {
             "price_volume": ["open", "high", "low", "close", "volume"],
             "moving_average": ["sma_<period>", "ema_<period>", "wma_<period>"],
             "trend": [
+                "adx_<period>",
+                "di_plus_<period>",
+                "di_minus_<period>",
                 "donchian_upper_<period>",
                 "donchian_middle_<period>",
-                "donchian_lower_<period>"
+                "donchian_lower_<period>",
+                "highest_<period>",
+                "lowest_<period>",
+                "tenkan",
+                "kijun",
+                "senkou_a",
+                "senkou_b",
+                "chikou",
+                "cloud_top",
+                "cloud_bottom",
+                "cloud_thickness"
             ],
             "momentum": [
                 "rsi_<period>",
                 "roc_<period>",
                 "stoch_k_<period>",
                 "stoch_d_<period>",
+                "stoch_rsi_<period>",
+                "stoch_rsi_k_<period>",
+                "stoch_rsi_d_<period>",
                 "cci_<period>",
-                "mfi_<period>"
+                "mfi_<period>",
+                "williams_r_<period>"
             ],
             "volatility_bands": [
                 "atr_<period>",
@@ -1408,7 +1434,10 @@ fn filter_catalog(json: bool) -> CliResult<()> {
                 "bb_middle_<period>",
                 "bb_lower_<period>",
                 "bb_width_<period>",
-                "bb_pct_b_<period>"
+                "bb_pct_b_<period>",
+                "keltner_upper_<period>",
+                "keltner_middle_<period>",
+                "keltner_lower_<period>"
             ],
             "macd": [
                 "macd_line",
@@ -1418,7 +1447,20 @@ fn filter_catalog(json: bool) -> CliResult<()> {
                 "macd_hist",
                 "macd_histogram"
             ],
-            "volume_aware": ["vwap_<period>", "volume_sma_<period>", "obv"]
+            "volume_aware": ["vwap_<period>", "volume_sma_<period>", "rvol_<period>", "obv"],
+            "session_levels": [
+                "prev_day_open",
+                "prev_day_high",
+                "prev_day_low",
+                "prev_day_close",
+                "prev_week_high",
+                "prev_week_low",
+                "premarket_high",
+                "premarket_low",
+                "gap_pct",
+                "gap_up",
+                "gap_down"
+            ]
         },
         "examples": {
             "ema_cross_cooldown": {
@@ -1457,14 +1499,21 @@ fn filter_catalog(json: bool) -> CliResult<()> {
     println!("Inline Filter DSL catalog");
     println!("Docs: docs/operator/filter-dsl-catalog.md and /docs?slug=filter-dsl-catalog");
     println!("Required fields: display_name, asset_scope, timeframe, conditions");
-    println!("Operators: >, <, >=, <=, ==, crosses_above, crosses_below, between");
+    println!(
+        "Operators: >, <, >=, <=, ==, crosses_above, crosses_below, between, \
+         above_for_<bars>, below_for_<bars>, crossed_above_<bars>, crossed_below_<bars>, \
+         slope_gt_<bars>, slope_lt_<bars>, zscore_gt_<period>, zscore_lt_<period>, within_pct_<pct>"
+    );
     println!("Accepted aliases: gt above lt below gte lte eq equals crosses_over crosses_under");
     println!(
         "Indicators: open high low close volume; sma_<period> ema_<period> wma_<period>; \
-         rsi_<period> roc_<period> stoch_k_<period> stoch_d_<period> cci_<period> mfi_<period>; \
+         adx_<period> di_plus_<period> di_minus_<period>; \
+         rsi_<period> roc_<period> stoch_k_<period> stoch_d_<period> stoch_rsi_<period> cci_<period> mfi_<period>; \
          atr_<period> atr_pct_<period>; bb_upper/middle/lower/width/pct_b_<period>; \
-         donchian_upper/middle/lower_<period>; macd_line macd_signal macd_hist; \
-         vwap_<period> volume_sma_<period> obv",
+         keltner_upper/middle/lower_<period>; donchian_upper/middle/lower_<period>; \
+         highest_<period> lowest_<period>; macd_line macd_signal macd_hist; \
+         ichimoku tenkan/kijun/cloud_*; vwap_<period> volume_sma_<period> rvol_<period> obv; \
+         prev_day_* prev_week_* premarket_* gap_*",
     );
     println!("Use --json for a machine-readable catalog with examples.");
     Ok(())

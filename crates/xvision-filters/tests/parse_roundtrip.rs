@@ -293,6 +293,38 @@ fn expanded_indicator_catalog_parses_and_validates() {
         ("mfi_14", 50.0),
         ("vwap_20", 100.0),
         ("volume_sma_20", 100.0),
+        ("adx_14", 25.0),
+        ("di_plus_14", 25.0),
+        ("di_minus_14", 25.0),
+        ("tenkan", 100.0),
+        ("kijun", 100.0),
+        ("senkou_a", 100.0),
+        ("senkou_b", 100.0),
+        ("chikou", 100.0),
+        ("cloud_top", 100.0),
+        ("cloud_bottom", 100.0),
+        ("cloud_thickness", 5.0),
+        ("stoch_rsi_14", 50.0),
+        ("stoch_rsi_k_14", 50.0),
+        ("stoch_rsi_d_14", 50.0),
+        ("rvol_20", 1.5),
+        ("prev_day_open", 100.0),
+        ("prev_day_high", 100.0),
+        ("prev_day_low", 100.0),
+        ("prev_day_close", 100.0),
+        ("prev_week_high", 100.0),
+        ("prev_week_low", 100.0),
+        ("premarket_high", 100.0),
+        ("premarket_low", 100.0),
+        ("highest_20", 100.0),
+        ("lowest_20", 100.0),
+        ("gap_pct", 0.0),
+        ("gap_up", 0.5),
+        ("gap_down", 0.5),
+        ("keltner_upper_20", 100.0),
+        ("keltner_middle_20", 100.0),
+        ("keltner_lower_20", 100.0),
+        ("williams_r_14", -50.0),
     ];
 
     for (token, threshold) in tokens {
@@ -311,6 +343,39 @@ fn expanded_indicator_catalog_parses_and_validates() {
         );
         let f = parse_toml(&toml_doc).unwrap_or_else(|e| panic!("parse failed for {token}: {e}"));
         validate(&f).unwrap_or_else(|e| panic!("validate failed for {token}: {e}"));
+    }
+}
+
+#[test]
+fn parameterized_operator_catalog_parses_and_validates() {
+    let cases: &[(&str, &str)] = &[
+        ("above_for_3", "100.0"),
+        ("below_for_3", "100.0"),
+        ("crossed_above_5", "\"ema_26\""),
+        ("crossed_below_5", "\"ema_26\""),
+        ("slope_gt_3", "0.0"),
+        ("slope_lt_3", "0.0"),
+        ("zscore_gt_20", "1.5"),
+        ("zscore_lt_20", "-1.5"),
+        ("within_pct_1.5", "\"ema_26\""),
+    ];
+
+    for (op, rhs) in cases {
+        let toml_doc = format!(
+            "[filter]\n\
+             id = \"f_01\"\n\
+             strategy_id = \"s_01\"\n\
+             display_name = \"t\"\n\
+             asset_scope = [\"BTC/USD\"]\n\
+             timeframe = \"1h\"\n\
+             \n\
+             [[filter.conditions.all]]\n\
+             lhs = \"ema_12\"\n\
+             op  = \"{op}\"\n\
+             rhs = {rhs}\n",
+        );
+        let f = parse_toml(&toml_doc).unwrap_or_else(|e| panic!("parse failed for operator {op}: {e}"));
+        validate(&f).unwrap_or_else(|e| panic!("validate failed for operator {op}: {e}"));
     }
 }
 

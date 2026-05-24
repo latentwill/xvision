@@ -208,7 +208,14 @@ fn validate_operand_types(cond: &Condition, base: &str) -> Result<(), Validation
     match cond.op {
         // Comparison operators: lhs Indicator, rhs Indicator | Numeric.
         // Range disallowed on either side.
-        Operator::Gt | Operator::Lt | Operator::Gte | Operator::Lte | Operator::Eq => {
+        Operator::Gt
+        | Operator::Lt
+        | Operator::Gte
+        | Operator::Lte
+        | Operator::Eq
+        | Operator::AboveFor(_)
+        | Operator::BelowFor(_)
+        | Operator::WithinPct(_) => {
             require_indicator(&cond.lhs, &lhs_path, cond.op)?;
             match &cond.rhs {
                 Operand::Indicator(_) | Operand::Numeric(_) => {}
@@ -224,9 +231,27 @@ fn validate_operand_types(cond: &Condition, base: &str) -> Result<(), Validation
             }
         }
         // `crosses_*`: both sides indicator.
-        Operator::CrossesAbove | Operator::CrossesBelow => {
+        Operator::CrossesAbove
+        | Operator::CrossesBelow
+        | Operator::CrossedAbove(_)
+        | Operator::CrossedBelow(_) => {
             require_indicator(&cond.lhs, &lhs_path, cond.op)?;
             require_indicator(&cond.rhs, &rhs_path, cond.op)?;
+        }
+        // Transform operators compare the transformed LHS against a
+        // numeric threshold.
+        Operator::SlopeGt(_) | Operator::SlopeLt(_) | Operator::ZscoreGt(_) | Operator::ZscoreLt(_) => {
+            require_indicator(&cond.lhs, &lhs_path, cond.op)?;
+            if !matches!(cond.rhs, Operand::Numeric(_)) {
+                return Err(ValidationError::OperandType {
+                    path: rhs_path,
+                    detail: format!(
+                        "operator '{}' requires rhs to be numeric, got {}",
+                        cond.op.dsl_token(),
+                        cond.rhs.kind_name()
+                    ),
+                });
+            }
         }
         // `between`: lhs indicator, rhs range.
         Operator::Between => {
@@ -277,6 +302,12 @@ fn validate_range(lo: f64, hi: f64, path: &str) -> Result<(), ValidationError> {
 }
 
 fn validate_numeric_bounds(cond: &Condition, base: &str) -> Result<(), ValidationError> {
+    if matches!(
+        cond.op,
+        Operator::SlopeGt(_) | Operator::SlopeLt(_) | Operator::ZscoreGt(_) | Operator::ZscoreLt(_)
+    ) {
+        return Ok(());
+    }
     // Determine the indicator the numeric value is being compared
     // against, then enforce per-indicator bounds.
     let indicator = match &cond.lhs {
@@ -310,7 +341,15 @@ fn check_numeric_for_indicator(ind: &IndicatorRef, value: f64, path: &str) -> Re
         });
     }
     match ind.name {
-        IndicatorName::Rsi | IndicatorName::StochK | IndicatorName::StochD | IndicatorName::Mfi
+        IndicatorName::Rsi
+        | IndicatorName::Adx
+        | IndicatorName::DiPlus
+        | IndicatorName::DiMinus
+        | IndicatorName::StochK
+        | IndicatorName::StochD
+        | IndicatorName::StochRsiK
+        | IndicatorName::StochRsiD
+        | IndicatorName::Mfi
             if !(0.0..=100.0).contains(&value) =>
         {
             Err(ValidationError::NumericBounds {
@@ -339,6 +378,25 @@ fn check_numeric_for_indicator(ind: &IndicatorRef, value: f64, path: &str) -> Re
                 ind.to_dsl()
             ),
         }),
+        IndicatorName::WilliamsR if !(-100.0..=0.0).contains(&value) => Err(ValidationError::NumericBounds {
+            path: path.to_string(),
+            detail: format!(
+                "williams_r threshold must be in [-100, 0]; got {} for '{}'",
+                value,
+                ind.to_dsl()
+            ),
+        }),
+        IndicatorName::GapUp | IndicatorName::GapDown if !(0.0..=1.0).contains(&value) => {
+            Err(ValidationError::NumericBounds {
+                path: path.to_string(),
+                detail: format!(
+                    "{} threshold must be in [0, 1]; got {} for '{}'",
+                    ind.name.dsl_prefix(),
+                    value,
+                    ind.to_dsl()
+                ),
+            })
+        }
         // No upper-bound check in v1 for ema/sma/atr/close (or for
         // values that satisfy the rsi/atr_pct bound).
         _ => Ok(()),
