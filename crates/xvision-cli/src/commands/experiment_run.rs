@@ -4,7 +4,8 @@
 //! It sits on top of all wave A / B / C primitives:
 //!
 //! - Wave A: `eval::batch::run_batch` — execute one run per scenario.
-//! - Wave B: `scenario::select_scenarios` — filter library by asset/timeframe.
+//! - Wave B: `scenario::select_scenarios` — filter library by timeframe /
+//!           decision-count / regime (scenarios are asset-free).
 //! - Wave C: `api::experiment::{create_experiment, update_experiment}` +
 //!           `ExperimentStore::set_result` — experiment ledger CRUD.
 //!
@@ -12,8 +13,13 @@
 //!
 //! Two modes:
 //! 1. `--scenarios <id1,id2,...>` — caller provides explicit scenario ids.
-//! 2. `--assets / --timeframe / ...` — delegates to `select_scenarios` (wave B).
-//!    Equivalent to calling `xvn scenario select` and feeding the result here.
+//! 2. `--timeframe / --target-decisions / ...` — delegates to
+//!    `select_scenarios` (wave B). Equivalent to calling `xvn scenario select`
+//!    and feeding the result here.
+//!
+//! `--assets` is a RUN-LAYER subset of the strategy universe (which assets to
+//! trade), NOT a scenario filter — scenarios are asset-free. (TODO: threaded
+//! to `eval --assets` in Task C3; currently informational.)
 //!
 //! TODO(scenario-set-persistence): `--scenario-set <name>` (named saved scenario
 //! sets) is NOT implemented here. It would require a persisted scenario-set table
@@ -36,7 +42,8 @@
 //!   --question "<freeform>" \
 //!   --strategy <strategy_id> \
 //!   [--scenarios <id1,id2,...>] \
-//!   [--assets <a1,a2> --timeframe <min> --target-decisions <N> | --same-decisions --max-decisions <N>] \
+//!   [--timeframe <min> --target-decisions <N> | --same-decisions --max-decisions <N>] \
+//!   [--assets <a1,a2>] \
 //!   --decision-budget <N> \
 //!   --wait \
 //!   [--review-with <profile>] \
@@ -321,7 +328,8 @@ pub struct RunArgs {
 
     /// Explicit comma-separated scenario ids (from `xvn scenario ls`).
     ///
-    /// Mutually exclusive with `--assets` / `--timeframe` selector mode.
+    /// Mutually exclusive with the `--timeframe` / `--target-decisions`
+    /// selector mode.
     #[arg(long, value_delimiter = ',')]
     pub scenarios: Vec<String>,
 
@@ -329,8 +337,9 @@ pub struct RunArgs {
     // TODO(scenario-set-persistence): --scenario-set <name> is NOT implemented.
     // Persisted named scenario sets were punted in wave B. Wire this up once
     // the `scenario_sets` table lands in a follow-up track.
-    /// Asset filter for scenario selection (e.g. `BTC/USD,ETH/USD`).
-    /// Only used when `--scenarios` is not provided.
+    /// Subset of the strategy universe to trade (e.g. `BTC/USD,ETH/USD`).
+    /// A run-layer filter, NOT a scenario filter — scenarios are asset-free.
+    /// TODO: thread to `eval --assets` (Task C3); currently informational.
     #[arg(long, value_delimiter = ',')]
     pub assets: Vec<String>,
 
@@ -447,13 +456,26 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         .await
         .exit_with(XvnExit::Upstream)?;
 
+    // `--assets` is now a RUN-LAYER subset of the strategy universe (which
+    // assets to trade), NOT a scenario filter — scenarios are asset-free.
+    // TODO: thread `args.assets` to `eval --assets` (Task C3). Until that
+    // lands, the subset is accepted and carried in the plan/log but does not
+    // affect scenario resolution or the executor universe.
+    let asset_subset = args.assets.clone();
+
+    // Scenario selection is driven by the remaining (asset-free) selector
+    // flags: --timeframe / --target-decisions / --same-decisions / --regimes.
+    let selector_requested = args.timeframe.is_some()
+        || args.target_decisions.is_some()
+        || args.same_decisions
+        || !args.regimes.is_empty();
+
     // Resolve scenario ids: explicit list OR selector.
     let mut scenario_ids: Vec<String> = if !args.scenarios.is_empty() {
         args.scenarios.clone()
-    } else if !args.assets.is_empty() {
+    } else if selector_requested {
         resolve_scenarios_via_selector(
             &ctx,
-            &args.assets,
             args.timeframe,
             &args.regimes,
             args.target_decisions,
@@ -465,14 +487,17 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
     } else {
         return Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("either --scenarios <ids> or --assets (with --timeframe) is required"),
+            source: anyhow::anyhow!(
+                "either --scenarios <ids> or a selector (--timeframe / --target-decisions / \
+                 --same-decisions / --regimes) is required"
+            ),
         });
     };
 
     if scenario_ids.is_empty() {
         return Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("no scenarios resolved; check --assets / --timeframe / --count"),
+            source: anyhow::anyhow!("no scenarios resolved; check --timeframe / --target-decisions / --count"),
         });
     }
 
@@ -498,6 +523,11 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         eprintln!("  question:          {q}");
     }
     eprintln!("  strategy:          {}", args.strategy);
+    if !asset_subset.is_empty() {
+        // Run-layer subset of the strategy universe. TODO: thread to
+        // `eval --assets` (Task C3); currently informational only.
+        eprintln!("  asset subset:      {}", asset_subset.join(","));
+    }
     eprintln!(
         "  runs to launch:    {}{}",
         scenario_ids.len(),
@@ -631,10 +661,11 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
 
 // ── Scenario selector integration ────────────────────────────────────────────
 
-/// Delegate scenario selection to wave-B `select_scenarios` logic.
+/// Delegate scenario selection to wave-B `select_scenarios` logic. Scenarios
+/// are asset-free, so this no longer filters by asset; asset-universe
+/// selection lives at the run layer (`--assets`, threaded in Task C3).
 async fn resolve_scenarios_via_selector(
     ctx: &ApiContext,
-    assets: &[String],
     timeframe_minutes: Option<u32>,
     regimes: &[String],
     target_decisions: Option<u64>,
@@ -659,7 +690,6 @@ async fn resolve_scenarios_via_selector(
 
     let rows = crate::commands::scenario::select_scenarios(
         &all_scenarios,
-        assets,
         timeframe_minutes,
         regimes,
         target_decisions,

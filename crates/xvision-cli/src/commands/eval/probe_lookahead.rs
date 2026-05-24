@@ -90,11 +90,10 @@ pub async fn run_probe_lookahead(args: ProbeLookaheadArgs) -> CliResult<()> {
         .map_err(|e| super::api_to_cli("probe-lookahead get scenario", e))?;
 
     let cache_key = &scenario.bar_cache_policy.cache_key;
-    let asset_venue_symbol = scenario
-        .asset
-        .first()
-        .map(|a| a.venue_symbol.as_str())
-        .unwrap_or("BTC/USD");
+    // Scenarios are asset-free. The bar fixture is keyed by `cache_key` alone
+    // (the symbol arg to `load_ohlcv_fixture` is unused), and this symbol only
+    // labels the synthetic snapshots best-effort, so a placeholder suffices.
+    let asset_venue_symbol = "BTC/USD";
 
     eprintln!(
         "probe-lookahead: run={} scenario={} cache_key={}",

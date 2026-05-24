@@ -502,7 +502,10 @@ async fn review_scenario_summary(ctx: &ApiContext, run_id: &str) -> Option<revie
     Some(review::ReviewScenarioSummary {
         id: scenario.id.clone(),
         name: Some(scenario.display_name.clone()),
-        asset: scenario.asset.first().map(|a| a.symbol.clone()),
+        // Scenarios are asset-free; the run is multi-asset and the per-decision
+        // asset is the source of truth, so a single run-level asset is no longer
+        // meaningful.
+        asset: None,
         granularity: Some(scenario.granularity.to_string()),
         start: Some(scenario.time_window.start.to_rfc3339()),
         end: Some(scenario.time_window.end.to_rfc3339()),

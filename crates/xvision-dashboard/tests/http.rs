@@ -686,7 +686,6 @@ fn minimal_create_request() -> serde_json::Value {
         "display_name": "Test BTC 1h scenario",
         "description": "Integration test scenario",
         "asset_class": "Crypto",
-        "asset": [{ "class": "Crypto", "symbol": "BTC", "venue_symbol": "BTC/USD" }],
         "quote_currency": "Usd",
         "time_window": {
             "start": "2025-01-01T00:00:00Z",
