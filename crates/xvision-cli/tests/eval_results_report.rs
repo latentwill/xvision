@@ -126,10 +126,7 @@ fn decision(run_id: &str, idx: u32, asset: &str, action: &str, pnl: Option<f64>)
     }
 }
 
-async fn seed_completed_run(
-    pool: &SqlitePool,
-    decisions: &[(&str, &str, Option<f64>)],
-) -> String {
+async fn seed_completed_run(pool: &SqlitePool, decisions: &[(&str, &str, Option<f64>)]) -> String {
     let ctx_store = RunStore::new(pool.clone());
     let run = Run::new_queued(
         "agent-results-test".into(),
@@ -168,9 +165,14 @@ async fn seed_completed_run(
 #[tokio::test]
 async fn eval_results_json_contains_action_counts_and_tokens() {
     let home = tempdir().unwrap();
-    let ctx = ApiContext::open(home.path(), Actor::Cli { user: "results-test".into() })
-        .await
-        .expect("open ApiContext");
+    let ctx = ApiContext::open(
+        home.path(),
+        Actor::Cli {
+            user: "results-test".into(),
+        },
+    )
+    .await
+    .expect("open ApiContext");
 
     // One run with a known decision mix and known model_calls.
     let run_id = seed_completed_run(
@@ -188,10 +190,7 @@ async fn eval_results_json_contains_action_counts_and_tokens() {
         &ctx.db,
         &run_id,
         "ag_results",
-        &[
-            ("sp_r1", 800, 400, Some(0.030)),
-            ("sp_r2", 200, 100, Some(0.010)),
-        ],
+        &[("sp_r1", 800, 400, Some(0.030)), ("sp_r2", 200, 100, Some(0.010))],
     )
     .await;
 
@@ -220,16 +219,17 @@ async fn eval_results_json_contains_action_counts_and_tokens() {
     assert_eq!(report.get("trades").and_then(Value::as_u64), Some(3));
     assert_eq!(report.get("input_tokens").and_then(Value::as_u64), Some(1_000));
     assert_eq!(report.get("output_tokens").and_then(Value::as_u64), Some(500));
-    assert!(report.get("wall_clock_ms").is_some(), "wall_clock_ms missing: {report}");
+    assert!(
+        report.get("wall_clock_ms").is_some(),
+        "wall_clock_ms missing: {report}"
+    );
     let cost = report
         .get("cost_usd_estimate")
         .and_then(Value::as_f64)
         .expect("cost_usd_estimate present");
     assert!((cost - 0.040).abs() < 1e-9, "expected 0.040, got {cost}");
     assert_eq!(
-        report
-            .get("cost_estimate_complete")
-            .and_then(Value::as_bool),
+        report.get("cost_estimate_complete").and_then(Value::as_bool),
         Some(true),
     );
 }
@@ -237,9 +237,14 @@ async fn eval_results_json_contains_action_counts_and_tokens() {
 #[tokio::test]
 async fn eval_compare_json_contains_tokens_and_actions_per_run() {
     let home = tempdir().unwrap();
-    let ctx = ApiContext::open(home.path(), Actor::Cli { user: "compare-test".into() })
-        .await
-        .expect("open ApiContext");
+    let ctx = ApiContext::open(
+        home.path(),
+        Actor::Cli {
+            user: "compare-test".into(),
+        },
+    )
+    .await
+    .expect("open ApiContext");
 
     let run_a = seed_completed_run(
         &ctx.db,
@@ -278,11 +283,13 @@ async fn eval_compare_json_contains_tokens_and_actions_per_run() {
     drop(ctx);
 
     let runs_arg = format!("{run_a},{run_b}");
-    let out = xvn(
-        &["eval", "compare", "--runs", &runs_arg, "--json"],
-        home.path(),
+    let out = xvn(&["eval", "compare", "--runs", &runs_arg, "--json"], home.path());
+    assert!(
+        out.status.success(),
+        "xvn eval compare exit={:?} stderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "xvn eval compare exit={:?} stderr={}", out.status.code(), String::from_utf8_lossy(&out.stderr));
     let v: Value = parse_json_lenient(&out.stdout);
     // CompareReport.runs is the CLI-side render shape (CompareRunRow);
     // the underlying ComparisonReport's per-run data lives on
@@ -322,17 +329,18 @@ async fn eval_compare_json_contains_tokens_and_actions_per_run() {
 #[tokio::test]
 async fn eval_results_json_handles_failure_mode_runs_with_no_model_calls() {
     let home = tempdir().unwrap();
-    let ctx = ApiContext::open(home.path(), Actor::Cli { user: "fail-test".into() })
-        .await
-        .expect("open ApiContext");
+    let ctx = ApiContext::open(
+        home.path(),
+        Actor::Cli {
+            user: "fail-test".into(),
+        },
+    )
+    .await
+    .expect("open ApiContext");
 
     // Seed a "run" with just decisions; no model_calls — simulates a run
     // that died before the observability bus wired up.
-    let run_id = seed_completed_run(
-        &ctx.db,
-        &[("BTC", "hold", None), ("BTC", "hold", None)],
-    )
-    .await;
+    let run_id = seed_completed_run(&ctx.db, &[("BTC", "hold", None), ("BTC", "hold", None)]).await;
     drop(ctx);
 
     let out = xvn(&["eval", "results", &run_id, "--json"], home.path());
@@ -344,7 +352,10 @@ async fn eval_results_json_handles_failure_mode_runs_with_no_model_calls() {
     // unknown are operationally different signals.
     assert!(report.get("input_tokens").map(Value::is_null).unwrap_or(false));
     assert!(report.get("output_tokens").map(Value::is_null).unwrap_or(false));
-    assert!(report.get("cost_usd_estimate").map(Value::is_null).unwrap_or(false));
+    assert!(report
+        .get("cost_usd_estimate")
+        .map(Value::is_null)
+        .unwrap_or(false));
     // But action_counts is populated (decisions table did get rows).
     let actions = report.get("action_counts").unwrap();
     assert_eq!(actions.get("hold").and_then(Value::as_u64), Some(2));

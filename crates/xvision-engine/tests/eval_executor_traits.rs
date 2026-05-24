@@ -3,7 +3,7 @@
 //! refactor (`team/contracts/executor-trait-extraction.md`).
 //!
 //! These tests pin the trait surface; the integration regression — that
-//! `BacktestExecutor` produces byte-identical metrics on real fixtures
+//! `Executor` produces byte-identical metrics on real fixtures
 //! after the rewire — is covered by the existing test suite
 //! (`decisions_count.rs`, `eval_progress_backtest.rs`,
 //! `api_eval_run.rs`, etc.), all of which exercise the executor's

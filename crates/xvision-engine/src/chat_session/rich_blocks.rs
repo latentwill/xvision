@@ -530,7 +530,7 @@ pub fn inline_strategy_card_from_summary(
         tags: summary.tags.clone(),
         actions: vec![InlineAction {
             label: "Open strategy".into(),
-            href: Some(format!("/authoring/{}", summary.agent_id)),
+            href: Some(format!("/strategies/{}", summary.agent_id)),
             command: None,
         }],
     };
@@ -824,6 +824,7 @@ mod tests {
             template: "mean-reversion".into(),
             decision_cadence_minutes: 60,
             tags: vec!["btc".into()],
+            color: Some("#D4A547".into()),
             model: Some("claude".into()),
             providers: vec!["anthropic".into()],
             models: vec!["claude".into()],
@@ -881,6 +882,8 @@ mod tests {
             id: id.into(),
             agent_id: "agent-a".into(),
             scenario_id: "scenario-a".into(),
+            strategy: None,
+            scenario: None,
             mode: "backtest".into(),
             status: "completed".into(),
             started_at: Utc::now(),
@@ -894,6 +897,9 @@ mod tests {
             inference_cost_quote_total: None,
             net_return_pct: None,
             filter_summaries: vec![],
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         }
     }
 
@@ -901,6 +907,7 @@ mod tests {
         ComparisonRunSummary {
             id: id.into(),
             agent_id: "agent-a".into(),
+            strategy_name: Some("Agent A".into()),
             scenario_id: "scenario-a".into(),
             mode: RunMode::Backtest,
             status: RunStatus::Completed,

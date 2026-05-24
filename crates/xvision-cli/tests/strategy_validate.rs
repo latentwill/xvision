@@ -130,7 +130,7 @@ fn seed_strategy_with_trader(
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));
@@ -323,6 +323,17 @@ fn validate_asset_mismatch_prompt_surfaces_warning() {
             String::from_utf8_lossy(&out.stderr)
         )
     });
+
+    assert_eq!(
+        code(&out),
+        0,
+        "asset mismatch should be warning-only; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        result["eval_ready"], true,
+        "warning must not block eval readiness"
+    );
 
     // The asset mismatch is a warning — it must appear in the warnings array.
     let warnings = result["warnings"].as_array().expect("warnings must be array");

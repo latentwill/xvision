@@ -7,7 +7,7 @@ use xvision_core::trading::AssetSymbol;
 
 #[derive(Debug, Clone, Copy)]
 struct Leg {
-    position: f64,    // +long / -short units
+    position: f64, // +long / -short units
     entry_price: f64,
     /// Last price this leg was marked at. Initialized to `entry_price` on
     /// `set_position` and updated via `mark`. Used as the unrealized
@@ -26,13 +26,31 @@ pub struct PortfolioBook {
 
 impl PortfolioBook {
     pub fn new(initial: f64) -> Self {
-        Self { initial, realized: 0.0, legs: BTreeMap::new() }
+        Self {
+            initial,
+            realized: 0.0,
+            legs: BTreeMap::new(),
+        }
     }
-    pub fn position(&self, a: AssetSymbol) -> f64 { self.legs.get(&a).map_or(0.0, |l| l.position) }
-    pub fn entry_price(&self, a: AssetSymbol) -> f64 { self.legs.get(&a).map_or(0.0, |l| l.entry_price) }
+    pub fn position(&self, a: AssetSymbol) -> f64 {
+        self.legs.get(&a).map_or(0.0, |l| l.position)
+    }
+    pub fn entry_price(&self, a: AssetSymbol) -> f64 {
+        self.legs.get(&a).map_or(0.0, |l| l.entry_price)
+    }
     pub fn set_position(&mut self, a: AssetSymbol, position: f64, entry_price: f64) {
-        if position == 0.0 { self.legs.remove(&a); }
-        else { self.legs.insert(a, Leg { position, entry_price, last_mark: entry_price }); }
+        if position == 0.0 {
+            self.legs.remove(&a);
+        } else {
+            self.legs.insert(
+                a,
+                Leg {
+                    position,
+                    entry_price,
+                    last_mark: entry_price,
+                },
+            );
+        }
     }
     /// Update the open leg's last-seen mark for asset `a`. No-op when there
     /// is no open leg for `a`. Call this at each timestamp for every asset
@@ -43,15 +61,21 @@ impl PortfolioBook {
             leg.last_mark = price;
         }
     }
-    pub fn add_realized(&mut self, pnl: f64) { self.realized += pnl; }
-    pub fn realized(&self) -> f64 { self.realized }
+    pub fn add_realized(&mut self, pnl: f64) {
+        self.realized += pnl;
+    }
+    pub fn realized(&self) -> f64 {
+        self.realized
+    }
     /// Mark-to-market equity. `marks[a]` is the price to value asset `a` at;
     /// an asset absent from `marks` falls back to its stored `last_mark`
     /// (the last price it was marked at via `mark`/`set_position`) rather
     /// than contributing zero unrealized. This keeps the pooled NAV
     /// continuous across timeline gaps where an asset has no bar.
     pub fn equity(&self, marks: &BTreeMap<AssetSymbol, f64>) -> f64 {
-        let unrealized: f64 = self.legs.iter()
+        let unrealized: f64 = self
+            .legs
+            .iter()
             .map(|(a, l)| {
                 let m = marks.get(a).copied().unwrap_or(l.last_mark);
                 l.position * (m - l.entry_price)

@@ -56,7 +56,14 @@ fn eval_run_provider_without_model_exits_2_usage() {
     let dir = tempdir().unwrap();
     let out = xvn(
         &[
-            "eval", "run", "--strategy", "any", "--scenario", "any", "--provider", "anthropic",
+            "eval",
+            "run",
+            "--strategy",
+            "any",
+            "--scenario",
+            "any",
+            "--provider",
+            "anthropic",
         ],
         dir.path(),
     );
@@ -149,9 +156,14 @@ async fn seed_completed_run_with_override(
 #[tokio::test]
 async fn eval_results_json_surfaces_provider_override_when_present() {
     let home = tempdir().unwrap();
-    let ctx = ApiContext::open(home.path(), Actor::Cli { user: "override-cli-test".into() })
-        .await
-        .expect("open ApiContext");
+    let ctx = ApiContext::open(
+        home.path(),
+        Actor::Cli {
+            user: "override-cli-test".into(),
+        },
+    )
+    .await
+    .expect("open ApiContext");
     let run_id = seed_completed_run_with_override(&ctx, "openrouter", "deepseek/deepseek-v4-flash").await;
     drop(ctx);
 
@@ -183,9 +195,14 @@ async fn eval_results_json_surfaces_provider_override_when_present() {
 #[tokio::test]
 async fn eval_results_json_omits_provider_override_when_absent() {
     let home = tempdir().unwrap();
-    let ctx = ApiContext::open(home.path(), Actor::Cli { user: "no-override-cli".into() })
-        .await
-        .expect("open ApiContext");
+    let ctx = ApiContext::open(
+        home.path(),
+        Actor::Cli {
+            user: "no-override-cli".into(),
+        },
+    )
+    .await
+    .expect("open ApiContext");
     let store = RunStore::new(ctx.db.clone());
     let run = Run::new_queued(
         "agent-no-override".into(),
@@ -213,7 +230,11 @@ async fn eval_results_json_omits_provider_override_when_absent() {
     drop(ctx);
 
     let out = xvn(&["eval", "results", &run_id, "--json"], home.path());
-    assert!(out.status.success(), "stderr={}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let body: Value = parse_json_lenient(&out.stdout);
     assert!(
         body.get("provider_override").is_none(),

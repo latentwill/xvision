@@ -18,8 +18,8 @@ use xvision_engine::api::strategy::{
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
-    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq, TemplateInfo,
-    UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
+    self, CreateStrategyOut, CreateStrategyReq, SetFilterReq, SetRiskConfigOut, SetRiskConfigReq,
+    TemplateInfo, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use xvision_engine::strategies::risk::RiskConfig;
 use xvision_engine::strategies::store::{MetadataPatchError, StrategyMetadataPatch};
@@ -305,6 +305,35 @@ pub async fn put_pipeline(
 }
 
 #[derive(Deserialize)]
+pub struct SetFilterBody {
+    #[serde(default)]
+    pub filter: Option<serde_json::Value>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub format: Option<String>,
+}
+
+pub async fn put_filter(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<SetFilterBody>,
+) -> Result<Json<Strategy>, DashboardError> {
+    let filter = match (body.filter, body.source) {
+        (Some(filter), _) => Some(filter),
+        (None, Some(source)) => Some(serde_json::Value::String(source)),
+        (None, None) => None,
+    };
+    let req = SetFilterReq {
+        strategy_id: id,
+        filter,
+        source: body.format,
+    };
+    let out = strategy::set_filter(&state.api_context(), req).await?;
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StrategyInspectorPatchBody {
     #[serde(default)]
@@ -313,6 +342,10 @@ pub struct StrategyInspectorPatchBody {
     pub plain_summary: Option<String>,
     #[serde(default)]
     pub asset_universe: Option<Vec<String>>,
+    #[serde(default)]
+    pub decision_cadence_minutes: Option<u32>,
+    #[serde(default)]
+    pub color: Option<String>,
     #[serde(default)]
     pub filter: Option<serde_json::Value>,
 }
@@ -323,12 +356,14 @@ impl StrategyInspectorPatchBody {
             display_name: self.display_name.clone(),
             plain_summary: self.plain_summary.clone(),
             asset_universe: self.asset_universe.clone(),
+            decision_cadence_minutes: self.decision_cadence_minutes,
+            color: self.color.clone(),
         }
     }
 }
 
 /// `PATCH /api/strategy/:id` — update top-level manifest fields
-/// (display_name, plain_summary, asset_universe). Out of scope:
+/// (display_name, plain_summary, asset_universe, cadence). Out of scope:
 /// id/creator/template/published_at and the sub-resources covered by
 /// dedicated routes (slot/agents/pipeline/risk/mechanical_params).
 ///
@@ -443,6 +478,8 @@ fn classify_metadata_patch_error(err: anyhow::Error, id: &str) -> DashboardError
             MetadataPatchError::EmptyAssetUniverse
             | MetadataPatchError::BlankAssetEntry
             | MetadataPatchError::InvalidAssetSymbol(_) => "asset_universe",
+            MetadataPatchError::InvalidDecisionCadence => "decision_cadence_minutes",
+            MetadataPatchError::InvalidColor(_) => "color",
         };
         return DashboardError::Validation {
             field: field.to_string(),

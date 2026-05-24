@@ -1,36 +1,34 @@
 import { describe, expect, it } from "vitest";
 import {
-  coerceDarkTheme,
   coerceThemePreference,
   resolveTheme,
   themeDefinitions,
 } from "./themes";
 
 describe("theme model", () => {
-  it("falls back to folio dark for invalid saved preferences", () => {
-    expect(coerceThemePreference(null)).toBe("folio-dark");
-    expect(coerceThemePreference("sepia")).toBe("folio-dark");
+  it("migrates retired theme ids to dark", () => {
+    expect(coerceThemePreference("folio-dark")).toBe("dark");
+    expect(coerceThemePreference("black")).toBe("dark");
+    expect(coerceThemePreference("light")).toBe("light");
+    expect(coerceThemePreference(null)).toBe("dark");
   });
 
-  it("falls back to folio dark for invalid saved dark themes", () => {
-    expect(coerceDarkTheme(null)).toBe("folio-dark");
-    expect(coerceDarkTheme("light")).toBe("folio-dark");
-    expect(coerceDarkTheme("black")).toBe("black");
+  it("falls back to dark for invalid saved preferences", () => {
+    expect(coerceThemePreference(null)).toBe("dark");
+    expect(coerceThemePreference("sepia")).toBe("dark");
   });
 
-  it("resolves auto from browser color scheme without choosing black", () => {
+  it("resolves auto from browser color scheme", () => {
     expect(resolveTheme("auto", "light")).toBe("light");
-    expect(resolveTheme("auto", "dark")).toBe("folio-dark");
+    expect(resolveTheme("auto", "dark")).toBe("dark");
   });
 
-  it("defines all concrete palettes and swatches", () => {
-    expect(Object.keys(themeDefinitions)).toEqual([
-      "light",
-      "folio-dark",
-      "black",
-    ]);
-    expect(themeDefinitions.black.cssVars["--bg"]).toBe("#000000");
-    expect(themeDefinitions["folio-dark"].cssVars["--bg"]).toBe("#0f0e0c");
+  it("defines exactly two concrete palettes: dark and light", () => {
+    expect(Object.keys(themeDefinitions)).toEqual(["dark", "light"]);
+    expect(themeDefinitions.dark.cssVars["--bg"]).toBe("#000000");
+    expect(themeDefinitions.dark.cssVars["--gold"]).toBe("#00E676");
+    expect(themeDefinitions.light.cssVars["--bg"]).toBe("#F7F8FA");
     expect(themeDefinitions.light.mode).toBe("light");
+    expect(themeDefinitions.dark.mode).toBe("dark");
   });
 });

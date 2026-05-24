@@ -147,11 +147,13 @@ async fn engine_boot_spawn_evicts_aged_blob() {
     // Wait for convergence: refs nulled AND blob file gone.
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let (refs,): (i64,) =
-                sqlx::query_as("SELECT COUNT(*) FROM model_calls WHERE prompt_payload_ref IS NOT NULL")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
+            let (refs,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM model_calls \
+                 WHERE prompt_payload_ref IS NOT NULL OR response_payload_ref IS NOT NULL",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
             if refs == 0 && !store.exists(&old_blob) {
                 break;
             }
@@ -251,10 +253,17 @@ async fn engine_boot_spawn_truncates_oversize_store() {
     .expect("max-bytes pass should evict oldest + null its ref within one tick");
     handle.abort();
 
-    // mtime-ascending eviction: oldest is gone; newest must still be
-    // on disk (its row points at it, ref must survive).
+    // mtime-ascending eviction: oldest is gone; middle and newest must
+    // still be on disk (their rows point at them, refs must survive).
     assert!(!store.exists(&oldest), "oldest blob must be evicted first");
+    assert!(store.exists(&middle), "middle blob must survive under cap");
     assert!(store.exists(&newest), "newest blob must survive under cap");
+    let (middle_response,): (Option<String>,) =
+        sqlx::query_as("SELECT response_payload_ref FROM model_calls WHERE span_id = 'span_x'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(middle_response.as_deref(), Some(middle.as_str()));
     let (newest_prompt, newest_response): (Option<String>, Option<String>) = sqlx::query_as(
         "SELECT prompt_payload_ref, response_payload_ref FROM model_calls WHERE span_id = 'span_y'",
     )
@@ -264,9 +273,6 @@ async fn engine_boot_spawn_truncates_oversize_store() {
     assert_eq!(newest_prompt.as_deref(), Some(newest.as_str()));
     assert_eq!(newest_response.as_deref(), Some(newest.as_str()));
 
-    // The middle blob may or may not survive depending on whether the
-    // run had to evict one or two files to get under the cap; either
-    // way the store must be at or below the cap.
     let total: u64 = std::fs::read_dir(&blob_root)
         .unwrap()
         .filter_map(|e| e.ok())

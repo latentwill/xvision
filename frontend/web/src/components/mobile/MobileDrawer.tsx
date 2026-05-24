@@ -40,7 +40,7 @@ export function MobileDrawer() {
       className="fixed inset-0 z-50 md:hidden bg-surface-sidebar flex flex-col py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(0px,env(safe-area-inset-bottom))]"
     >
       <div className="px-5 pb-5 flex items-center justify-between">
-        <span className="font-serif italic font-medium text-[34px] tracking-tight text-text">
+        <span className="font-sans font-semibold text-[34px] tracking-tight text-text">
           xvn
         </span>
         <button

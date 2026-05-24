@@ -37,7 +37,7 @@ use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
-use xvision_engine::eval::executor::{classify_run_failure, Executor, PaperExecutor};
+use xvision_engine::eval::executor::{classify_run_failure, Executor, RunExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
@@ -111,7 +111,7 @@ fn minimal_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -247,7 +247,7 @@ async fn harness_with_script(
     script: Vec<BrokerScriptStep>,
 ) -> (
     Arc<ScriptedBroker>,
-    PaperExecutor,
+    Executor,
     RunStore,
     Run,
     Strategy,
@@ -261,8 +261,12 @@ async fn harness_with_script(
     let broker: Arc<dyn BrokerSurface> = scripted.clone();
     let strategy = minimal_strategy();
     let scenario = six_hour_scenario();
-    let executor = PaperExecutor::with_bars(broker, bars_for(&scenario));
-    let run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(bars_for(&scenario));
+    let run = Run::new_queued(
+        "test-strategy-hash".into(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
     let canned = r#"{"action":"long_open","conviction":0.6,"justification":"keep buying"}"#;
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
@@ -277,6 +281,7 @@ async fn harness_with_script(
 /// `[repeated_broker_error]` class tag. The broker sees exactly 3
 /// submits — no fourth attempt is made post-abort.
 #[tokio::test]
+#[ignore = "executor-collapse-paper-mode (2026-05-22): asserts broker-submit error classification + circuit breaker, which moved from the paper executor to RealBrokerFills (Live track, pending live-bar-source-alpaca). Re-enable when Live wiring lands."]
 async fn three_consecutive_min_order_size_rejections_abort() {
     let script = vec![
         BrokerScriptStep::Failure(
@@ -339,6 +344,7 @@ async fn three_consecutive_min_order_size_rejections_abort() {
 /// fill must NOT abort — the counter resets on success. The run
 /// reaches its natural end with `RunStatus::Completed`.
 #[tokio::test]
+#[ignore = "executor-collapse-paper-mode (2026-05-22): asserts broker-submit error classification + circuit breaker, which moved from the paper executor to RealBrokerFills (Live track, pending live-bar-source-alpaca). Re-enable when Live wiring lands."]
 async fn two_failures_then_success_does_not_abort() {
     let script = vec![
         BrokerScriptStep::Failure(
@@ -384,6 +390,7 @@ async fn two_failures_then_success_does_not_abort() {
 /// the recoverable `rate_limited` class instead — same semantic check
 /// (counter does not span classes), live-correct execution.
 #[tokio::test]
+#[ignore = "executor-collapse-paper-mode (2026-05-22): asserts broker-submit error classification + circuit breaker, which moved from the paper executor to RealBrokerFills (Live track, pending live-bar-source-alpaca). Re-enable when Live wiring lands."]
 async fn alternating_error_classes_do_not_accumulate() {
     let script = vec![
         // tick 0: min_order_size (recoverable)
@@ -449,6 +456,7 @@ fn canned_response(json: &str) -> LlmResponse {
 /// submits). With the fix the run survives to tick 5 (broker sees 5
 /// submits — tick 2 made no submit) and only then trips.
 #[tokio::test]
+#[ignore = "executor-collapse-paper-mode (2026-05-22): asserts broker-submit error classification + circuit breaker, which moved from the paper executor to RealBrokerFills (Live track, pending live-bar-source-alpaca). Re-enable when Live wiring lands."]
 async fn hold_between_rejections_resets_strike_counter() {
     let script = vec![
         BrokerScriptStep::Failure(
@@ -474,8 +482,12 @@ async fn hold_between_rejections_resets_strike_counter() {
     let broker: Arc<dyn BrokerSurface> = scripted.clone();
     let strategy = minimal_strategy();
     let scenario = six_hour_scenario();
-    let executor = PaperExecutor::with_bars(broker, bars_for(&scenario));
-    let mut run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Paper);
+    let executor = Executor::with_bars(bars_for(&scenario));
+    let mut run = Run::new_queued(
+        "test-strategy-hash".into(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let long_open = r#"{"action":"long_open","conviction":0.6,"justification":"buy"}"#;

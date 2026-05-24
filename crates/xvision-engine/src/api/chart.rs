@@ -302,16 +302,12 @@ async fn resolve_run_asset_for_chart(
     agent_id: &str,
 ) -> ApiResult<xvision_core::trading::AssetSymbol> {
     let strategy = crate::api::strategy::get(ctx, agent_id).await?;
-    let raw = strategy
-        .manifest
-        .asset_universe
-        .first()
-        .ok_or_else(|| {
-            ApiError::Validation(format!(
-                "strategy '{}' has empty asset_universe",
-                strategy.manifest.id
-            ))
-        })?;
+    let raw = strategy.manifest.asset_universe.first().ok_or_else(|| {
+        ApiError::Validation(format!(
+            "strategy '{}' has empty asset_universe",
+            strategy.manifest.id
+        ))
+    })?;
     raw.parse::<xvision_core::trading::AssetSymbol>().map_err(|e| {
         ApiError::Validation(format!(
             "strategy '{}' asset_universe entry '{}' is not a recognised asset: {e}",

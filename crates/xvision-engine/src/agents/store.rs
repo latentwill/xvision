@@ -326,23 +326,19 @@ impl AgentStore {
         match patch.scope_strategy_id {
             None => {}
             Some(ScopePatch::Clear) => {
-                sqlx::query(
-                    "UPDATE agents SET scope_strategy_id = NULL, updated_at = ? WHERE agent_id = ?",
-                )
-                .bind(&now)
-                .bind(agent_id)
-                .execute(&mut *tx)
-                .await?;
+                sqlx::query("UPDATE agents SET scope_strategy_id = NULL, updated_at = ? WHERE agent_id = ?")
+                    .bind(&now)
+                    .bind(agent_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
             Some(ScopePatch::Set(id)) => {
-                sqlx::query(
-                    "UPDATE agents SET scope_strategy_id = ?, updated_at = ? WHERE agent_id = ?",
-                )
-                .bind(id)
-                .bind(&now)
-                .bind(agent_id)
-                .execute(&mut *tx)
-                .await?;
+                sqlx::query("UPDATE agents SET scope_strategy_id = ?, updated_at = ? WHERE agent_id = ?")
+                    .bind(id)
+                    .bind(&now)
+                    .bind(agent_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
         }
         if let Some(slots) = patch.slots {
@@ -378,6 +374,25 @@ impl AgentStore {
                 .execute(&self.pool)
                 .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Hard-delete every agent whose `scope_strategy_id` equals
+    /// `strategy_id`. Called by the strategy delete handler so scoped
+    /// Filter agents (the "Save as reusable agent" toggle = OFF flow,
+    /// Phase 3 of agent-firing-filter, migration 036) don't outlive
+    /// the strategy that owns them. Returns the number of agents
+    /// removed. ON DELETE CASCADE on the `agent_slots(agent_id)` FK
+    /// (migration 005) takes care of the slot rows automatically.
+    ///
+    /// No-op for workspace agents — they have `scope_strategy_id IS
+    /// NULL` and never match a strategy id.
+    pub async fn delete_scoped_to(&self, strategy_id: &str) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM agents WHERE scope_strategy_id = ?")
+            .bind(strategy_id)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("delete scoped agents for strategy={strategy_id}"))?;
+        Ok(result.rows_affected())
     }
 
     pub async fn name_exists(&self, name: &str, excluding_id: Option<&str>) -> Result<bool> {

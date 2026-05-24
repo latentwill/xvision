@@ -120,6 +120,8 @@ fn input_with<'a>(
         catalog: None,
         delta_briefing,
         prev_briefing,
+        trace_name: None,
+        trace_attrs: None,
     }
 }
 

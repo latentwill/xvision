@@ -326,9 +326,17 @@ impl Cli {
                 take_profit_pct,
                 summary,
                 asset,
-            } => commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary, asset)
-                .await
-                .map_err(Into::into),
+            } => commands::fire_trade::run(
+                venue,
+                side,
+                size_bps,
+                stop_loss_pct,
+                take_profit_pct,
+                summary,
+                asset,
+            )
+            .await
+            .map_err(Into::into),
             Command::Portfolio { venue } => commands::venue::portfolio(venue).await.map_err(Into::into),
             Command::ClosePosition { venue, asset } => commands::venue::close_position(venue, asset)
                 .await

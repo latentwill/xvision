@@ -66,7 +66,7 @@ describe("StrategiesNewRoute", () => {
         creator: null,
       });
     });
-    expect(navigate).toHaveBeenCalledWith("/authoring/st_1", { replace: true });
+    expect(navigate).toHaveBeenCalledWith("/strategies/st_1", { replace: true });
   });
 
   it("shows the creation error with a back link", async () => {

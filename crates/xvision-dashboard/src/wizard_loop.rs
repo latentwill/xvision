@@ -20,8 +20,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{de::Deserializer, de::Error as DeError, Deserialize, Serialize};
 use sqlx::SqlitePool;
+use ulid::Ulid;
+use xvision_filters::{parse_json, parse_toml, validate as validate_filter_dsl};
 
 use crate::cli_jobs::eval_run_bridge;
 use crate::cli_jobs::runner::CliJobRunner;
@@ -38,8 +40,13 @@ use xvision_engine::api::strategy as api_strategy;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
 use xvision_engine::chat_session::{action_confirmation_card, ChatSessionStore, ContextScope, InlineAction};
-use xvision_engine::eval::run::RunMode;
-use xvision_engine::eval::scenario::Scenario;
+use xvision_engine::eval::{
+    findings::Finding,
+    run::{RunMode, RunStatus},
+    scenario::Scenario,
+    store::RunStore,
+};
+use xvision_engine::strategies::ActivationMode;
 use xvision_engine::strategies_folder;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
@@ -332,6 +339,225 @@ struct AttachAgentReq {
     agent_id: String,
     #[serde(default)]
     role: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetFilterReq {
+    #[serde(default)]
+    strategy_id: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_filter_payload")]
+    filter: Option<serde_json::Value>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListEvalRunsReq {
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    scenario_id: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetEvalRunReq {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListEvalReviewsReq {
+    run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetEvalReviewReq {
+    id: String,
+}
+
+fn deserialize_filter_payload<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let filter = Option::<serde_json::Value>::deserialize(deserializer)?;
+    if matches!(filter.as_ref(), Some(value) if value.is_null()) {
+        return Err(DeError::custom("filter payload cannot be null"));
+    }
+    Ok(filter)
+}
+
+fn normalize_set_filter_payload(
+    filter: Option<serde_json::Value>,
+    source: Option<String>,
+    format: Option<String>,
+    strategy_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let (payload, format) = set_filter_payload_and_format(filter, source, format)?;
+    let parsed = parse_set_filter_payload(payload, format.as_deref(), strategy_id)?;
+    validate_filter_dsl(&parsed).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+    serde_json::to_value(parsed).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))
+}
+
+fn set_filter_payload_and_format(
+    filter: Option<serde_json::Value>,
+    source: Option<String>,
+    format: Option<String>,
+) -> anyhow::Result<(serde_json::Value, Option<String>)> {
+    let format = normalize_filter_format(format)?;
+    match (filter, source) {
+        (Some(filter), None) => Ok((filter, format)),
+        (None, Some(source)) => Ok((serde_json::Value::String(source), format)),
+        (Some(filter), Some(source)) => {
+            if format.is_none() && is_filter_format(source.trim()) {
+                Ok((filter, Some(source.trim().to_string())))
+            } else {
+                anyhow::bail!(
+                    "set_filter: `source` is filter text; do not send it with `filter`. Use `format` for json/toml."
+                )
+            }
+        }
+        (None, None) => anyhow::bail!(
+            "set_filter: filter payload is required; send `filter` or `source` (JSON/TOML body)"
+        ),
+    }
+}
+
+fn normalize_filter_format(format: Option<String>) -> anyhow::Result<Option<String>> {
+    let Some(format) = format else {
+        return Ok(None);
+    };
+    let format = format.trim();
+    if format.is_empty() {
+        anyhow::bail!("set_filter: format cannot be empty");
+    }
+    if !is_filter_format(format) {
+        anyhow::bail!("set_filter: unknown format `{format}`; expected `json` or `toml`");
+    }
+    Ok(Some(format.to_string()))
+}
+
+fn is_filter_format(value: &str) -> bool {
+    matches!(value, "json" | "toml")
+}
+
+fn parse_set_filter_payload(
+    mut filter: serde_json::Value,
+    source: Option<&str>,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    filter = extract_set_filter_payload(filter);
+    Ok(match filter {
+        serde_json::Value::String(src) => parse_set_filter_text(&src, source, strategy_id)?,
+        _ => match source {
+            Some("json") => parse_set_filter_value(filter, strategy_id)?,
+            Some("toml") => anyhow::bail!("set_filter: format `toml` requires text payload"),
+            Some(other) if other.trim().is_empty() => parse_set_filter_value(filter, strategy_id)?,
+            None => parse_set_filter_value(filter.clone(), strategy_id).or_else(|json_err| {
+                let src =
+                    serde_json::to_string(&filter).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+                parse_set_filter_text(&src, Some("toml"), strategy_id).map_err(|_| json_err)
+            })?,
+            Some(other) => {
+                let src =
+                    serde_json::to_string(&filter).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+                parse_set_filter_text(&src, Some(other), strategy_id)?
+            }
+        },
+    })
+}
+
+fn parse_set_filter_value(
+    raw_filter: serde_json::Value,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let obj = match raw_filter {
+        serde_json::Value::Object(mut obj) => {
+            if obj
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|id| id.trim().is_empty())
+            {
+                obj.insert("id".into(), serde_json::Value::String(Ulid::new().to_string()));
+            }
+            obj.insert(
+                "strategy_id".into(),
+                serde_json::Value::String(strategy_id.to_string()),
+            );
+            obj
+        }
+        _ => {
+            anyhow::bail!("filter parse error: filter payload must be an object");
+        }
+    };
+
+    parse_set_filter_text(
+        &serde_json::to_string(&serde_json::Value::Object(obj))
+            .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+        Some("json"),
+        strategy_id,
+    )
+}
+
+fn parse_set_filter_text(
+    source_text: &str,
+    source: Option<&str>,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let mut filter = match source.unwrap_or_default() {
+        "json" => parse_set_filter_text_preferring_json(source_text, strategy_id)?,
+        "toml" => parse_toml(source_text).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+        _ => parse_set_filter_text_preferring_json(source_text, strategy_id).or_else(|_| {
+            parse_toml(source_text)
+                .map_err(|e| anyhow::anyhow!("filter parse error: failed parsing as JSON and TOML: {e}"))
+        })?,
+    };
+    if filter.id.as_str().is_empty() {
+        filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
+    }
+    filter.strategy_id = strategy_id.to_string().into();
+    Ok(filter)
+}
+
+fn parse_set_filter_text_preferring_json(
+    source_text: &str,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let mut filter = parse_json(source_text).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+    if filter.id.as_str().is_empty() {
+        filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
+    }
+    filter.strategy_id = strategy_id.to_string().into();
+    Ok(filter)
+}
+
+fn extract_set_filter_payload(raw_filter: serde_json::Value) -> serde_json::Value {
+    match raw_filter {
+        serde_json::Value::Object(mut obj) => {
+            if let Some(filter) = obj.remove("filter") {
+                filter
+            } else {
+                serde_json::Value::Object(obj)
+            }
+        }
+        other => other,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ClearFilterReq {
+    #[serde(default)]
+    strategy_id: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -690,7 +916,7 @@ impl WizardLoop {
                 "Validation stuck — operator review needed".to_string(),
                 InlineAction {
                     label: "Open draft".into(),
-                    href: Some(format!("/authoring/{id}")),
+                    href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
             )
@@ -762,7 +988,7 @@ impl WizardLoop {
         if !agent_tool_defs(self.profile).iter().any(|d| d.name == name) {
             anyhow::bail!("tool '{name}' is not available in {:?} profile", self.profile);
         }
-        let input = normalize_tool_input(name, input);
+        let mut input = normalize_tool_input(name, input);
         match name {
             "create_strategy" => {
                 // Wizard always creates a blank draft — no template
@@ -828,6 +1054,16 @@ impl WizardLoop {
                 Ok(serde_json::to_value(out)?)
             }
             "update_slot" => {
+                if let Some(prompt) = input.get("prompt").and_then(|value| value.as_str()) {
+                    if !prompt.trim().is_empty() {
+                        anyhow::bail!(
+                            "update_slot does not accept `prompt`; use create_strategy_agent to set or replace the trader prompt"
+                        );
+                    }
+                }
+                if let Some(obj) = input.as_object_mut() {
+                    obj.remove("prompt");
+                }
                 let req: authoring::UpdateSlotReq = serde_json::from_value(input)?;
                 let out = api_strategy::update_slot(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
@@ -846,6 +1082,93 @@ impl WizardLoop {
                 let req: authoring::SetRiskConfigReq = serde_json::from_value(input)?;
                 let out = api_strategy::set_risk_config(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
+            }
+            "set_filter" => {
+                let req: SetFilterReq = serde_json::from_value(input)?;
+                let strategy_id = req
+                    .strategy_id
+                    .or(req.id)
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("set_filter: missing `strategy_id`"))?;
+
+                let filter = normalize_set_filter_payload(req.filter, req.source, req.format, &strategy_id)?;
+
+                let out = api_strategy::set_filter(
+                    &self.api_context,
+                    authoring::SetFilterReq {
+                        strategy_id,
+                        filter: Some(filter),
+                        source: Some("json".into()),
+                    },
+                )
+                .await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "list_eval_runs" => {
+                let req: ListEvalRunsReq = serde_json::from_value(input)?;
+                let status = match req.status.as_deref() {
+                    Some(s) => Some(
+                        RunStatus::parse(s)
+                            .ok_or_else(|| anyhow::anyhow!("list_eval_runs: invalid status `{s}`"))?,
+                    ),
+                    None => None,
+                };
+                let out = api_eval::list_summaries_paged(
+                    &self.api_context,
+                    api_eval::ListRunsRequest {
+                        agent_id: req.agent_id,
+                        scenario_id: req.scenario_id,
+                        status,
+                        limit: req.limit,
+                        offset: req.offset,
+                    },
+                )
+                .await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "get_eval_run" => {
+                let req: GetEvalRunReq = serde_json::from_value(input)?;
+                let out = api_eval::get(&self.api_context, &req.id).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "list_eval_reviews" => {
+                let req: ListEvalReviewsReq = serde_json::from_value(input)?;
+                let store = RunStore::new(self.pool.clone());
+                let reviews = store.list_reviews_for_run(&req.run_id).await?;
+                Ok(serde_json::json!({
+                    "run_id": req.run_id,
+                    "items": reviews,
+                }))
+            }
+            "get_eval_review" => {
+                let req: GetEvalReviewReq = serde_json::from_value(input)?;
+                let store = RunStore::new(self.pool.clone());
+                let review = store
+                    .get_review(&req.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("get_eval_review: review `{}` not found", req.id))?;
+                let findings: Vec<Finding> = store.read_findings_for_review(&req.id).await?;
+                Ok(serde_json::json!({
+                    "review": review,
+                    "findings": findings,
+                }))
+            }
+            "clear_filter" => {
+                let req: ClearFilterReq = serde_json::from_value(input)?;
+                let strategy_id = req
+                    .strategy_id
+                    .or(req.id)
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("clear_filter: missing `strategy_id`"))?;
+
+                api_strategy::clear_strategy_filter(&self.api_context, &strategy_id).await?;
+                Ok(serde_json::json!({
+                    "id": strategy_id,
+                    "ok": true,
+                    "cleared": true,
+                }))
             }
             "create_strategy_agent" => {
                 let req: CreateStrategyAgentReq = serde_json::from_value(input)?;
@@ -894,9 +1217,29 @@ impl WizardLoop {
                 };
                 let mode = input.get("mode").and_then(|v| v.as_str()).unwrap_or("backtest");
                 let mode = match mode {
-                    "paper" => RunMode::Paper,
+                    "live" => RunMode::Live,
                     _ => RunMode::Backtest,
                 };
+                let full_strategy = api_strategy::get(&self.api_context, &strategy.agent_id).await?;
+                if matches!(full_strategy.activation_mode, ActivationMode::EveryBar)
+                    && full_strategy.filter.is_none()
+                {
+                    let acknowledge_no_filter = input
+                        .get("acknowledge_no_filter")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if !acknowledge_no_filter {
+                        return Ok(serde_json::json!({
+                            "needs_clarification": {
+                                "question": "No filter is attached to this strategy. Attach a deterministic filter with `set_filter` before running eval, or set `acknowledge_no_filter: true` to run without filter.",
+                                "options": [
+                                    {"tool": "set_filter", "id": strategy.agent_id.clone()},
+                                    {"tool": "run_eval", "agent_id": agent_query, "scenario_id": scenario_query, "acknowledge_no_filter": true}
+                                ]
+                            }
+                        }));
+                    }
+                }
                 if mode == RunMode::Backtest && scenario_needs_bars(&scenario) {
                     return Ok(serde_json::json!({
                         "agent_id": strategy.agent_id.clone(),
@@ -910,9 +1253,13 @@ impl WizardLoop {
                     scenario_id: scenario.id,
                     mode,
                     params_override: None,
+                    live_config: None,
                     limits: None,
                     skip_preflight: false,
                     provider_override: None,
+                    auto_fire_review: false,
+                    review_model: None,
+                    max_annotations_per_review: Some(8),
                 };
                 let out = api_eval::start_run(
                     &xvision_engine::api::ApiContext::new(
@@ -1001,10 +1348,16 @@ impl WizardLoop {
                         .ok_or_else(|| anyhow::anyhow!("eval run '{job_id}' not found"))?
                 } else {
                     let store = CliJobStore::new(self.pool.clone());
-                    store
-                        .get(job_id)
-                        .await?
-                        .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
+                    if let Some(job) = store.get(job_id).await? {
+                        job
+                    } else if !job_id.starts_with("job_") {
+                        let eval_job_id = format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, job_id);
+                        eval_run_bridge::get_synthetic_job(&self.pool, &eval_job_id)
+                            .await?
+                            .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
+                    } else {
+                        anyhow::bail!("cli job '{job_id}' not found")
+                    }
                 };
                 Ok(serde_json::json!({
                     "job_id": job.job_id,
@@ -1046,10 +1399,16 @@ impl WizardLoop {
                         .ok_or_else(|| anyhow::anyhow!("eval run '{job_id}' not found"))?
                 } else {
                     let store = CliJobStore::new(self.pool.clone());
-                    store
-                        .output(job_id)
-                        .await?
-                        .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
+                    if let Some(output) = store.output(job_id).await? {
+                        output
+                    } else if !job_id.starts_with("job_") {
+                        let eval_job_id = format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, job_id);
+                        eval_run_bridge::get_synthetic_output(&self.pool, &eval_job_id)
+                            .await?
+                            .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
+                    } else {
+                        anyhow::bail!("cli job '{job_id}' not found")
+                    }
                 };
                 Ok(serde_json::json!({
                     "job_id": output.job_id,
@@ -1502,11 +1861,7 @@ fn legacy_fixture_exists(scenario: &Scenario) -> bool {
 }
 
 fn fetch_bars_ui_action(scenario: &Scenario) -> serde_json::Value {
-    let asset = scenario
-        .asset
-        .first()
-        .map(|asset| asset.symbol.clone())
-        .unwrap_or_else(|| "BTC".into());
+    let asset = "BTC".to_string();
     serde_json::json!({
         "type": "fetch_bars",
         "label": "Fetch bars",
@@ -1935,6 +2290,8 @@ fn expects_id(tool: &str) -> bool {
             | "update_manifest"
             | "set_mechanical_param"
             | "set_risk_config"
+            | "set_filter"
+            | "clear_filter"
             | "validate_draft"
     )
 }
@@ -1952,7 +2309,7 @@ fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<
                 format!("Draft {id} is ready for inspection."),
                 InlineAction {
                     label: "Open draft".into(),
-                    href: Some(format!("/authoring/{id}")),
+                    href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
             )
@@ -2018,7 +2375,7 @@ fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<
                 body,
                 InlineAction {
                     label: "Open draft".into(),
-                    href: Some(format!("/authoring/{id}")),
+                    href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
             )
@@ -2110,13 +2467,14 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "update_slot".into(),
-            description: "Update a regime/intern/trader slot. Only fields with non-null values are mutated.".into(),
+            description:
+                "Update a regime/intern/trader slot. `prompt` is not supported here; use `create_strategy_agent` for prompt updates. Only fields with non-null values are mutated."
+                    .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
                     "slot": {"type": "string", "enum": ["regime", "intern", "trader"]},
-                    "prompt": {"type": "string"},
                     "attested_with": {"type": "string"},
                     "provider": {"type": "string"},
                     "model": {"type": "string"},
@@ -2165,6 +2523,40 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "id": {"type": "string"},
                     "preset": {"type": "string", "enum": ["conservative", "balanced", "aggressive"]},
                     "explicit": {"type": "object"}
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "set_filter".into(),
+            description: "Attach/replace the strategy's deterministic filter. Use `source` for JSON/TOML text (or `format`: `json|toml`) or `filter` for a full JSON filter object (both accepted).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Alias for strategy_id"},
+                    "strategy_id": {"type": "string"},
+                    "filter": {
+                        "type": ["object", "string"],
+                        "description": "Filter payload: object or raw JSON/TOML text when using `format`."
+                    },
+                    "source": {"type": "string", "description": "Filter text (JSON or TOML)"},
+                    "format": {"type": "string", "enum": ["json", "toml"]}
+                },
+                "required": ["id"],
+                "oneOf": [
+                    {"required": ["id", "filter"]},
+                    {"required": ["id", "source"]}
+                ]
+            }),
+        },
+        ToolDefinition {
+            name: "clear_filter".into(),
+            description: "Clear strategy filter and restore every-bar activation mode.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Alias for strategy_id"},
+                    "strategy_id": {"type": "string"}
                 },
                 "required": ["id"]
             }),
@@ -2228,9 +2620,58 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "properties": {
                     "agent_id": {"type": "string"},
                     "scenario_id": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["backtest", "paper"]}
+                    "mode": {"type": "string", "enum": ["backtest", "live"]},
+                    "acknowledge_no_filter": {
+                        "type": "boolean",
+                        "description": "If true, allows running a strategy without a filter gate."
+                    }
                 },
                 "required": ["agent_id", "scenario_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_eval_runs".into(),
+            description: "List eval runs for quick review of prior output, sharpe, and status.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string"},
+                    "scenario_id": {"type": "string"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["queued", "running", "completed", "failed", "cancelled"]
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "description": "Optional page size"},
+                    "offset": {"type": "integer", "minimum": 0, "description": "Optional page offset"}
+                },
+                "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "get_eval_run".into(),
+            description: "Read one eval run by id, including metrics, status, and bar metadata.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_eval_reviews".into(),
+            description: "List all review records for one eval run (newest first).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"run_id": {"type": "string"}},
+                "required": ["run_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "get_eval_review".into(),
+            description: "Read one eval review by id and include normalized findings.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"]
             }),
         },
         ToolDefinition {
@@ -3214,6 +3655,167 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_filter_preflight_validates_filter_before_api_set() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "set a clean ema cross filter", ContextScope::Workspace).await;
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "Filter Draft" }))
+            .await
+            .expect("create strategy");
+        let id = created["id"].as_str().expect("created id");
+
+        // Valid filter: should pass preflight and persist as-is.
+        let valid_filter = serde_json::json!({
+            "filter": {
+                "display_name": "ema cross",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "15m",
+                "conditions": {
+                    "all": [
+                        {
+                            "lhs": "ema_12",
+                            "op": "crosses_above",
+                            "rhs": "ema_26"
+                        }
+                    ]
+                }
+            }
+        });
+        wl.run_tool(
+            "set_filter",
+            serde_json::json!({"id": id, "filter": valid_filter}),
+        )
+        .await
+        .expect("valid filter should preflight and persist");
+
+        let updated = wl
+            .run_tool("get_strategy", serde_json::json!({"id": id}))
+            .await
+            .expect("get strategy");
+        assert!(
+            updated["filter"].is_object(),
+            "filter should be persisted: {updated:?}"
+        );
+        assert_eq!(updated["filter"]["asset_scope"][0], "BTC/USD");
+
+        // Invalid filter: missing lhs should be rejected in the local
+        // preflight with a parse error before strategy persistence.
+        let invalid_filter = serde_json::json!({
+            "filter": {
+                "display_name": "bad filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "15m",
+                "conditions": {
+                    "all": [
+                        {
+                            "op": "crosses_above",
+                            "rhs": "ema_26"
+                        }
+                    ]
+                }
+            }
+        });
+        let err = wl
+            .run_tool(
+                "set_filter",
+                serde_json::json!({"id": id, "filter": invalid_filter}),
+            )
+            .await
+            .expect_err("invalid filter must fail preflight");
+        let msg = err.to_string();
+        assert!(msg.contains("missing field `lhs`"));
+
+        let final_state = wl
+            .run_tool("get_strategy", serde_json::json!({"id": id}))
+            .await
+            .expect("get strategy");
+        assert_eq!(final_state["filter"]["display_name"], "ema cross");
+        assert_eq!(final_state["filter"]["timeframe"], "15m");
+    }
+
+    #[tokio::test]
+    async fn set_filter_prefers_format_alias_for_toml_source() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "set a toml filter using format", ContextScope::Workspace).await;
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "Format Alias" }))
+            .await
+            .expect("create strategy");
+        let id = created["id"].as_str().expect("created id");
+
+        let filter = r#"[filter]
+id = "f_toml_format_alias"
+strategy_id = "placeholder"
+display_name = "toml ema cross"
+asset_scope = ["BTC/USD"]
+timeframe = "15m"
+
+[filter.conditions]
+all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
+"#;
+        wl.run_tool(
+            "set_filter",
+            serde_json::json!({
+                "id": id,
+                "filter": filter,
+                "format": "toml"
+            }),
+        )
+        .await
+        .expect("format alias should parse as toml");
+
+        let updated = wl
+            .run_tool("get_strategy", serde_json::json!({"id": id}))
+            .await
+            .expect("get strategy");
+        assert_eq!(updated["filter"]["display_name"], "toml ema cross");
+        assert_eq!(updated["filter"]["timeframe"], "15m");
+        assert_eq!(updated["filter"]["conditions"]["all"][0]["lhs"], "ema_12");
+    }
+
+    #[tokio::test]
+    async fn set_filter_accepts_source_text_payload() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "set a source text filter", ContextScope::Workspace).await;
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "Source Text" }))
+            .await
+            .expect("create strategy");
+        let id = created["id"].as_str().expect("created id");
+
+        let source = r#"[filter]
+id = "f_toml_source_text"
+strategy_id = "placeholder"
+display_name = "source text filter"
+asset_scope = ["BTC/USD"]
+timeframe = "15m"
+
+[filter.conditions]
+all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
+"#;
+        wl.run_tool(
+            "set_filter",
+            serde_json::json!({
+                "id": id,
+                "source": source,
+                "format": "toml"
+            }),
+        )
+        .await
+        .expect("source text should parse and persist");
+
+        let updated = wl
+            .run_tool("get_strategy", serde_json::json!({"id": id}))
+            .await
+            .expect("get strategy");
+        assert_eq!(updated["filter"]["display_name"], "source text filter");
+        assert_eq!(updated["filter"]["conditions"]["all"][0]["lhs"], "ema_12");
+    }
+
+    #[tokio::test]
     async fn create_strategy_then_attach_agent_matches_operator_transcript_shape() {
         // 2026-05-21 operator transcript: ask for a fibonacci+RSI strategy
         // using Gemini Flash Lite 3.1 as the agent's model. Before
@@ -3568,10 +4170,16 @@ mod tests {
             "update_manifest",
             "set_mechanical_param",
             "set_risk_config",
+            "set_filter",
+            "clear_filter",
             "create_strategy_agent",
             "attach_agent",
             "validate_draft",
             "run_eval",
+            "list_eval_runs",
+            "get_eval_run",
+            "list_eval_reviews",
+            "get_eval_review",
         ] {
             assert!(names.contains(&v), "missing verb {v} in {names:?}");
         }
@@ -4022,6 +4630,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn get_cli_job_output_with_bare_eval_run_ulid_reaches_bridge() {
+        // Same bridge fallback used by get_cli_job applies to output polling:
+        // if a bare ULID is not a cli_jobs row, it can still be an eval-run
+        // id and should be promoted to `eval_run_<ULID>` internally.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, pool, td, _sid) =
+            loop_with_session(mock, "watch eval output", ContextScope::Workspace).await;
+        seed_defaults(&pool, &td).await;
+        let store = RunStore::new(pool);
+        let run = Run::new_queued(
+            "agent-test".into(),
+            "crypto-rangebound-q2-2025".into(),
+            RunMode::Backtest,
+        );
+        store.create(&run).await.expect("seed eval run");
+        let bare = run.id.to_string();
+        let eval_job_id = format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, bare);
+
+        let result = wl
+            .run_tool("get_cli_job_output", serde_json::json!({"job_id": bare}))
+            .await
+            .expect("bare eval run id should reach bridge output");
+
+        assert_eq!(result["job_id"], serde_json::Value::String(eval_job_id));
+        assert_eq!(result["status"], "queued");
+        assert!(result["stdout"].as_str().is_some());
     }
 
     #[tokio::test]

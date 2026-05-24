@@ -26,6 +26,8 @@ impl RiskRule for AssetWhitelist {
 mod tests {
     use super::*;
     use crate::tests_common::{flat_portfolio, make_ctx, make_decision, test_whitelist};
+    use crate::whitelist::AssetEntry;
+    use std::collections::BTreeMap;
     use xvision_core::{Action, AssetSymbol, Direction};
 
     fn rule() -> AssetWhitelist {
@@ -45,21 +47,46 @@ mod tests {
     }
 
     #[test]
-    fn veto_for_disabled_asset() {
+    fn pass_for_enabled_sol_asset() {
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
         let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Eth)),
+            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Sol)),
+            RuleVerdict::Pass
+        ));
+    }
+
+    #[test]
+    fn veto_for_configured_disabled_asset() {
+        let mut assets = BTreeMap::new();
+        assets.insert(
+            AssetSymbol::Eth,
+            AssetEntry {
+                enabled: false,
+                cluster: "eth".into(),
+                venues: BTreeMap::new(),
+            },
+        );
+        let disabled_rule = AssetWhitelist {
+            whitelist: Whitelist::from_raw(assets),
+        };
+        let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
+        let p = flat_portfolio();
+        assert!(matches!(
+            disabled_rule.evaluate(&make_ctx(&d, &p, AssetSymbol::Eth)),
             RuleVerdict::Veto(VetoReason::AssetNotWhitelisted)
         ));
     }
 
     #[test]
-    fn veto_for_unknown_asset() {
+    fn veto_for_missing_asset() {
+        let missing_rule = AssetWhitelist {
+            whitelist: Whitelist::from_raw(BTreeMap::new()),
+        };
         let d = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
         let p = flat_portfolio();
         assert!(matches!(
-            rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Sol)),
+            missing_rule.evaluate(&make_ctx(&d, &p, AssetSymbol::Sol)),
             RuleVerdict::Veto(VetoReason::AssetNotWhitelisted)
         ));
     }

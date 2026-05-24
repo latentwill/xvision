@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 
 /// How the harness drives a multi-asset universe per bar.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-export", ts(export, export_to = "../../../frontend/web/src/api/types.gen/"))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
@@ -23,7 +26,10 @@ pub enum ExecutionMode {
 
 /// How capital is shared across assets in a run.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-export", ts(export, export_to = "../../../frontend/web/src/api/types.gen/"))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CapitalMode {
@@ -50,8 +56,14 @@ mod tests {
 
     #[test]
     fn execution_mode_serializes_snake_case() {
-        assert_eq!(serde_json::to_value(ExecutionMode::PerAsset).unwrap(), serde_json::json!("per_asset"));
-        assert_eq!(serde_json::to_value(ExecutionMode::Portfolio).unwrap(), serde_json::json!("portfolio"));
+        assert_eq!(
+            serde_json::to_value(ExecutionMode::PerAsset).unwrap(),
+            serde_json::json!("per_asset")
+        );
+        assert_eq!(
+            serde_json::to_value(ExecutionMode::Portfolio).unwrap(),
+            serde_json::json!("portfolio")
+        );
         // Custom round-trips in both directions.
         assert_eq!(
             serde_json::to_value(ExecutionMode::Custom("rotate".into())).unwrap(),
@@ -63,8 +75,14 @@ mod tests {
 
     #[test]
     fn capital_mode_serializes_snake_case() {
-        assert_eq!(serde_json::to_value(CapitalMode::Pooled).unwrap(), serde_json::json!("pooled"));
-        assert_eq!(serde_json::to_value(CapitalMode::PerAsset).unwrap(), serde_json::json!("per_asset"));
+        assert_eq!(
+            serde_json::to_value(CapitalMode::Pooled).unwrap(),
+            serde_json::json!("pooled")
+        );
+        assert_eq!(
+            serde_json::to_value(CapitalMode::PerAsset).unwrap(),
+            serde_json::json!("per_asset")
+        );
         let back: CapitalMode = serde_json::from_value(serde_json::json!("per_asset")).unwrap();
         assert_eq!(back, CapitalMode::PerAsset);
     }

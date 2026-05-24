@@ -20,3 +20,29 @@ export * from "./EmptyState";
 export * from "./DataTable";
 export * from "./PaneStack";
 export * from "./SyncCursor";
+
+// Track B dashboard primitives (chart-rework spec B1+).
+export * from "./MultiStrategyEquityPane";
+export * from "./KpiCard";
+export * from "./Topbar";
+export * from "./MonthlyReturnsHeatmap";
+export * from "./DrawdownCard";
+// B2 — Comparison AB additions.
+export * from "./MiniSparkline";
+export * from "./StrategyRosterPills";
+export * from "./StrategyCardGrid";
+export * from "./StrategyCard";
+export * from "./LeadCardChrome";
+// B3 — AI Annotation additions.
+export * from "./AiEnginePill";
+export * from "./Callout";
+export * from "./AnnotationOverlay";
+export * from "./InsightLog";
+// B4 — Gradient Hero additions.
+export * from "./AuraBackground";
+export * from "./GrainOverlay";
+export * from "./GlassCard";
+export * from "./GradientHeadline";
+export * from "./HeroGradientEquity";
+export * from "./PerformanceRadar";
+export * from "./MarketContextCard";

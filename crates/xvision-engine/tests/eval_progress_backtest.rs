@@ -1,7 +1,7 @@
-//! BacktestExecutor → ProgressBus integration tests. Mirrors the
-//! PaperExecutor coverage in `eval_progress.rs` (PR #35) but drives a
+//! Executor → ProgressBus integration tests. Mirrors the
+//! paper-mode-executor-deleted coverage in `eval_progress.rs` (PR #35) but drives a
 //! real fixture replay end-to-end and asserts every event type the
-//! BacktestExecutor is responsible for emitting fires at least once.
+//! Executor is responsible for emitting fires at least once.
 //!
 //! As with the paper-side test, subscribers MUST subscribe BEFORE the
 //! executor runs — broadcast doesn't replay, so a late subscribe loses
@@ -17,7 +17,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason};
-use xvision_engine::eval::executor::{classify_run_failure, BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{classify_run_failure, Executor, RunExecutor};
 use xvision_engine::eval::progress::{ProgressBus, ProgressEvent};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
@@ -109,7 +109,7 @@ fn build_strategy(agent_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -151,7 +151,7 @@ async fn backtest_executor_runs_30_day_fixture_without_200_bar_warmup() {
     let first_bar_ts = bars[0].timestamp;
     let dispatch = long_open_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     let metrics = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -205,7 +205,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
 
     let dispatch = long_open_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_progress(tx);
+    let executor = Executor::with_progress(tx);
 
     let result = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -308,7 +308,7 @@ async fn backtest_executor_emits_run_failed_on_unparseable_trader_output() {
     let tx = bus.sender();
 
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_progress(tx);
+    let executor = Executor::with_progress(tx);
     let err = executor
         .run(
             &mut run,
@@ -376,7 +376,7 @@ async fn backtest_executor_runs_clean_with_no_progress_subscriber() {
 
     let dispatch = long_open_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_progress(tx);
+    let executor = Executor::with_progress(tx);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -437,7 +437,7 @@ async fn backtest_executor_fails_with_empty_class_on_empty_trader_output() {
         },
     });
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_progress(tx);
+    let executor = Executor::with_progress(tx);
     let err = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
@@ -503,8 +503,8 @@ async fn backtest_executor_fails_with_empty_class_on_empty_trader_output() {
 
 #[tokio::test]
 async fn backtest_executor_default_constructor_is_silent() {
-    // Pre-PR callers used `BacktestExecutor` (unit struct). Post-PR,
-    // `BacktestExecutor::new()` is the equivalent — confirm it still
+    // Pre-PR callers used `Executor` (unit struct). Post-PR,
+    // `Executor::new()` is the equivalent — confirm it still
     // runs to completion with no progress wiring.
     ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
 
@@ -523,10 +523,10 @@ async fn backtest_executor_default_constructor_is_silent() {
 
     let dispatch = long_open_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::new();
+    let executor = Executor::new();
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
-        .expect("BacktestExecutor::new() should run to completion");
+        .expect("Executor::new() should run to completion");
 }

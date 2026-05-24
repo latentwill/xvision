@@ -1,6 +1,7 @@
 use chrono::{TimeZone, Utc};
 use std::str::FromStr;
 use xvision_data::alpaca::BarGranularity;
+use xvision_data::asset_whitelist::ALPACA_CRYPTO_WHITELIST;
 use xvision_engine::api::scenario::{archive, create, validate_request, CreateScenarioRequest};
 use xvision_engine::api::{ApiContext, ApiError};
 use xvision_engine::eval::scenario::*;
@@ -94,6 +95,17 @@ async fn create_succeeds_with_valid_request() {
     assert_eq!(s.source, ScenarioSource::User);
     assert!(s.id.starts_with("sc_"));
     assert!(!s.bar_cache_policy.cache_key.is_empty());
+}
+
+#[tokio::test]
+async fn create_keeps_scenarios_asset_free() {
+    let ctx = test_ctx().await;
+
+    let mut req = valid_request();
+    req.display_name = "asset-free 2024".into();
+
+    let scenario = create(&ctx, req).await.unwrap();
+    assert_eq!(scenario.asset_class, AssetClass::Crypto);
 }
 
 #[tokio::test]

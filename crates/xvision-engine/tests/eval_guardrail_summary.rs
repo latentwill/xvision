@@ -21,7 +21,7 @@ use chrono::{Duration, TimeZone, Utc};
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::findings::Severity;
 use xvision_engine::eval::guardrail_summary::{fire_guardrail_summary, KIND_GUARDRAIL_REWRITE_RATE};
 use xvision_engine::eval::run::{Run, RunMode, RunStatus};
@@ -275,7 +275,7 @@ async fn three_pyramid_blocks_produce_one_guardrail_summary_finding() {
     let bars = daily_bars(3);
     let dispatch = sequenced_dispatch(&["long_open", "long_open", "long_open"]);
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)

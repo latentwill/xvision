@@ -80,10 +80,7 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
         },
         hypothesis: None,
         agents,
-        pipeline: PipelineDef {
-            kind,
-            edges: vec![],
-        },
+        pipeline: PipelineDef { kind, edges: vec![] },
         regime_slot: None,
         intern_slot: None,
         trader_slot: None,
@@ -91,7 +88,7 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 

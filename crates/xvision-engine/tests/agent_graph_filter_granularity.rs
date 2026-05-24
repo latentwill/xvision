@@ -101,7 +101,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -157,6 +157,7 @@ async fn run_cycle(
             strategy_id: strategy.manifest.id.clone(),
             scope: xvision_engine::agent::dispatch_capability::SignalScope::Global,
         }),
+        trace_attrs: None,
         recorder: None,
     })
     .await

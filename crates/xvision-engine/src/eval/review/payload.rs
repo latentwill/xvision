@@ -182,7 +182,7 @@ pub fn build_review_payload(
 fn run_mode_str(mode: RunMode) -> &'static str {
     match mode {
         RunMode::Backtest => "backtest",
-        RunMode::Paper => "paper",
+        RunMode::Live => "live",
     }
 }
 

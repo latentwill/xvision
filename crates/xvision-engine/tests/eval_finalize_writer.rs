@@ -20,6 +20,28 @@ use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use xvision_engine::eval::finalize_writer::{FinalizeError, FinalizeWriter};
 use xvision_engine::eval::{Run, RunMode, RunStore};
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
 async fn pool_with_eval_migration() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -148,7 +170,7 @@ async fn queue_full_path_returns_typed_error() {
     // process-global env var. Cargo-test default is one binary per
     // file, and inside a binary tokio::test functions run
     // sequentially.
-    std::env::set_var("XVN_FINALIZE_WRITER_CAP", "1");
+    let _cap_guard = EnvVarGuard::set("XVN_FINALIZE_WRITER_CAP", "1");
 
     let pool = pool_with_eval_migration().await;
     let writer = FinalizeWriter::start(pool.clone());
@@ -181,8 +203,6 @@ async fn queue_full_path_returns_typed_error() {
         Err(FinalizeError::QueueFull { cap: 1 }) => {}
         other => panic!("expected QueueFull(1), got {other:?}"),
     }
-
-    std::env::remove_var("XVN_FINALIZE_WRITER_CAP");
 }
 
 /// Integration: real `RunStore` + temp DB; 27 staged calls fired

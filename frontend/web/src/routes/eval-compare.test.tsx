@@ -19,12 +19,6 @@ vi.mock("@/api/eval", async () => {
   const actual = await vi.importActual<typeof import("@/api/eval")>("@/api/eval");
   return { ...actual, compareRuns: vi.fn() };
 });
-vi.mock("@/api/chart", async () => {
-  const actual = await vi.importActual<typeof import("@/api/chart")>(
-    "@/api/chart",
-  );
-  return { ...actual, getCompareChart: vi.fn().mockResolvedValue(null) };
-});
 vi.mock("@/api/scenarios", async () => {
   const actual = await vi.importActual<typeof import("@/api/scenarios")>(
     "@/api/scenarios",
@@ -37,8 +31,11 @@ vi.mock("@/api/strategies", async () => {
   );
   return { ...actual, listStrategies: vi.fn().mockResolvedValue([]) };
 });
-vi.mock("@/components/chart/CompareChart", () => ({
-  CompareChart: () => null,
+vi.mock("@/components/chart/v2/primitives/ChartFrame", () => ({
+  ChartFrame: ({ children }: { children: unknown }) => <div>{children as never}</div>,
+}));
+vi.mock("@/components/chart/v2/primitives/UplotCompareOverlayPane", () => ({
+  UplotCompareOverlayPane: () => null,
 }));
 
 const evalApi = await import("@/api/eval");

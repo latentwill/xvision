@@ -74,9 +74,12 @@ const CASES: &[Case] = &[
     Case {
         description: "xvn eval run --json (no-such-strategy)",
         args: &[
-            "eval", "run",
-            "--strategy", "no-such-strategy",
-            "--scenario", "no-such-scenario",
+            "eval",
+            "run",
+            "--strategy",
+            "no-such-strategy",
+            "--scenario",
+            "no-such-scenario",
         ],
         pass_json: true,
         extra_args: &[],
@@ -108,9 +111,13 @@ const CASES: &[Case] = &[
     Case {
         description: "xvn eval batch run --json (unknown scenario)",
         args: &[
-            "eval", "batch", "run",
-            "--strategy", "no-such-strategy",
-            "--scenarios", "no-such-scenario",
+            "eval",
+            "batch",
+            "run",
+            "--strategy",
+            "no-such-strategy",
+            "--scenarios",
+            "no-such-scenario",
             "--wait",
         ],
         pass_json: true,
@@ -125,7 +132,8 @@ const CASES: &[Case] = &[
     Case {
         description: "xvn eval compare --json (two unknown runs)",
         args: &[
-            "eval", "compare",
+            "eval",
+            "compare",
             "01ZZZZZZZZZZZZZZZZZZZZZZZZ",
             "02ZZZZZZZZZZZZZZZZZZZZZZZZ",
         ],
@@ -141,9 +149,12 @@ const CASES: &[Case] = &[
     Case {
         description: "xvn eval validate --json (unknown strategy)",
         args: &[
-            "eval", "validate",
-            "--strategy", "no-such-strategy",
-            "--scenario", "no-such-scenario",
+            "eval",
+            "validate",
+            "--strategy",
+            "no-such-strategy",
+            "--scenario",
+            "no-such-scenario",
         ],
         pass_json: true,
         extra_args: &[],
@@ -167,10 +178,14 @@ const CASES: &[Case] = &[
     Case {
         description: "xvn experiment run --json (dry-run, no --yes)",
         args: &[
-            "experiment", "run",
-            "--name", "test-exp",
-            "--strategy", "no-such-strategy",
-            "--scenarios", "no-such-scenario",
+            "experiment",
+            "run",
+            "--name",
+            "test-exp",
+            "--strategy",
+            "no-such-strategy",
+            "--scenarios",
+            "no-such-scenario",
         ],
         pass_json: true,
         extra_args: &[],

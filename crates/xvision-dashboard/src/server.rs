@@ -25,6 +25,7 @@
 // 15. PATCH  /api/strategy/:id/agents/:role           strategies::patch_agent_role
 // 16. PUT    /api/strategy/:id/pipeline               strategies::put_pipeline
 // 17. PUT    /api/strategy/:id/risk                   strategies::put_risk
+// 17b. PUT/DELETE /api/strategy/:id/filter            strategies::put_filter / delete_filter
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
@@ -114,7 +115,8 @@
 //  R49. GET  /api/settings/providers/:name/catalog
 //  R50. GET  /api/chat-rail/sessions/:id/history
 //  R51. GET  /api/chat-rail/sessions
-//  R52. GET  /api/auth/session/current   (auth endpoint — own handler)
+//  R52. GET  /api/v2/charts/market-context
+//  R53. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
 //  A1.  POST   /api/auth/session
@@ -138,7 +140,8 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, chat_rail, charts_dashboards, cli, docs,
+    agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail, cli,
+    docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
     health::health,
@@ -192,6 +195,24 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/v2/charts/dashboards/overview",
             get(charts_dashboards::overview),
+        )
+        // B3 — AI annotation chart. Both endpoints fixture-backed; the
+        // live producer is out of scope per spec §9, so /live returns
+        // candles + empty annotations.
+        .route(
+            "/api/v2/charts/annotated/:run_id",
+            get(charts_annotated::run),
+        )
+        .route(
+            "/api/v2/charts/annotated/live/:symbol",
+            get(charts_annotated::live),
+        )
+        // B4 follow-up — market context for MarketContextCard. Stub returns
+        // deterministic BTC stats; real exchange-data integration is a
+        // separate follow-up PR.
+        .route(
+            "/api/v2/charts/market-context",
+            get(charts_market_context::get),
         )
         .route("/api/agent-runs/:id", get(agent_runs::get))
         .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))
@@ -265,6 +286,7 @@ fn mutating_router(state: AppState) -> Router {
         )
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
+        .route("/api/strategy/:id/filter", put(strategies::put_filter))
         .route("/api/strategy/:id/validate", post(strategies::post_validate))
         // ── Strategies folder ─────────────────────────────────────────────
         .route(

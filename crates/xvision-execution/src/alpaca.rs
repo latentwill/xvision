@@ -375,7 +375,6 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
         Self { api }
     }
 
-
     /// Poll an order until it reaches a terminal state.
     /// 5 retries × 200 ms; aborts with `Timeout` if still pending after that.
     async fn await_fill(&self, order_id: &str) -> Result<AlpacaOrder, ExecutorError> {

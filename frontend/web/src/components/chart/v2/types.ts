@@ -195,9 +195,26 @@ export type AnnotatedChartPayload = {
   granularity: string;
   candles: CandleColumns;
   ema?: LineSeries;
-  /** may be [] when source = "live" and the producer is not wired
-   *  (see spec §9 "out of scope") — UI renders EmptyState */
+  /** may be [] when no completed review has emitted annotations */
   annotations: Annotation[];
+  /** operator-facing reason when annotations are empty */
+  note?: string;
+};
+
+// /api/v2/charts/market-context — B4 follow-up. Replaces STUB_MARKET_CONTEXT +
+// STUB_REGIMES literals in GradientHeroDashboard.
+// MarketContextData + RegimeWeight are defined on the primitive and
+// re-exported here so API consumers have a single import point.
+import type {
+  MarketContextData,
+  RegimeWeight,
+} from "./primitives/MarketContextCard";
+
+export type { MarketContextData, RegimeWeight };
+
+export type MarketContextPayload = {
+  data: MarketContextData;
+  regimes: RegimeWeight[];
 };
 
 // /api/v2/charts/heatmap/:symbol — RESERVED for the F-CHART-LIQHEAT

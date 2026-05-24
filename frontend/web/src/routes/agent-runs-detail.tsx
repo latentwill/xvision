@@ -153,13 +153,7 @@ export function AgentRunDetailRoute() {
           {detail.summary.run_id}
         </div>
         <Pill tone={detail.summary.error_count > 0 ? "danger" : "default"}>{detail.summary.status}</Pill>
-        <Pill
-          tone={detail.summary.retention_mode === "full_debug" ? "warn" : "info"}
-          data-testid="retention-badge"
-          title={`Retention mode: ${detail.summary.retention_mode}`}
-        >
-          retention: {detail.summary.retention_mode}
-        </Pill>
+        {/* Retention-mode badge intentionally disabled; backend field is kept for later restoration. */}
         <span className="font-mono text-[12px] text-text-2">spans: {detail.summary.span_count}</span>
         <span
           className="font-mono text-[12px] text-text-2"
@@ -171,13 +165,6 @@ export function AgentRunDetailRoute() {
           {detail.summary.total_input_tokens.toLocaleString()} in · {detail.summary.total_output_tokens.toLocaleString()} out
         </span>
       </Card>
-
-      {/*
-        qa-ui-polish-round2 #10: the loud full_debug retention banner is
-        gone. The minimal `retention-badge` Pill above still shows the
-        mode, and Settings → Retention is the canonical surface — there
-        is no need for an `role="alert"` Card on every run page.
-      */}
 
       <Card className="mb-3 overflow-x-auto overflow-y-hidden">
         <div className="flex items-center gap-3">

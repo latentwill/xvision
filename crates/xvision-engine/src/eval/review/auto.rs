@@ -45,7 +45,7 @@ use serde_json::json;
 use ulid::Ulid;
 
 use crate::eval::findings::{uniformity::detect_uniformity, Finding, Severity};
-use crate::eval::review::{EvalReview, ReviewStatus, ReviewVerdict};
+use crate::eval::review::{EvalReview, ReviewAnnotation, ReviewStatus, ReviewVerdict};
 use crate::eval::store::RunStore;
 
 // ── Tunable constants ────────────────────────────────────────────────
@@ -175,6 +175,7 @@ pub async fn run_auto_review(
     let verdict = classify_verdict(&findings);
     let score = score_for(verdict, &findings);
     let summary = build_summary(&findings);
+    let annotations = annotations_from_findings(&findings);
     let raw = serialize_findings_snapshot(&findings, verdict, score);
 
     // Build a "completed" review row directly. The auto-runner doesn't
@@ -192,6 +193,7 @@ pub async fn run_auto_review(
         score: Some(score),
         summary: Some(summary),
         raw_output_json: Some(raw),
+        annotations,
         error: None,
         created_at: now,
         updated_at: now,
@@ -322,6 +324,86 @@ pub fn build_summary(findings: &[Finding]) -> String {
         })
         .collect();
     truncate_to(&parts.join("; "), SUMMARY_MAX_CHARS)
+}
+
+/// Convert the same finding snapshot that drives the deterministic
+/// verdict into chart annotations. The rule-based runner does not have
+/// cycle timestamps for every finding, so annotations are evenly spread
+/// across the demo/review candle range unless the future producer
+/// enriches them with timestamps.
+pub fn annotations_from_findings(findings: &[Finding]) -> Vec<ReviewAnnotation> {
+    findings
+        .iter()
+        .take(8)
+        .enumerate()
+        .map(|(i, finding)| {
+            let title = finding
+                .title
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| first_sentence(&finding.summary));
+            let body = finding
+                .description
+                .as_deref()
+                .or(finding.recommendation.as_deref())
+                .unwrap_or(&finding.summary);
+            ReviewAnnotation {
+                idx: ((i as u32) * 18 + 12).min(169),
+                side: if i % 2 == 0 { "top" } else { "bottom" }.to_string(),
+                kind: annotation_kind_for(finding),
+                title: truncate_to(title.trim(), 64),
+                body: truncate_to(body.trim(), 220),
+                conf: finding
+                    .confidence
+                    .unwrap_or_else(|| confidence_for(finding.severity))
+                    .clamp(0.0, 1.0),
+                action: action_for(finding.severity).to_string(),
+                danger: matches!(finding.severity, Severity::Critical | Severity::Warning),
+                ts: None,
+            }
+        })
+        .collect()
+}
+
+fn annotation_kind_for(finding: &Finding) -> String {
+    let kind = finding
+        .review_type
+        .as_deref()
+        .unwrap_or(&finding.kind)
+        .to_ascii_lowercase();
+    let mapped = if kind.contains("risk")
+        || kind.contains("drawdown")
+        || kind.contains("tail")
+        || kind.contains("lookahead")
+        || kind.contains("violation")
+    {
+        "RISK"
+    } else if kind.contains("regime") || kind.contains("structure") {
+        "STRUCTURE"
+    } else if kind.contains("execution") || kind.contains("overtrad") || kind.contains("flow") {
+        "FLOW"
+    } else if kind.contains("performance") || kind.contains("underperformance") {
+        "REVERSION"
+    } else {
+        "PATTERN"
+    };
+    mapped.to_string()
+}
+
+fn action_for(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Critical => "CAUTION",
+        Severity::Warning => "WATCH",
+        Severity::Info => "WATCH",
+    }
+}
+
+fn confidence_for(severity: Severity) -> f64 {
+    match severity {
+        Severity::Critical => 0.86,
+        Severity::Warning => 0.72,
+        Severity::Info => 0.58,
+    }
 }
 
 fn severity_rank(s: Severity) -> u8 {

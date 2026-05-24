@@ -15,8 +15,9 @@ use crate::api::{
 };
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
-    RenameAgentRoleRequest, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq, UpdateManifestOut,
-    UpdateManifestReq, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
+    RenameAgentRoleRequest, SetFilterReq, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq,
+    SetStrategyFilterOut, SetStrategyFilterReq, UpdateManifestOut, UpdateManifestReq, UpdateSlotOut,
+    UpdateSlotReq, ValidateDraftOut,
 };
 use crate::strategies::{
     store::{
@@ -43,6 +44,10 @@ pub struct StrategySummary {
     pub decision_cadence_minutes: u32,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Optional per-strategy display color from the manifest. Chart surfaces
+    /// use it before falling back to the stable compare palette.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     /// Model summary for attached AgentRefs. Falls back to legacy slot config
     /// and shows the first unique model plus a count when multiple are present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,12 +87,10 @@ pub struct AddAgentReq {
     pub role: String,
     /// Phase A `AgentRef.activates`. `None` (default) lets the
     /// dispatcher pick the slot's first capability — today's behavior.
-    /// `Some(Capability::Filter)` is what the strategy editor's inline
-    /// Filter composer sends so the Phase B dispatcher picks the
-    /// Filter handler at this position even when the referenced agent
-    /// advertises more than one capability.
+    /// `Some(Capability::Filter)` is rejected; filters are saved JSON
+    /// artifacts on the strategy, not agent refs.
     #[serde(default)]
-    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
     pub activates: Option<crate::agents::Capability>,
 }
 
@@ -151,6 +154,40 @@ pub struct StrategyAgentsOut {
 pub struct CloneStrategyReq {
     #[serde(default)]
     pub display_name: Option<String>,
+}
+
+/// Atomic clone request used by `xvn strategy clone` and the model-bakeoff
+/// orchestrator. Distinct from [`CloneStrategyReq`] (which the dashboard
+/// route consumes for shallow clones) so existing callers of
+/// [`clone_strategy`] keep their wire shape unchanged.
+///
+/// - `display_name`: required when called via CLI (CLI surface enforces);
+///   if `None` the helper falls back to `"{source name} (clone)"`.
+/// - `provider` + `model`: both-or-neither override pair. When `Some`, the
+///   cloned strategy's paired Agents have their slots rewritten to use
+///   the override; validated against
+///   [`crate::api::settings::providers::resolve_provider`] so an
+///   unreachable `(provider, model)` produces the same typed `reason`
+///   discriminant operators see on eval-launch refusal.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CloneStrategyFullReq {
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// Result of an atomic `clone_strategy_full`. `source_strategy_id` is the
+/// id passed in; `strategy_id` is the freshly minted clone; `agent_ids`
+/// is the per-AgentRef Vec of freshly minted Agent ids (parallel order to
+/// the source strategy's `agents` Vec).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CloneStrategyFullOut {
+    pub strategy_id: String,
+    pub agent_ids: Vec<String>,
+    pub source_strategy_id: String,
 }
 
 pub async fn list(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
@@ -260,19 +297,38 @@ async fn collect_strategy_ids(
 }
 
 /// Load each strategy file in `ids` and build the wire summary for it.
-/// Failures on individual files surface as `Internal` so a bad JSON
-/// blob takes down the whole list (consistent with the previous
-/// behaviour of `list_inner`).
+/// A single malformed or partially-deleted strategy must not take down
+/// the dashboard list page; skip that row and leave a structured warning
+/// for local diagnosis.
 async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResult<Vec<StrategySummary>> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let agent_store = AgentStore::new(ctx.db.clone());
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
-        let strategy = store
-            .load(id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let inventory = provider_model_inventory(ctx, &agent_store, &strategy).await?;
+        let strategy = match store.load(id).await {
+            Ok(strategy) => strategy,
+            Err(err) => {
+                tracing::warn!(
+                    strategy_id = %id,
+                    actor = ?&ctx.actor,
+                    error = %err,
+                    "strategy list skipped unreadable strategy file"
+                );
+                continue;
+            }
+        };
+        let inventory = match provider_model_inventory(ctx, &agent_store, &strategy).await {
+            Ok(inventory) => inventory,
+            Err(err) => {
+                tracing::warn!(
+                    strategy_id = %strategy.manifest.id,
+                    actor = ?&ctx.actor,
+                    error = %err,
+                    "strategy list skipped strategy with unreadable agent metadata"
+                );
+                continue;
+            }
+        };
         let model = model_summary(&inventory.models);
         let tags = strategy_tags(&strategy);
         out.push(StrategySummary {
@@ -281,6 +337,7 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             template: strategy.manifest.template.clone(),
             decision_cadence_minutes: strategy.manifest.decision_cadence_minutes,
             tags,
+            color: strategy.manifest.color.clone(),
             model,
             providers: inventory.providers,
             models: inventory.models,
@@ -514,6 +571,20 @@ pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
     .await;
     if result.is_ok() {
         api_search::delete_strategy(ctx, agent_id).await;
+        // Sweep agents whose `scope_strategy_id` matched the strategy
+        // we just deleted. Phase 3 of agent-firing-filter introduced
+        // strategy-scoped agents (migration 036); without this sweep
+        // they orphan in the agents table when the owning strategy is
+        // removed. Best-effort: if the sweep fails the delete still
+        // succeeds — the rows are inert noise, not a correctness bug.
+        let agent_store = AgentStore::new(ctx.db.clone());
+        if let Err(err) = agent_store.delete_scoped_to(agent_id).await {
+            tracing::warn!(
+                strategy_id = agent_id,
+                error = %err,
+                "scoped-agent sweep failed after strategy delete",
+            );
+        }
     }
     result
 }
@@ -627,6 +698,305 @@ pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategy
     result
 }
 
+/// Atomic strategy + paired-Agent clone with optional `(provider, model)`
+/// override.
+///
+/// Behavior:
+/// - Loads the source strategy. NotFound short-circuits with no writes.
+/// - Validates the override pair: both-or-neither (`Validation` error on a
+///   half-supplied pair).
+/// - When an override is supplied, gates the clone through
+///   `effective_providers::resolve_provider` so an unreachable
+///   `(provider, model)` refuses with the same typed `reason`
+///   discriminant operators see on eval-launch refusal
+///   (`provider_unknown`, `provider_disabled`, `key_missing`,
+///   `model_disabled`). The `reason` token is embedded in the
+///   `ApiError::Validation` message so the CLI / dashboard can string-
+///   match for structured handling.
+/// - Clones every paired `AgentRef` into a fresh Agent record. When an
+///   override is supplied, each cloned Agent's slots are rewritten to
+///   the override `(provider, model)`; other slot fields (system_prompt,
+///   skill_ids, max_tokens, …) carry forward unchanged.
+/// - Mints a fresh ULID for the cloned strategy, copies every other
+///   manifest field except `id` / `display_name` / `published_at`, and
+///   stashes `cloned_from: "<source-id>"` in
+///   `mechanical_params.metadata.cloned_from` so audit tooling can chain
+///   clones back to the original (no schema change — `mechanical_params`
+///   is already an arbitrary-JSON column).
+/// - The source strategy is byte-identical before and after. Failures in
+///   the agent-clone step short-circuit before the strategy file is
+///   written, so disk state remains consistent. Already-created clone-
+///   Agent rows are left in place (their absence from any strategy makes
+///   them orphans, which the agent library can prune; a strict-rollback
+///   variant is out of scope for v1).
+pub async fn clone_strategy_full(
+    ctx: &ApiContext,
+    source_strategy_id: &str,
+    req: CloneStrategyFullReq,
+) -> ApiResult<CloneStrategyFullOut> {
+    let started = Instant::now();
+    let result = clone_strategy_full_inner(ctx, source_strategy_id, req).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let target = result.as_ref().ok().map(|out| out.strategy_id.as_str());
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "clone_full",
+        target,
+        Some(source_strategy_id),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    if let Ok(out) = &result {
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        index_strategy_after_mutation(ctx, &store, &out.strategy_id).await;
+    }
+
+    result
+}
+
+async fn clone_strategy_full_inner(
+    ctx: &ApiContext,
+    source_strategy_id: &str,
+    req: CloneStrategyFullReq,
+) -> ApiResult<CloneStrategyFullOut> {
+    // 1. Both-or-neither override pair. A half-supplied pair (`--provider`
+    //    without `--model`, or vice versa) is a usage error before any
+    //    provider resolution or disk write.
+    let override_pair: Option<(String, String)> = match (req.provider.as_deref(), req.model.as_deref()) {
+        (Some(p), Some(m)) => {
+            let p = p.trim();
+            let m = m.trim();
+            if p.is_empty() || m.is_empty() {
+                return Err(ApiError::Validation(
+                    "provider and model must be non-empty when supplied".into(),
+                ));
+            }
+            Some((p.to_string(), m.to_string()))
+        }
+        (None, None) => None,
+        (Some(_), None) => {
+            return Err(ApiError::Validation(
+                "provider override requires model (both or neither)".into(),
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(ApiError::Validation(
+                "model override requires provider (both or neither)".into(),
+            ));
+        }
+    };
+
+    // 2. Load source. `get_inner` already maps NotFound through ApiError.
+    let source = get_inner(ctx, source_strategy_id).await?;
+
+    // 3. If an override is supplied, gate it through `resolve_provider`
+    //    before any DB writes. Embed the structured `reason` token in the
+    //    error message so callers (CLI, dashboard, tests) can string-
+    //    match the discriminant exactly as they do for eval-launch
+    //    refusal.
+    if let Some((ref p, ref m)) = override_pair {
+        let cfg_path = runtime_config_path(ctx);
+        if let Err(unavailable) =
+            crate::api::settings::providers::resolve_provider(ctx, &cfg_path, p, Some(m)).await
+        {
+            let model_clause = unavailable
+                .model
+                .as_ref()
+                .map(|m| format!(" model `{m}`,"))
+                .unwrap_or_default();
+            return Err(ApiError::Validation(format!(
+                "clone provider override `{}`{} is not launchable (reason={}): {}",
+                unavailable.provider,
+                model_clause,
+                unavailable.reason.as_str(),
+                unavailable.hint,
+            )));
+        }
+    }
+
+    // 4. Mint the strategy id before cloning Agents so cloned Agent
+    //    names can carry a per-clone suffix. Agent names are globally
+    //    unique, and operators should be able to clone the same source
+    //    strategy more than once.
+    let new_strategy_id = Ulid::new().to_string();
+
+    // 5. Clone each AgentRef into a fresh library Agent record. Track
+    //    the resulting ids so the new Strategy.agents Vec lines up in
+    //    parallel order with the source.
+    let mut cloned_agent_refs: Vec<AgentRef> = Vec::with_capacity(source.agents.len());
+    let mut created_agent_ids: Vec<String> = Vec::with_capacity(source.agents.len());
+    for (idx, agent_ref) in source.agents.iter().enumerate() {
+        let source_agent = match crate::api::agents::get(ctx, &agent_ref.agent_id).await {
+            Ok(agent) => agent,
+            Err(err) => {
+                cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+                return Err(err);
+            }
+        };
+
+        // Rewrite slots if override supplied; otherwise carry forward
+        // verbatim.
+        let new_slots: Vec<crate::agents::AgentSlot> = source_agent
+            .slots
+            .iter()
+            .cloned()
+            .map(|mut slot| {
+                if let Some((ref p, ref m)) = override_pair {
+                    slot.provider = p.clone();
+                    slot.model = m.clone();
+                }
+                slot
+            })
+            .collect();
+
+        let new_agent = match crate::api::agents::create(
+            ctx,
+            crate::api::agents::CreateAgentRequest {
+                name: clone_agent_name(&source_agent.name, &new_strategy_id, idx),
+                description: format!(
+                    "Cloned from agent {} via `xvn strategy clone {}`",
+                    agent_ref.agent_id, source_strategy_id
+                ),
+                tags: {
+                    let mut t = source_agent.tags.clone();
+                    if !t.iter().any(|x| x == "cloned") {
+                        t.push("cloned".into());
+                    }
+                    t
+                },
+                slots: new_slots,
+                scope_strategy_id: None,
+            },
+        )
+        .await
+        {
+            Ok(agent) => agent,
+            Err(err) => {
+                cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+                return Err(err);
+            }
+        };
+
+        created_agent_ids.push(new_agent.agent_id.clone());
+        cloned_agent_refs.push(AgentRef {
+            agent_id: new_agent.agent_id,
+            role: agent_ref.role.clone(),
+            activates: agent_ref.activates.clone(),
+        });
+    }
+
+    // 6. Build the new Strategy. Copy every other
+    //    field from the source. Provenance lands in
+    //    `mechanical_params.metadata.cloned_from`.
+    let new_mechanical_params = stash_cloned_from(&source.mechanical_params, source_strategy_id);
+    let display_name = req
+        .display_name
+        .clone()
+        .unwrap_or_else(|| format!("{} (clone)", source.manifest.display_name));
+
+    let mut new_strategy = source.clone();
+    new_strategy.manifest.id = new_strategy_id.clone();
+    new_strategy.manifest.display_name = display_name;
+    new_strategy.manifest.published_at = None;
+    new_strategy.agents = cloned_agent_refs;
+    new_strategy.mechanical_params = new_mechanical_params;
+
+    // 7. Shape validation surfaces here (rather than after a partial
+    //    filesystem write).
+    if let Err(e) = crate::strategies::validate::validate_strategy(&new_strategy) {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+        return Err(ApiError::Validation(format!("clone validation failed: {e}")));
+    }
+
+    // 8. Persist. Source is untouched; agents we created above already
+    //    exist in the library.
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    if let Err(e) = store.save(&new_strategy).await {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+        return Err(ApiError::Internal(e.to_string()));
+    }
+
+    Ok(CloneStrategyFullOut {
+        strategy_id: new_strategy_id,
+        agent_ids: created_agent_ids,
+        source_strategy_id: source_strategy_id.to_string(),
+    })
+}
+
+fn clone_agent_name(source_name: &str, strategy_id: &str, idx: usize) -> String {
+    let suffix: String = strategy_id
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{source_name} (clone {suffix}-{})", idx + 1)
+}
+
+async fn cleanup_created_clone_agents(ctx: &ApiContext, agent_ids: &[String]) {
+    for agent_id in agent_ids {
+        if let Err(err) = sqlx::query("DELETE FROM agents WHERE agent_id = ?")
+            .bind(agent_id)
+            .execute(&ctx.db)
+            .await
+        {
+            tracing::warn!(
+                agent_id = agent_id.as_str(),
+                error = %err,
+                "failed to clean up partial strategy clone agent",
+            );
+        }
+    }
+}
+
+/// Insert (or overwrite) `metadata.cloned_from` inside a strategy's
+/// `mechanical_params` JSON. If the source value is not a JSON object,
+/// the existing value is preserved under a reserved `_legacy` key so the
+/// caller never silently drops authoring data.
+fn stash_cloned_from(source: &serde_json::Value, source_id: &str) -> serde_json::Value {
+    let mut params = source.clone();
+    if !params.is_object() {
+        let prior = params.clone();
+        params = serde_json::json!({ "_legacy": prior });
+    }
+    let obj = params.as_object_mut().expect("ensured object above");
+    let metadata = obj
+        .entry("metadata".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !metadata.is_object() {
+        let prior = metadata.clone();
+        *metadata = serde_json::json!({ "_legacy": prior });
+    }
+    let metadata_obj = metadata.as_object_mut().expect("ensured object above");
+    metadata_obj.insert(
+        "cloned_from".to_string(),
+        serde_json::Value::String(source_id.to_string()),
+    );
+    params
+}
+
+/// Convenience accessor for `mechanical_params.metadata.cloned_from`.
+/// Returns the source strategy id when the clone was minted via
+/// [`clone_strategy_full`]; `None` for hand-authored or pre-clone-feature
+/// strategies. Audit tooling uses this to chain clones back to the
+/// original.
+pub fn cloned_from(strategy: &Strategy) -> Option<&str> {
+    strategy
+        .mechanical_params
+        .get("metadata")
+        .and_then(|m| m.get("cloned_from"))
+        .and_then(|v| v.as_str())
+}
+
 /// Map an `anyhow::Error` from `engine::authoring::*` dispatcher fns to a
 /// typed `ApiError`. The dispatcher emits validation failures as
 /// `anyhow!("...")` strings (no typed enum), so we string-match the prefix
@@ -650,6 +1020,20 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "asset_universe",
         "decision_cadence_minutes",
         "unknown preset",
+        "filter parse error",
+        "filter validation error",
+        "unknown filter source format",
+        "agent role 'filter' is reserved",
+        "agent type 'filter' is removed",
+        "strategy must have at least one agent",
+        "strategy must have a trader slot",
+        "agent role cannot be empty",
+        "duplicate agent role",
+        "single-agent pipeline cannot include multiple agents",
+        "graph pipeline edge references unknown role",
+        "graph pipeline edge from",
+        "asset universe cannot be empty",
+        "invalid risk config",
         "preset and explicit are mutually exclusive",
         "supply either preset or explicit",
         "unknown template",
@@ -663,6 +1047,15 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "graph pipelines cannot contain self-loops",
         "graph pipelines cannot contain duplicate edges",
         "graph pipelines must be acyclic",
+        "filter parse error",
+        "filter validation error",
+        "json parse error",
+        "toml parse error",
+        "failed parsing as JSON and TOML",
+        "missing field `id`",
+        "invalid indicator dsl",
+        "unknown operator",
+        "negative integer for unsigned field",
     ];
     if validation_markers.iter().any(|m| msg.contains(m)) {
         return ApiError::Validation(msg);
@@ -1227,6 +1620,37 @@ pub async fn set_pipeline(ctx: &ApiContext, req: SetPipelineReq) -> ApiResult<St
     result
 }
 
+/// Set or clear a strategy-level filter. Supports JSON payloads in both
+/// explicit object form and `{ "filter": ... }` form.
+pub async fn set_filter(ctx: &ApiContext, req: SetFilterReq) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_filter(&store, req)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(&strategy_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "strategy_set_filter",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &strategy_id).await;
+    }
+    result
+}
+
 /// Set one mechanical parameter on the strategy and refresh the search index.
 pub async fn set_mechanical_param(
     ctx: &ApiContext,
@@ -1288,6 +1712,70 @@ pub async fn set_risk_config(ctx: &ApiContext, req: SetRiskConfigReq) -> ApiResu
     .await;
     if result.is_ok() {
         index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
+    result
+}
+
+/// Set the strategy's deterministic DSL Filter from operator-supplied
+/// JSON source text. Parse errors map to `Validation`;
+/// missing strategy maps to `NotFound`.
+pub async fn set_strategy_filter(
+    ctx: &ApiContext,
+    req: SetStrategyFilterReq,
+) -> ApiResult<SetStrategyFilterOut> {
+    let started = Instant::now();
+    let agent_id = req.id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_strategy_filter(&store, req)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(&agent_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "set_filter",
+        Some(&agent_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
+    result
+}
+
+/// Clear the strategy's filter (reverts `activation_mode` to
+/// `EveryBar`). No-op if no filter was set.
+pub async fn clear_strategy_filter(ctx: &ApiContext, id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::clear_strategy_filter(&store, id)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "clear_filter",
+        Some(id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, id).await;
     }
     result
 }

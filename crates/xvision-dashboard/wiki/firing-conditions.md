@@ -136,6 +136,33 @@ schema matches what the SPA composer produces, which is useful when
 copying a predicate out of a working strategy. There is no DSL parser at
 the CLI; for multi-line or complex predicates, use the SPA composer.
 
+## Inline deterministic Filter DSL
+
+Strategies can also carry an inline deterministic filter under
+`strategy.filter`, installed by `xvn strategy set-filter <strategy_id>
+--from-json <path>`. This is the path used when the filter is pure
+indicator logic rather than a Filter-capable LLM agent.
+
+See [Filter DSL Catalog](/docs?slug=filter-dsl-catalog) for the
+authoritative indicator/operator list and copyable JSON examples.
+Agents and chat rail should call `xvn strategy filter-catalog --json`
+before generating a payload. The important contracts are:
+
+- operators are `>`, `<`, `>=`, `<=`, `==`, `crosses_above`,
+  `crosses_below`, `between`, plus parameterized operators such as
+  `above_for_<bars>`, `crossed_above_<bars>`, `slope_gt_<bars>`,
+  `zscore_gt_<period>`, and `within_pct_<pct>`
+- `crosses_above` and `crosses_below` require indicator operands on
+  both sides
+- use canonical tokens such as `ema_12`, `macd_hist`, `macd_12_26_9`,
+  `adx_14`, `di_plus_14`, `bb_pct_b_20`, `donchian_upper_20`,
+  `opening_range_high_30`, `rvol_tod_20`, and `volume_zscore_20`
+- every inline filter must include `display_name`, `asset_scope`,
+  `timeframe`, and a non-empty `conditions` tree
+- optional `fire` metadata (`reason`, `priority`, `tags`, `context`)
+  adds compact trigger context to traces and trader briefings when the
+  gate is active; it does not change pass/fail semantics
+
 ## What firing conditions are not
 
 - **Not risk gates.** Risk lives in the executor stage (`RiskDecision`
@@ -171,5 +198,7 @@ measurement so the savings number tracks actual briefing sizes.
   and `PipelineEdge.condition`.
 - `docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md` -
   the operator-surface spec this page accompanies.
+- [Filter DSL Catalog](/docs?slug=filter-dsl-catalog) - inline
+  deterministic filter indicators, operators, and examples.
 - `crates/xvision-filters/` - the deterministic DSL filter substrate;
   used by Filter-capable agents and (eventually) authorable directly.

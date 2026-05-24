@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::agents::AgentSlot;
@@ -32,6 +32,49 @@ use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 // Import the batch module from xvision-cli.
 use xvision_cli::commands::eval::batch::{run_batch, BatchRunRequest};
 
+async fn apply_agent_migrations(pool: &SqlitePool) {
+    sqlx::query(include_str!("../../xvision-engine/migrations/005_agents.sql"))
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/019_agent_slot_prompt_version.sql"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/020_agent_slot_inputs_policy.sql"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/025_agent_slot_cache_and_window.sql"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/029_agent_slot_memory_mode.sql"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/033_agent_slot_capabilities.sql"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -46,35 +89,7 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    // Agent tables (005) + slot column migrations needed by agents_api::create.
-    sqlx::query(include_str!("../../xvision-engine/migrations/005_agents.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/019_agent_slot_prompt_version.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/020_agent_slot_inputs_policy.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/025_agent_slot_cache_and_window.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/029_agent_slot_memory_mode.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    apply_agent_migrations(&pool).await;
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
@@ -186,7 +201,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
         mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -398,35 +413,7 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    // Agent tables (005) + slot column migrations needed by agents_api::create.
-    sqlx::query(include_str!("../../xvision-engine/migrations/005_agents.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/019_agent_slot_prompt_version.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/020_agent_slot_inputs_policy.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/025_agent_slot_cache_and_window.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/029_agent_slot_memory_mode.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    apply_agent_migrations(&pool).await;
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))

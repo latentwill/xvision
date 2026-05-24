@@ -30,13 +30,6 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 - [memory-aware-eval-findings](contracts/memory-aware-eval-findings.md) — **P2 leaf** · deferred (depends on `memory-provenance-in-decisions-trace`) · per-decision finding extractor.
 
-### agent-firing-filter-operator-surface-2026-05-22 — operator surface for the Filter capability
-
-Phase 1 (`agent-firing-filter-form-and-docs`) merged 2026-05-22 via PR #548; closed 2026-05-23. Phases 2 + 3 dispatched 2026-05-23 — see `team/briefings/2026-05-23-agent-firing-filter-phases-2-3.md`. Engine substrate complete (agent-graph Phases A–E all merged).
-
-- [agent-firing-filter-cli-verbs](contracts/agent-firing-filter-cli-verbs.md) — **P2 CLI** · claimed · `xvn agent create`, `xvn strategy add-filter`, `remove-filter`; soft-warning in `validate`.
-- [agent-firing-filter-strategy-composer](contracts/agent-firing-filter-strategy-composer.md) — **P3 SPA** · claimed · StrategyForm "When does this fire?" section + inline Filter composer; one schema field (`agents.scope_strategy_id`) for the "Save as reusable agent" toggle.
-
 ### cli-operator-safety-wave-b-2026-05-22 — model-bakeoff cluster
 
 Wave A (#530/#531/#532) and Wave B #5/#6 (#538/#537) merged
@@ -79,6 +72,19 @@ folding in the 2026-05-22 Claude design handoff under
 - [docs-search-list-component-adoption](contracts/docs-search-list-component-adoption.md) — only opens if docs-sidebar audit confirms list-component fit.
 
 ## Recently Closed
+
+### Merged 2026-05-23 — agent-firing-filter wave closed
+
+All three phases of `agent-firing-filter-operator-surface-2026-05-22`
+landed; archive at `team/archive/2026-05-23-agent-firing-filter/`.
+
+- `agent-firing-filter-form-and-docs` (#548 — Phase 1 AgentForm awareness card + docs page)
+- `agent-firing-filter-cli-verbs` (#555 — Phase 2 `xvn agent create`, `xvn strategy add-filter`/`remove-filter`, validate soft-warn)
+- `agent-firing-filter-strategy-composer` (#557 — Phase 3 StrategyForm "When does this fire?" + InlineFilterComposer + migration 036)
+
+Follow-up housekeeping landing in this same wave:
+- `cargo xtask gen-types` regen + SPA fixture sync (cleared 30+ pre-existing TS test-fixture drift errors that Phase A–D had left behind).
+- Scoped-agent janitor on `strategy::delete` (closes the orphan-row risk flagged in the Phase 3 contract).
 
 ### Merged 2026-05-22 (post sweep-6 cascade)
 

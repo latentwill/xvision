@@ -21,6 +21,7 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     getStrategy: vi.fn(),
+    patchStrategyMetadata: vi.fn(),
     validateDraft: vi.fn(),
     setRiskConfig: vi.fn(),
     updateSlot: vi.fn(),
@@ -49,8 +50,8 @@ vi.mock("@/api/chart", () => ({
   getStrategyChart: vi.fn().mockResolvedValue({ series: [] }),
 }));
 
-vi.mock("@/components/chart/StrategyChart", () => ({
-  StrategyChart: () => <div data-testid="strategy-chart" />,
+vi.mock("@/components/chart/v2/surfaces/StrategyHistoryChartV2", () => ({
+  StrategyHistoryChartV2: () => <div data-testid="strategy-chart" />,
 }));
 
 vi.mock("@/api/settings", () => ({
@@ -132,10 +133,13 @@ beforeEach(() => {
   localStorage.clear();
   vi.mocked(agentApi.listAgents).mockReset();
   vi.mocked(strategyApi.getStrategy).mockReset();
+  vi.mocked(strategyApi.patchStrategyMetadata).mockReset();
   vi.mocked(strategyApi.validateDraft).mockReset();
   vi.mocked(strategyApi.removeStrategyAgent).mockReset();
   vi.mocked(strategyApi.renameStrategyAgentRole).mockReset();
-  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
+      default_model: null,
+  });
 
   vi.mocked(agentApi.listAgents).mockResolvedValue([baseAgent]);
   vi.mocked(strategyApi.getStrategy).mockResolvedValue(baseStrategy);

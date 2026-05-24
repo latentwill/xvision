@@ -8,7 +8,7 @@ import type { Capability } from "./Capability";
  * same agent can appear in different strategies under different role
  * names — role lives on the reference, not the referent.
  */
-export type AgentRef = { agent_id: string, role: string,
+export type AgentRef = { agent_id: string, role: string, 
 /**
  * Which capability of the referenced agent this position
  * activates. Phase A field — Phase B's unified dispatcher reads
@@ -17,6 +17,6 @@ export type AgentRef = { agent_id: string, role: string,
  *
  * `None` (the default) means "let the runtime pick the slot's
  * first capability in `BTreeSet` order" — which is `Trader` for
- * every legacy/pre-033 slot.
+ * every legacy/pre-033 slot. Spec Decision 2.
  */
-activates?: Capability | null, };
+activates?: Capability, };

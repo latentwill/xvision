@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
-import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import {
   cancelRun,
@@ -18,46 +16,26 @@ import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
-import { FilterSummaryPanel } from "@/features/eval-runs/FilterSummaryPanel";
-import { FilterEventTimeline } from "@/features/eval-runs/FilterEventTimeline";
 import { useAdaptivePoll } from "@/features/eval-runs/useAdaptivePoll";
 import { useTraceDock } from "@/stores/trace-dock";
 import { isInflightRunStatus } from "@/lib/run-status";
-import {
-  evalRunDisambiguator,
-  evalRunLabels,
-  type EvalRunLabels,
-} from "@/lib/run-display";
+import { evalRunDisambiguator, evalRunLabels } from "@/lib/run-display";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
 import { getStrategy, listStrategies, strategyKeys } from "@/api/strategies";
-import { agentKeys, listAgents, type Agent } from "@/api/agents";
+import { agentKeys, listAgents } from "@/api/agents";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { drawdownMetricTone } from "@/lib/metric-tone";
-import type {
-  DecisionRowDto,
-  RunDetail,
-  RunSummary,
-} from "@/api/types.gen";
-import {
-  derivePositionsByDecision,
-  derivePriorSideByDecision,
-  type PositionSide,
-  type OpenPosition,
-} from "@/features/decisions/positions";
+import type { DecisionRowDto, RunDetail, RunSummary } from "@/api/types.gen";
+import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
+import { MetaChip } from "@/components/eval-detail/MetaChip";
+import { DecisionsTable } from "@/components/eval-detail/DecisionsTable";
+import { toTimelineDecisions } from "@/components/eval-detail/decision-view";
 import {
   MobileEvalRunDetail,
   MobileEvalRunDetailError,
   MobileEvalRunDetailLoading,
 } from "./eval-runs-detail-mobile";
-
-const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
-  completed: "gold",
-  running: "info",
-  queued: "default",
-  failed: "danger",
-  cancelled: "warn",
-};
 
 export function EvalRunDetailRoute() {
   const { runId } = useParams<{ runId: string }>();
@@ -65,12 +43,6 @@ export function EvalRunDetailRoute() {
   const qc = useQueryClient();
   // Status-aware adaptive cadence — see `useAdaptivePoll` for the
   // schedule (running=2s, queued=5s, terminal=stop, 5min idle→30s).
-  // The hook returns a `(status) => interval` callable that owns the
-  // "ms since last status change" state via refs, so the 5-min stale
-  // backoff fires correctly even when nothing in the React tree
-  // re-renders. We pull the latest status off the cache rather than
-  // routing it through hook deps so we don't have to call the hook
-  // *after* useQuery and run into TDZ ordering.
   const pollFor = useAdaptivePoll(id);
   const q = useQuery({
     queryKey: evalKeys.run(id),
@@ -91,47 +63,36 @@ export function EvalRunDetailRoute() {
     queryKey: scenarioKeys.list(),
     queryFn: () => listScenarios(),
   });
-  // F-1 (qa-round-7): the inspector top bar needs the strategy's attached
-  // agents so each can route to its detail page. `listStrategies()` only
-  // returns slim `StrategyListItem` rows — fetch the full strategy to get
-  // `agents: AgentRef[]`. Gated on the run's strategy id (`summary.agent_id`
-  // is the pre-mint strategy id, NOT to be confused with `Agent` records;
-  // see CLAUDE.md terminology lock).
+  // The MetaChip row needs the strategy's attached agents so each can route to
+  // its detail page. `listStrategies()` only returns slim rows — fetch the full
+  // strategy to get `agents: AgentRef[]`. Gated on the run's strategy id
+  // (`summary.agent_id` is the pre-mint strategy id; see CLAUDE.md terminology
+  // lock).
   const strategyIdForRun = q.data?.summary.agent_id ?? "";
   const strategyDetail = useQuery({
     queryKey: strategyKeys.detail(strategyIdForRun),
     queryFn: () => getStrategy(strategyIdForRun),
     enabled: strategyIdForRun.length > 0,
   });
-  // Pull every agent so we can map agent_id → display name in the top-bar
-  // chips. Cheap and cached; agents page hits the same query.
+  // Pull every agent so we can map agent_id → display name in the chips.
   const agentsAll = useQuery({
     queryKey: agentKeys.list(),
     queryFn: () => listAgents(),
   });
   // Sibling runs for the same strategy power the "Run #N/M" disambiguator.
-  // The list-runs API already filters by agent_id; we narrow to the same
-  // scenario client-side.
   const agentId = q.data?.summary.agent_id ?? "";
   const siblings = useQuery({
     queryKey: evalKeys.runs({ agent_id: agentId || undefined }),
     queryFn: () => listRuns({ agent_id: agentId || undefined }),
     enabled: agentId.length > 0,
   });
-  // F-8 (qa-round-7): linked agent run carries the per-call cost rows.
-  // We display its pre-rolled `total_cost_usd` so the summary matches the
-  // capsule's number exactly — both ultimately come from the same SQL
-  // aggregation over `model_call_cost_usd`, so there's no double-counting
-  // worry. Falls back to the eval-run id when an explicit
-  // `agent_run_id` isn't on the summary (older runs / mocks).
+  // Linked agent run carries the per-call cost rows; display its pre-rolled
+  // `total_cost_usd` so the summary matches the capsule's number exactly.
   const agentRunIdForCost = q.data ? traceRunId(q.data.summary) : "";
   const linkedAgentRun = useQuery({
     queryKey: agentRunKeys.run(agentRunIdForCost),
     queryFn: () => getAgentRun(agentRunIdForCost),
     enabled: agentRunIdForCost.length > 0,
-    // Cost is a terminal-state stat; don't burn requests while the run is
-    // still inflight (the eval-run query is already polling on adaptive
-    // cadence, and agent-run cost only finalizes once the agent completes).
     refetchInterval: false,
     retry: false,
   });
@@ -161,8 +122,6 @@ export function EvalRunDetailRoute() {
   useLiveRunStream(id, q.data, qc);
   const isPhone = useIsPhone();
 
-  // TODO(agent-run-observability): cross-link decision-row click → open dock + set decisionFilter to span's decision_idx. Needs design pass — eval-run decision rows do not map 1:1 to agent-run span decision_idx values.
-
   useEffect(() => {
     if (!id) return;
     const status = q.data?.summary.status;
@@ -171,9 +130,8 @@ export function EvalRunDetailRoute() {
       .setActiveRun(id, status && isInflightRunStatus(status) ? "live" : "post-hoc");
   }, [id, q.data?.summary.status]);
 
-  // Drop the active run from the trace-dock store on unmount so the
-  // floating capsule doesn't bleed onto the eval list or any other
-  // route after the operator navigates away from the inspector.
+  // Drop the active run from the trace-dock store on unmount so the floating
+  // capsule doesn't bleed onto other routes after navigation.
   useEffect(() => {
     return () => {
       const dock = useTraceDock.getState();
@@ -187,11 +145,13 @@ export function EvalRunDetailRoute() {
     if (isPhone) return <MobileEvalRunDetailLoading id={id} />;
     return (
       <>
-        <Topbar title="Run detail" sub={id ? id : "Loading…"} />
-        <Card className="p-6 animate-pulse">
-          <div className="h-5 w-72 bg-surface-elev rounded mb-3" />
-          <div className="h-4 w-48 bg-surface-elev rounded" />
-        </Card>
+        <EvalTopBar runId={id || "loading…"} status="queued" />
+        <div className="px-6 py-6">
+          <Card className="p-6 animate-pulse">
+            <div className="h-5 w-72 bg-surface-elev rounded mb-3" />
+            <div className="h-4 w-48 bg-surface-elev rounded" />
+          </Card>
+        </div>
       </>
     );
   }
@@ -208,8 +168,10 @@ export function EvalRunDetailRoute() {
     }
     return (
       <>
-        <Topbar title="Run detail" sub={id} />
-        <ErrorState err={q.error} onRetry={() => q.refetch()} runId={id} />
+        <EvalTopBar runId={id} status="failed" />
+        <div className="px-6 py-6">
+          <ErrorState err={q.error} onRetry={() => q.refetch()} runId={id} />
+        </div>
       </>
     );
   }
@@ -220,10 +182,7 @@ export function EvalRunDetailRoute() {
     strategies.data ?? [],
     scenarios.data ?? [],
   );
-  const disambiguator = evalRunDisambiguator(
-    detail.summary,
-    siblings.data ?? [],
-  );
+  const disambiguator = evalRunDisambiguator(detail.summary, siblings.data ?? []);
   if (isPhone) {
     return (
       <MobileEvalRunDetail
@@ -242,84 +201,124 @@ export function EvalRunDetailRoute() {
       />
     );
   }
+
+  const primaryAgent = (strategyDetail.data?.agents ?? [])[0];
+  const agentNameById = new Map(
+    (agentsAll.data ?? []).map((a) => [a.agent_id, a.name]),
+  );
+  const agentChipValue = primaryAgent
+    ? (agentNameById.get(primaryAgent.agent_id) ?? primaryAgent.agent_id)
+    : null;
+
   return (
-    <>
-      <Topbar
-        title={labels.title}
-        sub={`${labels.subtitle} · ${disambiguator}`}
-      />
+    <div className="-mx-4 -mt-4 flex flex-col min-h-0">
+      <EvalTopBar runId={detail.summary.id} status={detail.summary.status} />
 
-      <InspectorContextStrip
-        strategyId={detail.summary.agent_id}
-        strategyName={labels.strategyName}
-        scenarioId={detail.summary.scenario_id}
-        scenarioName={labels.scenarioName}
-        agents={strategyDetail.data?.agents ?? []}
-        agentsAll={agentsAll.data ?? []}
-      />
-
-      <SummaryCard
-        summary={detail.summary}
-        equityCurve={detail.equity_curve}
-        labels={labels}
-        disambiguator={disambiguator}
-        totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
-        onCancel={() => cancel.mutate(detail.summary.id)}
-        cancelling={cancel.variables === detail.summary.id && cancel.isPending}
-        onRetry={() => retry.mutate(detail.summary.id)}
-        retrying={retry.variables === detail.summary.id && retry.isPending}
-        retryError={
-          retry.isError && retry.error
-            ? retry.error instanceof Error
-              ? retry.error.message
-              : String(retry.error)
-            : null
-        }
-        onDelete={() => remove.mutate(detail.summary.id)}
-        deleting={remove.variables === detail.summary.id && remove.isPending}
-      />
-
-      <FilterSummaryPanel summaries={detail.filter_summaries ?? []} />
-      <FilterEventTimeline events={detail.filter_events ?? []} title="Filter timeline" />
-
-      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
-        Decisions <span className="text-text-3 text-[14px]">({detail.decisions.length})</span>
-      </h2>
-      <DecisionsPanel rows={detail.decisions} />
-
-      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
-        Equity
-      </h2>
-      <Card className="p-5">
-        {chart.isPending && (
-          <div className="text-text-3 text-[13px] text-center py-6">
-            Loading chart…
+      <div className="flex-1 min-h-0 px-6 py-6">
+        <div className="max-w-[1400px] mx-auto">
+          {/* Body header */}
+          <div className="mb-5">
+            <div className="flex items-baseline gap-4 flex-wrap">
+              <h1
+                data-testid="eval-run-id"
+                aria-label={`Eval run id ${detail.summary.id}`}
+                className="font-mono text-[28px] leading-none text-text tabular-nums break-all select-all"
+                style={{ fontWeight: 500, letterSpacing: "-0.03em" }}
+              >
+                {detail.summary.id}
+              </h1>
+              <div
+                data-testid="eval-run-meta"
+                className="text-[12px] font-mono text-text-3"
+              >
+                started{" "}
+                <span className="text-text-2">{fmtTime(detail.summary.started_at)}</span>
+                <span className="text-text-4 mx-2">·</span>
+                budget <span className="text-text-2">{formatCostUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd ?? null))}</span>
+                <span className="text-text-4 mx-2">·</span>
+                <span className="text-text-2">{disambiguator}</span>
+              </div>
+            </div>
+            <div className="mt-4 flex items-center gap-2 flex-wrap">
+              <MetaChip
+                label="Strategy"
+                value={labels.strategyName}
+                tone="gold"
+                ariaLabel={`Open Strategy ${labels.strategyName}`}
+                onClick={() =>
+                  navigate(`/strategies/${encodeURIComponent(detail.summary.agent_id)}`)
+                }
+              />
+              <MetaChip
+                label="Scenario"
+                value={labels.scenarioName}
+                tone="neutral"
+                ariaLabel={`Open Scenario ${labels.scenarioName}`}
+                onClick={() =>
+                  navigate(`/scenarios/${encodeURIComponent(detail.summary.scenario_id)}`)
+                }
+              />
+              {agentChipValue && primaryAgent ? (
+                <MetaChip
+                  label="Agent"
+                  value={agentChipValue}
+                  tone="info"
+                  ariaLabel={`Open Agent ${agentChipValue}`}
+                  onClick={() =>
+                    navigate(`/agents/${encodeURIComponent(primaryAgent.agent_id)}`)
+                  }
+                />
+              ) : null}
+            </div>
           </div>
-        )}
-        {chart.isError && (
-          <div className="text-danger text-[13px] text-center py-6">
-            Chart unavailable: {String(chart.error)}
-          </div>
-        )}
-        {chart.data && <RunChart payload={chart.data} />}
-      </Card>
 
-      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
-        Review
-      </h2>
-      {/*
-        `key={detail.summary.id}` resets every piece of local state in
-        ReviewPanel when the route is reused for a different run id —
-        otherwise selectedId/generate-mutation state can bleed across
-        navigations because the route element is mounted once and just
-        re-renders with a new :runId.
-      */}
-      <ReviewPanel
-        key={detail.summary.id}
-        runId={detail.summary.id}
-        runIsCompleted={detail.summary.status === "completed"}
-      />
-    </>
+          <div className="grid grid-cols-12 gap-5">
+            <div className="col-span-12 lg:col-span-8 space-y-5">
+              <SummaryCard
+                summary={detail.summary}
+                equityCurve={detail.equity_curve}
+                totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
+                chartPending={chart.isPending}
+                chartError={chart.isError ? String(chart.error) : null}
+                chartNode={chart.data ? <RunChart payload={chart.data} /> : null}
+                onCancel={() => cancel.mutate(detail.summary.id)}
+                cancelling={cancel.variables === detail.summary.id && cancel.isPending}
+                onRetry={() => retry.mutate(detail.summary.id)}
+                retrying={retry.variables === detail.summary.id && retry.isPending}
+                retryError={
+                  retry.isError && retry.error
+                    ? retry.error instanceof Error
+                      ? retry.error.message
+                      : String(retry.error)
+                    : null
+                }
+                onDelete={() => remove.mutate(detail.summary.id)}
+                deleting={remove.variables === detail.summary.id && remove.isPending}
+              />
+
+              <DecisionsCard rows={detail.decisions} />
+            </div>
+
+            <div className="col-span-12 lg:col-span-4 space-y-5">
+              <MetaCard
+                summary={detail.summary}
+                totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
+              />
+
+              {/*
+                `key={detail.summary.id}` resets ReviewPanel local state when the
+                route is reused for a different run id.
+              */}
+              <ReviewPanel
+                key={detail.summary.id}
+                runId={detail.summary.id}
+                runIsCompleted={detail.summary.status === "completed"}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -415,12 +414,19 @@ function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
+function displayCost(summary: RunSummary, totalCostUsd: number | null): number | null {
+  return summary.inference_cost_quote_total ?? totalCostUsd;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 function SummaryCard({
   summary,
   equityCurve,
-  labels,
-  disambiguator,
   totalCostUsd,
+  chartPending,
+  chartError,
+  chartNode,
   onCancel,
   cancelling,
   onRetry,
@@ -431,9 +437,10 @@ function SummaryCard({
 }: {
   summary: RunSummary;
   equityCurve: ReadonlyArray<{ equity_usd: number }>;
-  labels: EvalRunLabels;
-  disambiguator: string;
   totalCostUsd: number | null;
+  chartPending: boolean;
+  chartError: string | null;
+  chartNode: React.ReactNode;
   onCancel: () => void;
   cancelling: boolean;
   onRetry: () => void;
@@ -442,18 +449,8 @@ function SummaryCard({
   onDelete: () => void;
   deleting: boolean;
 }) {
-  const tone = STATUS_TONE[summary.status] ?? "default";
   const inflight = isInflightRunStatus(summary.status);
   const terminal = isTerminalStatus(summary.status);
-  // Three statuses can re-enqueue:
-  // - `failed` / `cancelled` → "Retry" (recovery after a fix or stop)
-  // - `completed` → "Rerun" (re-test the same agent/scenario for a
-  //   fresh trace; useful for verifying result stability)
-  // The button label + tooltip adapt below so the operator can tell
-  // the two semantics apart at a glance. The engine classifies the
-  // request as `RetryReason::FailureRecovery` vs `RetryReason::ManualRerun`
-  // for the audit log; if the backend rejects, the existing
-  // `retry.isError` path surfaces a classified error.
   const canRetry =
     summary.status === "failed" ||
     summary.status === "cancelled" ||
@@ -467,6 +464,8 @@ function SummaryCard({
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const agentRunId = traceRunId(summary);
+  const displayedCostUsd = displayCost(summary, totalCostUsd);
+  const verdict = summary.status === "completed" ? "PASS" : summary.status.toUpperCase();
 
   async function handleDownload() {
     setDownloadError(null);
@@ -481,118 +480,82 @@ function SummaryCard({
   }
 
   return (
-    <Card className="p-5 !border-border-soft">
-      <Link
-        to="/eval-runs"
-        className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
+    <div className="bg-surface-card border border-border-soft rounded-card">
+      <div
+        className="flex items-center justify-between px-5 pt-4 pb-3"
+        style={{ borderBottom: "1px solid var(--border-soft)" }}
       >
-        ← Back to runs
-      </Link>
-      <div className="flex items-center justify-between mb-4">
-        <div className="min-w-0">
-          <div className="font-serif text-[30px] leading-none text-text truncate">
-            {labels.strategyName}
-          </div>
-          <div
-            data-testid="eval-run-id"
-            className="mt-1 font-mono text-[12px] text-text-3 break-all select-all"
-            aria-label={`Eval run id ${summary.id}`}
+        <div className="flex items-baseline gap-3">
+          <h2 className="m-0 font-sans text-[22px] tracking-tight text-text" style={{ fontWeight: 600 }}>
+            Summary
+          </h2>
+          <span
+            className="px-1.5 py-0.5 text-[9px] font-mono tracking-[0.18em] uppercase"
+            style={{
+              color: summary.status === "completed" ? "var(--gold)" : "var(--text-2)",
+              background: summary.status === "completed" ? "var(--gold-bg)" : "var(--surface-elev)",
+              border: `1px solid ${summary.status === "completed" ? "var(--gold-soft)" : "var(--border-strong)"}`,
+              borderRadius: 4,
+            }}
           >
-            {summary.id}
-          </div>
-          <div className="mt-1 text-[14px] text-text-2 truncate">
-            {labels.scenarioName}
-          </div>
-          <div
-            data-testid="eval-run-meta"
-            className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-3"
-          >
-            <span className="text-text-2">{disambiguator}</span>
-            <span
-              className="font-mono"
-              title={summary.id}
-              aria-label={`Run id ${summary.id}`}
-            >
-              run {labels.shortRunId}
-            </span>
-            <Link
-              to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
-              className="text-info hover:underline"
-            >
-              View agent trace →
-            </Link>
-          </div>
+            {verdict}
+          </span>
         </div>
-        {/*
-          Each visible button takes `min-w-[16ch]` so the column floor
-          is the widest natural label ("Preparing JSON…" with padding).
-          The previous `grid grid-flow-col auto-cols-fr` shell only
-          equalizes columns when the grid has an explicit container
-          width — in an unconstrained inline-grid `1fr` collapses to
-          content size, so the operator still saw mismatched widths.
-          The status pill stays outside the grid so it keeps its
-          natural size. See `qa-eval-inspector-buttons-actually-uniform`.
-        */}
-        <div className="flex items-center gap-3">
-          <div
-            data-testid="eval-run-actions"
-            className="flex items-center gap-3"
-          >
-            {inflight ? (
-              <button
-                type="button"
-                aria-label={`Stop eval run ${summary.id}`}
-                onClick={onCancel}
-                disabled={cancelling}
-                className="min-w-[16ch] rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
-              >
-                {cancelling ? "Stopping..." : "Stop eval"}
-              </button>
-            ) : null}
-            {canRetry ? (
-              <button
-                type="button"
-                aria-label={`${retryLabel} eval run ${summary.id}`}
-                title={retryTooltip}
-                onClick={onRetry}
-                disabled={retrying}
-                className="min-w-[16ch] rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
-              >
-                {retrying ? retryInflightLabel : retryLabel}
-              </button>
-            ) : null}
-            {terminal ? (
-              <button
-                type="button"
-                aria-label={`Download eval run ${summary.id} as JSON`}
-                onClick={handleDownload}
-                disabled={downloading}
-                className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
-              >
-                {downloading ? "Preparing JSON…" : "Download JSON"}
-              </button>
-            ) : null}
+        <div data-testid="eval-run-actions" className="flex items-center gap-3">
+          {inflight ? (
             <button
               type="button"
-              aria-label={`Delete eval run ${summary.id}`}
-              onClick={onDelete}
-              disabled={deleting}
-              className="min-w-[16ch] rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
+              aria-label={`Stop eval run ${summary.id}`}
+              onClick={onCancel}
+              disabled={cancelling}
+              className="min-w-[16ch] rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
             >
-              {deleting ? "Deleting…" : "Delete"}
+              {cancelling ? "Stopping..." : "Stop eval"}
             </button>
-          </div>
-          <Pill tone={tone} animated={inflight}>
-            <span
-              className="w-1.5 h-1.5 rounded-full"
-              style={dotColor(tone)}
-            />
-            {summary.status}
-          </Pill>
+          ) : null}
+          <Link
+            to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
+            className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-center text-[12px] text-info hover:border-info/50 hover:text-text"
+          >
+            View agent trace →
+          </Link>
+          {canRetry ? (
+            <button
+              type="button"
+              aria-label={`${retryLabel} eval run ${summary.id}`}
+              title={retryTooltip}
+              onClick={onRetry}
+              disabled={retrying}
+              className="min-w-[16ch] rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
+            >
+              {retrying ? retryInflightLabel : retryLabel}
+            </button>
+          ) : null}
+          {terminal ? (
+            <button
+              type="button"
+              aria-label={`Download eval run ${summary.id} as JSON`}
+              onClick={handleDownload}
+              disabled={downloading}
+              className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
+            >
+              {downloading ? "Preparing JSON…" : "Download JSON"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            aria-label={`Delete eval run ${summary.id}`}
+            onClick={onDelete}
+            disabled={deleting}
+            className="min-w-[16ch] rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
         </div>
       </div>
+
       {downloadError ? (
-        <div className="mb-4 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger">
+        <div className="mx-5 mt-4 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger">
           Download failed: {downloadError}
         </div>
       ) : null}
@@ -600,121 +563,278 @@ function SummaryCard({
         <div
           role="status"
           data-testid="eval-retry-error"
-          className="mb-4 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger"
+          className="mx-5 mt-4 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger"
         >
           {isRerun ? "Rerun failed" : "Retry failed"}: {retryError}
         </div>
       ) : null}
 
-      <div className="grid grid-cols-3 gap-x-8 gap-y-3">
-        <Metric label="Sharpe" value={fmtNumber(summary.sharpe)} />
-        <Metric
-          label="Max DD"
-          value={fmtPct(summary.max_drawdown_pct)}
-          tone={drawdownMetricTone(summary.max_drawdown_pct)}
-        />
-        <Metric label="Gross %" value={fmtPct(summary.total_return_pct)} />
-        <Metric
-          label="Total PnL"
+      {/* Equity / run chart */}
+      <div className="px-5 pt-4">
+        {chartPending ? (
+          <div className="text-text-3 text-[13px] text-center py-6">Loading chart…</div>
+        ) : chartError ? (
+          <div className="text-danger text-[13px] text-center py-6">
+            Chart unavailable: {chartError}
+          </div>
+        ) : chartNode ? (
+          chartNode
+        ) : (
+          <div className="text-text-3 text-[13px] text-center py-6">No chart data.</div>
+        )}
+      </div>
+
+      {/* Stat grid */}
+      <div
+        className="mt-4 grid grid-cols-2 md:grid-cols-4"
+        style={{ borderTop: "1px solid var(--border-soft)" }}
+      >
+        <Stat
+          label="TOTAL PNL"
           value={fmtPnlUsd(totalPnlUsd(equityCurve))}
+          sub={fmtPct(summary.total_return_pct)}
           tone={pnlTone(totalPnlUsd(equityCurve))}
         />
-        <Metric label="Mode" value={summary.mode} />
-        <Metric label="Started" value={fmtTime(summary.started_at)} />
-        <Metric
-          label="Completed"
-          value={summary.completed_at ? fmtTime(summary.completed_at) : "—"}
+        <Stat
+          label="MAX DRAWDOWN"
+          value={fmtPct(summary.max_drawdown_pct)}
+          sub={summary.completed_at ? `@ ${fmtTime(summary.completed_at)}` : "in progress"}
+          tone={drawdownMetricTone(summary.max_drawdown_pct) === "neg" ? "neg" : "neu"}
         />
-        <Metric label="Tokens" value={fmtTokens(summary)} />
-        {/*
-          F-8 (qa-round-7): total inference cost stat lives next to Tokens.
-          Both ultimately sum over the per-call `model_call_cost_usd` rows
-          recorded by xvision-observability — agent-runs API rolls them up
-          server-side as `total_cost_usd` so we don't double-aggregate
-          here. Falls back to em-dash when the linked agent run hasn't
-          loaded (or is missing for older runs); the `title` attribute
-          surfaces full precision on hover, matching the trace surfaces.
-        */}
-        <Metric
-          label="Total cost (USD)"
-          value={formatCostUsd(totalCostUsd)}
-          titleValue={
-            totalCostUsd != null && Number.isFinite(totalCostUsd)
-              ? formatCostUsdPrecise(totalCostUsd)
-              : undefined
-          }
-        />
-        {/*
-          V2E: inference cost from MetricsSummary (aggregated post-run over
-          model_calls.cost_usd). Shown when pricing data is available;
-          falls back to em-dash for old runs or un-priced models.
-          Prefer summary.inference_cost_quote_total (populated by the
-          enrich_with_inference_cost pass) over totalCostUsd (which comes
-          from the agent-runs observability side) — they should match, but
-          the MetricsSummary field is the authoritative source for net_return_pct.
-        */}
-        <Metric
-          label="Infer cost (USD)"
-          value={
-            summary.inference_cost_quote_total != null
-              ? formatCostUsd(summary.inference_cost_quote_total)
-              : "—"
-          }
-          titleValue={
-            summary.inference_cost_quote_total != null &&
-            Number.isFinite(summary.inference_cost_quote_total)
-              ? formatCostUsdPrecise(summary.inference_cost_quote_total)
-              : undefined
-          }
-        />
-        <Metric
-          label="Net %"
-          value={
-            summary.net_return_pct != null
-              ? fmtPct(summary.net_return_pct)
-              : "—"
-          }
+        <Stat label="SHARPE" value={fmtNumber(summary.sharpe)} sub="annualized" tone="neu" />
+        <Stat
+          label="NET %"
+          value={summary.net_return_pct != null ? fmtPct(summary.net_return_pct) : "—"}
+          sub={`cost ${formatCostUsd(displayedCostUsd)}`}
           tone={
             summary.net_return_pct == null
-              ? "neutral"
+              ? "neu"
               : summary.net_return_pct > 0
-                ? "pos"
+                ? "gold"
                 : summary.net_return_pct < 0
                   ? "neg"
-                  : "neutral"
+                  : "neu"
+          }
+          titleValue={
+            displayedCostUsd != null && Number.isFinite(displayedCostUsd)
+              ? formatCostUsdPrecise(displayedCostUsd)
+              : undefined
           }
         />
       </div>
 
-      <RunSummaryPanel error={summary.error} />
-    </Card>
+      <div className="px-5 pb-5 pt-3">
+        <RunSummaryPanel error={summary.error} />
+      </div>
+    </div>
   );
 }
 
-function Metric({
+function Stat({
   label,
   value,
-  tone = "neutral",
+  sub,
+  tone,
   titleValue,
 }: {
   label: string;
   value: string;
-  tone?: "pos" | "neg" | "neutral";
-  /** Tooltip text — typically a full-precision form of `value`. */
+  sub?: string;
+  tone: "pos" | "neg" | "neu" | "gold";
   titleValue?: string;
 }) {
-  const valueClass =
-    tone === "pos" ? "text-gold" : tone === "neg" ? "text-danger" : "text-text";
+  const color =
+    tone === "neg"
+      ? "var(--danger)"
+      : tone === "gold" || tone === "pos"
+        ? "var(--gold)"
+        : "var(--text)";
   return (
-    <div>
-      <div className="text-text-3 text-[11px] uppercase tracking-wide mb-1">
-        {label}
-      </div>
-      <div className={`font-mono ${valueClass}`} title={titleValue}>
+    <div className="px-5 py-4" style={{ borderRight: "1px solid var(--border-soft)" }}>
+      <div className="text-[10px] font-mono tracking-[0.18em] text-text-3 uppercase">{label}</div>
+      <div
+        className="mt-1 text-[24px] font-mono tabular-nums leading-tight"
+        style={{ color, fontWeight: 500 }}
+        title={titleValue}
+      >
         {value}
       </div>
+      {sub && <div className="text-[10px] font-mono text-text-3 mt-0.5">{sub}</div>}
     </div>
   );
+}
+
+function DecisionsCard({ rows }: { rows: DecisionRowDto[] }) {
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
+  const decisions = useMemo(() => toTimelineDecisions(rows), [rows]);
+
+  if (rows.length === 0) {
+    return (
+      <div className="bg-surface-card border border-border rounded-card px-6 py-12 text-center text-text-2">
+        <div className="font-sans text-[22px] text-text-3 mb-2" style={{ fontWeight: 600 }}>
+          No decisions
+        </div>
+        <p className="m-0 text-[13px]">
+          This run hasn't recorded any decisions yet — likely still queued or
+          running.
+        </p>
+      </div>
+    );
+  }
+
+  // Local focus is the page-level decision-jump handler. The trace-dock
+  // decision filter is not wired yet (see TODO in agent-run observability), so
+  // jumping highlights the row + density tick in place rather than cross-
+  // filtering the dock. Clicking the focused row again clears the focus.
+  const onJump = (i: number) => setFocusedIdx((cur) => (cur === i ? null : i));
+
+  return (
+    <DecisionsTable decisions={decisions} focusedIdx={focusedIdx} onJump={onJump} />
+  );
+}
+
+function MetaCard({
+  summary,
+  totalCostUsd,
+}: {
+  summary: RunSummary;
+  totalCostUsd: number | null;
+}) {
+  const displayedCostUsd = displayCost(summary, totalCostUsd);
+  // The design mock lists seed/region/commit, but those fields don't exist on
+  // the real run wire shape — synthesizing them would be misleading. We keep
+  // the design's "right-rail config key/value list that does NOT duplicate the
+  // id/strategy/scenario/agent already shown in the H1 + MetaChips" intent and
+  // populate it with the run-config fields the engine actually reports.
+  const rows: [string, string][] = [
+    ["mode", summary.mode],
+    ["status", summary.status],
+    ["budget", formatCostUsd(displayedCostUsd)],
+    ["tokens", fmtTokens(summary)],
+    ["started", fmtTime(summary.started_at)],
+    ["completed", summary.completed_at ? fmtTime(summary.completed_at) : "—"],
+    ["duration", durationLabel(summary)],
+  ];
+  return (
+    <Card>
+      <div
+        className="flex items-baseline gap-3 px-5 pt-4 pb-3"
+        style={{ borderBottom: "1px solid var(--border-soft)" }}
+      >
+        <h2 className="m-0 font-sans text-[22px] tracking-tight text-text" style={{ fontWeight: 600 }}>
+          Meta
+        </h2>
+        <span className="text-[11px] font-mono text-text-3">run config</span>
+      </div>
+      <div className="p-4 text-[11px] font-mono space-y-1.5">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-baseline gap-3">
+            <span className="w-[80px] shrink-0 text-[10px] uppercase tracking-[0.14em] text-text-3">
+              {k}
+            </span>
+            <span className="text-text tabular-nums break-all">{v}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+function ErrorState({
+  err,
+  onRetry,
+  runId,
+}: {
+  err: unknown;
+  onRetry: () => void;
+  runId: string;
+}) {
+  if (err instanceof ApiError && err.code === "not_found") {
+    return (
+      <Card className="px-6 py-12 text-center">
+        <div className="font-sans text-[24px] text-text-3 mb-3" style={{ fontWeight: 600 }}>
+          Run not found
+        </div>
+        <p className="m-0 mb-5 text-text-2 text-[13px]">
+          No run with id <code className="font-mono text-text">{runId}</code>.
+        </p>
+        <Link
+          to="/eval-runs"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
+        >
+          ← Back to runs
+        </Link>
+      </Card>
+    );
+  }
+
+  const detail =
+    err instanceof ApiError
+      ? `${err.code}: ${err.message}`
+      : err instanceof Error
+        ? err.message
+        : String(err);
+
+  return (
+    <Card className="px-6 py-12 text-center">
+      <div className="font-sans text-[24px] text-danger mb-3" style={{ fontWeight: 600 }}>
+        Couldn't load run
+      </div>
+      <p className="m-0 mb-5 max-w-md mx-auto text-text-2 leading-snug">
+        <code className="text-danger font-mono text-[12px]">{detail}</code>
+      </p>
+      <button
+        onClick={onRetry}
+        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
+      >
+        Retry
+      </button>
+    </Card>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+function fmtNumber(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toFixed(2);
+}
+
+function fmtPct(n: number | null | undefined): string {
+  if (n == null) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(2)}%`;
+}
+
+function fmtTokens(summary: RunSummary): string {
+  const total =
+    (summary.actual_input_tokens ?? 0) + (summary.actual_output_tokens ?? 0);
+  return total > 0 ? `${total.toLocaleString()} tok` : "—";
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function durationLabel(summary: RunSummary): string {
+  if (!summary.completed_at) return "in progress";
+  const ms =
+    new Date(summary.completed_at).getTime() -
+    new Date(summary.started_at).getTime();
+  if (Number.isNaN(ms) || ms < 0) return "—";
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.floor((ms % 60_000) / 1000);
+  return `${m}m ${s}s`;
 }
 
 function totalPnlUsd(
@@ -739,464 +859,11 @@ function fmtPnlUsd(pnl: number | null): string {
   return `$${formatted}`;
 }
 
-function pnlTone(pnl: number | null): "pos" | "neg" | "neutral" {
-  if (pnl == null) return "neutral";
+function pnlTone(pnl: number | null): "pos" | "neg" | "neu" {
+  if (pnl == null) return "neu";
   if (pnl > 0) return "pos";
   if (pnl < 0) return "neg";
-  return "neutral";
-}
-
-type DecisionFilter = "all" | "buy" | "short" | "sell" | "cover" | "hold";
-type DecisionKind = Exclude<DecisionFilter, "all">;
-
-function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
-  const [filter, setFilter] = useState<DecisionFilter>("all");
-  // Derive open positions across the FULL unfiltered sequence — filtering
-  // is purely display-side, but a close row's "positions after close = []"
-  // only holds if we've walked every preceding fill. Prior-side walk runs
-  // in lockstep so the action-pill can distinguish sell-a-long from
-  // cover-a-short on rows whose on-the-wire action is `"flat"`.
-  const positionsByDecision = useMemo(() => derivePositionsByDecision(rows), [rows]);
-  const priorSideByDecision = useMemo(() => derivePriorSideByDecision(rows), [rows]);
-  const counts = useMemo(
-    () => decisionCounts(rows, priorSideByDecision),
-    [rows, priorSideByDecision],
-  );
-  const filtered = useMemo(
-    () =>
-      rows.filter(
-        (row) =>
-          filter === "all" ||
-          decisionKind(row.action, priorSideByDecision.get(row.decision_index) ?? "flat") ===
-            filter,
-      ),
-    [rows, filter, priorSideByDecision],
-  );
-
-  return (
-    <Card>
-      {rows.length === 0 ? (
-        <EmptyDecisions />
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-3">
-            {(["all", "buy", "short", "sell", "cover", "hold"] as DecisionFilter[]).map(
-              (value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setFilter(value)}
-                  className={`dec-filter ${filter === value ? "dec-filter--active" : ""}`}
-                  aria-pressed={filter === value}
-                >
-                  <span>{decisionFilterLabel(value)}</span>
-                  <span className="dec-filter__count">{counts[value]}</span>
-                </button>
-              ),
-            )}
-          </div>
-          <div className="xvn-scroll xvn-scroll--always max-h-[520px] overflow-x-auto">
-            <DecisionsTable
-              rows={filtered}
-              positionsByDecision={positionsByDecision}
-              priorSideByDecision={priorSideByDecision}
-            />
-          </div>
-        </>
-      )}
-    </Card>
-  );
-}
-
-function DecisionsTable({
-  rows,
-  positionsByDecision,
-  priorSideByDecision,
-}: {
-  rows: DecisionRowDto[];
-  positionsByDecision: Map<number, OpenPosition[]>;
-  priorSideByDecision: Map<number, PositionSide>;
-}) {
-  return (
-    <table className="w-full min-w-[1140px]">
-      <thead>
-        <tr className="sticky top-0 z-10 bg-surface-card text-left text-text-2 text-[12px] border-b border-border-soft">
-          <th className="font-normal py-2.5 px-5">#</th>
-          <th className="font-normal py-2.5 px-3">Time</th>
-          <th className="font-normal py-2.5 px-3">Asset</th>
-          <th className="font-normal py-2.5 px-3">Action</th>
-          <th className="font-normal py-2.5 px-3 text-right">Conviction</th>
-          <th className="font-normal py-2.5 px-3 text-right">Size</th>
-          <th className="font-normal py-2.5 px-3 text-right">Fill</th>
-          <th className="font-normal py-2.5 px-3 text-right">PnL</th>
-          <th className="font-normal py-2.5 px-3">Open positions</th>
-          <th className="font-normal py-2.5 px-3">Reasoning</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr
-            key={`${r.decision_index}`}
-            className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
-          >
-            <td className="py-2.5 px-5 font-mono text-text-3 text-[12px]">
-              {r.decision_index}
-            </td>
-            <td className="py-2.5 px-3 text-text-3 text-[12px]">
-              {fmtTime(r.timestamp)}
-            </td>
-            <td className="py-2.5 px-3 font-mono text-text-2">{r.asset}</td>
-            <td className="py-2.5 px-3">
-              <DecisionSignal
-                action={r.action}
-                priorSide={priorSideByDecision.get(r.decision_index) ?? "flat"}
-              />
-            </td>
-            <td className="py-2.5 px-3 text-right font-mono">
-              {fmtNumber(r.conviction)}
-            </td>
-            <td className="py-2.5 px-3 text-right font-mono">
-              {fmtNumber(r.order_size)}
-            </td>
-            <td className="py-2.5 px-3 text-right font-mono text-text-2">
-              {fmtNumber(r.fill_price)}
-            </td>
-            <td
-              className={`py-2.5 px-3 text-right font-mono ${pnlClass(r.pnl_realized)}`}
-            >
-              {fmtNumber(r.pnl_realized)}
-            </td>
-            <td
-              className="py-2.5 px-3 font-mono text-[12px]"
-              data-testid={`decision-open-positions-${r.decision_index}`}
-            >
-              <OpenPositionsCell positions={positionsByDecision.get(r.decision_index) ?? []} />
-            </td>
-            <td className="py-2.5 px-3 text-text-2 text-[12px] leading-snug max-w-[320px]">
-              {decisionReasoning(r)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function OpenPositionsCell({ positions }: { positions: OpenPosition[] }) {
-  if (positions.length === 0) {
-    return (
-      <span className="text-text-3" data-testid="decision-open-positions-flat">
-        flat
-      </span>
-    );
-  }
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {positions.map((p) => (
-        <span
-          key={p.asset}
-          className={`dec-pos dec-pos--${p.side}`}
-          title={`${p.asset} ${p.side} ${p.qty} @ ${p.entry_price}`}
-        >
-          <span className="dec-pos__asset">{p.asset}</span>
-          <span className="dec-pos__side">{p.side}</span>
-          <span className="dec-pos__qty">{fmtPositionQty(p.qty)}</span>
-          <span className="dec-pos__sep">@</span>
-          <span className="dec-pos__entry">{fmtPositionEntry(p.entry_price)}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function fmtPositionQty(qty: number): string {
-  // Strategy-config risk_pct lands roughly anywhere in 0.0001..10 units;
-  // 4 sig figs is wide enough without overflowing the cell.
-  if (qty === 0) return "0";
-  if (Math.abs(qty) >= 1000) return qty.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  return qty.toPrecision(4).replace(/\.?0+$/, "");
-}
-
-function fmtPositionEntry(price: number): string {
-  if (price === 0) return "0";
-  if (price >= 1000) return price.toLocaleString("en-US", { maximumFractionDigits: 0 });
-  if (price >= 1) return price.toFixed(2);
-  return price.toPrecision(4);
-}
-
-function DecisionSignal({
-  action,
-  priorSide,
-}: {
-  action: string;
-  priorSide: PositionSide;
-}) {
-  const kind = decisionKind(action, priorSide);
-  return (
-    <span className={`dec-pill dec-pill--${kind}`}>
-      <span className="dec-pill__label">{decisionActionLabel(kind)}</span>
-      <span className="dec-pill__raw">{action}</span>
-    </span>
-  );
-}
-
-function decisionKind(action: string, priorSide: PositionSide): DecisionKind {
-  if (action === "long_open") return "buy";
-  if (action === "short_open") return "short";
-  if (action === "flat") {
-    if (priorSide === "long") return "sell";
-    if (priorSide === "short") return "cover";
-    // flat-from-flat is a no-op; render neutrally rather than mint a
-    // misleading SELL/COVER pill on a row that closed nothing.
-    return "hold";
-  }
-  return "hold";
-}
-
-function decisionCounts(
-  rows: DecisionRowDto[],
-  priorSideByDecision: Map<number, PositionSide>,
-): Record<DecisionFilter, number> {
-  return rows.reduce<Record<DecisionFilter, number>>(
-    (acc, row) => {
-      acc.all += 1;
-      const prior = priorSideByDecision.get(row.decision_index) ?? "flat";
-      acc[decisionKind(row.action, prior)] += 1;
-      return acc;
-    },
-    { all: 0, buy: 0, short: 0, sell: 0, cover: 0, hold: 0 },
-  );
-}
-
-function decisionFilterLabel(filter: DecisionFilter): string {
-  return filter === "all" ? "All" : decisionActionLabel(filter);
-}
-
-function decisionActionLabel(filter: DecisionKind): string {
-  return {
-    buy: "BUY",
-    short: "SHORT",
-    sell: "SELL",
-    cover: "COVER",
-    hold: "HOLD",
-  }[filter];
-}
-
-function decisionReasoning(row: DecisionRowDto): string {
-  const extended = row as DecisionRowDto & { reasoning?: string | null };
-  return extended.reasoning?.trim() || row.justification?.trim() || "—";
-}
-
-function pnlClass(n: number | null | undefined): string {
-  if (n == null) return "text-text-3";
-  if (n > 0) return "text-gold";
-  if (n < 0) return "text-danger";
-  return "text-text-2";
-}
-
-function EmptyDecisions() {
-  return (
-    <div className="px-6 py-12 text-center text-text-2">
-      <div className="font-serif italic text-[22px] text-text-3 mb-2">
-        no decisions
-      </div>
-      <p className="m-0 text-[13px]">
-        This run hasn't recorded any decisions yet — likely still queued or
-        running.
-      </p>
-    </div>
-  );
-}
-
-function ErrorState({
-  err,
-  onRetry,
-  runId,
-}: {
-  err: unknown;
-  onRetry: () => void;
-  runId: string;
-}) {
-  if (err instanceof ApiError && err.code === "not_found") {
-    return (
-      <Card className="px-6 py-12 text-center">
-        <div className="font-serif italic text-[24px] text-text-3 mb-3">
-          run not found
-        </div>
-        <p className="m-0 mb-5 text-text-2 text-[13px]">
-          No run with id <code className="font-mono text-text">{runId}</code>.
-        </p>
-        <Link
-          to="/eval-runs"
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
-        >
-          ← Back to runs
-        </Link>
-      </Card>
-    );
-  }
-
-  const detail =
-    err instanceof ApiError
-      ? `${err.code}: ${err.message}`
-      : err instanceof Error
-        ? err.message
-        : String(err);
-
-  return (
-    <Card className="px-6 py-12 text-center">
-      <div className="font-serif italic text-[24px] text-danger mb-3">
-        couldn't load run
-      </div>
-      <p className="m-0 mb-5 max-w-md mx-auto text-text-2 leading-snug">
-        <code className="text-danger font-mono text-[12px]">{detail}</code>
-      </p>
-      <button
-        onClick={onRetry}
-        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
-      >
-        Retry
-      </button>
-    </Card>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * F-1 (qa-round-7): inline context strip on the eval inspector.
- *
- * Surfaces the three things an operator wants to one-click into when
- * triaging a run — the Strategy that produced it, the Scenario it was
- * evaluated against, and the Agent objects attached to the strategy.
- * Each pill is a `<Link>` to the corresponding detail route. No popups,
- * no hover-cards — per the CLAUDE.md "no popups" rule, the strip is a
- * flat row that lives directly under the topbar and above the summary
- * card.
- *
- * Strategy / scenario chips render even before their detail / list
- * queries resolve (we always have the id and the label-derived display
- * name). Agent chips depend on the strategy detail query (`agents[]`
- * lives on the full `Strategy` shape, not on the slim
- * `StrategyListItem`) and fall back to the raw agent id if the global
- * `listAgents()` lookup hasn't completed.
- */
-function InspectorContextStrip({
-  strategyId,
-  strategyName,
-  scenarioId,
-  scenarioName,
-  agents,
-  agentsAll,
-}: {
-  strategyId: string;
-  strategyName: string;
-  scenarioId: string;
-  scenarioName: string;
-  agents: { agent_id: string; role: string }[];
-  agentsAll: Agent[];
-}) {
-  const agentNameById = new Map(agentsAll.map((a) => [a.agent_id, a.name]));
-  return (
-    <div
-      data-testid="eval-inspector-context-strip"
-      className="mb-3 flex flex-wrap items-center gap-2 rounded-sm border border-border-soft bg-surface-elev/40 px-3 py-2 text-[11px]"
-    >
-      <ContextPill
-        kind="Strategy"
-        to={`/strategies/${encodeURIComponent(strategyId)}`}
-        label={strategyName}
-        idForAria={strategyId}
-      />
-      <span className="text-text-4">·</span>
-      <ContextPill
-        kind="Scenario"
-        to={`/scenarios/${encodeURIComponent(scenarioId)}`}
-        label={scenarioName}
-        idForAria={scenarioId}
-      />
-      {agents.length > 0 ? (
-        <>
-          <span className="text-text-4">·</span>
-          <span className="text-[10px] font-mono tracking-[0.18em] text-text-3 uppercase">
-            Agents
-          </span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {agents.map((ref) => (
-              <ContextPill
-                key={`${ref.agent_id}:${ref.role}`}
-                kind={ref.role}
-                to={`/agents/${encodeURIComponent(ref.agent_id)}`}
-                label={agentNameById.get(ref.agent_id) ?? ref.agent_id}
-                idForAria={ref.agent_id}
-                compact
-              />
-            ))}
-          </div>
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function ContextPill({
-  kind,
-  to,
-  label,
-  idForAria,
-  compact = false,
-}: {
-  kind: string;
-  to: string;
-  label: string;
-  idForAria: string;
-  compact?: boolean;
-}) {
-  return (
-    <Link
-      to={to}
-      aria-label={`Open ${kind} ${label} (${idForAria})`}
-      className={`inline-flex items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-text-2 hover:border-gold/50 hover:text-text dark:hover:border-gold/40 ${
-        compact ? "text-[11px]" : "text-[11px]"
-      }`}
-    >
-      <span className="text-[9px] font-mono tracking-[0.18em] text-text-3 uppercase">
-        {kind}
-      </span>
-      <span className="font-mono truncate max-w-[28ch]">{label}</span>
-    </Link>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-
-function fmtNumber(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return n.toFixed(2);
-}
-
-function fmtPct(n: number | null | undefined): string {
-  if (n == null) return "—";
-  const sign = n > 0 ? "+" : "";
-  return `${sign}${n.toFixed(2)}%`;
-}
-
-function fmtTokens(summary: RunSummary): string {
-  const total =
-    (summary.actual_input_tokens ?? 0) +
-    (summary.actual_output_tokens ?? 0);
-  return total > 0 ? total.toLocaleString() : "—";
-}
-
-function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return "neu";
 }
 
 function traceRunId(summary: RunSummary): string {
@@ -1204,8 +871,8 @@ function traceRunId(summary: RunSummary): string {
   return withTraceId.agent_run_id ?? summary.id;
 }
 
-// Defensive viewport check: when matchMedia is absent (jsdom, SSR), default
-// to desktop so existing tests keep targeting the desktop layout.
+// Defensive viewport check: when matchMedia is absent (jsdom, SSR), default to
+// desktop so existing tests keep targeting the desktop layout.
 function useIsPhone(): boolean {
   const [isPhone, setIsPhone] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -1221,14 +888,4 @@ function useIsPhone(): boolean {
     return () => mq.removeEventListener("change", update);
   }, []);
   return isPhone;
-}
-
-function dotColor(tone: "gold" | "warn" | "danger" | "default" | "info") {
-  return {
-    gold: { background: "var(--gold)" },
-    warn: { background: "var(--warn)" },
-    danger: { background: "var(--danger)" },
-    info: { background: "var(--info)" },
-    default: { background: "var(--text-3)" },
-  }[tone];
 }

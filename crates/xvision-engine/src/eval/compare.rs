@@ -85,6 +85,11 @@ pub struct ComparisonReport {
 pub struct ComparisonRunSummary {
     pub id: String,
     pub agent_id: String,
+    /// Human-readable strategy name resolved by the API layer when it has
+    /// access to the workspace strategy store. `None` for legacy payloads or
+    /// direct in-process callers that only have a `RunStore`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_name: Option<String>,
     pub scenario_id: String,
     pub mode: RunMode,
     pub status: RunStatus,
@@ -236,6 +241,7 @@ pub async fn compare_runs(
         runs.push(ComparisonRunSummary {
             id: run.id.clone(),
             agent_id: run.agent_id.clone(),
+            strategy_name: None,
             scenario_id: run.scenario_id.clone(),
             mode: run.mode,
             status: run.status,

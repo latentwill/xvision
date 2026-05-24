@@ -172,6 +172,13 @@ pub struct SlotInput<'a> {
     /// of `delta_briefing`. The caller (eval executor or test harness)
     /// owns the cache.
     pub prev_briefing: Option<serde_json::Value>,
+    /// Optional display name for the model-call span. Trader eval calls
+    /// use "decision" so the trace has the decision as the model call
+    /// span itself instead of a wrapper plus child model span.
+    pub trace_name: Option<String>,
+    /// Optional JSON attributes merged into the model-call span. Used by
+    /// filter-gated evals to show the filter context on the decision call.
+    pub trace_attrs: Option<serde_json::Value>,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
@@ -440,8 +447,16 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // tradeoff vs. routing the request back through the emitter.
         let prompt_for_blob: Option<crate::agent::llm::LlmRequest> = input.obs.as_ref().map(|_| req.clone());
         if let Some(obs) = input.obs.as_ref() {
-            obs.emit_model_call_started(&span_id, None, &provider_str, &model_str, Some(&input.slot.role))
-                .await;
+            obs.emit_model_call_started(
+                &span_id,
+                None,
+                &provider_str,
+                &model_str,
+                Some(&input.slot.role),
+                input.trace_name.as_deref(),
+                input.trace_attrs.as_ref(),
+            )
+            .await;
         }
 
         let resp = match input.dispatch.complete(req).await {
@@ -864,6 +879,8 @@ async fn try_context_overflow_recovery<'a>(
             &provider_str,
             &model_str,
             Some(&input.slot.role),
+            input.trace_name.as_deref(),
+            input.trace_attrs.as_ref(),
         )
         .await;
     }
@@ -1050,6 +1067,8 @@ mod tests {
             catalog: None,
             delta_briefing: false,
             prev_briefing: None,
+            trace_name: None,
+            trace_attrs: None,
         })
         .await
         .unwrap();
@@ -1107,6 +1126,8 @@ mod tests {
             catalog: None,
             delta_briefing: false,
             prev_briefing: None,
+            trace_name: None,
+            trace_attrs: None,
         })
         .await
         .unwrap();

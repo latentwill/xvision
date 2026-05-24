@@ -96,8 +96,7 @@ fn default_config_ignores_conviction_regression() {
 
     // Run with explicit conviction values spanning the full 0..1 range.
     for &conviction in &[0.0f32, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] {
-        let result =
-            layer.evaluate_with_conviction(buy_decision(1500), &portfolio, conviction);
+        let result = layer.evaluate_with_conviction(buy_decision(1500), &portfolio, conviction);
 
         // Both must be Approved.
         assert!(
@@ -133,8 +132,7 @@ fn default_config_ignores_conviction_regression() {
 #[test]
 fn default_config_low_conviction_still_approves() {
     let layer = default_layer();
-    let result =
-        layer.evaluate_with_conviction(buy_decision(1000), &flat_portfolio(), 0.01);
+    let result = layer.evaluate_with_conviction(buy_decision(1000), &flat_portfolio(), 0.01);
     assert!(
         matches!(result, RiskDecision::Approved { .. }),
         "low conviction must not cause veto with default rules, got {result:?}"
@@ -281,7 +279,6 @@ fn conviction_value_propagates_to_rule() {
     let mut layer = RiskLayer::with_default_rules(config, whitelist_btc_only(), None);
     layer.prepend_rule(Box::new(AssertConviction(0.73)));
 
-    let result =
-        layer.evaluate_with_conviction(buy_decision(1000), &flat_portfolio(), 0.73);
+    let result = layer.evaluate_with_conviction(buy_decision(1000), &flat_portfolio(), 0.73);
     assert!(matches!(result, RiskDecision::Approved { .. }));
 }

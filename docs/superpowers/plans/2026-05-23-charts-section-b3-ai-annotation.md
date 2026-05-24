@@ -3,6 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Scaffold status (2026-05-23):** Topology + files + acceptance gates only. Per-step TDD bodies are written when the contract is claimed and B0 has merged. B3 is independent of B1/B2 because it doesn't compose `MultiStrategyEquityPane` — it can run in parallel with B1 once B0 lands.
+>
+> **Review-annotation follow-up (2026-05-24):** `/api/v2/charts/annotated/:run_id` now reads persisted `eval_reviews.annotations_json` for real run ids, while `/demo` remains fixture-backed for chart lab/smoke usage. Empty run/live responses include `note?: string` so `AIAnnotationDashboard` can distinguish "review not yet run" from live/no-data states.
 
 **Goal:** Replace `/charts/annotated`'s B0 placeholder with the Chart 03 design — single-asset KlineCharts candle pane with EMA(21) overlay, AI-callout overlay layer with two-row callout placement + dashed connectors anchored to real candle indices, collapsible insight log right rail, and a pulsing "AI Engine · live" pill.
 

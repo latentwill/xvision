@@ -20,16 +20,21 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
-use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride};
+use xvision_engine::api::eval::{
+    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride,
+};
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use xvision_engine::eval::compare::ComparisonEquityCurve;
 use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
+use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::report::compute_run_report;
-use xvision_engine::eval::run::{RunMode, RunStatus};
+use xvision_engine::eval::run::{ReviewModel, RunMode, RunStatus};
+use xvision_engine::eval::scenario::{AssetClass, AssetRef};
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::safety::VenueLabel;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
@@ -109,10 +114,31 @@ pub struct RunArgs {
     pub strategy: String,
     /// Scenario id from `xvn eval scenarios`.
     #[arg(long)]
-    pub scenario: String,
-    /// Run mode: `paper` or `backtest`.
-    #[arg(long, default_value = "paper")]
+    pub scenario: Option<String>,
+    /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
+    #[arg(long, default_value = "backtest")]
     pub mode: String,
+    /// Live Alpaca asset, e.g. BTC/USD. Required for --mode live.
+    #[arg(long)]
+    pub live_asset: Option<String>,
+    /// Initial live paper capital in USD. Required for --mode live.
+    #[arg(long)]
+    pub live_capital: Option<f64>,
+    /// Broker credential reference. v1 accepts only "alpaca".
+    #[arg(long, default_value = "alpaca")]
+    pub live_broker_creds_ref: String,
+    /// Stop after N live bars. At least one live stop flag is required.
+    #[arg(long)]
+    pub live_bar_limit: Option<u32>,
+    /// Stop after N live decisions. At least one live stop flag is required.
+    #[arg(long)]
+    pub live_decision_limit: Option<u32>,
+    /// Stop after N wall-clock seconds. At least one live stop flag is required.
+    #[arg(long)]
+    pub live_time_limit_secs: Option<u64>,
+    /// Historical warmup bars to load before live streaming starts.
+    #[arg(long, default_value_t = 200)]
+    pub live_warmup_bars: u32,
     /// Override the xvn home directory.
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
@@ -122,8 +148,8 @@ pub struct RunArgs {
 
     // ===== Hard limits (cli-operator-safety-p0 slice 2/3) =====
     /// Max decision cycles. Breach cancels the run with a stable
-    /// reason in the `error` field. Backtest mode only — paper mode
-    /// silently ignores the cap today.
+    /// reason in the `error` field. Backtest mode only until live execution
+    /// is implemented.
     #[arg(long)]
     pub max_decisions: Option<u32>,
     /// Max cumulative input tokens across all model calls in the run.
@@ -163,6 +189,21 @@ pub struct RunArgs {
     /// launch with the same structured `reason` discriminant.
     #[arg(long)]
     pub model: Option<String>,
+    /// Fire the deterministic review agent when the run completes and store
+    /// chart annotations on the review row.
+    #[arg(long)]
+    pub auto_fire_review: bool,
+    /// Optional review provider label persisted on the run. Must be supplied
+    /// together with `--review-model`.
+    #[arg(long)]
+    pub review_provider: Option<String>,
+    /// Optional review model label persisted on the run. Must be supplied
+    /// together with `--review-provider`.
+    #[arg(long)]
+    pub review_model: Option<String>,
+    /// Maximum chart annotations a review should emit.
+    #[arg(long, default_value_t = 8)]
+    pub max_review_annotations: u32,
 }
 
 #[derive(Args, Debug)]
@@ -269,6 +310,7 @@ pub struct CompareRunRow {
     pub scenario_id: String,
     pub scenario_name: String,
     pub strategy_id: String,
+    pub strategy_name: Option<String>,
     pub status: String,
     pub return_pct: Option<f64>,
     pub sharpe: Option<f64>,
@@ -317,8 +359,8 @@ pub struct ValidateArgs {
     /// Scenario id from `xvn scenario ls`.
     #[arg(long)]
     pub scenario: String,
-    /// Run mode: `paper` or `backtest`.
-    #[arg(long, default_value = "paper")]
+    /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
+    #[arg(long, default_value = "backtest")]
     pub mode: String,
     /// Override the xvn home directory.
     #[arg(long)]
@@ -412,7 +454,9 @@ async fn run_export(args: ExportArgs) -> CliResult<()> {
 }
 
 fn parse_mode(s: &str) -> Result<RunMode> {
-    RunMode::parse(s).context(format!("unknown mode {s:?}; expected one of: paper | backtest",))
+    RunMode::parse(s).context(format!(
+        "unknown mode {s:?}; expected one of: backtest | live (legacy alias: paper)",
+    ))
 }
 
 async fn run_run(args: RunArgs) -> CliResult<()> {
@@ -463,15 +507,97 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         }
         (None, None) => None,
     };
+    let review_model = match (args.review_provider.as_deref(), args.review_model.as_deref()) {
+        (Some(p), Some(m)) => Some(ReviewModel {
+            provider: p.to_string(),
+            model: m.to_string(),
+        }),
+        (Some(_), None) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "--review-provider requires --review-model (both flags must be supplied together)"
+                ),
+            });
+        }
+        (None, Some(_)) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "--review-model requires --review-provider (both flags must be supplied together)"
+                ),
+            });
+        }
+        (None, None) => None,
+    };
+    let live_config = if mode == RunMode::Live {
+        let asset = args.live_asset.clone().ok_or_else(|| CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--mode live requires --live-asset"),
+        })?;
+        let capital = args.live_capital.ok_or_else(|| CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--mode live requires --live-capital"),
+        })?;
+        let stop_policy = StopPolicy {
+            time_limit_secs: args.live_time_limit_secs,
+            bar_limit: args.live_bar_limit,
+            decision_limit: args.live_decision_limit,
+        };
+        if stop_policy.is_empty() {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "--mode live requires at least one stop flag: --live-bar-limit, --live-decision-limit, or --live-time-limit-secs"
+                ),
+            });
+        }
+        let symbol = asset.split('/').next().unwrap_or(&asset).to_string();
+        Some(LiveConfig {
+            strategy_id: args.strategy.clone(),
+            assets: vec![AssetRef {
+                class: AssetClass::Crypto,
+                symbol,
+                venue_symbol: asset,
+            }],
+            capital: xvision_core::Capital {
+                initial: capital,
+                currency: "USD".into(),
+            },
+            broker_creds_ref: args.live_broker_creds_ref.clone(),
+            stop_policy,
+            venue_label: VenueLabel::Paper,
+            warmup_bars: Some(args.live_warmup_bars),
+            safety_limits: None,
+            display_name: format!("Live Alpaca {}", args.strategy),
+            description: None,
+            tags: vec!["live".into(), "alpaca".into()],
+            notes: None,
+        })
+    } else {
+        None
+    };
+    let scenario_id = if mode == RunMode::Live {
+        String::new()
+    } else {
+        args.scenario.clone().ok_or_else(|| CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--mode backtest requires --scenario"),
+        })?
+    };
 
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
-        scenario_id: args.scenario.clone(),
+        scenario_id,
         mode,
         params_override: None,
+        live_config,
         limits,
         skip_preflight: args.skip_preflight,
         provider_override,
+        auto_fire_review: args.auto_fire_review,
+        review_model,
+        max_annotations_per_review: Some(args.max_review_annotations),
     };
 
     // Banner — operator-facing progress, never on stdout. Stays visible
@@ -497,6 +623,14 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     println!("Run completed.");
     println!("  id              {}", run.id);
     println!("  status          {}", run.status.as_str());
+    println!("  auto_review     {}", run.auto_fire_review);
+    println!(
+        "  review_ann_max  {}",
+        run.max_annotations_per_review.unwrap_or(8)
+    );
+    if let Some(model) = run.review_model.as_ref() {
+        println!("  review_model    {}/{}", model.provider, model.model);
+    }
     if let Some(c) = run.completed_at {
         println!("  completed_at    {}", c.to_rfc3339());
     }
@@ -779,6 +913,11 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     println!("mode            {}", run.mode.as_str());
     println!("scenario        {}", run.scenario_id);
     println!("strategy        {}", run.agent_id);
+    println!("auto_review     {}", run.auto_fire_review);
+    println!("review_ann_max  {}", run.max_annotations_per_review.unwrap_or(8));
+    if let Some(model) = run.review_model.as_ref() {
+        println!("review_model    {}/{}", model.provider, model.model);
+    }
     println!("started_at      {}", run.started_at.to_rfc3339());
     if let Some(c) = run.completed_at {
         println!("completed_at    {}", c.to_rfc3339());
@@ -1009,6 +1148,7 @@ async fn build_compare_report(
             scenario_id: run.scenario_id.clone(),
             scenario_name,
             strategy_id: run.agent_id.clone(),
+            strategy_name: run.strategy_name.clone(),
             status: run.status.as_str().to_string(),
             return_pct,
             sharpe,
@@ -1034,22 +1174,36 @@ fn render_compare_markdown(report: &CompareReport) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Eval comparison ({} runs)\n\n", report.runs.len()));
     out.push_str(
-        "| Run | Scenario | Return % | Sharpe | DD % | Decisions | Trades | Actions | Failure mode |\n",
+        "| Run | Strategy | Scenario | Return % | Sharpe | DD % | Decisions | Trades | Actions | Failure mode |\n",
     );
-    out.push_str("|---|---|---|---|---|---|---|---|---|\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
     for row in &report.runs {
         let run_prefix: String = row.run_id.chars().take(8).collect();
+        let strategy_cell = md_cell(&compare_strategy_label(row));
         let scenario_cell = md_cell(&row.scenario_name);
         let return_cell = row.return_pct.map_or("-".into(), |v| format!("{v:.2}"));
         let sharpe_cell = row.sharpe.map_or("-".into(), |v| format!("{v:.2}"));
         let dd_cell = row.max_drawdown_pct.map_or("-".into(), |v| format!("{v:.2}"));
         let actions_cell = md_cell(&format_action_distribution(&row.action_distribution));
         out.push_str(&format!(
-            "| {run_prefix}... | {scenario_cell} | {return_cell} | {sharpe_cell} | {dd_cell} | {} | {} | {actions_cell} | {} |\n",
+            "| {run_prefix}... | {strategy_cell} | {scenario_cell} | {return_cell} | {sharpe_cell} | {dd_cell} | {} | {} | {actions_cell} | {} |\n",
             row.decisions, row.trades_opened, row.primary_failure_mode
         ));
     }
     out
+}
+
+fn compare_strategy_label(row: &CompareRunRow) -> String {
+    let short_id: String = row.strategy_id.chars().take(8).collect();
+    match row
+        .strategy_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(name) => format!("{name} ({short_id}...)"),
+        None => row.strategy_id.clone(),
+    }
 }
 
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
@@ -1133,7 +1287,7 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
     }
 
     // Headline metrics table — one column per run, one row per metric.
-    println!("RUN_ID\tSTRATEGY\tSCENARIO\tSTATUS\tTOTAL_RETURN_%\tSHARPE\tMAX_DD_%\tWIN_RATE\tN_TRADES\tN_DECISIONS");
+    println!("RUN_ID\tSTRATEGY\tSTRATEGY_ID\tSCENARIO\tSTATUS\tTOTAL_RETURN_%\tSHARPE\tMAX_DD_%\tWIN_RATE\tN_TRADES\tN_DECISIONS");
     for r in &report.runs {
         let (tr, sh, dd, wr, nt, nd) = match &r.metrics {
             Some(m) => (
@@ -1154,8 +1308,9 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
             ),
         };
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.id,
+            r.strategy_name.as_deref().unwrap_or(&r.agent_id),
             r.agent_id,
             r.scenario_id,
             r.status.as_str(),

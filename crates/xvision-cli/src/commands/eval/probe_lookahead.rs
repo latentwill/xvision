@@ -84,17 +84,13 @@ pub async fn run_probe_lookahead(args: ProbeLookaheadArgs) -> CliResult<()> {
         .await
         .map_err(|e| super::api_to_cli("probe-lookahead get run", e))?;
 
-    // 2. Load the scenario to get the bar cache key and asset info.
+    // 2. Load the scenario to get the bar cache key.
     let scenario = api_scenario::get(&ctx, &run.scenario_id)
         .await
         .map_err(|e| super::api_to_cli("probe-lookahead get scenario", e))?;
 
     let cache_key = &scenario.bar_cache_policy.cache_key;
-    let asset_venue_symbol = scenario
-        .asset
-        .first()
-        .map(|a| a.venue_symbol.as_str())
-        .unwrap_or("BTC/USD");
+    let asset_venue_symbol = "BTC/USD";
 
     eprintln!(
         "probe-lookahead: run={} scenario={} cache_key={}",

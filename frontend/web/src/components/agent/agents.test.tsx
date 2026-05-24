@@ -96,7 +96,9 @@ beforeEach(() => {
   vi.mocked(agentsApi.createAgent).mockResolvedValue(baseAgent);
   vi.mocked(agentsApi.updateAgent).mockResolvedValue(baseAgent);
   vi.mocked(agentsApi.validateAgent).mockResolvedValue([]);
-  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
+      default_model: null,
+  });
 });
 
 afterEach(() => {
@@ -214,6 +216,8 @@ describe("AgentForm slot editing", () => {
         providerRow("openrouter", ["claude-sonnet-4-6"]),
         providerRow("anthropic", ["claude-haiku-4-5"]),
       ],
+    
+        default_model: null,
     });
 
     renderAgentForm();

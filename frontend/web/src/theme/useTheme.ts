@@ -1,27 +1,20 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { safeStorageGet, safeStorageSet } from "@/lib/storage";
 import {
-  coerceDarkTheme,
   coerceThemePreference,
   resolveTheme,
   themeDefinitions,
-  THEME_DARK_KEY,
   THEME_PREFERENCE_KEY,
-  type ResolvedTheme,
   type SystemTheme,
   type ThemePreference,
 } from "./themes";
 
-type DarkTheme = Extract<ResolvedTheme, "folio-dark" | "black">;
-
 type Snapshot = {
   preference: ThemePreference;
-  darkTheme: DarkTheme;
   systemTheme: SystemTheme;
 };
 
 const listeners = new Set<() => void>();
-
 let snapshot: Snapshot = readSnapshot();
 
 function readSystemTheme(): SystemTheme {
@@ -37,17 +30,12 @@ function readSystemTheme(): SystemTheme {
 function readSnapshot(): Snapshot {
   return {
     preference: coerceThemePreference(safeStorageGet(THEME_PREFERENCE_KEY)),
-    darkTheme: coerceDarkTheme(safeStorageGet(THEME_DARK_KEY)),
     systemTheme: readSystemTheme(),
   };
 }
 
 function sameSnapshot(a: Snapshot, b: Snapshot) {
-  return (
-    a.preference === b.preference &&
-    a.darkTheme === b.darkTheme &&
-    a.systemTheme === b.systemTheme
-  );
+  return a.preference === b.preference && a.systemTheme === b.systemTheme;
 }
 
 function refreshSnapshot() {
@@ -69,9 +57,6 @@ function getSnapshot() {
 
 function setThemePreference(preference: ThemePreference) {
   safeStorageSet(THEME_PREFERENCE_KEY, preference);
-  if (preference === "folio-dark" || preference === "black") {
-    safeStorageSet(THEME_DARK_KEY, preference);
-  }
   refreshSnapshot();
 }
 
@@ -91,30 +76,18 @@ export function useTheme() {
   const setPreference = useCallback((preference: ThemePreference) => {
     setThemePreference(preference);
   }, []);
-
   const setLightTheme = useCallback(() => setThemePreference("light"), []);
-  const setDarkTheme = useCallback(() => {
-    setThemePreference(readSnapshot().darkTheme);
-  }, []);
+  const setDarkTheme = useCallback(() => setThemePreference("dark"), []);
 
   return useMemo(
     () => ({
       preference: current.preference,
-      darkTheme: current.darkTheme,
       resolvedTheme,
       definition,
       setPreference,
       setLightTheme,
       setDarkTheme,
     }),
-    [
-      current.darkTheme,
-      current.preference,
-      definition,
-      resolvedTheme,
-      setDarkTheme,
-      setLightTheme,
-      setPreference,
-    ],
+    [current.preference, definition, resolvedTheme, setDarkTheme, setLightTheme, setPreference],
   );
 }

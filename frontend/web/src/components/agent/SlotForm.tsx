@@ -254,53 +254,6 @@ export function SlotForm({
           </Field>
         </div>
       ) : null}
-
-      <FiringConditionsAwareness slot={slot} />
-    </div>
-  );
-}
-
-// Phase 1 of the agent-firing-filter operator surface
-// (docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md).
-// The card *teaches* — it does not author. Authoring lives at the strategy
-// level in Phase 3. Filter-capable slots get no card (the Filter is the gate).
-//
-// `capabilities` is read defensively: the Rust field landed in Phase A
-// (PR #527) but the hand-authored AgentSlot TS type in api/agents.ts does
-// not yet carry it. Per the back-compat default in
-// crates/xvision-engine/src/agents/model.rs, a slot with no capabilities
-// resolves to {Trader} — so undefined here is treated as Trader-capable
-// (firing-condition relevant; card shown).
-const FIRING_CAPABLE_ROLES = new Set(["trader", "critic", "intern", "router"]);
-
-function FiringConditionsAwareness({ slot }: { slot: AgentSlot }) {
-  const rawCaps = (slot as { capabilities?: readonly string[] }).capabilities;
-  const caps =
-    rawCaps && rawCaps.length > 0
-      ? rawCaps.map((c) => c.toLowerCase())
-      : ["trader"];
-  const isFilterSlot = caps.includes("filter");
-  const isFiringCapable = caps.some((c) => FIRING_CAPABLE_ROLES.has(c));
-  if (isFilterSlot || !isFiringCapable) {
-    return null;
-  }
-
-  return (
-    <div className="mt-5 px-4 py-3 bg-surface-card border border-border-soft rounded-sm">
-      <div className="text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
-        Firing conditions
-      </div>
-      <p className="text-[12.5px] text-text-2 leading-relaxed">
-        This agent runs on every bar by default. To gate it on a market
-        regime, indicator threshold, or other signal, add a Filter-capable
-        agent upstream of this one inside a strategy.{" "}
-        <a
-          href="/docs?slug=firing-conditions"
-          className="text-gold hover:text-gold-soft underline-offset-2 hover:underline"
-        >
-          Learn more →
-        </a>
-      </p>
     </div>
   );
 }

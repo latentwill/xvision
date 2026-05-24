@@ -261,6 +261,28 @@ fn min_notional_runs_after_size_modifying_rules() {
         ),
         "MinNotional must short-circuit BEFORE StopLossPresent's clamp; got {result:?}"
     );
+
+    let above_min_wide_stop = TraderDecision {
+        cycle_id: Uuid::nil(),
+        action: Action::Buy,
+        size_bps: 150,
+        direction: Direction::Long,
+        stop_loss_pct: 15.0,
+        take_profit_pct: 5.0,
+        trader_summary: "above min + wide stop".into(),
+        asset: AssetSymbol::Btc,
+    };
+    let above_min_result = layer.evaluate(above_min_wide_stop, &portfolio(1_000.0));
+    assert!(
+        matches!(
+            above_min_result,
+            RiskDecision::Modified {
+                reason: VetoReason::StopLossTooWide,
+                ..
+            }
+        ),
+        "above-min orders should reach StopLossPresent after MinNotional passes; got {above_min_result:?}"
+    );
 }
 
 /// Belt-and-suspenders: existing position present + tiny order on

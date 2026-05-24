@@ -135,8 +135,12 @@ Single owner: `xvision-engine/migrations/`. Every plan that touches `xvn.db` cla
 | `006_scheduler.sql` | xvn-scheduling-and-agent-cli (deferred) | `schedules`, `schedule_fires` | ⛔ deferred |
 | `007_autoresearch.sql` | AR-1 (deferred) | autoresearch core tables | ⛔ deferred |
 | `008_autoresearch_evals.sql` | AR-2 (deferred) | `canary_runs`, `mutator_ladder_snapshots`, `diversity_samples` | ⛔ deferred |
+| `038_eval_runs_live_config.sql` | Live Alpaca v1 | `eval_runs.live_config_json`, nullable `eval_runs.scenario_id` for `mode=Live` | ✅ |
 
 Notes:
+- The active monotonic migration registry now lives in `team/MANIFEST.md`.
+  Historical reservations here are kept for v1 context; new claims must update
+  both files.
 - xvn-scheduling-and-agent-cli's `api_audit` was originally numbered 002; ownership of `api_audit` has moved to the new Engine API Foundation plan at 001. The scheduler tables stay reserved at 006.
 - AR-1's original `003_autoresearch.sql` and AR-2's `004_autoresearch_evals.sql` need renumbering when those plans are picked up — call this table out in the plan files at pickup time.
 - Chat Rail and Command Palette plans currently reference inline rusqlite schemas; convert to numbered `.sql` migrations during integration so the registry stays authoritative.

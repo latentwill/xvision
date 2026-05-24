@@ -296,8 +296,11 @@ pub struct AuditFinding {
 }
 
 /// Validate an agent before it is persisted (create or update). Runs the
-/// hard save-gate rules for placeholder/too-short prompts and asset
-/// name↔prompt mismatches.
+/// hard save-gate rules for placeholder/too-short prompts. Asset
+/// name↔prompt mismatches remain diagnostics from [`validate_agent`],
+/// but are no longer a save blocker because agent-authored strategy
+/// creation can legitimately put the asset in structured strategy
+/// fields while keeping the prompt generic.
 ///
 /// Honors `XVISION_DISABLE_AGENT_SAVE_GATE=1` as a test-only bypass —
 /// **debug builds only**. The `cfg(debug_assertions)` guard means the
@@ -325,22 +328,6 @@ pub fn validate_agent_for_save(agent: &Agent) -> Result<(), String> {
                  {MIN_SYSTEM_PROMPT_CHARS} characters; replace with a real trading prompt before saving",
                 slot.name,
             ));
-        }
-    }
-
-    let combined_prompt = agent
-        .slots
-        .iter()
-        .map(|slot| slot.system_prompt.as_str())
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase();
-    for token in RECOGNISED_ASSET_TOKENS {
-        if !name_mentions_asset_token(&agent.name, token) {
-            continue;
-        }
-        if !combined_prompt.contains(&token.to_ascii_lowercase()) {
-            return Err(format!("agent name mentions {token} but system_prompt does not"));
         }
     }
 

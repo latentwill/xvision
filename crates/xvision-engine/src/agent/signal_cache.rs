@@ -48,11 +48,7 @@ pub struct SignalCacheKey {
 }
 
 impl SignalCacheKey {
-    pub fn new(
-        strategy_id: impl Into<String>,
-        role: impl Into<String>,
-        scope: SignalScope,
-    ) -> Self {
+    pub fn new(strategy_id: impl Into<String>, role: impl Into<String>, scope: SignalScope) -> Self {
         Self {
             strategy_id: strategy_id.into(),
             role: role.into(),

@@ -6,12 +6,15 @@
  * patch with every field `None` is a valid no-op and round-trips the
  * stored strategy untouched.
  *
- * Scope is deliberately narrow: only the three operator-editable
+ * Scope is deliberately narrow: only the four operator-editable
  * top-level manifest fields a typo in the create wizard could land
  * on. The strategy `id`, `creator`, `template`, `published_at`,
  * `risk_preset_or_config`, `agents`, `pipeline`, `risk`, and
  * `mechanical_params` are out of scope — they either have dedicated
  * sub-routes (slot/agents/pipeline/risk) or are immutable
  * post-create.
+ *
+ * Color clear convention: `color: ""` (empty string) explicitly
+ * clears the stored color. `color: null` / omitted leaves it unchanged.
  */
-export type StrategyMetadataPatch = { display_name: string | null, plain_summary: string | null, asset_universe: Array<string> | null, };
+export type StrategyMetadataPatch = { display_name: string | null, plain_summary: string | null, asset_universe: Array<string> | null, color?: string | null, };

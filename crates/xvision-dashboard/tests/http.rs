@@ -149,7 +149,7 @@ async fn strategies_list_returns_seeded_strategy() {
             mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         })
         .await
         .unwrap();
@@ -1217,7 +1217,7 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
             mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         })
         .await
         .unwrap();

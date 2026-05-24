@@ -3,7 +3,7 @@
 //! The trait is implemented by:
 //! - `xvision_execution::alpaca::AlpacaExecutor` — live paper-trading on Alpaca
 //! - `xvision_execution::orderly::OrderlyExecutor` — live perps on Orderly/Mantle (Phase 6.3)
-//! - `xvision_eval::backtest::BacktestExecutor` — stateful in-process simulator
+//! - `xvision_eval::backtest::Executor` — stateful in-process simulator
 //!
 //! Idempotency: every `submit` call carries the `RiskDecision`'s underlying
 //! `cycle_id` (via `RiskDecision::effective().cycle_id`); executors must use

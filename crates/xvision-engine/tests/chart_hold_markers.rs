@@ -157,11 +157,7 @@ async fn hold_marker_with_missing_bar_timestamp_is_skipped_not_zero_priced() {
     seed_cached_bars(&ctx, &cache_key, "BTC/USD", 3).await;
 
     let store = RunStore::new(ctx.db.clone());
-    let run = Run::new_queued(
-        strategy_id.into(),
-        scenario.id.clone(),
-        RunMode::Backtest,
-    );
+    let run = Run::new_queued(strategy_id.into(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
     store
         .record_decision(&hold_decision(&run.id, 0, 0))

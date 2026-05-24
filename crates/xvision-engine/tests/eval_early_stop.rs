@@ -21,7 +21,7 @@ use chrono::{Duration, TimeZone, Utc};
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
@@ -154,7 +154,7 @@ fn build_strategy(agent_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -202,7 +202,7 @@ async fn flat_degeneracy_triggers_inherited_skip_window() {
     let bars = synthetic_bars(12);
     let dispatch = CountingFlatDispatch::new();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     let metrics = executor
         .run(
@@ -308,7 +308,7 @@ async fn second_skip_window_only_triggers_after_counter_resets() {
     let bars = synthetic_bars(28);
     let dispatch = CountingFlatDispatch::new();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(

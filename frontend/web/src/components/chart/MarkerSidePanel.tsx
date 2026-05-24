@@ -19,9 +19,15 @@ export function MarkerSidePanel({ payload, active, onClose }: Props) {
   if (!active) return null;
 
   const idx = active.decision_index;
-  const trade = payload.markers.trades.find((t) => t.decision_index === idx);
-  const veto = payload.markers.vetoes.find((v) => v.decision_index === idx);
-  const hold = payload.markers.holds.find((h) => h.decision_index === idx);
+  const trade = active.kind === "trade"
+    ? payload.markers.trades.find((t) => t.decision_index === idx)
+    : undefined;
+  const veto = active.kind === "veto"
+    ? payload.markers.vetoes.find((v) => v.decision_index === idx)
+    : undefined;
+  const hold = active.kind === "hold"
+    ? payload.markers.holds.find((h) => h.decision_index === idx)
+    : undefined;
 
   const ts = trade ?? veto ?? hold;
   if (!ts) return null;

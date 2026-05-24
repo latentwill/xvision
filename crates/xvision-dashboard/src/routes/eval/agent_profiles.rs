@@ -26,7 +26,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use xvision_core::config;
+use xvision_engine::api::settings::providers::resolve_provider;
 use xvision_engine::api::ApiError;
 use xvision_engine::eval::review::AgentProfile;
 use xvision_engine::eval::store::RunStore;
@@ -80,33 +80,29 @@ pub async fn patch(
     Path(id): Path<String>,
     Json(body): Json<UpdateRequest>,
 ) -> Result<Json<AgentProfile>, DashboardError> {
-    // Validate provider name against the runtime config. Without this
-    // we'd happily persist `provider = "claude"` (typo) and then fail
-    // at dispatch time with the same "review skipped" error the
-    // operator is trying to escape.
-    if let Some(provider) = &body.provider {
+    let store = RunStore::new(state.api_context().db.clone());
+    let current = store
+        .get_agent_profile(&id)
+        .await
+        .map_err(DashboardError::Internal)?
+        .ok_or_else(|| DashboardError::from(ApiError::NotFound(format!("agent profile `{id}` not found"))))?;
+
+    // Validate the final provider/model pair before persisting it. This
+    // catches the failure mode QA hit repeatedly: a profile can point at
+    // `anthropic` while the workspace only has OpenRouter configured.
+    if body.provider.is_some() || body.model.is_some() {
+        let provider = body.provider.as_deref().unwrap_or(&current.provider);
+        let model = body.model.as_deref().unwrap_or(&current.model);
         let cfg_path = runtime_config_path(&state);
-        let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
-            .await
-            .map_err(|e| DashboardError::Internal(anyhow::anyhow!("spawn_blocking: {e}")))?
-            .map_err(|e| DashboardError::from(ApiError::Validation(format!("load config: {e}"))))?;
-        if !cfg.providers.iter().any(|p| p.name == *provider) {
-            let configured = if cfg.providers.is_empty() {
-                "none".to_string()
-            } else {
-                cfg.providers
-                    .iter()
-                    .map(|p| p.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
+        if let Err(err) = resolve_provider(&state.api_context(), &cfg_path, provider, Some(model)).await {
             return Err(DashboardError::from(ApiError::Validation(format!(
-                "provider `{provider}` is not configured in Settings → Providers (configured: {configured})",
+                "review profile `{id}` cannot use provider `{provider}` with model `{model}`: {}. {}",
+                err.reason.as_str(),
+                err.hint
             ))));
         }
     }
 
-    let store = RunStore::new(state.api_context().db.clone());
     let updated = store
         .update_agent_profile(
             &id,
@@ -168,8 +164,9 @@ mod tests {
 
     #[tokio::test]
     async fn patch_reseats_profile_against_configured_provider() {
+        std::env::set_var("OPENROUTER_KEY", "test-key");
         let (state, _tmp) = fresh_state_with_providers(
-            "\n[[providers]]\nname = \"openrouter\"\nkind = \"openai-compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\napi_key_env = \"OPENROUTER_KEY\"\n",
+            "\n[[providers]]\nname = \"openrouter\"\nkind = \"openai-compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\napi_key_env = \"OPENROUTER_KEY\"\nenabled_models = [\"anthropic/claude-sonnet-4.5\"]\n",
         )
         .await;
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
@@ -195,8 +192,9 @@ mod tests {
 
     #[tokio::test]
     async fn patch_rejects_unknown_provider() {
+        std::env::set_var("OPENROUTER_KEY", "test-key");
         let (state, _tmp) = fresh_state_with_providers(
-            "\n[[providers]]\nname = \"openrouter\"\nkind = \"openai-compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\napi_key_env = \"OPENROUTER_KEY\"\n",
+            "\n[[providers]]\nname = \"openrouter\"\nkind = \"openai-compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\napi_key_env = \"OPENROUTER_KEY\"\nenabled_models = [\"anthropic/claude-sonnet-4.5\"]\n",
         )
         .await;
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
@@ -207,7 +205,7 @@ mod tests {
             .await;
         let body = resp.text();
         assert!(
-            body.contains("not configured"),
+            body.contains("provider_unknown"),
             "should reject unknown provider, got: {body}"
         );
         // The original row must NOT have been touched.

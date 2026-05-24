@@ -17,6 +17,9 @@ Cross-references for operator-facing concepts that have their own docs:
 - **Agent memory** — see `docs/v2d-memory-overview.md` for how the
   per-slot memory toggle works and why backtest replays don't leak
   future knowledge.
+- **Inline filter DSL** — see `docs/operator/filter-dsl-catalog.md` for
+  the exact indicators, operators, and JSON examples accepted by
+  `xvn strategy set-filter`.
 
 ---
 
@@ -323,12 +326,25 @@ with the configured Alpaca paper account.
 xvn doctor [--json]
 xvn strategy templates [--json]        # list templates
 xvn strategy create --template <t> --name <n> [--json]
+xvn strategy create --name <n> --prompt @prompt.md \
+  --provider <provider> --model <model> --asset BTC/USD --timeframe 4h
 xvn strategy create --from-file strategy.json [--json]
 xvn strategy validate <id>
+xvn strategy validate <id> --scenario <scenario_id> [--json]
+xvn strategy edit <id> [--no-filter-warning | --clear-no-filter-warning]
+xvn strategy clone <id> --name <n> [--provider <provider> --model <model>] [--json]
 xvn strategy show <id>
 xvn strategy ls [--json]
 xvn strategy run <id> --fixture <name> --decisions <N> [--mock]
 ```
+
+Dashboard strategy editing lives at `/strategies/:id`; `/authoring/:id` is
+kept only for older links. The inspector lets operators edit display name,
+description, asset universe, cadence, filter, attached agents, and risk while
+keeping the strategy ID stable for eval history. Strategy validation is
+explicit: use **Check eval readiness** in the inspector or
+`xvn strategy validate`, instead of treating draft-load warnings as blocking
+form errors.
 
 ### AI agent drives xvn (Plan 2a)
 
@@ -341,7 +357,7 @@ cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
 
 Authoring verbs the server advertises over `tools/list`:
 `xvn_list_templates`, `xvn_create_strategy`, `xvn_get_strategy`,
-`xvn_update_slot`, `xvn_set_mechanical_param`, `xvn_set_risk_config`,
+`xvn_update_slot`, `xvn_update_manifest`, `xvn_set_risk_config`,
 `xvn_validate_draft` — alongside the indicator surface (`xvn_health`,
 `xvn_sma`, `xvn_rsi`, ...) that has shipped since v0.1. State lives in
 `$XVN_HOME/strategies/<id>.json`, the same path `xvn strategy ls` reads
@@ -384,6 +400,20 @@ xvn eval watch <run_id> [--once] [--json]
 xvn eval results <run_id> [--json]
 xvn eval compare <run_id_a> <run_id_b>
 ```
+
+Add `--auto-fire-review` to `xvn eval run` when a completed run should
+immediately write a deterministic review and chart annotations. Optional
+review metadata can be recorded with `--review-provider`,
+`--review-model`, and `--max-review-annotations`; `xvn eval show <run_id>`
+prints the stored auto-review state. The dashboard eval launcher exposes
+the same auto-run review checkbox, and `/charts/annotated?run_id=<run_id>`
+renders annotations from the newest completed review for that run.
+
+Compare labels prefer the strategy display name when the run's strategy
+manifest is available, while keeping the run id and strategy id visible in
+CLI output and dashboard secondary text. The run-centric dashboard is
+`/eval-runs/compare?ids=<run-a>,<run-b>`; the Charts v2 comparison dashboard
+is `/charts/compare?ids=<run-a>,<run-b>`.
 
 `xvn eval run` is part of the current surface. Use `xvn scenario ls` to find
 scenario ids; `xvn eval scenarios` remains available but is deprecated.

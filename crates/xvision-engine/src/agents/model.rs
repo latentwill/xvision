@@ -329,7 +329,6 @@ pub struct AgentSlot {
     /// dispatcher reads this set to decide which capability handler
     /// runs; Phase A only persists the shape.
     #[serde(default = "default_capabilities")]
-    #[cfg_attr(feature = "ts-export", ts(type = "Capability[]"))]
     pub capabilities: BTreeSet<Capability>,
     /// Per-slot opt-in for **delta-briefing mode** (F41 token-efficiency
     /// tail). When `Some(true)`, the trader briefing for bar N+1 is

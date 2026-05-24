@@ -221,7 +221,7 @@ export function MonthGrid({
               color: 'var(--text-3)',
               letterSpacing: '0.12em',
               textTransform: 'uppercase',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Geist, sans-serif',
             }}
           >
             {w}
@@ -309,12 +309,12 @@ export function MonthGrid({
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: '50%',
-                fontFamily: "'JetBrains Mono', monospace",
+                fontFamily: 'Geist Mono, ui-monospace, monospace',
                 fontVariantNumeric: 'tabular-nums',
                 fontSize: dims.font,
                 fontWeight: isEdge ? 600 : 400,
                 color: isEdge
-                  ? '#0F0E0C'
+                  ? '#000000'
                   : !isCur
                     ? 'var(--text-4)'
                     : isToday
@@ -323,7 +323,7 @@ export function MonthGrid({
                 background: isEdge ? 'var(--gold)' : 'transparent',
                 border:
                   isToday && !isEdge
-                    ? '1px solid rgba(212,165,71,0.55)'
+                    ? '1px solid rgba(0,230,118,0.55)'
                     : '1px solid transparent',
                 transition: 'background .12s, color .12s',
               }}
@@ -386,9 +386,8 @@ export function MonthHeader({
         borderRadius: 3,
         padding: '2px 5px 2px 6px',
         cursor: 'pointer',
-        fontFamily: "'Cormorant Garamond', serif",
-        fontStyle: italic ? 'italic' : 'normal',
-        fontWeight: 500,
+        fontFamily: 'Geist, sans-serif',
+        fontWeight: italic ? 600 : 500,
         fontSize: sizes.fs,
         letterSpacing: '-0.01em',
         color: active ? 'var(--gold)' : 'var(--text)',
@@ -434,7 +433,7 @@ export function MonthHeader({
     titleEl = (
       <div
         style={{
-          fontFamily: "'Cormorant Garamond', serif",
+          fontFamily: 'Geist, sans-serif',
           fontWeight: 500,
           fontSize: sizes.fs,
           letterSpacing: '-0.01em',
@@ -443,7 +442,7 @@ export function MonthHeader({
         }}
       >
         {startYear} <span style={{ color: 'var(--text-3)' }}>—</span>{' '}
-        <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }}>
+        <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>
           {startYear + 11}
         </span>
       </div>
@@ -453,7 +452,7 @@ export function MonthHeader({
       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <span
           style={{
-            fontFamily: "'Cormorant Garamond', serif",
+            fontFamily: 'Geist, sans-serif',
             fontWeight: 500,
             fontSize: sizes.fs,
             color: 'var(--text-3)',
@@ -594,19 +593,19 @@ export function MonthsView({
               height: rowH,
               border:
                 '1px solid ' +
-                (isSelected ? 'rgba(212,165,71,0.5)' : 'var(--border)'),
+                (isSelected ? 'rgba(0,230,118,0.5)' : 'var(--border)'),
               background: isSelected
                 ? 'var(--gold)'
                 : isCurrent
                   ? 'var(--gold-bg)'
                   : 'transparent',
               color: isSelected
-                ? '#0F0E0C'
+                ? '#000000'
                 : isCurrent
                   ? 'var(--gold)'
                   : 'var(--text-2)',
               borderRadius: 4,
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Geist, sans-serif',
               fontSize: density === 'mobile' ? 14 : 13,
               fontWeight: isSelected ? 600 : 500,
               cursor: 'pointer',
@@ -665,9 +664,9 @@ export function YearsView({
               border:
                 '1px solid ' +
                 (isSelected
-                  ? 'rgba(212,165,71,0.5)'
+                  ? 'rgba(0,230,118,0.5)'
                   : isToday && !isSelected
-                    ? 'rgba(212,165,71,0.35)'
+                    ? 'rgba(0,230,118,0.35)'
                     : 'var(--border)'),
               background: isSelected
                 ? 'var(--gold)'
@@ -675,12 +674,12 @@ export function YearsView({
                   ? 'var(--gold-bg)'
                   : 'transparent',
               color: isSelected
-                ? '#0F0E0C'
+                ? '#000000'
                 : isCurrent || isToday
                   ? 'var(--gold)'
                   : 'var(--text-2)',
               borderRadius: 4,
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
               fontVariantNumeric: 'tabular-nums',
               fontSize: density === 'mobile' ? 14 : 13,
               fontWeight: isSelected ? 600 : 500,
