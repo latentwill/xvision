@@ -1,6 +1,8 @@
 pub mod client;
 pub mod errors;
 pub mod event_sink;
+/// Stage-4 sidecar pool: bounded N-client lease/return pool with crash recovery.
+pub mod pool;
 pub mod protocol;
 pub mod provider_map;
 pub(crate) mod supervisor;
@@ -21,5 +23,6 @@ pub use protocol::{
     SideEffectLevel, StartRunParams, StartRunResult, StepParams, StepResult, ToolDescriptor,
     ToolRegistryGetResult, ToolRegistrySetResult, SUPPORTED_PROTOCOL_VERSION,
 };
+pub use pool::{PoolLease, PoolStats, SidecarPool, SlotStatus};
 pub use tool_dispatch::{ToolDispatch, ToolDispatchError};
 pub use transport::UdsTransport;
