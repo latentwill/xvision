@@ -195,7 +195,7 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, strategy_id: &str) -> Strateg
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
@@ -236,6 +236,9 @@ async fn run_tiny_notional_probe(
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         },
         broker,
         long_open_dispatch(),

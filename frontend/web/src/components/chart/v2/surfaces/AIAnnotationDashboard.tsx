@@ -85,8 +85,18 @@ export function AIAnnotationDashboard({
   const last = lastClose(payload);
   const change24 = pct24h(payload);
 
-  const isLiveEmpty =
-    payload.source === "live" && payload.annotations.length === 0;
+  const isEmpty = payload.annotations.length === 0;
+  const emptyTitle =
+    payload.source === "live"
+      ? "No live review annotations"
+      : payload.note?.includes("not yet run")
+        ? "Review not yet run"
+        : "No review annotations";
+  const emptyMessage =
+    payload.note ??
+    (payload.source === "live"
+      ? "Start a live run with review annotations enabled to populate this chart."
+      : "Run review for this eval to populate AI callouts.");
 
   // Insight log is filtered by the same type set as the chart overlay.
   const filteredAnnotations = useMemo(
@@ -182,11 +192,11 @@ export function AIAnnotationDashboard({
             height={480}
             onReady={handleChartReady}
           />
-          {isLiveEmpty ? (
+          {isEmpty ? (
             <div className="absolute inset-0 flex items-center justify-center p-6">
               <EmptyState
-                title="Annotation producer not configured"
-                message="Live annotations require the producer wiring (out of scope for chart-rework Track B). Switch to a stored run via the source picker once it ships."
+                title={emptyTitle}
+                message={emptyMessage}
               />
             </div>
           ) : (

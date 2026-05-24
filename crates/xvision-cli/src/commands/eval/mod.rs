@@ -30,7 +30,7 @@ use xvision_engine::eval::compare::ComparisonEquityCurve;
 use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
 use xvision_engine::eval::report::compute_run_report;
-use xvision_engine::eval::run::{RunMode, RunStatus};
+use xvision_engine::eval::run::{ReviewModel, RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
@@ -165,6 +165,21 @@ pub struct RunArgs {
     /// launch with the same structured `reason` discriminant.
     #[arg(long)]
     pub model: Option<String>,
+    /// Fire the deterministic review agent when the run completes and store
+    /// chart annotations on the review row.
+    #[arg(long)]
+    pub auto_fire_review: bool,
+    /// Optional review provider label persisted on the run. Must be supplied
+    /// together with `--review-model`.
+    #[arg(long)]
+    pub review_provider: Option<String>,
+    /// Optional review model label persisted on the run. Must be supplied
+    /// together with `--review-provider`.
+    #[arg(long)]
+    pub review_model: Option<String>,
+    /// Maximum chart annotations a review should emit.
+    #[arg(long, default_value_t = 8)]
+    pub max_review_annotations: u32,
 }
 
 #[derive(Args, Debug)]
@@ -468,6 +483,29 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         }
         (None, None) => None,
     };
+    let review_model = match (args.review_provider.as_deref(), args.review_model.as_deref()) {
+        (Some(p), Some(m)) => Some(ReviewModel {
+            provider: p.to_string(),
+            model: m.to_string(),
+        }),
+        (Some(_), None) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "--review-provider requires --review-model (both flags must be supplied together)"
+                ),
+            });
+        }
+        (None, Some(_)) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "--review-model requires --review-provider (both flags must be supplied together)"
+                ),
+            });
+        }
+        (None, None) => None,
+    };
 
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
@@ -477,6 +515,9 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         limits,
         skip_preflight: args.skip_preflight,
         provider_override,
+        auto_fire_review: args.auto_fire_review,
+        review_model,
+        max_annotations_per_review: Some(args.max_review_annotations),
     };
 
     // Banner — operator-facing progress, never on stdout. Stays visible
@@ -502,6 +543,14 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     println!("Run completed.");
     println!("  id              {}", run.id);
     println!("  status          {}", run.status.as_str());
+    println!("  auto_review     {}", run.auto_fire_review);
+    println!(
+        "  review_ann_max  {}",
+        run.max_annotations_per_review.unwrap_or(8)
+    );
+    if let Some(model) = run.review_model.as_ref() {
+        println!("  review_model    {}/{}", model.provider, model.model);
+    }
     if let Some(c) = run.completed_at {
         println!("  completed_at    {}", c.to_rfc3339());
     }
@@ -784,6 +833,11 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     println!("mode            {}", run.mode.as_str());
     println!("scenario        {}", run.scenario_id);
     println!("strategy        {}", run.agent_id);
+    println!("auto_review     {}", run.auto_fire_review);
+    println!("review_ann_max  {}", run.max_annotations_per_review.unwrap_or(8));
+    if let Some(model) = run.review_model.as_ref() {
+        println!("review_model    {}/{}", model.provider, model.model);
+    }
     println!("started_at      {}", run.started_at.to_rfc3339());
     if let Some(c) = run.completed_at {
         println!("completed_at    {}", c.to_rfc3339());

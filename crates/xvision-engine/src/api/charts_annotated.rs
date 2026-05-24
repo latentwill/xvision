@@ -19,6 +19,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiError, ApiResult};
+use crate::eval::review::{ReviewAnnotation, ReviewStatus};
+use crate::eval::store::{ListFilter, RunStore};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CandleColumns {
@@ -71,6 +73,9 @@ pub struct AnnotatedChartPayload {
     /// May be `[]` when `source == "live"` and the producer is not
     /// wired (the typical case until the annotation producer ships).
     pub annotations: Vec<Annotation>,
+    /// Operator-facing reason when no persisted annotations are available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 // ── Deterministic candle generator ───────────────────────────────────────
@@ -113,8 +118,7 @@ pub fn build_demo_candles() -> CandleColumns {
     };
     let mut price = START_PRICE;
     for i in 0..COUNT {
-        let drift =
-            (((i as f64) / 14.0).sin() * 90.0) + (((i as f64) / 35.0).cos() * 240.0);
+        let drift = (((i as f64) / 14.0).sin() * 90.0) + (((i as f64) / 35.0).cos() * 240.0);
         let prev_drift = if i > 0 {
             let p = (i - 1) as f64;
             (p / 14.0).sin() * 90.0 + (p / 35.0).cos() * 240.0
@@ -203,9 +207,7 @@ fn demo_annotations() -> Vec<Annotation> {
 /// stored alongside the run (follow-up; out of scope for this PR).
 pub fn build_annotated_run_stub(run_id: &str) -> ApiResult<AnnotatedChartPayload> {
     if run_id.is_empty() {
-        return Err(ApiError::Validation(
-            "run_id must be a non-empty string".into(),
-        ));
+        return Err(ApiError::Validation("run_id must be a non-empty string".into()));
     }
     Ok(AnnotatedChartPayload {
         kind: "annotated".into(),
@@ -217,6 +219,7 @@ pub fn build_annotated_run_stub(run_id: &str) -> ApiResult<AnnotatedChartPayload
         candles: build_demo_candles(),
         ema: None,
         annotations: demo_annotations(),
+        note: None,
     })
 }
 
@@ -225,9 +228,7 @@ pub fn build_annotated_run_stub(run_id: &str) -> ApiResult<AnnotatedChartPayload
 /// (spec §9); the UI handles empty annotations with an EmptyState.
 pub fn build_annotated_live_stub(symbol: &str) -> ApiResult<AnnotatedChartPayload> {
     if symbol.is_empty() {
-        return Err(ApiError::Validation(
-            "symbol must be a non-empty string".into(),
-        ));
+        return Err(ApiError::Validation("symbol must be a non-empty string".into()));
     }
     Ok(AnnotatedChartPayload {
         kind: "annotated".into(),
@@ -239,7 +240,127 @@ pub fn build_annotated_live_stub(symbol: &str) -> ApiResult<AnnotatedChartPayloa
         candles: build_demo_candles(),
         ema: None,
         annotations: vec![],
+        note: Some("live annotation producer not configured".into()),
     })
+}
+
+/// Real run-backed builder: load the run, then expose annotations from
+/// the newest completed review. `run_id=demo` remains fixture-backed so
+/// the chart lab and smoke routes continue to work without seeded evals.
+pub async fn build_annotated_run(store: &RunStore, run_id: &str) -> ApiResult<AnnotatedChartPayload> {
+    if run_id.is_empty() {
+        return Err(ApiError::Validation("run_id must be a non-empty string".into()));
+    }
+    if run_id == "demo" {
+        return build_annotated_run_stub(run_id);
+    }
+
+    let run = store.get(run_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("run not found") {
+            ApiError::NotFound(format!("eval run '{run_id}'"))
+        } else {
+            ApiError::Internal(msg)
+        }
+    })?;
+    let reviews = store
+        .list_reviews_for_run(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let completed = reviews
+        .iter()
+        .filter(|review| review.status == ReviewStatus::Completed)
+        .max_by_key(|review| review.updated_at);
+    let annotations = completed
+        .map(|review| {
+            review
+                .annotations
+                .iter()
+                .map(annotation_from_review)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let note = match completed {
+        None => Some("review not yet run".to_string()),
+        Some(_) if annotations.is_empty() => Some("review has no annotations".to_string()),
+        Some(_) => None,
+    };
+
+    Ok(AnnotatedChartPayload {
+        kind: "annotated".into(),
+        source: "run".into(),
+        run_id: Some(run.id),
+        symbol: None,
+        asset: "BTC/USDT".into(),
+        granularity: "1h".into(),
+        candles: build_demo_candles(),
+        ema: None,
+        annotations,
+        note,
+    })
+}
+
+/// Live endpoint is intentionally read-only in this wave. It returns the
+/// latest completed live run with annotations when present; otherwise it
+/// returns an empty live payload with an explicit note.
+pub async fn build_annotated_live(store: &RunStore, symbol: &str) -> ApiResult<AnnotatedChartPayload> {
+    if symbol.is_empty() {
+        return Err(ApiError::Validation("symbol must be a non-empty string".into()));
+    }
+
+    let runs = store
+        .list(ListFilter {
+            agent_id: None,
+            scenario_id: None,
+            status: None,
+            limit: Some(50),
+            offset: Some(0),
+        })
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    for run in runs.into_iter().filter(|run| run.mode.as_str() == "live") {
+        let reviews = store
+            .list_reviews_for_run(&run.id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        if let Some(review) = reviews
+            .iter()
+            .filter(|review| review.status == ReviewStatus::Completed && !review.annotations.is_empty())
+            .max_by_key(|review| review.updated_at)
+        {
+            return Ok(AnnotatedChartPayload {
+                kind: "annotated".into(),
+                source: "live".into(),
+                run_id: Some(run.id),
+                symbol: Some(symbol.to_string()),
+                asset: symbol.to_string(),
+                granularity: "1m".into(),
+                candles: build_demo_candles(),
+                ema: None,
+                annotations: review.annotations.iter().map(annotation_from_review).collect(),
+                note: None,
+            });
+        }
+    }
+
+    let mut payload = build_annotated_live_stub(symbol)?;
+    payload.note = Some("no completed live review annotations for symbol".into());
+    Ok(payload)
+}
+
+fn annotation_from_review(annotation: &ReviewAnnotation) -> Annotation {
+    Annotation {
+        idx: annotation.idx,
+        side: annotation.side.clone(),
+        kind: annotation.kind.clone(),
+        title: annotation.title.clone(),
+        body: annotation.body.clone(),
+        conf: annotation.conf,
+        action: annotation.action.clone(),
+        danger: annotation.danger.then_some(true),
+        ts: annotation.ts,
+    }
 }
 
 #[cfg(test)]

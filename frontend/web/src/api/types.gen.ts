@@ -135,6 +135,8 @@ export type { ResetWorkspaceReport } from "./types.gen/ResetWorkspaceReport";
 export type { RetentionModeDto } from "./types.gen/RetentionModeDto";
 export type { RetryReason } from "./types.gen/RetryReason";
 export type { ReviewStatus } from "./types.gen/ReviewStatus";
+export type { ReviewAnnotation } from "./types.gen/ReviewAnnotation";
+export type { ReviewModel } from "./types.gen/ReviewModel";
 export type { ReviewVerdict } from "./types.gen/ReviewVerdict";
 export type { RichContentBlock } from "./types.gen/RichContentBlock";
 export type { RunChartPayload } from "./types.gen/RunChartPayload";

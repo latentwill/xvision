@@ -50,6 +50,7 @@ pub async fn eval_review_pool_with_migrations() -> SqlitePool {
         include_str!("../../migrations/022_eval_runs_agents_agent_id.sql"),
         include_str!("../../migrations/026_trace_surface_foundation.sql"),
         include_str!("../../migrations/027_run_bars_manifest.sql"),
+        include_str!("../../migrations/037_review_annotations_and_autofire.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }

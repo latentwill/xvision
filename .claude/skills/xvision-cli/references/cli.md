@@ -150,6 +150,7 @@ Label vocabulary: `regime ∈ {trend, chop, crash, expansion, recovery}`,
 
 ```bash
 xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest --auto-fire-review --max-review-annotations 8
 xvn eval list
 xvn eval show <run_id>
 xvn eval results <run_id>
@@ -170,6 +171,10 @@ xvn eval attest <run_id>                              # sign + persist EvalAttes
 xvn eval export <run_id> --output exports/<run>.json  # canonical EvalRunExport (q15 §3)
 xvn eval review <run_id>                              # analytical review
 ```
+
+Review annotations are persisted on completed reviews and rendered by
+`/charts/annotated?run_id=<run_id>`. Use `xvn eval show <run_id>` to confirm
+whether a run was launched with `auto_review true`.
 
 `eval compare --markdown` includes a Baseline (buy_hold) column,
 backed by baseline auto-comparison in `BacktestExecutor`.

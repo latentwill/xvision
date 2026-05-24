@@ -111,6 +111,13 @@ async fn auto_review_writes_one_row_with_expected_verdict_and_score_band() {
     assert_eq!(r.status, ReviewStatus::Completed);
     assert_eq!(r.verdict, Some(ReviewVerdict::Weak));
     assert_eq!(r.agent_profile_id, AUTO_AGENT_PROFILE_ID);
+    assert!(r.annotations.len() >= 3);
+    assert!(r.annotations.iter().any(|a| a.kind == "REVERSION"));
+    assert!(r
+        .annotations
+        .iter()
+        .all(|a| a.action == "WATCH" || a.action == "CAUTION"));
+    assert!(r.annotations.iter().any(|a| a.danger));
     assert!(r.summary.as_deref().unwrap_or("").len() <= 240);
     let raw = r.raw_output_json.as_deref().expect("raw_output_json set");
     let v: serde_json::Value = serde_json::from_str(raw).expect("raw is valid JSON");

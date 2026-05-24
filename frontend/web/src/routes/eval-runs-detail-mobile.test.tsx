@@ -149,6 +149,9 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       inference_cost_quote_total: null,
       net_return_pct: null,
       filter_summaries: [],
+      auto_fire_review: false,
+      review_model: null,
+      max_annotations_per_review: 8,
     },
     decisions: [decision()],
     equity_curve: [

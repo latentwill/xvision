@@ -468,6 +468,9 @@ mod tests {
             bars_content_hash: None,
             manifest_canonical: None,
             bars_manifest: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         };
 
         // Two upserts in a row — second must not error and must not

@@ -950,7 +950,7 @@ impl XvisionTools {
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         };
 
         // 3. Validate shape.
@@ -1146,6 +1146,9 @@ impl XvisionTools {
                 limits: None,
                 skip_preflight: false,
                 provider_override: None,
+                auto_fire_review: false,
+                review_model: None,
+                max_annotations_per_review: Some(8),
             };
 
             let entry = match api_eval::run(&ctx, run_req).await {

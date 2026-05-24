@@ -309,6 +309,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       },
     ]);
 
@@ -342,6 +345,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       },
     ]);
 
@@ -370,6 +376,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       } as never,
     ]);
 
@@ -399,6 +408,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       },
       {
         id: "01RUN000000000000000000003",
@@ -417,6 +429,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       },
       {
         id: "01RUN000000000000000000002",
@@ -435,6 +450,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       },
     ] as never);
 
@@ -489,6 +507,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       } as never,
     ]);
     vi.mocked(evalApi.cancelRun).mockResolvedValue({
@@ -508,6 +529,9 @@ describe("EvalRunsRoute", () => {
       inference_cost_quote_total: null,
       net_return_pct: null,
       filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
     });
 
     renderRoute();
@@ -611,9 +635,75 @@ describe("EvalRunsRoute", () => {
         scenario_id: "user-scenario-4h",
         mode: "backtest",
         params_override: null,
+        auto_fire_review: false,
+        review_model: null,
+        max_annotations_per_review: 8,
       });
     });
     expect(screen.queryByText(/Pick a provider\/model/)).not.toBeInTheDocument();
+  });
+
+  it("persists the selected review model when auto-fire review is enabled", async () => {
+    mockReady({
+      providers: [
+        provider({
+          name: "openrouter",
+          base_url: "https://openrouter.ai/api/v1",
+          enabled_models: ["deepseek/deepseek-v4-flash", "qwen/qwen3"],
+        }),
+      ],
+    });
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "01TEST",
+        display_name: "DeepSeek Strategy",
+        template: "custom",
+        decision_cadence_minutes: 240,
+        providers: ["openrouter"],
+        models: ["deepseek/deepseek-v4-flash"],
+      },
+    ]);
+    vi.mocked(evalApi.startRun).mockResolvedValue({
+      summary: {
+        id: "01RUN",
+        agent_id: "01TEST",
+        scenario_id: "user-scenario-4h",
+        mode: "backtest",
+        status: "queued",
+        started_at: null,
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+      },
+      decisions: [],
+      metrics: null,
+    } as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    fireEvent.change(screen.getByLabelText("Scenario"), {
+      target: { value: "user-scenario-4h" },
+    });
+    fireEvent.click(screen.getByLabelText("auto-run review annotations on completion"));
+    fireEvent.change(screen.getByLabelText("Review model"), {
+      target: { value: "qwen/qwen3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => {
+      expect(vi.mocked(evalApi.startRun).mock.calls[0]?.[0]).toEqual({
+        agent_id: "01TEST",
+        scenario_id: "user-scenario-4h",
+        mode: "backtest",
+        params_override: null,
+        auto_fire_review: true,
+        review_model: { provider: "openrouter", model: "qwen/qwen3" },
+        max_annotations_per_review: 8,
+      });
+    });
   });
 
   it("blocks eval launch when the selected strategy uses an unconfigured provider", async () => {
@@ -687,6 +777,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       },
     ]);
 
@@ -729,6 +822,9 @@ describe("EvalRunsRoute", () => {
         inference_cost_quote_total: null,
         net_return_pct: null,
         filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: 8,
       },
     ]);
 

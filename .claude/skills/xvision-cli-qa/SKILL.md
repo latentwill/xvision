@@ -108,6 +108,8 @@ Watch for:
   byte-identical to `xvn eval export <run_id>`
 - `POST /api/eval/runs/:id/attest`
 - `POST /api/eval/runs/:id/review`
+- `GET /api/v2/charts/annotated/:run_id` — reads persisted review
+  annotations for real run ids; `/demo` remains fixture-backed
 - `POST /api/eval/runs/validate` — preflight without launching
 - `POST /api/eval/batch` — multi-scenario batch
 - `DELETE /api/eval/runs/:id`
@@ -117,6 +119,8 @@ Watch for:
 
 CLI peers:
 - `xvn eval run / list / show / results / watch / scenarios`
+- `xvn eval run --auto-fire-review --max-review-annotations 8` and
+  `xvn eval show <run_id>` for annotation auto-fire state
 - `xvn eval compare … --markdown --sort sharpe` — table and markdown modes
   show readable strategy labels plus adjacent ids
 - `xvn eval batch --strategy <id> --scenarios sc_a,sc_b,sc_c --wait`

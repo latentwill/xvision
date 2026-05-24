@@ -92,7 +92,6 @@ const MIGRATION_033_AGENT_SLOT_CAPABILITIES: &str =
 const MIGRATION_035_EVAL_BAKEOFFS: &str = include_str!("../../migrations/035_eval_bakeoffs.sql");
 const MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID: &str =
     include_str!("../../migrations/036_agents_scope_strategy_id.sql");
-
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -259,6 +258,7 @@ impl ApiContext {
         migrate_agent_slot_capabilities(&pool).await?;
         migrate_eval_bakeoffs(&pool).await?;
         migrate_agents_scope_strategy_id(&pool).await?;
+        migrate_review_annotations_and_autofire(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -886,6 +886,32 @@ async fn migrate_agent_slot_capabilities(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_agents_scope_strategy_id(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agents", "scope_strategy_id").await? {
         sqlx::query(MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 037: review annotations on `eval_reviews` plus
+/// per-run review auto-fire metadata on `eval_runs`.
+async fn migrate_review_annotations_and_autofire(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_reviews", "annotations_json").await? {
+        sqlx::query("ALTER TABLE eval_reviews ADD COLUMN annotations_json TEXT NOT NULL DEFAULT '[]'")
+            .execute(pool)
+            .await?;
+    }
+    if !table_has_column(pool, "eval_runs", "auto_fire_review").await? {
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN auto_fire_review INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+    if !table_has_column(pool, "eval_runs", "review_model_json").await? {
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN review_model_json TEXT")
+            .execute(pool)
+            .await?;
+    }
+    if !table_has_column(pool, "eval_runs", "max_annotations_per_review").await? {
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN max_annotations_per_review INTEGER")
             .execute(pool)
             .await?;
     }

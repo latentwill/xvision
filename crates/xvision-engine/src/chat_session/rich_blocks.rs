@@ -895,6 +895,9 @@ mod tests {
             inference_cost_quote_total: None,
             net_return_pct: None,
             filter_summaries: vec![],
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
         }
     }
 

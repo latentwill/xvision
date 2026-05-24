@@ -8,6 +8,7 @@ import {
 } from "@/lib/logger";
 import type {
   ComparisonReport,
+  ReviewModel,
   RunDetail,
   RunMode,
   RunSummary,
@@ -36,6 +37,9 @@ export type StartRunReq = {
   scenario_id: string;
   mode: RunMode;
   params_override?: Record<string, unknown> | null;
+  auto_fire_review?: boolean;
+  review_model?: ReviewModel | null;
+  max_annotations_per_review?: number | null;
 };
 
 export type ListRunsParams = {
