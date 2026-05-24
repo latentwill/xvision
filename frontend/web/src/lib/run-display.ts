@@ -3,6 +3,7 @@ import type { RunSummary } from "@/api/types.gen";
 export type NamedStrategy = {
   agent_id: string;
   display_name?: string | null;
+  color?: string | null;
 };
 
 export type NamedScenario = {
@@ -16,7 +17,6 @@ export type EvalRunLabels = {
   title: string;
   subtitle: string;
   runId: string;
-  shortRunId: string;
   strategyId: string;
   scenarioId: string;
 };
@@ -38,7 +38,6 @@ export function evalRunLabels(
     title: strategyName,
     subtitle: `${summary.mode} · ${summary.status}`,
     runId: summary.id,
-    shortRunId: shortId(summary.id, 10),
     strategyId: summary.agent_id,
     scenarioId: summary.scenario_id,
   };
@@ -65,7 +64,8 @@ export function displayScenarioName(
 }
 
 export function shortId(id: string, len = 10): string {
-  return id.length > len ? `${id.slice(0, len)}...` : id;
+  void len;
+  return id;
 }
 
 // Per-(strategy, scenario) sequence number, sorted by started_at ascending,
@@ -129,5 +129,5 @@ function fallbackName(kind: string, id: string): string {
   if (normalized && !/^[0-9A-Z]{10,}$/i.test(normalized)) {
     return normalized.replace(/\b\w/g, (ch) => ch.toUpperCase());
   }
-  return `${kind} ${shortId(id, 8)}`;
+  return `${kind} ${id}`;
 }

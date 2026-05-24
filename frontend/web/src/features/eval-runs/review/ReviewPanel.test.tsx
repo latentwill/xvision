@@ -61,6 +61,48 @@ function installFetchMock(opts: {
         headers: { "content-type": "application/json" },
       });
     }
+    if (method === "GET" && url.endsWith("/eval/agent-profiles")) {
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "reasoning-agent",
+              name: "Reasoning",
+              type: "review",
+              provider: "openrouter",
+              model: "anthropic/claude-sonnet-4.5",
+              temperature: 0.2,
+              max_tokens: 4096,
+              system_prompt: "Review the run carefully.",
+              enabled: true,
+              created_at: "2026-05-23T00:00:00Z",
+              updated_at: "2026-05-23T00:00:00Z",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (method === "GET" && url.endsWith("/settings/providers")) {
+      return new Response(
+        JSON.stringify({
+          providers: [
+            {
+              name: "openrouter",
+              kind: "openai-compat",
+              api_key_env: "OPENROUTER_KEY",
+              api_key_set: true,
+              base_url: "https://openrouter.ai/api/v1",
+              enabled_models: ["anthropic/claude-sonnet-4.5"],
+              synthetic: false,
+              supports_browsing: false,
+            },
+          ],
+          default_model: null,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     // Unknown — return a 404 JSON so the failure surfaces as an
     // assertion error in the test rather than a generic fetch reject.
     return new Response(
@@ -244,15 +286,12 @@ describe("ReviewPanel — operator-visible 400 surfacing", () => {
       expect(screen.getByText(/No review yet for this run/i)).toBeInTheDocument(),
     );
 
-    // Click "Reasoning" persona in the AgentPicker; matching is loose
-    // because labels are operator-facing and may change copy.
-    const buttons = screen.getAllByRole("button");
-    const reasoningButton = buttons.find((b) =>
-      /reason/i.test(b.textContent ?? ""),
-    );
-    expect(reasoningButton, "expected a Reasoning agent picker button").toBeDefined();
+    await screen.findByLabelText("Review prompt preset");
+    const reasoningButton = screen.getByRole("button", {
+      name: /generate review/i,
+    });
     await act(async () => {
-      await userEvent.click(reasoningButton!);
+      await userEvent.click(reasoningButton);
     });
 
     // The structured error alert must render with both the code

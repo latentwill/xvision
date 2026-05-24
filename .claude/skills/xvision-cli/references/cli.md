@@ -99,6 +99,20 @@ xvn strategy set-filter <strategy_id> --from-json filter.json
 Strategy artifacts persist at `$XVN_HOME/strategies/<agent_id>.json`
 (`agent_id` = ULID).
 
+Dashboard inspector notes:
+
+- `/strategies/:id` is the canonical inspector route; `/authoring/:id` is an old compatibility alias.
+- Manifest display name, summary, asset universe, and cadence are editable in the inspector.
+- Strategy ID is stable/read-only and should be shown explicitly when reporting QA.
+- Eval readiness validation is not auto-run on first page load. Use **Check eval readiness** or `xvn strategy validate`.
+- Mechanical params are no longer an operator tuning panel in the inspector.
+
+Filter QA notes:
+
+- A real XVN filter is a saved strategy filter artifact. Prompt wording that says "filter" is not enough.
+- Use the inspector Filter card or the supported strategy filter CLI/API path, then confirm eval detail has `filter_events` / `filter_summaries` when the filter should participate.
+- Eval result rows can be synthesized by `noop_skip`, graph gating, or early-stop inheritance. Separate those from direct model decisions before drawing conclusions.
+
 Reusable prompt authoring used to live under `xvn skill …` (Plan 2b). That surface was removed in ADR 0012 — the Agents page (`/agents`, `engine::agents`) is now the canonical authoring path. See `decisions/0012-deprecate-in-app-skills.md`.
 
 ### Inline deterministic Filter DSL
@@ -181,6 +195,7 @@ Label vocabulary: `regime ∈ {trend, chop, crash, expansion, recovery}`,
 
 ```bash
 xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest --auto-fire-review --max-review-annotations 8
 xvn eval list
 xvn eval show <run_id>
 xvn eval results <run_id>
@@ -202,8 +217,16 @@ xvn eval export <run_id> --output exports/<run>.json  # canonical EvalRunExport 
 xvn eval review <run_id>                              # analytical review
 ```
 
+Review annotations are persisted on completed reviews and rendered by
+`/charts/annotated?run_id=<run_id>`. Use `xvn eval show <run_id>` to confirm
+whether a run was launched with `auto_review true`.
+
 `eval compare --markdown` includes a Baseline (buy_hold) column,
 backed by baseline auto-comparison in `BacktestExecutor`.
+
+For filter-functionality QA, compare aggregate metrics plus decision
+divergence, filter events/summaries, and synthesized-decision counts.
+Identical headline metrics alone do not prove the filter is ineffective.
 
 ## Experiment ledger
 

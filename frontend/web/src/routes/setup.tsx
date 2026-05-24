@@ -197,7 +197,7 @@ export function SetupRoute() {
               tracked.
             </div>
             <Link
-              to={`/authoring/${draftId}`}
+              to={`/strategies/${draftId}`}
               className="text-[13px] text-info hover:underline"
             >
               Open in Inspector →

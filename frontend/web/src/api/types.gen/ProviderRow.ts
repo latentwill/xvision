@@ -14,12 +14,13 @@ api_key_env: string,
  */
 api_key_set: boolean, 
 /**
- * True for synthetic rows kept for wire compatibility.
+ * True for synthetic rows (kept for wire compatibility; new configs do
+ * not auto-create provider rows from `[default_llm]`).
  */
 synthetic: boolean, 
 /**
  * True if this provider is the workspace default (referenced by the
- * `[default_llm]` block). Removing it clears the workspace default.
+ * `[default_llm]` block). Removing it clears the default.
  */
 is_default: boolean, 
 /**

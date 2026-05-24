@@ -41,6 +41,7 @@ fn all_variants() -> Vec<(SpanKind, &'static str)> {
         (SpanKind::ToolValidateOutput, "tool.validate_output"),
         (SpanKind::RecoveryAttempt, "recovery.attempt"),
         (SpanKind::StateTransition, "state.transition"),
+        (SpanKind::AgentDecision, "agent.decision"),
     ]
 }
 
@@ -77,4 +78,5 @@ fn new_f4_variants_have_dotted_wire_form() {
     assert_eq!(SpanKind::ToolValidateOutput.as_db_str(), "tool.validate_output");
     assert_eq!(SpanKind::RecoveryAttempt.as_db_str(), "recovery.attempt");
     assert_eq!(SpanKind::StateTransition.as_db_str(), "state.transition");
+    assert_eq!(SpanKind::AgentDecision.as_db_str(), "agent.decision");
 }

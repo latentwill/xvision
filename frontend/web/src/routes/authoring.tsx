@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
 import {
   addStrategyAgent,
+  deleteStrategy,
   getStrategy,
+  patchStrategyMetadata,
   renameStrategyAgentRole,
   removeStrategyAgent,
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
+  validateDraft,
   type AgentRef,
   type PipelineDef,
   type PipelineKind,
@@ -19,11 +22,15 @@ import {
   type Strategy,
 } from "@/api/strategies";
 import { createAgent, listAgents, type Agent } from "@/api/agents";
-import { FiringSection } from "@/components/strategy";
+// `FiringSection` is still exported from `@/components/strategy` for the
+// deferred per-agent filter composer; re-add it to this import when
+// un-deferring (see authoring.tsx FilterCard wiring below).
+import { FilterCard } from "@/components/strategy";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
-import { StrategyChart } from "@/components/chart/StrategyChart";
+import { StrategyHistoryChartV2 } from "@/components/chart/v2/surfaces/StrategyHistoryChartV2";
 import { ModelPicker } from "@/components/ModelPicker";
+import { TimeframeSelect } from "@/components/TimeframeSelect";
 import type { ProviderRow } from "@/api/types.gen";
 import { safeStorageGet, safeStorageSet } from "@/lib/storage";
 
@@ -52,14 +59,15 @@ function InspectorPage({ id }: { id: string }) {
   return (
     <>
       <Topbar
-        title="Inspector"
+        title={strategyQ.data?.manifest.display_name || "Strategy"}
         back={{ to: "/strategies", label: "Back to strategies" }}
         sub={
           strategyQ.data ? (
             <>
-              <span>{strategyQ.data.manifest.display_name}</span>
+              <span>Strategy inspector</span>
               <span className="mx-1.5 text-text-3">·</span>
-              <span className="break-all font-mono text-[12px] text-text-3">
+              <span>Strategy ID:</span>
+              <span className="ml-1 break-all font-mono text-[12px] text-text-3">
                 {id}
               </span>
             </>
@@ -121,7 +129,7 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
             Could not load chart.
           </div>
         )}
-        {chart.data && <StrategyChart payload={chart.data} />}
+        {chart.data && <StrategyHistoryChartV2 payload={chart.data} />}
       </div>
     </Card>
   );
@@ -130,11 +138,132 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
 function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
+      <ValidationCard strategy={strategy} />
       <ManifestCard strategy={strategy} />
+      <FilterCard strategy={strategy} />
       <AgentsCard strategy={strategy} />
       <RiskCard strategy={strategy} />
-      <MechanicalParamsCard strategy={strategy} />
     </>
+  );
+}
+
+// L2 of `docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md`:
+// the strategy editor surfaces the engine's soft warnings (today, the
+// no-Filter warning) alongside errors so an operator sees the same
+// signal whether they're using the CLI or the SPA. Renders nothing
+// while validation is loading or when there are no
+// errors/warnings to report.
+function ValidationCard({ strategy }: { strategy: Strategy }) {
+  const validation = useQuery({
+    queryKey: strategyKeys.validate(strategy.manifest.id),
+    queryFn: () => validateDraft(strategy.manifest.id),
+    enabled: false,
+    // The engine path is cheap (in-memory shape check + filesystem
+    // load); a 30-second staleTime avoids refetching on every keystroke
+    // while still picking up changes after an authoring mutation
+    // invalidates the cache key.
+    staleTime: 30_000,
+  });
+
+  if (!validation.isFetched) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Eval readiness"
+          hint="Run validation when you are ready to launch or check the strategy."
+        />
+        <div className="px-5 pt-4 pb-5">
+          <button
+            type="button"
+            onClick={() => validation.refetch()}
+            disabled={validation.isFetching}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3 disabled:opacity-50"
+          >
+            {validation.isFetching ? "Checking..." : "Check eval readiness"}
+          </button>
+        </div>
+      </Card>
+    );
+  }
+  if (validation.isPending) return null;
+  if (validation.isError) {
+    return (
+      <Card>
+        <SectionHeader label="Eval readiness" hint="Validation request failed." />
+        <div className="px-5 pt-4 pb-5 text-[13px] text-danger">
+          {errorMessage(validation.error)}
+        </div>
+      </Card>
+    );
+  }
+  const { errors = [], warnings = [] } = validation.data ?? {};
+  if (errors.length === 0 && warnings.length === 0) {
+    return (
+      <Card>
+        <SectionHeader label="Eval readiness" hint="No blocking validation issues." />
+        <div className="px-5 pt-4 pb-5">
+          <button
+            type="button"
+            onClick={() => validation.refetch()}
+            disabled={validation.isFetching}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3 disabled:opacity-50"
+          >
+            {validation.isFetching ? "Checking..." : "Recheck"}
+          </button>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <SectionHeader
+        label="Validation"
+        hint={
+          errors.length > 0
+            ? "Resolve before launching an eval."
+            : "Soft signals — the strategy is still saveable."
+        }
+      />
+      <div className="px-5 pt-4 pb-5">
+        <ul className="space-y-2">
+          {errors.map((message, i) => (
+            <ValidationItem key={`err-${i}`} severity="error" message={message} />
+          ))}
+          {warnings.map((message, i) => (
+            <ValidationItem
+              key={`warn-${i}`}
+              severity="warning"
+              message={message}
+            />
+          ))}
+        </ul>
+      </div>
+    </Card>
+  );
+}
+
+function ValidationItem({
+  severity,
+  message,
+}: {
+  severity: "error" | "warning";
+  message: string;
+}) {
+  const tone =
+    severity === "error"
+      ? "bg-danger/10 text-danger border-danger/30"
+      : "bg-warn/10 text-warn border-warn/30";
+  const label = severity === "error" ? "Error" : "Warning";
+  return (
+    <li className="flex items-start gap-2.5 text-[13px]">
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded-sm border mt-0.5 ${tone}`}
+      >
+        {label}
+      </span>
+      <div className="flex-1 text-text leading-relaxed">{message}</div>
+    </li>
   );
 }
 
@@ -469,6 +598,8 @@ type AddAgentAccordionProps = {
 function AddAgentAccordion(props: AddAgentAccordionProps) {
   const [mode, setMode] = useState<"existing" | "create">("existing");
   const [open, setOpen] = useState(true);
+  const existingRoleReserved = isReservedAgentRole(props.newRole);
+  const newAgentRoleReserved = isReservedAgentRole(props.newAgentRole);
 
   return (
     <div
@@ -547,6 +678,11 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                   onChange={(e) => props.setNewRole(e.target.value)}
                   placeholder="Role name (e.g. trader)"
                 />
+                {existingRoleReserved ? (
+                  <div className="mt-1 text-[11px] text-warn">
+                    filter is reserved for saved strategy JSON filters.
+                  </div>
+                ) : null}
               </Field>
               <button
                 type="button"
@@ -554,6 +690,7 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                 disabled={
                   !props.newAgentId ||
                   !props.newRole.trim() ||
+                  existingRoleReserved ||
                   props.attachExistingPending
                 }
                 className="px-3 py-1.5 rounded text-[12px] border border-border disabled:opacity-50"
@@ -579,6 +716,11 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                     onChange={(e) => props.setNewAgentRole(e.target.value)}
                     placeholder="trader"
                   />
+                  {newAgentRoleReserved ? (
+                    <div className="mt-1 text-[11px] text-warn">
+                      filter is reserved for saved strategy JSON filters.
+                    </div>
+                  ) : null}
                 </Field>
               </div>
               <Field label="New agent model">
@@ -611,6 +753,7 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                 disabled={
                   !props.newAgentName.trim() ||
                   !props.newAgentRole.trim() ||
+                  newAgentRoleReserved ||
                   !props.newAgentProvider ||
                   !props.newAgentModel ||
                   props.createPending
@@ -663,11 +806,6 @@ export function AttachedAgentRow({
   agent,
   onRenameRole,
   onRemove,
-  allRefs,
-  pipeline,
-  filterCandidates,
-  providers,
-  onFiringChanged,
 }: AttachedAgentRowProps) {
   const storageKey = agentCollapseKey(strategyId, agentRef.role);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -768,17 +906,8 @@ export function AttachedAgentRow({
               </pre>
             </div>
           ) : null}
-          {allRefs && pipeline && filterCandidates && providers && onFiringChanged ? (
-            <FiringSection
-              strategyId={strategyId}
-              agentRef={agentRef}
-              refs={allRefs}
-              pipeline={pipeline}
-              filterCandidates={filterCandidates}
-              providers={providers}
-              onMutated={onFiringChanged}
-            />
-          ) : null}
+          {/* Per-agent filter composer deferred — see docs/superpowers/specs/2026-05-22-agent-firing-filter-operator-surface.md L4. Filter is now per-strategy via FilterCard. */}
+          {null}
           <div className="flex items-center gap-3 pt-1">
             <button
               type="button"
@@ -808,40 +937,141 @@ export function AttachedAgentRow({
 }
 
 function ManifestCard({ strategy }: { strategy: Strategy }) {
+  const qc = useQueryClient();
   const m = strategy.manifest;
+  const [displayName, setDisplayName] = useState(m.display_name);
+  const [plainSummary, setPlainSummary] = useState(m.plain_summary);
+  const [assetUniverse, setAssetUniverse] = useState(m.asset_universe.join(", "));
+  const [timeframeMinutes, setTimeframeMinutes] = useState(m.decision_cadence_minutes);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDisplayName(m.display_name);
+    setPlainSummary(m.plain_summary);
+    setAssetUniverse(m.asset_universe.join(", "));
+    setTimeframeMinutes(m.decision_cadence_minutes);
+    setLocalError(null);
+  }, [m.display_name, m.plain_summary, m.asset_universe, m.decision_cadence_minutes]);
+
+  const patch = useMutation({
+    mutationFn: () => {
+      if (!Number.isInteger(timeframeMinutes) || timeframeMinutes <= 0) {
+        throw new Error("Time frame must be a positive whole number of minutes.");
+      }
+      const assets = assetUniverse
+        .split(",")
+        .map((asset) => asset.trim())
+        .filter(Boolean);
+      if (assets.length === 0) {
+        throw new Error("Asset universe must include at least one SYMBOL/QUOTE pair.");
+      }
+      return patchStrategyMetadata(m.id, {
+        display_name: displayName,
+        plain_summary: plainSummary,
+        asset_universe: assets,
+        decision_cadence_minutes: timeframeMinutes,
+      });
+    },
+    onSuccess: (updated) => {
+      setSavedFlash(true);
+      setLocalError(null);
+      window.setTimeout(() => setSavedFlash(false), 1800);
+      qc.setQueryData(strategyKeys.detail(m.id), updated);
+      qc.invalidateQueries({ queryKey: strategyKeys.validate(m.id) });
+    },
+    onError: (err) => {
+      setLocalError(errorMessage(err));
+    },
+  });
+
+  const dirty =
+    displayName !== m.display_name ||
+    plainSummary !== m.plain_summary ||
+    assetUniverse !== m.asset_universe.join(", ") ||
+    timeframeMinutes !== m.decision_cadence_minutes;
+
   return (
     <Card>
       <SectionHeader
         label="Manifest"
-        hint="Direct edits are locked in the Inspector. Wizard changes appear here only after a save tool succeeds."
+        hint="Editable strategy identity and run defaults. The strategy ID stays stable for eval history."
       />
-      <dl className="grid grid-cols-[160px_1fr] gap-y-2 px-5 pt-4 pb-4 text-[13px]">
-        <DT>Display name</DT>
-        <DD>{m.display_name}</DD>
-        <DT>Template</DT>
-        <DD className="font-mono text-text-2">{m.template}</DD>
-        <DT>Creator</DT>
-        <DD className="font-mono text-text-2">{m.creator}</DD>
-        <DT>Asset universe</DT>
-        <DD>
-          {m.asset_universe.length > 0
-            ? m.asset_universe.map((a) => (
-                <span
-                  key={a}
-                  className="inline-block mr-1.5 px-1.5 py-0.5 bg-surface-elev border border-border-soft rounded text-[12px] font-mono"
-                >
-                  {a}
-                </span>
-              ))
-            : "(none)"}
-        </DD>
-        <DT>Cadence</DT>
-        <DD>
-          every <strong>{m.decision_cadence_minutes}</strong> min
-        </DD>
-        <DT>Risk basis</DT>
-        <DD>{m.risk_preset_or_config}</DD>
-      </dl>
+      <div className="px-5 pt-4 pb-5 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Display name">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Asset universe"
+            hint="Comma-separated SYMBOL/QUOTE pairs, e.g. BTC/USD, ETH/USD"
+          >
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              aria-label="Asset universe"
+              value={assetUniverse}
+              onChange={(e) => setAssetUniverse(e.target.value)}
+            />
+          </Field>
+          <Field label="Time frame">
+            <TimeframeSelect
+              valueMinutes={timeframeMinutes}
+              onChange={setTimeframeMinutes}
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+            />
+          </Field>
+          <Field
+            label="Strategy ID"
+            hint="Stable identifier used by eval runs, traces, and API links."
+          >
+            <input
+              className="w-full bg-surface-elev border border-border-soft rounded px-3 py-2 text-[13px] text-text-2 font-mono"
+              value={m.id}
+              readOnly
+              aria-label={`Strategy ID ${m.id}`}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </Field>
+        </div>
+        <Field label="Description">
+          <textarea
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text leading-relaxed"
+            value={plainSummary}
+            onChange={(e) => setPlainSummary(e.target.value)}
+            rows={3}
+          />
+        </Field>
+        <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-[13px]">
+          <DT>Template</DT>
+          <DD className="font-mono text-text-2">{m.template}</DD>
+          <DT>Creator</DT>
+          <DD className="font-mono text-text-2">{m.creator}</DD>
+          <DT>Risk basis</DT>
+          <DD>{m.risk_preset_or_config}</DD>
+        </dl>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setLocalError(null);
+              patch.mutate();
+            }}
+            disabled={!dirty || patch.isPending}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+          >
+            {patch.isPending ? "Saving..." : "Save manifest"}
+          </button>
+          {savedFlash ? (
+            <span className="text-[12px] text-success">Saved.</span>
+          ) : localError ? (
+            <span className="text-[12px] text-danger">{localError}</span>
+          ) : null}
+        </div>
+      </div>
     </Card>
   );
 }
@@ -1012,34 +1242,6 @@ function riskFormFromConfig(risk: RiskConfig): RiskFormState {
   };
 }
 
-function MechanicalParamsCard({ strategy }: { strategy: Strategy }) {
-  const json = JSON.stringify(strategy.mechanical_params, null, 2);
-  const empty =
-    strategy.mechanical_params == null ||
-    (typeof strategy.mechanical_params === "object" &&
-      Object.keys(strategy.mechanical_params as object).length === 0);
-
-  return (
-    <Card>
-      <SectionHeader
-        label="Mechanical params"
-        hint="Inspector read-only in v1. Tune through setup tools; this panel shows the saved JSON."
-      />
-      <div className="px-5 pt-4 pb-5">
-        {empty ? (
-          <p className="m-0 text-[13px] text-text-3">
-            No mechanical params on this template.
-          </p>
-        ) : (
-          <pre className="m-0 overflow-x-auto rounded border border-border-soft bg-surface-elev p-3 font-mono text-[12px] text-text-2">
-            {json}
-          </pre>
-        )}
-      </div>
-    </Card>
-  );
-}
-
 function BackLinkCard() {
   return (
     <Card>
@@ -1072,12 +1274,43 @@ function InspectorActions({
   strategyId: string;
   strategy: Strategy | null;
 }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const deleteMut = useMutation({
+    mutationFn: () => deleteStrategy(strategyId),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: strategyKeys.all });
+      navigate("/strategies");
+    },
+  });
+
+  function onDelete() {
+    const label = strategy?.manifest.display_name || strategyId;
+    if (!window.confirm(`Delete strategy "${label}"? This cannot be undone.`)) {
+      return;
+    }
+    deleteMut.mutate();
+  }
+
+  const deleteButton = (
+    <button
+      type="button"
+      onClick={onDelete}
+      disabled={deleteMut.isPending}
+      aria-label={`Delete strategy ${strategyId}`}
+      className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-danger/40 text-danger hover:border-danger disabled:opacity-50"
+    >
+      {deleteMut.isPending ? "Deleting..." : "Delete"}
+    </button>
+  );
+
   if (!strategy) {
     return (
       <div className="flex items-center justify-end gap-3 mb-5">
         <span className="text-[12px] text-text-3">
           Checking eval readiness...
         </span>
+        {deleteButton}
       </div>
     );
   }
@@ -1085,6 +1318,11 @@ function InspectorActions({
   if (!hasAttachedAgents(strategy)) {
     return (
       <div className="flex items-center justify-end gap-3 mb-5">
+        {deleteMut.isError ? (
+          <span className="text-[12px] text-danger">
+            {errorMessage(deleteMut.error)}
+          </span>
+        ) : null}
         <span className="text-[12px] text-danger">
           No strategy agent is attached yet.
         </span>
@@ -1094,12 +1332,19 @@ function InspectorActions({
         >
           Go to agents
         </a>
+        {deleteButton}
       </div>
     );
   }
 
   return (
     <div className="flex items-center justify-end gap-3 mb-5">
+      {deleteMut.isError ? (
+        <span className="text-[12px] text-danger">
+          {errorMessage(deleteMut.error)}
+        </span>
+      ) : null}
+      {deleteButton}
       <Link
         to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
         className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
@@ -1116,6 +1361,10 @@ function hasAttachedAgents(strategy: Strategy | null): boolean {
 
 function agentSupportsFilter(agent: Agent): boolean {
   return agent.slots.some((slot) => slot.capabilities?.includes("filter"));
+}
+
+function isReservedAgentRole(role: string): boolean {
+  return role.trim().toLowerCase() === "filter";
 }
 
 function Field({

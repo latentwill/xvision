@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use crate::eval::live_config::LiveConfig;
+
 /// Reason a run was aborted by the safety subsystem. Persisted to the
 /// `eval_runs.error` column so the dashboard can render a human-readable
 /// reason alongside the `Cancelled` terminal status.
@@ -55,7 +57,7 @@ impl RunAbort {
 #[serde(rename_all = "snake_case")]
 pub enum RunMode {
     Backtest,
-    Paper,
+    Live,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -111,14 +113,19 @@ impl RunMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             RunMode::Backtest => "backtest",
-            RunMode::Paper => "paper",
+            RunMode::Live => "live",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "backtest" => Some(RunMode::Backtest),
-            "paper" => Some(RunMode::Paper),
+            "live" => Some(RunMode::Live),
+            // Legacy DB read-only alias: pre-collapse runs persisted `mode = 'paper'`.
+            // The intake's "retire paper mode with prejudice" decision relabels them
+            // as Backtest on read. New writes never emit "paper". See
+            // team/archive/2026-05-22-conductor-pass/contracts/executor-refactor.md.
+            "paper" => Some(RunMode::Backtest),
             _ => None,
         }
     }
@@ -165,6 +172,21 @@ pub struct Run {
     /// `None` for pre-migration rows.
     #[serde(default)]
     pub bars_manifest: Option<serde_json::Value>,
+    /// Per-run opt-in for the post-completion auto review path.
+    #[serde(default)]
+    pub auto_fire_review: bool,
+    /// Provider/model preference to use when an operator manually fires a
+    /// review, or when a future LLM auto-review worker is enabled.
+    #[serde(default)]
+    pub review_model: Option<ReviewModel>,
+    /// Upper bound for review-generated chart annotations. Defaults to 8
+    /// when absent.
+    #[serde(default)]
+    pub max_annotations_per_review: Option<u32>,
+    /// Launch envelope for a Live run. Backtests keep this as `None`; Live
+    /// rows persist it in `eval_runs.live_config_json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_config: Option<LiveConfig>,
 }
 
 impl Run {
@@ -188,8 +210,28 @@ impl Run {
             bars_content_hash: None,
             manifest_canonical: None,
             bars_manifest: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
+            live_config: None,
         }
     }
+
+    pub fn with_live_config(mut self, config: LiveConfig) -> Self {
+        self.live_config = Some(config);
+        self
+    }
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewModel {
+    pub provider: String,
+    pub model: String,
 }
 
 /// Per-baseline performance numbers for one of the four automatic baselines.
@@ -306,5 +348,47 @@ impl MetricsSummary {
     /// `total_return_pct` for one release.
     pub fn gross_return_pct(&self) -> f64 {
         self.total_return_pct
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_mode_as_str_backtest_returns_backtest() {
+        // executor-collapse-paper-mode: post-collapse the wire string is
+        // "backtest", not "paper". New writes emit "backtest"; legacy
+        // "paper" rows route through `parse(...)` to `Backtest` on read.
+        assert_eq!(RunMode::Backtest.as_str(), "backtest");
+    }
+
+    #[test]
+    fn run_mode_as_str_live_returns_live() {
+        assert_eq!(RunMode::Live.as_str(), "live");
+    }
+
+    #[test]
+    fn run_mode_parse_paper_returns_backtest_legacy_alias() {
+        // The legacy alias is the deliberate backward-compatibility seam
+        // (see comment in `RunMode::parse`). Pre-collapse rows with
+        // `mode = 'paper'` continue to load as Backtest.
+        assert_eq!(RunMode::parse("paper"), Some(RunMode::Backtest));
+    }
+
+    #[test]
+    fn run_mode_parse_backtest_returns_backtest() {
+        assert_eq!(RunMode::parse("backtest"), Some(RunMode::Backtest));
+    }
+
+    #[test]
+    fn run_mode_parse_live_returns_live() {
+        assert_eq!(RunMode::parse("live"), Some(RunMode::Live));
+    }
+
+    #[test]
+    fn run_mode_parse_unknown_returns_none() {
+        assert_eq!(RunMode::parse("???"), None);
+        assert_eq!(RunMode::parse(""), None);
     }
 }

@@ -76,6 +76,8 @@ beforeEach(() => {
   stubMatchMediaDesktop();
   vi.mocked(settingsApi.listProviders).mockResolvedValue({
     providers: [provider()],
+  
+      default_model: null,
   });
 });
 
@@ -92,6 +94,8 @@ describe("SettingsProvidersRoute", () => {
         provider({ name: "anthropic", kind: "anthropic" }),
         provider({ name: "openrouter", kind: "openai-compat" }),
       ],
+    
+        default_model: null,
     });
 
     renderRoute();
@@ -124,6 +128,8 @@ describe("SettingsProvidersRoute", () => {
           enabled_models: ["gpt-4.1-mini", "gpt-4.1"],
         }),
       ],
+    
+        default_model: null,
     });
     vi.mocked(settingsApi.listProviderModels).mockResolvedValue({
       models: [
@@ -163,6 +169,8 @@ describe("SettingsProvidersRoute", () => {
   it("does not re-order rows mid-session when a checkbox is toggled", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [provider({ enabled_models: ["gpt-4.1"] })],
+    
+        default_model: null,
     });
     vi.mocked(settingsApi.listProviderModels).mockResolvedValue({
       models: [

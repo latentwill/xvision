@@ -17,6 +17,7 @@ export type StrategyListItem = {
   template: string;
   decision_cadence_minutes: number;
   tags?: string[];
+  color?: string | null;
   model?: string;
   providers?: string[];
   models?: string[];
@@ -119,7 +120,11 @@ type PublicManifest = {
   required_tools: string[];
   risk_preset_or_config: string;
   published_at: string | null;
+  color?: string | null;
 };
+
+export type { Filter } from "./types.gen/Filter";
+import type { Filter } from "./types.gen/Filter";
 
 export type Strategy = {
   manifest: PublicManifest;
@@ -130,6 +135,15 @@ export type Strategy = {
   mechanical_params: unknown;
   agents?: AgentRef[];
   pipeline?: PipelineDef;
+  /// Per-strategy deterministic gate. `null` (or absent) means
+  /// `EveryBar` — the strategy fires on every cycle. Non-null means
+  /// `Filtered` — the engine evaluates the DSL each bar.
+  filter?: Filter | null;
+};
+
+export type SetFilterBody = {
+  source: string;
+  format: "json";
 };
 
 export type StrategyAgentsOut = {
@@ -156,6 +170,12 @@ export type ValidateDraftOut = {
   id: string;
   ok: boolean;
   errors: string[];
+  /// Soft signals — saveable but worth surfacing in the strategy editor
+  /// alongside errors. As of the firing-filter wave the engine populates
+  /// this with the no-Filter warning (Trader/Critic agent with no
+  /// upstream Filter). Optional on the wire so older server responses
+  /// continue to parse — treat `undefined` as `[]`.
+  warnings?: string[];
 };
 
 export type TemplateInfo = {
@@ -179,6 +199,14 @@ export type CreateStrategyOut = {
 
 export type CloneStrategyReq = {
   display_name?: string;
+};
+
+export type StrategyMetadataPatch = {
+  display_name?: string;
+  plain_summary?: string;
+  asset_universe?: string[];
+  decision_cadence_minutes?: number;
+  color?: string;
 };
 
 export const strategyKeys = {
@@ -230,6 +258,16 @@ export function getStrategy(id: string): Promise<Strategy> {
   return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}`);
 }
 
+export function patchStrategyMetadata(
+  id: string,
+  patch: StrategyMetadataPatch,
+): Promise<Strategy> {
+  return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
 export function setRiskConfig(
   id: string,
   body: PutRiskBody,
@@ -240,6 +278,33 @@ export function setRiskConfig(
       method: "PUT",
       body: JSON.stringify(body),
     },
+  );
+}
+
+/// Install/replace the per-strategy deterministic filter. `source` is
+/// the raw DSL JSON text; the engine
+/// parses + validates server-side and returns the resolved Filter on
+/// success. Validation/parse failures come back as ApiError (4xx).
+export function setStrategyFilter(
+  id: string,
+  body: SetFilterBody,
+): Promise<Strategy> {
+  return apiFetch<Strategy>(
+    `/api/strategy/${encodeURIComponent(id)}/filter`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/// Drop the per-strategy filter and revert activation_mode back to
+/// `EveryBar`. Server returns 204 No Content; the helper resolves to
+/// void.
+export function clearStrategyFilter(id: string): Promise<void> {
+  return apiFetch<void>(
+    `/api/strategy/${encodeURIComponent(id)}/filter`,
+    { method: "DELETE" },
   );
 }
 
@@ -347,7 +412,7 @@ export function listTemplates(): Promise<TemplateInfo[]> {
 }
 
 /// Create a new blank draft strategy. Returns the new agent_id; the UI
-/// redirects to /authoring/:id after this resolves.
+/// redirects to /strategies/:id after this resolves.
 export function createStrategy(
   body: CreateStrategyReq,
 ): Promise<CreateStrategyOut> {

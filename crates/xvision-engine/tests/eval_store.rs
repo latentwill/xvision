@@ -46,7 +46,7 @@ async fn get_unknown_id_errors() {
 #[tokio::test]
 async fn update_status_transitions_queued_to_running_to_completed() {
     let (store, _db_dir, scenario_id) = store_with_migration().await;
-    let run = fresh_run(&scenario_id, RunMode::Paper);
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 

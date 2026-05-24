@@ -29,25 +29,35 @@ its own CLI, dashboard, `BrokerSurface`, and eval pipeline.
 
 ## Required Mental Model
 
-Paper eval order flow:
+Backtest and bounded Live Alpaca evals now share the `Executor` loop. The run
+shape determines which sources and sinks are attached:
 
-1. `xvision-engine::eval::executor::paper::PaperExecutor` runs each decision.
-2. It asks the broker for position and balance.
-3. It loads the scenario's historical bars and includes the current bar in the
-   agent seed inputs.
-4. It sizes actionable decisions using the current eval bar close as the
-   reference price.
-5. It calls `BrokerSurface::submit_order` with that explicit
-   `reference_price_usd`.
-6. `xvision-execution::broker_surface::AlpacaPaperSurface` converts base size
-   into Alpaca notional and submits a market order.
+1. Backtests require a scenario id. Bars come from the scenario loader or an
+   injected test fixture, fills use `SimulatedFills`, and `live_config` must be
+   absent.
+2. Live Alpaca v1 requires `RunMode::Live` plus `LiveConfig`. It persists
+   `eval_runs.scenario_id = NULL` and `eval_runs.live_config_json`; internally
+   the API builds a synthetic scenario envelope from the live config.
+3. Live v1 is paper-only. `VenueLabel::Live` and non-paper Alpaca trading base
+   URLs must be rejected. The accepted default is
+   `https://paper-api.alpaca.markets`.
+4. Live bars are supplied by `AlpacaLiveClient` with a polling fallback through
+   `LiveStream`. Configured warmup bars seed `market_data.bar_history` only;
+   they must not create decisions or fills.
+5. Live fills go through `RealBrokerFills` and
+   `xvision-execution::broker_surface::AlpacaPaperSurface`. Broker rejections
+   should persist the broker error class/message on the fill record and produce
+   diagnosable run failure context.
+6. Stop policy is mandatory for live runs and uses OR semantics across
+   `time_limit_secs`, `bar_limit`, and `decision_limit`.
 
 Reference-price invariant:
 
 - The agent must receive the current historical eval bar before deciding.
-- Paper eval order sizing and Alpaca notional conversion must use the same
+- Backtest order sizing and Alpaca notional conversion must use the same
   current eval bar close.
-- Do not use live/latest quotes for a historical eval decision.
+- Do not use live/latest quotes for a historical backtest decision.
+- Live orders must use the current live bar close as the reference price.
 - Do not default BTC/USD to a hard-coded paper price except inside isolated
   mocks.
 - Missing reference price must not be a vague terminal error. Include run id,
@@ -60,8 +70,10 @@ Reference-price invariant:
    - Broker-surface errors usually mention `alpaca get_position`,
      `alpaca create_order`, `alpaca get_order`, or reference price.
    - Eval orchestration errors live in `crates/xvision-engine/src/api/eval.rs`.
-   - Paper execution errors live in
-     `crates/xvision-engine/src/eval/executor/paper.rs`.
+   - Shared backtest/live execution errors live in
+     `crates/xvision-engine/src/eval/executor/backtest.rs`.
+   - Live config validation lives in
+     `crates/xvision-engine/src/eval/live_config.rs`.
    - Alpaca order conversion lives in
      `crates/xvision-execution/src/broker_surface.rs`.
 
@@ -81,13 +93,16 @@ Reference-price invariant:
 4. Add tests with mocks before touching live credentials.
    - Use `crates/xvision-execution/tests/broker_surface.rs` for
      `AlpacaPaperSurface` behavior.
+   - Use `RunMode::Live` requests without credentials only for validation
+     failures, not broker submission.
    - Mock flat accounts with `positions: vec![]`.
    - Assert the notional and bracket prices come from the intended eval-bar
      reference price.
 
 5. Validate narrowly first.
    - `cargo test -p xvision-execution --test broker_surface`
-   - `cargo test -p xvision-engine eval_executor_paper`
+   - `cargo test -p xvision-engine live_config`
+   - `cargo test -p xvision-engine --test api_eval_run run_rejects_live_mode_without_live_config -- --nocapture`
    - `cargo build --release` before building a deploy image.
 
 ## Logging Requirements

@@ -82,7 +82,7 @@ export function CompareChart({
       );
     });
 
-    applyRange(c, range, collectVisibleTimes(payload, showBackdrop));
+    applyRange(c, range, collectVisibleTimes(payload, showBackdrop), showBackdrop && !!payload.price_backdrop);
 
     return () => c.remove();
   }, [payload, activeTheme, showBackdrop, range]);
@@ -126,13 +126,12 @@ function applyRange(
   chart: ReturnType<typeof createChart>,
   range: RangePreset,
   times: number[],
+  includeBackdrop: boolean,
 ) {
   if (times.length <= 0) return;
+  const scaleIds = includeBackdrop ? ["right", "left"] : ["right"];
   if (range === "All") {
-    // CompareChart's price series live on the `left` scale (see the
-    // backdrop `priceScaleId: "left"` config above); fitChartContent's
-    // default `right` is a no-op for this chart, so pass the actual id.
-    fitChartContent(chart, ["left"]);
+    fitChartContent(chart, scaleIds);
     return;
   }
 
@@ -147,7 +146,7 @@ function applyRange(
     from: Math.max(0, times.length - count),
     to: times.length + 2,
   });
-  applyVerticalAutoScale(chart, ["left"]);
+  applyVerticalAutoScale(chart, scaleIds);
 }
 
 function inferBarSeconds(times: number[]): number | null {

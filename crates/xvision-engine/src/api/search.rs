@@ -268,7 +268,7 @@ fn strategy_entry(strategy: &Strategy) -> IndexEntry {
         summary,
         tags,
         updated_at: m.published_at.unwrap_or_else(chrono::Utc::now),
-        href: format!("/authoring/{}", m.id),
+        href: format!("/strategies/{}", m.id),
     }
 }
 
@@ -333,7 +333,7 @@ fn run_entry(run: &Run) -> IndexEntry {
 
 fn mode_label(m: RunMode) -> &'static str {
     match m {
-        RunMode::Paper => "paper",
+        RunMode::Live => "live",
         RunMode::Backtest => "backtest",
     }
 }
@@ -468,6 +468,10 @@ mod tests {
             bars_content_hash: None,
             manifest_canonical: None,
             bars_manifest: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
+            live_config: None,
         };
 
         // Two upserts in a row — second must not error and must not

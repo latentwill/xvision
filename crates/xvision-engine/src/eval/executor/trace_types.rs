@@ -1,8 +1,8 @@
 //! V2E trace-surface types — per-decision and per-fill provenance fields.
 //!
 //! These types are the wire-stable schema for `decisions.jsonl` and
-//! `fills.jsonl` artifacts emitted by both `BacktestExecutor` and
-//! `PaperExecutor`. Old runs without these fields deserialize via
+//! `fills.jsonl` artifacts emitted by both `Executor` and
+//! `paper-mode-executor-deleted`. Old runs without these fields deserialize via
 //! `serde(default)` and report `schema_version = "1"`.
 //!
 //! Schema version history:

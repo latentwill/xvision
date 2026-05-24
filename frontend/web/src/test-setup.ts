@@ -41,6 +41,28 @@ if (typeof window !== "undefined") {
   });
 }
 
+// uPlot (used by chart-v2 panes) calls `matchMedia` at module-load
+// time to set up its DPR change listener. jsdom doesn't ship
+// `matchMedia`; polyfill a no-op so importing any uPlot pane works in
+// tests. Component-level tests that need to assert matchMedia behaviour
+// can replace this on the window directly.
+if (typeof window !== "undefined" && typeof window.matchMedia === "undefined") {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 // Provide a minimal EventSource stub for components that try to
 // subscribe to SSE during tests. Individual tests can replace this.
 class StubEventSource {

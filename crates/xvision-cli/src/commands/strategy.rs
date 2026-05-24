@@ -1756,206 +1756,77 @@ async fn clone(
         return Err(CliError::usage(anyhow::anyhow!("--name must be non-empty")));
     }
 
-    // Validate the override pair: both or neither. A half-set override
-    // is a usage error, not a silent partial.
-    let override_pair: Option<(String, String)> = match (override_provider, override_model) {
-        (Some(p), Some(m)) => {
-            let p = p.trim();
-            let m = m.trim();
-            if p.is_empty() || m.is_empty() {
-                return Err(CliError::usage(anyhow::anyhow!(
-                    "--provider and --model must be non-empty when supplied"
-                )));
-            }
-            Some((p.to_string(), m.to_string()))
+    // Surface the half-supplied override pair at the CLI layer too, so
+    // operators get a familiar usage error before any ApiContext is
+    // opened. (The engine helper enforces the same invariant for non-CLI
+    // callers.)
+    match (override_provider, override_model) {
+        (Some(_), None) => {
+            return Err(CliError::usage(anyhow::anyhow!("--provider requires --model")));
         }
-        (None, None) => None,
-        (Some(_), None) => return Err(CliError::usage(anyhow::anyhow!("--provider requires --model"))),
-        (None, Some(_)) => return Err(CliError::usage(anyhow::anyhow!("--model requires --provider"))),
-    };
+        (None, Some(_)) => {
+            return Err(CliError::usage(anyhow::anyhow!("--model requires --provider")));
+        }
+        _ => {}
+    }
 
     let ctx = open_ctx().await?;
 
-    // 1. Load the source strategy. NotFound short-circuits without any
-    //    writes downstream.
-    let source = store().load(source_strategy_id).await.map_err(|e| CliError {
-        exit: XvnExit::NotFound,
-        source: anyhow::anyhow!("strategy `{source_strategy_id}` not found: {e}"),
-    })?;
+    let out = api_strategy::clone_strategy_full(
+        &ctx,
+        source_strategy_id,
+        api_strategy::CloneStrategyFullReq {
+            display_name: Some(new_name.to_string()),
+            provider: override_provider.map(str::to_string),
+            model: override_model.map(str::to_string),
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("strategy clone", e))?;
 
-    // 2. If an override is supplied, validate it against the providers
-    //    catalog BEFORE doing any DB writes. Same refusal shape eval
-    //    uses (`reason` discriminant + actionable hint).
-    if let Some((ref p, ref m)) = override_pair {
-        let cfg_path = ctx.xvn_home.join("config").join("default.toml");
-        if let Err(unavailable) =
-            xvision_engine::api::settings::providers::resolve_provider(&ctx, &cfg_path, p, Some(m)).await
-        {
-            return Err(CliError {
-                exit: XvnExit::Usage,
-                source: anyhow::anyhow!(
-                    "--provider/--model override `{} / {}` is not launchable (reason={}): {}",
-                    unavailable.provider,
-                    unavailable.model.as_deref().unwrap_or("?"),
-                    unavailable.reason.as_str(),
-                    unavailable.hint,
-                ),
-            });
-        }
-    }
-
-    // 3. Clone each AgentRef into a new library record. Track the
-    //    resulting (new_id, role) pairs so we can build the new
-    //    Strategy.agents Vec in step 4. Failures here return early
-    //    before any strategy file is written.
-    let mut cloned_agent_refs: Vec<AgentRef> = Vec::with_capacity(source.agents.len());
-    let mut created_agent_ids: Vec<String> = Vec::new();
-    for agent_ref in &source.agents {
-        let source_agent = match api_agents::get(&ctx, &agent_ref.agent_id).await {
-            Ok(a) => a,
-            Err(e) => {
-                return Err(api_to_cli("strategy clone (load agent)", e));
-            }
-        };
-
-        // Rewrite slots if override supplied. Each slot's provider +
-        // model are substituted with the override pair; other slot
-        // fields (system_prompt, skill_ids, max_tokens, …) carry
-        // forward unchanged.
-        let new_slots: Vec<AgentSlot> = source_agent
-            .slots
-            .into_iter()
-            .map(|mut slot| {
-                if let Some((ref p, ref m)) = override_pair {
-                    slot.provider = p.clone();
-                    slot.model = m.clone();
-                }
-                slot
-            })
-            .collect();
-
-        let new_agent = api_agents::create(
-            &ctx,
-            api_agents::CreateAgentRequest {
-                name: format!(
-                    "{} (clone of {})",
-                    source_agent.name, source.manifest.display_name
-                ),
-                description: format!(
-                    "Cloned from agent {} via `xvn strategy clone {}`",
-                    agent_ref.agent_id, source_strategy_id
-                ),
-                tags: {
-                    let mut t = source_agent.tags.clone();
-                    t.push("cloned".into());
-                    t
-                },
-                slots: new_slots,
-                scope_strategy_id: None,
-            },
-        )
-        .await
-        .map_err(|e| api_to_cli("strategy clone (create cloned agent)", e))?;
-
-        created_agent_ids.push(new_agent.agent_id.clone());
-        cloned_agent_refs.push(AgentRef {
-            agent_id: new_agent.agent_id,
-            role: agent_ref.role.clone(),
-            activates: agent_ref.activates.clone(),
-        });
-    }
-
-    // 4. Build the new Strategy. Mint a fresh ULID; copy every other
-    //    field from the source. `cloned_from` lands in
-    //    `mechanical_params.metadata.cloned_from`.
-    let new_strategy_id = Ulid::new().to_string();
-    let mut new_mechanical_params = source.mechanical_params.clone();
-    {
-        // Ensure mechanical_params is an object before reaching for
-        // `.metadata`. Source strategies authored via the legacy paths
-        // may carry a non-object value here; preserve it under a
-        // reserved `_legacy` key so we don't drop it silently.
-        if !new_mechanical_params.is_object() {
-            let prior = new_mechanical_params.clone();
-            new_mechanical_params = serde_json::json!({ "_legacy": prior });
-        }
-        let obj = new_mechanical_params.as_object_mut().unwrap();
-        let metadata = obj
-            .entry("metadata".to_string())
-            .or_insert_with(|| serde_json::json!({}));
-        if !metadata.is_object() {
-            *metadata = serde_json::json!({});
-        }
-        let metadata_obj = metadata.as_object_mut().unwrap();
-        metadata_obj.insert(
-            "cloned_from".to_string(),
-            serde_json::Value::String(source_strategy_id.to_string()),
-        );
-    }
-
-    let mut new_manifest = source.manifest.clone();
-    new_manifest.id = new_strategy_id.clone();
-    new_manifest.display_name = new_name.to_string();
-    new_manifest.published_at = None;
-
-    let new_strategy = xvision_engine::strategies::Strategy {
-        manifest: new_manifest,
-        hypothesis: source.hypothesis.clone(),
-        agents: cloned_agent_refs.clone(),
-        pipeline: source.pipeline.clone(),
-        regime_slot: source.regime_slot.clone(),
-        intern_slot: source.intern_slot.clone(),
-        trader_slot: source.trader_slot.clone(),
-        risk: source.risk.clone(),
-        mechanical_params: new_mechanical_params,
-        activation_mode: source.activation_mode,
-        filter: source.filter.clone(),
-        acknowledge_no_filter: source.acknowledge_no_filter,
+    // Primary-agent surfacing for downstream tools: prefer the trader-
+    // role AgentRef on the cloned strategy; fall back to the first
+    // cloned agent id when no trader role exists.
+    let primary_agent_id = {
+        let cloned = store()
+            .load(&out.strategy_id)
+            .await
+            .exit_with(XvnExit::Upstream)?;
+        cloned
+            .agents
+            .iter()
+            .find(|r| r.role.eq_ignore_ascii_case("trader"))
+            .map(|r| r.agent_id.clone())
+            .or_else(|| out.agent_ids.first().cloned())
     };
 
-    // 5. Shape-validate the cloned strategy. A bad clone surfaces here
-    //    rather than after a partial filesystem write.
-    let preflight = preflight_validate(&new_strategy, None);
-    if !preflight.errors.is_empty() {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "clone validation failed: {}",
-            preflight.errors.join("; ")
-        )));
-    }
-
-    // 6. Persist the cloned strategy. Source is untouched; agents we
-    //    created above already exist in the library.
-    store().save(&new_strategy).await.exit_with(XvnExit::Upstream)?;
-
-    // 7. Emit output. Contract shape:
-    //    `{ strategy_id, agent_id, source_strategy_id, ... }`. For
-    //    multi-agent strategies we surface the trader-role agent (or
-    //    the first agent) as `agent_id` and the full Vec as
-    //    `agent_ids` so downstream tools can choose.
-    let primary_agent_id = cloned_agent_refs
-        .iter()
-        .find(|r| r.role.eq_ignore_ascii_case("trader"))
-        .or_else(|| cloned_agent_refs.first())
-        .map(|r| r.agent_id.clone());
-
     let json_out = serde_json::json!({
-        "strategy_id": new_strategy_id,
+        "strategy_id": out.strategy_id,
         "agent_id": primary_agent_id,
-        "agent_ids": created_agent_ids,
-        "source_strategy_id": source_strategy_id,
+        "agent_ids": out.agent_ids,
+        "source_strategy_id": out.source_strategy_id,
         "name": new_name,
-        "override": override_pair.as_ref().map(|(p, m)| serde_json::json!({"provider": p, "model": m})),
+        "override": match (override_provider, override_model) {
+            (Some(p), Some(m)) => Some(serde_json::json!({"provider": p, "model": m})),
+            _ => None,
+        },
     });
 
     if json {
+        // PR #531 JSON contract: clean JSON on stdout, human banners on
+        // stderr only. Skip the progress banner so stdout is exactly one
+        // JSON object.
         crate::io::print_json(&json_out)?;
     } else {
         crate::progress!(
             "Cloned strategy: {} → {} (agents cloned: {})",
             source_strategy_id,
-            new_strategy_id,
-            created_agent_ids.len()
+            out.strategy_id,
+            out.agent_ids.len()
         );
+        // Pretty JSON to stdout is the non-JSON-mode "result body" so
+        // human readers still see the new ids. The progress line above
+        // goes to stderr.
         println!(
             "{}",
             serde_json::to_string_pretty(&json_out).exit_with(XvnExit::Upstream)?

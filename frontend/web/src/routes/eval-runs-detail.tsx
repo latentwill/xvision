@@ -281,6 +281,7 @@ export function EvalRunDetailRoute() {
 
       <FilterSummaryPanel summaries={detail.filter_summaries ?? []} />
       <FilterEventTimeline events={detail.filter_events ?? []} title="Filter timeline" />
+      <DecisionProvenancePanel rows={detail.decisions} />
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Decisions <span className="text-text-3 text-[14px]">({detail.decisions.length})</span>
@@ -467,6 +468,7 @@ function SummaryCard({
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const agentRunId = traceRunId(summary);
+  const displayedCostUsd = summary.inference_cost_quote_total ?? totalCostUsd;
 
   async function handleDownload() {
     setDownloadError(null);
@@ -495,8 +497,9 @@ function SummaryCard({
           </div>
           <div
             data-testid="eval-run-id"
-            className="mt-1 font-mono text-[12px] text-text-3 break-all select-all"
+            className="mt-1 font-mono text-[12px] text-text-2 break-all select-all"
             aria-label={`Eval run id ${summary.id}`}
+            title={summary.id}
           >
             {summary.id}
           </div>
@@ -507,6 +510,8 @@ function SummaryCard({
             data-testid="eval-run-meta"
             className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-3"
           >
+            <span>{summary.mode}</span>
+            <span>{summary.status}</span>
             <span className="text-text-2">{disambiguator}</span>
             <Link
               to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
@@ -542,6 +547,12 @@ function SummaryCard({
                 {cancelling ? "Stopping..." : "Stop eval"}
               </button>
             ) : null}
+            <Link
+              to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
+              className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-center text-[12px] text-info hover:border-info/50 hover:text-text"
+            >
+              View agent trace →
+            </Link>
             {canRetry ? (
               <button
                 type="button"
@@ -620,43 +631,15 @@ function SummaryCard({
         />
         <Metric label="Tokens" value={fmtTokens(summary)} />
         {/*
-          F-8 (qa-round-7): total inference cost stat lives next to Tokens.
-          Both ultimately sum over the per-call `model_call_cost_usd` rows
-          recorded by xvision-observability — agent-runs API rolls them up
-          server-side as `total_cost_usd` so we don't double-aggregate
-          here. Falls back to em-dash when the linked agent run hasn't
-          loaded (or is missing for older runs); the `title` attribute
-          surfaces full precision on hover, matching the trace surfaces.
+          Prefer the eval metrics summary cost; fall back to the linked
+          agent-run rollup for older runs that predate summary enrichment.
         */}
         <Metric
           label="Total cost (USD)"
-          value={formatCostUsd(totalCostUsd)}
+          value={formatCostUsd(displayedCostUsd)}
           titleValue={
-            totalCostUsd != null && Number.isFinite(totalCostUsd)
-              ? formatCostUsdPrecise(totalCostUsd)
-              : undefined
-          }
-        />
-        {/*
-          V2E: inference cost from MetricsSummary (aggregated post-run over
-          model_calls.cost_usd). Shown when pricing data is available;
-          falls back to em-dash for old runs or un-priced models.
-          Prefer summary.inference_cost_quote_total (populated by the
-          enrich_with_inference_cost pass) over totalCostUsd (which comes
-          from the agent-runs observability side) — they should match, but
-          the MetricsSummary field is the authoritative source for net_return_pct.
-        */}
-        <Metric
-          label="Infer cost (USD)"
-          value={
-            summary.inference_cost_quote_total != null
-              ? formatCostUsd(summary.inference_cost_quote_total)
-              : "—"
-          }
-          titleValue={
-            summary.inference_cost_quote_total != null &&
-            Number.isFinite(summary.inference_cost_quote_total)
-              ? formatCostUsdPrecise(summary.inference_cost_quote_total)
+            displayedCostUsd != null && Number.isFinite(displayedCostUsd)
+              ? formatCostUsdPrecise(displayedCostUsd)
               : undefined
           }
         />
@@ -708,6 +691,51 @@ function Metric({
       </div>
     </div>
   );
+}
+
+function DecisionProvenancePanel({ rows }: { rows: DecisionRowDto[] }) {
+  const counts = useMemo(() => decisionProvenanceCounts(rows), [rows]);
+  if (rows.length === 0 || counts.synthetic === 0) return null;
+
+  return (
+    <Card className="mt-4 p-4">
+      <div className="mb-3 text-[12px] uppercase tracking-wide text-text-3">
+        Decision provenance
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Metric label="Model decisions" value={String(counts.model)} />
+        <Metric label="Synthesized rows" value={String(counts.synthetic)} />
+        <Metric label="Noop skip" value={String(counts.noopSkip)} />
+        <Metric label="Early stop" value={String(counts.earlyStop)} />
+      </div>
+      <div className="mt-3 text-[12px] text-text-3">
+        Synthesized rows were inherited or guardrail-generated, not direct
+        trader model decisions.
+      </div>
+    </Card>
+  );
+}
+
+function decisionProvenanceCounts(rows: DecisionRowDto[]) {
+  let noopSkip = 0;
+  let earlyStop = 0;
+  let graphSkip = 0;
+
+  for (const row of rows) {
+    const text = `${row.justification ?? ""} ${row.reasoning ?? ""}`.toLowerCase();
+    if (text.includes("noop_skip")) noopSkip += 1;
+    if (text.includes("inherited from early-stop policy")) earlyStop += 1;
+    if (text.includes("trader_skipped_by_graph")) graphSkip += 1;
+  }
+
+  const synthetic = noopSkip + earlyStop + graphSkip;
+  return {
+    model: Math.max(0, rows.length - synthetic),
+    synthetic,
+    noopSkip,
+    earlyStop,
+    graphSkip,
+  };
 }
 
 function totalPnlUsd(
@@ -1157,7 +1185,7 @@ function ContextPill({
       <span className="text-[9px] font-mono tracking-[0.18em] text-text-3 uppercase">
         {kind}
       </span>
-      <span className="font-mono truncate max-w-[28ch]">{label}</span>
+      <span className="font-mono break-all">{label}</span>
     </Link>
   );
 }

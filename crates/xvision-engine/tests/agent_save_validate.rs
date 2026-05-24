@@ -61,6 +61,10 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/036_agents_scope_strategy_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = TempDir::new().unwrap();
     (AgentStore::new(pool), dir)
 }
@@ -133,10 +137,11 @@ async fn happy_consistent_name_and_prompt() {
     );
 }
 
-/// Rejection: agent name says SOL but the prompt opens with ETH — the audit
-/// finding that motivated this check.
+/// Asset-name/prompt mismatch remains a lint diagnostic, but it is no longer
+/// a hard save gate. Chat/wizard-created agents can carry the asset in the
+/// strategy manifest while the prompt stays generic.
 #[tokio::test]
-async fn reject_sol_name_with_eth_prompt() {
+async fn allow_sol_name_with_eth_prompt_at_save_time() {
     let (store, _dir) = fresh_agent_store().await;
     let eth_slot = rich_slot("ETH"); // prompt contains ETH, not SOL
     let result = store
@@ -148,11 +153,9 @@ async fn reject_sol_name_with_eth_prompt() {
             scope_strategy_id: None,
         })
         .await;
-    assert!(result.is_err(), "SOL name + ETH-only prompt should be rejected",);
-    let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("SOL") && msg.contains("system_prompt"),
-        "error should mention SOL and system_prompt, got: {msg}",
+        result.is_ok(),
+        "SOL name + ETH-only prompt should not block save; lint handles this"
     );
 }
 

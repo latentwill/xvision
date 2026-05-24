@@ -1,0 +1,2 @@
+-- SQLite cannot reliably restore the scenario_id NOT NULL constraint without
+-- rebuilding and potentially dropping Live rows. Keep down migration no-op.

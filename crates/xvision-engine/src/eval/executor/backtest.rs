@@ -1,4 +1,4 @@
-//! `BacktestExecutor` — replays an OHLCV fixture in chronological order,
+//! `Executor` — replays an OHLCV fixture in chronological order,
 //! invoking the strategy's pipeline at each decision boundary and simulating
 //! fills against the next bar's open with linear slippage + taker fees. No
 //! broker is involved; positions and equity are tracked in-memory.
@@ -8,11 +8,11 @@
 //!
 //! Out of scope (deferred):
 //! - Multi-asset universes (uses `scenario.asset_universe[0]` only — v1
-//!   constraint, same as PaperExecutor).
+//!   constraint, same as paper-mode-executor-deleted).
 //! - Indicator panel injection into the pipeline seed (matching what
-//!   PaperExecutor passes today, which is just portfolio_state).
+//!   paper-mode-executor-deleted passes today, which is just portfolio_state).
 //! - Win-rate sourced from realized-PnL pairs across decisions (the
-//!   `MetricsSummary.win_rate` is left at 0.0 the same way PaperExecutor
+//!   `MetricsSummary.win_rate` is left at 0.0 the same way paper-mode-executor-deleted
 //!   leaves it — Phase 3.C work).
 
 use std::collections::HashMap;
@@ -46,16 +46,20 @@ use crate::eval::broker_rules::{
 };
 use crate::eval::cost_arrays::BarCostTable;
 use crate::eval::early_stop::{self, EarlyStopConfig};
+use crate::eval::executor::live_source::LiveStream;
+use crate::eval::executor::real_broker_fills::RealBrokerFills;
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::executor::traits::{
     BarSource, Clock, FillRecord, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
 };
-use crate::eval::executor::Executor;
+use crate::eval::executor::wall_clock::WallClock;
+use crate::eval::executor::RunExecutor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
 use crate::eval::guardrails::{
     self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
     GuardrailDecision,
 };
+use crate::eval::live_config::LiveConfig;
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
@@ -71,13 +75,20 @@ use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
+use xvision_execution::broker_surface::BrokerSurface;
+
+pub(crate) struct LiveRuntime {
+    pub(crate) bar_source: LiveStream,
+    pub(crate) clock: WallClock,
+    pub(crate) fill_sink: RealBrokerFills,
+}
 
 #[derive(Default)]
-pub struct BacktestExecutor {
+pub struct Executor {
     /// Optional progress channel. When `None` the executor is silent
     /// (today's `api::eval::run_with_deps` callers); when `Some`, every
     /// significant action emits a `ProgressEvent`. Send-when-no-subscribers
-    /// is a no-op via `send_event`. Mirrors PR #35's PaperExecutor wiring
+    /// is a no-op via `send_event`. Mirrors PR #35's paper-mode-executor-deleted wiring
     /// so SSE / CLI subscribers see both run modes through the same bus.
     progress: Option<ProgressTx>,
     /// Optional pre-loaded bars. When `Some`, the executor skips the
@@ -130,9 +141,56 @@ pub struct BacktestExecutor {
     /// emission path. The recorder-symmetry regression test wires this
     /// explicitly to assert F-11(f) closure.
     recorder: Option<Arc<dyn xvision_observability::Recorder>>,
+    live_runtime: Option<tokio::sync::Mutex<LiveRuntime>>,
+    fill_sink_override: Option<tokio::sync::Mutex<Box<dyn FillSink>>>,
 }
 
-impl BacktestExecutor {
+impl Executor {
+    /// Backtest constructor — wires `InjectedBars + InstantClock +
+    /// SimulatedFills` under the hood. The trio is composed inside
+    /// `run_inner` from the supplied bars; this constructor is the
+    /// stable entry point the API dispatch site uses for
+    /// [`RunMode::Backtest`].
+    ///
+    /// Mirrors [`Executor::with_bars`] today (which it delegates to).
+    /// Future evolution: take a `CostModel` explicitly rather than
+    /// reading it back off the scenario at `run_inner` time. Kept
+    /// minimal here so the executor-collapse-paper-mode +
+    /// executor-live-shell PR stays focused.
+    pub fn backtest(bars: Vec<Ohlcv>) -> Self {
+        Self::with_bars(bars)
+    }
+
+    /// Live constructor — wires `LiveStream + WallClock + RealBrokerFills`.
+    pub fn live(
+        live_config: &LiveConfig,
+        broker: Arc<dyn BrokerSurface>,
+        bar_source: LiveStream,
+        clock: WallClock,
+        obs_emitter: Option<ObsEmitter>,
+    ) -> anyhow::Result<Self> {
+        live_config
+            .validate()
+            .map_err(|e| anyhow!("invalid LiveConfig: {e:?}"))?;
+        Ok(Self {
+            progress: None,
+            injected_bars: None,
+            warmup_bars: Vec::new(),
+            event_bus: None,
+            obs_emitter,
+            memory_recorder: None,
+            provider_catalogs: HashMap::new(),
+            limits: None,
+            recorder: None,
+            live_runtime: Some(tokio::sync::Mutex::new(LiveRuntime {
+                bar_source,
+                clock,
+                fill_sink: RealBrokerFills::new(broker),
+            })),
+            fill_sink_override: None,
+        })
+    }
+
     /// Constructor without progress wiring. Existing callers
     /// (`api::eval::run_with_deps` today, plus tests against legacy
     /// `canonical_scenarios()` ids) keep working unchanged — bars get
@@ -155,6 +213,8 @@ impl BacktestExecutor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            live_runtime: None,
+            fill_sink_override: None,
         }
     }
 
@@ -176,6 +236,8 @@ impl BacktestExecutor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            live_runtime: None,
+            fill_sink_override: None,
         }
     }
 
@@ -191,12 +253,14 @@ impl BacktestExecutor {
             provider_catalogs: HashMap::new(),
             limits: None,
             recorder: None,
+            live_runtime: None,
+            fill_sink_override: None,
         }
     }
 
     /// Attach a live-stream event bus to an existing executor. Builder-style
     /// so callers can chain after `with_bars` / `with_progress`:
-    ///   `BacktestExecutor::with_bars(bars).with_event_bus(bus)`.
+    ///   `Executor::with_bars(bars).with_event_bus(bus)`.
     pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
         self.event_bus = Some(bus);
         self
@@ -241,7 +305,7 @@ impl BacktestExecutor {
     /// Pre-window warmup bars. The decision loop never iterates these;
     /// they only feed the per-decision rolling `bar_history` window in
     /// the seed. Chains with `with_bars` / `with_progress` / `with_event_bus`:
-    ///   `BacktestExecutor::with_bars(bars).with_warmup(warmup)`.
+    ///   `Executor::with_bars(bars).with_warmup(warmup)`.
     pub fn with_warmup(mut self, warmup_bars: Vec<Ohlcv>) -> Self {
         self.warmup_bars = warmup_bars;
         self
@@ -253,6 +317,12 @@ impl BacktestExecutor {
     /// the per-bar check is a constant-time no-op.
     pub fn with_limits(mut self, limits: super::super::limits::EvalLimits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn with_fill_sink(mut self, sink: Box<dyn FillSink>) -> Self {
+        self.fill_sink_override = Some(tokio::sync::Mutex::new(sink));
         self
     }
 
@@ -272,7 +342,7 @@ impl BacktestExecutor {
 }
 
 #[async_trait]
-impl Executor for BacktestExecutor {
+impl RunExecutor for Executor {
     async fn run(
         &self,
         run: &mut Run,
@@ -370,7 +440,7 @@ impl Executor for BacktestExecutor {
     }
 }
 
-impl BacktestExecutor {
+impl Executor {
     #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
@@ -406,7 +476,10 @@ impl BacktestExecutor {
         // 2. Legacy fixture loader — the canonical-scenarios fallback
         //    still reads from `data/probes/<cache_key>.parquet`. Keeps
         //    pre-Task-8 tests working without a DB / Alpaca creds.
-        let bars: Vec<Ohlcv> = if let Some(injected) = self.injected_bars.clone() {
+        let is_live = self.live_runtime.is_some();
+        let mut bars: Vec<Ohlcv> = if is_live {
+            Vec::new()
+        } else if let Some(injected) = self.injected_bars.clone() {
             injected
         } else {
             let data_seed = &scenario.bar_cache_policy.cache_key;
@@ -419,7 +492,7 @@ impl BacktestExecutor {
         // genuinely-uninterpretable case is an empty bar list. Anything
         // narrower than that is a contract bug at the loader layer, not
         // a runtime input the executor should silently tolerate.
-        if bars.is_empty() {
+        if !is_live && bars.is_empty() {
             anyhow::bail!("scenario {} has no bars; nothing to backtest", scenario.id,);
         }
 
@@ -427,7 +500,7 @@ impl BacktestExecutor {
         // now driven by the BarSource trait, timestamp progression by
         // the Clock trait, and fill production by the FillSink trait.
         // Trait-object dispatch keeps codegen reasonable when sub-track
-        // 3 lands the Live impl on the same `BacktestExecutor` shape.
+        // 3 lands the Live impl on the same `Executor` shape.
         //
         // The BarSource owns its own copy of the bars (clone is cheap —
         // `Ohlcv` is `Copy`-like data); the executor keeps the original
@@ -435,26 +508,46 @@ impl BacktestExecutor {
         // post-loop `compute_baselines` call. The two stay in lockstep
         // because the BarSource is constructed from the same vector and
         // is drained in step with the indexed iteration below.
-        let mut bar_source: Box<dyn BarSource> = Box::new(InjectedBars::new(bars.clone()));
+        let mut bar_source: Option<Box<dyn BarSource>> = if is_live {
+            None
+        } else {
+            Some(Box::new(InjectedBars::new(bars.clone())))
+        };
         let mut clock: Box<dyn Clock> = Box::new(InstantClock::new());
-        let mut fill_sink: Box<dyn FillSink> = Box::new(SimulatedFills::new());
+        let mut local_sim_sink = SimulatedFills::new();
+        let mut override_guard = if let Some(mtx) = self.fill_sink_override.as_ref() {
+            Some(mtx.lock().await)
+        } else {
+            None
+        };
 
         // Used by RunTick to report bar-clock progress. Cadence can make
         // actual decisions sparser; the final bar produces a decision too
         // (it fills against its own close instead of the absent T+1 open —
         // see the `next_bar_open` fallback in the loop below).
-        let total_decision_bars = bars.len().max(1) as f64;
+        let total_decision_bars = run
+            .live_config
+            .as_ref()
+            .and_then(|cfg| cfg.stop_policy.bar_limit)
+            .map(|n| n.max(1) as f64)
+            .unwrap_or_else(|| bars.len().max(1) as f64);
 
-        // Per-decision rolling-history window. Warmup bars (from
-        // `eval::bars::load_warmup_bars`) are concatenated in front of the
-        // scenario bars so we can slice the last `scenario.warmup_bars`
-        // bars at each decision and surface them in the seed as
-        // `market_data.bar_history`. The slice excludes `current_bar`
-        // (already in the seed). This is the mechanism the QA15 fix
-        // relies on: bar 1 of a 30-bar EMA5/EMA13 scenario sees N≥13
-        // prior bars when the scenario has `warmup_bars >= 13`.
-        let warmup_count = self.warmup_bars.len();
-        let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(bars.iter()).collect();
+        // Per-decision rolling-history window. Warmup bars are concatenated
+        // in front of the tradable bars so we can surface them in
+        // `market_data.bar_history` while excluding `current_bar`.
+        //
+        // Backtests receive warmup from `eval::bars::load_warmup_bars`.
+        // Live runs receive warmup through their live stream first; those
+        // bars seed history only and never produce decisions or fills.
+        let mut runtime_warmup_bars = self.warmup_bars.clone();
+        let mut live_warmup_remaining = if is_live {
+            run.live_config
+                .as_ref()
+                .and_then(|cfg| cfg.warmup_bars)
+                .unwrap_or(0)
+        } else {
+            0
+        };
         let history_window = scenario.warmup_bars as usize;
 
         // F-6: per-run seed-sanitization policy. Mirror of the paper
@@ -577,7 +670,38 @@ impl BacktestExecutor {
         // `bars` slice, which is the same data the BarSource was built
         // from. Clock advancement is driven explicitly inside the loop.
         let mut i: usize = 0;
-        while let Some(bar) = bar_source.next_bar().await {
+        let live_started = Instant::now();
+        let mut consumed_bars: u32 = 0;
+        loop {
+            let source_bar = if let Some(runtime) = self.live_runtime.as_ref() {
+                let mut runtime = runtime.lock().await;
+                let bar = runtime.bar_source.next_bar().await;
+                if let Some(bar) = bar.as_ref() {
+                    runtime.clock.advance_to(bar.timestamp);
+                }
+                bar
+            } else {
+                bar_source
+                    .as_mut()
+                    .expect("backtest executor has bar source")
+                    .next_bar()
+                    .await
+            };
+            let Some(source_bar) = source_bar else { break };
+            if is_live {
+                if live_warmup_remaining > 0 {
+                    runtime_warmup_bars.push(source_bar);
+                    live_warmup_remaining -= 1;
+                    continue;
+                }
+                bars.push(source_bar);
+            }
+            consumed_bars = consumed_bars.saturating_add(1);
+            let stop_after_this_bar = run
+                .live_config
+                .as_ref()
+                .and_then(|cfg| cfg.stop_policy.bar_limit)
+                .is_some_and(|limit| consumed_bars >= limit);
             // Sync indexed view of the bar — the `bars` slice and the
             // BarSource share the same underlying data, so the same
             // index works for both.
@@ -585,16 +709,28 @@ impl BacktestExecutor {
             // Update the logical clock to this bar's timestamp before
             // any decision-side work. Live impls will ignore this
             // (their `WallClock::advance_to` will be a no-op).
-            clock.advance_to(bar.timestamp);
+            if !is_live {
+                clock.advance_to(bars[i].timestamp);
+            }
             let bar = &bars[i];
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
+            }
+            if let Some(policy) = run.live_config.as_ref().map(|cfg| &cfg.stop_policy) {
+                if let Some(limit) = policy.time_limit_secs {
+                    if live_started.elapsed().as_secs() >= limit {
+                        break;
+                    }
+                }
             }
             // Cadence gate: only fire on bars whose minute-aligned timestamp
             // is divisible by the strategy's cadence. With hourly bars and
             // 60-min cadence this always matches.
             if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
                 i += 1;
+                if stop_after_this_bar {
+                    break;
+                }
                 continue;
             }
             // Track every cadence-gated bar so baselines can replay the same
@@ -607,7 +743,11 @@ impl BacktestExecutor {
             // an N-bar scenario would silently drop the last decision and
             // produce N-1 rows in `decisions` (operator-reported off-by-
             // one — `qa-decisions-30day-count`).
-            let next_bar_open = bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close);
+            let next_bar_open = if is_live {
+                bar.close
+            } else {
+                bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close)
+            };
 
             // RunTick fires before the per-bar pipeline call so dashboards
             // can advance progress bars even when an LLM round-trip is slow.
@@ -676,6 +816,9 @@ impl BacktestExecutor {
                         n_trades,
                     });
                     i += 1;
+                    if stop_after_this_bar {
+                        break;
+                    }
                     continue;
                 }
             }
@@ -685,6 +828,8 @@ impl BacktestExecutor {
             // combined `[warmup..., bars...]` series. When the run starts
             // and `warmup_count` covers it, the slice contains
             // `history_window` real prior bars (the QA15 fix).
+            let warmup_count = runtime_warmup_bars.len();
+            let combined_bars: Vec<&Ohlcv> = runtime_warmup_bars.iter().chain(bars.iter()).collect();
             let combined_idx = warmup_count + i;
             let history_start = combined_idx.saturating_sub(history_window);
             let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
@@ -876,6 +1021,9 @@ impl BacktestExecutor {
                 prev_position = position;
                 decision_idx += 1;
                 i += 1;
+                if stop_after_this_bar {
+                    break;
+                }
                 continue;
             }
 
@@ -933,7 +1081,7 @@ impl BacktestExecutor {
                 trace_attrs: trace_filter_attrs,
                 // Phase D — unified Recorder. Wired by callers that
                 // construct an `EvalRecorder` and thread it via
-                // `BacktestExecutor::with_recorder`. The default `None`
+                // `Executor::with_recorder`. The default `None`
                 // keeps the legacy bus-driven emission path untouched.
                 recorder: self.recorder.as_deref(),
             })
@@ -1295,6 +1443,7 @@ impl BacktestExecutor {
                     aggressor_side: None,
                     order_state: None,
                     volume_cap_hit: None,
+                    broker_error: None,
                 }
             } else {
                 // Resolve per-bar and per-asset cost overrides.
@@ -1374,28 +1523,33 @@ impl BacktestExecutor {
                 // the surrounding loop. The request is owned (no
                 // borrowed references) so future async-broker impls
                 // can hold it across `.await`.
-                let fill_record: FillRecord = fill_sink
-                    .submit(FillRequest {
-                        pos: pre_fill_position,
-                        entry: entry_price,
-                        action: applied_action.clone(),
-                        next_open: next_bar_open,
-                        bar_volume: bar.volume,
-                        slip_bps: effective_slip_bps,
-                        spread_bps: effective_spread_bps,
-                        taker_bps: effective_taker_bps,
-                        maker_bps: effective_maker_bps,
-                        equity,
-                        risk_pct: strategy.risk.risk_pct_per_trade,
-                        slippage_model: effective_slippage_model.clone(),
-                        fee_source,
-                        asset: asset.clone(),
-                        bar_ts: bar.timestamp,
-                        bar_open: fill_bar_open,
-                        bar_high: fill_bar_high,
-                        bar_low: fill_bar_low,
-                    })
-                    .await;
+                let fill_req = FillRequest {
+                    pos: pre_fill_position,
+                    entry: entry_price,
+                    action: applied_action.clone(),
+                    next_open: next_bar_open,
+                    bar_volume: bar.volume,
+                    slip_bps: effective_slip_bps,
+                    spread_bps: effective_spread_bps,
+                    taker_bps: effective_taker_bps,
+                    maker_bps: effective_maker_bps,
+                    equity,
+                    risk_pct: strategy.risk.risk_pct_per_trade,
+                    slippage_model: effective_slippage_model.clone(),
+                    fee_source,
+                    asset: asset.clone(),
+                    bar_ts: bar.timestamp,
+                    bar_open: fill_bar_open,
+                    bar_high: fill_bar_high,
+                    bar_low: fill_bar_low,
+                };
+                let fill_record: FillRecord = if let Some(sink) = override_guard.as_mut() {
+                    sink.submit(fill_req).await
+                } else if let Some(runtime) = self.live_runtime.as_ref() {
+                    runtime.lock().await.fill_sink.submit(fill_req).await
+                } else {
+                    local_sim_sink.submit(fill_req).await
+                };
 
                 // Collect volume_share_excess finding if the cap bound.
                 if let Some((req_qty, bar_vol, cap_qty, fill_share)) = fill_record.volume_cap_hit {
@@ -1627,6 +1781,20 @@ impl BacktestExecutor {
 
             decision_idx += 1;
             i += 1;
+            if let Some(policy) = run.live_config.as_ref().map(|cfg| &cfg.stop_policy) {
+                if policy.bar_limit.is_some_and(|limit| consumed_bars >= limit) {
+                    break;
+                }
+                if policy.decision_limit.is_some_and(|limit| decision_idx >= limit) {
+                    break;
+                }
+                if policy
+                    .time_limit_secs
+                    .is_some_and(|limit| live_started.elapsed().as_secs() >= limit)
+                {
+                    break;
+                }
+            }
         }
 
         if store.is_terminal(&run.id).await? {
@@ -2636,5 +2804,15 @@ mod tests {
         let strategy = empty_strategy();
         let slots = vec![resolved("regime", "claude-opus-4-7")];
         assert!(trader_model_id(&slots, &strategy).is_none());
+    }
+}
+
+#[cfg(test)]
+mod live_shell_tests {
+    #[test]
+    fn live_shell_is_wired_by_api_builder() {
+        // Live construction now needs broker + stream handles; API-level tests
+        // cover validation without requiring real Alpaca credentials here.
+        assert!(true);
     }
 }

@@ -47,6 +47,8 @@ Do **not** use this for visual layout checks, control alignment, or wizard scree
 
 ### Strategy
 - `GET /api/strategy/:id`
+- `PATCH /api/strategy/:id` — editable manifest metadata, including display name, summary, asset universe, cadence, and color
+- `PUT /api/strategy/:id/filter` / `DELETE /api/strategy/:id/filter` — strategy-level deterministic filter artifact
 - `POST /api/strategy/:id/agents`
 - `PATCH /api/strategy/:id/agents/:role`
 - `DELETE /api/strategy/:id/agents/:role`
@@ -67,6 +69,8 @@ Watch for:
 - manifest fields disagreeing with slot prompts
 - validation passing despite drift
 - `eval_ready: true` returned while warnings/errors describe blockers
+- prompt text that claims a filter exists while the strategy has no saved filter artifact
+- strategy cadence/asset universe mismatches with the intended scenario
 - atomic mode partially succeeding (Agent created, Strategy not, or vice versa)
 - missing delete/archive for the strategy entity itself
 - `temperature` not threading through to the live agent slot
@@ -106,15 +110,21 @@ Watch for:
   byte-identical to `xvn eval export <run_id>`
 - `POST /api/eval/runs/:id/attest`
 - `POST /api/eval/runs/:id/review`
+- `GET /api/v2/charts/annotated/:run_id` — reads persisted review
+  annotations for real run ids; `/demo` remains fixture-backed
 - `POST /api/eval/runs/validate` — preflight without launching
 - `POST /api/eval/batch` — multi-scenario batch
 - `DELETE /api/eval/runs/:id`
 - `GET /api/eval/compare?ids=…` — `ComparisonReport`; includes
-  baseline (buy_hold) column when present
+  `strategy_name` when the strategy manifest is available, while retaining
+  `id` and `agent_id` for addressing
 
 CLI peers:
 - `xvn eval run / list / show / results / watch / scenarios`
-- `xvn eval compare … --markdown --sort sharpe`
+- `xvn eval run --auto-fire-review --max-review-annotations 8` and
+  `xvn eval show <run_id>` for annotation auto-fire state
+- `xvn eval compare … --markdown --sort sharpe` — table and markdown modes
+  show readable strategy labels plus adjacent ids
 - `xvn eval batch --strategy <id> --scenarios sc_a,sc_b,sc_c --wait`
 - `xvn eval validate / attest / export / review`
 
@@ -122,11 +132,14 @@ Watch for:
 - model/provider resolution mismatches
 - runs queuing successfully and then failing on the first decision
 - invalid JSON from the trader slot
+- empty `filter_events` / `filter_summaries` on a run that was supposed to test the XVN filter subsystem
+- conclusions drawn from synthesized rows (`noop_skip`, graph-gated trader skips, early-stop inheritance) without separating them from direct model decisions
 - `EvalRunExport` JSON not byte-identical between `GET /export` and
   `xvn eval export <run_id> --output …`
 - batch endpoint returning success when a subset of runs failed to enqueue
 - compare `Baseline (buy_hold)` column missing or NaN for runs that
   should have a baseline arm
+- compare views showing raw strategy ids where `strategy_name` is populated
 - short run id labels (`shortRunId`) collapsing two distinct runs to
   the same display string
 
@@ -208,6 +221,8 @@ Watch for:
 - atomic-mode strategy create returns 200 with `eval_ready: false`
   but no `warnings` / `errors` explaining why
 - eval uses an upstream model ID that does not exist for the configured provider
+- a "filtered" strategy exists only as prompt language; no filter artifact is attached
+- eval result analysis treats early-stop / `noop_skip` rows as direct trader decisions
 - duplicate scenarios appear in dropdowns because the API already has duplicate rows
 - strategy-level deletion is absent even though agent-role mutation exists
 - `classify --all` silently skips scenarios because `regime_derived = false`
@@ -240,7 +255,7 @@ See `references/xvision-api-quirks.md` for the concrete endpoint quirks, payload
 
 ---
 
-*Skills owner: any track that adds or changes an `/api/*` route,
-corresponding `xvn` verb, or Filter DSL contract is responsible for
-updating this file in the same PR. Last refresh: 2026-05-24 (Filter DSL
-trigger-context expansion).*
+*Skills owner: any track that adds or changes an `/api/*` route, the
+corresponding `xvn` verb, Filter DSL contract, or a QA-critical operator
+workflow is responsible for updating this file in the same PR. Last
+refresh: 2026-05-24 (Filter DSL trigger-context expansion).*

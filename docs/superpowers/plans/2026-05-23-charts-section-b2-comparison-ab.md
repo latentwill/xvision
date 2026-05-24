@@ -6,7 +6,13 @@
 
 **Goal:** Replace `/charts/compare`'s B0 placeholder with the Chart 02 design — hero overlay equity (N selected strategies) + interactive strategy roster pill rail + auto-flow strategy card grid (2/4/6/8 columns by selection size) — all sharing one URL-synced selection state.
 
-**Architecture:** New surface `ComparisonABDashboard`. Reuses `MultiStrategyEquityPane` and `Topbar` from B1. Three new primitives: `StrategyRosterPills`, `StrategyCardGrid` (+ `StrategyCard` + `MiniSparkline`), and `LeadCardChrome`. One new hook `useChart2Roster` for URL-synced selection state. No new backend work — reuses B1's `/api/v2/charts/dashboards/overview` payload.
+**Implementation note (2026-05-24):** Wave 1 now uses real eval comparison
+data rather than the dashboard overview fixture on the production route.
+`/charts/compare?ids=<run-a>,<run-b>` calls `compare_runs(ids)`, shares the
+Charts v2 roster/card primitives, and keeps URL/CLI/API addressing id-keyed
+while display labels prefer `ComparisonRunSummary.strategy_name`.
+
+**Architecture:** New surface `ComparisonABDashboard`. Reuses `MultiStrategyEquityPane` and `Topbar` from B1. Three new primitives: `StrategyRosterPills`, `StrategyCardGrid` (+ `StrategyCard` + `MiniSparkline`), and `LeadCardChrome`. `useChart2Roster` remains for Chart Lab fixtures; the production route uses `useCompareSelection` with real eval run ids. Backend work is limited to readable labels on `ComparisonRunSummary`.
 
 **Tech Stack:** React 18 + TypeScript, uPlot, react-router-dom v6 `useSearchParams`.
 

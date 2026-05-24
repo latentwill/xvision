@@ -57,6 +57,7 @@ import {
 } from "@/lib/run-display";
 import type {
   BrokersReport,
+  LiveConfig,
   ProvidersReport,
   RunDetail,
   RunMode,
@@ -84,8 +85,8 @@ const MODE_FILTER: FilterDef = {
   label: "Mode",
   options: [
     { value: "all", label: "All modes" },
-    { value: "paper", label: "Paper" },
     { value: "backtest", label: "Backtest" },
+    { value: "live", label: "Live" },
   ],
 };
 
@@ -427,7 +428,7 @@ export function EvalRunsRoute() {
             badge={row.status}
             badgeColor={badgeColorFor(row.status)}
             subtitle={displayScenarioName(row.scenario_id, scenarios)}
-            meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}`}
+            meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}${row.auto_fire_review ? " · auto review" : ""}`}
             rightTop={fmtPct(row.total_return_pct)}
             rightSub={fmtDuration(row.started_at, row.completed_at, nowMs)}
             rightTone={signedTone(row.total_return_pct)}
@@ -590,6 +591,11 @@ function DesktopRow({
         </div>
         <div className="mt-0.5 text-[11px] text-text-2">
           {evalRunDisambiguator(row, allRows)}
+          {row.auto_fire_review ? (
+            <span className="ml-2 inline-flex rounded border border-gold/40 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-gold">
+              auto review
+            </span>
+          ) : null}
         </div>
         <div
           className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all"
@@ -686,6 +692,13 @@ function StartEvalDialog({
   const [agentId, setAgentId] = useState<string>(initialAgentId);
   const [scenarioId, setScenarioId] = useState<string>("");
   const [mode, setMode] = useState<RunMode>("backtest");
+  const [liveAsset, setLiveAsset] = useState("BTC/USD");
+  const [liveCapital, setLiveCapital] = useState("10000");
+  const [liveBarLimit, setLiveBarLimit] = useState("5");
+  const [liveWarmupBars, setLiveWarmupBars] = useState("200");
+  const [autoFireReview, setAutoFireReview] = useState<boolean>(false);
+  const [reviewProvider, setReviewProvider] = useState<string>("");
+  const [reviewModel, setReviewModel] = useState<string>("");
   const [preflightError, setPreflightError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -701,20 +714,62 @@ function StartEvalDialog({
     },
   });
 
-  const ready =
-    agentId.length > 0 && scenarioId.length > 0 && !start.isPending;
+  const ready = agentId.length > 0 && !start.isPending;
   const selectedStrategy = (strategies.data ?? []).find(
     (s) => s.agent_id === agentId,
   );
+  const reviewProviderRows = (providers.data?.providers ?? []).filter(
+    (row) => row.enabled_models.length > 0,
+  );
+  const activeReviewProvider =
+    reviewProviderRows.find((row) => row.name === reviewProvider) ??
+    reviewProviderRows[0];
+  const activeReviewModel =
+    reviewModel ||
+    activeReviewProvider?.enabled_models[0] ||
+    "";
   const displayedError =
     preflightError ?? (start.isError ? errorDetail(start.error) : null);
   const setupAction = preflightSetupAction(displayedError);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!ready) return;
+    if (!agentId) {
+      setPreflightError("Pick a strategy before starting eval.");
+      return;
+    }
+    if (mode === "backtest" && !scenarioId) {
+      setPreflightError("Pick a scenario before starting Backtest.");
+      return;
+    }
+    if (mode === "live") {
+      const capital = Number(liveCapital);
+      const barLimit = Number(liveBarLimit);
+      const warmupBars = Number(liveWarmupBars);
+      if (!liveAsset.trim()) {
+        setPreflightError("Enter a live asset before starting Live.");
+        return;
+      }
+      if (!Number.isFinite(capital) || capital <= 0) {
+        setPreflightError("Enter a positive live capital amount.");
+        return;
+      }
+      if (!Number.isFinite(barLimit) || barLimit <= 0) {
+        setPreflightError("Enter a positive live bar limit.");
+        return;
+      }
+      if (!Number.isFinite(warmupBars) || warmupBars < 0) {
+        setPreflightError("Enter a non-negative live warmup bar count.");
+        return;
+      }
+      if (brokers.data?.alpaca.configured !== true) {
+        setPreflightError(
+          "Configure Alpaca paper credentials in Settings -> Brokers before starting Live.",
+        );
+        return;
+      }
+    }
     const blocked = evalPreflightError({
-      mode,
       providers,
       brokers,
       strategy: selectedStrategy,
@@ -724,12 +779,52 @@ function StartEvalDialog({
       return;
     }
     setPreflightError(null);
-    start.mutate({
+    const capitalNum = Number(liveCapital);
+    const barLimitNum = Number(liveBarLimit);
+    const warmupBarsNum = Number(liveWarmupBars);
+    const liveConfig: LiveConfig | null =
+      mode === "live"
+        ? {
+            strategy_id: agentId,
+            assets: [
+              {
+                class: "Crypto",
+                symbol: liveAsset.split("/")[0] || liveAsset,
+                venue_symbol: liveAsset,
+              },
+            ],
+            capital: { initial: capitalNum, currency: "USD" },
+            broker_creds_ref: "alpaca",
+            stop_policy: {
+              time_limit_secs: null,
+              bar_limit: barLimitNum,
+              decision_limit: null,
+            },
+            venue_label: "paper",
+            warmup_bars: warmupBarsNum,
+            safety_limits: null,
+            display_name: `Live Alpaca ${liveAsset}`,
+            description: null,
+            tags: ["live", "alpaca"],
+            notes: null,
+          }
+        : null;
+    const request: StartRunReq = {
       agent_id: agentId,
-      scenario_id: scenarioId,
+      scenario_id: mode === "live" ? "" : scenarioId,
       mode,
       params_override: null,
-    });
+      auto_fire_review: autoFireReview,
+      review_model:
+        autoFireReview && activeReviewProvider && activeReviewModel
+          ? { provider: activeReviewProvider.name, model: activeReviewModel }
+          : null,
+      max_annotations_per_review: 8,
+    };
+    if (liveConfig) {
+      request.live_config = liveConfig;
+    }
+    start.mutate(request);
   }
 
   return (
@@ -820,20 +915,6 @@ function StartEvalDialog({
                 <input
                   type="radio"
                   name="mode"
-                  value="paper"
-                  checked={mode === "paper"}
-                  onChange={() => {
-                    setMode("paper");
-                    setPreflightError(null);
-                  }}
-                  className="accent-gold"
-                />
-                paper
-              </label>
-              <label className="inline-flex items-center gap-2 text-[13px] text-text-2">
-                <input
-                  type="radio"
-                  name="mode"
                   value="backtest"
                   checked={mode === "backtest"}
                   onChange={() => {
@@ -844,11 +925,117 @@ function StartEvalDialog({
                 />
                 backtest
               </label>
+              <label className="inline-flex items-center gap-2 text-[13px] text-text-2">
+                <input
+                  type="radio"
+                  name="mode"
+                  value="live"
+                  checked={mode === "live"}
+                  onChange={() => {
+                    setMode("live");
+                    setPreflightError(null);
+                  }}
+                  className="accent-gold"
+                />
+                live
+              </label>
             </div>
             <p className="m-0 mt-1.5 text-[11px] text-text-3 leading-snug">
-              Paper trades against Alpaca paper credentials (Settings → Brokers).
-              Backtest replays the scenario's parquet fixture in-process.
+              Backtest replays a scenario. Live uses Alpaca paper credentials
+              and must be bounded by a stop policy.
             </p>
+          </fieldset>
+
+          {mode === "live" ? (
+            <fieldset className="grid grid-cols-2 gap-2">
+              <legend className="col-span-2 block text-[12px] text-text-2 mb-1 px-0">
+                Live Alpaca
+              </legend>
+              <input
+                aria-label="Live asset"
+                value={liveAsset}
+                onChange={(e) => setLiveAsset(e.target.value)}
+                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              />
+              <input
+                aria-label="Live capital"
+                type="number"
+                min="1"
+                value={liveCapital}
+                onChange={(e) => setLiveCapital(e.target.value)}
+                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              />
+              <input
+                aria-label="Live bar limit"
+                type="number"
+                min="1"
+                value={liveBarLimit}
+                onChange={(e) => setLiveBarLimit(e.target.value)}
+                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              />
+              <input
+                aria-label="Live warmup bars"
+                type="number"
+                min="0"
+                value={liveWarmupBars}
+                onChange={(e) => setLiveWarmupBars(e.target.value)}
+                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              />
+            </fieldset>
+          ) : null}
+
+          <fieldset>
+            <legend className="block text-[12px] text-text-2 mb-1.5 px-0">
+              Review
+            </legend>
+            <label className="inline-flex items-center gap-2 text-[13px] text-text-2">
+              <input
+                type="checkbox"
+                checked={autoFireReview}
+                onChange={(e) => {
+                  setAutoFireReview(e.target.checked);
+                  setPreflightError(null);
+                }}
+                className="accent-gold"
+              />
+              auto-run review annotations on completion
+            </label>
+            {autoFireReview ? (
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <select
+                  aria-label="Review provider"
+                  value={activeReviewProvider?.name ?? ""}
+                  onChange={(e) => {
+                    setReviewProvider(e.target.value);
+                    const row = reviewProviderRows.find(
+                      (candidate) => candidate.name === e.target.value,
+                    );
+                    setReviewModel(row?.enabled_models[0] ?? "");
+                  }}
+                  disabled={reviewProviderRows.length === 0}
+                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+                >
+                  {reviewProviderRows.map((row) => (
+                    <option key={row.name} value={row.name}>
+                      {row.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Review model"
+                  value={activeReviewModel}
+                  onChange={(e) => setReviewModel(e.target.value)}
+                  disabled={!activeReviewProvider}
+                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+                >
+                  {(activeReviewProvider?.enabled_models ?? []).map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
           </fieldset>
 
           {displayedError ? (
@@ -890,12 +1077,10 @@ function StartEvalDialog({
 }
 
 function evalPreflightError({
-  mode,
   providers,
   brokers,
   strategy,
 }: {
-  mode: RunMode;
   providers: UseQueryResult<ProvidersReport>;
   brokers: UseQueryResult<BrokersReport>;
   strategy?: StrategyListItem;
@@ -942,11 +1127,6 @@ function evalPreflightError({
         return `model '${pair.model}' is not enabled for provider '${pair.provider}'. Enable it in Settings -> Providers before running eval.`;
       }
     }
-  }
-
-  const alpacaConfigured = brokers.data?.alpaca.configured === true;
-  if (mode === "paper" && !alpacaConfigured) {
-    return "Configure Alpaca paper credentials in Settings -> Brokers before running a paper eval.";
   }
 
   return null;

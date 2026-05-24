@@ -8,7 +8,7 @@
 //! - Blobs referenced only by hash_only runs are treated as orphaned.
 //! - Blobs younger than `min_age_secs` are skipped even if orphaned.
 
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::fs;
 use tempfile::TempDir;
 use xvision_observability::{gc_orphaned_blobs, BlobStore};
@@ -18,7 +18,11 @@ const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cl
 const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -61,6 +65,43 @@ async fn insert_model_call(pool: &SqlitePool, span_id: &str, prompt_ref: &str, r
     .bind(span_id)
     .bind(prompt_ref)
     .bind(response_ref)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn insert_tool_call(pool: &SqlitePool, span_id: &str, input_ref: &str, output_ref: &str) {
+    sqlx::query(
+        "INSERT INTO tool_calls \
+         (span_id, tool_name, origin, input_hash, output_hash, input_payload_ref, output_payload_ref, side_effect_level, risk_level) \
+         VALUES (?, 'test-tool', 'native', 'h_i', 'h_o', ?, ?, 'pure', 'safe_read')",
+    )
+    .bind(span_id)
+    .bind(input_ref)
+    .bind(output_ref)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn insert_checkpoint(
+    pool: &SqlitePool,
+    id: &str,
+    run_id: &str,
+    span_id: &str,
+    input_ref: &str,
+    output_ref: &str,
+) {
+    sqlx::query(
+        "INSERT INTO checkpoints \
+         (id, run_id, span_id, sequence, kind, input_hash, output_hash, input_payload_ref, output_payload_ref, created_at) \
+         VALUES (?, ?, ?, 0, 'tool_step', 'h_i', 'h_o', ?, ?, datetime('now'))",
+    )
+    .bind(id)
+    .bind(run_id)
+    .bind(span_id)
+    .bind(input_ref)
+    .bind(output_ref)
     .execute(pool)
     .await
     .unwrap();
@@ -176,36 +217,88 @@ async fn gc_mixed_scenario_counts() {
     let tmp = TempDir::new().unwrap();
     let store = BlobStore::new(tmp.path());
 
-    let protected = store.write(b"protected-full-debug").unwrap();
+    let protected = store.write(b"protected-full-debug-model").unwrap();
+    let protected_tool = store.write(b"protected-full-debug-tool").unwrap();
+    let protected_checkpoint = store.write(b"protected-full-debug-checkpoint").unwrap();
     let orphan = store.write(b"fully-orphaned").unwrap();
     let hash_only = store.write(b"hash-only-ref").unwrap();
+    let hash_only_tool = store.write(b"hash-only-tool-ref").unwrap();
+    let hash_only_checkpoint = store.write(b"hash-only-checkpoint-ref").unwrap();
 
-    for sha in [protected.as_str(), orphan.as_str(), hash_only.as_str()] {
+    for sha in [
+        protected.as_str(),
+        protected_tool.as_str(),
+        protected_checkpoint.as_str(),
+        orphan.as_str(),
+        hash_only.as_str(),
+        hash_only_tool.as_str(),
+        hash_only_checkpoint.as_str(),
+    ] {
         backdate(&tmp.path().join(sha), 120);
     }
 
-    // full_debug run references `protected`.
+    // full_debug run references protected blobs through all ref-bearing tables.
     insert_run(&pool, "run_p", "full_debug").await;
     insert_span(&pool, "span_p", "run_p").await;
     insert_model_call(&pool, "span_p", protected.as_str(), protected.as_str()).await;
+    insert_span(&pool, "span_tool_p", "run_p").await;
+    insert_tool_call(
+        &pool,
+        "span_tool_p",
+        protected_tool.as_str(),
+        protected_tool.as_str(),
+    )
+    .await;
+    insert_span(&pool, "span_checkpoint_p", "run_p").await;
+    insert_checkpoint(
+        &pool,
+        "checkpoint_p",
+        "run_p",
+        "span_checkpoint_p",
+        protected_checkpoint.as_str(),
+        protected_checkpoint.as_str(),
+    )
+    .await;
 
-    // hash_only run references `hash_only` blob.
+    // hash_only run references blobs through all tables; these are logically orphaned.
     insert_run(&pool, "run_h", "hash_only").await;
     insert_span(&pool, "span_h", "run_h").await;
     insert_model_call(&pool, "span_h", hash_only.as_str(), hash_only.as_str()).await;
+    insert_span(&pool, "span_tool_h", "run_h").await;
+    insert_tool_call(
+        &pool,
+        "span_tool_h",
+        hash_only_tool.as_str(),
+        hash_only_tool.as_str(),
+    )
+    .await;
+    insert_span(&pool, "span_checkpoint_h", "run_h").await;
+    insert_checkpoint(
+        &pool,
+        "checkpoint_h",
+        "run_h",
+        "span_checkpoint_h",
+        hash_only_checkpoint.as_str(),
+        hash_only_checkpoint.as_str(),
+    )
+    .await;
 
     // `orphan` has no DB rows.
 
     let report = gc_orphaned_blobs(&pool, &store, 0).await.unwrap();
 
-    assert_eq!(report.scanned, 3);
-    assert_eq!(report.deleted, 2, "orphan + hash_only both deleted");
-    assert_eq!(report.retained_referenced, 1, "protected kept");
+    assert_eq!(report.scanned, 7);
+    assert_eq!(report.deleted, 4, "orphan + hash_only refs deleted");
+    assert_eq!(report.retained_referenced, 3, "full_debug refs kept");
     assert_eq!(report.errors, Vec::<String>::new());
 
     assert!(store.exists(&protected));
+    assert!(store.exists(&protected_tool));
+    assert!(store.exists(&protected_checkpoint));
     assert!(!store.exists(&orphan));
     assert!(!store.exists(&hash_only));
+    assert!(!store.exists(&hash_only_tool));
+    assert!(!store.exists(&hash_only_checkpoint));
 }
 
 // ---------------------------------------------------------------------------

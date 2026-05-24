@@ -5,6 +5,13 @@
  * to decide whether a `PipelineEdge` fires. Closed set per Decision 5
  * of the capability-first agent model spec.
  *
+ * Phase A persists the shape only. The Phase B unified dispatcher
+ * implements the evaluator — when an edge has `condition = Some(p)`,
+ * the dispatcher resolves `p` against the from-side agent's most
+ * recent `FilterSignal.payload` and drops the edge if the predicate
+ * evaluates to `false`. `signal_field` is a dotted path into the
+ * payload JSON (e.g. `"regime"`, `"confidence.value"`).
+ *
  * The serde tag is `snake_case` so on-disk JSON reads the lowercase
  * variant name verbatim:
  *
@@ -13,12 +20,4 @@
  * { "any": [ { "eq": { ... } }, { "eq": { ... } } ] }
  * ```
  */
-export type EdgePredicate =
-  | { "eq": { signal_field: string, value: unknown, } }
-  | { "neq": { signal_field: string, value: unknown, } }
-  | { "gte": { signal_field: string, value: unknown, } }
-  | { "lte": { signal_field: string, value: unknown, } }
-  | { "in": { signal_field: string, values: unknown[], } }
-  | { "all": Array<EdgePredicate> }
-  | { "any": Array<EdgePredicate> }
-  | { "not": EdgePredicate };
+export type EdgePredicate = { "eq": { signal_field: string, value: unknown, } } | { "neq": { signal_field: string, value: unknown, } } | { "gte": { signal_field: string, value: unknown, } } | { "lte": { signal_field: string, value: unknown, } } | { "in": { signal_field: string, values: unknown[], } } | { "all": Array<EdgePredicate> } | { "any": Array<EdgePredicate> } | { "not": EdgePredicate };

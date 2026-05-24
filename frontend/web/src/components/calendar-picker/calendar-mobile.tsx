@@ -5,7 +5,7 @@
 // variant (`MobileBottomSheet`) is also NOT ported — overlay/popup,
 // excluded by the no-popup rule.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   DAY_MS,
   CalendarView,
@@ -45,6 +45,16 @@ export function MobileInlineCard({
   );
   const [hover, setHover] = useState<Date | null>(null);
   const [activePreset, setActivePreset] = useState<string | null>(null);
+
+  useEffect(() => {
+    const nextStart = fromIsoDate(startIso);
+    const nextEnd = fromIsoDate(endIso);
+    setStart(nextStart);
+    setEnd(nextEnd);
+    setAnchor(nextStart ?? today());
+    setHover(null);
+    setActivePreset(null);
+  }, [startIso, endIso]);
 
   const handlePick = (d: Date) => {
     if (!start || (start && end)) {

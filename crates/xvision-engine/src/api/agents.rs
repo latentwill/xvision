@@ -558,7 +558,7 @@ mod tests {
             mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         }
     }
 
@@ -586,6 +586,10 @@ mod tests {
             bars_content_hash: None,
             manifest_canonical: None,
             bars_manifest: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
+            live_config: None,
         }
     }
 

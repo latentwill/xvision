@@ -255,6 +255,46 @@ describe("RunChart", () => {
     expect(screen.queryByText("Decision #7")).not.toBeInTheDocument();
   });
 
+  it("resolves marker panel content by marker kind and decision index", () => {
+    const payload = {
+      ...(samplePayload as any),
+      markers: {
+        trades: [
+          {
+            time: 1_700_000_000,
+            side: "Buy",
+            price: 50_000,
+            size: 0.25,
+            fee: 1.5,
+            pnl_realized: null,
+            decision_index: 7,
+            justification: "Entry signal",
+          },
+        ],
+        vetoes: [
+          {
+            time: 1_700_000_060,
+            price: 49_500,
+            reason: "Risk veto",
+            decision_index: 7,
+          },
+        ],
+        holds: [],
+      },
+    };
+
+    render(<RunChart payload={payload} />);
+
+    act(() => {
+      chartMocks.createdCharts[0]?.emitClick({ hoveredObjectId: "veto:7" });
+    });
+
+    expect(screen.getByText("Decision #7")).toBeInTheDocument();
+    expect(screen.getByText("Risk veto")).toBeInTheDocument();
+    expect(screen.queryByText("Entry signal")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Trade/)).not.toBeInTheDocument();
+  });
+
   it("renders chart shell range controls and data table toggle", () => {
     render(
       <ChartContainer

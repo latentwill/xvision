@@ -26,3 +26,22 @@ export type { SyncBridge } from "./sync-bridge";
 
 export { createStreamingBuffer } from "./streaming";
 export type { StreamingBuffer } from "./streaming";
+
+export {
+  xvnLastDot,
+  xvnAreaFill,
+  xvnRegimeBands,
+  xvnGradientFill,
+  xvnSheen,
+} from "./uplot-plugins";
+
+export {
+  xForIndex,
+  yForPrice,
+  deriveRange,
+  DEFAULT_BOUNDS,
+  createKlineAnchor,
+  type AnchorBounds,
+  type PriceRange,
+  type KlineAnchor,
+} from "./kline-anchor";

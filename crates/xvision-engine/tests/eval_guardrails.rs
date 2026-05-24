@@ -33,7 +33,7 @@ use chrono::{Duration, TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
@@ -127,7 +127,7 @@ fn minimal_strategy(agent_id: &str) -> Strategy {
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -234,7 +234,7 @@ async fn four_consecutive_long_open_pyramid_blocks_to_three_holds() {
     let bars = daily_bars(4);
     let dispatch = sequenced_dispatch(&["long_open", "long_open", "long_open", "long_open"]);
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -324,7 +324,7 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
     let bars = daily_bars(2);
     let dispatch = sequenced_dispatch(&["long_open", "short_open"]);
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = BacktestExecutor::with_bars(bars);
+    let executor = Executor::with_bars(bars);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -355,6 +355,16 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
         decisions[1].fill_price.is_some(),
         "flip-blocked decision must produce a close fill; got: {:?}",
         decisions[1].fill_price,
+    );
+    let opened = decisions[0]
+        .fill_size
+        .expect("first decision must record opened long size");
+    let closed = decisions[1]
+        .fill_size
+        .expect("flip-blocked decision must record close size");
+    assert!(
+        (opened + closed).abs() < 1e-9,
+        "flip-blocked decision must only close the existing long, not open a new short; opened={opened}, closed={closed}",
     );
 
     // supervisor_notes carries exactly one `one-step flip blocked` row.

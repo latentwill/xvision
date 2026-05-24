@@ -99,6 +99,14 @@ def first_paragraph(text: str) -> str:
     return next((p for p in paragraphs if p), "")
 
 
+def canonical_section_key(name: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", " ", strip_markdown(name).lower()).strip()
+    for alias, key in SECTION_ALIASES.items():
+        if normalized == alias or normalized.startswith(f"{alias} "):
+            return key
+    return re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+
+
 def parse_sections(raw: str) -> tuple[str, dict[str, str], dict[str, str]]:
     title_match = re.search(r"^#\s+(.+?)\s*$", raw, flags=re.MULTILINE)
     title = title_match.group(1).strip() if title_match else ""
@@ -112,8 +120,7 @@ def parse_sections(raw: str) -> tuple[str, dict[str, str], dict[str, str]]:
     for idx, heading in enumerate(headings):
         start = heading.end()
         end = headings[idx + 1].start() if idx + 1 < len(headings) else len(raw)
-        name = heading.group(1).strip().lower()
-        canonical = SECTION_ALIASES.get(name, re.sub(r"[^a-z0-9]+", "_", name).strip("_"))
+        canonical = canonical_section_key(heading.group(1).strip())
         sections[canonical] = raw[start:end].strip()
 
     return title, metadata, sections

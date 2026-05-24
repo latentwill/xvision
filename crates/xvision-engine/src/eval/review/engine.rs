@@ -241,13 +241,14 @@ async fn persist_completed(
     })?;
 
     let _ = store
-        .complete_review(
+        .complete_review_with_annotations(
             review_id,
             verdict,
             parsed.confidence,
             parsed.score,
             &parsed.summary,
             &parsed.raw_json,
+            &parsed.annotations,
         )
         .await
         .map_err(|e| ReviewError::Db(e.context("complete review")))?;

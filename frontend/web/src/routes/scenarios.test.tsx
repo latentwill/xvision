@@ -70,6 +70,7 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
         partial_fills: false,
         volume_constraints: null,
       },
+      overrides: [],
     },
     replay_mode: { mode: "Continuous" },
     capital: { initial: 10000, currency: "USD" },
@@ -82,8 +83,14 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
     created_at: "2025-01-01T00:00:00Z",
     created_by: "test",
     archived_at: null,
+    regime_label: null,
+    volatility_label: null,
+    trend_direction: null,
+    regime_derived: false,
+    venue_label: "paper",
+    safety_limits: null,
     ...overrides,
-  };
+  } as Scenario;
 }
 
 // `<ResponsiveListCard>` reads `useViewportMode()` which calls

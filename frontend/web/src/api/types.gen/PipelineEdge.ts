@@ -6,11 +6,12 @@ import type { EdgePredicate } from "./EdgePredicate";
  * `Sequential`. Roles refer to `AgentRef.role` values present on the
  * owning strategy's `agents` list.
  */
-export type PipelineEdge = { from_role: string, to_role: string,
+export type PipelineEdge = { from_role: string, to_role: string, 
 /**
  * Optional predicate evaluated against the upstream agent's
  * `FilterSignal.payload`. `None` (the default) = unconditional
  * edge — today's behavior. `Some(p)` fires the edge only when `p`
- * evaluates to `true`.
+ * evaluates to `true`. Phase A persists the shape; Phase B
+ * implements the evaluator.
  */
-condition?: EdgePredicate | null, };
+condition?: EdgePredicate, };

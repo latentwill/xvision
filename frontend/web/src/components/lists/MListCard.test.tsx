@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MListCard } from "./MListCard";
+import { MListRow } from "./MListRow";
 import type {
   ActiveFilter,
   ListSearchState,
@@ -194,5 +195,20 @@ describe("MListCard", () => {
     const region = screen.getByRole("region", { name: /active filters/i });
     fireEvent.click(within(region).getByRole("button", { name: /Validated/ }));
     expect(setStatus).toHaveBeenCalledWith("all");
+  });
+
+  it("MListRow renders zero-valued optional slots", () => {
+    render(
+      <MListRow
+        title="Cash"
+        badge={0}
+        subtitle={0}
+        meta={0}
+        rightTop={0}
+        rightSub={0}
+      />,
+    );
+
+    expect(screen.getAllByText("0")).toHaveLength(5);
   });
 });

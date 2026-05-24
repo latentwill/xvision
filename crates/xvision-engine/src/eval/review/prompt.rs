@@ -27,6 +27,7 @@ The JSON object MUST have these exact keys:
   "confidence": number in [0.0, 1.0],
   "score": integer in [0, 100],
   "findings": array of finding objects,
+  "annotations": array of annotation objects,
   "risks": array of strings,
   "next_tests": array of strings,
   "questions": array of strings
@@ -43,10 +44,23 @@ Each finding object MUST have:
   "recommendation": string
 }
 
+Each annotation object is optional chart markup for `/charts/annotated` and MUST have:
+{
+  "idx": integer candle/decision index,
+  "side": "top" | "bottom",
+  "type": "PATTERN" | "FLOW" | "RISK" | "REVERSION" | "STRUCTURE",
+  "title": string,
+  "body": string,
+  "conf": number in [0.0, 1.0],
+  "action": "WATCH" | "LONG" | "SHORT" | "CAUTION",
+  "danger": boolean
+}
+
 Counts:
 - `findings`: 3..=10 for completed runs. If the payload is too sparse to
   support 3 grounded findings, return verdict "inconclusive" and an empty
   findings array.
+- `annotations`: 0..=8. Use only moments grounded in the payload.
 - `risks`: 1..=5.
 - `next_tests`: 3..=7.
 

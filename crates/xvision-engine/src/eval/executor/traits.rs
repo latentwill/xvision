@@ -4,7 +4,7 @@
 //! `team/contracts/executor-trait-extraction.md` for this sub-track).
 //!
 //! Three traits — [`BarSource`], [`Clock`], and [`FillSink`] — describe
-//! the three knobs the `BacktestExecutor` will eventually share with a
+//! the three knobs the `Executor` will eventually share with a
 //! `LiveExecutor`:
 //!   - **Bars** — where the next OHLCV bar comes from (in-memory `Vec`
 //!     today; a market-data websocket in sub-track 3).
@@ -15,7 +15,7 @@
 //!
 //! This module ships the three Backtest impls — [`InjectedBars`],
 //! [`InstantClock`], [`SimulatedFills`] — and is consumed internally by
-//! [`super::BacktestExecutor`]. The Live impls (`LiveStream`,
+//! [`super::Executor`]. The Live impls (`LiveStream`,
 //! `WallClock`, `RealBrokerFills`) are explicitly out of scope for this
 //! contract; they land in sub-track 3.
 //!
@@ -23,7 +23,7 @@
 //!
 //! Trait objects (`Box<dyn BarSource>` etc.) rather than generics. The
 //! per-bar loop pays one virtual dispatch per call; the alternative
-//! (`<B: BarSource, C: Clock, F: FillSink>` on `BacktestExecutor`) would
+//! (`<B: BarSource, C: Clock, F: FillSink>` on `Executor`) would
 //! require monomorphizing the entire body for every combination — fine
 //! for backtest-only today, but sub-track 3 will land a Live impl on
 //! the same shape and we'd rather not blow up codegen there.
@@ -32,7 +32,7 @@
 //!
 //! Every backtest fixture must produce byte-identical metrics after the
 //! rewire. [`SimulatedFills`] lifts the existing fill-simulation code
-//! out of `BacktestExecutor` verbatim — same slippage, same fees, same
+//! out of `Executor` verbatim — same slippage, same fees, same
 //! min-notional, same provenance. The integration regression in
 //! `tests/eval_executor_traits.rs` pins this against a representative
 //! fixture from the existing test corpus.
@@ -41,6 +41,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 use xvision_core::market::Ohlcv;
+use xvision_execution::broker_surface::BrokerErrorClass;
 
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::orders::OrderState;
@@ -258,6 +259,9 @@ pub struct FillRecord {
     /// the executor uses to emit a `volume_share_excess` finding.
     /// `None` for every other case.
     pub volume_cap_hit: Option<(f64, f64, f64, f64)>,
+    /// Broker error classification for Live fills rejected by the paper
+    /// broker. `None` for simulated backtest fills and successful Live fills.
+    pub broker_error: Option<(BrokerErrorClass, String)>,
 }
 
 /// Order-fill seam.
@@ -317,7 +321,7 @@ impl FillSink for SimulatedFills {
 /// **DO NOT modify this function in this contract.** It is a verbatim
 /// lift; behavioral drift would surface as test failures elsewhere.
 /// See the contract acceptance: "Lift the existing fill code from
-/// `BacktestExecutor` verbatim into `SimulatedFills` rather than
+/// `Executor` verbatim into `SimulatedFills` rather than
 /// rewriting it."
 pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
     let want_long = a.action == "long_open";
@@ -338,6 +342,7 @@ pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
             aggressor_side: None,
             order_state: None,
             volume_cap_hit: None,
+            broker_error: None,
         };
     }
 
@@ -479,5 +484,101 @@ pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
         aggressor_side: Some(aggressor_side),
         order_state: Some(order_state),
         volume_cap_hit,
+        broker_error: None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn ohlcv_at(ts_secs: i64, close: f64) -> Ohlcv {
+        Ohlcv {
+            timestamp: Utc.timestamp_opt(ts_secs, 0).unwrap(),
+            open: close - 1.0,
+            high: close + 1.0,
+            low: close - 2.0,
+            close,
+            volume: 100.0,
+        }
+    }
+
+    #[tokio::test]
+    async fn injected_bars_yields_each_bar_in_order_then_none() {
+        let bars = vec![ohlcv_at(1, 100.0), ohlcv_at(2, 101.0), ohlcv_at(3, 102.0)];
+        let mut src = InjectedBars::new(bars.clone());
+
+        for expected in bars.iter() {
+            let got = src.next_bar().await.expect("bar present");
+            assert_eq!(got.timestamp, expected.timestamp);
+            assert_eq!(got.close, expected.close);
+        }
+        assert!(src.next_bar().await.is_none(), "source must drain to None");
+        // Subsequent polls keep returning None.
+        assert!(src.next_bar().await.is_none());
+    }
+
+    #[test]
+    fn instant_clock_now_returns_most_recent_advance_to() {
+        let mut clock = InstantClock::new();
+        // Pre-advance: epoch.
+        assert_eq!(clock.now().timestamp(), 0);
+
+        let t1 = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        clock.advance_to(t1);
+        assert_eq!(clock.now(), t1);
+
+        let t2 = Utc.timestamp_opt(1_700_000_060, 0).unwrap();
+        clock.advance_to(t2);
+        assert_eq!(clock.now(), t2);
+    }
+
+    #[tokio::test]
+    async fn simulated_fills_produces_same_outcome_as_inline_simulate() {
+        // The fill simulation is a pure function of the FillRequest. Build
+        // an identical request and assert SimulatedFills::submit matches
+        // simulate_fill_inner directly — guarding against accidental
+        // behavioural drift between the trait impl and the lifted free
+        // function it delegates to.
+        let req = FillRequest {
+            pos: 0.0,
+            entry: 0.0,
+            action: "long_open".into(),
+            next_open: 100.0,
+            bar_volume: 1_000.0,
+            slip_bps: 5.0,
+            spread_bps: 2.0,
+            taker_bps: 10.0,
+            maker_bps: 5.0,
+            equity: 10_000.0,
+            risk_pct: 0.01,
+            slippage_model: SlippageModel::Linear { bps: 5 },
+            fee_source: crate::eval::scenario::FeeSource::Default,
+            asset: "BTC/USD".into(),
+            bar_ts: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+            bar_open: 100.0,
+            bar_high: 101.0,
+            bar_low: 99.0,
+        };
+
+        let mut sink = SimulatedFills::new();
+        let from_trait = sink.submit(req.clone()).await;
+        let from_inline = simulate_fill_inner(&req);
+
+        // Compare the load-bearing fields. Both must agree byte-for-byte.
+        assert_eq!(from_trait.new_pos, from_inline.new_pos);
+        assert_eq!(from_trait.new_entry, from_inline.new_entry);
+        assert_eq!(from_trait.fill_price, from_inline.fill_price);
+        assert_eq!(from_trait.fill_size, from_inline.fill_size);
+        assert_eq!(from_trait.fee, from_inline.fee);
+        assert_eq!(from_trait.realized_pnl, from_inline.realized_pnl);
+        assert_eq!(from_trait.fill_branch, from_inline.fill_branch);
+        assert_eq!(from_trait.aggressor_side, from_inline.aggressor_side);
+        assert_eq!(from_trait.order_state, from_inline.order_state);
     }
 }

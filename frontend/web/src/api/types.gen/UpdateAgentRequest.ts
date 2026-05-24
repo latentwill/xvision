@@ -2,11 +2,11 @@
 import type { AgentSlot } from "./AgentSlot";
 import type { ScopePatch } from "./ScopePatch";
 
-export type UpdateAgentRequest = { name: string | null, description: string | null, tags: Array<string> | null, slots: Array<AgentSlot> | null,
+export type UpdateAgentRequest = { name: string | null, description: string | null, tags: Array<string> | null, slots: Array<AgentSlot> | null, 
 /**
  * Patch the agent's scope. `None` (default) leaves the column
  * alone; `Some(ScopePatch::Clear)` promotes a scoped agent to
  * the workspace; `Some(ScopePatch::Set(strategy_id))` scopes it.
  * Migration 036.
  */
-scope_strategy_id?: ScopePatch | null, };
+scope_strategy_id: ScopePatch | null, };

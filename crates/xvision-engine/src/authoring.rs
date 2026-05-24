@@ -19,9 +19,10 @@ use crate::strategies::{
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
-    validate::validate_strategy,
+    validate::{no_filter_warnings, validate_strategy},
     AgentRef, PipelineDef, PipelineKind, Strategy,
 };
+use xvision_filters::{parse_json, validate as validate_filter_dsl, ActivationMode, Filter};
 
 // ---------------------------------------------------------------------------
 // types — request / response shapes shared by both surfaces.
@@ -99,10 +100,8 @@ pub struct AddAgentRefRequest {
     pub role: String,
     /// Phase A `AgentRef.activates`. `None` (default, the back-compat
     /// path) lets the dispatcher pick the slot's first capability.
-    /// `Some(Capability::Filter)` is the value the strategy editor's
-    /// inline Filter composer sets when attaching a Filter agent so
-    /// the Phase B dispatcher picks the Filter handler at this
-    /// position even if the referenced agent also advertises Trader.
+    /// `Some(Capability::Filter)` is rejected; filters are saved JSON
+    /// artifacts on the strategy, not agent refs.
     #[serde(default)]
     pub activates: Option<crate::agents::Capability>,
 }
@@ -146,10 +145,47 @@ pub struct SetRiskConfigReq {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetFilterReq {
+    pub strategy_id: String,
+    #[serde(default)]
+    pub filter: Option<serde_json::Value>,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetRiskConfigOut {
     pub id: String,
     /// `preset` or `explicit`.
     pub applied: String,
+}
+
+/// Request to set or replace the strategy's deterministic DSL Filter.
+///
+/// The caller supplies the filter as DSL JSON source text and
+/// the server parses + validates it. This keeps the operator's text
+/// editor as the source of truth and avoids round-tripping a deeply
+/// nested JSON tree through every client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetStrategyFilterReq {
+    pub id: String,
+    pub source: String,
+    /// Must be `"json"`. Kept on the wire so older clients fail with a
+    /// validation error instead of silently sending the wrong source form.
+    #[serde(default = "default_filter_format")]
+    pub format: String,
+}
+
+fn default_filter_format() -> String {
+    "json".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetStrategyFilterOut {
+    pub id: String,
+    pub filter: Filter,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +193,19 @@ pub struct ValidateDraftOut {
     pub id: String,
     pub ok: bool,
     pub errors: Vec<String>,
+    /// Soft validation signals — the strategy is still saveable but the
+    /// operator may want to address them. The dashboard's strategy
+    /// editor surfaces these alongside errors (without blocking save).
+    ///
+    /// Populated as of the agent-firing-filter wave with the no-Filter
+    /// soft-warning from `validate::no_filter_warnings`. The field is
+    /// additive — clients that omit it on the wire still parse cleanly
+    /// via `#[serde(default)]`, and the
+    /// `skip_serializing_if = "Vec::is_empty"` collapses the field out
+    /// of the JSON when no warnings fire (e.g. the strategy carries
+    /// `acknowledge_no_filter = true`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +282,7 @@ pub async fn create_blank_strategy(
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     };
     store.save(&draft).await?;
     Ok(CreateStrategyOut { id })
@@ -325,11 +374,24 @@ pub async fn update_manifest(
     Ok(UpdateManifestOut { id: req.id, updated })
 }
 
+fn reject_reserved_agent_role(role: &str) -> anyhow::Result<()> {
+    if role == "filter" {
+        anyhow::bail!(
+            "agent role 'filter' is reserved for strategy JSON filters; choose a trader, analyst, risk, or reviewer role"
+        );
+    }
+    Ok(())
+}
+
 pub async fn add_agent_ref(store: &dyn StrategyStore, req: AddAgentRefRequest) -> anyhow::Result<Strategy> {
     let mut strategy = store.load(&req.strategy_id).await?;
     let role = canonical_role(&req.role);
     if role.is_empty() {
         anyhow::bail!("role is required");
+    }
+    reject_reserved_agent_role(&role)?;
+    if matches!(req.activates, Some(crate::agents::Capability::Filter)) {
+        anyhow::bail!("agent type 'filter' is removed; attach a strategy JSON filter instead");
     }
     if strategy.agents.iter().any(|a| canonical_role(&a.role) == role) {
         anyhow::bail!("role '{role}' already exists on strategy");
@@ -382,6 +444,7 @@ pub async fn rename_agent_role(
     if new_role.is_empty() {
         anyhow::bail!("new role is required");
     }
+    reject_reserved_agent_role(&new_role)?;
     if strategy
         .agents
         .iter()
@@ -513,6 +576,117 @@ pub async fn set_mechanical_param(
     store.save(&strategy).await
 }
 
+pub async fn set_filter(store: &dyn StrategyStore, req: SetFilterReq) -> anyhow::Result<Strategy> {
+    let mut strategy = store.load(&req.strategy_id).await?;
+    let filter = parse_filter_payload(req.filter, req.source.as_deref(), &req.strategy_id)?;
+    strategy.filter = filter;
+    strategy.activation_mode = if strategy.filter.is_some() {
+        xvision_filters::ActivationMode::FilterGated
+    } else {
+        xvision_filters::ActivationMode::EveryBar
+    };
+    store.save(&strategy).await?;
+    Ok(strategy)
+}
+
+fn parse_filter_payload(
+    raw_filter: Option<serde_json::Value>,
+    source: Option<&str>,
+    strategy_id: &str,
+) -> anyhow::Result<Option<xvision_filters::Filter>> {
+    let Some(raw_filter) = raw_filter else {
+        return Ok(None);
+    };
+    if raw_filter.is_null() {
+        return Ok(None);
+    }
+    let raw_filter = extract_filter_payload(raw_filter);
+    let maybe_filter = match raw_filter {
+        serde_json::Value::String(src) => parse_filter_text(&src, source, strategy_id),
+        other_value => match source {
+            Some("json") => parse_filter_value(other_value, strategy_id),
+            Some(source) if source.trim().is_empty() => parse_filter_value(other_value, strategy_id),
+            None => parse_filter_value(other_value, strategy_id),
+            Some(_) => parse_filter_text(
+                &serde_json::to_string(&other_value)
+                    .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+                source,
+                strategy_id,
+            ),
+        },
+    };
+    maybe_filter.map(Some)
+}
+
+fn parse_filter_value(
+    raw_filter: serde_json::Value,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let serde_json::Value::Object(mut obj) = raw_filter else {
+        anyhow::bail!("filter parse error: filter payload must be an object");
+    };
+    if obj
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|id| id.trim().is_empty())
+    {
+        obj.insert("id".into(), serde_json::Value::String(Ulid::new().to_string()));
+    }
+    obj.insert(
+        "strategy_id".into(),
+        serde_json::Value::String(strategy_id.to_string()),
+    );
+    let json = serde_json::to_string(&serde_json::Value::Object(obj))
+        .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+    parse_filter_text(&json, Some("json"), strategy_id)
+}
+
+fn parse_filter_text(
+    source_text: &str,
+    source: Option<&str>,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    if let Some(source) = source {
+        if source != "json" {
+            anyhow::bail!("unknown filter source format `{source}` — must be `json`");
+        }
+    }
+    let mut filter = parse_filter_text_preferring_json(source_text, strategy_id)?;
+    if filter.id.as_str().is_empty() {
+        filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
+    }
+    filter.strategy_id = strategy_id.to_string().into();
+    xvision_filters::validate(&filter).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+    Ok(filter)
+}
+
+fn parse_filter_text_preferring_json(
+    source_text: &str,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let mut filter =
+        xvision_filters::parse_json(source_text).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+    if filter.id.as_str().is_empty() {
+        filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
+    }
+    filter.strategy_id = strategy_id.to_string().into();
+    xvision_filters::validate(&filter).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+    Ok(filter)
+}
+
+fn extract_filter_payload(raw_filter: serde_json::Value) -> serde_json::Value {
+    match raw_filter {
+        serde_json::Value::Object(mut obj) => {
+            if let Some(filter) = obj.remove("filter") {
+                filter
+            } else {
+                serde_json::Value::Object(obj)
+            }
+        }
+        other => other,
+    }
+}
+
 pub async fn set_risk_config(
     store: &dyn StrategyStore,
     req: SetRiskConfigReq,
@@ -543,6 +717,36 @@ pub async fn set_risk_config(
     })
 }
 
+/// Parse the supplied DSL source, validate it, and write it to
+/// `Strategy.filter`. Promotes `activation_mode` from `EveryBar` to
+/// `FilterGated` so the runtime actually consults the filter on every
+/// bar — the inverse of [`clear_strategy_filter`].
+pub async fn set_strategy_filter(
+    store: &dyn StrategyStore,
+    req: SetStrategyFilterReq,
+) -> anyhow::Result<SetStrategyFilterOut> {
+    let filter = match req.format.as_str() {
+        "json" => parse_json(&req.source).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+        other => anyhow::bail!("unknown filter source format `{other}` — must be `json`"),
+    };
+    validate_filter_dsl(&filter).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+
+    let mut strategy = store.load(&req.id).await?;
+    strategy.filter = Some(filter.clone());
+    strategy.activation_mode = ActivationMode::FilterGated;
+    store.save(&strategy).await?;
+    Ok(SetStrategyFilterOut { id: req.id, filter })
+}
+
+/// Clear the strategy's filter, reverting `activation_mode` to
+/// `EveryBar`. No-op when the strategy already has no filter.
+pub async fn clear_strategy_filter(store: &dyn StrategyStore, id: &str) -> anyhow::Result<()> {
+    let mut strategy = store.load(id).await?;
+    strategy.filter = None;
+    strategy.activation_mode = ActivationMode::EveryBar;
+    store.save(&strategy).await
+}
+
 pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Result<ValidateDraftOut> {
     let strategy = store.load(id).await?;
     let mut errors = match validate_strategy(&strategy) {
@@ -556,10 +760,16 @@ pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Resu
         );
     }
     let ok = errors.is_empty();
+    // Soft signals — surfaced alongside errors but do not block save.
+    // L2 of the firing-filter operator-surface spec (2026-05-22) calls
+    // for the SPA validate panel to render the no-Filter warning so the
+    // operator sees it whether they're using the CLI or the SPA.
+    let warnings = no_filter_warnings(&strategy);
     Ok(ValidateDraftOut {
         id: id.to_string(),
         ok,
         errors,
+        warnings,
     })
 }
 
@@ -773,14 +983,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_agent_ref_threads_activates_capability_to_pipeline_position() {
-        // Phase 3 of agent-firing-filter: the strategy editor's inline
-        // composer attaches a Filter agent by sending
-        // `activates: Some(Capability::Filter)` on AddAgentRefRequest.
-        // The new AgentRef must carry that value so the Phase B
-        // dispatcher picks the Filter handler at this position even
-        // when the referenced agent advertises more than one
-        // capability. None on the request preserves today's behavior.
+    async fn add_agent_ref_rejects_filter_agent_type() {
         let (store, _td) = store_in_tmp();
         let out = create_strategy(
             &store,
@@ -806,8 +1009,9 @@ mod tests {
         .unwrap();
         assert_eq!(s.agents[0].activates, None);
 
-        // Some(Filter) → the new AgentRef carries it verbatim.
-        let s = add_agent_ref(
+        // Some(Filter) is no longer a valid agent ref. Filters are saved
+        // JSON artifacts on the strategy, not agents.
+        let err = add_agent_ref(
             &store,
             AddAgentRefRequest {
                 strategy_id: out.id,
@@ -817,13 +1021,8 @@ mod tests {
             },
         )
         .await
-        .unwrap();
-        let added = s
-            .agents
-            .iter()
-            .find(|r| r.role == "regime_filter")
-            .expect("added");
-        assert_eq!(added.activates, Some(crate::agents::Capability::Filter));
+        .expect_err("filter agent type should be rejected");
+        assert!(err.to_string().contains("agent type 'filter' is removed"));
     }
 
     #[tokio::test]
@@ -891,6 +1090,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_strategy_filter_parses_json_and_flips_activation_mode() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "filter-x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Baseline: every-bar, no filter.
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.filter.is_none());
+        assert!(matches!(strategy.activation_mode, ActivationMode::EveryBar));
+
+        // Set: minimal valid Filter JSON — the only accepted authoring form.
+        const FILTER_JSON: &str = r#"{
+  "id": "f_01JX0000000000000000000000",
+  "strategy_id": "s_01JX0000000000000000000000",
+  "display_name": "EMA Cross",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "1h",
+  "scan_cadence": "bar_close",
+  "cooldown_bars": 3,
+  "conditions": {
+    "all": [
+      { "lhs": "ema_20", "op": ">", "rhs": "ema_50" }
+    ]
+  }
+}"#;
+        let r = set_strategy_filter(
+            &store,
+            SetStrategyFilterReq {
+                id: out.id.clone(),
+                source: FILTER_JSON.to_string(),
+                format: "json".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.filter.display_name, "EMA Cross");
+
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.filter.is_some());
+        assert!(matches!(strategy.activation_mode, ActivationMode::FilterGated));
+
+        // Clear: filter goes away, activation mode reverts.
+        clear_strategy_filter(&store, &out.id).await.unwrap();
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.filter.is_none());
+        assert!(matches!(strategy.activation_mode, ActivationMode::EveryBar));
+    }
+
+    #[tokio::test]
+    async fn set_strategy_filter_rejects_malformed_source() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "filter-bad".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let r = set_strategy_filter(
+            &store,
+            SetStrategyFilterReq {
+                id: out.id.clone(),
+                source: "this is not valid json".to_string(),
+                format: "json".to_string(),
+            },
+        )
+        .await;
+        assert!(r.is_err(), "malformed source must error");
+
+        // Strategy unchanged on error.
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.filter.is_none());
+        assert!(matches!(strategy.activation_mode, ActivationMode::EveryBar));
+    }
+
+    #[tokio::test]
     async fn set_risk_config_preset_balanced_updates_manifest_label() {
         let (store, _td) = store_in_tmp();
         let out = create_strategy(
@@ -918,6 +1203,94 @@ mod tests {
         let strategy = get_strategy(&store, &out.id).await.unwrap();
         assert_eq!(strategy.risk.risk_pct_per_trade, 0.015);
         assert_eq!(strategy.manifest.risk_preset_or_config, "balanced");
+    }
+
+    #[tokio::test]
+    async fn validate_draft_surfaces_no_filter_warning_for_explicit_trader() {
+        // The validate endpoint must surface the no-filter soft-warning
+        // so the strategy editor can render it alongside errors.
+        use crate::agents::Capability;
+
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "explicit-trader-no-filter".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        // Hand-author a strategy with one explicit-Trader AgentRef and
+        // no Filter. Going through `add_agent_ref` would leave
+        // `activates: None`, which (per the warning's design) does NOT
+        // fire the warning — only explicit Trader/Critic does.
+        let mut strategy = store.load(&out.id).await.unwrap();
+        strategy.agents.push(AgentRef {
+            agent_id: "01HZAGENT_TRADER".into(),
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        });
+        store.save(&strategy).await.unwrap();
+
+        let v = validate_draft(&store, &out.id).await.unwrap();
+        assert!(
+            v.warnings.iter().any(|w| w.contains("no saved JSON filter")),
+            "expected no-Filter warning in ValidateDraftOut.warnings, got: {:?}",
+            v.warnings,
+        );
+        // Errors stay clean — the warning is soft.
+        assert!(
+            v.errors.is_empty(),
+            "warning must not push the draft into errors, got: {:?}",
+            v.errors,
+        );
+        // And the round-trip JSON includes the field so SPA consumers
+        // see it (skip_serializing_if pulls it out only when empty).
+        let json = serde_json::to_value(&v).unwrap();
+        assert!(
+            json.get("warnings").is_some(),
+            "warnings field must be serialized when populated; got {json}",
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_draft_omits_warnings_field_when_strategy_acknowledges() {
+        // `acknowledge_no_filter = true` silences the warning. The
+        // `skip_serializing_if = "Vec::is_empty"` then drops the field
+        // from the wire shape so the SPA panel renders nothing.
+        use crate::agents::Capability;
+
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "ack-no-filter".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut strategy = store.load(&out.id).await.unwrap();
+        strategy.agents.push(AgentRef {
+            agent_id: "01HZAGENT_TRADER".into(),
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        });
+        strategy.acknowledge_no_filter = true;
+        store.save(&strategy).await.unwrap();
+
+        let v = validate_draft(&store, &out.id).await.unwrap();
+        assert!(
+            v.warnings.is_empty(),
+            "acknowledge_no_filter must suppress all warnings, got: {:?}",
+            v.warnings,
+        );
+        let json = serde_json::to_value(&v).unwrap();
+        assert!(
+            json.get("warnings").is_none(),
+            "empty warnings must be omitted from the wire shape; got {json}",
+        );
     }
 
     #[tokio::test]

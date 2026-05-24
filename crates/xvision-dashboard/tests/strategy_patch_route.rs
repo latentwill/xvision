@@ -201,6 +201,47 @@ async fn patch_metadata_rejects_invalid_asset_symbol() {
 }
 
 #[tokio::test]
+async fn patch_metadata_rejects_out_of_scope_fields() {
+    let (server, _tmp) = boot().await;
+    let id = create_strategy(&server).await;
+
+    let response = server
+        .patch(&format!("/api/strategy/{id}"))
+        .json(&serde_json::json!({ "id": "01JSHOULDNOTCHANGE0000000000" }))
+        .await;
+    response.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+
+    let response = server.get(&format!("/api/strategy/{id}")).await;
+    response.assert_status_ok();
+    let fetched: serde_json::Value = response.json();
+    assert_eq!(fetched["manifest"]["id"], id);
+}
+
+#[tokio::test]
+async fn patch_metadata_invalid_multi_field_patch_is_atomic() {
+    let (server, _tmp) = boot().await;
+    let id = create_strategy(&server).await;
+
+    let response = server
+        .patch(&format!("/api/strategy/{id}"))
+        .json(&serde_json::json!({
+            "display_name": "",
+            "plain_summary": "This should not be persisted.",
+        }))
+        .await;
+    response.assert_status_bad_request();
+
+    let response = server.get(&format!("/api/strategy/{id}")).await;
+    response.assert_status_ok();
+    let fetched: serde_json::Value = response.json();
+    assert_eq!(fetched["manifest"]["display_name"], "PatchMe");
+    assert_ne!(
+        fetched["manifest"]["plain_summary"], "This should not be persisted.",
+        "valid fields in a rejected patch must not be partially written"
+    );
+}
+
+#[tokio::test]
 async fn patch_metadata_normalizes_and_dedupes_asset_universe() {
     let (server, _tmp) = boot().await;
     let id = create_strategy(&server).await;

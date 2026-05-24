@@ -504,6 +504,13 @@ function EditProviderForm({
           base_url: trimmedBaseUrl,
           api_key_env: trimmedEnv,
           api_key: apiKey.trim() === "" ? null : apiKey,
+          // `null` = "no per-provider enabled_models override; keep the
+          // built-in model catalog". The settings UI doesn't manage
+          // this field today; ensure it's always sent so the server's
+          // `deny_unknown_fields` accepts the request and existing
+          // operator config isn't accidentally overwritten with an
+          // empty allowlist.
+          enabled_models: null,
         });
       }}
       className="px-4 space-y-3"

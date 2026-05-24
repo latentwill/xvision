@@ -81,7 +81,7 @@ pub struct ResolvedAgentSlot {
     pub capabilities: BTreeSet<Capability>,
     /// Snapshotted `AgentSlot.noop_skip` at strategy-resolution time.
     /// `true` (the effective default for both `None` and `Some(true)`)
-    /// enables the pre-LLM zero-legal-actions gate on trader-role slots;
+    /// enables the pre-LLM hold-only action gate on trader-role slots;
     /// `false` disables it so the LLM runs even in a corner.
     /// Non-trader roles always run regardless of this flag.
     pub noop_skip: bool,
@@ -97,7 +97,7 @@ pub struct PipelineInputs<'a> {
     /// `execute_slot` call (`qa-eval-observability-wiring`,
     /// 2026-05-17). `None` is the default — every existing call site
     /// inherits the no-op path without code changes, and the eval
-    /// executors opt in via `BacktestExecutor::with_observability_bus`.
+    /// executors opt in via `Executor::with_observability_bus`.
     pub obs: Option<ObsEmitter>,
     /// V2D: optional cortex-memory recorder. Threaded into every
     /// `execute_slot` call so per-slot `memory_mode = AgentScoped`
@@ -308,27 +308,22 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
     })
 }
 
-/// Returns true when the current seed's `portfolio_state.position_size`
-/// indicates that both `long_open` and `short_open` are blocked — i.e. the
-/// only legal action for the trader is `hold`. This is the "zero legal open
-/// actions" condition defined in the trader-noop-skip intake.
-///
-/// The check is purely on the seed JSON: a non-zero `position_size` means the
-/// portfolio already carries a position on the cycle's asset (long > 0 or
-/// short < 0), so the risk gate would block any new open on the same asset
-/// before the LLM response even gets there. If `position_size` is absent or
-/// cannot be parsed as a float, the gate does NOT fire (conservative default
-/// — run the LLM).
-fn seed_has_zero_legal_opens(seed: &serde_json::Value) -> bool {
-    let ps = match seed.get("portfolio_state") {
-        Some(v) => v,
-        None => return false,
+/// Returns true only when the seed explicitly says no state-changing trading
+/// action is available. A non-zero position is NOT enough to skip the trader:
+/// the trader may still decide to close/flatten, reduce, or reverse.
+fn seed_has_only_hold_action(seed: &serde_json::Value) -> bool {
+    let legal_actions = seed
+        .get("legal_actions")
+        .or_else(|| seed.get("portfolio_state").and_then(|v| v.get("legal_actions")))
+        .and_then(|v| v.as_array());
+    let Some(actions) = legal_actions else {
+        return false;
     };
-    let size = match ps.get("position_size").and_then(|v| v.as_f64()) {
-        Some(f) => f,
-        None => return false,
-    };
-    size != 0.0
+    !actions.is_empty()
+        && actions
+            .iter()
+            .filter_map(|v| v.as_str())
+            .all(|action| matches!(action, "hold" | "noop" | "no_op"))
 }
 
 /// Synthesize a `TraderDecision`-shaped `LlmResponse` that records the
@@ -340,7 +335,7 @@ fn seed_has_zero_legal_opens(seed: &serde_json::Value) -> bool {
 fn noop_skip_response() -> LlmResponse {
     LlmResponse {
         content: vec![ContentBlock::Text {
-            text: r#"{"action":"hold","conviction":0.0,"justification":"noop_skip: portfolio already carries a position — only hold is legal"}"#.into(),
+            text: r#"{"action":"hold","conviction":0.0,"justification":"noop_skip: only hold is available; no state-changing trading action is available"}"#.into(),
         }],
         stop_reason: StopReason::EndTurn,
         input_tokens: 0,
@@ -448,22 +443,22 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
             continue;
         }
 
-        // trader-noop-skip: only fires on Trader-capable agents AND
-        // when the seed has zero legal open actions. Keeping the gate
-        // here (above `dispatch_capability`) so the synthesized
-        // `noop_skip` LlmResponse is byte-identical to the pre-Phase-B
-        // path — the dispatch seam never sees the skipped call.
-        if capability == Capability::Trader && resolved.noop_skip && seed_has_zero_legal_opens(&accumulated) {
+        // trader-noop-skip: only fires on Trader-capable agents when
+        // the seed explicitly supplies a legal_actions set containing
+        // no state-changing trading action. A held position alone must
+        // not skip the trader because close/flat may still be the right
+        // decision.
+        if capability == Capability::Trader && resolved.noop_skip && seed_has_only_hold_action(&accumulated) {
             tracing::debug!(
                 event = "noop_skip",
                 role = %resolved.role,
-                "trader-noop-skip: portfolio already carries a position — skipping LLM call",
+                "trader-noop-skip: only hold is available — skipping LLM call",
             );
             if let Some(obs) = input.obs.as_ref() {
                 let payload = serde_json::json!({
                     "role": resolved.role,
                     "cycle_idx": input.cycle_idx,
-                    "reason": "noop_skip: portfolio already carries a position",
+                    "reason": "noop_skip: only hold is available",
                 });
                 obs.emit_engine_event("flat_skip_fired", None, Some(payload.to_string()))
                     .await;
@@ -471,9 +466,9 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                     "guard",
                     "info",
                     &format!(
-                        "trader-noop-skip fired at cycle {} — portfolio already \
-                         carries a position; the LLM call was skipped and a \
-                         hold decision was synthesized",
+                        "trader-noop-skip fired at cycle {} — only hold was \
+                         available; the LLM call was skipped and a hold \
+                         decision was synthesized",
                         input.cycle_idx
                     ),
                 )
