@@ -33,10 +33,10 @@ pub use runtime::{
     dsl_to_filter_signal, referenced_indicators, ActivationDecision, BridgedFilterSignal, ConditionResult,
     EvalContext, FilterEvalOutcome, RuntimeFilter, Transition,
 };
-pub use state::{collect_indicator_refs, FilterState};
+pub use state::{collect_filter_indicator_refs, collect_indicator_refs, FilterState};
 pub use types::{
-    ActivationMode, AgentContextTemplateId, Condition, ConditionTree, Filter, FilterId, FilterStatus,
-    IndicatorName, IndicatorRef, Operand, Operator, ScanCadence, StrategyId, Symbol, Timeframe,
+    ActivationMode, AgentContextTemplateId, Condition, ConditionTree, Filter, FilterFire, FilterId,
+    FilterStatus, IndicatorName, IndicatorRef, Operand, Operator, ScanCadence, StrategyId, Symbol, Timeframe,
     WakeInPosition, DEFAULT_AGENT_CONTEXT_TEMPLATE,
 };
 pub use validate::validate;

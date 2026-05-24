@@ -41,6 +41,8 @@ pub fn validate(filter: &Filter) -> Result<(), ValidationError> {
     // Rule 10 — non-empty condition tree.
     validate_condition_tree_non_empty(&filter.conditions)?;
 
+    validate_fire_metadata(filter)?;
+
     // Per-condition rules: 1, 2, 3, 4, 5, 6.
     let variant = filter.conditions.variant_name();
     for (idx, cond) in filter.conditions.conditions().iter().enumerate() {
@@ -48,6 +50,31 @@ pub fn validate(filter: &Filter) -> Result<(), ValidationError> {
         validate_condition(cond, &base)?;
     }
 
+    Ok(())
+}
+
+fn validate_fire_metadata(filter: &Filter) -> Result<(), ValidationError> {
+    let Some(fire) = &filter.fire else {
+        return Ok(());
+    };
+    if fire.reason.trim().is_empty() {
+        return Err(ValidationError::EmptyTree {
+            path: "/fire/reason".to_string(),
+            detail: "fire.reason must not be empty".to_string(),
+        });
+    }
+    if !fire.priority.is_finite() || !(0.0..=1.0).contains(&fire.priority) {
+        return Err(ValidationError::NumericBounds {
+            path: "/fire/priority".to_string(),
+            detail: format!(
+                "fire.priority must be finite and in [0, 1]; got {}",
+                fire.priority
+            ),
+        });
+    }
+    for (idx, indicator) in fire.context.iter().enumerate() {
+        validate_indicator_ref(indicator, &format!("/fire/context/{}", idx))?;
+    }
     Ok(())
 }
 

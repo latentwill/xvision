@@ -72,7 +72,7 @@ impl FilterState {
     /// pre-seeded with every `IndicatorRef` mentioned in the filter's
     /// conditions.
     pub fn new(filter: &Filter) -> Self {
-        let refs = collect_indicator_refs(&filter.conditions);
+        let refs = collect_filter_indicator_refs(filter);
         let indicators = IndicatorEngine::new(refs.iter());
         let n_conditions = filter.conditions.conditions().len();
         Self {
@@ -124,7 +124,7 @@ impl FilterState {
     /// by `filter`, keyed by the stable DSL string (`ema_20`, `close`,
     /// etc.). Indicators still in warmup are omitted.
     pub fn indicator_snapshot(&self, filter: &Filter) -> BTreeMap<String, f64> {
-        collect_indicator_refs(&filter.conditions)
+        collect_filter_indicator_refs(filter)
             .into_iter()
             .filter_map(|r| self.indicators.value(&r).map(|v| (r.to_string(), v)))
             .collect()
@@ -174,6 +174,22 @@ pub fn collect_indicator_refs(tree: &ConditionTree) -> Vec<IndicatorRef> {
     seen
 }
 
+/// Collect every indicator a filter needs at runtime: condition operands
+/// plus optional fire-context indicators.
+pub fn collect_filter_indicator_refs(filter: &Filter) -> Vec<IndicatorRef> {
+    let mut out = collect_indicator_refs(&filter.conditions);
+    if let Some(fire) = &filter.fire {
+        out.extend(fire.context.iter().cloned());
+    }
+    let mut seen: Vec<IndicatorRef> = Vec::new();
+    for r in out {
+        if !seen.iter().any(|s| s == &r) {
+            seen.push(r);
+        }
+    }
+    seen
+}
+
 fn collect_from_condition(c: &Condition, out: &mut Vec<IndicatorRef>) {
     collect_from_operand(&c.lhs, out);
     collect_from_operand(&c.rhs, out);
@@ -204,6 +220,7 @@ mod tests {
             timeframe: Timeframe::new("1h"),
             scan_cadence: crate::types::ScanCadence::BarClose,
             conditions: tree,
+            fire: None,
             cooldown_bars: cooldown,
             max_wakeups_per_day: max_wake,
             wake_when_in_position: crate::types::WakeInPosition::Always,

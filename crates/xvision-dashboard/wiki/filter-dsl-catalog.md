@@ -21,6 +21,17 @@ The runtime defaults are `status: "draft"`, `scan_cadence: "bar_close"`,
 `agent_context_template: "compact_trade_context_v1"` when those fields
 are omitted by higher-level authoring surfaces.
 
+Filters may also include optional LLM trigger metadata:
+
+- `fire.reason` - short machine-readable trigger reason
+- `fire.priority` - 0.0 to 1.0 relative priority for downstream surfaces
+- `fire.tags` - compact category labels
+- `fire.context` - indicator tokens to attach to the trigger payload
+
+`fire` metadata does not make a filter pass or fail. It only controls
+the compact reason/context bundle exposed to traces and trader briefings
+when the boolean gate is active.
+
 ## Operators
 
 | Operator | DSL token | Operand contract |
@@ -84,6 +95,9 @@ Moving averages and trend:
 - `donchian_lower_<period>` - 2 to 200
 - `highest_<period>` - 2 to 200, rolling N-bar high
 - `lowest_<period>` - 2 to 200, rolling N-bar low
+- `opening_range_high_<minutes>` - 2 to 200, current session opening-range high after the window locks
+- `opening_range_low_<minutes>` - 2 to 200, current session opening-range low after the window locks
+- `opening_range_mid_<minutes>` - 2 to 200, midpoint of opening-range high/low after the window locks
 
 Ichimoku:
 
@@ -135,6 +149,8 @@ Volume-aware:
 - `vwap_<period>` - 2 to 200, rolling typical-price VWAP
 - `volume_sma_<period>` - 2 to 200
 - `rvol_<period>` - current volume divided by same-time-of-day average when timestamps are available, otherwise rolling volume average
+- `rvol_tod_<period>` - explicit same-time-of-day relative volume token; same fallback behavior as `rvol_<period>`
+- `volume_zscore_<period>` - current volume normalized by trailing rolling volume mean/stddev
 - `obv` - cumulative On-Balance Volume
 
 Session and reference levels:
@@ -145,6 +161,11 @@ Session and reference levels:
 - `prev_day_close`
 - `prev_week_high`
 - `prev_week_low`
+- `prev_week_close`
+- `prev_month_open`
+- `prev_month_high`
+- `prev_month_low`
+- `prev_month_close`
 - `premarket_high`
 - `premarket_low`
 - `gap_pct` - current session open versus previous day close, percent
@@ -164,6 +185,39 @@ EMA cross with a 16-bar cooldown:
     "any": [
       { "lhs": "ema_12", "op": "crosses_above", "rhs": "ema_26" },
       { "lhs": "ema_12", "op": "crosses_below", "rhs": "ema_26" }
+    ]
+  },
+  "cooldown_bars": 16
+}
+```
+
+LLM trigger context for an opening-range breakout:
+
+```json
+{
+  "display_name": "LLM trend breakout fire",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "15m",
+  "conditions": {
+    "all": [
+      { "lhs": "adx_14", "op": ">", "rhs": 25 },
+      { "lhs": "di_plus_14", "op": "above_for_3", "rhs": "di_minus_14" },
+      { "lhs": "close", "op": "crossed_above_3", "rhs": "opening_range_high_30" },
+      { "lhs": "rvol_tod_20", "op": ">", "rhs": 1.5 }
+    ]
+  },
+  "fire": {
+    "reason": "trend_breakout",
+    "priority": 0.85,
+    "tags": ["trend", "breakout", "volume"],
+    "context": [
+      "close",
+      "opening_range_high_30",
+      "adx_14",
+      "di_plus_14",
+      "di_minus_14",
+      "rvol_tod_20",
+      "volume_zscore_20"
     ]
   },
   "cooldown_bars": 16
@@ -250,7 +304,8 @@ This catalog covers the common strategy components surfaced in
 Freqtrade, Hummingbot, TA-Lib, and Backtrader references: moving
 averages, MACD, RSI, Stochastic/StochRSI, ADX/DI, Ichimoku, Bollinger
 Bands, Keltner Channels, ATR, Donchian/rolling high-low, Williams %R,
-volume flow, RVOL, and VWAP. Relevant public references:
+volume flow, RVOL/time-of-day RVOL, opening-range/session references,
+and VWAP. Relevant public references:
 
 - https://www.freqtrade.io/en/stable/strategy-customization/
 - https://technical.freqtrade.io/1.4.3/

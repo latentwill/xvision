@@ -645,6 +645,7 @@ impl BacktestExecutor {
                             .map(|c| c.passed)
                             .collect::<Vec<_>>(),
                         "bar_timestamp": bar.timestamp.to_rfc3339(),
+                        "trigger": evaluation.trigger_context.clone(),
                     }
                 }));
                 if !evaluation.outcome.decision.is_active() {
@@ -705,7 +706,7 @@ impl BacktestExecutor {
             // `Raw` / `Oracle` keep the original shape byte-for-byte
             // — the regression-guard test pins this.
             let current_bar_json = ohlcv_to_json(bar, inputs_policy);
-            let seed = match inputs_policy {
+            let mut seed = match inputs_policy {
                 InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
                     "decision_index": decision_idx,
                     "asset": asset,
@@ -741,6 +742,14 @@ impl BacktestExecutor {
                     },
                 }),
             };
+            if let (Some(seed_obj), Some(filter_attrs)) = (seed.as_object_mut(), trace_filter_attrs.as_ref())
+            {
+                if let Some(trigger) = filter_attrs.pointer("/filter/trigger") {
+                    if !trigger.is_null() {
+                        seed_obj.insert("filter_trigger".to_string(), trigger.clone());
+                    }
+                }
+            }
 
             // eval-flat-degeneracy-early-stop (F-9): before paying the
             // LLM tax, check whether we should inherit this decision as

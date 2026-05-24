@@ -134,7 +134,9 @@ enum Instance {
     Vwap(VwapState),
     VolumeSma(SmaState),
     Rvol(RvolState),
+    VolumeZscore(VolumeZscoreState),
     Ichimoku(IchimokuState),
+    OpeningRange(OpeningRangeState),
     Keltner(KeltnerState),
     WilliamsR(DonchianState),
 }
@@ -186,7 +188,12 @@ impl IndicatorEngine {
                 IndicatorName::Mfi => Instance::Mfi(MfiState::new(key.period as usize)),
                 IndicatorName::Vwap => Instance::Vwap(VwapState::new(key.period as usize)),
                 IndicatorName::VolumeSma => Instance::VolumeSma(SmaState::new(key.period as usize)),
-                IndicatorName::Rvol => Instance::Rvol(RvolState::new(key.period as usize)),
+                IndicatorName::Rvol | IndicatorName::RvolTod => {
+                    Instance::Rvol(RvolState::new(key.period as usize))
+                }
+                IndicatorName::VolumeZscore => {
+                    Instance::VolumeZscore(VolumeZscoreState::new(key.period as usize))
+                }
                 IndicatorName::Tenkan
                 | IndicatorName::Kijun
                 | IndicatorName::SenkouA
@@ -197,6 +204,11 @@ impl IndicatorEngine {
                 | IndicatorName::CloudThickness => Instance::Ichimoku(IchimokuState::new()),
                 IndicatorName::Highest | IndicatorName::Lowest => {
                     Instance::Donchian(DonchianState::new(key.period as usize))
+                }
+                IndicatorName::OpeningRangeHigh
+                | IndicatorName::OpeningRangeLow
+                | IndicatorName::OpeningRangeMid => {
+                    Instance::OpeningRange(OpeningRangeState::new(key.period))
                 }
                 IndicatorName::KeltnerUpper | IndicatorName::KeltnerMiddle | IndicatorName::KeltnerLower => {
                     Instance::Keltner(KeltnerState::new(key.period as usize))
@@ -214,6 +226,11 @@ impl IndicatorEngine {
                 | IndicatorName::PrevDayClose
                 | IndicatorName::PrevWeekHigh
                 | IndicatorName::PrevWeekLow
+                | IndicatorName::PrevWeekClose
+                | IndicatorName::PrevMonthOpen
+                | IndicatorName::PrevMonthHigh
+                | IndicatorName::PrevMonthLow
+                | IndicatorName::PrevMonthClose
                 | IndicatorName::PremarketHigh
                 | IndicatorName::PremarketLow
                 | IndicatorName::GapPct
@@ -258,7 +275,9 @@ impl IndicatorEngine {
                 Instance::Vwap(s) => s.push(bar.high, bar.low, bar.close, bar.volume),
                 Instance::VolumeSma(s) => s.push(bar.volume),
                 Instance::Rvol(s) => s.push(bar.volume, bar.timestamp),
+                Instance::VolumeZscore(s) => s.push(bar.volume),
                 Instance::Ichimoku(s) => s.push(bar.high, bar.low, bar.close),
+                Instance::OpeningRange(s) => s.push(bar),
                 Instance::Keltner(s) => s.push(bar.high, bar.low, bar.close, prev_close),
                 Instance::WilliamsR(s) => s.push(bar.high, bar.low),
             }
@@ -297,6 +316,11 @@ impl IndicatorEngine {
             IndicatorName::PrevDayClose => return self.calendar.prev_day.map(|d| d.close),
             IndicatorName::PrevWeekHigh => return self.calendar.prev_week.map(|w| w.high),
             IndicatorName::PrevWeekLow => return self.calendar.prev_week.map(|w| w.low),
+            IndicatorName::PrevWeekClose => return self.calendar.prev_week.map(|w| w.close),
+            IndicatorName::PrevMonthOpen => return self.calendar.prev_month.map(|m| m.open),
+            IndicatorName::PrevMonthHigh => return self.calendar.prev_month.map(|m| m.high),
+            IndicatorName::PrevMonthLow => return self.calendar.prev_month.map(|m| m.low),
+            IndicatorName::PrevMonthClose => return self.calendar.prev_month.map(|m| m.close),
             IndicatorName::PremarketHigh => return self.calendar.premarket_high,
             IndicatorName::PremarketLow => return self.calendar.premarket_low,
             IndicatorName::GapPct => return self.calendar.gap_pct,
@@ -359,6 +383,7 @@ impl IndicatorEngine {
             Instance::Vwap(s) => s.value(),
             Instance::VolumeSma(s) => s.value(),
             Instance::Rvol(s) => s.value(),
+            Instance::VolumeZscore(s) => s.value(),
             Instance::Ichimoku(s) => match r.name {
                 IndicatorName::Tenkan => s.tenkan(),
                 IndicatorName::Kijun => s.kijun(),
@@ -368,6 +393,12 @@ impl IndicatorEngine {
                 IndicatorName::CloudTop => s.cloud_top(),
                 IndicatorName::CloudBottom => s.cloud_bottom(),
                 IndicatorName::CloudThickness => s.cloud_thickness(),
+                _ => None,
+            },
+            Instance::OpeningRange(s) => match r.name {
+                IndicatorName::OpeningRangeHigh => s.high(),
+                IndicatorName::OpeningRangeLow => s.low(),
+                IndicatorName::OpeningRangeMid => s.mid(),
                 _ => None,
             },
             Instance::Keltner(s) => match r.name {
@@ -401,7 +432,9 @@ impl IndicatorEngine {
                 | Instance::Vwap(_)
                 | Instance::VolumeSma(_)
                 | Instance::Rvol(_)
+                | Instance::VolumeZscore(_)
                 | Instance::WilliamsR(_) => key.period,
+                Instance::OpeningRange(_) => 0,
                 Instance::Rsi(_) | Instance::Atr(_) | Instance::AtrPct(_) => key.period + 1,
                 Instance::Dmi(_) => key.period * 2 + 1,
                 Instance::Roc(_) => key.period + 1,
@@ -737,6 +770,21 @@ impl WeekKey {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MonthKey {
+    year: i32,
+    month: u32,
+}
+
+impl MonthKey {
+    fn from_ts(ts: DateTime<Utc>) -> Self {
+        Self {
+            year: ts.year(),
+            month: ts.month(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct OhlcRange {
     open: f64,
@@ -770,6 +818,9 @@ struct CalendarLevels {
     current_week_key: Option<WeekKey>,
     current_week: Option<OhlcRange>,
     prev_week: Option<OhlcRange>,
+    current_month_key: Option<MonthKey>,
+    current_month: Option<OhlcRange>,
+    prev_month: Option<OhlcRange>,
     premarket_day_key: Option<DateKey>,
     premarket_high: Option<f64>,
     premarket_low: Option<f64>,
@@ -809,6 +860,15 @@ impl CalendarLevels {
             week.push(bar);
         }
 
+        let month_key = MonthKey::from_ts(ts);
+        if self.current_month_key != Some(month_key) {
+            self.prev_month = self.current_month;
+            self.current_month_key = Some(month_key);
+            self.current_month = Some(OhlcRange::new(bar));
+        } else if let Some(month) = self.current_month.as_mut() {
+            month.push(bar);
+        }
+
         if is_premarket_utc(ts) {
             self.premarket_high = Some(self.premarket_high.map_or(bar.high, |v| v.max(bar.high)));
             self.premarket_low = Some(self.premarket_low.map_or(bar.low, |v| v.min(bar.low)));
@@ -821,6 +881,96 @@ fn is_premarket_utc(ts: DateTime<Utc>) -> bool {
     // Equity premarket approximation in UTC. Kept deterministic and
     // timezone-free inside this engine-independent crate.
     (4 * 60..9 * 60 + 30).contains(&minutes)
+}
+
+#[derive(Debug)]
+struct VolumeZscoreState {
+    window: WindowState,
+    current: Option<f64>,
+}
+
+impl VolumeZscoreState {
+    fn new(period: usize) -> Self {
+        Self {
+            window: WindowState::new(period),
+            current: None,
+        }
+    }
+
+    fn push(&mut self, volume: f64) {
+        self.window.push(volume);
+        self.current = Some(volume);
+    }
+
+    fn value(&self) -> Option<f64> {
+        let mean = self.window.mean()?;
+        let stddev = self.window.stddev()?;
+        if stddev <= f64::EPSILON {
+            return Some(0.0);
+        }
+        Some((self.current? - mean) / stddev)
+    }
+}
+
+#[derive(Debug)]
+struct OpeningRangeState {
+    minutes: u32,
+    day_key: Option<DateKey>,
+    start_ts: Option<DateTime<Utc>>,
+    high: Option<f64>,
+    low: Option<f64>,
+    locked: bool,
+}
+
+impl OpeningRangeState {
+    fn new(minutes: u32) -> Self {
+        Self {
+            minutes,
+            day_key: None,
+            start_ts: None,
+            high: None,
+            low: None,
+            locked: false,
+        }
+    }
+
+    fn push(&mut self, bar: &Bar) {
+        let Some(ts) = bar.timestamp else {
+            return;
+        };
+        let day_key = DateKey::from_ts(ts);
+        if self.day_key != Some(day_key) {
+            self.day_key = Some(day_key);
+            self.start_ts = Some(ts);
+            self.high = Some(bar.high);
+            self.low = Some(bar.low);
+            self.locked = false;
+            return;
+        }
+
+        let Some(start) = self.start_ts else {
+            return;
+        };
+        let elapsed = ts.signed_duration_since(start).num_minutes().max(0) as u32;
+        if elapsed < self.minutes {
+            self.high = Some(self.high.map_or(bar.high, |v| v.max(bar.high)));
+            self.low = Some(self.low.map_or(bar.low, |v| v.min(bar.low)));
+        } else {
+            self.locked = true;
+        }
+    }
+
+    fn high(&self) -> Option<f64> {
+        self.locked.then_some(self.high?)
+    }
+
+    fn low(&self) -> Option<f64> {
+        self.locked.then_some(self.low?)
+    }
+
+    fn mid(&self) -> Option<f64> {
+        Some((self.high()? + self.low()?) / 2.0)
+    }
 }
 
 #[derive(Debug)]
@@ -1626,8 +1776,13 @@ mod tests {
             IndicatorRef::periodic(IndicatorName::StochRsiK, 14),
             IndicatorRef::periodic(IndicatorName::StochRsiD, 14),
             IndicatorRef::periodic(IndicatorName::Rvol, 3),
+            IndicatorRef::periodic(IndicatorName::RvolTod, 3),
+            IndicatorRef::periodic(IndicatorName::VolumeZscore, 20),
             IndicatorRef::periodic(IndicatorName::Highest, 20),
             IndicatorRef::periodic(IndicatorName::Lowest, 20),
+            IndicatorRef::periodic(IndicatorName::OpeningRangeHigh, 30),
+            IndicatorRef::periodic(IndicatorName::OpeningRangeLow, 30),
+            IndicatorRef::periodic(IndicatorName::OpeningRangeMid, 30),
             IndicatorRef::periodic(IndicatorName::KeltnerUpper, 20),
             IndicatorRef::periodic(IndicatorName::KeltnerMiddle, 20),
             IndicatorRef::periodic(IndicatorName::KeltnerLower, 20),
@@ -1703,6 +1858,11 @@ mod tests {
                 bar_offset: None,
             },
             IndicatorRef {
+                name: IndicatorName::PrevWeekClose,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
                 name: IndicatorName::PremarketHigh,
                 period: None,
                 bar_offset: None,
@@ -1765,5 +1925,41 @@ mod tests {
         for r in &refs {
             assert!(e.value(r).is_some(), "{} should have a value after warmup", r);
         }
+    }
+
+    #[test]
+    fn previous_month_levels_roll_forward() {
+        let refs = [
+            IndicatorRef {
+                name: IndicatorName::PrevMonthOpen,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevMonthHigh,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevMonthLow,
+                period: None,
+                bar_offset: None,
+            },
+            IndicatorRef {
+                name: IndicatorName::PrevMonthClose,
+                period: None,
+                bar_offset: None,
+            },
+        ];
+        let mut e = IndicatorEngine::new(refs.iter());
+        let jan = Utc.with_ymd_and_hms(2026, 1, 31, 23, 0, 0).unwrap();
+        e.push(&Bar::with_timestamp(10.0, 12.0, 9.0, 11.0, 100.0, jan));
+        let feb = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+        e.push(&Bar::with_timestamp(20.0, 21.0, 19.0, 20.5, 100.0, feb));
+
+        assert_eq!(e.value(&refs[0]), Some(10.0));
+        assert_eq!(e.value(&refs[1]), Some(12.0));
+        assert_eq!(e.value(&refs[2]), Some(9.0));
+        assert_eq!(e.value(&refs[3]), Some(11.0));
     }
 }

@@ -44,6 +44,7 @@ fn expected_spec_filter() -> Filter {
                 rhs: Operand::Numeric(0.6),
             },
         ]),
+        fire: None,
         cooldown_bars: 3,
         max_wakeups_per_day: Some(2),
         wake_when_in_position: WakeInPosition::OnInvalidationOrTargetOnly,
@@ -296,6 +297,8 @@ fn expanded_indicator_catalog_parses_and_validates() {
         ("adx_14", 25.0),
         ("di_plus_14", 25.0),
         ("di_minus_14", 25.0),
+        ("rvol_tod_20", 1.5),
+        ("volume_zscore_20", 2.0),
         ("tenkan", 100.0),
         ("kijun", 100.0),
         ("senkou_a", 100.0),
@@ -314,10 +317,18 @@ fn expanded_indicator_catalog_parses_and_validates() {
         ("prev_day_close", 100.0),
         ("prev_week_high", 100.0),
         ("prev_week_low", 100.0),
+        ("prev_week_close", 100.0),
+        ("prev_month_open", 100.0),
+        ("prev_month_high", 100.0),
+        ("prev_month_low", 100.0),
+        ("prev_month_close", 100.0),
         ("premarket_high", 100.0),
         ("premarket_low", 100.0),
         ("highest_20", 100.0),
         ("lowest_20", 100.0),
+        ("opening_range_high_30", 100.0),
+        ("opening_range_low_30", 100.0),
+        ("opening_range_mid_30", 100.0),
         ("gap_pct", 0.0),
         ("gap_up", 0.5),
         ("gap_down", 0.5),
@@ -344,6 +355,37 @@ fn expanded_indicator_catalog_parses_and_validates() {
         let f = parse_toml(&toml_doc).unwrap_or_else(|e| panic!("parse failed for {token}: {e}"));
         validate(&f).unwrap_or_else(|e| panic!("validate failed for {token}: {e}"));
     }
+}
+
+#[test]
+fn fire_metadata_parses_and_validates_context_indicators() {
+    let raw = r#"
+{
+  "id": "f_01",
+  "strategy_id": "s_01",
+  "display_name": "trend breakout fire",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "15m",
+  "conditions": {
+    "all": [
+      { "lhs": "adx_14", "op": ">", "rhs": 25 },
+      { "lhs": "close", "op": "crossed_above_3", "rhs": "prev_day_high" }
+    ]
+  },
+  "fire": {
+    "reason": "trend_breakout",
+    "priority": 0.85,
+    "tags": ["trend", "breakout", "volume"],
+    "context": ["close", "prev_day_high", "adx_14", "rvol_tod_20", "volume_zscore_20"]
+  },
+  "cooldown_bars": 16
+}
+"#;
+    let f = parse_json(raw).expect("parse fire metadata");
+    validate(&f).expect("fire metadata validates");
+    let fire = f.fire.expect("fire metadata present");
+    assert_eq!(fire.reason, "trend_breakout");
+    assert_eq!(fire.context.len(), 5);
 }
 
 #[test]

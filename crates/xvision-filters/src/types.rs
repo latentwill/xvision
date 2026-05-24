@@ -211,6 +211,8 @@ pub enum IndicatorName {
     StochRsiK,
     StochRsiD,
     Rvol,
+    RvolTod,
+    VolumeZscore,
     Tenkan,
     Kijun,
     SenkouA,
@@ -225,10 +227,18 @@ pub enum IndicatorName {
     PrevDayClose,
     PrevWeekHigh,
     PrevWeekLow,
+    PrevWeekClose,
+    PrevMonthOpen,
+    PrevMonthHigh,
+    PrevMonthLow,
+    PrevMonthClose,
     PremarketHigh,
     PremarketLow,
     Highest,
     Lowest,
+    OpeningRangeHigh,
+    OpeningRangeLow,
+    OpeningRangeMid,
     GapPct,
     GapUp,
     GapDown,
@@ -268,6 +278,11 @@ impl IndicatorName {
                 | IndicatorName::PrevDayClose
                 | IndicatorName::PrevWeekHigh
                 | IndicatorName::PrevWeekLow
+                | IndicatorName::PrevWeekClose
+                | IndicatorName::PrevMonthOpen
+                | IndicatorName::PrevMonthHigh
+                | IndicatorName::PrevMonthLow
+                | IndicatorName::PrevMonthClose
                 | IndicatorName::PremarketHigh
                 | IndicatorName::PremarketLow
                 | IndicatorName::GapPct
@@ -315,6 +330,8 @@ impl IndicatorName {
             IndicatorName::StochRsiK => "stoch_rsi_k",
             IndicatorName::StochRsiD => "stoch_rsi_d",
             IndicatorName::Rvol => "rvol",
+            IndicatorName::RvolTod => "rvol_tod",
+            IndicatorName::VolumeZscore => "volume_zscore",
             IndicatorName::Tenkan => "tenkan",
             IndicatorName::Kijun => "kijun",
             IndicatorName::SenkouA => "senkou_a",
@@ -329,10 +346,18 @@ impl IndicatorName {
             IndicatorName::PrevDayClose => "prev_day_close",
             IndicatorName::PrevWeekHigh => "prev_week_high",
             IndicatorName::PrevWeekLow => "prev_week_low",
+            IndicatorName::PrevWeekClose => "prev_week_close",
+            IndicatorName::PrevMonthOpen => "prev_month_open",
+            IndicatorName::PrevMonthHigh => "prev_month_high",
+            IndicatorName::PrevMonthLow => "prev_month_low",
+            IndicatorName::PrevMonthClose => "prev_month_close",
             IndicatorName::PremarketHigh => "premarket_high",
             IndicatorName::PremarketLow => "premarket_low",
             IndicatorName::Highest => "highest",
             IndicatorName::Lowest => "lowest",
+            IndicatorName::OpeningRangeHigh => "opening_range_high",
+            IndicatorName::OpeningRangeLow => "opening_range_low",
+            IndicatorName::OpeningRangeMid => "opening_range_mid",
             IndicatorName::GapPct => "gap_pct",
             IndicatorName::GapUp => "gap_up",
             IndicatorName::GapDown => "gap_down",
@@ -370,6 +395,11 @@ impl IndicatorName {
             | IndicatorName::PrevDayClose
             | IndicatorName::PrevWeekHigh
             | IndicatorName::PrevWeekLow
+            | IndicatorName::PrevWeekClose
+            | IndicatorName::PrevMonthOpen
+            | IndicatorName::PrevMonthHigh
+            | IndicatorName::PrevMonthLow
+            | IndicatorName::PrevMonthClose
             | IndicatorName::PremarketHigh
             | IndicatorName::PremarketLow
             | IndicatorName::GapPct
@@ -400,8 +430,13 @@ impl IndicatorName {
             | IndicatorName::StochRsiK
             | IndicatorName::StochRsiD
             | IndicatorName::Rvol
+            | IndicatorName::RvolTod
+            | IndicatorName::VolumeZscore
             | IndicatorName::Highest
             | IndicatorName::Lowest
+            | IndicatorName::OpeningRangeHigh
+            | IndicatorName::OpeningRangeLow
+            | IndicatorName::OpeningRangeMid
             | IndicatorName::KeltnerUpper
             | IndicatorName::KeltnerMiddle
             | IndicatorName::KeltnerLower
@@ -482,6 +517,11 @@ impl IndicatorRef {
             "prev_day_close" => Some(IndicatorName::PrevDayClose),
             "prev_week_high" => Some(IndicatorName::PrevWeekHigh),
             "prev_week_low" => Some(IndicatorName::PrevWeekLow),
+            "prev_week_close" => Some(IndicatorName::PrevWeekClose),
+            "prev_month_open" => Some(IndicatorName::PrevMonthOpen),
+            "prev_month_high" => Some(IndicatorName::PrevMonthHigh),
+            "prev_month_low" => Some(IndicatorName::PrevMonthLow),
+            "prev_month_close" => Some(IndicatorName::PrevMonthClose),
             "premarket_high" => Some(IndicatorName::PremarketHigh),
             "premarket_low" => Some(IndicatorName::PremarketLow),
             "gap_pct" => Some(IndicatorName::GapPct),
@@ -523,6 +563,11 @@ impl IndicatorRef {
             ("stoch_k", IndicatorName::StochK),
             ("stoch_d", IndicatorName::StochD),
             ("williams_r", IndicatorName::WilliamsR),
+            ("opening_range_high", IndicatorName::OpeningRangeHigh),
+            ("opening_range_low", IndicatorName::OpeningRangeLow),
+            ("opening_range_mid", IndicatorName::OpeningRangeMid),
+            ("volume_zscore", IndicatorName::VolumeZscore),
+            ("rvol_tod", IndicatorName::RvolTod),
             ("di_plus", IndicatorName::DiPlus),
             ("di_minus", IndicatorName::DiMinus),
             ("highest", IndicatorName::Highest),
@@ -884,6 +929,29 @@ impl ConditionTree {
 }
 
 // ---------------------------------------------------------------------------
+// LLM fire metadata
+// ---------------------------------------------------------------------------
+
+/// Optional author-facing metadata attached to a filter trip. This does
+/// not change whether a filter fires; it tells downstream agent surfaces
+/// why the gate fired and which compact indicator values should be
+/// surfaced with the trigger.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilterFire {
+    pub reason: String,
+    pub priority: f64,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub context: Vec<IndicatorRef>,
+}
+
+// ---------------------------------------------------------------------------
 // Filter (top-level)
 // ---------------------------------------------------------------------------
 
@@ -908,6 +976,8 @@ pub struct Filter {
     #[serde(default = "default_scan_cadence")]
     pub scan_cadence: ScanCadence,
     pub conditions: ConditionTree,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fire: Option<FilterFire>,
     #[serde(default)]
     pub cooldown_bars: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]

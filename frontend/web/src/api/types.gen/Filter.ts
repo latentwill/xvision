@@ -6,6 +6,13 @@ import type { FilterStatus } from "./FilterStatus";
 import type { ScanCadence } from "./ScanCadence";
 import type { WakeInPosition } from "./WakeInPosition";
 
+export type FilterFire = {
+  reason: string;
+  priority: number;
+  tags: Array<string>;
+  context: Array<string>;
+};
+
 /**
  * Top-level Filter entity. JSON parses this directly; TOML wraps it under
  * `[filter]` (handled in the engine's parse layer). See the spec at
@@ -21,6 +28,7 @@ export type Filter = {
   timeframe: string;
   scan_cadence: ScanCadence;
   conditions: ConditionTree;
+  fire?: FilterFire | null;
   cooldown_bars: number;
   max_wakeups_per_day?: number | null;
   wake_when_in_position: WakeInPosition;

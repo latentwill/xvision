@@ -617,6 +617,7 @@ mod tests {
             timeframe: Timeframe::new("1h".to_string()),
             scan_cadence: ScanCadence::BarClose,
             conditions: tree,
+            fire: None,
             cooldown_bars: cooldown,
             max_wakeups_per_day: max_wake,
             wake_when_in_position: WakeInPosition::Always,

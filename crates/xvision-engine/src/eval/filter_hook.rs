@@ -48,6 +48,7 @@ pub struct FilterHook {
 pub struct FilterEvaluationRecord {
     pub outcome: FilterEvalOutcome,
     pub event: FilterEventV1,
+    pub trigger_context: Option<serde_json::Value>,
 }
 
 impl FilterHook {
@@ -102,8 +103,37 @@ impl FilterHook {
             &outcome,
             self.state.indicator_snapshot(&self.filter),
         );
+        let trigger_context = outcome
+            .decision
+            .is_active()
+            .then(|| self.build_trigger_context(&event.indicator_snapshot))
+            .flatten();
         self.bar_index += 1;
-        FilterEvaluationRecord { outcome, event }
+        FilterEvaluationRecord {
+            outcome,
+            event,
+            trigger_context,
+        }
+    }
+
+    fn build_trigger_context(
+        &self,
+        indicator_snapshot: &std::collections::BTreeMap<String, f64>,
+    ) -> Option<serde_json::Value> {
+        let fire = self.filter.fire.as_ref()?;
+        let mut values = serde_json::Map::new();
+        for indicator in &fire.context {
+            let token = indicator.to_string();
+            if let Some(value) = indicator_snapshot.get(&token) {
+                values.insert(token, serde_json::json!(value));
+            }
+        }
+        Some(serde_json::json!({
+            "reason": fire.reason,
+            "priority": fire.priority,
+            "tags": fire.tags,
+            "context": values,
+        }))
     }
 
     /// Persist a row to `eval_filter_evaluations` and emit the matching

@@ -1375,6 +1375,17 @@ fn filter_catalog(json: bool) -> CliResult<()> {
             "dashboard": "/docs?slug=filter-dsl-catalog"
         },
         "required_fields": ["display_name", "asset_scope", "timeframe", "conditions"],
+        "optional_fields": {
+            "fire": {
+                "shape": {
+                    "reason": "string",
+                    "priority": "number_0_to_1",
+                    "tags": "string[]",
+                    "context": "indicator[]"
+                },
+                "effect": "adds compact trigger metadata/context to traces and trader briefings when the filter is active"
+            }
+        },
         "operators": [
             {"token": ">", "aliases": ["gt", "above"], "rhs": "indicator_or_numeric"},
             {"token": "<", "aliases": ["lt", "below"], "rhs": "indicator_or_numeric"},
@@ -1447,7 +1458,14 @@ fn filter_catalog(json: bool) -> CliResult<()> {
                 "macd_hist",
                 "macd_histogram"
             ],
-            "volume_aware": ["vwap_<period>", "volume_sma_<period>", "rvol_<period>", "obv"],
+            "volume_aware": [
+                "vwap_<period>",
+                "volume_sma_<period>",
+                "rvol_<period>",
+                "rvol_tod_<period>",
+                "volume_zscore_<period>",
+                "obv"
+            ],
             "session_levels": [
                 "prev_day_open",
                 "prev_day_high",
@@ -1455,8 +1473,16 @@ fn filter_catalog(json: bool) -> CliResult<()> {
                 "prev_day_close",
                 "prev_week_high",
                 "prev_week_low",
+                "prev_week_close",
+                "prev_month_open",
+                "prev_month_high",
+                "prev_month_low",
+                "prev_month_close",
                 "premarket_high",
                 "premarket_low",
+                "opening_range_high_<minutes>",
+                "opening_range_low_<minutes>",
+                "opening_range_mid_<minutes>",
                 "gap_pct",
                 "gap_up",
                 "gap_down"
@@ -1487,6 +1513,26 @@ fn filter_catalog(json: bool) -> CliResult<()> {
                     ]
                 },
                 "cooldown_bars": 8
+            },
+            "llm_fire_trend_breakout": {
+                "display_name": "LLM trend breakout fire",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "15m",
+                "conditions": {
+                    "all": [
+                        {"lhs": "adx_14", "op": ">", "rhs": 25},
+                        {"lhs": "di_plus_14", "op": "above_for_3", "rhs": "di_minus_14"},
+                        {"lhs": "close", "op": "crossed_above_3", "rhs": "opening_range_high_30"},
+                        {"lhs": "rvol_tod_20", "op": ">", "rhs": 1.5}
+                    ]
+                },
+                "fire": {
+                    "reason": "trend_breakout",
+                    "priority": 0.85,
+                    "tags": ["trend", "breakout", "volume"],
+                    "context": ["close", "opening_range_high_30", "adx_14", "di_plus_14", "di_minus_14", "rvol_tod_20", "volume_zscore_20"]
+                },
+                "cooldown_bars": 16
             }
         }
     });
@@ -1511,9 +1557,13 @@ fn filter_catalog(json: bool) -> CliResult<()> {
          rsi_<period> roc_<period> stoch_k_<period> stoch_d_<period> stoch_rsi_<period> cci_<period> mfi_<period>; \
          atr_<period> atr_pct_<period>; bb_upper/middle/lower/width/pct_b_<period>; \
          keltner_upper/middle/lower_<period>; donchian_upper/middle/lower_<period>; \
-         highest_<period> lowest_<period>; macd_line macd_signal macd_hist; \
-         ichimoku tenkan/kijun/cloud_*; vwap_<period> volume_sma_<period> rvol_<period> obv; \
-         prev_day_* prev_week_* premarket_* gap_*",
+         highest_<period> lowest_<period>; opening_range_high/low/mid_<minutes>; \
+         macd_line macd_signal macd_hist; ichimoku tenkan/kijun/cloud_*; \
+         vwap_<period> volume_sma_<period> rvol_<period> rvol_tod_<period> volume_zscore_<period> obv; \
+         prev_day_* prev_week_* prev_month_* premarket_* gap_*",
+    );
+    println!(
+        "Optional fire metadata: fire.reason, fire.priority 0..1, fire.tags, fire.context indicator list."
     );
     println!("Use --json for a machine-readable catalog with examples.");
     Ok(())
@@ -2164,6 +2214,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             cycle_idx: 0,
             provider_catalogs: std::collections::HashMap::new(),
             filter_ctx: None,
+            trace_attrs: None,
             recorder: None,
         })
         .await
