@@ -48,6 +48,46 @@ impl SqliteRecorder {
         self.span_to_run.lock().await.get(span_id).cloned()
     }
 
+    /// Stage 3 (Cline runtime unification, Task 3 + operational-visibility
+    /// item 3): write the run-level replay metrics onto an existing
+    /// `agent_runs` row.
+    ///
+    /// The `RunStarted` event seeds `trajectory_mode = 'live'` (column
+    /// default). A run driven in record/replay updates it here after the run
+    /// resolves its mode:
+    ///
+    /// * `trajectory_mode` — `'live'` | `'record'` | `'replay'`.
+    /// * `replay_hit_ratio` — fraction of model calls served from a recorded
+    ///   trajectory (1.0 for a pure replay, `None`/NULL for a live run).
+    /// * `recovery_reason` — set on abort to one of the documented reasons
+    ///   (`replay_frames_exhausted`, `replay_divergence`); `None` clears it.
+    ///
+    /// This is the ONLY run-level write this crate makes for these columns;
+    /// frame-level batching lives in the trajectory store (owned elsewhere).
+    /// The update is a no-op (zero rows affected) if the run id is unknown,
+    /// which the caller may treat as a soft error.
+    pub async fn set_run_replay_metrics(
+        &self,
+        run_id: &str,
+        trajectory_mode: &str,
+        replay_hit_ratio: Option<f64>,
+        recovery_reason: Option<&str>,
+    ) -> Result<u64, RecorderError> {
+        let r = sqlx::query(
+            "UPDATE agent_runs \
+             SET trajectory_mode = ?, replay_hit_ratio = ?, recovery_reason = ? \
+             WHERE id = ?",
+        )
+        .bind(trajectory_mode)
+        .bind(replay_hit_ratio)
+        .bind(recovery_reason)
+        .bind(run_id)
+        .execute(&self.pool)
+        .await
+        .map_err(RecorderError::from)?;
+        Ok(r.rows_affected())
+    }
+
     async fn drop_run_spans(&self, run_id: &str) {
         let mut map = self.span_to_run.lock().await;
         map.retain(|_, rid| rid != run_id);
