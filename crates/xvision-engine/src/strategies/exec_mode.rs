@@ -52,7 +52,20 @@ mod tests {
     fn execution_mode_serializes_snake_case() {
         assert_eq!(serde_json::to_value(ExecutionMode::PerAsset).unwrap(), serde_json::json!("per_asset"));
         assert_eq!(serde_json::to_value(ExecutionMode::Portfolio).unwrap(), serde_json::json!("portfolio"));
+        // Custom round-trips in both directions.
+        assert_eq!(
+            serde_json::to_value(ExecutionMode::Custom("rotate".into())).unwrap(),
+            serde_json::json!({"custom": "rotate"})
+        );
         let c: ExecutionMode = serde_json::from_value(serde_json::json!({"custom": "rotate"})).unwrap();
         assert_eq!(c, ExecutionMode::Custom("rotate".into()));
+    }
+
+    #[test]
+    fn capital_mode_serializes_snake_case() {
+        assert_eq!(serde_json::to_value(CapitalMode::Pooled).unwrap(), serde_json::json!("pooled"));
+        assert_eq!(serde_json::to_value(CapitalMode::PerAsset).unwrap(), serde_json::json!("per_asset"));
+        let back: CapitalMode = serde_json::from_value(serde_json::json!("per_asset")).unwrap();
+        assert_eq!(back, CapitalMode::PerAsset);
     }
 }
