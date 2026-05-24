@@ -20,9 +20,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use ulid::Ulid;
-use serde::{de::Error as DeError, de::Deserializer, Deserialize, Serialize};
+use serde::{de::Deserializer, de::Error as DeError, Deserialize, Serialize};
 use sqlx::SqlitePool;
+use ulid::Ulid;
 use xvision_filters::{parse_json, parse_toml, validate as validate_filter_dsl};
 
 use crate::cli_jobs::eval_run_bridge;
@@ -384,9 +384,7 @@ struct GetEvalReviewReq {
     id: String,
 }
 
-fn deserialize_filter_payload<'de, D>(
-    deserializer: D,
-) -> Result<Option<serde_json::Value>, D::Error>
+fn deserialize_filter_payload<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -397,59 +395,96 @@ where
     Ok(filter)
 }
 
-fn validate_set_filter_request(
-    raw_filter: Option<&serde_json::Value>,
-    source: Option<&str>,
+fn normalize_set_filter_payload(
+    filter: Option<serde_json::Value>,
+    source: Option<String>,
+    format: Option<String>,
     strategy_id: &str,
-) -> anyhow::Result<()> {
-    let filter = raw_filter.ok_or_else(|| {
-        anyhow::anyhow!(
-            "set_filter: filter payload is required; send `source` (JSON/TOML body)"
-        )
-    })?;
-    parse_set_filter_payload(filter.clone(), source, strategy_id)?;
-    Ok(())
+) -> anyhow::Result<serde_json::Value> {
+    let (payload, format) = set_filter_payload_and_format(filter, source, format)?;
+    let parsed = parse_set_filter_payload(payload, format.as_deref(), strategy_id)?;
+    validate_filter_dsl(&parsed).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
+    serde_json::to_value(parsed).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))
+}
+
+fn set_filter_payload_and_format(
+    filter: Option<serde_json::Value>,
+    source: Option<String>,
+    format: Option<String>,
+) -> anyhow::Result<(serde_json::Value, Option<String>)> {
+    let format = normalize_filter_format(format)?;
+    match (filter, source) {
+        (Some(filter), None) => Ok((filter, format)),
+        (None, Some(source)) => Ok((serde_json::Value::String(source), format)),
+        (Some(filter), Some(source)) => {
+            if format.is_none() && is_filter_format(source.trim()) {
+                Ok((filter, Some(source.trim().to_string())))
+            } else {
+                anyhow::bail!(
+                    "set_filter: `source` is filter text; do not send it with `filter`. Use `format` for json/toml."
+                )
+            }
+        }
+        (None, None) => anyhow::bail!(
+            "set_filter: filter payload is required; send `filter` or `source` (JSON/TOML body)"
+        ),
+    }
+}
+
+fn normalize_filter_format(format: Option<String>) -> anyhow::Result<Option<String>> {
+    let Some(format) = format else {
+        return Ok(None);
+    };
+    let format = format.trim();
+    if format.is_empty() {
+        anyhow::bail!("set_filter: format cannot be empty");
+    }
+    if !is_filter_format(format) {
+        anyhow::bail!("set_filter: unknown format `{format}`; expected `json` or `toml`");
+    }
+    Ok(Some(format.to_string()))
+}
+
+fn is_filter_format(value: &str) -> bool {
+    matches!(value, "json" | "toml")
 }
 
 fn parse_set_filter_payload(
     mut filter: serde_json::Value,
     source: Option<&str>,
     strategy_id: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<xvision_filters::Filter> {
     filter = extract_set_filter_payload(filter);
-    let parsed = match filter {
+    Ok(match filter {
         serde_json::Value::String(src) => parse_set_filter_text(&src, source, strategy_id)?,
         _ => match source {
             Some("json") => parse_set_filter_value(filter, strategy_id)?,
-            Some("toml") => {
-                let src = serde_json::to_string(&filter)
-                    .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
-                parse_set_filter_text(&src, Some("toml"), strategy_id)?
-            }
+            Some("toml") => anyhow::bail!("set_filter: format `toml` requires text payload"),
             Some(other) if other.trim().is_empty() => parse_set_filter_value(filter, strategy_id)?,
-            None => {
-                parse_set_filter_value(filter.clone(), strategy_id).or_else(|json_err| {
-                    let src = serde_json::to_string(&filter)
-                        .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
-                    parse_set_filter_text(&src, Some("toml"), strategy_id)
-                        .map_err(|_| json_err)
-                })?
-            }
+            None => parse_set_filter_value(filter.clone(), strategy_id).or_else(|json_err| {
+                let src =
+                    serde_json::to_string(&filter).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+                parse_set_filter_text(&src, Some("toml"), strategy_id).map_err(|_| json_err)
+            })?,
             Some(other) => {
-                let src = serde_json::to_string(&filter)
-                    .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+                let src =
+                    serde_json::to_string(&filter).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
                 parse_set_filter_text(&src, Some(other), strategy_id)?
             }
         },
-    };
-    validate_filter_dsl(&parsed).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
-    Ok(())
+    })
 }
 
-fn parse_set_filter_value(raw_filter: serde_json::Value, strategy_id: &str) -> anyhow::Result<xvision_filters::Filter> {
-    let mut obj = match raw_filter {
+fn parse_set_filter_value(
+    raw_filter: serde_json::Value,
+    strategy_id: &str,
+) -> anyhow::Result<xvision_filters::Filter> {
+    let obj = match raw_filter {
         serde_json::Value::Object(mut obj) => {
-            if obj.get("id").and_then(serde_json::Value::as_str).is_none_or(|id| id.trim().is_empty())
+            if obj
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|id| id.trim().is_empty())
             {
                 obj.insert("id".into(), serde_json::Value::String(Ulid::new().to_string()));
             }
@@ -478,13 +513,12 @@ fn parse_set_filter_text(
     strategy_id: &str,
 ) -> anyhow::Result<xvision_filters::Filter> {
     let mut filter = match source.unwrap_or_default() {
-        "toml" => parse_toml(source_text)
-            .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
-        _ => parse_set_filter_text_preferring_json(source_text, strategy_id)
-            .or_else(|_| {
-                parse_toml(source_text)
-                    .map_err(|e| anyhow::anyhow!("filter parse error: failed parsing as JSON and TOML: {e}"))
-            })?,
+        "json" => parse_set_filter_text_preferring_json(source_text, strategy_id)?,
+        "toml" => parse_toml(source_text).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
+        _ => parse_set_filter_text_preferring_json(source_text, strategy_id).or_else(|_| {
+            parse_toml(source_text)
+                .map_err(|e| anyhow::anyhow!("filter parse error: failed parsing as JSON and TOML: {e}"))
+        })?,
     };
     if filter.id.as_str().is_empty() {
         filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
@@ -497,8 +531,7 @@ fn parse_set_filter_text_preferring_json(
     source_text: &str,
     strategy_id: &str,
 ) -> anyhow::Result<xvision_filters::Filter> {
-    let mut filter = parse_json(source_text)
-        .map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
+    let mut filter = parse_json(source_text).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?;
     if filter.id.as_str().is_empty() {
         filter.id = xvision_filters::FilterId::new(Ulid::new().to_string());
     }
@@ -1059,26 +1092,14 @@ impl WizardLoop {
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow::anyhow!("set_filter: missing `strategy_id`"))?;
 
-                let source = req.source.or(req.format);
-                if req.filter.is_none() && source.is_none() {
-                    anyhow::bail!(
-                        "set_filter: filter payload is required; send `source` (JSON/TOML body)"
-                    );
-                }
-                if matches!(req.filter.as_ref(), Some(f) if f.is_null()) {
-                    anyhow::bail!("set_filter: filter payload cannot be null");
-                }
-                if matches!(source.as_ref(), Some(source) if source.trim().is_empty()) {
-                    anyhow::bail!("set_filter: source cannot be empty");
-                }
-                validate_set_filter_request(req.filter.as_ref(), source.as_deref(), &strategy_id)?;
+                let filter = normalize_set_filter_payload(req.filter, req.source, req.format, &strategy_id)?;
 
                 let out = api_strategy::set_filter(
                     &self.api_context,
                     authoring::SetFilterReq {
                         strategy_id,
-                        filter: req.filter,
-                        source,
+                        filter: Some(filter),
+                        source: Some("json".into()),
                     },
                 )
                 .await?;
@@ -1232,9 +1253,13 @@ impl WizardLoop {
                     scenario_id: scenario.id,
                     mode,
                     params_override: None,
+                    live_config: None,
                     limits: None,
                     skip_preflight: false,
                     provider_override: None,
+                    auto_fire_review: false,
+                    review_model: None,
+                    max_annotations_per_review: Some(8),
                 };
                 let out = api_eval::start_run(
                     &xvision_engine::api::ApiContext::new(
@@ -1326,8 +1351,7 @@ impl WizardLoop {
                     if let Some(job) = store.get(job_id).await? {
                         job
                     } else if !job_id.starts_with("job_") {
-                        let eval_job_id =
-                            format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, job_id);
+                        let eval_job_id = format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, job_id);
                         eval_run_bridge::get_synthetic_job(&self.pool, &eval_job_id)
                             .await?
                             .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
@@ -1378,8 +1402,7 @@ impl WizardLoop {
                     if let Some(output) = store.output(job_id).await? {
                         output
                     } else if !job_id.starts_with("job_") {
-                        let eval_job_id =
-                            format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, job_id);
+                        let eval_job_id = format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, job_id);
                         eval_run_bridge::get_synthetic_output(&self.pool, &eval_job_id)
                             .await?
                             .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
@@ -3638,12 +3661,8 @@ mod tests {
     #[tokio::test]
     async fn set_filter_preflight_validates_filter_before_api_set() {
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, _pool, _td, _sid) = loop_with_session(
-            mock,
-            "set a clean ema cross filter",
-            ContextScope::Workspace,
-        )
-        .await;
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "set a clean ema cross filter", ContextScope::Workspace).await;
         let created = wl
             .run_tool("create_strategy", serde_json::json!({ "name": "Filter Draft" }))
             .await
@@ -3667,15 +3686,21 @@ mod tests {
                 }
             }
         });
-        wl.run_tool("set_filter", serde_json::json!({"id": id, "filter": valid_filter}))
-            .await
-            .expect("valid filter should preflight and persist");
+        wl.run_tool(
+            "set_filter",
+            serde_json::json!({"id": id, "filter": valid_filter}),
+        )
+        .await
+        .expect("valid filter should preflight and persist");
 
         let updated = wl
             .run_tool("get_strategy", serde_json::json!({"id": id}))
             .await
             .expect("get strategy");
-        assert!(updated["filter"].is_object(), "filter should be persisted: {updated:?}");
+        assert!(
+            updated["filter"].is_object(),
+            "filter should be persisted: {updated:?}"
+        );
         assert_eq!(updated["filter"]["asset_scope"][0], "BTC/USD");
 
         // Invalid filter: missing lhs should be rejected in the local
@@ -3696,7 +3721,10 @@ mod tests {
             }
         });
         let err = wl
-            .run_tool("set_filter", serde_json::json!({"id": id, "filter": invalid_filter}))
+            .run_tool(
+                "set_filter",
+                serde_json::json!({"id": id, "filter": invalid_filter}),
+            )
             .await
             .expect_err("invalid filter must fail preflight");
         let msg = err.to_string();
@@ -3713,23 +3741,22 @@ mod tests {
     #[tokio::test]
     async fn set_filter_prefers_format_alias_for_toml_source() {
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, _pool, _td, _sid) = loop_with_session(
-            mock,
-            "set a toml filter using format",
-            ContextScope::Workspace,
-        )
-        .await;
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "set a toml filter using format", ContextScope::Workspace).await;
         let created = wl
             .run_tool("create_strategy", serde_json::json!({ "name": "Format Alias" }))
             .await
             .expect("create strategy");
         let id = created["id"].as_str().expect("created id");
 
-        let filter = r#"display_name = "toml ema cross"
+        let filter = r#"[filter]
+id = "f_toml_format_alias"
+strategy_id = "placeholder"
+display_name = "toml ema cross"
 asset_scope = ["BTC/USD"]
 timeframe = "15m"
 
-[conditions]
+[filter.conditions]
 all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
 "#;
         wl.run_tool(
@@ -3749,6 +3776,46 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             .expect("get strategy");
         assert_eq!(updated["filter"]["display_name"], "toml ema cross");
         assert_eq!(updated["filter"]["timeframe"], "15m");
+        assert_eq!(updated["filter"]["conditions"]["all"][0]["lhs"], "ema_12");
+    }
+
+    #[tokio::test]
+    async fn set_filter_accepts_source_text_payload() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "set a source text filter", ContextScope::Workspace).await;
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "Source Text" }))
+            .await
+            .expect("create strategy");
+        let id = created["id"].as_str().expect("created id");
+
+        let source = r#"[filter]
+id = "f_toml_source_text"
+strategy_id = "placeholder"
+display_name = "source text filter"
+asset_scope = ["BTC/USD"]
+timeframe = "15m"
+
+[filter.conditions]
+all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
+"#;
+        wl.run_tool(
+            "set_filter",
+            serde_json::json!({
+                "id": id,
+                "source": source,
+                "format": "toml"
+            }),
+        )
+        .await
+        .expect("source text should parse and persist");
+
+        let updated = wl
+            .run_tool("get_strategy", serde_json::json!({"id": id}))
+            .await
+            .expect("get strategy");
+        assert_eq!(updated["filter"]["display_name"], "source text filter");
         assert_eq!(updated["filter"]["conditions"]["all"][0]["lhs"], "ema_12");
     }
 
