@@ -80,6 +80,8 @@ So the data/types are multi-asset-*ready*; the gap is that the **run harness and
    ```
    This fixes the per-asset collision correctly **and** makes cross-asset/global signals first-class instead of synthetic asset names. In v1's `PerAsset` arm the dispatcher tags each filter signal `Asset(current_asset)` by default; the type already admits `Global`/`Pair`/`Custom` so a future filter emits them with **no key migration**.
 
+   **Briefing/edge resolution (preserves the existing prompt contract):** the capability model presents filter signals to downstream agents as `filter_signals["<role>"]` (keyed by role name — see capability spec Decision 6) and evaluates edge predicates against the same view. Once the cache is `(role, scope)`-keyed, the per-cycle briefing builder and the edge-predicate evaluator **resolve the scoped map down to the current cycle's asset** — selecting entries whose scope is `Asset(current_asset)` or `Global` — and re-present them keyed by role. Existing trader prompts and edges that reference `filter_signals["regime"]` keep working unchanged; they simply see this asset's `regime`. This is the one load-bearing integration point multi-filter strategies depend on.
+
 5. **The briefing exposes the data; the prompt decides what to attend to.** The cycle briefing carries:
    - `active_assets: Vec<AssetSymbol>` — always present (names only; tiny).
    - `current_asset: AssetSymbol` — present when fanned out (`PerAsset`). This is the existing seed `"asset"` field, now set to the fan-out asset instead of `scenario.asset[0]`. **No prose is injected** — the user's `system_prompt` references the field as it sees fit.
@@ -141,7 +143,8 @@ TDD per phase — failing test first, then implementation, then green. Key tests
 
 - **Data model:** legacy scenario `body_json` with `asset` key parses (key dropped); strategy JSON without `execution_mode`/`capital_mode` parses to defaults; `SignalCacheKey` round-trips each `SignalScope`; two `Asset(BTC)` vs `Asset(ETH)` signals for the same role **don't collide**.
 - **Harness:** a `PerAsset` backtest over `[BTC,ETH]` produces decisions for **both** assets; shared NAV equals pooled formula; per-asset positions tracked independently; `Portfolio` mode returns the not-implemented error; `--assets ETH` subsets correctly.
-- **Filter scope:** a strategy with one Filter + one Trader over 2 assets caches/serves per-asset signals (regression for the collision bug).
+- **Filter scope (single):** a strategy with one Filter + one Trader over 2 assets caches/serves per-asset signals (regression for the collision bug).
+- **Multi-filter:** a strategy with 2 Filters (e.g. `regime` + `vol`) + 1 Trader over 2 assets produces 4 non-colliding cache entries; each asset's trader briefing surfaces `filter_signals["regime"]`/`["vol"]` scoped to *that* asset; an edge predicate referencing `regime` gates per-asset correctly.
 - **CLI:** `xvn strategy new --assets BTC,ETH,SOL` writes a 3-asset universe; report shows per-asset rollup.
 - **No-regression:** existing single-asset (1-element universe) runs produce byte-identical results to pre-change baseline (pin via fixture diff).
 
@@ -163,7 +166,7 @@ TDD per phase — failing test first, then implementation, then green. Key tests
 - `Portfolio` / `Custom` execution-mode behavior (field + branch + rejection ship; the arms don't).
 - `PerAsset` capital segregation (`capital_mode: PerAsset` behavior).
 - A cross-asset **selector** agent / filter-driven asset selection (the substrate — scoped signals, free-text slots, active-set resolver — is built so this is incremental later; the selector itself is not built).
-- `Pair`/`Global` signal **producers** (the scope types exist; no agent emits them in v1).
+- `Pair`/`Global` signal **producers** (the scope types exist; no agent emits them in v1). **Known v1 limitation:** a semantically universe-wide filter runs redundantly once per active asset (each result tagged `Asset(x)`, not `Global`) — correct but not deduplicated. `SignalScope::Global` makes the future "run once, fan the result to all assets" optimization a non-breaking change.
 - Multi-asset **live** trading execution (the `live_config.rs` single-asset wall stays; lifting it needs its own broker-side safety review).
 - New asset classes beyond the existing `AssetSymbol` whitelist.
 
