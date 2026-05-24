@@ -1,8 +1,7 @@
 import type { Config } from "tailwindcss";
 
-// Folio dark theme — ported from frontend/prototype/styles.css. Tokens live in
-// src/styles/tokens.css; this config maps Tailwind utilities onto those CSS
-// variables so components can use either.
+// Signal theme — tokens live in src/styles/tokens.css; this config maps
+// Tailwind utilities onto those CSS variables so components can use either.
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
@@ -31,9 +30,11 @@ export default {
         info: "var(--info)",
       },
       fontFamily: {
-        serif: ["'Cormorant Garamond'", "serif"],
-        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
+        // `serif` retained as a Tailwind utility name for compatibility with
+        // existing `font-serif` classes — Signal has no serif, it maps to Geist.
+        serif: ["'Geist'", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["'Geist'", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["'Geist Mono'", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       borderRadius: {
         card: "6px",
