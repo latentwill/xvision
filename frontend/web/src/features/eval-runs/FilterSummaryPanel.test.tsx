@@ -2,8 +2,8 @@
 //
 // The panel reads a list of `FilterSummary` rows (one per filter that ran
 // during a backtest) and renders the bars-scanned / wake-ups / suppression
-// breakdown / LLM-calls-saved / estimated-tokens-saved metrics inline on the
-// run-detail surface. EveryBar runs and runs that produced no
+// breakdown / LLM-calls-saved metrics inline on the run-detail surface.
+// EveryBar runs and runs that produced no
 // FilterEventV1 rows pass `[]` and the panel renders nothing.
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -55,10 +55,11 @@ describe("FilterSummaryPanel", () => {
     expect(within(row).getByText("3")).toBeInTheDocument();
   });
 
-  it("renders the estimated_tokens_saved value with locale grouping", () => {
+  it("does not render the estimated token-savings metric", () => {
     render(<FilterSummaryPanel summaries={[makeSummary()]} />);
     const row = screen.getByTestId("filter-summary-row");
-    expect(within(row).getByText("4,750,000")).toBeInTheDocument();
+    expect(within(row).queryByText("4,750,000")).not.toBeInTheDocument();
+    expect(within(row).queryByText(/est\. tokens saved/i)).not.toBeInTheDocument();
   });
 
   it("renders one row per summary when multiple filters are present", () => {

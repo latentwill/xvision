@@ -170,6 +170,7 @@ async fn noop_skip_fires_when_seed_allows_only_hold() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -238,6 +239,7 @@ async fn noop_skip_does_not_fire_just_because_portfolio_is_long() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -324,6 +326,7 @@ async fn noop_skip_does_not_fire_when_portfolio_flat() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await

@@ -56,7 +56,7 @@ fn fixture_strategy_with_agents(agents: Vec<AgentRef>, pipeline: PipelineDef) ->
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -119,6 +119,7 @@ async fn pipeline_output_assigned_for_role_variants() {
             cycle_idx: 0,
             provider_catalogs: std::collections::HashMap::new(),
             filter_ctx: None,
+            trace_attrs: None,
             recorder: None,
         })
         .await

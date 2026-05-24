@@ -130,6 +130,8 @@ async fn execute_slot_caps_runaway_tool_use_loop() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     })
     .await
     .expect_err("runaway tool-use loop must terminate at the iteration cap");

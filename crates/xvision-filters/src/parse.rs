@@ -147,7 +147,9 @@ fn classify_message(path: &str, message: &str) -> Option<ParseError> {
     // `Operator`. Messages look like `unknown variant '!='` or
     // `expected one of ...` listing the legal renames.
     let operator_mentioned = lower.contains("operator");
-    let enum_shape = lower.contains("unknown variant") || lower.contains("invalid variant");
+    let enum_shape = lower.contains("unknown variant")
+        || lower.contains("invalid variant")
+        || lower.contains("unknown operator");
     let operator_token_hint = enum_shape
         && (lower.contains("crosses_above")
             || lower.contains("crosses_below")

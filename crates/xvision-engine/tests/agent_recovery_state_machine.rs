@@ -158,6 +158,8 @@ fn build_input<'a>(
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     }
 }
 

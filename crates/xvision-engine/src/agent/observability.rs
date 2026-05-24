@@ -28,10 +28,10 @@ use crate::eval::cost::compute_token_cost_usd_from_catalog;
 use xvision_core::providers::Catalog;
 use xvision_observability::{
     AssistantTextDeltaEvent, BlobStore, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
-    BrokerSide, EngineEvent, MemoryRecallEvent, MemoryRecallItem, ModelCallFinishedEvent, Redactor, RetentionMode,
-    RiskLevel, RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent, RunStatus, SideEffectLevel,
-    SpanAttributes, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus, SupervisorNoteEvent,
-    ToolCallFailedEvent, ToolCallFinishedEvent, ToolCallStartedEvent, ToolOrigin,
+    BrokerSide, EngineEvent, MemoryRecallEvent, MemoryRecallItem, ModelCallFinishedEvent, Redactor,
+    RetentionMode, RiskLevel, RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent, RunStatus,
+    SideEffectLevel, SpanAttributes, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
+    SupervisorNoteEvent, ToolCallFailedEvent, ToolCallFinishedEvent, ToolCallStartedEvent, ToolOrigin,
 };
 
 /// Serializable digest input for `compute_prompt_hash`. Private —
@@ -900,6 +900,8 @@ impl ObsEmitter {
         provider: &str,
         model: &str,
         stage: Option<&str>,
+        name_override: Option<&str>,
+        extra_attrs: Option<&serde_json::Value>,
     ) {
         let attrs = SpanAttributes {
             run_id: Some(self.run_id.clone()),
@@ -908,17 +910,28 @@ impl ObsEmitter {
             provider: Some(provider.to_string()),
             ..SpanAttributes::default()
         };
+        let attributes_json = match extra_attrs {
+            Some(serde_json::Value::Object(map)) => attrs.merge_into_object(map.clone()),
+            Some(other) => {
+                let mut map = serde_json::Map::new();
+                map.insert("context".to_string(), other.clone());
+                attrs.merge_into_object(map)
+            }
+            None => attrs.to_attributes_json().unwrap_or_else(|| "{}".to_string()),
+        };
         self.bus
             .publish(RunEvent::SpanStarted(SpanStartedEvent {
                 span_id: span_id.to_string(),
                 run_id: self.run_id.clone(),
                 parent_span_id,
                 kind: SpanKind::ModelCall,
-                name: format!("{provider}/{model}"),
+                name: name_override
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| format!("{provider}/{model}")),
                 started_at: Utc::now(),
                 otel_trace_id: None,
                 otel_span_id: None,
-                attributes_json: attrs.to_attributes_json(),
+                attributes_json: Some(attributes_json),
             }))
             .await;
     }

@@ -126,6 +126,8 @@ async fn full_debug_execute_slot_writes_prompt_and_response_blobs() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     })
     .await
     .expect("execute_slot must succeed with CannedDispatch");
@@ -212,6 +214,8 @@ async fn hash_only_execute_slot_leaves_payload_refs_none() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
     })
     .await
     .expect("execute_slot must succeed with CannedDispatch");

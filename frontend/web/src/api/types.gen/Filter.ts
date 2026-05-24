@@ -3,14 +3,22 @@ import type { AgentContextTemplateId } from "./AgentContextTemplateId";
 import type { ConditionTree } from "./ConditionTree";
 import type { FilterId } from "./FilterId";
 import type { FilterStatus } from "./FilterStatus";
+import type { IndicatorRef } from "./IndicatorRef";
 import type { ScanCadence } from "./ScanCadence";
 import type { StrategyId } from "./StrategyId";
 import type { Symbol } from "./Symbol";
 import type { Timeframe } from "./Timeframe";
 import type { WakeInPosition } from "./WakeInPosition";
 
+export type FilterFire = {
+  reason: string;
+  priority: number;
+  tags: Array<string>;
+  context: Array<IndicatorRef>;
+};
+
 /**
  * Top-level Filter entity. JSON parses this struct directly; TOML wraps
  * it under `[filter]` (handled in `parse.rs`).
  */
-export type Filter = { id: FilterId, strategy_id: StrategyId, display_name: string, description: string | null, status: FilterStatus, asset_scope: Array<Symbol>, timeframe: Timeframe, scan_cadence: ScanCadence, conditions: ConditionTree, cooldown_bars: number, max_wakeups_per_day: number | null, wake_when_in_position: WakeInPosition, agent_context_template: AgentContextTemplateId, };
+export type Filter = { id: FilterId, strategy_id: StrategyId, display_name: string, description: string | null, status: FilterStatus, asset_scope: Array<Symbol>, timeframe: Timeframe, scan_cadence: ScanCadence, conditions: ConditionTree, fire?: FilterFire | null, cooldown_bars: number, max_wakeups_per_day: number | null, wake_when_in_position: WakeInPosition, agent_context_template: AgentContextTemplateId, };

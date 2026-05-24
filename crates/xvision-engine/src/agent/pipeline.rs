@@ -138,6 +138,10 @@ pub struct PipelineInputs<'a> {
     /// existing call site inherits it without code changes. The eval
     /// executors opt in via `with_filter_ctx`.
     pub filter_ctx: Option<FilterPipelineCtx<'a>>,
+    /// Optional attributes merged into Trader model-call spans. Backtest
+    /// uses this to surface the strategy filter outcome directly on the
+    /// decision span.
+    pub trace_attrs: Option<serde_json::Value>,
     /// Phase D — unified `Recorder` threaded from the entry point
     /// (harness path constructs a `HarnessRecorder`; eval-executor path
     /// constructs an `EvalRecorder`). Each capability handler in
@@ -216,6 +220,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             catalog: catalog_for_slot(slot, &input.provider_catalogs),
             delta_briefing: false,
             prev_briefing: None,
+            trace_name: None,
+            trace_attrs: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -248,6 +254,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             catalog: catalog_for_slot(slot, &input.provider_catalogs),
             delta_briefing: false,
             prev_briefing: None,
+            trace_name: None,
+            trace_attrs: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -280,6 +288,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             catalog: catalog_for_slot(slot, &input.provider_catalogs),
             delta_briefing: false,
             prev_briefing: None,
+            trace_name: Some("decision".to_string()),
+            trace_attrs: input.trace_attrs.clone(),
         })
         .await?;
         total_in += out.input_tokens;
@@ -570,6 +580,16 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
                 delta_briefing: false,
                 prev_briefing: None,
+                trace_name: if capability == Capability::Trader {
+                    Some("decision".to_string())
+                } else {
+                    None
+                },
+                trace_attrs: if capability == Capability::Trader {
+                    input.trace_attrs.clone()
+                } else {
+                    None
+                },
                 current_index: i,
                 total_agents: n,
                 activates: capability,
@@ -708,6 +728,8 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
                         delta_briefing: false,
                         prev_briefing: None,
+                        trace_name: Some("decision".to_string()),
+                        trace_attrs: input.trace_attrs.clone(),
                         current_index: i,
                         total_agents: n,
                         activates: capability,
