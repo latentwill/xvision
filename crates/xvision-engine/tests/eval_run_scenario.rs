@@ -158,6 +158,8 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             min_warmup_bars: None,
 
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -252,6 +254,8 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             min_warmup_bars: None,
 
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -378,6 +382,8 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
             min_warmup_bars: None,
 
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -479,6 +485,8 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {

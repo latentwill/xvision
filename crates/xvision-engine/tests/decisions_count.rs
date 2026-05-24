@@ -134,6 +134,8 @@ fn build_strategy(agent_id: &str) -> Strategy {
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),

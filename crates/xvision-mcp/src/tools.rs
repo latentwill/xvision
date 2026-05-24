@@ -935,6 +935,8 @@ impl XvisionTools {
                 published_at: None,
                 min_warmup_bars: None,
                 color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),

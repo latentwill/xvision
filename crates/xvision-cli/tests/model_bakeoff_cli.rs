@@ -338,6 +338,8 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
             published_at: None,
             min_warmup_bars: None,
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {

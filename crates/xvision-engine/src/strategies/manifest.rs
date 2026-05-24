@@ -32,6 +32,33 @@ pub struct PublicManifest {
     /// `strategyRotation` palette by stable index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// How the harness drives the asset universe. Defaults to `PerAsset`
+    /// so pre-multi-asset strategy JSON parses unchanged.
+    #[serde(default)]
+    pub execution_mode: crate::strategies::ExecutionMode,
+    /// How capital is shared across assets. Defaults to `Pooled`.
+    #[serde(default)]
+    pub capital_mode: crate::strategies::CapitalMode,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_without_modes_defaults_per_asset_pooled() {
+        // Legacy strategy JSON omits the new fields → defaults.
+        let json = serde_json::json!({
+            "id":"s1","display_name":"d","plain_summary":"",
+            "creator":"@x","template":"custom","regime_fit":[],
+            "asset_universe":["BTC/USD"],"decision_cadence_minutes":60,
+            "attested_with":[],"required_tools":[],
+            "risk_preset_or_config":"balanced"
+        });
+        let m: PublicManifest = serde_json::from_value(json).unwrap();
+        assert_eq!(m.execution_mode, crate::strategies::ExecutionMode::PerAsset);
+        assert_eq!(m.capital_mode, crate::strategies::CapitalMode::Pooled);
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

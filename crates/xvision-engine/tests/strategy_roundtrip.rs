@@ -24,6 +24,8 @@ fn sample_strategy() -> Strategy {
             min_warmup_bars: None,
 
             color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),
@@ -102,6 +104,8 @@ fn manifest_roundtrip_with_required_fields() {
         published_at: None,
         min_warmup_bars: None,
         color: None,
+        execution_mode: Default::default(),
+        capital_mode: Default::default(),
     };
     let json = serde_json::to_string(&m).unwrap();
     let parsed: PublicManifest = serde_json::from_str(&json).unwrap();

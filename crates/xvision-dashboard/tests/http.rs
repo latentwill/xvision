@@ -136,6 +136,8 @@ async fn strategies_list_returns_seeded_strategy() {
 
                 min_warmup_bars: None,
                 color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             hypothesis: None,
             agents: Vec::new(),
@@ -1202,6 +1204,8 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
 
                 min_warmup_bars: None,
                 color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
             },
             hypothesis: None,
             agents: Vec::new(),
