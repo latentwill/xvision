@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Route live + forward-paper decision cycles through the `xvision-agentd` Cline sidecar so a real cycle produces a `TraderDecision` end-to-end via Cline, with `LlmDispatch` demoted to a flag-gated fallback.
+**Goal:** Route live decision cycles through the `xvision-agentd` Cline sidecar so a real cycle produces a `TraderDecision` end-to-end via Cline, with `LlmDispatch` demoted to a flag-gated fallback. Backtests use the same Cline slot runtime once Stage 3 record/replay is in place.
 
 **Architecture:** A slot invocation becomes a *Cline `Agent` run* (`start_run` → one-or-more `step` → `end_run`), per the umbrella. We do **not** wrap Cline inside `LlmDispatch` — that would nest `execute_slot`'s tool loop inside Cline's own loop. Instead we add a sibling executor `execute_slot_cline` that returns the same `LlmResponse` shape (so `PipelineOutputs` and all downstream parsing are unchanged), and a runtime flag selects it. The agent returns its structured decision by calling a new `submit_decision` lifecycle tool; `xvision-mcp` indicators are registered as Cline tools. Observability flows through the existing event sink so live runs appear in the agent-runs UI.
 
@@ -20,13 +20,14 @@ All boxes must be checked before this stage is accepted.
 - [ ] **Item 3 — Operational visibility (non-negotiable, begins here).** Live runs surface run/slot phase state and a `trajectory_mode` field (value `"live"` at this stage) in: the CLI (`xvn run inspect`), the agent-runs dashboard (re-enable the disabled mode badge), and structured run artifacts. Replay-hit ratio / dropped-events / recovery-reason fields are *declared* now and populated in Stages 2–3.
 - [ ] **Item 5 — Provider matrix + compatibility (must-have).** Produce an explicit provider coverage matrix (xvision `ProviderEntry` → Cline `providerId`/`modelId`/`baseUrl`, feature parity) committed as a doc, and define fallback/abort behavior per gap: an unmapped provider **aborts with a typed error**, it does not silently fall back unless the runtime flag explicitly selects `LlmDispatch`.
 
-Stage 1 exit (umbrella): *a real live/forward-paper cycle produces a `TraderDecision` via the Cline sidecar end-to-end; `LlmDispatch` no longer the live path (flag-gated fallback only).*
+Stage 1 exit (umbrella): *a real live cycle produces a `TraderDecision` via the Cline sidecar end-to-end; `LlmDispatch` no longer the live path (flag-gated fallback only).*
 
 ---
 
 ## File Structure
 
 - Create: `crates/xvision-agent-client/src/provider_map.rs` — `ProviderEntry` (kind + base_url) → Cline `providerId`/`modelId` mapping + typed `ProviderMapError`.
+- Modify: `crates/xvision-agent-client/Cargo.toml` — add the `xvision-core` dependency needed by `provider_map.rs`.
 - Create: `docs/superpowers/specs/2026-05-24-cline-provider-matrix.md` — the item-5 coverage matrix deliverable.
 - Modify: `crates/xvision-core/src/config.rs` — add `AgentRuntime` enum + `runtime` field.
 - Create: `crates/xvision-engine/src/agent/execute_cline.rs` — `execute_slot_cline(SlotInput) -> LlmResponse`.
@@ -34,7 +35,7 @@ Stage 1 exit (umbrella): *a real live/forward-paper cycle produces a `TraderDeci
 - Modify: `crates/xvision-engine/src/agent/pipeline.rs` — runtime-flag branch in `run_agent_pipeline`/`run_pipeline`.
 - Modify: `crates/xvision-engine/src/api/eval.rs` — construct an `AgentClient` (event-sink-wired) when `runtime == Cline`.
 - Modify: `crates/xvision-agent-client/src/protocol.rs` — add `decision_json: Option<String>` to `StepResult`.
-- Modify (Node): `xvision-agentd/src/session/submit-decision.ts` (new), `src/methods/session.ts`, `src/session/store.ts`, `src/tool-registry.ts`.
+- Modify (Node): `xvision-agentd/src/session/submit-decision.ts` (new), `src/methods/session.ts`, `src/session/store.ts`, `src/session/build-agent.ts`, `src/methods/tool-registry.ts`.
 - Modify: `crates/xvision-engine/migrations/0NN_run_trajectory_mode.sql` — add `trajectory_mode` to `agent_runs`.
 - Modify: `frontend/web/src/routes/agent-runs-detail.tsx:156` + `frontend/web/src/features/agent-runs/RunStatusStrip.tsx` + `frontend/web/src/api/types-agent-runs.ts`.
 - Modify: `crates/xvision-cli/src/commands/run/inspect.rs` — print `trajectory_mode`.
@@ -45,6 +46,7 @@ Stage 1 exit (umbrella): *a real live/forward-paper cycle produces a `TraderDeci
 
 **Files:**
 - Create: `crates/xvision-agent-client/src/provider_map.rs`
+- Modify: `crates/xvision-agent-client/Cargo.toml` (add `xvision-core = { path = "../xvision-core" }`)
 - Modify: `crates/xvision-agent-client/src/lib.rs` (add `pub mod provider_map;`)
 - Create: `docs/superpowers/specs/2026-05-24-cline-provider-matrix.md`
 - Test: inline `#[cfg(test)] mod tests` in `provider_map.rs`
@@ -148,7 +150,8 @@ Create `docs/superpowers/specs/2026-05-24-cline-provider-matrix.md` with a table
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xvision-agent-client/src/provider_map.rs crates/xvision-agent-client/src/lib.rs \
+git add crates/xvision-agent-client/Cargo.toml \
+        crates/xvision-agent-client/src/provider_map.rs crates/xvision-agent-client/src/lib.rs \
         docs/superpowers/specs/2026-05-24-cline-provider-matrix.md
 git commit -m "feat(stage1): provider→Cline mapping + coverage matrix"
 ```
@@ -211,8 +214,9 @@ Add a `pub runtime: AgentRuntime` field (with `#[serde(default)]`) to the engine
 
 **Files:**
 - Create: `xvision-agentd/src/session/submit-decision.ts`
-- Modify: `xvision-agentd/src/methods/session.ts` (capture decision; add to result)
+- Modify: `xvision-agentd/src/methods/session.ts` (accept builtin lifecycle tool during validation; capture decision; add to result)
 - Modify: `xvision-agentd/src/session/store.ts` (`StepResult` shape; per-run `decisionJson`)
+- Modify: `xvision-agentd/src/session/build-agent.ts` (append lifecycle tools separately from registry-backed shims)
 - Test: `xvision-agentd/test/session/submit-decision.test.ts`
 
 - [ ] **Step 1: Write the failing vitest**
@@ -222,7 +226,7 @@ import { describe, it, expect, beforeEach } from "vitest"
 import { handleSessionStartRun, handleSessionStep, __setStoreForTesting } from "../../src/methods/session.js"
 import { createStore } from "../../src/session/store.js"
 import { setMockScript, resetMockScript } from "../../src/testing/mock-provider.js"
-import { resetRegistry } from "../../src/tool-registry.js"
+import { resetRegistry } from "../../src/methods/tool-registry.js"
 
 describe("submit_decision lifecycle tool", () => {
   beforeEach(() => {
@@ -236,6 +240,7 @@ describe("submit_decision lifecycle tool", () => {
     handleSessionStartRun({
       run_id: "r1", provider_id: "xvision-mock", model_id: "mock",
       system_prompt: "decide", allowed_tools: ["submit_decision"],
+      decision_schema: { type: "object", additionalProperties: true },
       budget_limits: { max_input_tokens: 1000, max_output_tokens: 1000, max_wall_ms: 10000 },
     })
     const r = await handleSessionStep({ run_id: "r1", prompt: "go" })
@@ -252,15 +257,15 @@ describe("submit_decision lifecycle tool", () => {
 ```typescript
 // A lifecycle tool the agent calls exactly once to emit its structured
 // decision. The sidecar captures the input and ends the run.
-import type { AgentTool } from "../tool-registry.js"
+import type { AgentTool } from "@cline/sdk"
 
 export const SUBMIT_DECISION_TOOL = "submit_decision"
 
-export function buildSubmitDecisionTool(capture: (json: string) => void): AgentTool {
+export function buildSubmitDecisionTool(inputSchema: Record<string, unknown>, capture: (json: string) => void): AgentTool {
   return {
     name: SUBMIT_DECISION_TOOL,
     description: "Submit your final structured decision. Call exactly once. Ends the run.",
-    inputSchema: { type: "object", additionalProperties: true }, // slot-specific schema injected by caller
+    inputSchema,
     isRunTerminator: true,
     async run(input: unknown) {
       capture(JSON.stringify(input))
@@ -270,7 +275,7 @@ export function buildSubmitDecisionTool(capture: (json: string) => void): AgentT
 }
 ```
 
-In `session.ts`: when building the agent for a run whose `allowed_tools` includes `submit_decision`, register `buildSubmitDecisionTool((json) => store.setDecisionJson(run_id, json))` alongside the shimmed tools. In `store.ts`: add `decisionJson?: string` to the per-run session and `setDecisionJson`/`getDecisionJson`. Extend `StepResult` with `decision_json?: string`, populated from `store.getDecisionJson(run_id)` after `agent.run`.
+In `session.ts`: `submit_decision` is a built-in lifecycle tool, not a registry-backed Rust callback. During `handleSessionStartRun` validation, accept `submit_decision` even though it is absent from `tool.registry.get`, and require a non-array object `decision_schema` whenever `allowed_tools` contains it. When lazily building the agent, call `buildAgent(session.config, { captureDecision: (json) => store.setDecisionJson(run_id, json) })`. In `build-agent.ts`: pass registry-backed tool names through `shimRegistryToTools`, but append `buildSubmitDecisionTool(config.decision_schema, opts.captureDecision)` separately so the tool captures locally instead of calling Rust. In `store.ts`: add `decisionJson?: string`, `decision_schema?: Record<string, unknown>`, and `setDecisionJson`/`getDecisionJson`. Extend `StepResult` with `decision_json?: string`, populated from `store.getDecisionJson(run_id)` after `agent.run`.
 
 - [ ] **Step 4: Run — PASS.** Step 5: Commit `feat(stage1): submit_decision lifecycle tool in sidecar`.
 
@@ -280,7 +285,7 @@ In `session.ts`: when building the agent for a run whose `allowed_tools` include
 
 **Files:**
 - Modify: `crates/xvision-agent-client/src/protocol.rs` (add `decision_json: Option<String>` to `StepResult`)
-- Modify: `crates/xvision-agent-client/src/client.rs` (helper to register `submit_decision` + indicator tools)
+- Modify: `crates/xvision-agent-client/src/client.rs` (helper to register indicator tools)
 - Test: inline test in `xvision-agent-client`
 
 - [ ] **Step 1: Failing test** — assert `StepResult` deserializes a payload containing `decision_json`:
@@ -300,7 +305,7 @@ fn step_result_carries_decision_json() {
 
 - [ ] **Step 2: Run — FAIL** (unknown field / missing field). `cargo test -p xvision-agent-client step_result` (worktree target dir).
 
-- [ ] **Step 3: Implement** — add `#[serde(default)] pub decision_json: Option<String>` to `StepResult`. Add a `register_decision_and_indicator_tools(&self, schema: serde_json::Value, indicators: Vec<ToolDescriptor>)` helper on `AgentClient` that pushes the `submit_decision` descriptor (with the slot's response schema as `inputSchema`) plus the `xvision-mcp` indicator descriptors over the existing `tool.registry.set` RPC.
+- [ ] **Step 3: Implement** — add `#[serde(default)] pub decision_json: Option<String>` to `StepResult`. Add `#[serde(skip_serializing_if = "Option::is_none")] pub decision_schema: Option<serde_json::Value>` to `StartRunParams`; the sidecar validates and stores it for the built-in lifecycle tool. Add a `register_indicator_tools(&self, indicators: Vec<ToolDescriptor>)` helper on `AgentClient` that pushes only the registry-backed `xvision-mcp` indicator descriptors over the existing `tool.registry.set` RPC. Do **not** register `submit_decision` as a callback tool, or Cline will route the final decision through `callRust` instead of local capture.
 
 - [ ] **Step 4: Run — PASS.** Step 5: Commit `feat(stage1): decision_json in StepResult + tool registration helper`.
 
@@ -346,14 +351,14 @@ pub async fn execute_slot_cline<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmR
     let mapped = map_provider(input.provider_entry, input.slot.effective_model())?; // typed abort on gap (item 5)
 
     let run_id = input.run_id.to_string(); // cycle_id + slot role; the idempotency key (item 2)
-    client.register_decision_and_indicator_tools(
-        input.response_schema_json(), input.indicator_descriptors()).await?;
+    client.register_indicator_tools(input.indicator_descriptors()).await?;
     client.start_run(StartRunParams {
         run_id: run_id.clone(),
         provider_id: mapped.provider_id, model_id: mapped.model_id,
         api_key: Some(input.api_key.clone()), base_url: mapped.base_url,
         system_prompt: input.system_prompt.clone(),
         allowed_tools: input.allowed_tool_names_plus_submit_decision(),
+        decision_schema: Some(input.response_schema_json()),
         budget_limits: input.budget_limits(),
     }).await?;
 
@@ -455,7 +460,7 @@ Add the new `SlotInput` fields used above (`cline_client: Option<&AgentClient>`,
 
 - [ ] **Step 2: Flip** `#[default]` to `Cline`. `LlmDispatch` remains a valid flag value (the fallback per invariant 6).
 
-- [ ] **Step 3: Exit verification** — run a real (or mock-sidecar) live/forward-paper cycle end-to-end; confirm the `TraderDecision` is produced via Cline, the run appears in the agent-runs UI with `trajectory_mode = live`, and selecting `runtime = llm-dispatch` still routes through the old path.
+- [ ] **Step 3: Exit verification** — run a real (or mock-sidecar) live cycle end-to-end; confirm the `TraderDecision` is produced via Cline, the run appears in the agent-runs UI with `trajectory_mode = live`, and selecting `runtime = llm-dispatch` still routes through the old path. Backtest coverage is completed in Stage 3 via record/replay over this same slot runtime.
 
 - [ ] **Step 4: Commit** `feat(stage1): default live runtime to Cline; LlmDispatch is flag-gated fallback`.
 

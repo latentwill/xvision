@@ -15,7 +15,7 @@
 ## Inherited contract gates (from umbrella §"Subplan inheritance contract")
 
 - [ ] **Item 1 — Replay determinism (replay half, non-negotiable).** Stage 3 replays full step state — raw frames, tool payloads, tool results/errors, retry/cancel, timestamps, budgets/counters — re-executing the loop (not memoizing the final decision). A replay re-run is bit-stable.
-- [ ] **Item 2 — Live-vs-replay divergence (the piece deferred from Stage 1, non-negotiable).** When a replayed Agent would make a different tool call / take a different branch than the recorded trajectory, detect it, abort, set `recovery_reason = replay_divergence`, and surface it. Never silently paper over divergence.
+- [ ] **Item 2 — Live-vs-replay divergence (the piece deferred from Stage 1, non-negotiable).** When a replayed Agent would make a different tool call / take a different branch than the recorded trajectory, detect it, abort, set `recovery_reason = replay_divergence`, and surface it. Never silently hide divergence.
 - [ ] **Item 4 — Piping + backpressure (replay side, non-negotiable).** Specify the replay frame-feed schema, bounds, and the reconstitution rule for an exhausted/missing frame (→ recording marked corrupt, abort — no silent partial replay).
 - [ ] **Item 6 — Migration/off-ramp (must-have).** A parity gate proves Cline-record == `LlmDispatch` before the flag is removed; an env-gated emergency rollback to `LlmDispatch` remains, with blast-radius limited to opt-in and documented.
 - [ ] **Item 8 — A/B pairing (must-have).** Define and preserve A/B semantics under trajectories: shared-slot recordings are reused across arms; arm-specific slots are per-arm. Current shared-intern-briefing behavior is preserved exactly.
@@ -117,7 +117,11 @@ describe("replay model", () => {
 
 - [ ] **Step 1: Failing test** — record a trajectory; then replay it but inject a tool whose result differs from the recorded `ToolResult` (simulating a non-deterministic tool / changed environment), forcing the Agent down a different branch than recorded. Assert: detected, run aborts, `recovery_reason = replay_divergence`, and the divergence point (slot, step, frame index) is reported.
 
-- [ ] **Step 2: Run — FAIL.** **Step 3: Implement** — during replay, the wrapper compares the Agent's actual requested tool call against the recorded `ToolCallDelta` at that step; on mismatch, raise `ReplayDivergence { recording_id, slot, step, expected, actual }`; Rust marks `recovery_reason = replay_divergence` and surfaces it (UI field from Stage 1). **Step 4: Run — PASS.** **Step 5: Commit** `feat(stage3): replay divergence detection (item 2 deferred piece)`.
+- [ ] **Step 2: Run — FAIL.** **Step 3: Implement** — divergence detection must compare the runtime's actual control flow against the recorded transcript, not just replayed model output against itself. During replay:
+  - compare each actual tool call Cline requests against the next recorded `ToolCallDelta`;
+  - execute the real tool or deterministic replay tool according to the selected replay policy, then compare the actual tool output/error against the recorded `ToolResult`;
+  - compare the next model `Request` frame Cline constructs (messages/tools/system prompt) against the recorded `Request` for that step before yielding the next recorded model events.
+  On any mismatch, raise `ReplayDivergence { recording_id, slot, step, frame_index, expected, actual }`; Rust marks `recovery_reason = replay_divergence` and surfaces it (UI field from Stage 1). This avoids the false-green case where a replay model simply yields the recorded `ToolCallDelta` and therefore "matches" itself while changed tool results or message reconstitution drift silently. **Step 4: Run — PASS.** **Step 5: Commit** `feat(stage3): replay divergence detection (item 2 deferred piece)`.
 
 ---
 
@@ -128,10 +132,10 @@ describe("replay model", () => {
 - Test: `crates/xvision-eval/src/ab_compare.rs` inline `#[cfg(test)]`
 
 - [ ] **Step 1: Failing test** — two `Trader` arms with the **same** intern provider/model but **different** trader models, over one cycle:
-  - assert the intern slot resolves to **one** recording (shared `TrajectoryKey.fingerprint()` — arm not part of intern's identity when provider/model/prompt match) → preserves today's shared-intern-briefing pairing;
+  - assert the intern slot resolves to **one** recording (shared `TrajectoryKey.fingerprint()` with `arm_scope = None` when provider/model/prompt match) → preserves today's shared-intern-briefing pairing;
   - assert the trader slot resolves to **two** recordings (one per arm, because the model differs) → arm-specific.
 
-- [ ] **Step 2: Run — FAIL.** **Step 3: Implement** — derive each slot's `TrajectoryKey` from `(cycle_id, slot_role, provider, model, prompt_hashes)` and include `arm` in the key **only when the slot's identity differs across arms**. Concretely: compute the key without `arm`; if two arms produce the same fingerprint for a slot, they share the recording (shared-slot); otherwise each records under its own fingerprint (per-arm). Document the three modes (shared-briefing / shared-slot / per-arm per-slot) in the function doc and state which xvision uses (shared-slot, fingerprint-driven). **Step 4: Run — PASS.** **Step 5: Commit** `feat(stage3): fingerprint-driven A/B pairing preserves shared-briefing (item 8)`.
+- [ ] **Step 2: Run — FAIL.** **Step 3: Implement** — derive each slot's `TrajectoryKey` from `(cycle_id, slot_role, provider, model, prompt_hashes, simulation_id, arm_scope)`. `arm_scope` is `None` for a shared slot and `Some(arm_id)` for a per-arm slot. Concretely: compute the candidate key with `arm_scope = None`; if two arms produce the same slot identity, they share that recording. If the slot identity differs, use `arm_scope = Some(arm_id)` so each arm records/replays independently. `RecordingId` remains separate and is never part of the fingerprint. Document the three modes (shared-briefing / shared-slot / per-arm per-slot) in the function doc and state which xvision uses (shared-slot, fingerprint-driven). **Step 4: Run — PASS.** **Step 5: Commit** `feat(stage3): fingerprint-driven A/B pairing preserves shared-briefing (item 8)`.
 
 ---
 

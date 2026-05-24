@@ -32,7 +32,7 @@ Stage 2 exit (umbrella): *a recorded run can be fully reconstructed from the sto
 - Create: `crates/xvision-observability/src/trajectory/store.rs` — `TrajectoryStore` (write/read/validate/purge/reindex over SQLite + blob store).
 - Create: `crates/xvision-engine/migrations/0NN_trajectory_frames.sql` (+ `.down.sql`).
 - Create (Node): `xvision-agentd/src/session/frame-recorder.ts` — serializes frames from the model-wrapper tap.
-- Modify (Node): `xvision-agentd/src/session/model-wrapper.ts` (apply to real providers; emit frame records), `src/methods/session.ts` (apply wrapper unconditionally), `src/session/emit.ts` (frame notification), `src/session/build-agent.ts` (wrap real-provider model).
+- Modify (Node): `xvision-agentd/src/session/model-wrapper.ts` (apply to real providers; emit frame records), `src/methods/session.ts` (apply wrapper unconditionally), `src/session/emit.ts` (frame notification), `src/session/build-agent.ts` (wrap real-provider model), `src/session/provider-model.ts` (new gateway/model construction helper if required by the SDK), `src/session/tool-shim.ts` (record full tool result payloads/errors).
 - Modify: `crates/xvision-agent-client/src/protocol.rs` (frame notification type), `src/client.rs` (route frames to the store).
 - Create: `crates/xvision-cli/src/commands/trajectory/{mod,inspect,validate,purge,reindex}.rs`; modify `crates/xvision-cli/src/lib.rs` (add `Trajectory(TrajectoryCmd)` verb).
 - Modify: `crates/xvision-core/src/config.rs` — retention policy fields.
@@ -55,14 +55,14 @@ mod tests {
     #[test]
     fn keys_differ_when_any_identity_field_differs() {
         let base = TrajectoryKey::builder()
-            .recording_id(RecordingId::new("rec-1"))
             .cycle_id("11111111-1111-1111-1111-111111111111".parse().unwrap())
             .slot_role("trader").step_index(0)
-            .arm("trader_arm").provider("anthropic").model("claude-opus-4-7")
+            .arm_scope(Some("trader_arm")).simulation_id(Some("sim-1"))
+            .provider("anthropic").model("claude-opus-4-7")
             .model_version("2026-05").schema_version(TRAJECTORY_SCHEMA_VERSION)
             .system_prompt_hash("h_sys").user_prompt_hash("h_usr")
             .build();
-        let other = base.clone().with_arm("trader_arm[deepseek]");
+        let other = base.clone().with_arm_scope(Some("trader_arm[deepseek]"));
         assert_ne!(base.fingerprint(), other.fingerprint());
         assert_ne!(base.with_model("claude-sonnet-4-6").fingerprint(), base.fingerprint());
     }
@@ -86,16 +86,13 @@ use uuid::Uuid;
 pub const TRAJECTORY_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordingId(pub String);
-impl RecordingId { pub fn new(s: impl Into<String>) -> Self { Self(s.into()) } }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrajectoryKey {
-    pub recording_id: RecordingId,
     pub cycle_id: Uuid,
     pub slot_role: String,
     pub step_index: u32,
-    pub arm: String,
+    /// `None` means this slot is shared across A/B arms; `Some` means per-arm.
+    pub arm_scope: Option<String>,
+    pub simulation_id: Option<String>,
     pub provider: String,
     pub model: String,
     pub model_version: String,
@@ -106,22 +103,29 @@ pub struct TrajectoryKey {
 
 impl TrajectoryKey {
     pub fn builder() -> TrajectoryKeyBuilder { TrajectoryKeyBuilder::default() }
-    /// Stable content fingerprint over all identity fields (collision-resistant key).
+    /// Stable content fingerprint over logical identity fields only.
+    /// `RecordingId` is an instance id and is intentionally excluded so
+    /// re-recording the same logical key can dedupe/supersede cleanly.
     pub fn fingerprint(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
         for part in [
-            self.recording_id.0.as_str(), &self.cycle_id.to_string(), &self.slot_role,
-            &self.step_index.to_string(), &self.arm, &self.provider, &self.model,
+            &self.cycle_id.to_string(), &self.slot_role, &self.step_index.to_string(),
+            self.arm_scope.as_deref().unwrap_or(""), self.simulation_id.as_deref().unwrap_or(""),
+            &self.provider, &self.model,
             &self.model_version, &self.schema_version.to_string(),
             &self.system_prompt_hash, &self.user_prompt_hash,
         ] { h.update(part.as_bytes()); h.update([0u8]); }
         format!("{:x}", h.finalize())
     }
-    pub fn with_arm(mut self, a: &str) -> Self { self.arm = a.into(); self }
+    pub fn with_arm_scope(mut self, a: Option<&str>) -> Self { self.arm_scope = a.map(str::to_string); self }
     pub fn with_model(mut self, m: &str) -> Self { self.model = m.into(); self }
 }
 // + a derive-style TrajectoryKeyBuilder (use the `derive_builder` crate if already a dep; else hand-write).
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordingId(pub String);
+impl RecordingId { pub fn new(s: impl Into<String>) -> Self { Self(s.into()) } }
 ```
 
 - [ ] **Step 4: Run — PASS.** Step 5: Commit `feat(stage2): versioned trajectory identity key (item 7)`.
@@ -204,9 +208,12 @@ CREATE TABLE trajectory_recordings (
   recording_id     TEXT PRIMARY KEY,
   schema_version   INTEGER NOT NULL,
   status           TEXT NOT NULL DEFAULT 'open',   -- open | complete | incomplete | corrupt
-  key_fingerprint  TEXT NOT NULL,                  -- TrajectoryKey.fingerprint() (item 7)
+  key_fingerprint  TEXT NOT NULL UNIQUE,           -- TrajectoryKey.fingerprint() (item 7)
   cycle_id         TEXT NOT NULL,
-  arm              TEXT,
+  slot_role        TEXT NOT NULL,
+  step_index       INTEGER NOT NULL,
+  arm_scope        TEXT,                            -- NULL means shared across arms
+  simulation_id    TEXT,
   provider         TEXT NOT NULL,
   model            TEXT NOT NULL,
   model_version    TEXT,
@@ -240,16 +247,18 @@ Implement `TrajectoryStore { pool, blob }` with `begin_recording(key) -> Recordi
 ### Task 5: Wire the model-wrapper tap to record real-provider frames
 
 **Files:**
-- Modify (Node): `xvision-agentd/src/session/model-wrapper.ts`, `src/session/build-agent.ts`, `src/methods/session.ts`, `src/session/emit.ts`
+- Modify (Node): `xvision-agentd/src/session/model-wrapper.ts`, `src/session/build-agent.ts`, `src/session/provider-model.ts`, `src/methods/session.ts`, `src/session/emit.ts`, `src/session/tool-shim.ts`
 - Create (Node): `xvision-agentd/src/session/frame-recorder.ts`
 - Modify: `crates/xvision-agent-client/src/protocol.rs` (frame notification), `src/client.rs` (route to store)
 - Test: `xvision-agentd/test/session/frame-record.test.ts` + `crates/xvision-engine/tests/cline_record_real.rs`
 
-- [ ] **Step 1: Failing Vitest** — run a mock-scripted step with recording enabled; assert one `Request` frame + the expected `TextDelta`/`ToolCallDelta`/`Usage`/`Finish` frames are emitted via `emitFrame`, in order, with monotonically non-decreasing `tsMs`.
+- [ ] **Step 1: Failing Vitest** — run a mock-scripted step with recording enabled; assert one `Request` frame + the expected `TextDelta`/`ToolCallDelta`/`ToolResult`/`Usage`/`Finish` frames are emitted via `emitFrame`, in order, with monotonically non-decreasing `tsMs`. The `ToolResult` assertion must cover success output and an error-as-data output from `tool-shim.ts`.
 
 - [ ] **Step 2: Run — FAIL.** **Step 3: Implement**
-  - `build-agent.ts`: wrap the **real-provider** model with `wrapAgentModel(...)` too (today only mock is wrapped — close that gap), so the tap fires for live providers.
+  - **Gateway/model audit first:** close the current `build-agent.ts` gap explicitly. Today the real-provider branch lets Cline construct an internal model, so there is nothing for `wrapAgentModel(...)` to wrap. Implement `provider-model.ts` by either using a public Cline SDK gateway/model-construction API or pinning/updating the SDK to an API that exposes it. If no supported API exists, this task is blocked and must not fall back to aggregate-only `ModelCallStarted/Finished` spans — aggregate spans are insufficient for replay.
+  - `build-agent.ts`: wrap the **real-provider** model with `wrapAgentModel(...)` too, so the tap fires for live providers.
   - `model-wrapper.ts`: in addition to the existing observability emits, when `recording` is enabled, call `frameRecorder.record(frame)` for the request and each event.
+  - `tool-shim.ts`: record each tool output/error payload as a `ToolResult` frame before returning data to Cline. This is mandatory for replay divergence detection and for reconstructing the next model request.
   - `frame-recorder.ts`: convert each `AgentModelEvent` (+ the request + tool results) into a `frame-types.ts` frame and `emitFrame(NOTIFY.trajectory_frame, frame)`.
   - `emit.ts`: add `event.trajectory_frame`.
   - Rust `client.rs`: on `trajectory_frame` notification, push into the `FrameChannel` (Task 3) → `TrajectoryStore.append_frame` (Task 4).
@@ -265,7 +274,7 @@ Implement `TrajectoryStore { pool, blob }` with `begin_recording(key) -> Recordi
 - Modify: `crates/xvision-observability/src/trajectory/store.rs` (`purge_expired`, `compact`)
 - Test: `crates/xvision-engine/tests/trajectory_retention.rs`
 
-- [ ] **Step 1: Failing tests** — (a) `begin_recording` sets `expires_at = created_at + ttl`; (b) `purge_expired(now)` deletes recordings past TTL and their frames (cascade) and reclaims blobs; (c) `compact` drops payload blobs for `hash_only`-downgraded recordings while keeping hashes.
+- [ ] **Step 1: Failing tests** — (a) `begin_recording` sets `expires_at = created_at + ttl`; (b) `purge_expired(now)` deletes recordings past TTL and their frames (cascade) and reclaims only blobs no remaining row references; (c) `compact` drops payload refs for `hash_only`-downgraded recordings while keeping hashes and deletes only unreferenced blobs.
 
 - [ ] **Step 2: Run — FAIL.** **Step 3: Implement.** Add `TrajectoryRetention { ttl_secs: Option<u64>, default_mode: RetentionMode }` to config (mirror the existing `xvn obs` retention precedent). Implement `purge_expired` + `compact`. **Document the cache-migration path** in a module doc-comment: the in-memory `BriefingCache` is ephemeral (no persisted data to migrate); the trajectory store *supersedes* it, and the cutover (deleting `BriefingCache` usage) happens in Stage 3 once replay is proven. There is no data backfill — only a code cutover. (This is the honest "migration path"; do not fabricate a data migration.)
 

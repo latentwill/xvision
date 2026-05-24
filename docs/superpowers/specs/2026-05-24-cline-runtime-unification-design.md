@@ -104,7 +104,7 @@ GEPA/optimizer foundation and V3 autoresearcher.
 
 ### Single runtime
 The Cline sidecar becomes the sole execution path for all LLM-driven agent
-slots, in both live/forward-paper and eval/backtest/A-B. Each slot invocation
+slots, in both live and eval/backtest/A-B. Each slot invocation
 is a Cline `Agent` run (`start_run` → one-or-more `step` → `end_run`). A slot
 with no tools and a single iteration is just a wrapped completion, so simple
 stages remain simple. The raw `LlmDispatch` retires (see migration invariant).
@@ -180,13 +180,13 @@ conductor authors stage contracts; this umbrella does not.
   test green. Independent of all later stages; can land first.
 
 ### Stage 1 — Cline live path (the deferred Wave 3)
-- **Goal:** route live + forward-paper decision cycles through the sidecar.
+- **Goal:** route live decision cycles through the sidecar and establish the shared Cline slot runtime that backtests use via Stage 3 record/replay.
 - **Scope:** map provider config → Cline `providerId`/`modelId`/`apiKey`/
   `baseUrl`; slot the `start_run`/`step`/`end_run` loop into `run_pipeline`;
   `submit_decision` lifecycle tool; expose `xvision-mcp` indicators as Cline
   tools; observability events flow through the existing event sink. No
   record/replay yet.
-- **Exit:** a real live/forward-paper cycle produces a `TraderDecision` via the
+- **Exit:** a real live cycle produces a `TraderDecision` via the
   Cline sidecar end-to-end; `LlmDispatch` no longer the live path (flag-gated
   fallback only).
 

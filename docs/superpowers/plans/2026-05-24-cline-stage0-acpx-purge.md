@@ -61,7 +61,7 @@ cd "$(git rev-parse --show-toplevel)"
 PATTERN='acpx|AcpxIntern|XVN_INTERN_ACPX|openclaw'
 
 # Files/dirs allowed to mention ACPX as historical record only.
-ALLOW='^docs/cli-non-surfaced.md|^docs/superpowers/notes/|^team/intake/archive/|^team/archive/|^scripts/guard-no-acpx.sh'
+ALLOW='^docs/cli-non-surfaced.md|^docs/superpowers/notes/|^docs/superpowers/plans/2026-05-24-cline-|^docs/superpowers/specs/2026-05-24-cline-runtime-unification-design.md|^team/intake/archive/|^team/archive/|^scripts/guard-no-acpx.sh'
 
 hits="$(git grep -nIE "$PATTERN" -- \
   ':!target' ':!node_modules' \
@@ -221,7 +221,7 @@ git commit -m "docs(stage0): purge ACPX intern harness from MANUAL"
 
 - [ ] **Step 2: xvision-cli/references/architecture.md**
   - Line 14: change `Intern backends (\`OpenAICompatIntern\`, \`AnthropicIntern\`, \`AcpxIntern\`)` → `Intern backends (\`OpenAICompatIntern\`, \`AnthropicIntern\`)`.
-  - Line 37: delete the entire `| \`AcpxIntern\` | Forward-paper / live only … |` table row.
+  - Line 37: delete the entire `AcpxIntern` table row.
 
 - [ ] **Step 3: xvision-dev/SKILL.md**
   - Line 63: same crate-row edit as Step 2 line 14.
@@ -304,7 +304,7 @@ git commit -m "docs(stage0): re-point xvision-mcp doc comments from ACPX to Clin
 - [ ] **Step 4: Run the grep guard — now expected to PASS**
 
 Run: `bash scripts/guard-no-acpx.sh`
-Expected: **OK — no live ACPX references.** (Exit code 0.) The only remaining matches are in the allow-listed tombstone/archive files.
+Expected: **OK — no live ACPX references.** (Exit code 0.) The only remaining matches are in the allow-listed tombstone/archive files and the dated Cline planning/spec documents that describe the purge itself.
 
 - [ ] **Step 5: Commit**
 
