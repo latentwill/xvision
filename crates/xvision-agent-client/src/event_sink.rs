@@ -472,38 +472,28 @@ pub struct TrajectoryFramePersister {
 }
 
 impl TrajectoryFramePersister {
-    /// Spawn the consumer task that drains the channel into `store`,
-    /// appending each frame with a monotonically-increasing `(slot_role,
-    /// step_index, frame_index)` taken verbatim from the notification.
+    /// Spawn the persister over a lossless [`FrameChannel`].
     ///
     /// `capacity` bounds the in-flight frame buffer (true backpressure when
     /// full). Pass `xvision_observability::trajectory::DEFAULT_FRAME_CHANNEL_CAPACITY`
     /// unless tuning for a bursty multi-step slot.
-    pub fn spawn(store: Arc<TrajectoryStore>, recording_id: RecordingId, capacity: usize) -> Self {
+    ///
+    /// The channel provides the lossless backpressure + corrupt-on-drop
+    /// semantics required for replay-faithful recording (a dropped frame
+    /// breaks replay determinism). The append to the store happens in
+    /// [`TrajectoryFramePersister::persist`], which awaits store I/O so
+    /// frames land in their verbatim `(slot_role, step_index, frame_index)`
+    /// coordinates (the bare `TrajectoryFrame` the channel transports does
+    /// not carry those coordinates). The spawned consumer drains the channel
+    /// so the producer's backpressure flows and a fatal consumer exit
+    /// surfaces as the corrupt signal on the next `send`.
+    pub fn spawn(recording_id: RecordingId, capacity: usize) -> Self {
         let (sender, mut receiver) = FrameChannel::new(capacity).split();
-        let rid = recording_id.clone();
-        // The consumer receives `(slot_role, step_index, frame_index, frame)`
-        // tuples re-packed onto the frame's coordinates. Because the channel
-        // only carries `TrajectoryFrame`, the coordinates ride alongside via
-        // a parallel queue is avoided by encoding them in a wrapper queue;
-        // here we keep it simple: the producer side appends synchronously
-        // through `persist`, so the consumer only needs to flush frames it
-        // is handed with their coordinates. To carry coordinates we use a
-        // dedicated mpsc of the full tuple instead.
-        //
-        // NOTE: the FrameChannel transports only `TrajectoryFrame` (its
-        // public type), so coordinates are threaded through `persist`'s
-        // direct store call rather than the channel. The channel exists to
-        // provide lossless backpressure semantics + the corrupt-on-drop
-        // signal; the consumer simply acknowledges drained frames.
         let consumer = tokio::spawn(async move {
-            // Drain to keep backpressure flowing; the actual append happens
-            // in `persist` (which awaits store I/O directly so coordinates
-            // are preserved). When the sender is dropped the loop ends.
-            while receiver.recv().await.is_some() {
-                // no-op: append already performed in `persist`.
-            }
-            let _ = &rid; // recording id retained for symmetry/debugging.
+            // Drain to keep backpressure flowing. When the sender is dropped
+            // the loop ends; a panic here drops the receiver and the next
+            // `send` returns Err (the corrupt signal).
+            while receiver.recv().await.is_some() {}
         });
         Self {
             recording_id,
@@ -847,7 +837,7 @@ mod tests {
             .build();
         let rid = store.begin_recording(&key).await.unwrap();
 
-        let persister = TrajectoryFramePersister::spawn(store.clone(), rid.clone(), 16);
+        let persister = TrajectoryFramePersister::spawn(rid.clone(), 16);
 
         for fi in 0..3i64 {
             let parsed = ParsedTrajectoryFrame {
