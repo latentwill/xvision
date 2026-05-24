@@ -999,6 +999,8 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "filter parse error",
         "filter validation error",
         "unknown filter source format",
+        "filter payload is required to set a strategy filter",
+        "filter payload cannot be null",
         "preset and explicit are mutually exclusive",
         "supply either preset or explicit",
         "unknown template",

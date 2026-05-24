@@ -9,7 +9,7 @@
 //! Errors are flat `anyhow::Result`; surface-specific error mapping
 //! (rmcp::ErrorData, axum::Json, etc.) happens at the call site.
 
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use ulid::Ulid;
 
@@ -150,10 +150,23 @@ pub struct SetRiskConfigReq {
 #[serde(deny_unknown_fields)]
 pub struct SetFilterReq {
     pub strategy_id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_filter_payload")]
     pub filter: Option<serde_json::Value>,
     #[serde(default)]
     pub source: Option<String>,
+}
+
+fn deserialize_filter_payload<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let filter = Option::<serde_json::Value>::deserialize(deserializer)?;
+    if matches!(filter.as_ref(), Some(value) if value.is_null()) {
+        return Err(DeError::custom("filter payload cannot be null"));
+    }
+    Ok(filter)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -585,11 +598,14 @@ fn parse_filter_payload(
     source: Option<&str>,
     strategy_id: &str,
 ) -> anyhow::Result<Option<xvision_filters::Filter>> {
-    let Some(raw_filter) = raw_filter else {
-        return Ok(None);
-    };
+    if raw_filter.is_none() {
+        anyhow::bail!(
+            "filter payload is required to set a strategy filter; provide `filter` content in the request or call DELETE /api/strategy/:id/filter to clear"
+        );
+    }
+    let raw_filter = raw_filter.expect("guarded above");
     if raw_filter.is_null() {
-        return Ok(None);
+        anyhow::bail!("filter payload cannot be null");
     }
     let raw_filter = extract_filter_payload(raw_filter);
     let maybe_filter = match raw_filter {

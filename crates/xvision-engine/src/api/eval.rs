@@ -47,6 +47,7 @@ use crate::eval::run::{Run, RunMode, RunStatus};
 use crate::eval::scenario::canonical_scenarios;
 use crate::eval::scenario::Scenario;
 use crate::eval::store::{ListFilter, RunStore};
+use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
@@ -943,6 +944,21 @@ fn validate_provider_override_shape(override_value: Option<&ProviderOverride>) -
     Ok(())
 }
 
+fn enforce_no_filter_run_gate(strategy: &Strategy) -> ApiResult<()> {
+    if strategy.acknowledge_no_filter {
+        return Ok(());
+    }
+    if matches!(strategy.activation_mode, xvision_filters::ActivationMode::EveryBar)
+        && strategy.filter.is_none()
+    {
+        return Err(ApiError::Validation(format!(
+            "strategy '{}' runs on EveryBar without an attached filter. Either attach a filter, or set acknowledge_no_filter=true before launching an eval run",
+            strategy.manifest.display_name
+        )));
+    }
+    Ok(())
+}
+
 /// Rewrite each `ResolvedAgentSlot.slot.provider` / `.model` (and the
 /// `attested_with` echo) in place when a per-launch override is set.
 /// No-op when the override is `None`. Empty/whitespace overrides are
@@ -1609,6 +1625,7 @@ async fn run_inner(
 ) -> ApiResult<Run> {
     // 1. Look up the strategy. Propagates ApiError::NotFound cleanly.
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
+    enforce_no_filter_run_gate(&strategy)?;
     let mut agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
     // Per-launch override (Wave B #5): resolve against the canonical
@@ -2200,6 +2217,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let started = Instant::now();
     validate_provider_override_shape(req.provider_override.as_ref())?;
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
+    enforce_no_filter_run_gate(&strategy)?;
     let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
 
     // Build broker / dispatch / tools from env up-front so any

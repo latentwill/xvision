@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use serde::de::{Deserializer, Error as DeError};
 
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
@@ -305,7 +306,7 @@ pub async fn put_pipeline(
 
 #[derive(Deserialize)]
 pub struct SetFilterBody {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_filter_payload")]
     pub filter: Option<serde_json::Value>,
     #[serde(default)]
     pub source: Option<String>,
@@ -313,23 +314,74 @@ pub struct SetFilterBody {
     pub format: Option<String>,
 }
 
+fn deserialize_filter_payload<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let filter = Option::<serde_json::Value>::deserialize(deserializer)?;
+    if matches!(filter.as_ref(), Some(value) if value.is_null()) {
+        return Err(DeError::custom("filter payload cannot be null"));
+    }
+    Ok(filter)
+}
+
 pub async fn put_filter(
     Path(id): Path<String>,
     State(state): State<AppState>,
     Json(body): Json<SetFilterBody>,
 ) -> Result<Json<Strategy>, DashboardError> {
+    if body.filter.is_none() && body.source.is_none() {
+        return Err(DashboardError::Validation {
+            field: "filter".into(),
+            msg: "filter payload is required; send `source` (JSON/TOML body) or use DELETE /api/strategy/:id/filter to clear".to_string(),
+        });
+    }
+
+    if let Some(filter) = &body.filter {
+        if filter.is_null() {
+            return Err(DashboardError::Validation {
+                field: "filter".into(),
+                msg: "filter payload cannot be null; send `source` (JSON/TOML body) or use DELETE /api/strategy/:id/filter to clear".to_string(),
+            });
+        }
+    }
+
     let filter = match (body.filter, body.source) {
         (Some(filter), _) => Some(filter),
         (None, Some(source)) => Some(serde_json::Value::String(source)),
         (None, None) => None,
     };
+    if let Some(source) = filter.as_ref() {
+        if source.is_string() && source.as_str().unwrap_or_default().trim().is_empty() {
+            return Err(DashboardError::Validation {
+                field: "source".into(),
+                msg: "filter source text cannot be empty".to_string(),
+            });
+        }
+        if source.is_null() {
+            return Err(DashboardError::Validation {
+                field: "filter".into(),
+                msg: "filter payload cannot be null; send `source` (JSON/TOML body) or use DELETE /api/strategy/:id/filter to clear".to_string(),
+            });
+        }
+    }
     let req = SetFilterReq {
         strategy_id: id,
         filter,
-        source: body.format,
+        source: body.source,
     };
     let out = strategy::set_filter(&state.api_context(), req).await?;
     Ok(Json(out))
+}
+
+pub async fn delete_filter(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<StatusCode, DashboardError> {
+    strategy::clear_strategy_filter(&state.api_context(), &id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `PATCH /api/strategy/:id` — update top-level manifest fields

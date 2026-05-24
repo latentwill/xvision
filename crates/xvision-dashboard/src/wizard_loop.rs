@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as DeError, de::Deserializer, Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::cli_jobs::eval_run_bridge;
@@ -40,6 +40,7 @@ use xvision_engine::authoring;
 use xvision_engine::chat_session::{action_confirmation_card, ChatSessionStore, ContextScope, InlineAction};
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::eval::scenario::Scenario;
+use xvision_engine::strategies::ActivationMode;
 use xvision_engine::strategies_folder;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
@@ -332,6 +333,41 @@ struct AttachAgentReq {
     agent_id: String,
     #[serde(default)]
     role: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetFilterReq {
+    #[serde(default)]
+    strategy_id: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_filter_payload")]
+    filter: Option<serde_json::Value>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+}
+
+fn deserialize_filter_payload<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let filter = Option::<serde_json::Value>::deserialize(deserializer)?;
+    if matches!(filter.as_ref(), Some(value) if value.is_null()) {
+        return Err(DeError::custom("filter payload cannot be null"));
+    }
+    Ok(filter)
+}
+
+#[derive(Debug, Deserialize)]
+struct ClearFilterReq {
+    #[serde(default)]
+    strategy_id: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -847,6 +883,54 @@ impl WizardLoop {
                 let out = api_strategy::set_risk_config(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
+            "set_filter" => {
+                let req: SetFilterReq = serde_json::from_value(input)?;
+                let strategy_id = req
+                    .strategy_id
+                    .or(req.id)
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("set_filter: missing `strategy_id`"))?;
+
+                if req.filter.is_none() && req.source.is_none() {
+                    anyhow::bail!(
+                        "set_filter: filter payload is required; send `source` (JSON/TOML body)"
+                    );
+                }
+                if matches!(req.filter.as_ref(), Some(f) if f.is_null()) {
+                    anyhow::bail!("set_filter: filter payload cannot be null");
+                }
+                if matches!(req.source.as_ref(), Some(source) if source.trim().is_empty()) {
+                    anyhow::bail!("set_filter: source cannot be empty");
+                }
+
+                let out = api_strategy::set_filter(
+                    &self.api_context,
+                    authoring::SetFilterReq {
+                        strategy_id,
+                        filter: req.filter,
+                        source: req.source,
+                    },
+                )
+                .await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "clear_filter" => {
+                let req: ClearFilterReq = serde_json::from_value(input)?;
+                let strategy_id = req
+                    .strategy_id
+                    .or(req.id)
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("clear_filter: missing `strategy_id`"))?;
+
+                api_strategy::clear_strategy_filter(&self.api_context, &strategy_id).await?;
+                Ok(serde_json::json!({
+                    "id": strategy_id,
+                    "ok": true,
+                    "cleared": true,
+                }))
+            }
             "create_strategy_agent" => {
                 let req: CreateStrategyAgentReq = serde_json::from_value(input)?;
                 let out = self.create_and_attach_strategy_agent(req).await?;
@@ -897,6 +981,26 @@ impl WizardLoop {
                     "live" => RunMode::Live,
                     _ => RunMode::Backtest,
                 };
+                let full_strategy = api_strategy::get(&self.api_context, &strategy.agent_id).await?;
+                if matches!(full_strategy.activation_mode, ActivationMode::EveryBar)
+                    && full_strategy.filter.is_none()
+                {
+                    let acknowledge_no_filter = input
+                        .get("acknowledge_no_filter")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if !acknowledge_no_filter {
+                        return Ok(serde_json::json!({
+                            "needs_clarification": {
+                                "question": "No filter is attached to this strategy. Attach a deterministic filter with `set_filter` before running eval, or set `acknowledge_no_filter: true` to run without filter.",
+                                "options": [
+                                    {"tool": "set_filter", "id": strategy.agent_id.clone()},
+                                    {"tool": "run_eval", "agent_id": agent_query, "scenario_id": scenario_query, "acknowledge_no_filter": true}
+                                ]
+                            }
+                        }));
+                    }
+                }
                 if mode == RunMode::Backtest && scenario_needs_bars(&scenario) {
                     return Ok(serde_json::json!({
                         "agent_id": strategy.agent_id.clone(),
@@ -1935,6 +2039,8 @@ fn expects_id(tool: &str) -> bool {
             | "update_manifest"
             | "set_mechanical_param"
             | "set_risk_config"
+            | "set_filter"
+            | "clear_filter"
             | "validate_draft"
     )
 }
@@ -2170,6 +2276,40 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "set_filter".into(),
+            description: "Attach/replace the strategy's deterministic filter. Use `source` for JSON/TOML text or `filter` for an object payload.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Alias for strategy_id"},
+                    "strategy_id": {"type": "string"},
+                    "filter": {
+                        "type": ["object", "string", "number", "boolean", "array"],
+                        "description": "Filter payload object (non-null). For clearing, call `clear_filter`."
+                    },
+                    "source": {"type": "string", "description": "Filter text (JSON or TOML)"},
+                    "format": {"type": "string", "enum": ["json", "toml"]}
+                },
+                "required": ["id"],
+                "oneOf": [
+                    {"required": ["id", "filter"]},
+                    {"required": ["id", "source"]}
+                ]
+            }),
+        },
+        ToolDefinition {
+            name: "clear_filter".into(),
+            description: "Clear strategy filter and restore every-bar activation mode.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Alias for strategy_id"},
+                    "strategy_id": {"type": "string"}
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
             name: "create_strategy_agent".into(),
             description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used.".into(),
             input_schema: serde_json::json!({
@@ -2228,7 +2368,11 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "properties": {
                     "agent_id": {"type": "string"},
                     "scenario_id": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["backtest", "live"]}
+                    "mode": {"type": "string", "enum": ["backtest", "live"]},
+                    "acknowledge_no_filter": {
+                        "type": "boolean",
+                        "description": "If true, allows running a strategy without a filter gate."
+                    }
                 },
                 "required": ["agent_id", "scenario_id"]
             }),
@@ -3568,6 +3712,8 @@ mod tests {
             "update_manifest",
             "set_mechanical_param",
             "set_risk_config",
+            "set_filter",
+            "clear_filter",
             "create_strategy_agent",
             "attach_agent",
             "validate_draft",

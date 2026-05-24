@@ -137,6 +137,9 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
     // `xvn strategy validate --json` paths see it without duplicating
     // the check. `eval_ready` is intentionally re-derived AFTER folding
     // so a no-Filter warning prevents the green-checkmark UI.
+    if let Some(warning) = no_filter_attachment_warning(strategy) {
+        result.warnings.push(warning);
+    }
     result.warnings.extend(no_filter_warnings(strategy));
 
     result.eval_ready = result.errors.is_empty() && result.warnings.is_empty();
@@ -161,6 +164,20 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
 /// scriptable `xvn strategy validate --json`) treats the string
 /// verbatim as the warning surface. See contract
 /// `team/contracts/agent-firing-filter-cli-verbs.md` acceptance #5.
+fn no_filter_attachment_warning(strategy: &Strategy) -> Option<String> {
+    if strategy.acknowledge_no_filter {
+        return None;
+    }
+    if strategy.filter.is_none() {
+        Some(format!(
+            "strategy '{}' has no filter attached. Attach a filter or set acknowledge_no_filter=true",
+            strategy.manifest.display_name
+        ))
+    } else {
+        None
+    }
+}
+
 pub fn no_filter_warnings(strategy: &Strategy) -> Vec<String> {
     if strategy.acknowledge_no_filter {
         return Vec::new();
@@ -564,7 +581,8 @@ mod preflight_tests {
 
     #[test]
     fn preflight_with_scenario_asset_match_produces_no_warnings() {
-        let strategy = make_strategy_with_agent("ETH/USD", 240);
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.acknowledge_no_filter = true;
         let scenario = make_eth_4h_scenario();
         let result = preflight_validate(&strategy, Some(&scenario));
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -598,7 +616,8 @@ mod preflight_tests {
     #[test]
     fn preflight_with_scenario_timeframe_match_produces_no_timeframe_warning() {
         // Strategy cadence 240 (4h); scenario granularity Hour4 → 240 min
-        let strategy = make_strategy_with_agent("ETH/USD", 240);
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.acknowledge_no_filter = true;
         let scenario = make_eth_4h_scenario();
         let result = preflight_validate(&strategy, Some(&scenario));
         let tf_warnings: Vec<_> = result
@@ -630,7 +649,8 @@ mod preflight_tests {
 
     #[test]
     fn preflight_eval_ready_true_when_no_errors_and_no_warnings() {
-        let strategy = make_strategy_with_agent("ETH/USD", 240);
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.acknowledge_no_filter = true;
         let scenario = make_eth_4h_scenario();
         let result = preflight_validate(&strategy, Some(&scenario));
         assert!(result.errors.is_empty());
