@@ -63,6 +63,24 @@ impl AgentRunRecorder for SqliteRecorder {
     async fn handle_event(&self, event: &RunEvent) -> Result<(), RecorderError> {
         match event {
             RunEvent::RunStarted(e) => {
+                // Stage 1 (Cline runtime unification, operational-visibility
+                // contract item 3): every run persisted through this recorder
+                // is a LIVE run (the Cline sidecar live path / the legacy
+                // LlmDispatch live+eval path) — record/replay does not exist
+                // until Stages 2-3. `agent_runs.trajectory_mode` is therefore
+                // intentionally OMITTED from this INSERT so the column's
+                // migration-039 default (`'live'`) fills it. Omitting the
+                // column (rather than threading it through the RunEvent
+                // vocabulary) keeps this write working both on fully-migrated
+                // pools and on the migration-018-only pools several
+                // observability tests build — and avoids rippling a new
+                // required field across every cross-crate `RunStartedEvent`
+                // literal (including the read-only sidecar event sink). When
+                // Stages 2-3 add record/replay, `RunStartedEvent` gains an
+                // optional `trajectory_mode` and this bind switches to write
+                // it explicitly. The sibling migration-039 columns
+                // (replay_hit_ratio / dropped_events / recovery_reason) stay
+                // at their column defaults (NULL / 0 / NULL) until then.
                 sqlx::query(
                     "INSERT INTO agent_runs (\
                         id, objective, strategy_id, eval_run_id, source_cli_job_id, \
