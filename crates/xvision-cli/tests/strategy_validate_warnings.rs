@@ -73,6 +73,7 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
                     capabilities: [Capability::Trader].into_iter().collect(),
                     delta_briefing: None,
                 }],
+                scope_strategy_id: None,
             },
         )
         .await
