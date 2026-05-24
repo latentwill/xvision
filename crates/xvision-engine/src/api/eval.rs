@@ -89,6 +89,28 @@ pub struct ScenarioSummary {
     pub time_window_days: i64,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunStrategyMetadata {
+    pub id: String,
+    pub display_name: String,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunScenarioMetadata {
+    pub id: String,
+    pub display_name: String,
+}
+
 /// Slim wire shape of a run. Used by the dashboard's `/api/eval/runs` and
 /// (future) MCP browse tools so the payload stays bounded as the engine adds
 /// internal telemetry fields to `Run`.
@@ -102,6 +124,10 @@ pub struct RunSummary {
     pub id: String,
     pub agent_id: String,
     pub scenario_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<RunStrategyMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenario: Option<RunScenarioMetadata>,
     pub mode: String,
     pub status: String,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
@@ -764,6 +790,7 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let mut summary = summarise(run);
+    enrich_run_summary_metadata(ctx, &mut summary).await;
     summary.filter_summaries = filter_summaries.clone();
 
     Ok(RunDetail {
@@ -773,6 +800,41 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
         filter_events,
         filter_summaries,
     })
+}
+
+async fn enrich_run_summary_metadata(ctx: &ApiContext, summary: &mut RunSummary) {
+    match api_strategy::get(ctx, &summary.agent_id).await {
+        Ok(strategy) => {
+            summary.strategy = Some(RunStrategyMetadata {
+                id: strategy.manifest.id,
+                display_name: strategy.manifest.display_name,
+            });
+        }
+        Err(err) => {
+            tracing::debug!(
+                run_id = %summary.id,
+                strategy_id = %summary.agent_id,
+                error = %err,
+                "eval run summary strategy metadata unavailable"
+            );
+        }
+    }
+    match api_scenario::get(ctx, &summary.scenario_id).await {
+        Ok(scenario) => {
+            summary.scenario = Some(RunScenarioMetadata {
+                id: scenario.id,
+                display_name: scenario.display_name,
+            });
+        }
+        Err(err) => {
+            tracing::debug!(
+                run_id = %summary.id,
+                scenario_id = %summary.scenario_id,
+                error = %err,
+                "eval run summary scenario metadata unavailable"
+            );
+        }
+    }
 }
 
 /// Return the behavior summary for a run by loading its decisions on demand
@@ -2898,6 +2960,8 @@ fn summarise(run: Run) -> RunSummary {
         id: run.id,
         agent_id: run.agent_id,
         scenario_id: run.scenario_id,
+        strategy: None,
+        scenario: None,
         mode: match run.mode {
             RunMode::Backtest => "backtest".into(),
             RunMode::Paper => "paper".into(),

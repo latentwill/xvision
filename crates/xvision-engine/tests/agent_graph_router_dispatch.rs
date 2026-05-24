@@ -111,7 +111,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, kind: PipelineKind, edges: Vec<Pipeli
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -163,6 +163,7 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -212,9 +213,11 @@ async fn dispatch_capability_router_returns_route_selection() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
         current_index: 1,
         total_agents: 5,
         activates: Capability::Router,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -257,9 +260,11 @@ async fn dispatch_capability_router_rejects_backward_target() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
         current_index: 2, // Router at index 2; target=0 is backward.
         total_agents: 5,
         activates: Capability::Router,
+        trace_attrs: None,
         recorder: None,
     })
     .await

@@ -136,6 +136,85 @@ describe("GenerateErrorAlert", () => {
   });
 });
 
+describe("ReviewPanel — copy completed review", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  test("copies completed review as Markdown and JSON", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.endsWith("/reviews")) {
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  id: "review_1",
+                  eval_run_id: "run_test_1",
+                  agent_profile_id: "reasoning-agent",
+                  status: "completed",
+                  verdict: "promising",
+                  confidence: 0.8,
+                  score: 7,
+                  summary: "Useful signal.",
+                  raw_output_json: null,
+                  error: null,
+                  created_at: "2026-05-24T00:00:00Z",
+                  updated_at: "2026-05-24T00:00:00Z",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.endsWith("/api/eval/reviews/review_1")) {
+          return new Response(
+            JSON.stringify({
+              review: {
+                id: "review_1",
+                eval_run_id: "run_test_1",
+                agent_profile_id: "reasoning-agent",
+                status: "completed",
+                verdict: "promising",
+                confidence: 0.8,
+                score: 7,
+                summary: "Useful signal.",
+                raw_output_json: null,
+                error: null,
+                created_at: "2026-05-24T00:00:00Z",
+                updated_at: "2026-05-24T00:00:00Z",
+              },
+              findings: [],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ message: `no mock for ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+
+    renderPanel();
+    await screen.findByText("Useful signal.");
+
+    await userEvent.click(screen.getByTestId("copy-review-md"));
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("# Eval Review review_1"));
+
+    await userEvent.click(screen.getByTestId("copy-review-json"));
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('"id": "review_1"'));
+  });
+});
+
 describe("ReviewPanel — operator-visible 400 surfacing", () => {
   beforeEach(() => {
     vi.useRealTimers();

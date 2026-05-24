@@ -627,11 +627,26 @@ impl BacktestExecutor {
             // counted in `decision_bars` (already pushed above) so
             // post-loop baselines see the same bar slice the strategy
             // would have considered.
+            let mut trace_filter_attrs: Option<serde_json::Value> = None;
             if let Some(hook) = filter_hook.as_mut() {
                 let in_position = position.abs() > f64::EPSILON;
                 let evaluation = hook.evaluate(bar, in_position);
                 hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &evaluation)
                     .await?;
+                trace_filter_attrs = Some(serde_json::json!({
+                    "filter": {
+                        "filter_id": evaluation.event.filter_id.clone(),
+                        "decision": evaluation.outcome.decision.tag(),
+                        "tree_true": evaluation.outcome.tree_true,
+                        "conditions_passed": evaluation
+                            .outcome
+                            .conditions_passed
+                            .iter()
+                            .map(|c| c.passed)
+                            .collect::<Vec<_>>(),
+                        "bar_timestamp": bar.timestamp.to_rfc3339(),
+                    }
+                }));
                 if !evaluation.outcome.decision.is_active() {
                     equity = initial + realized_total + position * (next_bar_open - entry_price);
                     store.record_equity(&run.id, bar.timestamp, equity).await?;
@@ -855,36 +870,21 @@ impl BacktestExecutor {
                 continue;
             }
 
-            // F43 (`trace-dock-emitters`): open a per-decision span so
-            // child model.call / tool.call / broker.call rows have a
-            // visible decision parent on the trace dock. Closed at the
-            // bottom of the iteration with span_finished_ok (or
-            // _error on early bail). Also emits the `decision_started`
-            // engine event so the dashboard timeline shows a per-bar
-            // tick without diffing decision rows.
-            let decision_span_id = crate::agent::observability::fresh_span_id();
+            // The model.call span for the trader is now named
+            // "decision"; keep decision lifecycle as point events
+            // rather than wrapping the call in a redundant agent.decision
+            // span.
             if let Some(obs) = self.obs_emitter.as_ref() {
-                obs.emit_decision_span_started(&decision_span_id, None, decision_idx as i64, Some(&asset))
-                    .await;
                 let payload = serde_json::json!({
                     "decision_index": decision_idx,
                     "asset": asset,
                     "bar_ts": bar.timestamp.to_rfc3339(),
                 });
-                obs.emit_engine_event(
-                    "decision_started",
-                    Some(decision_span_id.clone()),
-                    Some(payload.to_string()),
-                )
-                .await;
+                obs.emit_engine_event("decision_started", None, Some(payload.to_string()))
+                    .await;
             }
             macro_rules! finish_decision_span_error {
-                ($message:expr) => {
-                    if let Some(obs) = self.obs_emitter.as_ref() {
-                        obs.emit_span_finished_error(&decision_span_id, $message)
-                            .await;
-                    }
-                };
+                ($message:expr) => {};
             }
 
             // F-5 phase 2a: keep a copy of the seed so the
@@ -921,6 +921,7 @@ impl BacktestExecutor {
                     bar_ts: bar.timestamp,
                     strategy_id: strategy.manifest.id.clone(),
                 }),
+                trace_attrs: trace_filter_attrs,
                 // Phase D — unified Recorder. Wired by callers that
                 // construct an `EvalRecorder` and thread it via
                 // `BacktestExecutor::with_recorder`. The default `None`
@@ -1086,12 +1087,8 @@ impl BacktestExecutor {
                             "original": original_action.as_str(),
                             "applied": action.as_str(),
                         });
-                        obs.emit_engine_event(
-                            "guardrail_fired",
-                            Some(decision_span_id.clone()),
-                            Some(payload.to_string()),
-                        )
-                        .await;
+                        obs.emit_engine_event("guardrail_fired", None, Some(payload.to_string()))
+                            .await;
                     }
                     // Per-decision warn demoted to debug (eval-guardrail-log-collapse):
                     // the supervisor_notes row is the durable record; a per-run
@@ -1255,12 +1252,8 @@ impl BacktestExecutor {
                                 "severity": if is_blocking { "critical" } else { "warning" },
                                 "action": applied_action,
                             });
-                            obs.emit_engine_event(
-                                "broker_rule_violation",
-                                Some(decision_span_id.clone()),
-                                Some(payload.to_string()),
-                            )
-                            .await;
+                            obs.emit_engine_event("broker_rule_violation", None, Some(payload.to_string()))
+                                .await;
                         }
                         is_blocking // Critical → skip simulate_fill; Warning → fill proceeds
                     }
@@ -1447,12 +1440,8 @@ impl BacktestExecutor {
                     "fill_price": fill.fill_price,
                     "fill_size": fill.fill_size,
                 });
-                obs.emit_engine_event(
-                    "fill_attempted",
-                    Some(decision_span_id.clone()),
-                    Some(payload.to_string()),
-                )
-                .await;
+                obs.emit_engine_event("fill_attempted", None, Some(payload.to_string()))
+                    .await;
             }
 
             // DecisionEmitted fires for every cycle so subscribers see
@@ -1615,22 +1604,16 @@ impl BacktestExecutor {
             }
             prev_position = position;
 
-            // F43 (`trace-dock-emitters`): close the per-decision span
-            // + emit the `decision_completed` engine event so the
-            // trace dock can compute decision-scoped duration.
+            // Emit decision completion as a point event; the trader
+            // model.call span itself is named "decision".
             if let Some(obs) = self.obs_emitter.as_ref() {
-                obs.emit_span_finished_ok(&decision_span_id).await;
                 let payload = serde_json::json!({
                     "decision_index": decision_idx,
                     "asset": asset,
                     "applied_action": applied_action,
                 });
-                obs.emit_engine_event(
-                    "decision_completed",
-                    Some(decision_span_id.clone()),
-                    Some(payload.to_string()),
-                )
-                .await;
+                obs.emit_engine_event("decision_completed", None, Some(payload.to_string()))
+                    .await;
             }
 
             decision_idx += 1;
@@ -2597,7 +2580,7 @@ mod tests {
             mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         }
     }
 

@@ -245,7 +245,7 @@ export function EvalRunDetailRoute() {
   return (
     <>
       <Topbar
-        title={labels.title}
+        title="Eval run"
         sub={`${labels.subtitle} · ${disambiguator}`}
       />
 
@@ -508,13 +508,6 @@ function SummaryCard({
             className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-3"
           >
             <span className="text-text-2">{disambiguator}</span>
-            <span
-              className="font-mono"
-              title={summary.id}
-              aria-label={`Run id ${summary.id}`}
-            >
-              run {labels.shortRunId}
-            </span>
             <Link
               to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
               className="text-info hover:underline"
@@ -1156,6 +1149,7 @@ function ContextPill({
     <Link
       to={to}
       aria-label={`Open ${kind} ${label} (${idForAria})`}
+      title={`${kind}: ${label} (${idForAria})`}
       className={`inline-flex items-center gap-1.5 rounded-sm border border-border-soft px-2 py-0.5 text-text-2 hover:border-gold/50 hover:text-text dark:hover:border-gold/40 ${
         compact ? "text-[11px]" : "text-[11px]"
       }`}

@@ -58,7 +58,7 @@ fn fixture_strategy() -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -163,6 +163,7 @@ async fn noop_skip_fires_when_portfolio_long_and_skip_enabled() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -232,6 +233,7 @@ async fn noop_skip_disabled_calls_llm_even_when_portfolio_long() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -275,6 +277,7 @@ async fn noop_skip_does_not_fire_when_portfolio_flat() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await

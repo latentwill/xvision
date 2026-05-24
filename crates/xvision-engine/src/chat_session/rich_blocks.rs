@@ -881,6 +881,8 @@ mod tests {
             id: id.into(),
             agent_id: "agent-a".into(),
             scenario_id: "scenario-a".into(),
+            strategy: None,
+            scenario: None,
             mode: "backtest".into(),
             status: "completed".into(),
             started_at: Utc::now(),

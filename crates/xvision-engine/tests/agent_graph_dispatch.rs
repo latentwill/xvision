@@ -91,7 +91,7 @@ fn fixture_strategy(agents: Vec<AgentRef>) -> Strategy {
         mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
-    acknowledge_no_filter: false,
+        acknowledge_no_filter: false,
     }
 }
 
@@ -162,6 +162,7 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
+        trace_attrs: None,
         recorder: None,
     })
     .await
@@ -230,9 +231,11 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
+        trace_name: None,
         current_index: 0,
         total_agents: 1,
         activates: Capability::Trader,
+        trace_attrs: None,
         recorder: None,
     })
     .await

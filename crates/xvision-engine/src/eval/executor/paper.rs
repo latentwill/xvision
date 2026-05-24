@@ -969,6 +969,7 @@ impl PaperExecutor {
                     bar_ts: bar.timestamp,
                     strategy_id: strategy.manifest.id.clone(),
                 }),
+                trace_attrs: None,
                 // Phase D — unified Recorder. Wired by callers that
                 // construct an `EvalRecorder` and thread it via
                 // `PaperExecutor::with_recorder`. The default `None`
@@ -1797,7 +1798,7 @@ mod role_tests {
             mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
-        acknowledge_no_filter: false,
+            acknowledge_no_filter: false,
         }
     }
 

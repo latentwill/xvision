@@ -1,9 +1,9 @@
 // Filter v1 — read-only summary panel surfaced on the eval-run detail.
 //
 // Renders one block per `FilterSummary` produced by a FilterGated run:
-// bars scanned, wake-ups, suppression breakdown, LLM calls saved,
-// estimated tokens saved. Inline (no popups), per the dashboard's
-// no-popups rule. Returns `null` when the run has no filter summaries so
+// bars scanned, wake-ups, suppression breakdown, and LLM calls saved.
+// Inline (no popups), per the dashboard's no-popups rule. Returns `null`
+// when the run has no filter summaries so
 // EveryBar runs render nothing.
 //
 // Spec: `docs/superpowers/specs/2026-05-21-filter-v1.md` §Acceptance #10.
@@ -86,12 +86,6 @@ function FilterSummaryRow({ summary: s }: { summary: FilterSummary }) {
           label="LLM calls saved"
           value={fmtCount(s.llm_calls_saved)}
           tone="pos"
-        />
-        <Metric
-          label="est. tokens saved"
-          value={fmtCount(s.estimated_tokens_saved)}
-          tone="pos"
-          titleValue={`${s.estimated_tokens_saved.toLocaleString()} tokens (≈ llm_calls_saved × 50,000)`}
         />
         <div />
       </div>
