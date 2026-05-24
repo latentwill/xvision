@@ -225,6 +225,77 @@ conductor authors stage contracts; this umbrella does not.
 | In-memory → persistent store migration | Medium | Reuse the observability SQLite recorder pattern; version the schema from Stage 2. |
 | DSRs/optimizer assumptions drift while parked | Low | Optimizer seam (system_prompt string) is runtime-agnostic; no coupling introduced. |
 
+## Subplan inheritance contract
+
+All stage specs/plans/contracts generated from this umbrella must inherit the
+requirements below; omissions should be treated as blockers before the subplan is
+accepted.
+
+1. **Replay determinism contract (non-negotiable).**  
+   `Stage 2` and `Stage 3` must define trajectory persistence at frame-level, and `Stage 3` must replay full step state, including:
+   - raw model frames/tokens,
+   - tool invocation payloads,
+   - tool responses/errors,
+   - retry/cancel decisions,
+   - sidecar/runtime timestamps needed for ordering,
+   - budgets and resource counters.  
+   Any subplan that memoizes only final decisions violates this spec.
+
+2. **Failure + recovery contract (non-negotiable).**  
+   Stage 1 through Stage 4 must define and test:
+   - sidecar crash boundaries during an in-flight step,
+   - idempotency/deduplication for step replay,
+   - partial-cycle recovery semantics,
+   - live-vs-replay divergence handling.
+
+3. **Operational visibility contract (non-negotiable).**  
+   A downstream implementation must surface, at minimum, run/slot phase state and
+   trajectory mode in:
+   - CLI commands (status/select/replay commands),
+   - dashboard/operator UI (health, mode, replay-hit ratio, dropped-events, and
+     recovery reason),
+   - structured run artifacts.
+
+4. **Piping + backpressure contract (non-negotiable).**  
+   Every replay/record event channel must specify:
+   - frame stream schema,
+   - queue bounds and overflow policy,
+   - backpressure signals and throttling behavior,
+   - dropped-frame observability and reconstitution rules.
+
+5. **Provider matrix + compatibility contract (must-have).**  
+   Stage 1 must produce an explicit provider coverage matrix (Cline provider IDs,
+   model IDs, custom base URLs, feature parity) and define fallback/abort behavior
+   per gap.
+
+6. **Migration/off-ramp contract (must-have).**  
+   Stage 3 must define explicit operational fallback when migration fails (flagged
+   compatibility mode, emergency rollback path, and blast-radius limits) and
+   remove that path only after proven parity gates pass.
+
+7. **Trajectory identity contract (must-have).**  
+   Persistent keys must be versioned and include all fields needed to avoid collisions
+   across replay contexts, including at least:
+   - run/cycle identifiers,
+   - arm/simulation identifiers,
+   - provider/model identity and versions,
+   - trajectory schema/replay-model version,
+   - system/user prompt hashes.
+
+8. **A/B pairing contract (must-have).**  
+   Stage 3 must define whether trajectory replay is shared-briefing, shared-slot,
+   or per-arm per-slot and preserve current A/B semantics under the new model.
+
+9. **Retention contract (must-have).**  
+   Stage 2 must define data lifecycle policy before full rollout: TTL, compaction,
+   purge tooling, and migration path from the in-memory intern cache.
+
+10. **CLI affordance contract (must-have).**  
+   Subplans must add explicit CLI commands for:
+   - selecting record/replay mode per run,
+   - inspecting/validating trajectory artifacts for a run/slot/step,
+   - purging/reindexing trajectory stores.
+
 ## Out of scope
 
 - Skills & capabilities rework (lands after this).
