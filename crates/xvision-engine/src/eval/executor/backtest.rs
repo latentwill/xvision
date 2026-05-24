@@ -7,8 +7,9 @@
 //! Pair with `xvn eval run --mode backtest --strategy <id> --scenario <id>`.
 //!
 //! Out of scope (deferred):
-//! - Multi-asset universes (uses `scenario.asset_universe[0]` only — v1
-//!   constraint, same as PaperExecutor).
+//! - Multi-asset fan-out (resolves a single asset from
+//!   `strategy.manifest.asset_universe[0]` for now; per-asset fan-out is a
+//!   later task, same staging as PaperExecutor).
 //! - Indicator panel injection into the pipeline seed (matching what
 //!   PaperExecutor passes today, which is just portfolio_state).
 //! - Win-rate sourced from realized-PnL pairs across decisions (the
