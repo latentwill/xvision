@@ -70,11 +70,11 @@ live SSE + screenshot evidence captured.
 - [ ] Hook timeout / fail-open / fail-closed tests
 
 ### Phase 3 — DSPy foundation
-- [ ] `dspy/dependency-spike.txt` + `cargo tree` excerpt (where dspy-rs enters)
-- [ ] `dspy/dummy-lm-compile.txt` (deterministic, no network)
-- [ ] `dspy/optimize-cli-baseline.json` / `dspy/optimize-cli-candidate.json`
-- [ ] `dspy/optimization-lineage-row.json`
-- [ ] `cargo tree -p xvision-engine` proof: no `dspy-rs`
+- [x] `dspy/dependency-spike.txt` + `cargo tree` excerpt — GO, dspy-rs=0.7.3
+- [x] `dspy/crate-foundation.txt` — DummyLM deterministic compile (no network), 5 tests
+- [x] `cargo tree -p xvision-engine` proof: engine clean of dspy-rs/rig-core (foundation + integrated)
+- [ ] `dspy/optimize-cli-baseline.json` / `dspy/optimize-cli-candidate.json` (needs `xvn optimize` — 3.6)
+- [ ] `dspy/optimization-lineage-row.json` (needs demo/optimization store — 3.5)
 
 ### Phase 4 — strategy agents
 - [ ] `strategy-agents/missing-capability-proof.txt`
