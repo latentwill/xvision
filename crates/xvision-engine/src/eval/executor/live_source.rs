@@ -37,16 +37,20 @@
 //!
 //! Single-asset Alpaca paper live is wired end-to-end: `LiveStream` is
 //! consumed by the `Executor` constructed via `build_live_executor` in
-//! `api/eval.rs`. Multi-asset fanout is the §4 follow-up
-//! (`multi-asset-alpaca-unlock` plan).
+//! `api/eval.rs`. Multi-asset fanout (§4, cline-live-followups L2) is
+//! provided by [`MultiLiveStream`], which owns one [`LiveStream`] per
+//! active asset and merges their bar streams.
 
 use std::collections::VecDeque;
+use std::pin::Pin;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use futures::StreamExt;
+use futures::stream::{self, BoxStream, SelectAll};
+use futures::{Stream, StreamExt};
 use thiserror::Error;
 use xvision_core::market::Ohlcv;
+use xvision_core::trading::AssetSymbol;
 use xvision_data::alpaca::{BarGranularity, MarketBar};
 use xvision_data::alpaca_live::{BarStreamEvent, BarSubscription};
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError};
@@ -249,4 +253,100 @@ fn market_bar_to_ohlcv(bar: &MarketBar) -> Ohlcv {
         close: bar.close,
         volume: bar.volume,
     }
+}
+
+// ---------------------------------------------------------------------------
+// MultiLiveStream — multi-asset live bar fanout (§4, cline-live-followups L2)
+// ---------------------------------------------------------------------------
+
+/// One bar tagged with the asset whose [`LiveStream`] produced it.
+pub type TaggedBar = (AssetSymbol, Ohlcv);
+
+/// Multi-asset live [`BarSource`] fanning N per-asset [`LiveStream`]s into
+/// a single tagged-bar stream.
+///
+/// ## Merge strategy
+///
+/// Each owned `(AssetSymbol, LiveStream)` is wrapped in a `futures::Stream`
+/// (via [`stream::unfold`]) that pulls `LiveStream::next_bar()` and tags
+/// each yielded bar with its asset. The N tagged sub-streams are merged
+/// with [`stream::select_all`], which polls every sub-stream and yields
+/// whichever is ready first.
+///
+/// This gives the §4 behaviours for free:
+///
+/// * **Sparse / lagging bars (item 4):** a sub-stream that is `Pending`
+///   (waiting on its websocket) does not block the others — `select_all`
+///   keeps polling the ready ones.
+/// * **Closed sub-streams (item 4):** when a `LiveStream` returns `None`
+///   its wrapping stream ends; `select_all` drops it automatically and
+///   continues yielding from the live ones.
+/// * **All closed:** once every sub-stream has ended, `select_all` yields
+///   `None`, which `next_bar()` surfaces so the live loop exits.
+///
+/// ## Determinism
+///
+/// For real websocket streams the *arrival* order across assets is
+/// inherently non-deterministic (it tracks the market). Deterministic
+/// ordering of effects (equity-PK keying, per-asset decision indices) is
+/// enforced by the consuming live loop, which processes each arriving
+/// `(asset, bar)` independently and keys persisted rows by the bar
+/// timestamp + a single monotonic decision counter — exactly as the
+/// multi-asset backtest does. For tests, `new_for_test` sub-streams that
+/// yield eagerly produce a stable interleaving (round-robin across the
+/// ready sub-streams), so the 2-asset hermetic test is reproducible.
+///
+/// ## Single-asset equivalence
+///
+/// A 1-element `MultiLiveStream` is behaviourally identical to consuming
+/// the single `LiveStream` directly: `select_all` over one sub-stream just
+/// forwards that stream's bars, each tagged with the one asset. This
+/// preserves L1 single-asset byte-identity.
+pub struct MultiLiveStream {
+    merged: SelectAll<BoxStream<'static, TaggedBar>>,
+    last_yielded_ts: Option<DateTime<Utc>>,
+}
+
+impl MultiLiveStream {
+    /// Build a multi-asset live source from one [`LiveStream`] per active
+    /// asset. The input must be non-empty (the caller resolves the active
+    /// asset set first); an empty `Vec` yields a stream that closes
+    /// immediately.
+    pub fn new(streams: Vec<(AssetSymbol, LiveStream)>) -> Self {
+        let tagged: Vec<BoxStream<'static, TaggedBar>> = streams
+            .into_iter()
+            .map(|(asset, stream)| tag_stream(asset, stream))
+            .collect();
+        Self {
+            merged: stream::select_all(tagged),
+            last_yielded_ts: None,
+        }
+    }
+
+    /// Pull the next `(asset, bar)` across all sub-streams, or `None` when
+    /// every sub-stream has closed.
+    pub async fn next_tagged(&mut self) -> Option<TaggedBar> {
+        let next = self.merged.next().await;
+        if let Some((_, bar)) = next.as_ref() {
+            self.last_yielded_ts = Some(bar.timestamp);
+        }
+        next
+    }
+
+    /// Timestamp of the most recent bar handed to the caller (across all
+    /// assets). Public for diagnostics + trace events.
+    pub fn last_yielded_ts(&self) -> Option<DateTime<Utc>> {
+        self.last_yielded_ts
+    }
+}
+
+/// Wrap a single [`LiveStream`] into a `'static` stream that tags every
+/// bar with its asset. `stream::unfold` drives `next_bar()` and ends when
+/// the underlying stream closes (returns `None`).
+fn tag_stream(asset: AssetSymbol, stream: LiveStream) -> BoxStream<'static, TaggedBar> {
+    let s = stream::unfold(stream, move |mut s| async move {
+        s.next_bar().await.map(|bar| ((asset, bar), s))
+    });
+    let s: Pin<Box<dyn Stream<Item = TaggedBar> + Send>> = Box::pin(s);
+    s
 }

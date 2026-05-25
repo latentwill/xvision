@@ -1,16 +1,26 @@
-//! Hermetic integration coverage for the §3 single-asset live loop
-//! (cline-live-followups L1). No network, no Node sidecar.
+//! Hermetic integration coverage for the live loop — §3 single-asset (L1)
+//! and §4 multi-asset fanout (L2). No network, no Node sidecar.
 //!
-//! Wires a [`LiveStream::new_for_test`] (mock websocket subscription +
-//! scripted poll) into [`Executor::live`] alongside a recording
-//! [`BrokerSurface`] mock through [`RealBrokerFills`], and asserts:
+//! Wires [`LiveStream::new_for_test`] sub-streams (mock websocket
+//! subscription + scripted poll) into a [`MultiLiveStream`], hands that to
+//! [`Executor::live`] alongside a recording [`BrokerSurface`] mock through
+//! `RealBrokerFills`, and asserts:
 //!
 //!   - a mock stream emitting one bar drives exactly one decision cycle;
 //!   - the mock broker RECEIVES the expected order (action / asset / size);
 //!   - NO injected bars are required — the run starts from the stream;
 //!   - fills come from broker-reported data, not simulated bar fills;
 //!   - the loop exits cleanly on (a) stream end, (b) cancellation,
-//!     (c) a broker error — without hanging or panicking.
+//!     (c) a broker error — without hanging or panicking;
+//!   - a pyramid-blocked `hold` preserves the open position (no close);
+//!   - §4: a 2-asset MultiLiveStream drives BOTH assets, with per-asset
+//!     decision isolation, one shared pooled NAV, a single monotonic
+//!     decision-index series, and a sub-stream that closes early does not
+//!     halt the others.
+//!
+//! A single-asset run is driven through a 1-element `MultiLiveStream`,
+//! which the executor consumes byte-identically to the L1 single
+//! `LiveStream` — `single_asset_stream()` wraps that.
 
 mod common;
 
@@ -28,8 +38,9 @@ use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials, LiveBar
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError, LivePollFetcher};
 use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side};
 
+use xvision_core::trading::AssetSymbol;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::eval::executor::{Executor, LiveStream, RunExecutor, WallClock};
+use xvision_engine::eval::executor::{Executor, LiveStream, MultiLiveStream, RunExecutor, WallClock};
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::{AssetClass, AssetRef, Scenario};
@@ -84,14 +95,87 @@ impl LivePollFetcher for EmptyFetcher {
     }
 }
 
-/// Build a [`LiveStream`] that emits the given websocket bars then closes
-/// (no warmup, poll returns `Empty`).
-fn live_stream_from_bars(bars: Vec<MarketBar>) -> LiveStream {
+/// Build a [`LiveStream`] for `asset` that emits the given websocket bars
+/// then closes (no warmup, poll returns `Empty`).
+fn live_stream_for(asset: &str, bars: Vec<MarketBar>) -> LiveStream {
     let ws_items: Vec<LiveBarItem> = bars.into_iter().map(LiveBarItem::Bar).collect();
     let ws = client().subscription_from_stream(BarGranularity::Minute1, stream::iter(ws_items));
-    let poll = AlpacaLivePoll::new(Arc::new(EmptyFetcher), "BTC/USD".into(), BarGranularity::Minute1)
+    let poll = AlpacaLivePoll::new(Arc::new(EmptyFetcher), asset.into(), BarGranularity::Minute1)
         .with_poll_interval(Duration::ZERO);
     LiveStream::new_for_test(Vec::new(), ws, poll)
+}
+
+/// Single-asset (BTC) [`MultiLiveStream`] — a 1-element fanout, which the
+/// executor consumes exactly like the L1 single `LiveStream`. This is what
+/// the single-asset live loop tests drive.
+fn single_asset_stream(bars: Vec<MarketBar>) -> MultiLiveStream {
+    MultiLiveStream::new(vec![(AssetSymbol::Btc, live_stream_for("BTC/USD", bars))])
+}
+
+/// Broker mock that records orders PER ASSET and returns a per-asset fixed
+/// fill price. Used by the multi-asset fanout test to prove BTC and ETH each
+/// reach the broker with their own price.
+struct PerAssetRecordingBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    fill_price_by_asset: std::collections::HashMap<String, f64>,
+}
+
+impl PerAssetRecordingBroker {
+    fn new(prices: &[(&str, f64)]) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            fill_price_by_asset: prices.iter().map(|(a, p)| ((*a).to_string(), *p)).collect(),
+        })
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for PerAssetRecordingBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        self.submitted.lock().unwrap().push(req.clone());
+        let price = self.fill_price_by_asset.get(&req.asset).copied().unwrap_or(1.0);
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+/// Build a strategy over a two-asset (BTC + ETH) universe for the
+/// multi-asset live fanout test.
+fn build_multi_asset_strategy(agent_id: &str) -> Strategy {
+    let mut s = build_strategy(agent_id);
+    s.manifest.asset_universe = vec!["BTC/USD".into(), "ETH/USD".into()];
+    s
+}
+
+/// A two-asset LiveConfig (BTC + ETH).
+fn multi_asset_live_config() -> LiveConfig {
+    let mut cfg = live_config();
+    cfg.assets = vec![
+        AssetRef {
+            class: AssetClass::Crypto,
+            symbol: "BTC/USD".into(),
+            venue_symbol: "BTC/USD".into(),
+        },
+        AssetRef {
+            class: AssetClass::Crypto,
+            symbol: "ETH/USD".into(),
+            venue_symbol: "ETH/USD".into(),
+        },
+    ];
+    cfg
 }
 
 /// Broker mock that records every submitted order and returns a fixed
@@ -281,7 +365,7 @@ async fn live_fixtures(initial: f64) -> (RunStore, Strategy, Scenario, Run, temp
 async fn one_live_bar_drives_exactly_one_decision_through_the_broker() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = RecordingBroker::new(50_123.0);
-    let stream = live_stream_from_bars(vec![market_bar_at(60, 50_000.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);
 
     let executor = Executor::live(
         &live_config(),
@@ -338,7 +422,7 @@ async fn live_run_requires_no_injected_bars_and_sources_from_stream() {
     // injected_asset_bars / the fixture loader.
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = RecordingBroker::new(50_000.0);
-    let stream = live_stream_from_bars(vec![
+    let stream = single_asset_stream(vec![
         market_bar_at(60, 50_000.0),
         market_bar_at(120, 50_100.0),
         market_bar_at(180, 50_200.0),
@@ -381,7 +465,7 @@ async fn live_loop_exits_on_bar_limit_stop_policy() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = RecordingBroker::new(50_000.0);
     // Five bars available, but bar_limit=2 must stop after two.
-    let stream = live_stream_from_bars(vec![
+    let stream = single_asset_stream(vec![
         market_bar_at(60, 50_000.0),
         market_bar_at(120, 50_100.0),
         market_bar_at(180, 50_200.0),
@@ -417,7 +501,7 @@ async fn live_loop_exits_on_bar_limit_stop_policy() {
 async fn live_loop_exits_on_decision_limit_stop_policy() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = RecordingBroker::new(50_000.0);
-    let stream = live_stream_from_bars(vec![
+    let stream = single_asset_stream(vec![
         market_bar_at(60, 50_000.0),
         market_bar_at(120, 50_100.0),
         market_bar_at(180, 50_200.0),
@@ -451,10 +535,7 @@ async fn live_loop_exits_on_decision_limit_stop_policy() {
 async fn live_loop_exits_cleanly_on_cancellation() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = RecordingBroker::new(50_000.0);
-    let stream = live_stream_from_bars(vec![
-        market_bar_at(60, 50_000.0),
-        market_bar_at(120, 50_100.0),
-    ]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_100.0)]);
 
     // Cancel the run BEFORE the executor starts (the run row already
     // exists from `live_fixtures`). The executor's `begin_running` guard
@@ -497,7 +578,7 @@ async fn live_loop_exits_cleanly_on_cancellation() {
 async fn live_loop_surfaces_broker_error_as_run_failure() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = Arc::new(ErrorBroker);
-    let stream = live_stream_from_bars(vec![market_bar_at(60, 50_000.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);
 
     let executor = Executor::live(
         &live_config(),
@@ -536,4 +617,251 @@ async fn live_loop_surfaces_broker_error_as_run_failure() {
         decisions[0].fill_price.is_none(),
         "a rejected order produces no fill price",
     );
+}
+
+// ---------------------------------------------------------------------------
+// §3-review nit: hold-preservation (pyramid-block rewrite must NOT close)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn pyramid_block_rewrites_to_hold_and_preserves_the_open_position() {
+    // Bar 1: trader emits long_open while flat -> opens long (one order).
+    // Bar 2: trader emits long_open again while ALREADY long -> the pyramid
+    // guardrail rewrites it to `hold`. The L1 hold short-circuit must NOT
+    // forward `hold` to the broker (which would otherwise classify it as
+    // want_flat and CLOSE the position). Assert: exactly one order ever
+    // reaches the broker (the bar-1 open), and the open long position is
+    // preserved (bar-2 records no fill, no close).
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_000.0);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_100.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    assert_eq!(metrics.n_decisions, 2, "two bars => two decisions");
+
+    // Exactly ONE order reached the broker — the bar-1 long_open. The
+    // bar-2 long_open was guardrail-rewritten to hold and short-circuited
+    // BEFORE the broker, so it produced no close/flatten order.
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        1,
+        "only the bar-1 open crosses the broker; the pyramid-blocked hold must not submit",
+    );
+    assert!(
+        matches!(submitted[0].side, Side::Buy),
+        "the single order is the long open (Buy)",
+    );
+
+    // The bar-2 decision recorded NO fill (the hold preserved the position
+    // rather than closing it).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(decisions.len(), 2);
+    assert_eq!(decisions[0].action, "long_open");
+    assert!(
+        decisions[0].fill_price.is_some(),
+        "bar-1 open fills at the broker price",
+    );
+    // The bar-2 row's action is the guardrail-rewritten value is not
+    // surfaced as `action` (the trader's original action is recorded), but
+    // crucially it produced NO fill — the open position is intact.
+    assert!(
+        decisions[1].fill_price.is_none(),
+        "bar-2 pyramid-block hold must not fill (position preserved, not closed)",
+    );
+    // Only the bar-1 open counts as a trade.
+    assert_eq!(metrics.n_trades, 1, "exactly one fill across the run");
+}
+
+// ---------------------------------------------------------------------------
+// §4 L2: multi-asset live fanout
+// ---------------------------------------------------------------------------
+
+/// A queued multi-asset (BTC + ETH) Live run + store + strategy + scenario.
+async fn multi_asset_live_fixtures(initial: f64) -> (RunStore, Strategy, Scenario, Run, tempfile::TempDir) {
+    let (store, dir) = fresh_store().await;
+    let strategy = build_multi_asset_strategy("01TESTLIVEMULTI");
+    let scenario = live_scenario(initial);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Live);
+    run.live_config = Some(multi_asset_live_config());
+    store.create(&run).await.unwrap();
+    (store, strategy, scenario, run, dir)
+}
+
+#[tokio::test]
+async fn multi_asset_fanout_both_assets_decide_and_order_with_per_asset_isolation() {
+    // Two assets, one bar each. With per-asset open-direction memory, BOTH
+    // BTC and ETH open their own long leg, so BOTH reach the broker. If the
+    // guardrail flip-memory were shared across assets (a bleed), ETH's
+    // long_open would be rewritten to `hold` because BTC already opened
+    // long — and only ONE order would reach the broker. Two orders proves
+    // isolation.
+    let (store, strategy, scenario, mut run, _dir) = multi_asset_live_fixtures(100_000.0).await;
+    let broker = PerAssetRecordingBroker::new(&[("BTC/USD", 50_000.0), ("ETH/USD", 3_000.0)]);
+
+    let multi = MultiLiveStream::new(vec![
+        (
+            AssetSymbol::Btc,
+            live_stream_for("BTC/USD", vec![market_bar_at(60, 50_000.0)]),
+        ),
+        (
+            AssetSymbol::Eth,
+            live_stream_for("ETH/USD", vec![market_bar_at(60, 3_000.0)]),
+        ),
+    ]);
+
+    let executor = Executor::live(
+        &multi_asset_live_config(),
+        broker.clone(),
+        multi,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("multi-asset live run completes on stream end");
+
+    // Two bars total (one per asset) => two decisions.
+    assert_eq!(metrics.n_decisions, 2, "one bar per asset => two decisions");
+
+    // BOTH assets produced a decision row.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(decisions.len(), 2, "two decision rows (one per asset)");
+    let assets: std::collections::BTreeSet<&str> = decisions.iter().map(|d| d.asset.as_str()).collect();
+    assert!(assets.contains("BTC/USD"), "BTC must have decided");
+    assert!(assets.contains("ETH/USD"), "ETH must have decided");
+
+    // Decision indices are a single monotonic counter shared across assets
+    // (matching the backtest), so they are distinct — no (run_id,
+    // decision_index) PK collision.
+    let mut idxs: Vec<u32> = decisions.iter().map(|d| d.decision_index).collect();
+    idxs.sort_unstable();
+    assert_eq!(
+        idxs,
+        vec![0, 1],
+        "shared monotonic decision indices, no collision"
+    );
+
+    // PER-ASSET ISOLATION: both legs opened (two orders to the broker), one
+    // per asset. A shared flip-memory would have blocked the second.
+    let submitted = broker.submitted();
+    assert_eq!(submitted.len(), 2, "both assets' opens reached the broker");
+    let order_assets: std::collections::BTreeSet<&str> = submitted.iter().map(|o| o.asset.as_str()).collect();
+    assert!(order_assets.contains("BTC/USD"));
+    assert!(order_assets.contains("ETH/USD"));
+    // No simulated-fill fallback: fills carry the BROKER-reported per-asset
+    // prices (50_000 for BTC, 3_000 for ETH), not a bar-derived price.
+    for d in &decisions {
+        let expected = if d.asset == "ETH/USD" { 3_000.0 } else { 50_000.0 };
+        assert_eq!(
+            d.fill_price,
+            Some(expected),
+            "{} must fill at the broker-reported price (no simulated fallback)",
+            d.asset,
+        );
+    }
+
+    // ONE pooled NAV series, keyed by timestamp. Both assets shared bar
+    // ts=60, so the upsert collapses them to a SINGLE equity row at that
+    // timestamp (no PK collision, no double series).
+    let curve = store.read_equity_curve(&run.id).await.unwrap();
+    assert_eq!(
+        curve.len(),
+        1,
+        "two assets at the same bar timestamp => one pooled equity row",
+    );
+}
+
+#[tokio::test]
+async fn multi_asset_fanout_continues_when_one_substream_ends_early() {
+    // BTC emits one bar then closes; ETH emits three. The merged stream
+    // must keep yielding ETH's bars after BTC's sub-stream closes (a closed
+    // sub-stream is dropped, not a stop condition). Run ends only when ALL
+    // sub-streams have closed.
+    let (store, strategy, scenario, mut run, _dir) = multi_asset_live_fixtures(100_000.0).await;
+    let broker = PerAssetRecordingBroker::new(&[("BTC/USD", 50_000.0), ("ETH/USD", 3_000.0)]);
+
+    let multi = MultiLiveStream::new(vec![
+        (
+            AssetSymbol::Btc,
+            live_stream_for("BTC/USD", vec![market_bar_at(60, 50_000.0)]),
+        ),
+        (
+            AssetSymbol::Eth,
+            live_stream_for(
+                "ETH/USD",
+                vec![
+                    market_bar_at(60, 3_000.0),
+                    market_bar_at(120, 3_010.0),
+                    market_bar_at(180, 3_020.0),
+                ],
+            ),
+        ),
+    ]);
+
+    let executor = Executor::live(
+        &multi_asset_live_config(),
+        broker,
+        multi,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("run completes only after ALL sub-streams close");
+
+    // 1 BTC bar + 3 ETH bars = 4 decisions. The early-closed BTC stream did
+    // not stop the run; ETH's later bars still produced decisions.
+    assert_eq!(
+        metrics.n_decisions, 4,
+        "BTC(1) + ETH(3) bars => 4 decisions; the early BTC close must not halt the run",
+    );
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let eth_decisions = decisions.iter().filter(|d| d.asset == "ETH/USD").count();
+    let btc_decisions = decisions.iter().filter(|d| d.asset == "BTC/USD").count();
+    assert_eq!(btc_decisions, 1, "BTC decided once before its stream closed");
+    assert_eq!(eth_decisions, 3, "ETH kept deciding after BTC closed");
 }

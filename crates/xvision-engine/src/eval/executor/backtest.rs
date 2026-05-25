@@ -46,12 +46,10 @@ use crate::eval::broker_rules::{
 };
 use crate::eval::cost_arrays::BarCostTable;
 use crate::eval::early_stop::{self, EarlyStopConfig};
-use crate::eval::executor::live_source::LiveStream;
+use crate::eval::executor::live_source::MultiLiveStream;
 use crate::eval::executor::real_broker_fills::RealBrokerFills;
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
-use crate::eval::executor::traits::{
-    BarSource, Clock, FillRecord, FillRequest, FillSink, InstantClock, SimulatedFills,
-};
+use crate::eval::executor::traits::{Clock, FillRecord, FillRequest, FillSink, InstantClock, SimulatedFills};
 use crate::eval::executor::wall_clock::WallClock;
 use crate::eval::executor::RunExecutor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
@@ -78,7 +76,11 @@ use super::trader_output::TraderOutput;
 use xvision_execution::broker_surface::BrokerSurface;
 
 pub(crate) struct LiveRuntime {
-    pub(crate) bar_source: LiveStream,
+    /// Multi-asset live bar fanout. A single active asset is a 1-element
+    /// `MultiLiveStream` (== the single L1 `LiveStream`), preserving
+    /// single-asset byte-identity; multiple actives merge their per-asset
+    /// `LiveStream`s into one tagged-bar stream.
+    pub(crate) bar_source: MultiLiveStream,
     pub(crate) clock: WallClock,
     pub(crate) fill_sink: RealBrokerFills,
     /// Run-terminating limits (time / bar / decision). The live loop
@@ -174,11 +176,14 @@ impl Executor {
         Self::with_bars(bars)
     }
 
-    /// Live constructor — wires `LiveStream + WallClock + RealBrokerFills`.
+    /// Live constructor — wires `MultiLiveStream + WallClock +
+    /// RealBrokerFills`. The `bar_source` is a multi-asset fanout; a
+    /// single-asset live run hands in a 1-element `MultiLiveStream`, which
+    /// is behaviourally identical to the L1 single `LiveStream`.
     pub fn live(
         live_config: &LiveConfig,
         broker: Arc<dyn BrokerSurface>,
-        bar_source: LiveStream,
+        bar_source: MultiLiveStream,
         clock: WallClock,
         obs_emitter: Option<ObsEmitter>,
     ) -> anyhow::Result<Self> {
@@ -1993,27 +1998,44 @@ impl Executor {
         Ok(metrics)
     }
 
-    /// Live run loop (§3, cline-live-followups L1). Single-asset.
+    /// Live run loop (§3 L1 single-asset, §4 L2 multi-asset fanout).
     ///
-    /// Drives a streaming `LiveStream.next_bar()` loop instead of the
-    /// backtest's aligned timeline. Each bar runs ONE per-asset decision
-    /// cycle through the shared `decide_one_live` body, submits the
-    /// resulting order through `RealBrokerFills` (decision → broker market
-    /// order → broker-reported fill) on a `WallClock`, and records the
-    /// decision + a pooled-equity sample. No injected backtest bars are
-    /// required — bars come from the stream.
+    /// Drives a streaming `MultiLiveStream.next_tagged()` loop instead of
+    /// the backtest's aligned timeline. Each arriving `(asset, bar)` runs
+    /// ONE per-asset decision cycle through the shared `decide_one_live`
+    /// body, submits the resulting order through `RealBrokerFills`
+    /// (decision → broker market order → broker-reported fill) on a
+    /// `WallClock`, applies the broker-reported fill to the SHARED pooled
+    /// `PortfolioBook`, and records the decision + a pooled-equity sample.
+    /// No injected backtest bars are required — bars come from the stream.
+    ///
+    /// **Per-asset isolation (§4 item 2):** the rolling `history`,
+    /// `signal_cache`, and `last_open_direction` are keyed per asset
+    /// (`BTreeMap<AssetSymbol, _>`) so a signal/position on BTC never
+    /// bleeds into ETH. Only the `PortfolioBook` (pooled NAV) and the
+    /// monotonic `decision_idx` are shared — matching the multi-asset
+    /// backtest, where the decision index is a single run-wide counter.
+    ///
+    /// **Equity-PK keying (§4 item 3):** `eval_equity_samples` is keyed
+    /// `(run_id, timestamp)`. Live bars are not pre-aligned into a
+    /// timeline, so two assets can arrive at the same bar timestamp. We
+    /// therefore upsert the pooled equity sample per arriving bar
+    /// (`record_equity_upsert`): the latest pooled NAV at a given
+    /// timestamp wins, yielding exactly one pooled-equity row per
+    /// timestamp without a PK collision. A single-asset run never repeats
+    /// a timestamp, so the upsert behaves like the L1 plain INSERT.
     ///
     /// Exit conditions:
-    ///   (a) stream end — `next_bar()` returns `None`;
+    ///   (a) stream end — `next_tagged()` returns `None` (ALL sub-streams
+    ///       closed);
     ///   (b) `StopPolicy` limit hit — time / bar / decision;
     ///   (c) cancellation — `store.is_terminal()` flips (cancel/stop);
     ///   (d) broker error — a `RealBrokerFills` rejection surfaces as a
     ///       `Rejected` `FillRecord` carrying a `broker_error`, which is
     ///       lifted into a classified run failure.
     ///
-    /// The per-(asset, bar) body is factored into `decide_one_live` so §4
-    /// (multi-asset fanout) can call it once per asset per bar without
-    /// reshaping the loop.
+    /// The per-(asset, bar) body is factored into `decide_one_live`, called
+    /// once per arriving tagged bar.
     #[allow(clippy::too_many_arguments)]
     async fn run_inner_live(
         &self,
@@ -2026,20 +2048,28 @@ impl Executor {
         store: &RunStore,
     ) -> Result<MetricsSummary> {
         use crate::eval::executor::asset_set::active_assets;
+        use std::collections::BTreeMap;
 
-        // Resolve the single active asset (L1 is single-asset; the
-        // LiveConfig validator already pins assets.len() == 1, and the
-        // strategy universe is narrowed by the same `active_assets` path
-        // the backtest uses so §4 can lift this to a fan-out cleanly).
+        // Resolve the active asset set. The `MultiLiveStream` in
+        // `live_runtime` was built (in `build_live_executor`) over this
+        // same active set, so the per-asset state maps below cover exactly
+        // the assets the stream can yield. A single active asset reduces to
+        // the L1 path (one map entry, one sub-stream).
         let active = active_assets(&strategy.manifest.asset_universe, self.asset_subset.as_deref())?;
-        let asset_sym = *active.first().ok_or_else(|| {
-            anyhow!(
+        if active.is_empty() {
+            anyhow::bail!(
                 "strategy {} resolved an empty active asset set",
                 strategy.manifest.id
-            )
-        })?;
-        let asset = asset_sym.as_alpaca_pair();
-        let active_venue_symbols: Vec<String> = vec![asset.clone()];
+            );
+        }
+        // Venue symbols of the active set, surfaced in each seed as
+        // `active_assets` so the trader sees the cross-asset context
+        // (mirrors the multi-asset backtest path).
+        let active_venue_symbols: Vec<String> = active.iter().map(|a| a.as_alpaca_pair()).collect();
+        // Per-asset venue-symbol strings, resolved once so the hot loop
+        // doesn't reallocate them per bar.
+        let asset_pairs: BTreeMap<xvision_core::trading::AssetSymbol, String> =
+            active.iter().map(|a| (*a, a.as_alpaca_pair())).collect();
 
         use crate::strategies::{CapitalMode, ExecutionMode};
         match &strategy.manifest.execution_mode {
@@ -2058,26 +2088,45 @@ impl Executor {
         let history_window = scenario.warmup_bars as usize;
 
         let initial = scenario.capital.initial;
+        // Pooled book + NAV are SHARED across all assets (PortfolioBook
+        // carries per-asset legs + a pooled equity formula).
         let mut book = crate::eval::executor::book::PortfolioBook::new(initial);
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];
         let mut peak_equity = initial.max(0.0);
+        // Single monotonic decision counter, shared across assets — exactly
+        // like the multi-asset backtest. Each arriving (asset, bar) gets a
+        // unique index so the `(run_id, decision_index)` PK never collides.
         let mut decision_idx = 0u32;
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let run_started: Instant = Instant::now();
-        // Guardrail flip memory + early-stop are backtest-only refinements;
-        // L1 keeps the live loop minimal (one decision per live bar). The
-        // guardrail flip-block still runs per decision, so track the last
-        // emitted open direction for the single asset.
-        let mut last_open_direction: Option<GuardAction> = None;
-        // Rolling bar-history window. Live bars (including the warmup
-        // prefix `LiveStream` drains first) accumulate here so the trader
-        // seed carries `bar_history` exactly like the backtest path.
-        let mut history: Vec<Ohlcv> = Vec::new();
-
-        let mut signal_cache = crate::agent::signal_cache::SignalCache::new();
+        // PER-ASSET guardrail flip memory: the trader's last emitted open
+        // direction, keyed per asset so a flip on BTC doesn't leak into
+        // ETH's flip detection (mirrors the backtest's per-asset map).
+        let mut last_open_direction: BTreeMap<xvision_core::trading::AssetSymbol, Option<GuardAction>> =
+            active.iter().map(|a| (*a, None)).collect();
+        // PER-ASSET rolling bar-history window. Each asset's live bars
+        // (including its warmup prefix, which the `LiveStream` drains
+        // first) accumulate in their own buffer so the trader seed for one
+        // asset never sees another asset's bars.
+        let mut history: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>> =
+            active.iter().map(|a| (*a, Vec::new())).collect();
+        // PER-ASSET signal cache so filter signals stay scoped to the asset
+        // they were computed for. `SignalScope::Asset(asset)` keys the
+        // filter dispatch; an isolated cache per asset keeps the scopes
+        // from sharing entries.
+        let mut signal_cache: BTreeMap<
+            xvision_core::trading::AssetSymbol,
+            crate::agent::signal_cache::SignalCache,
+        > = active
+            .iter()
+            .map(|a| (*a, crate::agent::signal_cache::SignalCache::new()))
+            .collect();
+        // Last pooled-equity timestamp recorded — drives the upsert path so
+        // a single-asset run keeps the L1 one-INSERT-per-bar shape while a
+        // multi-asset run collapses same-timestamp bars to one pooled row.
         let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
         let cadence_min = strategy.manifest.decision_cadence_minutes.max(1);
         let bar_period_minutes = cadence_min;
@@ -2100,18 +2149,28 @@ impl Executor {
                 anyhow::bail!("eval run stopped");
             }
 
-            // (a) stream end.
-            let bar = match runtime.bar_source.next_bar().await {
-                Some(b) => b,
+            // (a) stream end — `next_tagged()` returns `None` only once ALL
+            // sub-streams have closed. A lagging or closed sub-stream does
+            // not stop the merged stream (§4 item 4); `select_all` drops a
+            // closed sub-stream and keeps yielding from the live ones.
+            let (asset_sym, bar) = match runtime.bar_source.next_tagged().await {
+                Some(tagged) => tagged,
                 None => break,
             };
+            // Venue-symbol string for this asset (e.g. "BTC/USD"). Resolved
+            // from the pre-built map for the active set; an asset the stream
+            // yields outside that set still gets a valid pair computed on
+            // demand (any `AssetSymbol` has one), so a config/universe drift
+            // doesn't drop bars.
+            let asset = asset_pairs
+                .get(&asset_sym)
+                .cloned()
+                .unwrap_or_else(|| asset_sym.as_alpaca_pair());
             bar_count += 1;
 
-            // (b) bar-count stop limit. Checked AFTER consuming the bar so
-            // `bar_limit = N` processes exactly N bars.
-            // The decision below still runs for this bar; the limit gates
-            // whether we pull another one. We evaluate it at loop top via
-            // `stop_after` after the decision is recorded.
+            // (b) bar-count stop limit. Checked AFTER the decision is
+            // recorded (at the loop bottom via `live_stop_reason`) so
+            // `bar_limit = N` yields exactly N decisions / bars.
 
             // Logical clock = wall clock for live (`advance_to` is a no-op
             // on `WallClock`; we still call it to mirror the backtest shape).
@@ -2119,12 +2178,13 @@ impl Executor {
             // RunTick so subscribers see progress against real time.
             runtime.clock.advance_to(bar.timestamp);
             let wall_now = runtime.clock.now();
-            // Persisted decision + equity rows are keyed by the BAR's
-            // timestamp, not wall-clock now: bar timestamps are unique +
-            // monotonic (so `eval_equity_samples`'s `(run_id, timestamp)`
-            // PK never collides) and align the chart series to the market
-            // data the trader actually saw. Two bars arriving inside the
-            // same wall-clock second would otherwise collide.
+            // Persisted decision rows are keyed by `(run_id, decision_index)`
+            // (a single monotonic counter, unique per arriving bar) and the
+            // equity sample by the BAR's timestamp. Bar timestamps align the
+            // chart series to the market data the trader saw; the pooled
+            // equity write below upserts on `(run_id, timestamp)` so two
+            // assets sharing a timestamp collapse to one pooled row rather
+            // than colliding on the PK (§4 item 3).
             let decision_ts = bar.timestamp;
 
             self.emit(ProgressEvent::RunTick {
@@ -2138,9 +2198,22 @@ impl Executor {
                 current_ts: wall_now,
             });
 
-            // Run one decision cycle for (asset, bar). Borrow the fill sink
-            // mutably for the broker submit. `decide_one_live` is the shared
-            // per-(asset, bar) body §4 will call per asset.
+            // Run one decision cycle for THIS (asset, bar). The pooled book
+            // + the shared `equity` are passed in; the per-asset rolling
+            // history, signal cache, and open-direction memory are pulled
+            // from their per-asset maps so BTC's state never bleeds into
+            // ETH (§4 item 2). `decide_one_live` is the shared body — its
+            // signature is unchanged from L1.
+            // Per-asset state is pre-seeded for the strategy's active set,
+            // but the stream is built over the LiveConfig's asset list; if
+            // those ever diverge we lazily create state for the arriving
+            // asset rather than panicking, so a config/universe mismatch
+            // degrades to "this asset just starts cold" instead of a crash.
+            let asset_history = history.get(&asset_sym).map(|v| v.as_slice()).unwrap_or(&[]);
+            let asset_last_open = last_open_direction.get(&asset_sym).copied().flatten();
+            let asset_signal_cache = signal_cache
+                .entry(asset_sym)
+                .or_insert_with(crate::agent::signal_cache::SignalCache::new);
             let outcome = self
                 .decide_one_live(
                     DecideOneLiveCtx {
@@ -2161,10 +2234,10 @@ impl Executor {
                         inputs_policy,
                         bar_history_limit,
                         history_window,
-                        history: &history,
-                        last_open_direction,
+                        history: asset_history,
+                        last_open_direction: asset_last_open,
                         bar_period_minutes,
-                        signal_cache: &mut signal_cache,
+                        signal_cache: asset_signal_cache,
                         multi_filter_config,
                     },
                     &mut runtime.fill_sink,
@@ -2183,15 +2256,19 @@ impl Executor {
             if outcome.fill_happened {
                 n_trades += 1;
             }
-            last_open_direction = outcome.last_open_direction;
+            // Per-asset open-direction memory: write back THIS asset's
+            // updated direction only.
+            last_open_direction.insert(asset_sym, outcome.last_open_direction);
 
-            // Push this bar onto the rolling history AFTER the decision (so
-            // the seed for bar T sees only bars strictly before T, matching
-            // the backtest's history-slice semantics).
-            history.push(bar.clone());
-            if history_window > 0 && history.len() > history_window {
-                let drop_n = history.len() - history_window;
-                history.drain(0..drop_n);
+            // Push this bar onto THIS asset's rolling history AFTER the
+            // decision (so the seed for bar T sees only bars strictly before
+            // T, matching the backtest's history-slice semantics). Keyed per
+            // asset so the window never mixes assets.
+            let asset_hist = history.entry(asset_sym).or_default();
+            asset_hist.push(bar.clone());
+            if history_window > 0 && asset_hist.len() > history_window {
+                let drop_n = asset_hist.len() - history_window;
+                asset_hist.drain(0..drop_n);
             }
 
             // (d) broker error — RealBrokerFills surfaced a rejection. We
@@ -2203,11 +2280,20 @@ impl Executor {
             }
 
             // Mark-to-market on the bar close + record the pooled equity
-            // sample keyed at this bar's timestamp.
+            // sample keyed at this bar's timestamp. We mark only the
+            // arriving asset's leg; every other open leg keeps its stored
+            // `last_mark` (PortfolioBook falls back to it for assets absent
+            // from `marks`), so the pooled NAV stays continuous across
+            // assets that haven't produced a bar this tick.
             book.mark(asset_sym, bar.close);
             let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
             equity = book.equity(&marks);
-            store.record_equity(&run.id, decision_ts, equity).await?;
+            // Upsert (not plain INSERT): two assets at the same bar
+            // timestamp would otherwise collide on the `(run_id, timestamp)`
+            // PK. The latest pooled NAV at a timestamp wins; a single-asset
+            // run never repeats a timestamp, so this matches L1's one row
+            // per bar.
+            store.record_equity_upsert(&run.id, decision_ts, equity).await?;
             self.emit_chart(
                 &run.id,
                 RunChartEvent::Equity(ChartEquityPoint {
@@ -2442,8 +2528,7 @@ impl Executor {
         let applied_action: String = match &decision {
             GuardrailDecision::Allow => parsed.action.clone(),
             GuardrailDecision::RewriteTo { action, reason } => {
-                let note =
-                    supervisor_note_content(*reason, original_action, *action, asset, decision_idx);
+                let note = supervisor_note_content(*reason, original_action, *action, asset, decision_idx);
                 store
                     .record_supervisor_note(&run.id, "guard", "warn", &note)
                     .await?;

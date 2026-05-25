@@ -2428,12 +2428,11 @@ async fn build_live_executor(
             cfg.broker_creds_ref
         )));
     }
-    let asset = cfg
-        .assets
-        .first()
-        .ok_or_else(|| ApiError::Validation("live_config.assets must contain one asset".into()))?
-        .venue_symbol
-        .clone();
+    if cfg.assets.is_empty() {
+        return Err(ApiError::Validation(
+            "live_config.assets must contain at least one asset".into(),
+        ));
+    }
     let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
     let (key_id, secret, trade_base_url) = if let Some(c) = stored {
         (
@@ -2479,25 +2478,48 @@ async fn build_live_executor(
         key_id: key_id.clone(),
         secret_key: secret.clone(),
     });
-    let ws = live_client
-        .subscribe_bars(&asset, granularity)
-        .await
-        .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars: {e}")))?;
     let data_base_url = std::env::var("APCA_API_DATA_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "https://data.alpaca.markets".into());
-    let poll = AlpacaLivePoll::new(
-        production_fetcher(data_base_url, key_id, secret),
-        asset.clone(),
-        granularity,
-    );
     let warmup_bars = cfg.warmup_bars.unwrap_or(200);
-    let stream =
-        crate::eval::executor::LiveStream::new_with_warmup(ctx, &asset, granularity, warmup_bars, ws, poll)
+
+    // Multi-asset live fanout (§4 L2): build one `LiveStream` per asset in
+    // the LiveConfig (subscribe + poll + warmup each), then merge them into
+    // a `MultiLiveStream`. A single-asset run yields a 1-element
+    // `MultiLiveStream`, which the executor consumes exactly like the L1
+    // single `LiveStream` — preserving single-asset byte-identity.
+    let mut sub_streams: Vec<(
+        xvision_core::trading::AssetSymbol,
+        crate::eval::executor::LiveStream,
+    )> = Vec::with_capacity(cfg.assets.len());
+    for asset_ref in &cfg.assets {
+        let asset = asset_ref.venue_symbol.clone();
+        let asset_sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&asset)
+            .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
+        let ws = live_client
+            .subscribe_bars(&asset, granularity)
             .await
-            .map_err(|e| ApiError::Validation(format!("build LiveStream: {e}")))?;
-    let mut live = Executor::live(cfg, broker, stream, crate::eval::executor::WallClock::new(), obs)
+            .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
+        let poll = AlpacaLivePoll::new(
+            production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
+            asset.clone(),
+            granularity,
+        );
+        let stream = crate::eval::executor::LiveStream::new_with_warmup(
+            ctx,
+            &asset,
+            granularity,
+            warmup_bars,
+            ws,
+            poll,
+        )
+        .await
+        .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?;
+        sub_streams.push((asset_sym, stream));
+    }
+    let multi = crate::eval::executor::MultiLiveStream::new(sub_streams);
+    let mut live = Executor::live(cfg, broker, multi, crate::eval::executor::WallClock::new(), obs)
         .map_err(|e| ApiError::Validation(format!("build Live executor: {e}")))?
         .with_event_bus(ctx.event_bus.clone())
         .with_provider_catalogs(provider_catalogs);
