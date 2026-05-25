@@ -48,10 +48,19 @@ applicable (record rationale in `final/surface-matrix.md`).
       `chat-rail/frontend-reducer-tests.txt` (11 vitest, tsc clean)
 - [x] Durable session rail-state + migration 041 —
       `chat-rail/session-persistence-tests.txt` (11 store tests)
-- [ ] `chat-rail/unified-stream-cli.txt` (needs live SSE rewiring — 1.2 remainder)
-- [ ] `chat-rail/unified-stream-api.jsonl` (needs live SSE rewiring)
-- [ ] `chat-rail/unified-stream-dashboard.png` (needs rail wired to reducer)
-- [ ] Session resume browser proof (needs rail wired to reducer)
+- [x] `chat-rail/unified-stream-api.jsonl` — live capture via `capture-sse.py`
+      against the real dashboard over real seeded `session_events` (10 events,
+      replay bounded by `replay_complete` last_seq=9), exit 0
+- [x] `chat-rail/unified-stream-dashboard.png` — headless-Chrome screenshot of
+      the rail rendering the seeded rows (assistant + completed tool + checkpoint)
+- [x] Reconnect/resume by session_id — `chat-rail/unified-stream-resume.txt`
+      (dashboard integration test through real `ApiContext::open`)
+- [x] Runtime migration wiring (041) fixed + regression test —
+      `migrate_chat_session_rail_state` in `ApiContext::open`
+
+**Phase 1 COMPLETE** (2026-05-24): unified taxonomy + both projections + live
+session stream w/ resume + one-source rail/dock reducer, all surfaces tested,
+live SSE + screenshot evidence captured.
 
 ### Phase 2 — chat rail safety
 - [ ] `chat-rail/research-act-deny-write.txt` (server-side denial, spoofed frontend mode)
