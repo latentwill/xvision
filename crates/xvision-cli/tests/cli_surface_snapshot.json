@@ -124,6 +124,60 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "agent",
+        "help",
+        "lint"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "agent",
+        "help",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "agent",
+        "lint"
+      ]
+    },
+    {
+      "aliases": [
+        "list"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--format",
+        "--help",
+        "--include-archived",
+        "--tag",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "agent",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [
         "--help",
@@ -1213,6 +1267,28 @@
         "help",
         "agent",
         "get"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "agent",
+        "lint"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "agent",
+        "ls"
       ]
     },
     {
