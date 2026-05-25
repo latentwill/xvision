@@ -1479,8 +1479,20 @@ async fn assert_launchable_with_guardrails(
     strategy_id: &str,
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
-    available_providers: &[String],
 ) -> ApiResult<()> {
+    // Resolve the set of providers configured in the runtime config — the
+    // enabled-provider set the `provider_unavailable` guardrail checks slot
+    // bindings against. A slot bound to a provider absent from this set is a
+    // hard short-circuit. A config-load failure leaves the set empty, so any
+    // bound provider is reported unavailable (fail-closed). local-candle and
+    // every other configured kind are included by name.
+    let cfg_path = runtime_config_path(ctx);
+    let available_providers: Vec<String> =
+        match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+            Ok(Ok(cfg)) => cfg.providers.iter().map(|p| p.name.clone()).collect(),
+            _ => Vec::new(),
+        };
+    let available_providers = available_providers.as_slice();
     // ── Phase 4.1: capability-completeness launch gate ──────────────────
     // Compute typed diagnostics and refuse the launch if any REQUIRED
     // capability is unmet. OPTIONAL capabilities never block.
@@ -1511,12 +1523,19 @@ async fn assert_launchable_with_guardrails(
         }
     }
 
-    // Map each resolved AgentRef → its agent record so we can check
-    // slot-attachment (the role resolved to a real slot). `resolve_agent_slots`
-    // already errors on an agent with zero slots, so a missing slot here is the
-    // "role names a slot the agent doesn't fulfil" case the guardrail covers.
+    // strategy_references_unattached_slot — defense-in-depth.
+    //
+    // NOTE: as the engine resolves slots today (`resolve_agent_slots`),
+    // an `AgentRef` whose agent is missing or has zero slots already fails
+    // EARLIER with `ApiError::NotFound` / "agent has no executable slots",
+    // and a resolved ref always maps the agent's first slot to the ref's
+    // role (so `resolved.role == agent_ref.role` by construction). The
+    // primary trigger for this guardrail is therefore pre-empted upstream.
+    // We keep the cheap check as a regression guard: if the resolution
+    // semantics ever change so a ref can survive resolution without a
+    // matching slot, this fires the typed short-circuit rather than
+    // launching a position that cannot execute.
     for agent_ref in &strategy.agents {
-        // The role is attached iff a resolved slot carries this role + agent.
         let slot_attached = agent_slots.iter().any(|resolved| {
             resolved.agent_id == agent_ref.agent_id
                 && resolved.role.trim().eq_ignore_ascii_case(agent_ref.role.trim())
@@ -2882,8 +2901,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // missing a required capability never starts. Live mode runs the same
     // gate: a non-launchable strategy must not reach the executor in either
     // mode.
-    assert_launchable_with_guardrails(ctx, &req.agent_id, &strategy, &agent_slots, &provider_names)
-        .await?;
+    assert_launchable_with_guardrails(ctx, &req.agent_id, &strategy, &agent_slots).await?;
 
     let (dispatch, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
