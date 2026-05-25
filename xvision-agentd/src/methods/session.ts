@@ -64,6 +64,8 @@ interface StartRunParams {
   decision_schema?: unknown
   /** Optional — enables trajectory frame recording for this run. */
   record?: unknown
+  /** Optional — slot role stamped on recorded trajectory frames. */
+  slot_role?: unknown
 }
 
 interface StartRunResult {
@@ -151,6 +153,8 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     throw new TypeError("params.base_url must be a string when present")
   if (p.record !== undefined && typeof p.record !== "boolean")
     throw new TypeError("params.record must be a boolean when present")
+  if (p.slot_role !== undefined && (typeof p.slot_role !== "string" || p.slot_role.length === 0))
+    throw new TypeError("params.slot_role must be a non-empty string when present")
   const limits = validateBudget(p.budget_limits)
   // exactOptionalPropertyTypes: spread the optional fields only when present.
   return {
@@ -163,6 +167,7 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     budget_limits: limits,
     ...(decisionSchemaOk ? { decision_schema: p.decision_schema as Record<string, unknown> } : {}),
     ...(typeof p.record === "boolean" ? { record: p.record } : {}),
+    ...(typeof p.slot_role === "string" && p.slot_role.length > 0 ? { slot_role: p.slot_role } : {}),
   }
 }
 
@@ -307,16 +312,25 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
 
   // Lazy: build the Agent on first step (or after replay_load resets it).
   // Wire submit_decision's local capture to this run's store slot so the
-  // decision lands on the StepResult. Pass replay frames when loaded.
+  // decision lands on the StepResult. Pass replay frames when loaded. When
+  // recording is enabled, retain the FrameRecorder so we can advance
+  // `step_index` per step below.
   if (!session.agent) {
     const replayFrames = store.getReplayFrames(p.run_id)
+    const runId = p.run_id
     const agent = buildAgent(session.config, {
-      captureDecision: (json) => store.setDecisionJson(p.run_id as string, json),
+      captureDecision: (json) => store.setDecisionJson(runId, json),
+      onRecorder: (recorder) => store.setRecorder(runId, recorder),
       ...(replayFrames ? { replayFrames } : {}),
     })
     store.attachAgent(p.run_id, agent)
   }
   const agent = session.agent!
+
+  // Advance the recording's step index for this `session.step` so frames
+  // emitted during it land in their own (slot_role, step_index) group on
+  // the Rust side. No-op when recording is disabled.
+  store.getRecorder(p.run_id)?.beginStep()
 
   const runId = p.run_id
   // Both the mock-provider and real-provider paths are now wrapped by

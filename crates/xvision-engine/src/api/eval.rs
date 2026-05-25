@@ -1890,6 +1890,9 @@ async fn spawn_cline_ctx(
         &ev_sock,
         dispatch,
         bus,
+        // §2-A: recording disabled on the live eval path. §2-B mints the
+        // TrajectoryStore + RecordingId and passes Some(...) here.
+        None,
     )
     .await
     .map_err(|e| {

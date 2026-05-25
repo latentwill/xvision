@@ -117,6 +117,8 @@ async fn start_run_round_trip() {
                     max_wall_ms: 30_000,
                 },
                 decision_schema: None,
+                record: false,
+                slot_role: None,
             }),
         )
         .await

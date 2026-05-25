@@ -2,7 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::errors::{AgentClientError, Result};
-use crate::event_sink::{start_event_sink, EventSinkHandle, SidecarFingerprint};
+use crate::event_sink::{
+    start_event_sink, EventSinkHandle, SidecarFingerprint, TrajectoryFramePersister,
+    TrajectoryFrameSink,
+};
 use crate::protocol::{
     EndRunParams, EndRunResult, ReplayLoadParams, ReplayLoadResult, RuntimeHealthResult, StartRunParams,
     StartRunResult, StepParams, StepResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams,
@@ -11,6 +14,9 @@ use crate::protocol::{
 use crate::supervisor::Supervisor;
 use crate::tool_dispatch::{serve_callbacks, ToolDispatch};
 use crate::transport::UdsTransport;
+use xvision_observability::trajectory::key::RecordingId;
+use xvision_observability::trajectory::store::TrajectoryStore;
+use xvision_observability::trajectory::DEFAULT_FRAME_CHANNEL_CAPACITY;
 use xvision_observability::RunEventBus;
 
 /// Combines a spawned `xvision-agentd` sidecar with a JSON-RPC transport.
@@ -190,6 +196,18 @@ impl AgentClient {
     /// The sidecar fingerprint (`sidecar_version`, `cline_sdk_version`,
     /// `protocol_version`) is captured from the IPC handshake here and
     /// threaded onto every `RunStarted` event the sink publishes.
+    ///
+    /// `recording`, when `Some((store, recording_id))`, enables lossless
+    /// trajectory frame persistence: `event.trajectory_frame` notifications
+    /// from the sidecar are routed to a [`TrajectoryFramePersister`] backed by
+    /// `store` and keyed by `recording_id`. The engine mints the recording via
+    /// [`TrajectoryStore::begin_recording`] before spawning and closes it after
+    /// `end_run`. Pass `None` to disable recording — the event socket then
+    /// behaves exactly as before (frame notifications are ignored), so
+    /// non-recording callers are unaffected. The caller is responsible for
+    /// also setting `StartRunParams::record = true` so the sidecar actually
+    /// emits frames; spawning with a recording sink but `record=false` simply
+    /// produces no frames to persist.
     pub async fn spawn_with_event_sink(
         bin: &Path,
         socket_path: &Path,
@@ -197,7 +215,18 @@ impl AgentClient {
         event_socket_path: &Path,
         dispatch: Arc<dyn ToolDispatch>,
         bus: Arc<RunEventBus>,
+        recording: Option<(Arc<TrajectoryStore>, RecordingId)>,
     ) -> Result<Self> {
+        // Build the trajectory frame sink up front (if recording). The
+        // persister spawns its lossless drain consumer; both sink clones
+        // (placeholder + fingerprinted listeners below) share the same
+        // persister via `Arc`, so frames land in one ordered sequence.
+        let frame_sink = recording.map(|(store, recording_id)| {
+            let persister =
+                Arc::new(TrajectoryFramePersister::spawn(recording_id, DEFAULT_FRAME_CHANNEL_CAPACITY));
+            TrajectoryFrameSink::new(store, persister)
+        });
+
         let callback_handle = serve_callbacks(callback_socket_path, dispatch).await?;
 
         // Bind the event listener BEFORE we tell the sidecar where the
@@ -206,7 +235,14 @@ impl AgentClient {
         // connection errors).
         // Start with an empty fingerprint; populated after handshake.
         let initial_fp = SidecarFingerprint::default();
-        let event_sink = match start_event_sink(event_socket_path, bus.clone(), initial_fp).await {
+        let event_sink = match start_event_sink(
+            event_socket_path,
+            bus.clone(),
+            initial_fp,
+            frame_sink.clone(),
+        )
+        .await
+        {
             Ok(h) => h,
             Err(e) => {
                 callback_handle.abort();
@@ -266,7 +302,7 @@ impl AgentClient {
         };
         event_sink.accept_handle.abort();
         let _ = std::fs::remove_file(event_socket_path);
-        let event_sink = match start_event_sink(event_socket_path, bus.clone(), fp).await {
+        let event_sink = match start_event_sink(event_socket_path, bus.clone(), fp, frame_sink).await {
             Ok(h) => h,
             Err(e) => {
                 callback_handle.abort();

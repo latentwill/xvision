@@ -314,6 +314,11 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         allowed_tools: input.allowed_tools_plus_submit_decision(),
         budget_limits: input.budget_limits(),
         decision_schema: Some(input.response_schema.schema.clone()),
+        // §2-A threads the field through the protocol; the eval-side
+        // recording mint (TrajectoryStore + RecordingId + record=true) is
+        // §2-B. Until then the live path requests no recording.
+        record: false,
+        slot_role: None,
     };
 
     input

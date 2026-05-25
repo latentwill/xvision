@@ -4,7 +4,7 @@ import { handleToolRegistryGet } from "../methods/tool-registry.js"
 import { MOCK_PROVIDER_ID, buildMockModel } from "../testing/mock-provider.js"
 import { wrapAgentModel } from "./model-wrapper.js"
 import { buildProviderModel } from "./provider-model.js"
-import { createFrameRecorder } from "./frame-recorder.js"
+import { createFrameRecorder, type FrameRecorder } from "./frame-recorder.js"
 import { SUBMIT_DECISION_TOOL, buildSubmitDecisionTool } from "./submit-decision.js"
 import { buildReplayModel } from "./replay-model.js"
 import type { TrajectoryFrame } from "./frame-types.js"
@@ -25,6 +25,13 @@ export interface BuildAgentOptions {
    * replay. Takes priority over provider_id / mock detection.
    */
   replayFrames?: TrajectoryFrame[]
+  /**
+   * Invoked with the FrameRecorder when recording is enabled (`config.record
+   * === true`). Lets the caller (session.step) retain the recorder so it can
+   * advance `step_index` via `recorder.beginStep()` per step. Not called when
+   * recording is disabled.
+   */
+  onRecorder?: (recorder: FrameRecorder) => void
 }
 
 export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {}): Agent {
@@ -37,8 +44,16 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
   // Build a FrameRecorder when recording is enabled. The same recorder instance
   // is shared between the model wrapper (records Request + AgentModelEvent frames)
   // and the tool shim (records ToolResult frames) so all frames for one step flow
-  // through a single ordered sequence.
-  const recorder = config.record === true ? createFrameRecorder() : undefined
+  // through a single ordered sequence. The recorder stamps `slot_role` on every
+  // emitted frame envelope so the Rust consumer keys frames to the matching
+  // recording.
+  const recorder =
+    config.record === true
+      ? createFrameRecorder(config.slot_role !== undefined ? { slotRole: config.slot_role } : {})
+      : undefined
+  if (recorder && opts.onRecorder) {
+    opts.onRecorder(recorder)
+  }
 
   const tools: AgentTool[] = shimRegistryToTools(reg.tools, registryNames, {
     allowWrites: opts.allowWrites ?? false,

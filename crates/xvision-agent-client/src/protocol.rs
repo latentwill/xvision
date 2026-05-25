@@ -100,6 +100,31 @@ pub struct StartRunParams {
     /// for runs that don't use the lifecycle tool.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision_schema: Option<serde_json::Value>,
+    /// When `true`, the sidecar records a `TrajectoryFrame` for every model
+    /// request, streamed delta, tool result, usage update, and finish marker
+    /// and emits each over the event socket as an `event.trajectory_frame`
+    /// notification. The Rust client routes those to a
+    /// [`crate::event_sink::TrajectoryFramePersister`] backed by a
+    /// `TrajectoryStore`.
+    ///
+    /// Defaults to `false` (and is skipped on the wire) so existing
+    /// non-recording callers behave exactly as before. Set to `true` only
+    /// when the caller has spawned the client with a trajectory store +
+    /// recording id (see `AgentClient::spawn_with_event_sink`); recording
+    /// without a persister produces frames the client drops.
+    #[serde(skip_serializing_if = "is_false")]
+    pub record: bool,
+    /// Slot role stamped on every recorded trajectory frame (`slot_role` in the
+    /// frame envelope), so the Rust consumer keys frames to the matching
+    /// recording's `TrajectoryKey.slot_role`. Only meaningful when
+    /// `record == true`; the sidecar defaults to `"default"` when omitted.
+    /// Skipped on the wire when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot_role: Option<String>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -308,6 +333,8 @@ mod tests {
                 max_wall_ms: 1,
             },
             decision_schema: Some(serde_json::json!({"type": "object"})),
+            record: false,
+            slot_role: None,
         };
         let with = serde_json::to_value(&base).unwrap();
         assert!(with.get("decision_schema").is_some());
@@ -315,6 +342,43 @@ mod tests {
         let without = StartRunParams { decision_schema: None, ..base };
         let v = serde_json::to_value(&without).unwrap();
         assert!(v.get("decision_schema").is_none(), "None must be skipped on the wire");
+    }
+
+    #[test]
+    fn start_run_params_skips_record_when_false_emits_when_true() {
+        let base = StartRunParams {
+            run_id: "r".into(),
+            provider_id: "anthropic".into(),
+            model_id: "m".into(),
+            api_key: None,
+            base_url: None,
+            system_prompt: "s".into(),
+            allowed_tools: vec!["echo".into()],
+            budget_limits: BudgetLimits {
+                max_input_tokens: 1,
+                max_output_tokens: 1,
+                max_wall_ms: 1,
+            },
+            decision_schema: None,
+            record: false,
+            slot_role: None,
+        };
+        // Default false: omitted from the wire so existing sidecars/tests
+        // see exactly the pre-record shape.
+        let off = serde_json::to_value(&base).unwrap();
+        assert!(off.get("record").is_none(), "record=false must be skipped on the wire");
+        assert!(off.get("slot_role").is_none(), "slot_role=None must be skipped on the wire");
+
+        // Recording on: the field is present and true; slot_role rides along
+        // exactly as the engine sets it.
+        let on = serde_json::to_value(&StartRunParams {
+            record: true,
+            slot_role: Some("trader".into()),
+            ..base
+        })
+        .unwrap();
+        assert_eq!(on.get("record"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(on.get("slot_role"), Some(&serde_json::Value::String("trader".into())));
     }
 
     #[test]
