@@ -143,7 +143,7 @@ use crate::routes::{
     agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail, cli,
     docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
-    eval_runs,
+    eval_runs, focus as focus_route,
     health::health,
     memory as memory_route, safety as safety_route, scenarios, search as search_route, settings, skills,
     static_files, strategies, strategies_folder as strategies_folder_route, wizard,
@@ -251,6 +251,8 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/chat-rail/sessions", get(chat_rail::list_sessions))
         // Phase 2.3: read the persisted three-state tool-policy for a scope.
         .route("/api/chat-rail/tool-policy", get(chat_rail::get_tool_policy))
+        // Phase 2.4: read the per-scope focus.md file.
+        .route("/api/chat-rail/focus", get(focus_route::get))
         .with_state(state)
 }
 
@@ -397,6 +399,8 @@ fn mutating_router(state: AppState) -> Router {
             "/api/chat-rail/tool-policy",
             put(chat_rail::put_tool_policy),
         )
+        // Phase 2.4: save the per-scope focus.md file.
+        .route("/api/chat-rail/focus", put(focus_route::put))
         .route("/api/chat-rail/chat", post(chat_rail::chat))
         // ── Apply require_auth middleware to ALL mutating routes ───────────
         .route_layer(axum::middleware::from_fn_with_state(
