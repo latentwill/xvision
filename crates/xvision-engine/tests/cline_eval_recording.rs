@@ -1,8 +1,17 @@
-//! §2-B integration test — eval-side live Cline trajectory recording,
+//! §2-B / §2-D integration test — eval-side live Cline trajectory recording,
 //! end-to-end through the (mock) `xvision-agentd` sidecar's record path.
 //!
 //! This is the §2 done-criterion test: "a recorded run can be replayed
 //! loading frames from the persisted store WITHOUT direct test seeding."
+//!
+//! §2-D: recording is driven by the per-run `trajectory_mode` config, not an
+//! env var. The slot here runs in `TrajectoryMode::Record` — the executor-level
+//! value the eval gate selects when `EvalRunRequest.trajectory_mode == Record`.
+//! `recording_mode_gate_is_config_driven` asserts that request-level mapping.
+//!
+//! §6: the trajectory tables come from the main API migrator (migration 040),
+//! not from `open_store`; the `open_store` helper provisions them the same way
+//! the migrator does before opening the store.
 //!
 //! Flow:
 //!   1. Mint a recording (`begin_recording`) keyed by a `TrajectoryKey`
@@ -56,6 +65,13 @@ const SLOT_ROLE: &str = "trader";
 const PROVIDER: &str = "anthropic";
 const MODEL: &str = "claude-sonnet-4-6";
 
+/// Migration-040 SQL (trajectory tables). §6 moved the production apply into
+/// the main API migrator (`ApiContext::open` → `migrate_trajectory_frames`);
+/// this hermetic test opens a bare pool, so it provisions the schema the same
+/// way the migrator does before opening the store. The store itself no longer
+/// self-migrates.
+const MIGRATION_040: &str = include_str!("../migrations/040_trajectory_frames.sql");
+
 async fn open_store(tmp: &TempDir) -> Arc<TrajectoryStore> {
     let db_path = tmp.path().join("agent_runs.db");
     let url = format!("sqlite://{}?mode=rwc", db_path.display());
@@ -64,11 +80,16 @@ async fn open_store(tmp: &TempDir) -> Arc<TrajectoryStore> {
         .connect(&url)
         .await
         .expect("open sqlite");
-    // §2-B: open_store applies migration 040 idempotently, exactly as the
-    // eval path does — NO hand-written CREATE TABLE here.
+    // §6: the trajectory tables are provisioned by the main migrator now, not
+    // by `open_store`. Apply migration 040 here exactly as the migrator does,
+    // then open the store over the already-migrated pool.
+    sqlx::query(MIGRATION_040)
+        .execute(&pool)
+        .await
+        .expect("apply migration 040 (trajectory tables)");
     let store = cline_recording::open_store(pool, tmp.path().join("blobs"))
         .await
-        .expect("open trajectory store (applies migration 040)");
+        .expect("open trajectory store over migrated pool");
     Arc::new(store)
 }
 
@@ -354,4 +375,56 @@ async fn record_persists_frames_then_replays_from_store_no_seeding() {
         .shutdown()
         .await
         .unwrap();
+}
+
+/// §6: the trajectory tables (`trajectory_recordings`, `trajectory_frames`)
+/// are now provisioned by the main API migrator (migration 040), not by the
+/// ad-hoc `cline_recording::open_store::ensure_tables` that §2-B used. Assert
+/// `ApiContext::open` lands both tables so every engine boot has the
+/// trajectory schema (and the store can open against the migrated pool).
+#[tokio::test]
+async fn api_context_open_provisions_trajectory_tables() {
+    use xvision_engine::api::{Actor, ApiContext};
+
+    let dir = TempDir::new().unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .expect("open ApiContext");
+
+    for table in ["trajectory_recordings", "trajectory_frames"] {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")
+                .bind(table)
+                .fetch_one(&ctx.db)
+                .await
+                .expect("query sqlite_master");
+        assert_eq!(
+            count, 1,
+            "main migrator (migration 040) must provision the `{table}` table"
+        );
+    }
+}
+
+/// §2-D: recording is driven by the per-run `trajectory_mode` config (the
+/// operator's chosen knob), NOT the removed `XVN_TRAJECTORY_RECORD` env var.
+/// The eval gate (`api::eval::run_inner`) mints a `recording_request` iff
+/// `req.trajectory_mode.records()`; `Record` records, `Live` (the default)
+/// does not. This locks the config→record mapping that the integration flow
+/// above exercises at the executor level (`TrajectoryMode::Record`).
+#[test]
+fn recording_mode_gate_is_config_driven() {
+    use xvision_engine::api::eval::RunTrajectoryMode;
+
+    assert!(
+        RunTrajectoryMode::Record.records(),
+        "Record mode mints a recording"
+    );
+    assert!(
+        !RunTrajectoryMode::Live.records(),
+        "Live mode records nothing (byte-identical to a non-recorded run)"
+    );
+    assert!(
+        !RunTrajectoryMode::default().records(),
+        "default is Live — recording is opt-in, preserving non-record byte-identity"
+    );
 }

@@ -1,8 +1,10 @@
-//! §2-B — eval-side live Cline trajectory recording.
+//! §2-B / §2-D — eval-side live Cline trajectory recording.
 //!
-//! Wires the §2-A emit↔persist plumbing into the live eval path. When
-//! recording is enabled (the [`record_enabled`] env gate), the eval entry
-//! point:
+//! Wires the §2-A emit↔persist plumbing into the live eval path. Recording
+//! is decided by the per-run [`EvalRunRequest.trajectory_mode`] config
+//! (§2-D — the operator's choice; not an env var): `record` mints a
+//! recording, `live` (the default) records nothing, `replay` re-drives a
+//! recorded trajectory. When recording is requested the eval entry point:
 //!
 //! 1. constructs a [`TrajectoryStore`] over the agent_runs SQLite DB
 //!    ([`open_store`]),
@@ -44,12 +46,6 @@ use xvision_observability::trajectory::key::{RecordingId, TrajectoryKey, TRAJECT
 use xvision_observability::trajectory::store::{StoreError, TrajectoryStore};
 use xvision_observability::{BlobStore, RetentionMode};
 
-/// Env var that turns eval-side trajectory recording ON. Mirrors the
-/// `XVN_AGENTD_BIN` opt-in convention: recording is OFF unless explicitly
-/// enabled, so the live loop + backtest stay byte-identical for everyone
-/// who hasn't opted in.
-pub const RECORD_ENV: &str = "XVN_TRAJECTORY_RECORD";
-
 /// `recovery_reason` written when the frame persist path signalled a
 /// failure (store fatal / dead consumer) during the run (footgun d).
 pub const RECOVERY_PERSIST_FAILED: &str = "frame_persist_failed";
@@ -58,49 +54,24 @@ pub const RECOVERY_PERSIST_FAILED: &str = "frame_persist_failed";
 /// was open, so the recording is incomplete and must not be replayed.
 pub const RECOVERY_RUN_FAILED: &str = "run_failed_mid_recording";
 
-/// True when eval-side trajectory recording is enabled via [`RECORD_ENV`].
-/// Any non-empty value other than `0`/`false` (case-insensitive) enables it.
-pub fn record_enabled() -> bool {
-    std::env::var(RECORD_ENV)
-        .map(|v| {
-            let v = v.trim();
-            !v.is_empty() && !v.eq_ignore_ascii_case("0") && !v.eq_ignore_ascii_case("false")
-        })
-        .unwrap_or(false)
-}
-
-/// Migration 040 (trajectory tables), inlined so [`open_store`] can apply it
-/// idempotently against the agent_runs DB. The engine's `ApiContext` open
-/// path applies migration 039 (the `trajectory_mode` column) but not 040
-/// (the frame tables) — §2-B is the first place that needs them on the live
-/// pool. `CREATE TABLE IF NOT EXISTS` keeps re-open a no-op.
-const MIGRATION_040: &str = include_str!("../../migrations/040_trajectory_frames.sql");
-
-/// Open a [`TrajectoryStore`] over `pool`, ensuring the migration-040 tables
-/// exist (idempotent). Blobs live under `$xvn_home/agent_runs/blobs` — the
-/// same root the observability blob store uses, so retention + GC see one
-/// blob tree.
+/// Open a [`TrajectoryStore`] over `pool`. The `trajectory_recordings` +
+/// `trajectory_frames` tables are provisioned by the main API migrator
+/// (`api::mod::migrate_trajectory_frames`, migration 040), so `pool` is
+/// expected to already carry them — this no longer self-applies the
+/// migration (§6 relocation). Blobs live under `$xvn_home/agent_runs/blobs`
+/// — the same root the observability blob store uses, so retention + GC see
+/// one blob tree.
+///
+/// Returns `Result` for call-site symmetry (and future store-open work);
+/// the body is currently infallible.
 pub async fn open_store(
     pool: SqlitePool,
     blob_root: std::path::PathBuf,
 ) -> Result<TrajectoryStore, StoreError> {
-    ensure_tables(&pool).await?;
     let blob = BlobStore::new(blob_root);
     // FullDebug so payloads are written to the blob store and replay can
     // reconstruct the exact recorded frames (hash_only cannot replay).
     Ok(TrajectoryStore::new(pool, blob, RetentionMode::FullDebug))
-}
-
-/// Apply migration 040 idempotently. The migration's `CREATE TABLE` /
-/// `CREATE INDEX` statements are rewritten to `IF NOT EXISTS` form so a
-/// second open does not error on the existing tables.
-async fn ensure_tables(pool: &SqlitePool) -> Result<(), StoreError> {
-    let idempotent = MIGRATION_040
-        .replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
-        .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ");
-    // The SQLite driver executes the multi-statement script.
-    sqlx::query(&idempotent).execute(pool).await?;
-    Ok(())
 }
 
 /// Build the per-run [`TrajectoryKey`]. Both the record path (here) and the
@@ -237,30 +208,14 @@ mod tests {
         assert_ne!(k1.fingerprint(), k3.fingerprint());
     }
 
-    #[test]
-    fn record_disabled_by_default() {
-        // Note: this reads the live process env; in CI the var is unset.
-        // We assert the parsing contract via explicit values instead of
-        // mutating global env (which races other tests).
-        // (Covered structurally — the gate fn delegates to env::var.)
-        assert!(!parse_enabled(""));
-        assert!(!parse_enabled("0"));
-        assert!(!parse_enabled("false"));
-        assert!(!parse_enabled("FALSE"));
-        assert!(parse_enabled("1"));
-        assert!(parse_enabled("true"));
-        assert!(parse_enabled("yes"));
-    }
-
-    // Mirror of `record_enabled`'s parsing without touching env, so the
-    // contract is testable deterministically.
-    fn parse_enabled(v: &str) -> bool {
-        let v = v.trim();
-        !v.is_empty() && !v.eq_ignore_ascii_case("0") && !v.eq_ignore_ascii_case("false")
-    }
-
     use sqlx::sqlite::SqlitePoolOptions;
     use xvision_observability::trajectory::store::{STATUS_COMPLETE, STATUS_CORRUPT};
+
+    /// Migration-040 SQL (trajectory tables). §6 moved the production apply
+    /// into the main API migrator; these unit tests provision the schema on
+    /// their throwaway pool directly so they don't need a full
+    /// `ApiContext::open`.
+    const MIGRATION_040_TEST: &str = include_str!("../../migrations/040_trajectory_frames.sql");
 
     async fn fresh_store(tmp: &tempfile::TempDir) -> Arc<TrajectoryStore> {
         let url = format!("sqlite://{}?mode=rwc", tmp.path().join("t.db").display());
@@ -269,10 +224,13 @@ mod tests {
             .connect(&url)
             .await
             .unwrap();
+        // The store no longer self-migrates (§6) — provision the tables the
+        // way the main migrator does.
+        sqlx::query(MIGRATION_040_TEST).execute(&pool).await.unwrap();
         Arc::new(
             open_store(pool, tmp.path().join("blobs"))
                 .await
-                .expect("open store applies migration 040"),
+                .expect("open store over a migrated pool"),
         )
     }
 
@@ -329,8 +287,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn open_store_is_idempotent() {
-        // Opening twice over the same pool must not error (IF NOT EXISTS).
+    async fn open_store_reopen_over_migrated_pool_is_a_noop() {
+        // §6: the store no longer applies migration 040 — the main API
+        // migrator does. Opening the store twice over an already-migrated
+        // pool must not error (it just wraps the pool + blob store; there is
+        // no migration to double-apply).
         let tmp = tempfile::TempDir::new().unwrap();
         let url = format!("sqlite://{}?mode=rwc", tmp.path().join("t.db").display());
         let pool = SqlitePoolOptions::new()
@@ -338,6 +299,7 @@ mod tests {
             .connect(&url)
             .await
             .unwrap();
+        sqlx::query(MIGRATION_040_TEST).execute(&pool).await.unwrap();
         open_store(pool.clone(), tmp.path().join("blobs")).await.unwrap();
         open_store(pool, tmp.path().join("blobs")).await.unwrap();
     }

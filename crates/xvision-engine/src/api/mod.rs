@@ -100,6 +100,15 @@ const MIGRATION_038_EVAL_RUNS_LIVE_CONFIG: &str =
 /// columns may already exist on a partially-migrated DB.
 const MIGRATION_039_RUN_TRAJECTORY_MODE: &str =
     include_str!("../../migrations/039_run_trajectory_mode.sql");
+/// Stage 2 (Cline runtime unification, Trajectory Record): the
+/// `trajectory_recordings` + `trajectory_frames` tables. Applied via
+/// `migrate_trajectory_frames` (guarded on the recordings table existing)
+/// so re-opening an already-migrated home is a no-op. Moved here from the
+/// ad-hoc `cline_recording::ensure_tables` idempotent-apply (§6): every
+/// `ApiContext::open` now provisions the trajectory store schema, and the
+/// store itself opens against the already-migrated pool.
+const MIGRATION_040_TRAJECTORY_FRAMES: &str =
+    include_str!("../../migrations/040_trajectory_frames.sql");
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -269,6 +278,7 @@ impl ApiContext {
         migrate_review_annotations_and_autofire(&pool).await?;
         migrate_eval_runs_live_config(&pool).await?;
         migrate_run_trajectory_mode(&pool).await?;
+        migrate_trajectory_frames(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -1034,6 +1044,29 @@ async fn migrate_eval_runs_live_config(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_run_trajectory_mode(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agent_runs", "trajectory_mode").await? {
         sqlx::query(MIGRATION_039_RUN_TRAJECTORY_MODE)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Stage 2 (Cline runtime unification, Trajectory Record) + §6 relocation.
+/// Creates the `trajectory_recordings` + `trajectory_frames` tables. The
+/// migration SQL uses plain `CREATE TABLE` (not `IF NOT EXISTS`), so this
+/// is guarded on the recordings table existing — re-opening an
+/// already-migrated home short-circuits and is a no-op. The two
+/// `CREATE TABLE` + index statements run as a single multi-statement query
+/// (the SQLite driver executes the whole script).
+///
+/// Before §2-D/§6 this schema was applied ad-hoc + idempotently inside
+/// `cline_recording::open_store::ensure_tables`. Folding it into the main
+/// migrator means every `ApiContext::open` (and every test harness that
+/// builds a `RunStore` / opens a pool through `open`) has the trajectory
+/// tables, and the trajectory store opens against the already-migrated DB
+/// instead of self-applying.
+async fn migrate_trajectory_frames(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "trajectory_recordings").await? {
+        sqlx::query(MIGRATION_040_TRAJECTORY_FRAMES)
             .execute(pool)
             .await?;
     }

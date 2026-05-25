@@ -243,6 +243,7 @@ async fn run_tiny_notional_probe(
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),
+            trajectory_mode: Default::default(),
         },
         broker,
         long_open_dispatch(),

@@ -638,6 +638,9 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         auto_fire_review: source.auto_fire_review,
         review_model: source.review_model.clone(),
         max_annotations_per_review: source.max_annotations_per_review,
+        // Retries default to no recording (Live); a re-record is requested
+        // explicitly via a fresh launch.
+        trajectory_mode: RunTrajectoryMode::default(),
     };
     let detail = start_run(ctx, req).await?;
     Ok(RetryOutcome {
@@ -914,6 +917,47 @@ pub struct ProviderOverride {
     pub model: String,
 }
 
+/// §2-D — per-run trajectory-recording mode. The operator's chosen driver
+/// for Cline trajectory recording (replaces the §2-B `XVN_TRAJECTORY_RECORD`
+/// env gate). Mirrors the request-field shape the CLI ab-compare path uses
+/// (`xvision_eval::ab_compare::AbTrajectoryMode`): the caller declares intent
+/// on the request, the engine acts on it.
+///
+/// * `Live` (default) — no recording. Byte-identical to the pre-§2-D /
+///   pre-§2-B behaviour for backtest + live + non-record Cline runs:
+///   `trajectory_mode != Record` ⇒ `recording_request = None` ⇒ the §2-B
+///   `None` spawn path (no event sink bound).
+/// * `Record` — mint a trajectory recording for the run's primary recorded
+///   slot and bind the event sink so frames persist into the store.
+///
+/// Replay through the engine eval path is intentionally NOT a variant here:
+/// today replay is driven only from the dedicated CLI record/replay entry
+/// point (`xvn ab-compare --replay`, `AbTrajectoryMode::Replay`) and the
+/// per-cycle pipeline dispatch hard-codes `execute_cline::TrajectoryMode::Record`
+/// (live/record). Adding engine-eval replay would require threading a
+/// recording id + store into every slot dispatch — out of scope for §2-D.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunTrajectoryMode {
+    /// No recording (default — preserves byte-identity for non-record runs).
+    #[default]
+    Live,
+    /// Mint a recording for this run and persist trajectory frames.
+    Record,
+}
+
+impl RunTrajectoryMode {
+    /// True when this run should mint a trajectory recording.
+    pub fn records(self) -> bool {
+        matches!(self, RunTrajectoryMode::Record)
+    }
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -992,6 +1036,15 @@ pub struct EvalRunRequest {
     /// run so UI/CLI launches round-trip their annotation budget.
     #[serde(default)]
     pub max_annotations_per_review: Option<u32>,
+    /// §2-D — per-run Cline trajectory-recording mode. The operator-chosen
+    /// driver for recording (replaces the §2-B `XVN_TRAJECTORY_RECORD` env
+    /// gate). `Live` (default) records nothing and is byte-identical to the
+    /// pre-§2-D behaviour; `Record` mints a trajectory recording for the
+    /// run's primary recorded slot. Only consulted when the run's
+    /// `agent_runtime` resolves to `Cline`; backtest/live LlmDispatch runs
+    /// ignore it. CLI: `--record-trajectory`.
+    #[serde(default)]
+    pub trajectory_mode: RunTrajectoryMode,
 }
 
 /// Stable role string used on the `supervisor_notes` row that captures
@@ -1873,8 +1926,9 @@ async fn spawn_cline_ctx(
     })?;
     let api_key = resolve_provider_api_key(&entry)?;
 
-    // §2-B: when recording is requested (env gate on) AND we have a primary
-    // slot role to key it by, mint the recording BEFORE spawning the client
+    // §2-B/§2-D: when recording is requested (per-run `trajectory_mode =
+    // record`) AND we have a primary slot role to key it by, mint the
+    // recording BEFORE spawning the client
     // so the event sink is bound to the store + recording id. The record
     // path and the replay path build the same TrajectoryKey
     // (`cline_recording::build_key`), so a recorded run replays from the
@@ -2229,9 +2283,10 @@ async fn run_inner(
     // an unset XVN_AGENTD_BIN surfaces as a typed error here — never a
     // silent fallback (provider-matrix + failure contracts).
     let agent_runtime = resolve_agent_runtime(ctx).await;
-    // `run_recording` is `Some` only when recording is enabled (the env
-    // gate) AND a Cline client was spawned with a recording sink. The eval
-    // finalizer below closes it out (complete / corrupt) after the run.
+    // `run_recording` is `Some` only when recording is enabled (per-run
+    // `trajectory_mode = record`) AND a Cline client was spawned with a
+    // recording sink. The eval finalizer below closes it out (complete /
+    // corrupt) after the run.
     let (cline_ctx, run_recording) = if matches!(agent_runtime, AgentRuntime::Cline) {
         let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
         let cfg_path = runtime_config_path(ctx);
@@ -2245,12 +2300,14 @@ async fn run_inner(
                     u.hint
                 ))
             })?;
-        // §2-B: build the recording request when the env gate is on and we
-        // can identify a primary recorded slot (the trader). The recording
-        // is keyed by this slot's role, which the dispatcher then stamps on
-        // every recorded frame (footgun c coupling). Recording OFF ⇒ `None`
-        // ⇒ the spawn binds no sink and the live path is unchanged.
-        let recording_request = if crate::agent::cline_recording::record_enabled() {
+        // §2-D: build the recording request when the run's per-run
+        // `trajectory_mode` selects `Record` (the operator-chosen config
+        // driver — replaces the §2-B env gate) and we can identify a primary
+        // recorded slot (the trader). The recording is keyed by this slot's
+        // role, which the dispatcher then stamps on every recorded frame
+        // (footgun c coupling). `trajectory_mode != Record` ⇒ `None` ⇒ the
+        // spawn binds no sink and the live path is byte-identical to pre-§2-D.
+        let recording_request = if req.trajectory_mode.records() {
             primary_recorded_slot(&strategy, &agent_slots).map(|(slot_role, model)| {
                 RecordingRequest {
                     run_id: run.id.clone(),

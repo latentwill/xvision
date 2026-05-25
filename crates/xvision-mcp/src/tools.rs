@@ -1193,6 +1193,7 @@ impl XvisionTools {
                 auto_fire_review: false,
                 review_model: None,
                 max_annotations_per_review: Some(8),
+                trajectory_mode: api_eval::RunTrajectoryMode::default(),
             };
 
             let entry = match api_eval::run(&ctx, run_req).await {

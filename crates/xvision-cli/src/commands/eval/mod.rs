@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use xvision_engine::api::eval::{
-    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride,
+    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride, RunTrajectoryMode,
 };
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
@@ -230,6 +230,13 @@ pub struct RunArgs {
     /// Maximum chart annotations a review should emit.
     #[arg(long, default_value_t = 8)]
     pub max_review_annotations: u32,
+    /// Record the Cline agent trajectory for this run (§2-D). Only effective
+    /// when the run's `agent_runtime` resolves to `cline`; mints a trajectory
+    /// recording for the run's primary recorded slot so the run can later be
+    /// replayed deterministically. Off by default (no recording — the run is
+    /// byte-identical to a non-recorded run). Mirrors `xvn ab-compare --record`.
+    #[arg(long)]
+    pub record_trajectory: bool,
 }
 
 #[derive(Args, Debug)]
@@ -659,6 +666,13 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         auto_fire_review: args.auto_fire_review,
         review_model,
         max_annotations_per_review: Some(args.max_review_annotations),
+        // §2-D: `--record-trajectory` selects Record; default is Live (no
+        // recording — byte-identical to a non-recorded run).
+        trajectory_mode: if args.record_trajectory {
+            RunTrajectoryMode::Record
+        } else {
+            RunTrajectoryMode::Live
+        },
     };
 
     // Banner — operator-facing progress, never on stdout. Stays visible
