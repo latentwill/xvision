@@ -38,6 +38,18 @@ use xvision_engine::safety::VenueLabel;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
+/// Output format for list/status commands.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// Human-readable tab-separated columns (default).
+    #[default]
+    Table,
+    /// Pretty-printed JSON.
+    Json,
+    /// Compact single-line JSON.
+    JsonCompact,
+}
+
 /// Map an engine ApiError to our exit-code-bearing CliError. Variants
 /// carry meaning that's worth preserving on the wire, so we don't fall
 /// back to the default Upstream coercion.
@@ -227,7 +239,12 @@ pub struct ListArgs {
     /// Only show runs in this status (queued | running | completed | failed | cancelled).
     #[arg(long)]
     pub status: Option<String>,
-    /// Output as JSON (otherwise tab-separated columns).
+    /// Output format: `table` (default), `json` (pretty), or `json-compact` (single line).
+    /// `--json` is an alias for `--format json-compact`.
+    #[arg(long, value_name = "FORMAT", default_value = "table")]
+    pub format: OutputFormat,
+    /// Output as compact JSON (alias for `--format json-compact`).
+    /// Explicit `--format` takes precedence.
     #[arg(long)]
     pub json: bool,
 }
@@ -718,10 +735,29 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
     let runs = eval::list(&ctx, req)
         .await
         .map_err(|e| api_to_cli("eval list", e))?;
-    if args.json {
-        crate::io::print_json(&runs)?;
-        return Ok(());
+
+    // Resolve effective format: explicit --format wins; --json is alias for
+    // json-compact (matches the legacy behaviour).
+    let effective_format = if args.format != OutputFormat::Table {
+        args.format
+    } else if args.json {
+        OutputFormat::JsonCompact
+    } else {
+        OutputFormat::Table
+    };
+
+    match effective_format {
+        OutputFormat::Json => {
+            crate::io::print_json(&runs)?;
+            return Ok(());
+        }
+        OutputFormat::JsonCompact => {
+            crate::io::print_json_compact(&runs)?;
+            return Ok(());
+        }
+        OutputFormat::Table => {}
     }
+
     if runs.is_empty() {
         println!("(no runs)");
         return Ok(());

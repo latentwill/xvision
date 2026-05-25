@@ -25,6 +25,7 @@ use xvision_engine::api::experiment::{
 };
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 
+use crate::commands::eval::OutputFormat;
 use crate::exit::{CliError, CliResult, XvnExit};
 
 // ── Top-level command ────────────────────────────────────────────────────────
@@ -86,7 +87,12 @@ pub struct NewArgs {
 
 #[derive(Args, Debug)]
 pub struct LsArgs {
-    /// Emit as a JSON array.
+    /// Output format: `table` (default), `json` (pretty), or `json-compact` (single line).
+    /// `--json` is an alias for `--format json-compact`.
+    #[arg(long, value_name = "FORMAT", default_value = "table")]
+    pub format: OutputFormat,
+    /// Emit as compact JSON (alias for `--format json-compact`).
+    /// Explicit `--format` takes precedence.
     #[arg(long)]
     pub json: bool,
 }
@@ -177,9 +183,29 @@ async fn run_ls(args: LsArgs, xvn_home: Option<PathBuf>) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("list_experiments", e))?;
 
-    if args.json {
-        crate::io::print_json(&experiments)?;
-    } else if experiments.is_empty() {
+    // Resolve effective format: explicit --format wins; --json is alias for
+    // json-compact (matches the legacy behaviour).
+    let effective_format = if args.format != OutputFormat::Table {
+        args.format
+    } else if args.json {
+        OutputFormat::JsonCompact
+    } else {
+        OutputFormat::Table
+    };
+
+    match effective_format {
+        OutputFormat::Json => {
+            crate::io::print_json(&experiments)?;
+            return Ok(());
+        }
+        OutputFormat::JsonCompact => {
+            crate::io::print_json_compact(&experiments)?;
+            return Ok(());
+        }
+        OutputFormat::Table => {}
+    }
+
+    if experiments.is_empty() {
         println!("(no experiments)");
     } else {
         for exp in &experiments {
