@@ -8,6 +8,7 @@ pub mod api;
 pub mod authoring;
 pub mod baselines;
 pub mod chat_session;
+pub mod checkpoint;
 pub mod error;
 pub mod eval;
 pub mod focus;
@@ -23,6 +24,12 @@ pub mod tools;
 pub use error::EngineError;
 pub use focus::FocusDoc;
 pub use strategies::Strategy;
+
+// Phase 2.5 chat-rail checkpoints: content-addressed snapshot + verbatim
+// restore of a session's mutable authoring artifacts.
+pub use checkpoint::{
+    CapturedArtifact, Checkpoint, CheckpointError, CheckpointKind, Checkpointer, RestoreOutcome,
+};
 
 // Re-export strategy risk types so consumers don't have to depend on
 // xvision-core directly just to construct a Strategy.
