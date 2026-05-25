@@ -33,7 +33,6 @@ describe("license guard: API-key auth only", () => {
       provider_id: MOCK_PROVIDER_ID,
       model_id: "mock",
       api_key: "sk-test",
-      base_url: undefined,
       system_prompt: "decide",
       allowed_tools: [],
       budget_limits: { max_input_tokens: 1, max_output_tokens: 1, max_wall_ms: 1 },

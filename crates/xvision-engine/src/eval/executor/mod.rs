@@ -10,10 +10,12 @@
 //!   Built via [`Executor::backtest`]. Replays a parquet fixture in
 //!   chronological order, simulates fills with slippage + fees. No
 //!   broker required.
-//! - **Live** — `LiveStream` + `WallClock` + `RealBrokerFills`. Built
-//!   via [`Executor::live`], which currently returns a not-implemented
-//!   error pending the `live-bar-source-alpaca` track. The signature
-//!   exists so the API dispatch can route to it once that track lands.
+//! - **Live** — `MultiLiveStream` + `WallClock` + `RealBrokerFills`.
+//!   Built via [`Executor::live`]. Alpaca paper live is wired end-to-end
+//!   for one or more assets: each active asset is fanned out into its own
+//!   `LiveStream` and merged by `MultiLiveStream` (§4 L2 multi-asset
+//!   fanout). A single active asset is a 1-element `MultiLiveStream`,
+//!   behaviourally identical to the L1 single `LiveStream`.
 //!
 //! Callers (`engine::api::eval::run`, the eval CLI) pick a constructor
 //! by `RunMode` and call [`RunExecutor::run`] once per `xvn eval run`
@@ -42,7 +44,7 @@ use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
 pub use backtest::Executor;
-pub use live_source::{LiveStream, LiveStreamError};
+pub use live_source::{LiveStream, LiveStreamError, MultiLiveStream, TaggedBar};
 pub use real_broker_fills::RealBrokerFills;
 pub use trace_types::{
     AggressorSide, DecisionTrace, FeeSource, FillBranch, FillTrace, ToolCall, DECISIONS_SCHEMA_VERSION,
