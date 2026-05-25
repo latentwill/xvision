@@ -146,7 +146,8 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, focus as focus_route,
     health::health,
-    memory as memory_route, safety as safety_route, scenarios, search as search_route, settings, skills,
+    memory as memory_route, optimizations as optimizations_route, safety as safety_route,
+    scenarios, search as search_route, settings, skills,
     static_files, strategies, strategies_folder as strategies_folder_route, wizard,
 };
 use crate::state::AppState;
@@ -259,6 +260,10 @@ fn readonly_router(state: AppState) -> Router {
             "/api/chat-rail/sessions/:id/checkpoints",
             get(checkpoints_route::list),
         )
+        // Phase 3.7: optimizer run list + detail (dspy-free; reads the
+        // engine OptimizationStore).
+        .route("/api/optimizations", get(optimizations_route::list))
+        .route("/api/optimizations/:id", get(optimizations_route::get))
         .with_state(state)
 }
 
@@ -377,6 +382,15 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/settings/danger/factory-reset",
             post(settings::danger::factory_reset),
+        )
+        // ── Optimizations (Phase 3.7) ─────────────────────────────────────
+        .route(
+            "/api/optimizations/:id/accept",
+            post(optimizations_route::accept),
+        )
+        .route(
+            "/api/optimizations/:id/revert",
+            post(optimizations_route::revert),
         )
         // Safety API: pause gate + audit log (v2b-broker-wallet-kill-switch).
         .route("/api/safety/state", get(safety_route::get_state_handler))

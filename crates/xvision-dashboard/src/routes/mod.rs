@@ -13,6 +13,7 @@ pub mod eval_runs;
 pub mod focus;
 pub mod health;
 pub mod memory;
+pub mod optimizations;
 pub mod safety;
 pub mod scenarios;
 pub mod search;
