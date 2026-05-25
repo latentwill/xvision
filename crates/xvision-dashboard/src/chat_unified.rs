@@ -72,10 +72,19 @@ pub struct WizardEventProjector {
 
 impl WizardEventProjector {
     pub fn new(session_id: impl Into<String>, scope: &ContextScope) -> Self {
+        Self::new_seeded(session_id, scope, 0)
+    }
+
+    /// Construct a projector whose first projected event gets sequence
+    /// `start_seq`. Seed this with `SessionEventLog::next_seq` so the
+    /// per-session sequence continues monotonically across chat turns (each
+    /// turn spawns a fresh projector but the persisted log is the source of
+    /// truth for where the next seq picks up).
+    pub fn new_seeded(session_id: impl Into<String>, scope: &ContextScope, start_seq: u64) -> Self {
         Self {
             session_id: session_id.into(),
             scope: scope_to_event_scope(scope),
-            seq: 0,
+            seq: start_seq,
             tool_spans: HashMap::new(),
         }
     }
@@ -247,6 +256,17 @@ mod tests {
             }
             other => panic!("wrong payloads: {other:?}"),
         }
+    }
+
+    #[test]
+    fn new_seeded_continues_sequence_across_turns() {
+        // A prior turn persisted events 0..=4; the next turn's projector is
+        // seeded with next_seq = 5 so the unified sequence is gap-free.
+        let mut p = WizardEventProjector::new_seeded("sess_seed", &ContextScope::Workspace, 5);
+        let e0 = p.project("e0", WizardEvent::Token { text: "resume".into() }, ts(), || "sp".into());
+        let e1 = p.project("e1", WizardEvent::Done { draft_id: None }, ts(), || "sp".into());
+        assert_eq!(e0.seq, 5);
+        assert_eq!(e1.seq, 6);
     }
 
     #[test]

@@ -11,10 +11,12 @@
 //! are deferred to follow-up PRs.
 
 pub mod context;
+pub mod event_log;
 pub mod rich_blocks;
 pub mod store;
 
 pub use context::ContextScope;
+pub use event_log::SessionEventLog;
 pub use rich_blocks::{
     action_confirmation_card, build_inline_chart, inline_compare_chart_from_report,
     inline_equity_chart_from_run_detail, inline_returns_histogram_from_runs,

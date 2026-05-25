@@ -245,6 +245,9 @@ fn readonly_router(state: AppState) -> Router {
             get(settings::providers::get_catalog),
         )
         .route("/api/chat-rail/sessions/:id/history", get(chat_rail::history))
+        // Phase 1.2 unified session stream: replay persisted UnifiedEvents
+        // (resume by ?after_seq=<n>, default -1) then tail live events.
+        .route("/api/chat-rail/sessions/:id/stream", get(chat_rail::stream))
         .route("/api/chat-rail/sessions", get(chat_rail::list_sessions))
         .with_state(state)
 }

@@ -100,6 +100,23 @@ const MIGRATION_038_EVAL_RUNS_LIVE_CONFIG: &str =
 /// columns may already exist on a partially-migrated DB.
 const MIGRATION_039_RUN_TRAJECTORY_MODE: &str =
     include_str!("../../migrations/039_run_trajectory_mode.sql");
+/// Phase 1.2 (chat-rail unified stream): the persisted unified-event log
+/// (`session_events`). Applied via `migrate_session_events` (guarded on the
+/// table's existence) because the file is two statements — CREATE TABLE +
+/// CREATE INDEX — which a single `sqlx::query` cannot run together. The DDL
+/// is duplicated as the two constants below so each runs on its own.
+const MIGRATION_042_SESSION_EVENTS_TABLE: &str =
+    "CREATE TABLE IF NOT EXISTS session_events (\
+         event_id    TEXT PRIMARY KEY, \
+         session_id  TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE, \
+         seq         INTEGER NOT NULL, \
+         ts          TEXT NOT NULL, \
+         source      TEXT NOT NULL, \
+         kind        TEXT NOT NULL, \
+         payload_json TEXT NOT NULL\
+     )";
+const MIGRATION_042_SESSION_EVENTS_INDEX: &str =
+    "CREATE INDEX IF NOT EXISTS idx_session_events_seq ON session_events(session_id, seq)";
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -269,6 +286,7 @@ impl ApiContext {
         migrate_review_annotations_and_autofire(&pool).await?;
         migrate_eval_runs_live_config(&pool).await?;
         migrate_run_trajectory_mode(&pool).await?;
+        migrate_session_events(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -1037,6 +1055,20 @@ async fn migrate_run_trajectory_mode(pool: &SqlitePool) -> ApiResult<()> {
             .execute(pool)
             .await?;
     }
+    Ok(())
+}
+
+/// Apply migration 042 (`session_events`, the unified-event log). The two
+/// DDL statements are run separately because `sqlx::query` executes a single
+/// statement at a time. Both use `IF NOT EXISTS`, so the helper is idempotent
+/// across re-opens of the same `xvn_home`.
+async fn migrate_session_events(pool: &SqlitePool) -> ApiResult<()> {
+    sqlx::query(MIGRATION_042_SESSION_EVENTS_TABLE)
+        .execute(pool)
+        .await?;
+    sqlx::query(MIGRATION_042_SESSION_EVENTS_INDEX)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
