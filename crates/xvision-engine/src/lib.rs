@@ -10,6 +10,7 @@ pub mod baselines;
 pub mod chat_session;
 pub mod error;
 pub mod eval;
+pub mod focus;
 pub mod providers;
 pub mod safety;
 pub mod search;
@@ -20,6 +21,7 @@ pub mod tokens;
 pub mod tools;
 
 pub use error::EngineError;
+pub use focus::FocusDoc;
 pub use strategies::Strategy;
 
 // Re-export strategy risk types so consumers don't have to depend on
