@@ -10,6 +10,7 @@ import {
   durationSince,
   safeId,
 } from "@/lib/logger";
+import type { UnifiedEvent, UnifiedPayloadKind } from "./unified-events";
 
 // ContextScope mirrors `xvision_engine::chat_session::ContextScope`'s
 // serde tagged-union shape: `{ scope: <variant>, ...fields }`.
@@ -216,6 +217,14 @@ export function loadSessionHistory(sessionId: string): Promise<ChatMessage[]> {
   );
 }
 
+/**
+ * @deprecated Legacy `WizardEvent` POST generator. The unified event stream
+ * (`openUnifiedSessionStream`) is the source of truth for rail rows + the
+ * trace dock (Phase 1.2/1.4). `streamChat` is retained ONLY to drive the
+ * send/POST round-trip until the backend mirrors sends through the unified
+ * log; rows must project from `stores/session-events.ts`, not from these
+ * `WizardEvent`s. Do not add new row-rendering on this path.
+ */
 export async function* streamChat(
   req: {
     session_id: string;
@@ -351,6 +360,224 @@ export async function* streamChat(
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Unified session event stream (Phase 1.2/1.4).
+//
+// `GET /api/chat-rail/sessions/:id/stream?after_seq=<n>` (SSE, EventSource).
+// Each frame is `event: <kind>\ndata: <UnifiedEvent JSON>\n\n` where the JSON
+// matches `api/unified-events.ts` (adjacently tagged `{ kind, data }`). A
+// control frame `event: replay_complete\ndata: {"last_seq":N}\n\n` separates
+// the replayed history from the live tail.
+//
+// `after_seq = -1` (default) replays from the start. On reconnect we resume
+// from the last seq we successfully rendered. Backoff mirrors the
+// `SSE_BACKOFF_MS` schedule in `api/agent-runs.ts`.
+
+const UNIFIED_SSE_BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
+
+/** Default `after_seq` — replay the whole log from the start. */
+export const UNIFIED_STREAM_REPLAY_FROM_START = -1;
+
+export type UnifiedStreamHandlers = {
+  /** One parsed `UnifiedEvent` (replay or live tail). */
+  onEvent: (ev: UnifiedEvent) => void;
+  /** Fires when the replayed history ends and the live tail begins. */
+  onReplayComplete?: (lastSeq: number) => void;
+  /** Connection (re)opened — fires on first connect and each reconnect. */
+  onOpen?: () => void;
+  /** Terminal/transport error surfaced to the caller (reconnect continues). */
+  onError?: (err: unknown) => void;
+};
+
+/** Close handle returned by `openUnifiedSessionStream`. */
+export type UnifiedStreamHandle = () => void;
+
+/**
+ * Best-effort guard that a parsed object looks like a `UnifiedEvent`. We trust
+ * the SSE `event:` name for the kind but validate the envelope shape so a
+ * malformed frame is dropped rather than poisoning the reducer.
+ */
+function isUnifiedEvent(v: unknown): v is UnifiedEvent {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.event_id === "string" &&
+    typeof o.seq === "number" &&
+    typeof o.payload === "object" &&
+    o.payload !== null &&
+    typeof (o.payload as { kind?: unknown }).kind === "string"
+  );
+}
+
+/**
+ * Open the unified SSE stream for a chat-rail session. Replays history from
+ * `afterSeq` (pass `UNIFIED_STREAM_REPLAY_FROM_START` for the full log), then
+ * streams the live tail. Reconnects with exponential backoff, resuming from
+ * the highest seq seen so a dropped connection never replays already-rendered
+ * frames. Returns a `close()` handle.
+ */
+export function openUnifiedSessionStream(
+  sessionId: string,
+  afterSeq: number,
+  handlers: UnifiedStreamHandlers,
+): UnifiedStreamHandle {
+  const trace = createTrace("chat", {
+    stream_id: safeId(),
+    session_id: sessionId,
+    transport: "unified_sse",
+  });
+
+  let closed = false;
+  let attempt = 0;
+  let source: EventSource | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Highest seq we've handed to `onEvent`. Resume point on reconnect.
+  let lastSeqSeen = afterSeq;
+
+  const urlFor = (after: number): string => {
+    const id = encodeURIComponent(sessionId);
+    return `/api/chat-rail/sessions/${id}/stream?after_seq=${after}`;
+  };
+
+  const handleUnified = (kind: UnifiedPayloadKind) => (ev: MessageEvent) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(ev.data as string);
+    } catch {
+      trace.warn("chat.unified.malformed_frame", { kind });
+      return;
+    }
+    if (!isUnifiedEvent(parsed)) {
+      trace.warn("chat.unified.invalid_envelope", { kind });
+      return;
+    }
+    // Trust the wire `event:` name; the payload tag should agree.
+    if (parsed.payload.kind !== kind) {
+      trace.warn("chat.unified.kind_mismatch", {
+        event_name: kind,
+        payload_kind: parsed.payload.kind,
+      });
+    }
+    if (parsed.seq > lastSeqSeen) lastSeqSeen = parsed.seq;
+    handlers.onEvent(parsed);
+  };
+
+  const handleReplayComplete = (ev: MessageEvent) => {
+    let lastSeq = lastSeqSeen;
+    try {
+      const data = JSON.parse(ev.data as string) as { last_seq?: number };
+      if (typeof data.last_seq === "number") {
+        lastSeq = data.last_seq;
+        if (lastSeq > lastSeqSeen) lastSeqSeen = lastSeq;
+      }
+    } catch {
+      // Control frame is malformed; fall back to the highest seq we saw.
+    }
+    trace.debug("chat.unified.replay_complete", { last_seq: lastSeq });
+    handlers.onReplayComplete?.(lastSeq);
+  };
+
+  const connect = () => {
+    if (closed) return;
+    // Resume from the highest seq rendered so far (replays nothing already shown).
+    source = new EventSource(urlFor(lastSeqSeen));
+
+    source.addEventListener("open", () => {
+      attempt = 0;
+      trace.debug("chat.unified.open", { after_seq: lastSeqSeen });
+      handlers.onOpen?.();
+    });
+
+    // One listener per UnifiedPayload kind. EventSource only delivers a frame
+    // to the listener whose name matches the `event:` line, so we register
+    // every kind the contract can emit.
+    for (const kind of UNIFIED_EVENT_KINDS) {
+      source.addEventListener(kind, handleUnified(kind) as EventListener);
+    }
+    source.addEventListener("replay_complete", handleReplayComplete as EventListener);
+
+    source.addEventListener("error", (e) => {
+      if (closed) return;
+      handlers.onError?.(e);
+      source?.close();
+      source = null;
+      const delay =
+        UNIFIED_SSE_BACKOFF_MS[
+          Math.min(attempt, UNIFIED_SSE_BACKOFF_MS.length - 1)
+        ]!;
+      attempt += 1;
+      trace.warn("chat.unified.reconnect", { attempt, delay_ms: delay });
+      reconnectTimer = setTimeout(connect, delay);
+    });
+  };
+
+  connect();
+
+  return () => {
+    closed = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    source?.close();
+    source = null;
+    trace.debug("chat.unified.close", { last_seq: lastSeqSeen });
+  };
+}
+
+/**
+ * Every `UnifiedPayload` kind the stream can emit, as SSE `event:` names.
+ * Kept in sync with `api/unified-events.ts` (the contract). EventSource
+ * dispatches by event name, so each must be registered as a listener.
+ */
+const UNIFIED_EVENT_KINDS: readonly UnifiedPayloadKind[] = [
+  "session_created",
+  "session_resumed",
+  "session_interrupted",
+  "session_completed",
+  "session_failed",
+  "run_started",
+  "run_finished",
+  "run_interrupted",
+  "span_started",
+  "span_finished",
+  "model_call_finished",
+  "assistant_message_started",
+  "assistant_token_delta",
+  "assistant_content_block",
+  "assistant_message_done",
+  "tool_requested",
+  "tool_policy_checked",
+  "tool_approved",
+  "tool_started",
+  "tool_delta",
+  "tool_finished",
+  "tool_failed",
+  "tool_cancelled",
+  "tool_denied",
+  "broker_call_started",
+  "broker_call_finished",
+  "checkpoint_created",
+  "checkpoint_restored",
+  "checkpoint_restore_failed",
+  "focus_loaded",
+  "focus_edited",
+  "focus_injected",
+  "optimization_candidate_started",
+  "optimization_candidate_metric",
+  "optimization_candidate_selected",
+  "optimization_completed",
+  "memory_recall",
+  "artifact_written",
+  "supervisor_note",
+  "engine_event",
+  "error_missing_capability",
+  "error_missing_tool",
+  "error_invalid_schema",
+  "error_provider_unavailable",
+  "error_policy_denied",
+  "error_persistence_failed",
+  "sidecar_error",
+  "backpressure_dropped",
+];
 
 // ---------------------------------------------------------------------------
 // Scope derivation from the current location. The rail is mounted once in the
