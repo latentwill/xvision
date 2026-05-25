@@ -60,7 +60,7 @@ image is being prepared.
 | `xvision-cli` | `xvn` binary; subcommands under `src/commands/*.rs`, registered in `src/lib.rs` |
 | `xvision-dashboard` | axum HTTP server + embedded SPA; routes in `src/routes/*.rs` |
 | `xvision-eval` | Eval harness — A/B compare, baselines, gate logic |
-| `xvision-intern` | Intern backends (`OpenAICompatIntern`, `AnthropicIntern`, `AcpxIntern`) |
+| `xvision-intern` | Intern backends (`OpenAICompatIntern`, `AnthropicIntern`) |
 | `xvision-mcp` | stdio MCP tool surface (indicators + health) |
 | `xvision-execution` | Venue executors (Alpaca, Orderly) |
 | `xvision-identity` | ERC-8004 IdentityRegistry / ReputationRegistry client (opt-in) |
@@ -192,7 +192,7 @@ Full deploy mechanics + pitfalls in [`references/deploy.md`](references/deploy.m
 - **No Docker image builds on remote/deploy hosts.** Build locally; ship the image.
 - **`source .op_env` before `gh` / `op`** so GitHub + 1Password access come from the expected env.
 - **Push workflow-file changes with the classic PAT** (1Password `Olympus / Github Classic Token (No Admin/Delete)`). Default `gh` auth on `extndly-dev` lacks `workflow` scope.
-- **A/B cache pairing is tier-1.** Cache keys pair per `cycle_id` (formerly `setup_id`). `AcpxIntern` is agentic and **breaks** this — never use it for backtests / A/B compare. Use `OpenAICompatIntern` or `AnthropicIntern`.
+- **A/B cache pairing is tier-1.** Cache keys pair per `cycle_id` (formerly `setup_id`). Backtests / A/B compare require a deterministic intern backend — use `OpenAICompatIntern` or `AnthropicIntern`.
 - **No DB mocks in integration tests.** Production migrations need real exercise — mocked tests have masked broken migrations before.
 - **No backwards-compatibility shims for pre-rename names.** The setup→cycle rename was a pre-launch breaking change; don't re-introduce `setup_id` aliases.
 - **Dark mode borders:** never `border-white` / `border-gray-100/200` / `#fff` on cards. Use `border-border` or muted tones with `dark:` variants. (Workspace-wide rule from `/CLAUDE.md`.)

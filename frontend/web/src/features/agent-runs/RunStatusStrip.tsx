@@ -8,6 +8,7 @@ import type { AgentRunSummary } from "@/api/types-agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { spanColor } from "./span-colors";
+import { TrajectoryModePill } from "./TrajectoryModeBadge";
 
 // ── Exported types ────────────────────────────────────────────────────────────
 
@@ -247,6 +248,12 @@ export function RunStatusStrip({
         >
           {conf.label}
         </span>
+        {/* Trajectory-mode pill — shown only when backend field is present.
+            Renders beside the status dot so operators see live/record/replay
+            at a glance without reading the detail card. */}
+        {summary.trajectory_mode ? (
+          <TrajectoryModePill mode={summary.trajectory_mode} />
+        ) : null}
       </div>
 
       {/* Divider */}

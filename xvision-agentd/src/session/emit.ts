@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { emitNotification } from "../transport/event-client.js"
+import type { TrajectoryFrame } from "./frame-types.js"
 
 /**
  * Notification methods sent from the sidecar to the Rust client.
@@ -20,6 +21,7 @@ export const NOTIFY = {
   AssistantTextDelta: "event.assistant_text_delta",
   Overloaded: "event.overloaded",
   Error: "event.error",
+  TrajectoryFrame: "event.trajectory_frame",
 } as const
 
 export function newSpanId(): string {
@@ -153,4 +155,22 @@ export function emitOverloaded(params: {
 
 export function emitError(params: { run_id: string; message: string; severity: "info" | "warn" | "error" }): void {
   void emitNotification(NOTIFY.Error, params)
+}
+
+/**
+ * Emit a single trajectory frame over the notification socket.
+ *
+ * Frames are non-droppable (a missing frame invalidates the recording), so
+ * this always emits — unlike the lossy observability ring that can drop events
+ * under pressure. The Rust consumer routes `event.trajectory_frame`
+ * notifications to the bounded `FrameChannel` which applies backpressure
+ * (blocks the producer) rather than dropping.
+ *
+ * The `run_id` is deliberately not included here: frames are tied to a
+ * recording id on the Rust side, not a sidecar run id. The transport layer
+ * delivers them in order on the notification socket, so the consumer can
+ * associate frames with the current open recording.
+ */
+export function emitFrame(frame: TrajectoryFrame): void {
+  void emitNotification(NOTIFY.TrajectoryFrame, frame)
 }

@@ -1,6 +1,7 @@
 import type { Agent } from "@cline/sdk"
 import type { CumulativeUsage } from "./budget.js"
 import { emptyUsage } from "./budget.js"
+import type { TrajectoryFrame } from "./frame-types.js"
 
 export interface BudgetLimits {
   max_input_tokens: number
@@ -16,6 +17,24 @@ export interface StartRunConfig {
   system_prompt: string
   allowed_tools: string[]
   budget_limits: BudgetLimits
+  /**
+   * JSON schema the agent's `submit_decision` payload must match. Required by
+   * the start_run validator whenever `allowed_tools` includes `submit_decision`;
+   * used as the lifecycle tool's `inputSchema`.
+   */
+  decision_schema?: Record<string, unknown>
+  /**
+   * When true, the model-wrapper tap records a `Request` frame + one frame per
+   * `AgentModelEvent`, and tool-shim records a `ToolResult` frame for every
+   * tool execution. Frames are emitted via `emitFrame` (non-droppable) so the
+   * Rust side can persist them to the trajectory store.
+   *
+   * Opt-in: recording is disabled by default to avoid overhead on runs that
+   * don't need replay fidelity (e.g. paper-trading, live runs where the caller
+   * hasn't opted in). Set to true for backtests and any run requiring Stage 3
+   * replay.
+   */
+  record?: boolean
 }
 
 export interface Session {
@@ -29,6 +48,18 @@ export interface Session {
    * against `config.budget_limits` to enforce the per-run token caps.
    */
   usage: CumulativeUsage
+  /**
+   * JSON the agent submitted via the `submit_decision` lifecycle tool, if any.
+   * Captured locally by build-agent.ts's tool callback; surfaced on
+   * `StepResult.decision_json` after the step completes.
+   */
+  decisionJson?: string
+  /**
+   * Recorded trajectory frames loaded for replay. When set, the next
+   * `session.step` drives the agent with a buildReplayModel instead of
+   * a live provider or mock. Set via `session.replay_load`.
+   */
+  replayFrames?: TrajectoryFrame[]
 }
 
 export interface SessionStore {
@@ -41,6 +72,18 @@ export interface SessionStore {
    * are then checked against the new totals.
    */
   addUsage(run_id: string, delta: Partial<CumulativeUsage>): CumulativeUsage
+  /** Store the JSON submitted via `submit_decision` for this run. */
+  setDecisionJson(run_id: string, json: string): void
+  /** Read the `submit_decision` JSON captured for this run, if any. */
+  getDecisionJson(run_id: string): string | undefined
+  /**
+   * Store replay frames for this run. After calling this, the next
+   * `session.step` will drive the agent with a replay model built from
+   * these frames instead of a live provider.
+   */
+  setReplayFrames(run_id: string, frames: TrajectoryFrame[]): void
+  /** Read the replay frames loaded for this run, if any. */
+  getReplayFrames(run_id: string): TrajectoryFrame[] | undefined
   /**
    * Current monotonic clock for this store. Budget enforcement reads
    * this so the same clock that stamped `created_at_ms` also computes
@@ -95,6 +138,22 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
         s.usage.output_tokens += delta.output_tokens
       }
       return { ...s.usage }
+    },
+    setDecisionJson(run_id, json) {
+      const s = sessions.get(run_id)
+      if (!s) throw new Error(`session not found: ${run_id}`)
+      s.decisionJson = json
+    },
+    getDecisionJson(run_id) {
+      return sessions.get(run_id)?.decisionJson
+    },
+    setReplayFrames(run_id, frames) {
+      const s = sessions.get(run_id)
+      if (!s) throw new Error(`session not found: ${run_id}`)
+      s.replayFrames = frames
+    },
+    getReplayFrames(run_id) {
+      return sessions.get(run_id)?.replayFrames
     },
     now() {
       return now()

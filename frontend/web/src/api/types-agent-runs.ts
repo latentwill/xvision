@@ -166,6 +166,19 @@ export type ToolCall = {
   finished_at: string | null;
 };
 
+/**
+ * Trajectory mode set on the `agent_runs` row by the engine
+ * (migration 039). Declared here so the UI can render defensively
+ * even before all API paths expose the field.
+ *
+ * - `live`   — real-time execution against a live provider (default).
+ * - `record` — live execution with trajectory frames recorded to the
+ *              TrajectoryStore for later replay.
+ * - `replay` — deterministic re-execution driven by previously-recorded
+ *              frames; zero provider calls.
+ */
+export type TrajectoryMode = "live" | "record" | "replay";
+
 export type AgentRunSummary = {
   run_id: string;
   objective: string;
@@ -189,6 +202,30 @@ export type AgentRunSummary = {
    * and (when `full_debug`) the warning banner about on-disk payloads.
    */
   retention_mode: RetentionMode;
+  /**
+   * Trajectory execution mode (migration 039). Absent on runs predating
+   * the migration — treat as `"live"` for rendering. Populated by the
+   * Cline runtime; always `"live"` on the LlmDispatch path.
+   */
+  trajectory_mode?: TrajectoryMode;
+  /**
+   * Fraction of model-call steps served from recorded frames during a
+   * `replay` run. Absent on `live` / `record` runs. Range [0, 1].
+   */
+  replay_hit_ratio?: number | null;
+  /**
+   * Count of trajectory events that could not be replayed / delivered
+   * due to buffer pressure. Absent when zero or on non-replay runs.
+   */
+  dropped_events?: number;
+  /**
+   * Machine-readable reason the replay was terminated or aborted early.
+   * Known values (from Stages 2–3):
+   *   `replay_divergence`        — agent made a different tool call than recorded.
+   *   `replay_frames_exhausted`  — ran out of recorded frames before agent finished.
+   * Absent on runs that completed cleanly or are not in replay mode.
+   */
+  recovery_reason?: string | null;
 };
 
 export type AgentRunDetail = {

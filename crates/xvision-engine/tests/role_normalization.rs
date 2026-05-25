@@ -123,6 +123,8 @@ async fn pipeline_output_assigned_for_role_variants() {
             filter_ctx: None,
             trace_attrs: None,
             recorder: None,
+            runtime: Default::default(),
+            cline: None,
         })
         .await
         .expect("pipeline runs");

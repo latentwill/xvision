@@ -230,6 +230,16 @@ pub enum Command {
         /// endpoints that don't require auth.
         #[arg(long, default_value = "OPENAI_API_KEY")]
         trader_api_key_env: String,
+        /// Record trajectories for this run (Stage 3, item 10). Mutually
+        /// exclusive with `--replay`. Default behavior (neither flag) is
+        /// record, preserving prior behavior during the transition.
+        #[arg(long, conflicts_with = "replay")]
+        record: bool,
+        /// Replay a previously-recorded trajectory set by id — deterministic,
+        /// no fresh intern/trader calls, bit-stable across reruns. Mutually
+        /// exclusive with `--record`.
+        #[arg(long)]
+        replay: Option<String>,
     },
     /// Strategy authoring (create / validate / ls / show / templates / run).
     Strategy(commands::strategy::StrategyCmd),
@@ -282,6 +292,8 @@ pub enum Command {
     /// Bounded (strategy × model) bakeoff verb. See
     /// `team/contracts/cli-model-bakeoff.md`.
     Model(commands::model::ModelCmd),
+    /// Trajectory store operations — inspect / validate / purge / reindex.
+    Trajectory(commands::trajectory::TrajectoryCmd),
 }
 
 impl Cli {
@@ -359,6 +371,8 @@ impl Cli {
                 trader_base_url,
                 trader_model,
                 trader_api_key_env,
+                record,
+                replay,
             } => commands::ab_compare::run(
                 cycles,
                 bars,
@@ -377,6 +391,8 @@ impl Cli {
                 trader_base_url,
                 trader_model,
                 trader_api_key_env,
+                record,
+                replay,
             )
             .await
             .map_err(Into::into),
@@ -402,6 +418,7 @@ impl Cli {
             Command::Experiment(cmd) => commands::experiment::run(cmd).await,
             Command::Memory(cmd) => commands::memory::run(cmd).await,
             Command::Model(cmd) => commands::model::run(cmd).await,
+            Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
         }
     }
 }

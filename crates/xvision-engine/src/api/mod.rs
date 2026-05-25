@@ -94,6 +94,12 @@ const MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID: &str =
     include_str!("../../migrations/036_agents_scope_strategy_id.sql");
 const MIGRATION_038_EVAL_RUNS_LIVE_CONFIG: &str =
     include_str!("../../migrations/038_eval_runs_live_config.sql");
+/// Stage 1 (Cline runtime unification, operational-visibility contract
+/// item 3): adds `trajectory_mode` (+ sibling Stage 2-3 columns) to
+/// `agent_runs`. Applied via `migrate_run_trajectory_mode` because the
+/// columns may already exist on a partially-migrated DB.
+const MIGRATION_039_RUN_TRAJECTORY_MODE: &str =
+    include_str!("../../migrations/039_run_trajectory_mode.sql");
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -262,6 +268,7 @@ impl ApiContext {
         migrate_agents_scope_strategy_id(&pool).await?;
         migrate_review_annotations_and_autofire(&pool).await?;
         migrate_eval_runs_live_config(&pool).await?;
+        migrate_run_trajectory_mode(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -1015,6 +1022,21 @@ async fn migrate_eval_runs_live_config(pool: &SqlitePool) -> ApiResult<()> {
         .execute(pool)
         .await?;
     sqlx::query(MIGRATION_012_RUNS_FK).execute(pool).await?;
+    Ok(())
+}
+
+/// Stage 1 (Cline runtime unification, operational-visibility contract
+/// item 3). Adds `trajectory_mode` (+ Stage 2-3 sibling columns) to
+/// `agent_runs`. Idempotent: guarded on `trajectory_mode` existing so
+/// re-opening the same `xvn_home` is a no-op. The four `ALTER TABLE ADD
+/// COLUMN` statements in `MIGRATION_039_RUN_TRAJECTORY_MODE` execute as a
+/// single multi-statement query (the SQLite driver runs all of them).
+async fn migrate_run_trajectory_mode(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agent_runs", "trajectory_mode").await? {
+        sqlx::query(MIGRATION_039_RUN_TRAJECTORY_MODE)
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 

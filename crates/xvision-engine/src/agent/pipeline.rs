@@ -151,6 +151,17 @@ pub struct PipelineInputs<'a> {
     /// existing call site keeps working until its entry point is
     /// migrated to construct one of the two implementors.
     pub recorder: Option<&'a (dyn xvision_observability::Recorder + 'a)>,
+    /// Stage 1 (Cline runtime unification) — which runtime drives the
+    /// LLM-backed slots. `LlmDispatch` (the default) keeps the raw-reqwest
+    /// path; `Cline` routes Trader / Router slots through the sidecar, but
+    /// only when `cline` is `Some`. Every existing call site inherits
+    /// `LlmDispatch` via `Default` without code changes; the eval entry
+    /// point sets it from `RuntimeConfig.agent_runtime`.
+    pub runtime: xvision_core::config::AgentRuntime,
+    /// The live sidecar context, present only when the eval entry point
+    /// spawned a Cline client for this run. `None` keeps every dispatch on
+    /// `LlmDispatch`.
+    pub cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
 }
 
 /// Phase C — runtime context owned by the executor for the duration
@@ -603,6 +614,8 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 total_agents: n,
                 activates: capability,
                 recorder: input.recorder,
+                runtime: input.runtime,
+                cline: input.cline.clone(),
             })
             .await?
         };
@@ -744,6 +757,8 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         total_agents: n,
                         activates: capability,
                         recorder: input.recorder,
+                        runtime: input.runtime,
+                        cline: input.cline.clone(),
                     })
                     .await?;
                     total_in += outcome2.input_tokens;
