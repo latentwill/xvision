@@ -26,6 +26,7 @@ experiment orchestration.
 | `set-pipeline <strategy-id> --kind single\|sequential\|graph [--edge from:to …]` | Set the strategy pipeline shape; repeat `--edge` for graph edges. |
 | `run <id> --fixture <name> [--decisions <n>] [--mock]` | Run a strategy inline against a fixture parquet; `--mock` uses deterministic dispatch with no API calls. |
 | `migrate-agents [--dry-run]` | Migrate legacy slot-shaped strategies into agent references; `--dry-run` previews without writing. |
+| `diagnostics <id> [--json]` | Capability-completeness readiness report for every agent slot in the strategy: which capabilities are required, which are unmet (and why), and which are optimizable now. Exits `14` (`OptValidation`) when the strategy is **not launchable**, `4` (`NotFound`) for an unknown id. See [Capability diagnostics](#capability-diagnostics). |
 
 **Atomic-mode hypothesis flags** (usable with `create --template` or `create --from-file`):
 
@@ -134,6 +135,100 @@ pretty-printed) or `json-compact` (single-line, suitable for piping). Alias:
 
 ---
 
+### `xvn agent inspect <agent-id> --diagnostics`
+
+Per-agent capability readiness, independent of any strategy. For each
+capability the agent's slots declare, it reports `slot`, `has_prompt`,
+`has_model_binding`, the `required_tools`, whether the runtime supports the
+capability, and whether it is `optimizable` (has a DSPy signature). Text mode
+prints one line per capability; `--json` emits the structured object below.
+
+```
+xvn agent inspect <agent-id> --diagnostics
+xvn agent inspect <agent-id> --diagnostics --json
+```
+
+```json
+{
+  "agent_id": "01KSEK3NRR4EVVV0J6ZYDKDEFA",
+  "name": "complete-trader",
+  "archived": false,
+  "capabilities": [
+    {
+      "capability": "trader",
+      "slot": "main",
+      "has_prompt": true,
+      "has_model_binding": true,
+      "required_tools": ["ohlcv"],
+      "runtime_supported": true,
+      "optimizable": true
+    }
+  ]
+}
+```
+
+Exit `0` on success, `4` (`NotFound`) for an unknown agent id. Unlike
+`xvn strategy diagnostics`, an agent inspect does not fail just because a
+capability is incomplete — it reports state; launch-gating is a strategy-level
+concern.
+
+---
+
+### `xvn optimize …`
+
+Offline DSPy prompt/demonstration optimizer (Phase 3.6). Runs an optimization
+pass over a corpus for one agent slot/capability, persists the candidates and
+the winning snapshot to the optimization store, and lets you accept a snapshot
+as a **child agent** with a recorded lineage edge. The optimizer runs entirely
+offline against a deterministic, no-network model by default (`--live` is an
+opt-in stub in this wave). The engine and the slim runtime image carry **no
+DSPy dependency** — see [Optimizer](/docs?slug=optimizer) for the offline-only
+invariant.
+
+| Verb | Effect |
+|---|---|
+| `run --agent <id> --slot <name> --capability <cap> --corpus <q\|path> --optimizer <opt> --metric <name> --rng-seed <n> [--max-rounds <n>] [--dry-run] [--live] [--json] [--xvn-home <path>]` | Run an optimization pass for one agent slot/capability. Persists `optimization_runs`/`candidates`/`demos`/`snapshots` rows unless `--dry-run`. |
+| `inspect <run-id> [--json]` | Show a persisted run, its candidate table (instructions + metric values, `selected` flag), and snapshots. Exit `4` if the run id is unknown. |
+| `export-demos <snapshot-id\|demo-set> [--output <path>]` | Export a snapshot's (or demo set's) demonstrations as canonical content-addressed JSON. |
+| `import-demos <path>` | Import a demos JSON file into the content-addressed demo store. |
+| `accept-as-child-agent <snapshot-id>` | Mint a child agent from a snapshot's winning instruction; records the `agent_lineage` edge (`parent → child`) and sets the accept flag. |
+| `revert-accepted <snapshot-id>` | Clear the accept flag and the lineage edge for a previously accepted snapshot. |
+| `explain-missing-data <corpus>` | Explain why a corpus query produced no usable training data (query guidance; does not run an optimization). |
+
+`--capability` accepts `trader`, `filter`, `decision_grader`, `intern`, or
+`chat_authoring`. `--optimizer` accepts `mipro`, `gepa`, or `copro`.
+`--corpus` is either a saved-query string or a path to a corpus JSON file.
+`--metric` is the objective name (e.g. `delta_sharpe`, `grader_score`).
+`--rng-seed` makes demo sampling + search order reproducible: the same seed +
+inputs yields the same winning candidate.
+
+`xvn optimize run --json` emits a single object with the run id, the chosen
+optimizer/metric, the `signature_hash`, the `candidate_count`,
+`selected_candidate_index`, the `snapshot_id`, the content-addressed
+`demo_set`, and `status`. The reproduction recipe (corpus query, seed, model,
+optimizer, optimizer version, signature hash, metric) is persisted so any run
+can be re-derived from its inputs.
+
+```
+# deterministic, no-network run (default model)
+xvn optimize run \
+  --agent 01AGENTV --slot trader --capability trader \
+  --corpus ./corpus.json --optimizer mipro --metric delta_sharpe \
+  --rng-seed 42 --json
+
+# validate corpus + capability without writing to the store
+xvn optimize run … --dry-run
+
+xvn optimize inspect <run-id> --json
+xvn optimize accept-as-child-agent <snapshot-id>
+xvn optimize revert-accepted <snapshot-id>
+```
+
+`xvn optimize` returns a distinct exit code per failure class so an agent can
+branch on the exact reason without parsing text — see [Exit codes](#exit-codes).
+
+---
+
 ### `xvn memory …`
 
 Operator surface for V2D memory items. Reads default to Patterns because those
@@ -226,8 +321,74 @@ error text (see `crate::exit::XvnExit`):
 | 5 | Upstream | LLM API / broker / network / file system / database error. |
 | 7 | Conflict | State collision (e.g. duplicate name on rename or create). |
 
+`xvn optimize` and `xvn strategy diagnostics` add a distinct band (10–15) so an
+agent can branch on the exact optimization/launch-gate failure without parsing
+text:
+
+| Code | Name | Meaning |
+|---|---|---|
+| 10 | OptMissingData | The corpus query resolved to no usable training data. Use `xvn optimize explain-missing-data` for guidance. |
+| 11 | OptMissingCapability | The requested capability has no optimizer signature (typed `missing_capability_optimizer`). |
+| 12 | OptProvider | The model provider could not be reached / is not configured (includes the `--live` stub in this wave). |
+| 13 | OptMetric | The objective metric failed to evaluate (e.g. unknown metric name). |
+| 14 | OptValidation | Input/signature validation failed — bad capability/optimizer enum, missing corpus path, signature parse/validate error. Also the **not-launchable** code for `xvn strategy diagnostics`. |
+| 15 | OptPersistence | The store write failed (migration not applied, DB error). |
+
 `xvn strategy validate` exits non-zero (code 2) when `eval_ready` is false,
-making it safe to use as a gate in a shell pipeline.
+making it safe to use as a gate in a shell pipeline. `xvn strategy diagnostics`
+exits `14` when a strategy is not launchable, so it can gate a launch the same
+way.
+
+---
+
+## Capability diagnostics
+
+`xvn strategy diagnostics <id>` and `xvn agent inspect <id> --diagnostics`
+answer the launch-readiness question: does every required capability in the
+strategy have a slot with a prompt, a model binding, its required tools, and a
+runtime that supports it?
+
+```
+xvn strategy diagnostics <strategy-id>          # text
+xvn strategy diagnostics <strategy-id> --json
+```
+
+Text mode for a launchable strategy:
+
+```
+strategy: 01HZCOMPLETE000000000000AA
+launchable: yes
+required capabilities: trader
+optimizable now (dspy signature): trader
+
+• role 'trader' → agent 01KSEK3NRR4EVVV0J6ZYDKDEFA (complete-trader)
+    [required] trader   optimizable tools=ohlcv
+```
+
+For an incomplete strategy it lists each unmet capability with a typed reason
+and exits `14`:
+
+```
+strategy: 01HZINCOMPLETE0000000000BB
+launchable: NO
+required capabilities: trader
+
+• role 'trader' → agent 01KSEK3NRR4EVVV0J6ZYDKDEFA (complete-trader)
+    [required] trader   MISSING_TOOL(ohlcv) tools=ohlcv
+
+UNMET REQUIRED CAPABILITIES:
+  - role 'trader' capability 'trader': MISSING_TOOL(ohlcv)
+strategy '01HZINCOMPLETE0000000000BB' is not launchable: 1 unmet required capability (trader:trader=missing_tool)
+```
+
+The `--json` object carries `per_agent[]` (with each capability's typed
+`status`: `optimizable` / `missing_tool` / `missing_prompt` /
+`missing_model_binding` / `unsupported`), `required_capabilities[]`,
+`required_unmet[]`, `optimizable[]`, and the top-level `launchable: bool`. The
+unmet-status `kind` values map onto the same vocabulary the unified event
+stream uses (`error_missing_capability`, `error_missing_tool`, …). Only the
+`trader` and `filter` capabilities are optimizable today; `critic` and `router`
+are recognized but `unsupported` and block launch when required.
 
 ---
 
