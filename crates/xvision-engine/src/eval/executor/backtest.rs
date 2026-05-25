@@ -855,32 +855,11 @@ impl Executor {
                 current_ts: ts,
             });
 
-            // track-plan-touches: per-bar filter evaluation. `None` means
-            // EveryBar strategy (no gating). The filter is a STRATEGY-level
-            // gate, evaluated once per timestamp on the first active
-            // asset's bar; when not `Active` it skips ALL assets' decisions
-            // this timestamp. `in_position` is true when any leg is open.
-            let mut filter_gated = false;
-            if let Some(hook) = filter_hook.as_mut() {
-                if let Some(&first_idx) = assets_at_ts.get(&asset_sym) {
-                    let gate_bar = &asset_bars[&asset_sym][first_idx];
-                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
-                    let evaluation = hook.evaluate(gate_bar, in_position);
-                    hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
-                        .await?;
-                    if !evaluation.outcome.decision.is_active() {
-                        filter_gated = true;
-                    }
-                }
-            }
-
             // Per-asset fan-out. Each iteration runs the existing
             // per-decision body for one asset using that asset's own bar
             // vec + index (T+1 look-ahead, history slicing). `'asset`
-            // labels the loop so the body's skip paths (early-stop inherit,
-            // filter gate) advance to the next asset rather than the next
-            // timestamp. Skipped via `continue 'asset` after recording the
-            // per-asset decision row.
+            // labels the loop so the body's skip paths advance to the next
+            // asset rather than the next timestamp.
             'asset: for (&asset_sym, &i) in assets_at_ts.iter() {
                 let asset = asset_sym.as_alpaca_pair();
                 let bars = &asset_bars[&asset_sym];
@@ -900,13 +879,24 @@ impl Executor {
                 // (qa-decisions-30day-count).
                 let next_bar_open = bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close);
 
-                if filter_gated {
-                    // Strategy filter gated this timestamp: skip the agent
-                    // pipeline for this asset. No decision row is written
-                    // (matches the single-asset filter-gate behavior, which
-                    // recorded only the filter evaluation + dense equity).
-                    // Equity is recorded once per timestamp below.
-                    continue 'asset;
+                // track-plan-touches: per-bar filter evaluation. `None`
+                // means EveryBar strategy (no gating). In multi-asset sparse
+                // timelines the first active asset may not have a bar at this
+                // timestamp, so the gate must be evaluated on each actual
+                // asset bar before that asset's pipeline can run.
+                if let Some(hook) = filter_hook.as_mut() {
+                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
+                    let evaluation = hook.evaluate(bar, in_position);
+                    hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
+                        .await?;
+                    if !evaluation.outcome.decision.is_active() {
+                        // Strategy filter gated this asset bar: skip the
+                        // agent pipeline. No decision row is written (matches
+                        // the single-asset filter-gate behavior, which
+                        // recorded only the filter evaluation + dense equity).
+                        // Equity is recorded once per timestamp below.
+                        continue 'asset;
+                    }
                 }
 
                 // History slice: last `history_window` bars strictly before
@@ -2189,10 +2179,10 @@ impl Executor {
         // ETH's flip detection (mirrors the backtest's per-asset map).
         let mut last_open_direction: BTreeMap<xvision_core::trading::AssetSymbol, Option<GuardAction>> =
             active.iter().map(|a| (*a, None)).collect();
-        // PER-ASSET rolling bar-history window. Each asset's live bars
-        // (including its warmup prefix, which the `LiveStream` drains
-        // first) accumulate in their own buffer so the trader seed for one
-        // asset never sees another asset's bars.
+        // PER-ASSET rolling bar-history window. Each asset's historical
+        // warmup prefix is seeded before the live loop and only feeds
+        // decision context; tradable live bars are appended after each
+        // decision so one asset never sees another asset's bars.
         let mut history: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>> =
             active.iter().map(|a| (*a, Vec::new())).collect();
         // PER-ASSET signal cache so filter signals stay scoped to the asset
@@ -2223,6 +2213,13 @@ impl Executor {
             .lock()
             .await;
         let stop_policy = runtime.stop_policy.clone();
+        for (asset, mut warmup) in runtime.bar_source.take_warmup_history() {
+            if history_window > 0 && warmup.len() > history_window {
+                let drop_n = warmup.len() - history_window;
+                warmup.drain(0..drop_n);
+            }
+            history.entry(asset).or_default().extend(warmup);
+        }
 
         let mut bar_count: u32 = 0;
         loop {

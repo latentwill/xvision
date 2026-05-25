@@ -40,4 +40,3 @@ test unified_event::tests::typed_errors_round_trip_with_remediation ... ok
 test unified_event::tests::checkpoint_variant_round_trips_despite_inner_kind_field ... ok
 
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.00s
-
