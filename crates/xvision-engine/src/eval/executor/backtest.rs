@@ -1096,6 +1096,37 @@ impl Executor {
                     };
                 }
 
+                // GUARDRAIL(invalid_output_schema): emit the Phase 4.2 typed
+                // short-circuit onto the obs/event stream when the trader's
+                // schema-recovery is EXHAUSTED (all repair attempts failed, or
+                // the failure class is non-recoverable). Without this the
+                // failed prerequisite was only a free-text decision-span error
+                // string; the typed `invalid_output_schema` event makes the
+                // recorded failure machine-readable rather than degrading to a
+                // silent/opaque error. Pair with `finish_decision_span_error!`
+                // at every recovery-exhausted branch (it does NOT close the
+                // span — the caller still does).
+                macro_rules! emit_schema_short_circuit {
+                    ($detail:expr) => {
+                        if let Some(obs) = self.obs_emitter.as_ref() {
+                            let role = trader_role_label(agent_slots);
+                            let sc = crate::guardrails::ShortCircuit::InvalidOutputSchema {
+                                role: role.clone(),
+                                expected: "TraderOutput".to_string(),
+                                detail: $detail,
+                            };
+                            let payload = sc.to_typed_error();
+                            let payload_json = serde_json::to_string(&payload).ok();
+                            obs.emit_engine_event(
+                                sc.code(),
+                                Some(decision_span_id.clone()),
+                                payload_json,
+                            )
+                            .await;
+                        }
+                    };
+                }
+
                 // F-5 phase 2a: keep a copy of the seed so the
                 // malformed-json repair path (below) can rebuild the
                 // original user prompt byte-for-byte. The pipeline consumes
@@ -1225,13 +1256,17 @@ impl Executor {
                                 {
                                     Ok(repaired) => repaired,
                                     Err(original) => {
+                                        // schema-missing-field recovery exhausted.
                                         let err = original.with_model_hint(trader_model_id.as_deref());
+                                        emit_schema_short_circuit!(err.to_string());
                                         finish_decision_span_error!(&err.to_string());
                                         return Err(err.into());
                                     }
                                 }
                             } else {
+                                // No repair context → recovery cannot run.
                                 let err = e.with_model_hint(trader_model_id.as_deref());
+                                emit_schema_short_circuit!(err.to_string());
                                 finish_decision_span_error!(&err.to_string());
                                 return Err(err.into());
                             }
@@ -1251,18 +1286,24 @@ impl Executor {
                                 {
                                     Ok(repaired) => repaired,
                                     Err(original) => {
+                                        // malformed-json repair exhausted.
                                         let err = original.with_model_hint(trader_model_id.as_deref());
+                                        emit_schema_short_circuit!(err.to_string());
                                         finish_decision_span_error!(&err.to_string());
                                         return Err(err.into());
                                     }
                                 }
                             } else {
+                                // No repair context → recovery cannot run.
                                 let err = e.with_model_hint(trader_model_id.as_deref());
+                                emit_schema_short_circuit!(err.to_string());
                                 finish_decision_span_error!(&err.to_string());
                                 return Err(err.into());
                             }
                         } else {
+                            // Non-recoverable failure class: recovery never applies.
                             let err = e.with_model_hint(trader_model_id.as_deref());
+                            emit_schema_short_circuit!(err.to_string());
                             finish_decision_span_error!(&err.to_string());
                             return Err(err.into());
                         }
@@ -2333,6 +2374,18 @@ fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Op
         }
     }
     None
+}
+
+/// Role label for the trader position, used to attribute the
+/// `invalid_output_schema` guardrail short-circuit to a slot. Prefers the
+/// attached agent with canonical role `trader`; falls back to the literal
+/// `"trader"` when no attached slot matches (legacy strategies).
+fn trader_role_label(agent_slots: &[ResolvedAgentSlot]) -> String {
+    agent_slots
+        .iter()
+        .find(|r| canonical_role(&r.role) == "trader")
+        .map(|r| r.role.clone())
+        .unwrap_or_else(|| "trader".to_string())
 }
 
 /// Simulate a market-order fill at the next bar's open, applying the
