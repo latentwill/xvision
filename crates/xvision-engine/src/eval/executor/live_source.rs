@@ -33,12 +33,12 @@
 //!    On poll error, transitions to `Closed`.
 //! 4. `Closed` — `next_bar()` returns `None` forever.
 //!
-//! ## Not wired into an Executor in this PR
+//! ## Live loop wiring status
 //!
-//! Per the contract: nothing in this PR makes a Live run runnable
-//! end-to-end. The struct is reachable only from unit tests until
-//! sub-track 4 (`executor-live-shell`) lands the unified `Executor`
-//! that picks the trait trio per `RunMode`.
+//! Single-asset Alpaca paper live is wired end-to-end: `LiveStream` is
+//! consumed by the `Executor` constructed via `build_live_executor` in
+//! `api/eval.rs`. Multi-asset fanout is the §4 follow-up
+//! (`multi-asset-alpaca-unlock` plan).
 
 use std::collections::VecDeque;
 

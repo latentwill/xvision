@@ -2421,9 +2421,12 @@ async fn build_live_executor(
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
     if cfg.broker_creds_ref != "alpaca" {
-        return Err(ApiError::Validation(
-            "live_config.broker_creds_ref must be 'alpaca' for v1 Live Alpaca".into(),
-        ));
+        return Err(ApiError::Validation(format!(
+            "live_config.broker_creds_ref '{}' is not supported in the current live scope. \
+             Current live mode is Alpaca paper trading only; set broker_creds_ref = \"alpaca\". \
+             Other brokers and real-money venues are out of scope for now.",
+            cfg.broker_creds_ref
+        )));
     }
     let asset = cfg
         .assets
@@ -2456,9 +2459,12 @@ async fn build_live_executor(
         (key_id, secret, trade_base_url)
     };
     if !trade_base_url.contains("paper-api.alpaca.markets") {
-        return Err(ApiError::Validation(
-            "Live v1 is paper-only; APCA_API_BASE_URL must point at Alpaca paper trading".into(),
-        ));
+        return Err(ApiError::Validation(format!(
+            "current live mode is Alpaca paper trading only; \
+             APCA_API_BASE_URL must point at https://paper-api.alpaca.markets \
+             (got '{trade_base_url}'). \
+             Real-money and other venues are out of scope for the current live scope."
+        )));
     }
 
     let broker: Arc<dyn BrokerSurface> = match broker_override {

@@ -92,13 +92,21 @@ impl StopPolicy {
 /// Launch envelope for a Live run. Persisted as
 /// `eval_runs.live_config_json` (Phase B migration).
 ///
+/// **Current live scope: Alpaca paper trading only.** Live mode sends
+/// orders to `https://paper-api.alpaca.markets` — real market data,
+/// paper (simulated) money. Real-money venues (`VenueLabel::Live`) are
+/// rejected at validation until the per-strategy verdict + kill-switch
+/// hardening lands.
+///
 /// `strategy_id` references the strategy artifact that drives the run.
 /// `assets` is `Vec` for forward-compat with multi-asset Live launches
 /// (see `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md`);
 /// v1 hard-walls it to `len() == 1`.
 ///
-/// `broker_creds_ref` resolves to a configured broker-credentials row;
-/// the engine never stores the secret material itself in `LiveConfig`.
+/// `broker_creds_ref` selects WHICH stored credential set to load
+/// (e.g. `"alpaca"` → the Alpaca credentials row). It is a lookup key,
+/// not a venue/environment selector — venue selection is a separate
+/// future plan. The engine never stores secret material in `LiveConfig`.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -113,6 +121,11 @@ pub struct LiveConfig {
     /// type (mirrors the existing override on `Scenario`).
     #[cfg_attr(feature = "ts-export", ts(type = "{ initial: number, currency: string }"))]
     pub capital: Capital,
+    /// Selects WHICH stored credential set to use (e.g. `"alpaca"` → the
+    /// Alpaca credentials row under Settings → Brokers). This is a lookup
+    /// key, **not** a venue/environment selector — venue and environment
+    /// selection is a separate future plan. Current live scope accepts only
+    /// `"alpaca"` (Alpaca paper trading).
     pub broker_creds_ref: String,
     pub stop_policy: StopPolicy,
 
@@ -324,7 +337,10 @@ impl std::fmt::Display for LiveConfigValidationError {
                 "stop_policy.time_limit_secs {secs} exceeds the {max}-second hard cap"
             ),
             Self::VenueLabelLiveRejected => f.write_str(
-                "venue_label = Live is reserved for a future milestone (real-money gates not yet wired)",
+                "real-money live (venue_label = Live) is not yet supported; \
+                 current live mode is Alpaca paper trading only \
+                 (https://paper-api.alpaca.markets). \
+                 Set venue_label = Paper (or omit it) to use the current live scope.",
             ),
             Self::CapitalNotPositive { initial } => {
                 write!(f, "capital.initial must be > 0 (got {initial})")

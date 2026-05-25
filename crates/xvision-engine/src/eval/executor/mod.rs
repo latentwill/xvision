@@ -11,9 +11,8 @@
 //!   chronological order, simulates fills with slippage + fees. No
 //!   broker required.
 //! - **Live** — `LiveStream` + `WallClock` + `RealBrokerFills`. Built
-//!   via [`Executor::live`], which currently returns a not-implemented
-//!   error pending the `live-bar-source-alpaca` track. The signature
-//!   exists so the API dispatch can route to it once that track lands.
+//!   via [`Executor::live`]. Single-asset Alpaca paper live is wired
+//!   end-to-end; multi-asset fanout is the §4 follow-up.
 //!
 //! Callers (`engine::api::eval::run`, the eval CLI) pick a constructor
 //! by `RunMode` and call [`RunExecutor::run`] once per `xvn eval run`
