@@ -171,6 +171,12 @@ pub struct CreateArgs {
     /// Output format for the created agent.
     #[arg(long, value_enum, default_value_t = ObjectFormat::Json)]
     pub format: ObjectFormat,
+    /// Preview the agent record that would be created WITHOUT persisting
+    /// anything. Validates all inputs (name, provider, model, prompt), builds
+    /// the request, and emits a `{"dry_run":true,"would_create":{...}}` object
+    /// to stdout (respecting `--format`). Exits 0 on success. No write occurs.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 pub async fn run(cmd: AgentCmd) -> CliResult<()> {
@@ -231,16 +237,12 @@ async fn run_create(args: CreateArgs) -> CliResult<()> {
     capabilities.clear();
     capabilities.insert(cap);
 
-    let ctx = open_ctx(args.xvn_home.clone())
-        .await
-        .exit_with(XvnExit::Upstream)?;
-
     let prompt_version = AgentSlot::compute_prompt_version(&system_prompt);
     let slot = AgentSlot {
         name: "main".to_string(),
         provider: args.provider.trim().to_string(),
         model: args.model.trim().to_string(),
-        system_prompt,
+        system_prompt: system_prompt.clone(),
         skill_ids: args.skills.clone(),
         max_tokens: args.max_tokens,
         temperature: args.temperature,
@@ -249,9 +251,38 @@ async fn run_create(args: CreateArgs) -> CliResult<()> {
         bar_history_limit: None,
         memory_mode: Default::default(),
         noop_skip: None,
-        capabilities,
+        capabilities: capabilities.clone(),
         delta_briefing: None,
     };
+
+    // --dry-run: validate, build, preview, exit WITHOUT persisting.
+    if args.dry_run {
+        let prompt_preview = if system_prompt.len() > 120 {
+            format!("{}…", &system_prompt[..120])
+        } else {
+            system_prompt.clone()
+        };
+        let preview = DryRunPreview {
+            dry_run: true,
+            would_create: DryRunWouldCreate {
+                name: args.name.clone(),
+                description: args.description.clone(),
+                tags: args.tags.clone(),
+                capability: format!("{cap:?}").to_lowercase(),
+                provider: slot.provider.clone(),
+                model: slot.model.clone(),
+                system_prompt_preview: prompt_preview,
+                skill_ids: args.skills.clone(),
+                temperature: args.temperature,
+                max_tokens: args.max_tokens,
+            },
+        };
+        return emit_object(&preview, args.format);
+    }
+
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
 
     let agent = agents_api::create(
         &ctx,
@@ -340,6 +371,33 @@ fn truncate(s: &str, max: usize) -> String {
         let end = s.char_indices().nth(max.saturating_sub(1)).map(|(i, _)| i).unwrap_or(s.len());
         format!("{}…", &s[..end])
     }
+}
+
+/// Preview object emitted by `xvn agent create --dry-run`. Contains the
+/// request that WOULD have been sent to the engine if `--dry-run` were
+/// absent, letting scripts validate inputs or diff would-be agents without
+/// persisting anything.
+#[derive(Debug, Serialize)]
+struct DryRunPreview {
+    dry_run: bool,
+    would_create: DryRunWouldCreate,
+}
+
+#[derive(Debug, Serialize)]
+struct DryRunWouldCreate {
+    name: String,
+    description: String,
+    tags: Vec<String>,
+    capability: String,
+    provider: String,
+    model: String,
+    /// First 120 chars of the system prompt plus an ellipsis when the
+    /// prompt is longer, so the preview remains readable without dumping
+    /// the entire prompt body.
+    system_prompt_preview: String,
+    skill_ids: Vec<String>,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
 }
 
 /// Per-agent lint result for JSON output.
