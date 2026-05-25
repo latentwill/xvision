@@ -93,6 +93,38 @@ impl WizardEventProjector {
         self.seq
     }
 
+    /// Project a ready-made [`UnifiedPayload`] into the session stream,
+    /// advancing `seq`. Used for net-new payloads the legacy [`WizardEvent`]
+    /// vocabulary can't express — the Phase 2 safety events
+    /// (`ToolPolicyChecked`, `ToolDenied`, `ErrorPolicyDenied`). The caller
+    /// supplies the actor (`Hook` for policy enforcement) and an optional span
+    /// id to correlate with the tool the check ran for.
+    pub fn project_payload(
+        &mut self,
+        event_id: impl Into<String>,
+        actor: Actor,
+        span_id: Option<String>,
+        payload: UnifiedPayload,
+        ts: DateTime<Utc>,
+    ) -> UnifiedEvent {
+        let out = UnifiedEvent {
+            event_id: event_id.into(),
+            session_id: Some(self.session_id.clone()),
+            run_id: None,
+            span_id,
+            parent_event_id: None,
+            seq: self.seq,
+            ts,
+            scope: self.scope.clone(),
+            actor,
+            source: EventSource::ChatRail,
+            blob_hash: None,
+            payload,
+        };
+        self.seq += 1;
+        out
+    }
+
     /// Project one `WizardEvent`, advancing `seq`. `event_id` is injected so
     /// callers control id generation (ULID in production, deterministic in
     /// tests). `span_minter` mints a span id for a fresh tool call.

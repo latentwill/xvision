@@ -249,6 +249,8 @@ fn readonly_router(state: AppState) -> Router {
         // (resume by ?after_seq=<n>, default -1) then tail live events.
         .route("/api/chat-rail/sessions/:id/stream", get(chat_rail::stream))
         .route("/api/chat-rail/sessions", get(chat_rail::list_sessions))
+        // Phase 2.3: read the persisted three-state tool-policy for a scope.
+        .route("/api/chat-rail/tool-policy", get(chat_rail::get_tool_policy))
         .with_state(state)
 }
 
@@ -384,6 +386,16 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/chat-rail/sessions/:id",
             delete(chat_rail::delete_session),
+        )
+        // Phase 2.2: set the server-enforced Research/Act mode for a session.
+        .route(
+            "/api/chat-rail/sessions/:id/mode",
+            post(chat_rail::set_mode),
+        )
+        // Phase 2.3: upsert one tool's three-state policy for a scope.
+        .route(
+            "/api/chat-rail/tool-policy",
+            put(chat_rail::put_tool_policy),
         )
         .route("/api/chat-rail/chat", post(chat_rail::chat))
         // ── Apply require_auth middleware to ALL mutating routes ───────────

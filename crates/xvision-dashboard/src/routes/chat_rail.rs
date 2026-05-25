@@ -33,7 +33,8 @@ use tokio_stream::StreamExt;
 use ulid::Ulid;
 
 use xvision_engine::chat_session::{
-    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope, SessionEventLog,
+    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope, SessionEventLog, ToolPolicy,
+    ToolPolicyRow, ToolPolicyStore, GLOBAL_SCOPE,
 };
 use xvision_observability::UnifiedEvent;
 
@@ -111,6 +112,98 @@ pub async fn delete_session(
         .await
         .map_err(DashboardError::Internal)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Body for `POST /api/chat-rail/sessions/:id/mode` (Phase 2.2). Only
+/// `research` and `act` are accepted; anything else is a 400 so an invalid
+/// mode can never reach the DB and silently weaken enforcement.
+#[derive(Debug, Deserialize)]
+pub struct SetModeReq {
+    pub mode: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetModeResp {
+    pub session_id: String,
+    pub mode: String,
+}
+
+/// `POST /api/chat-rail/sessions/:id/mode` — set the Research/Act mode. The
+/// persisted column is the single source of truth the server-side enforcement
+/// (WizardLoop) reads before every WRITE tool; the client never gets to assert
+/// its own mode at execution time.
+pub async fn set_mode(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SetModeReq>,
+) -> Result<Json<SetModeResp>, DashboardError> {
+    if req.mode != "research" && req.mode != "act" {
+        return Err(DashboardError::Validation {
+            field: "mode".into(),
+            msg: format!("invalid mode '{}': expected 'research' or 'act'", req.mode),
+        });
+    }
+    ChatSessionStore::set_mode(&state.pool, &id, &req.mode)
+        .await
+        .map_err(|_| DashboardError::NotFound(format!("session '{id}'")))?;
+    Ok(Json(SetModeResp { session_id: id, mode: req.mode }))
+}
+
+/// Query for `GET /api/chat-rail/tool-policy`. `scope` selects which
+/// `tool_policies` rows to return; omitted ⇒ the workspace-wide `global` scope.
+#[derive(Debug, Deserialize)]
+pub struct ToolPolicyQuery {
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// `GET /api/chat-rail/tool-policy?scope=` — list persisted tool-policy
+/// overrides for a scope. A tool absent from this list uses its class default
+/// (Read → enabled+auto-approve, Write → enabled+needs-approval).
+pub async fn get_tool_policy(
+    State(state): State<AppState>,
+    Query(query): Query<ToolPolicyQuery>,
+) -> Result<Json<Vec<ToolPolicyRow>>, DashboardError> {
+    let scope = query.scope.as_deref().unwrap_or(GLOBAL_SCOPE);
+    let rows = ToolPolicyStore::get_policies(&state.pool, scope)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(rows))
+}
+
+/// Body for `PUT /api/chat-rail/tool-policy`.
+#[derive(Debug, Deserialize)]
+pub struct PutToolPolicyReq {
+    #[serde(default)]
+    pub scope: Option<String>,
+    pub tool_name: String,
+    pub enabled: bool,
+    pub auto_approve: bool,
+}
+
+/// `PUT /api/chat-rail/tool-policy` — upsert one tool's three-state policy for
+/// a scope. Disabling a tool hides it from the model on the next turn; an
+/// enabled write tool with `auto_approve=false` needs approval.
+pub async fn put_tool_policy(
+    State(state): State<AppState>,
+    Json(req): Json<PutToolPolicyReq>,
+) -> Result<Json<ToolPolicyRow>, DashboardError> {
+    if req.tool_name.trim().is_empty() {
+        return Err(DashboardError::Validation {
+            field: "tool_name".into(),
+            msg: "tool_name must not be empty".into(),
+        });
+    }
+    let scope = req.scope.as_deref().unwrap_or(GLOBAL_SCOPE);
+    let policy = ToolPolicy { enabled: req.enabled, auto_approve: req.auto_approve };
+    ToolPolicyStore::upsert_policy(&state.pool, scope, &req.tool_name, policy)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(ToolPolicyRow {
+        tool_name: req.tool_name,
+        enabled: req.enabled,
+        auto_approve: req.auto_approve,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,6 +314,36 @@ pub async fn chat(
             }
         };
         while let Some(ev) = wl.next_event().await {
+            // Phase 2 SAFETY CORE: drain any net-new unified safety events
+            // (ToolPolicyChecked / ToolDenied / ErrorPolicyDenied) the loop
+            // queued while producing this WizardEvent. Project + persist +
+            // publish them through the SAME projector so the unified seq stays
+            // gap-free. These carry no legacy WizardEvent equivalent — they
+            // exist only on the unified stream. Drained before the legacy
+            // event below so a denial's record precedes the tool-call bubble's
+            // result on the unified log.
+            for pe in wl.take_policy_events() {
+                let unified = projector.project_payload(
+                    Ulid::new().to_string(),
+                    pe.actor,
+                    pe.span_id,
+                    pe.payload,
+                    Utc::now(),
+                );
+                if let Err(e) = SessionEventLog::append(&projector_pool, &unified).await {
+                    tracing::error!(
+                        target: "xvision::dashboard::chat_rail",
+                        session_id = %projector_session_id,
+                        seq = unified.seq,
+                        kind = unified.event_name(),
+                        error = %e,
+                        "failed to append unified policy event",
+                    );
+                } else {
+                    session_bus.publish(&unified).await;
+                }
+            }
+
             // DEPRECATED: legacy WizardEvent stream, superseded by the unified
             // session stream (Phase 1.2). Kept verbatim as a compatibility
             // shim so existing clients keep working during the dual-path
@@ -253,6 +376,29 @@ pub async fn chat(
 
             if tx.send(ev).await.is_err() {
                 break;
+            }
+        }
+        // Final drain: the terminal WizardEvent (Done/Error) may itself have
+        // queued policy events (e.g. a denial on the last tool of the turn).
+        for pe in wl.take_policy_events() {
+            let unified = projector.project_payload(
+                Ulid::new().to_string(),
+                pe.actor,
+                pe.span_id,
+                pe.payload,
+                Utc::now(),
+            );
+            if let Err(e) = SessionEventLog::append(&projector_pool, &unified).await {
+                tracing::error!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %projector_session_id,
+                    seq = unified.seq,
+                    kind = unified.event_name(),
+                    error = %e,
+                    "failed to append trailing unified policy event",
+                );
+            } else {
+                session_bus.publish(&unified).await;
             }
         }
     });

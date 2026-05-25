@@ -125,6 +125,12 @@ const MIGRATION_042_SESSION_EVENTS_TABLE: &str =
      )";
 const MIGRATION_042_SESSION_EVENTS_INDEX: &str =
     "CREATE INDEX IF NOT EXISTS idx_session_events_seq ON session_events(session_id, seq)";
+/// Phase 2.3 (chat-rail SAFETY CORE): three-state tool-policy persistence
+/// (`tool_policies`). Applied via `migrate_tool_policies` (guarded on the
+/// table's existence) so re-opening an already-migrated DB is a no-op. Driven
+/// straight off the committed migration file so the runtime path and the file
+/// never drift.
+const MIGRATION_043_TOOL_POLICIES: &str = include_str!("../../migrations/043_tool_policies.sql");
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -296,6 +302,7 @@ impl ApiContext {
         migrate_run_trajectory_mode(&pool).await?;
         migrate_chat_session_rail_state(&pool).await?;
         migrate_session_events(&pool).await?;
+        migrate_tool_policies(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -1097,6 +1104,15 @@ async fn migrate_session_events(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+async fn migrate_tool_policies(pool: &SqlitePool) -> ApiResult<()> {
+    // Single `CREATE TABLE IF NOT EXISTS` statement; guard on table existence
+    // is implicit in the `IF NOT EXISTS` so a re-open is a no-op.
+    if !table_exists(pool, "tool_policies").await? {
+        sqlx::query(MIGRATION_043_TOOL_POLICIES).execute(pool).await?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub enum Actor {
     Cli {
@@ -1205,5 +1221,47 @@ mod migration_registry_tests {
                 .unwrap();
         assert_eq!(mode, "research");
         assert_eq!(cursor, 0);
+    }
+
+    /// Phase 2.3: migration 043 (`tool_policies`) is applied by the
+    /// hand-maintained `ApiContext::open` registry via `migrate_tool_policies`,
+    /// not `sqlx::migrate!`. Without the wiring the table never exists at
+    /// runtime and the tool-policy store fails with "no such table". This
+    /// proves the helper creates the table on a fresh DB, that the four
+    /// columns exist, that the DEFAULTs match the migration (enabled=1,
+    /// auto_approve=0), and that re-running is a no-op.
+    #[tokio::test]
+    async fn migrate_tool_policies_creates_table_with_defaults_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        assert!(!table_exists(&pool, "tool_policies").await.unwrap());
+
+        migrate_tool_policies(&pool).await.unwrap();
+        assert!(table_exists(&pool, "tool_policies").await.unwrap());
+        for col in ["user_scope", "tool_name", "enabled", "auto_approve"] {
+            assert!(
+                table_has_column(&pool, "tool_policies", col).await.unwrap(),
+                "column {col} missing after migrate_tool_policies"
+            );
+        }
+
+        // Second pass is a no-op (guarded on table existence) — re-open safe.
+        migrate_tool_policies(&pool).await.unwrap();
+
+        // Defaults: enabled=1, auto_approve=0 when only PK columns are given.
+        sqlx::query(
+            "INSERT INTO tool_policies (user_scope, tool_name) VALUES ('global', 'create_strategy')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (enabled, auto_approve): (i64, i64) = sqlx::query_as(
+            "SELECT enabled, auto_approve FROM tool_policies \
+             WHERE user_scope = 'global' AND tool_name = 'create_strategy'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(enabled, 1, "enabled defaults to 1");
+        assert_eq!(auto_approve, 0, "auto_approve defaults to 0");
     }
 }
