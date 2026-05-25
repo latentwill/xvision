@@ -5315,4 +5315,210 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             "expected loop to continue to final turn: {events:#?}"
         );
     }
+
+    // ── Phase 2.5 checkpoint + Phase 2.4 focus wiring ──────────────────────
+
+    /// Drain the loop while also collecting every queued PolicyEvent in
+    /// emission order — mirrors what the chat_rail route does between
+    /// `next_event` calls (`take_policy_events`).
+    async fn drain_with_policy_events(
+        wl: &mut WizardLoop,
+    ) -> (Vec<WizardEvent>, Vec<PolicyEvent>) {
+        let mut events = vec![];
+        let mut policy = vec![];
+        while let Some(ev) = wl.next_event().await {
+            policy.extend(wl.take_policy_events());
+            events.push(ev);
+        }
+        policy.extend(wl.take_policy_events());
+        (events, policy)
+    }
+
+    /// Seed a blank strategy on disk for the tempdir-backed XVN_HOME and return
+    /// its id. Lets a write tool run against an EXISTING draft so the pre-tool
+    /// checkpoint has a Strategy artifact to capture.
+    async fn seed_strategy(td: &tempfile::TempDir, name: &str) -> String {
+        let store = xvision_engine::strategies::store::FilesystemStore::new(
+            xvision_engine::strategies::store::strategy_store_dir(td.path()),
+        );
+        let out = authoring::create_blank_strategy(&store, name.into(), None)
+            .await
+            .expect("seed strategy");
+        out.id
+    }
+
+    /// A WRITE tool against an existing draft must take a PreTool checkpoint
+    /// BEFORE it runs: the session's `checkpoint_head` is set and a
+    /// `CheckpointCreated` unified event is queued for the route to project.
+    #[tokio::test]
+    async fn mutating_tool_triggers_pretool_checkpoint() {
+        let (pool, td) = fresh_pool().await;
+        let scope = ContextScope::Workspace;
+        let session_id = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
+        unlock_writes_for_tests(&pool, &session_id).await;
+
+        // Seed a draft so update_manifest has something to mutate (and the
+        // checkpointer has a Strategy artifact to snapshot).
+        let strategy_id = seed_strategy(&td, "Checkpoint Target").await;
+
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_1",
+                "update_manifest",
+                serde_json::json!({ "id": strategy_id, "decision_cadence_minutes": 30 }),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text { text: "Updated the cadence.".into() }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+
+        let mut wl = WizardLoop::new(
+            td.path().to_path_buf(),
+            mock,
+            "claude-sonnet-4-6".into(),
+            pool.clone(),
+            session_id.clone(),
+            scope,
+            "set the cadence to 30 minutes".into(),
+        )
+        .await
+        .unwrap();
+
+        let (events, policy_events) = drain_with_policy_events(&mut wl).await;
+
+        // The tool actually ran (not blocked by the checkpoint hook).
+        let updated = events.iter().any(|e| matches!(
+            e,
+            WizardEvent::ToolResult { tool, result }
+                if tool == "update_manifest" && result.get("error").is_none()
+        ));
+        assert!(updated, "update_manifest should have run: {events:#?}");
+
+        // checkpoint_head is set on the session.
+        let rail = ChatSessionStore::load_rail_state(&pool, &session_id).await.unwrap();
+        let head = rail.checkpoint_head.expect("checkpoint_head must be set after a write tool");
+
+        // A CheckpointCreated event was queued referencing that same id.
+        let created = policy_events.iter().find_map(|pe| match &pe.payload {
+            UnifiedPayload::CheckpointCreated(c) => Some(c.clone()),
+            _ => None,
+        });
+        let created = created.expect("a CheckpointCreated event must be emitted");
+        assert_eq!(created.checkpoint_id, head, "event id must match checkpoint_head");
+        assert_eq!(created.run_id, session_id, "session id carried in run_id slot");
+        assert!(!created.input_hash.is_empty(), "checkpoint content_hash present");
+
+        // The persisted checkpoint really captured the Strategy artifact.
+        let checkpointer = Checkpointer::new(pool.clone(), td.path().to_path_buf());
+        let list = checkpointer.list(&session_id).await.unwrap();
+        assert_eq!(list.len(), 1, "exactly one pre-tool checkpoint");
+        assert_eq!(list[0].kind, CheckpointKind::PreTool);
+        let labels: Vec<&str> = list[0].artifacts.iter().map(|a| a.label()).collect();
+        assert!(labels.contains(&"strategy"), "captured strategy: {labels:?}");
+        assert!(labels.contains(&"tool_policy"), "captured tool policy: {labels:?}");
+        assert!(labels.contains(&"focus"), "captured focus marker: {labels:?}");
+    }
+
+    /// A read-only tool must NOT take a checkpoint — no rewind point is needed
+    /// and no CheckpointCreated event is emitted.
+    #[tokio::test]
+    async fn read_only_tool_takes_no_checkpoint() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use("tu_1", "list_strategies", serde_json::json!({})),
+            LlmResponse {
+                content: vec![ContentBlock::Text { text: "Here they are.".into() }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, pool, _td, sid) =
+            loop_with_session(mock, "what strategies exist", ContextScope::Workspace).await;
+        let (_events, policy_events) = drain_with_policy_events(&mut wl).await;
+
+        let any_ckpt = policy_events
+            .iter()
+            .any(|pe| matches!(pe.payload, UnifiedPayload::CheckpointCreated(_)));
+        assert!(!any_ckpt, "read-only tool must not checkpoint");
+        let rail = ChatSessionStore::load_rail_state(&pool, &sid).await.unwrap();
+        assert!(rail.checkpoint_head.is_none(), "no checkpoint_head for read-only tool");
+    }
+
+    /// The scope's focus document is spliced into the assembled system prompt
+    /// (a clearly-delimited "## Focus" section) and a `FocusInjected` event
+    /// carrying the content hash is emitted on the turn it is injected.
+    #[tokio::test]
+    async fn focus_doc_is_injected_into_system_prompt() {
+        let (pool, td) = fresh_pool().await;
+        let scope = ContextScope::Strategy { draft_id: "btc-momentum".into() };
+        let session_id = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
+
+        // Operator pins focus notes for this scope.
+        let focus_text = "Keep position sizing conservative; never exceed 2% per trade.";
+        let saved = focus::save(td.path(), &scope, focus_text).await.unwrap();
+
+        // RecordingDispatch captures the system prompt the loop assembles.
+        struct Recorder {
+            inner: MockDispatch,
+            last_system: Arc<std::sync::Mutex<Option<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl LlmDispatch for Recorder {
+            async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+                *self.last_system.lock().unwrap() = Some(req.system_prompt.clone());
+                self.inner.complete(req).await
+            }
+        }
+        let last_system = Arc::new(std::sync::Mutex::new(None));
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(Recorder {
+            inner: MockDispatch::echo("Understood."),
+            last_system: last_system.clone(),
+        });
+
+        let mut wl = WizardLoop::new(
+            td.path().to_path_buf(),
+            dispatch,
+            "claude-sonnet-4-6".into(),
+            pool.clone(),
+            session_id.clone(),
+            scope,
+            "what should I watch for".into(),
+        )
+        .await
+        .unwrap();
+
+        let (_events, policy_events) = drain_with_policy_events(&mut wl).await;
+
+        // The focus content is spliced into the system prompt under "## Focus".
+        let system = last_system.lock().unwrap().clone().expect("a system prompt was assembled");
+        assert!(system.contains("## Focus"), "system prompt has a Focus section: {system}");
+        assert!(system.contains(focus_text), "focus content spliced into prompt: {system}");
+
+        // A FocusInjected event with the saved content hash was emitted.
+        let injected = policy_events.iter().find_map(|pe| match &pe.payload {
+            UnifiedPayload::FocusInjected(f) => Some(f.clone()),
+            _ => None,
+        });
+        let injected = injected.expect("a FocusInjected event must be emitted");
+        assert_eq!(injected.scope_kind, "strategy");
+        assert_eq!(injected.scope_id.as_deref(), Some("btc-momentum"));
+        assert_eq!(injected.content_hash.as_deref(), Some(saved.content_hash.as_str()));
+    }
+
+    /// With no focus file for the scope, no Focus section and no FocusInjected
+    /// event appear — the absence path is silent and non-fatal.
+    #[tokio::test]
+    async fn no_focus_doc_means_no_focus_section() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "hi", ContextScope::Workspace).await;
+        let (_events, policy_events) = drain_with_policy_events(&mut wl).await;
+        let any_focus = policy_events
+            .iter()
+            .any(|pe| matches!(pe.payload, UnifiedPayload::FocusInjected(_)));
+        assert!(!any_focus, "no focus file → no FocusInjected event");
+    }
 }
