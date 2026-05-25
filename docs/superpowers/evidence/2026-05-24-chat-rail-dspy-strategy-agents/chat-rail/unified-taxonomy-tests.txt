@@ -1,0 +1,16 @@
+# Phase 1.1 — unified event taxonomy
+# 2026-05-25T00:17:52Z  f6924c9
+
+$ cargo test -p xvision-observability --lib unified_event
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (/Users/edkennedy/.cargo-target/xvision-chat-rail/debug/deps/xvision_observability-d877d0f3277bffc1)
+
+running 5 tests
+test unified_event::tests::every_payload_has_a_distinct_event_name ... ok
+test unified_event::tests::projector_assigns_monotonic_seq_and_run_id ... ok
+test unified_event::tests::payload_kind_tag_matches_event_name ... ok
+test unified_event::tests::typed_errors_round_trip_with_remediation ... ok
+test unified_event::tests::envelope_round_trips_through_json ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.00s
+
