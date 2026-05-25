@@ -9,12 +9,14 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
+use serde::Serialize;
 
-use xvision_engine::agents::{default_capabilities, AgentSlot, Capability};
+use xvision_engine::agents::{default_capabilities, AgentSlot, Capability, Severity, ValidationDiagnostic};
 use xvision_engine::api::agents as agents_api;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
+use crate::io::{print_json, print_json_compact};
 use crate::json::{emit_object, ObjectFormat};
 
 #[derive(Args, Debug)]
@@ -35,6 +37,15 @@ pub enum Op {
     /// set from `--capability`. `--system-prompt` may be a literal string
     /// or `@<path>` to read the prompt from a file.
     Create(CreateArgs),
+    /// List agents in the workspace library. Default output is a table;
+    /// use `--format json` or `--format json-compact` for machine-readable
+    /// output. Alias: `list`.
+    #[command(visible_alias = "list")]
+    Ls(LsArgs),
+    /// Validate one or all agents and report diagnostics. Exits non-zero
+    /// (code 2) when any agent has an error-severity diagnostic, making it
+    /// usable as a CI gate. Use `--json` for machine-readable output.
+    Lint(LintArgs),
 }
 
 #[derive(Args, Debug)]
@@ -48,6 +59,47 @@ pub struct GetArgs {
     /// is a single-line JSON payload suitable for piping.
     #[arg(long, value_enum, default_value_t = ObjectFormat::Json)]
     pub format: ObjectFormat,
+}
+
+/// Output format for `xvn agent ls`. Extends `ObjectFormat` by adding a
+/// human-readable `table` variant (the default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub enum ListFormat {
+    /// Human-readable table (default).
+    Table,
+    /// Pretty-printed JSON array.
+    Json,
+    /// Compact single-line JSON array, suitable for piping.
+    JsonCompact,
+}
+
+#[derive(Args, Debug)]
+pub struct LsArgs {
+    /// Output format: table (default), json, or json-compact.
+    #[arg(long, value_enum, default_value_t = ListFormat::Table)]
+    pub format: ListFormat,
+    /// Filter agents that carry this tag. Repeatable.
+    #[arg(long = "tag")]
+    pub tags: Vec<String>,
+    /// Include archived agents in the listing.
+    #[arg(long)]
+    pub include_archived: bool,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct LintArgs {
+    /// Agent id (ULID) to lint. If omitted, lint ALL agents in the workspace.
+    pub agent_id: Option<String>,
+    /// Emit diagnostics as a JSON array instead of human text.
+    #[arg(long)]
+    pub json: bool,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
 }
 
 /// Wire form of the capability classes. Mirrors
@@ -125,6 +177,8 @@ pub async fn run(cmd: AgentCmd) -> CliResult<()> {
     match cmd.op {
         Op::Get(args) => run_get(args).await,
         Op::Create(args) => run_create(args).await,
+        Op::Ls(args) => run_ls(args).await,
+        Op::Lint(args) => run_lint(args).await,
     }
 }
 
@@ -213,6 +267,168 @@ async fn run_create(args: CreateArgs) -> CliResult<()> {
     .map_err(|e| api_to_cli("agent create", e))?;
 
     emit_object(&agent, args.format)
+}
+
+async fn run_ls(args: LsArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    let req = agents_api::ListAgentsRequest {
+        include_archived: args.include_archived,
+        q: None,
+        limit: None,
+        offset: None,
+        scope: None,
+    };
+
+    let mut agents = agents_api::list(&ctx, req)
+        .await
+        .map_err(|e| api_to_cli("agent ls", e))?;
+
+    // Apply tag filter client-side (the API does not support multi-tag filter).
+    if !args.tags.is_empty() {
+        agents.retain(|a| args.tags.iter().all(|t| a.tags.contains(t)));
+    }
+
+    match args.format {
+        ListFormat::Json => print_json(&agents),
+        ListFormat::JsonCompact => print_json_compact(&agents),
+        ListFormat::Table => {
+            // Column widths: AGENT_ID (26), NAME (28), CAPABILITIES (24),
+            // MODELS (32), ARCHIVED (8), TAGS.
+            println!(
+                "{:<26}  {:<28}  {:<24}  {:<32}  {:<8}  {}",
+                "AGENT_ID", "NAME", "CAPABILITIES", "MODELS", "ARCHIVED", "TAGS"
+            );
+            println!("{}", "-".repeat(140));
+            for a in &agents {
+                let caps: String = a
+                    .slots
+                    .iter()
+                    .flat_map(|s| s.capabilities.iter().map(|c| format!("{c:?}").to_lowercase()))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let models: String = a
+                    .slots
+                    .iter()
+                    .map(|s| format!("{}/{}", s.provider, s.model))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let tags = a.tags.join(",");
+                println!(
+                    "{:<26}  {:<28}  {:<24}  {:<32}  {:<8}  {}",
+                    &a.agent_id,
+                    truncate(&a.name, 28),
+                    truncate(&caps, 24),
+                    truncate(&models, 32),
+                    if a.archived { "yes" } else { "no" },
+                    tags,
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Truncate a string to at most `max` chars, appending `…` if it was
+/// longer. Used for table column formatting.
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let end = s.char_indices().nth(max.saturating_sub(1)).map(|(i, _)| i).unwrap_or(s.len());
+        format!("{}…", &s[..end])
+    }
+}
+
+/// Per-agent lint result for JSON output.
+#[derive(Debug, Serialize)]
+struct AgentLintResult {
+    agent_id: String,
+    diagnostics: Vec<ValidationDiagnostic>,
+}
+
+async fn run_lint(args: LintArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    // Collect the agent ids to lint.
+    let agent_ids: Vec<String> = if let Some(id) = args.agent_id.clone() {
+        vec![id]
+    } else {
+        let agents = agents_api::list(
+            &ctx,
+            agents_api::ListAgentsRequest {
+                include_archived: true,
+                q: None,
+                limit: None,
+                offset: None,
+                scope: None,
+            },
+        )
+        .await
+        .map_err(|e| api_to_cli("agent lint", e))?;
+        agents.into_iter().map(|a| a.agent_id).collect()
+    };
+
+    let mut results: Vec<AgentLintResult> = Vec::new();
+    let mut has_error = false;
+
+    for id in &agent_ids {
+        let diags = agents_api::validate(&ctx, id)
+            .await
+            .map_err(|e| api_to_cli("agent lint", e))?;
+
+        if diags.iter().any(|d| d.severity == Severity::Error) {
+            has_error = true;
+        }
+
+        results.push(AgentLintResult {
+            agent_id: id.clone(),
+            diagnostics: diags,
+        });
+    }
+
+    if args.json {
+        print_json(&results)?;
+    } else {
+        // Human output: one line per diagnostic, grouped by agent.
+        for r in &results {
+            if r.diagnostics.is_empty() {
+                println!("{}: ok", r.agent_id);
+            } else {
+                for d in &r.diagnostics {
+                    let sev = match d.severity {
+                        Severity::Error => "ERROR",
+                        Severity::Warning => "WARN",
+                        Severity::Info => "INFO",
+                    };
+                    let field = d.field.as_deref().unwrap_or("-");
+                    println!(
+                        "{agent}  [{sev}]  {code}  {field}  {msg}",
+                        agent = r.agent_id,
+                        sev = sev,
+                        code = d.code,
+                        field = field,
+                        msg = d.message,
+                    );
+                }
+            }
+        }
+    }
+
+    if has_error {
+        Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!(
+                "agent lint: one or more agents have error-severity diagnostics"
+            ),
+        })
+    } else {
+        Ok(())
+    }
 }
 
 async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> {
