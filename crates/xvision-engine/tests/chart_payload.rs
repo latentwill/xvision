@@ -7,6 +7,8 @@
 use chrono::TimeZone;
 use tempfile::tempdir;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
+use xvision_engine::eval::{DecisionRow, Run, RunMode, RunStore};
+use xvision_engine::strategies::store::strategy_store_dir;
 
 /// Build a fresh `ApiContext` backed by an on-disk SQLite DB under a tmpdir.
 /// Uses `ApiContext::open` so all migrations are applied and the canonical
@@ -95,6 +97,24 @@ async fn seed_cached_bars(ctx: &ApiContext, cache_key: &str, asset: &str, count:
     .unwrap();
 }
 
+fn hold_decision_for_asset(run_id: &str, asset: &str) -> DecisionRow {
+    DecisionRow {
+        run_id: run_id.into(),
+        decision_index: 0,
+        timestamp: chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+        asset: asset.into(),
+        action: "hold".into(),
+        conviction: Some(0.6),
+        justification: Some("fixture hold".into()),
+        reasoning: None,
+        order_size: None,
+        fill_price: None,
+        fill_size: None,
+        fee: None,
+        pnl_realized: None,
+    }
+}
+
 /// `build_run_payload` must return `ApiError::NotFound` for a run id that
 /// doesn't exist in the store.
 #[tokio::test]
@@ -112,6 +132,52 @@ async fn build_run_payload_unknown_run_returns_not_found() {
     assert!(
         msg.contains("r_does_not_exist"),
         "NotFound message should include the run id, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn build_run_payload_uses_persisted_decision_asset_before_strategy_file() {
+    let ctx = test_ctx().await;
+    let scenario = xvision_engine::api::scenario::get(&ctx, "crypto-bull-q1-2025")
+        .await
+        .unwrap();
+    let strategy_id = "corrupt-chart-strategy";
+    let strategy_dir = strategy_store_dir(&ctx.xvn_home);
+    tokio::fs::create_dir_all(&strategy_dir).await.unwrap();
+    tokio::fs::write(
+        strategy_dir.join(format!("{strategy_id}.json")),
+        b"{not valid json",
+    )
+    .await
+    .unwrap();
+
+    let cache_key = xvision_engine::eval::bars::compute_cache_key(
+        "ETH/USD",
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
+    seed_cached_bars(&ctx, &cache_key, "ETH/USD", 3).await;
+
+    let store = RunStore::new(ctx.db.clone());
+    let run = Run::new_queued(strategy_id.into(), scenario.id.clone(), RunMode::Backtest);
+    store.create(&run).await.unwrap();
+    store
+        .record_decision(&hold_decision_for_asset(&run.id, "ETH/USD"))
+        .await
+        .unwrap();
+
+    let payload = xvision_engine::api::chart::build_run_payload(&ctx, &run.id)
+        .await
+        .unwrap();
+
+    assert_eq!(payload.asset, "ETH");
+    assert_eq!(payload.bars.len(), 3);
+    assert_eq!(
+        payload.markers.holds.len(),
+        1,
+        "decision asset should let chart render even when the strategy artifact is unreadable",
     );
 }
 

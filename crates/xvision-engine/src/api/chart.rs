@@ -15,8 +15,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiContext, ApiError, ApiResult};
+use crate::eval::run::Run;
 use crate::eval::scenario::TimeWindow;
 use crate::eval::store::{DecisionRow, RunStore};
+use xvision_core::trading::AssetSymbol;
 
 // ── chart-domain types ──────────────────────────────────────────────────────
 
@@ -293,14 +295,9 @@ const MAX_BARS: usize = 100_000;
 ///
 /// Returns `ApiError::NotFound` when the run or scenario does not exist.
 /// Returns `ApiError::Validation` when the bar count exceeds `MAX_BARS`.
-/// Resolve the asset a run/strategy trades from the strategy's
-/// `asset_universe` (single-asset for now — `asset_universe[0]`). Scenarios
-/// are asset-free, so chart payloads source the asset from the strategy
-/// referenced by the run's `agent_id`.
-async fn resolve_run_asset_for_chart(
-    ctx: &ApiContext,
-    agent_id: &str,
-) -> ApiResult<xvision_core::trading::AssetSymbol> {
+/// Resolve the asset a strategy trades from its `asset_universe`
+/// (single-asset for now — `asset_universe[0]`).
+async fn resolve_strategy_asset_for_chart(ctx: &ApiContext, agent_id: &str) -> ApiResult<AssetSymbol> {
     let strategy = crate::api::strategy::get(ctx, agent_id).await?;
     let raw = strategy.manifest.asset_universe.first().ok_or_else(|| {
         ApiError::Validation(format!(
@@ -308,12 +305,77 @@ async fn resolve_run_asset_for_chart(
             strategy.manifest.id
         ))
     })?;
-    raw.parse::<xvision_core::trading::AssetSymbol>().map_err(|e| {
+    raw.parse::<AssetSymbol>().map_err(|e| {
         ApiError::Validation(format!(
             "strategy '{}' asset_universe entry '{}' is not a recognised asset: {e}",
             strategy.manifest.id, raw
         ))
     })
+}
+
+fn parse_chart_asset(raw: &str, source: &str) -> Option<AssetSymbol> {
+    match raw.parse::<AssetSymbol>() {
+        Ok(asset) => Some(asset),
+        Err(err) => {
+            tracing::warn!(
+                source,
+                asset = %raw,
+                error = %err,
+                "ignoring unparseable chart asset candidate"
+            );
+            None
+        }
+    }
+}
+
+fn asset_from_decisions(decisions: &[DecisionRow]) -> Option<AssetSymbol> {
+    decisions
+        .iter()
+        .find_map(|decision| parse_chart_asset(&decision.asset, "eval_decisions.asset"))
+}
+
+fn asset_from_live_config(run: &Run) -> Option<AssetSymbol> {
+    run.live_config.as_ref().and_then(|config| {
+        config.assets.first().and_then(|asset| {
+            parse_chart_asset(
+                &asset.venue_symbol,
+                "eval_runs.live_config_json.assets[0].venue_symbol",
+            )
+            .or_else(|| parse_chart_asset(&asset.symbol, "eval_runs.live_config_json.assets[0].symbol"))
+        })
+    })
+}
+
+/// Resolve the asset used for a run chart.
+///
+/// Prefer run-local persisted data over reloading the mutable strategy
+/// artifact: old runs can outlive deleted or malformed strategy files, while
+/// `eval_decisions.asset` reflects what the executor actually traded.
+async fn resolve_run_asset_for_chart(
+    ctx: &ApiContext,
+    run: &Run,
+    decisions: &[DecisionRow],
+) -> ApiResult<AssetSymbol> {
+    if let Some(asset) = asset_from_decisions(decisions) {
+        return Ok(asset);
+    }
+
+    if let Some(asset) = asset_from_live_config(run) {
+        return Ok(asset);
+    }
+
+    match resolve_strategy_asset_for_chart(ctx, &run.agent_id).await {
+        Ok(asset) => Ok(asset),
+        Err(err) => {
+            tracing::warn!(
+                run_id = %run.id,
+                strategy_id = %run.agent_id,
+                error = %err,
+                "falling back to BTC/USD for run chart asset resolution"
+            );
+            Ok(AssetSymbol::Btc)
+        }
+    }
 }
 
 pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunChartPayload> {
@@ -340,10 +402,16 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
             other => other,
         })?;
 
-    // Scenarios are asset-free; the run's traded asset comes from the
-    // strategy's `asset_universe` (single-asset for now). Per-asset cache
-    // key is computed from that asset over the scenario window.
-    let asset_sym = resolve_run_asset_for_chart(ctx, &run.agent_id).await?;
+    let decisions = store
+        .read_decisions(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Scenarios are asset-free; the run's traded asset comes from persisted
+    // run-local data when available, then the strategy's `asset_universe`,
+    // then a BTC/USD backdrop fallback for metadata-only/legacy runs. The
+    // per-asset cache key is computed from that asset over the scenario window.
+    let asset_sym = resolve_run_asset_for_chart(ctx, &run, &decisions).await?;
     let asset_pair = asset_sym.as_alpaca_pair();
     let cache_key = crate::eval::bars::compute_cache_key(
         &asset_pair,
@@ -397,11 +465,6 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
     let drawdown = compute_drawdown(&equity);
 
     // 9. Decisions → position series + markers.
-    let decisions = store
-        .read_decisions(run_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
     let position = compute_position(&decisions, &bars);
     let markers = split_markers(&decisions, &bars);
 
@@ -1109,8 +1172,8 @@ pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiR
     let mut series: Vec<CompareRunSeries> = Vec::new();
     let mut scenario_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Asset for the shared-scenario backdrop comes from the first run's
-    // strategy (scenarios are asset-free). Captured here in run order.
-    let mut backdrop_agent_id: Option<String> = None;
+    // persisted decision asset when available, then its launch metadata.
+    let mut backdrop_run: Option<Run> = None;
 
     for id in run_ids {
         let run = store.get(id).await.map_err(|e| {
@@ -1123,8 +1186,8 @@ pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiR
         })?;
 
         scenario_ids.insert(run.scenario_id.clone());
-        if backdrop_agent_id.is_none() {
-            backdrop_agent_id = Some(run.agent_id.clone());
+        if backdrop_run.is_none() {
+            backdrop_run = Some(run.clone());
         }
 
         let equity: Vec<ChartEquityPoint> = store
@@ -1157,9 +1220,15 @@ pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiR
             other => other,
         })?;
 
-        let asset_sym = match &backdrop_agent_id {
-            Some(agent_id) => resolve_run_asset_for_chart(ctx, agent_id).await?,
-            None => xvision_core::trading::AssetSymbol::Btc,
+        let asset_sym = match &backdrop_run {
+            Some(run) => {
+                let decisions = store
+                    .read_decisions(&run.id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?;
+                resolve_run_asset_for_chart(ctx, run, &decisions).await?
+            }
+            None => AssetSymbol::Btc,
         };
         let asset_pair = asset_sym.as_alpaca_pair();
         let cache_key = crate::eval::bars::compute_cache_key(
