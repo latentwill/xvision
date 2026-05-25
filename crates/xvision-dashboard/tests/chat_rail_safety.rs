@@ -279,7 +279,17 @@ async fn write_tool_in_act_without_auto_approve_needs_approval_and_does_not_exec
     ChatSessionStore::set_mode(&state.pool, &session_id, "act")
         .await
         .unwrap();
-    // Default Write policy: enabled + NOT auto_approve → NeedsApproval.
+    ToolPolicyStore::upsert_policy(
+        &state.pool,
+        GLOBAL_SCOPE,
+        "create_strategy",
+        xvision_engine::chat_session::ToolPolicy {
+            enabled: true,
+            auto_approve: false,
+        },
+    )
+    .await
+    .unwrap();
 
     let mut wl = WizardLoop::new(
         tmp.path().to_path_buf(),

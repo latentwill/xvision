@@ -55,6 +55,7 @@ pub struct ResolveSessionReq {
 #[derive(Debug, Serialize)]
 pub struct ResolveSessionResp {
     pub session_id: String,
+    pub mode: String,
     pub history: Vec<ChatMessage>,
 }
 
@@ -69,6 +70,7 @@ pub async fn create_session(
         .map_err(DashboardError::Internal)?;
     Ok(Json(ResolveSessionResp {
         session_id,
+        mode: "research".to_string(),
         history: Vec::new(),
     }))
 }
@@ -83,7 +85,15 @@ pub async fn resolve_session(
     let (session_id, history) = ChatSessionStore::resolve(&state.pool, &req.scope)
         .await
         .map_err(DashboardError::Internal)?;
-    Ok(Json(ResolveSessionResp { session_id, history }))
+    let mode = ChatSessionStore::load_rail_state(&state.pool, &session_id)
+        .await
+        .map(|state| state.mode)
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(ResolveSessionResp {
+        session_id,
+        mode,
+        history,
+    }))
 }
 
 pub async fn history(

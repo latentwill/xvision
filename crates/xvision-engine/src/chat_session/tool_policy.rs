@@ -6,12 +6,13 @@
 //!
 //! 1. **Mode** (`research` | `act`) — a per-session flag persisted on
 //!    `chat_sessions.mode`. Research is read-only: no WRITE tool may run. Act
-//!    unlocks WRITE tools. Server-side enforcement reads the column from the
-//!    DB; the client-sent value is never trusted.
+//!    unlocks normal WRITE tools. Server-side enforcement reads the column from
+//!    the DB; the client-sent value is never trusted.
 //! 2. **Tool policy** (`enabled` + `auto_approve`) — a persisted per-tool,
 //!    per-scope record in `tool_policies`. A disabled tool is hidden from the
-//!    model and denied if requested anyway. An enabled WRITE tool either
-//!    auto-runs (auto_approve) or needs operator approval.
+//!    model and denied if requested anyway. Enabled WRITE tools auto-run by
+//!    default in Act mode; operators can still disable or de-auto-approve
+//!    individual tools.
 //!
 //! The classifier ([`classify`]) assigns each authoring verb a [`ToolClass`]
 //! (Read / Write / Dangerous). The classification lives here — one place, not
@@ -41,7 +42,7 @@ pub enum ToolClass {
     /// in any mode, auto-approved.
     Read,
     /// Authoring verbs that mutate a strategy/scenario/agent or launch work.
-    /// Allowed only in Act mode; needs approval unless auto-approved.
+    /// Allowed only in Act mode; auto-approved by default.
     Write,
     /// Reserved for irreversible / high-blast-radius verbs. Disabled by
     /// default; an operator must explicitly enable + (optionally) auto-approve.
@@ -61,7 +62,7 @@ pub struct ToolPolicy {
 impl ToolPolicy {
     /// Default policy for a class:
     /// - Read → enabled + auto_approve
-    /// - Write → enabled + NOT auto_approve (needs approval)
+    /// - Write → enabled + auto_approve
     /// - Dangerous → disabled
     pub fn default_for(class: ToolClass) -> Self {
         match class {
@@ -71,7 +72,7 @@ impl ToolPolicy {
             },
             ToolClass::Write => ToolPolicy {
                 enabled: true,
-                auto_approve: false,
+                auto_approve: true,
             },
             ToolClass::Dangerous => ToolPolicy {
                 enabled: false,
@@ -131,7 +132,7 @@ pub fn classify(tool_name: &str) -> ToolClass {
 /// 1. Disabled policy → `Denied` (regardless of class or mode).
 /// 2. Write tool in `research` mode → `Denied` (read-only mode).
 /// 3. Write tool in `act` mode → `AutoApproved` if `auto_approve`, else
-///    `NeedsApproval`.
+///    `NeedsApproval` for explicit operator overrides.
 /// 4. Read tool → `AutoApproved` (any mode).
 /// 5. Dangerous behaves like Write here once enabled; its restriction is the
 ///    disabled-by-default policy handled by rule 1.
@@ -325,7 +326,7 @@ mod tests {
             ToolPolicy::default_for(ToolClass::Write),
             ToolPolicy {
                 enabled: true,
-                auto_approve: false
+                auto_approve: true
             }
         );
         assert_eq!(
@@ -386,10 +387,10 @@ mod tests {
     }
 
     #[test]
-    fn decide_write_in_act_needs_approval_by_default() {
+    fn decide_write_in_act_auto_approves_by_default() {
         assert_eq!(
             decide("act", ToolClass::Write, write_default()),
-            ToolPolicyOutcome::NeedsApproval
+            ToolPolicyOutcome::AutoApproved
         );
     }
 

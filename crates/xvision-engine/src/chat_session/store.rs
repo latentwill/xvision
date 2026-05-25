@@ -72,6 +72,7 @@ pub struct ChatMessage {
 pub struct ChatSessionSummary {
     pub id: String,
     pub scope: ContextScope,
+    pub mode: String,
     pub started_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
 }
@@ -383,8 +384,8 @@ impl ChatSessionStore {
 
     /// List sessions newest-first. Used by the chat rail's history pane.
     pub async fn list_sessions(pool: &SqlitePool) -> Result<Vec<ChatSessionSummary>> {
-        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-            "SELECT id, context_scope_json, started_at, last_activity_at \
+        let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+            "SELECT id, context_scope_json, mode, started_at, last_activity_at \
              FROM chat_sessions ORDER BY last_activity_at DESC",
         )
         .fetch_all(pool)
@@ -392,11 +393,12 @@ impl ChatSessionStore {
         .context("list sessions")?;
 
         rows.into_iter()
-            .map(|(id, scope_json, started_at, last_activity_at)| {
+            .map(|(id, scope_json, mode, started_at, last_activity_at)| {
                 let scope = serde_json::from_str(&scope_json).unwrap_or_default();
                 Ok(ChatSessionSummary {
                     id,
                     scope,
+                    mode,
                     started_at: DateTime::parse_from_rfc3339(&started_at)
                         .context("parse started_at")?
                         .with_timezone(&Utc),

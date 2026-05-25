@@ -94,8 +94,8 @@ export const ListCard = forwardRef(function ListCard<T>(
           <ListToolbar ref={searchRef} {...toolbar} density={density} />
         </div>
       )}
-      <div className="border-t border-border-soft">
-        <table className="w-full border-collapse">
+      <div className="border-t border-border-soft overflow-x-auto xvn-scroll">
+        <table className="w-full min-w-max border-collapse">
           {columns.length > 0 && (
             <thead>
               <tr>
