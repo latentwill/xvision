@@ -5,7 +5,7 @@ wave: agent-cli-press-audit-2026-05-25
 worktree: /Users/edkennedy/Code/xvision-cli-press
 branch: task/agent-cli-press-audit
 base: origin/main
-status: ready          # operator-authorized track; worked via worktree + subagent fan-out
+status: pr-open        # operator-authorized track; PR #601
 depends_on: []
 blocks: []
 stacking: none
