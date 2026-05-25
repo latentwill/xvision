@@ -303,6 +303,7 @@ fn mutating_router(state: AppState) -> Router {
             delete(strategies::delete_agent).patch(strategies::patch_agent_role),
         )
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
+        .route("/api/strategy/:id/swap-agent", post(strategies::swap_agent))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
         .route("/api/strategy/:id/filter", put(strategies::put_filter))
         .route("/api/strategy/:id/validate", post(strategies::post_validate))
@@ -391,6 +392,19 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/optimizations/:id/revert",
             post(optimizations_route::revert),
+        )
+        // ── Holdout discipline + marketplace mint gate (Phase 4.3/4.4) ────
+        .route(
+            "/api/optimizations/:id/snapshots/:sid/holdout",
+            post(optimizations_route::record_holdout),
+        )
+        .route(
+            "/api/optimizations/:id/snapshots/:sid/waive-overfit",
+            post(optimizations_route::waive_overfit),
+        )
+        .route(
+            "/api/optimizations/:id/mint",
+            post(optimizations_route::mint),
         )
         // Safety API: pause gate + audit log (v2b-broker-wallet-kill-switch).
         .route("/api/safety/state", get(safety_route::get_state_handler))

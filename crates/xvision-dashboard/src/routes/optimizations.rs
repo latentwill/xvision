@@ -35,6 +35,10 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::agents::store::{AgentStore, NewAgent};
 use xvision_engine::agents::Agent;
+use xvision_engine::mint::{
+    check_accept, check_marketplace_mint, AcceptInputs, EvalProof, HoldoutResult, HoldoutStore,
+    MintDecision, MintInputs, NewHoldoutResult,
+};
 use xvision_engine::optimization::{
     LineageEdge, OptimizationCandidate, OptimizationRun, OptimizationSnapshotRow,
     OptimizationStore,
@@ -81,6 +85,12 @@ pub struct AcceptRequest {
     pub snapshot_id: String,
     #[serde(default)]
     pub child_name: Option<String>,
+    /// HOLDOUT DISCIPLINE (Phase 4.4): when the snapshot has no recorded holdout
+    /// result, the accept is REFUSED unless a non-empty `override_reason` is
+    /// supplied. The reason is recorded in the child agent's description so the
+    /// bypass is auditable.
+    #[serde(default)]
+    pub override_reason: Option<String>,
 }
 
 /// `POST /api/optimizations/:id/accept` response.
@@ -90,6 +100,13 @@ pub struct AcceptResponse {
     pub lineage: LineageEdge,
     pub snapshot_id: String,
     pub accepted: bool,
+    /// `true` when a holdout result backed the accept.
+    pub holdout_present: bool,
+    /// The override reason, when the holdout-presence gate was bypassed.
+    pub override_reason: Option<String>,
+    /// `true` when the backing holdout carried an overfit warning (a later
+    /// marketplace mint will be blocked until it is waived).
+    pub overfit_warning: bool,
 }
 
 /// `POST /api/optimizations/:id/revert` request body.
@@ -178,6 +195,25 @@ pub async fn accept(
         });
     }
 
+    // HOLDOUT DISCIPLINE GATE (Phase 4.4): a snapshot cannot be accepted without
+    // a recorded holdout result UNLESS a non-empty override_reason is supplied.
+    // The decision is computed by the pure engine gate; a refusal is typed and
+    // surfaced as a 422-style validation error carrying the machine code.
+    let holdout_store = HoldoutStore::new(state.pool.clone());
+    let holdout = holdout_store
+        .get(&req.snapshot_id)
+        .await
+        .map_err(map_holdout_error)?;
+    let decision = check_accept(&AcceptInputs {
+        snapshot_id: &req.snapshot_id,
+        holdout: holdout.as_ref(),
+        override_reason: req.override_reason.as_deref(),
+    })
+    .map_err(|refusal| DashboardError::Validation {
+        field: refusal.machine_code().into(),
+        msg: refusal.to_string(),
+    })?;
+
     // The run must have a selected winner whose instruction we adopt.
     let candidates = s.list_candidates(&id).await?;
     let selected = candidates
@@ -215,13 +251,19 @@ pub async fn accept(
         .clone()
         .unwrap_or_else(|| format!("{} (optimized)", parent.name));
 
+    let mut description = format!(
+        "Optimized from {} via run {id} (optimizer {}, metric {})",
+        parent.name, run.optimizer, run.metric
+    );
+    if let Some(reason) = &decision.override_reason {
+        // Record the holdout-bypass rationale on the child so the override is
+        // auditable from the agent record itself.
+        description.push_str(&format!(" [accepted without holdout — override: {reason}]"));
+    }
     let child_id = agent_store
         .create(NewAgent {
             name: child_name,
-            description: format!(
-                "Optimized from {} via run {id} (optimizer {}, metric {})",
-                parent.name, run.optimizer, run.metric
-            ),
+            description,
             tags: parent.tags.clone(),
             slots,
             scope_strategy_id: parent.scope_strategy_id.clone(),
@@ -247,6 +289,9 @@ pub async fn accept(
         lineage,
         snapshot_id: req.snapshot_id,
         accepted: true,
+        holdout_present: decision.holdout_present,
+        override_reason: decision.override_reason,
+        overfit_warning: decision.overfit_warning,
     }))
 }
 
@@ -283,4 +328,191 @@ pub async fn revert(
         child_agent_id: req.child_agent_id,
         accepted: false,
     }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Holdout discipline (Phase 4.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `POST /api/optimizations/:id/snapshots/:sid/holdout` request body — record a
+/// snapshot's paired train/holdout metric values. The overfit verdict is
+/// computed by the engine from the paired values. Metric values are produced by
+/// the eval harness on the CLI side; this endpoint just persists them.
+#[derive(Debug, Deserialize)]
+pub struct RecordHoldoutRequest {
+    pub metric: String,
+    pub train_metric_value: f64,
+    pub holdout_metric_value: f64,
+}
+
+/// `POST /api/optimizations/:id/snapshots/:sid/holdout` — record the holdout
+/// result for a snapshot under this run. The run id + snapshot id are validated
+/// to belong together before the result is recorded.
+pub async fn record_holdout(
+    State(state): State<AppState>,
+    Path((id, sid)): Path<(String, String)>,
+    Json(req): Json<RecordHoldoutRequest>,
+) -> Result<Json<HoldoutResult>, DashboardError> {
+    let s = store(&state);
+    // The snapshot must exist and belong to this run.
+    let snapshot = s.get_snapshot(&sid).await?;
+    if snapshot.run_id != id {
+        return Err(DashboardError::Validation {
+            field: "snapshot_id".into(),
+            msg: format!("snapshot {sid} belongs to run {}, not {id}", snapshot.run_id),
+        });
+    }
+    let holdout_store = HoldoutStore::new(state.pool.clone());
+    let result = holdout_store
+        .record(NewHoldoutResult {
+            snapshot_id: sid,
+            run_id: id,
+            metric: req.metric,
+            train_metric_value: req.train_metric_value,
+            holdout_metric_value: req.holdout_metric_value,
+        })
+        .await
+        .map_err(map_holdout_error)?;
+    Ok(Json(result))
+}
+
+/// `POST /api/optimizations/:id/snapshots/:sid/waive-overfit` request body.
+#[derive(Debug, Deserialize)]
+pub struct WaiveOverfitRequest {
+    /// Non-empty rationale lifting the overfit mint-block. Recorded on the
+    /// holdout result.
+    pub reason: String,
+}
+
+/// `POST /api/optimizations/:id/snapshots/:sid/waive-overfit` — record a waiver
+/// reason that lifts the overfit warning's mint-block for a snapshot. Refuses an
+/// empty reason (the waiver must be justified).
+pub async fn waive_overfit(
+    State(state): State<AppState>,
+    Path((id, sid)): Path<(String, String)>,
+    Json(req): Json<WaiveOverfitRequest>,
+) -> Result<Json<HoldoutResult>, DashboardError> {
+    if req.reason.trim().is_empty() {
+        return Err(DashboardError::Validation {
+            field: "reason".into(),
+            msg: "an overfit waiver requires a non-empty reason".into(),
+        });
+    }
+    let s = store(&state);
+    let snapshot = s.get_snapshot(&sid).await?;
+    if snapshot.run_id != id {
+        return Err(DashboardError::Validation {
+            field: "snapshot_id".into(),
+            msg: format!("snapshot {sid} belongs to run {}, not {id}", snapshot.run_id),
+        });
+    }
+    let holdout_store = HoldoutStore::new(state.pool.clone());
+    let result = holdout_store
+        .waive_overfit(&sid, req.reason.trim())
+        .await
+        .map_err(map_holdout_error)?;
+    Ok(Json(result))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Marketplace mint gate (Phase 4.3/4.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `POST /api/optimizations/:id/mint` request body — request a marketplace mint
+/// of a child agent produced by this run's accepted snapshot.
+///
+/// The engine mint gate REFUSES (typed) without (a) optimization lineage,
+/// (b) eval proof, (c) no-unwaived-overfit, (d) the capability's required-metric
+/// set covered. `eval_run_id` is the eval proof the conductor wires in (the
+/// engine treats it as an opaque pointer — PRESENCE is what is checked).
+/// `metrics_present` is the metric battery the holdout proof carries.
+#[derive(Debug, Deserialize)]
+pub struct MintRequest {
+    /// The child agent (from a prior `/accept`) to mint to marketplace metadata.
+    pub child_agent_id: String,
+    /// The eval run id backing the mint (eval proof). Required.
+    pub eval_run_id: String,
+    /// The metric name the eval proof reports.
+    pub eval_metric: String,
+    /// The metric names the snapshot's holdout proof carries (checked against
+    /// the capability's required-metric set).
+    #[serde(default)]
+    pub metrics_present: Vec<String>,
+}
+
+/// `POST /api/optimizations/:id/mint` response — the mint decision the engine
+/// gate produced. Carried verbatim so the (separate, 4.5) FE mint flow can
+/// stamp the marketplace metadata with the attested provenance.
+#[derive(Debug, Serialize)]
+pub struct MintResponse {
+    pub decision: MintDecision,
+}
+
+/// `POST /api/optimizations/:id/mint` — gate a marketplace mint of a child agent.
+///
+/// Composes the facts (lineage edge, eval proof, holdout result, capability,
+/// metric coverage) and runs the pure engine [`check_marketplace_mint`] gate.
+/// A refusal is typed and surfaced as a validation error carrying the machine
+/// code; success returns the attested mint decision. This endpoint does NOT
+/// write marketplace metadata — that is the FE mint flow (Phase 4.5). It is the
+/// REFUSAL barrier: nothing should mint without passing here first.
+pub async fn mint(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<MintRequest>,
+) -> Result<Json<MintResponse>, DashboardError> {
+    let s = store(&state);
+    let run = s.get_run(&id).await?;
+
+    // Lineage: the child must trace to a parent via an accepted run. We accept
+    // the mint only when the child's lineage edge names THIS run, so a child
+    // can't be minted against an unrelated run's proof.
+    let lineage = s.get_lineage_for_child(&req.child_agent_id).await?;
+    let has_lineage = lineage
+        .as_ref()
+        .map(|e| e.optimization_run_id == id)
+        .unwrap_or(false);
+
+    // Holdout result for this run's accepted snapshot (if recorded). The mint
+    // gate uses it for the overfit + metric-coverage checks. We take the
+    // accepted snapshot; if multiple, the newest accepted one.
+    let holdout_store = HoldoutStore::new(state.pool.clone());
+    let snapshots = s.list_snapshots(&id).await?;
+    let accepted_snapshot = snapshots.iter().find(|sn| sn.accepted);
+    let holdout: Option<HoldoutResult> = match accepted_snapshot {
+        Some(sn) => holdout_store.get(&sn.id).await.map_err(map_holdout_error)?,
+        None => None,
+    };
+
+    let eval_proof = EvalProof {
+        eval_run_id: req.eval_run_id.clone(),
+        metric: req.eval_metric.clone(),
+    };
+
+    let decision = check_marketplace_mint(&MintInputs {
+        child_agent_id: &req.child_agent_id,
+        capability: &run.capability,
+        has_lineage,
+        eval_proof: Some(&eval_proof),
+        holdout: holdout.as_ref(),
+        metrics_present: &req.metrics_present,
+    })
+    .map_err(|refusal| DashboardError::Validation {
+        field: refusal.machine_code().into(),
+        msg: refusal.to_string(),
+    })?;
+
+    Ok(Json(MintResponse { decision }))
+}
+
+/// Map a [`xvision_engine::mint::HoldoutError`] to the dashboard error model.
+/// `NotFound` → 404; DB errors → 500.
+fn map_holdout_error(err: xvision_engine::mint::HoldoutError) -> DashboardError {
+    use xvision_engine::mint::HoldoutError;
+    match err {
+        HoldoutError::NotFound(id) => {
+            DashboardError::NotFound(format!("holdout result not found: {id}"))
+        }
+        HoldoutError::Db(e) => DashboardError::Internal(anyhow::anyhow!(e)),
+    }
 }
