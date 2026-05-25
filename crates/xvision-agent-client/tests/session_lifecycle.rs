@@ -127,6 +127,7 @@ async fn full_session_round_trip() {
                 max_output_tokens: 1000,
                 max_wall_ms: 30_000,
             },
+            decision_schema: None,
         })
         .await
         .expect("start_run");

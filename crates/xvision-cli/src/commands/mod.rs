@@ -31,4 +31,5 @@ pub mod store_cmd;
 pub mod strategies;
 pub mod strategy;
 pub mod trader;
+pub mod trajectory;
 pub mod venue;

@@ -9,6 +9,7 @@
 //! janitor.
 
 pub mod blobs;
+pub mod trajectory;
 pub mod bus;
 pub mod bus_subscriber;
 pub mod config;

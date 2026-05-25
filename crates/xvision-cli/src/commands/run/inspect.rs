@@ -57,6 +57,23 @@ pub enum OutputFormat {
 pub async fn run(args: InspectArgs) -> CliResult<()> {
     let pool = open_pool(args.xvn_home.as_deref(), args.db.as_deref()).await?;
 
+    // Stage 1 (Cline runtime unification, operational-visibility contract
+    // item 3): surface the run's trajectory mode in the CLI. Read directly
+    // from `agent_runs` (a cheap scalar) and print to stderr so it never
+    // contaminates the `--out -` JSON stdout deliverable. Best-effort: a
+    // pool that predates migration 039 (no `trajectory_mode` column) or a
+    // missing row simply skips the line rather than failing the inspect.
+    if let Ok(Some(mode)) =
+        sqlx::query_scalar::<_, Option<String>>("SELECT trajectory_mode FROM agent_runs WHERE id = ?")
+            .bind(&args.id)
+            .fetch_optional(&pool)
+            .await
+    {
+        if let Some(mode) = mode {
+            eprintln!("xvn run inspect → trajectory mode: {mode}");
+        }
+    }
+
     // Stdout sink for JSON. Markdown is meaningless on stdout (mixed
     // with caller output), so we restrict `-` to JSON.
     if let Some("-") = args.out.as_deref() {

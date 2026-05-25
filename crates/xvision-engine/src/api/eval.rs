@@ -54,7 +54,8 @@ use crate::eval::scenario::{
 };
 use crate::eval::store::{ListFilter, RunStore};
 use crate::tools::ToolRegistry;
-use xvision_core::config::{self, ProviderEntry, ProviderKind};
+use xvision_agent_client::{AgentClient, ToolDispatch, ToolDispatchError};
+use xvision_core::config::{self, AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials};
 use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
@@ -1722,6 +1723,188 @@ async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmD
     }
 }
 
+/// Resolve the API key for a provider entry (mirrors the key-resolution
+/// half of [`dispatch_from_provider`]). Returns `Ok(None)` for keyless
+/// local endpoints, `Ok(Some(key))` otherwise, and a typed validation
+/// error when the configured env var is unset.
+fn resolve_provider_api_key(entry: &ProviderEntry) -> ApiResult<Option<String>> {
+    if entry.api_key_env.is_empty() {
+        return Ok(None);
+    }
+    let key = std::env::var(&entry.api_key_env).map_err(|_| {
+        ApiError::Validation(format!(
+            "no API key for provider `{}` (env var {} is unset). Paste a key in Settings → Providers or export {} before running eval.",
+            entry.name, entry.api_key_env, entry.api_key_env
+        ))
+    })?;
+    if key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+        return Err(ApiError::Validation(format!(
+            "provider `{}` has no API key set. Paste one in Settings → Providers.",
+            entry.name
+        )));
+    }
+    Ok(Some(key))
+}
+
+/// Read the effective agent runtime for an eval run.
+///
+/// The flag default is `Cline` (Task 9 flip). But the Cline path can only
+/// physically run when the `xvision-agentd` sidecar binary is available, so
+/// the eval entry point gates the effective runtime on `XVN_AGENTD_BIN`:
+///
+/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` set → `Cline`.
+/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` UNSET →
+///   `Cline` is still returned, so `spawn_cline_ctx` produces the typed
+///   "set XVN_AGENTD_BIN" error — an operator who explicitly asked for
+///   Cline gets a clear failure, never a silent downgrade (design
+///   decision 5 / failure contract).
+/// * config omits the field (resolves to the `Cline` serde default) but
+///   `XVN_AGENTD_BIN` is UNSET → `LlmDispatch`. This is the safe migration
+///   behavior: an environment that hasn't provisioned the sidecar (most
+///   tests, fresh installs) keeps running through the proven raw-dispatch
+///   path until the operator opts in by provisioning the sidecar.
+/// * config fails to load (no file / parse error) → `LlmDispatch`.
+///
+/// The distinction between "explicitly cline" and "defaulted cline" is read
+/// from the raw config text (the `agent_runtime` key's presence) because
+/// serde collapses both to the same deserialized value.
+async fn resolve_agent_runtime(ctx: &ApiContext) -> AgentRuntime {
+    // Stage 3 Task 10 / inheritance item 6 — emergency off-ramp. When the
+    // documented env var is set, route the routine path back through the
+    // legacy LlmDispatch for incident rollback, with a loud warn naming the
+    // blast radius. This is the ONLY remaining knob that selects LlmDispatch;
+    // the per-config `agent_runtime` field no longer drives the routine path.
+    if config::emergency_llm_dispatch_enabled() {
+        tracing::warn!(
+            target: "agent_runtime",
+            env = config::EMERGENCY_LLM_DISPATCH_ENV,
+            "EMERGENCY ROLLBACK ACTIVE: routing LLM slots through legacy LlmDispatch \
+             (blast radius: this process only, opt-in). Cline is the unconditional \
+             routine runtime; unset {} to restore it. See MANUAL.md (Emergency rollback).",
+            config::EMERGENCY_LLM_DISPATCH_ENV,
+        );
+        return AgentRuntime::LlmDispatch;
+    }
+
+    let cfg_path = runtime_config_path(ctx);
+    let sidecar_available = std::env::var("XVN_AGENTD_BIN").map(|v| !v.is_empty()).unwrap_or(false);
+
+    let raw = tokio::fs::read_to_string(&cfg_path).await.ok();
+    let explicitly_set = raw
+        .as_deref()
+        .map(|s| {
+            s.lines()
+                .map(str::trim_start)
+                .any(|l| l.starts_with("agent_runtime") && l.contains('='))
+        })
+        .unwrap_or(false);
+
+    let configured = match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+        Ok(Ok(cfg)) => cfg.agent_runtime,
+        _ => return AgentRuntime::LlmDispatch,
+    };
+
+    match configured {
+        AgentRuntime::Cline if explicitly_set || sidecar_available => AgentRuntime::Cline,
+        // Defaulted-to-Cline without a provisioned sidecar: stay on the
+        // proven raw-dispatch path until the operator opts in.
+        AgentRuntime::Cline => AgentRuntime::LlmDispatch,
+        AgentRuntime::LlmDispatch => AgentRuntime::LlmDispatch,
+    }
+}
+
+/// Bridges sidecar tool callbacks to the engine's [`ToolRegistry`]. The
+/// Cline agent invokes registry-backed tools (indicators, ohlcv, …) over
+/// the callback socket; this adapter routes them to the same
+/// `tool_call::invoke` path the `LlmDispatch` executor uses, so both
+/// runtimes share one tool surface. `submit_decision` is NOT routed here —
+/// it is a built-in lifecycle tool captured locally by the sidecar.
+struct ToolRegistryDispatch {
+    tools: Arc<ToolRegistry>,
+}
+
+#[async_trait::async_trait]
+impl ToolDispatch for ToolRegistryDispatch {
+    async fn invoke(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, ToolDispatchError> {
+        match crate::agent::tool_call::invoke(name, input, self.tools.clone()).await {
+            Ok(s) => {
+                // Tool outputs are JSON-shaped strings; pass parsed JSON
+                // through when possible, else wrap the raw string.
+                Ok(serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s)))
+            }
+            Err(e) => Err(ToolDispatchError::Failed(format!("{e:#}"))),
+        }
+    }
+}
+
+/// Stage 1 (Cline runtime unification, Task 6 eval wiring). When the
+/// runtime flag selects `Cline`, spawn the `xvision-agentd` sidecar and
+/// build the [`crate::agent::dispatch_capability::ClineDispatchCtx`] the
+/// executor threads into every slot dispatch.
+///
+/// The sidecar binary is resolved from `XVN_AGENTD_BIN`; a real Cline run
+/// with the env var unset is a hard, clearly-messaged error (NO silent
+/// fallback to LlmDispatch — the operator asked for Cline). The client is
+/// spawned with the observability event sink so live runs surface in the
+/// agent-runs UI; when no obs bus is configured a fresh bus is used so the
+/// spawn still succeeds.
+async fn spawn_cline_ctx(
+    ctx: &ApiContext,
+    entry: ProviderEntry,
+    tools: Arc<ToolRegistry>,
+) -> ApiResult<crate::agent::dispatch_capability::ClineDispatchCtx> {
+    let bin = std::env::var("XVN_AGENTD_BIN").map_err(|_| {
+        ApiError::Validation(
+            "agent_runtime = cline but XVN_AGENTD_BIN is unset. Set it to the built \
+             xvision-agentd entrypoint (e.g. xvision-agentd/dist/index.js) or switch \
+             agent_runtime back to llm-dispatch."
+                .to_string(),
+        )
+    })?;
+    let api_key = resolve_provider_api_key(&entry)?;
+
+    // Per-run socket paths under the xvn home so concurrent runs don't
+    // collide. The sidecar process is reaped on client drop.
+    let sock_dir = ctx.xvn_home.join("agent_runs").join("sockets");
+    std::fs::create_dir_all(&sock_dir)
+        .map_err(|e| ApiError::Internal(format!("create sidecar socket dir: {e}")))?;
+    let uniq = ulid::Ulid::new().to_string();
+    let main_sock = sock_dir.join(format!("agentd-{uniq}.sock"));
+    let cb_sock = sock_dir.join(format!("agentd-{uniq}.cb.sock"));
+    let ev_sock = sock_dir.join(format!("agentd-{uniq}.ev.sock"));
+
+    let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch { tools });
+    let bus = ctx
+        .obs_event_bus
+        .clone()
+        .unwrap_or_else(|| Arc::new(xvision_observability::RunEventBus::new(Vec::new())));
+
+    let client = AgentClient::spawn_with_event_sink(
+        std::path::Path::new(&bin),
+        &main_sock,
+        &cb_sock,
+        &ev_sock,
+        dispatch,
+        bus,
+    )
+    .await
+    .map_err(|e| {
+        ApiError::Internal(format!(
+            "failed to spawn xvision-agentd sidecar (XVN_AGENTD_BIN={bin}): {e}"
+        ))
+    })?;
+
+    Ok(crate::agent::dispatch_capability::ClineDispatchCtx {
+        client: Arc::new(client),
+        provider_entry: entry,
+        api_key,
+    })
+}
+
 fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
     if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
         if !p.is_empty() {
@@ -1921,6 +2104,32 @@ async fn run_inner(
             .with_catalogs(obs_catalogs.clone())
     });
 
+    // Stage 1 (Cline runtime unification, Task 6): resolve the agent
+    // runtime once. When `Cline` is selected, spawn the sidecar and build
+    // the dispatch ctx so the backtest executor threads it into every slot
+    // dispatch. `LlmDispatch` leaves `build_eval_dispatch` exactly as
+    // before (the `dispatch` arg already in hand). An unmapped provider or
+    // an unset XVN_AGENTD_BIN surfaces as a typed error here — never a
+    // silent fallback (provider-matrix + failure contracts).
+    let agent_runtime = resolve_agent_runtime(ctx).await;
+    let cline_ctx = if matches!(agent_runtime, AgentRuntime::Cline) {
+        let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
+        let cfg_path = runtime_config_path(ctx);
+        let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
+            .await
+            .map_err(|u| {
+                ApiError::Validation(format!(
+                    "agent_runtime = cline: provider `{}` is not launchable (reason={}): {}",
+                    u.provider,
+                    u.reason.as_str(),
+                    u.hint
+                ))
+            })?;
+        Some(spawn_cline_ctx(ctx, entry, tools.clone()).await?)
+    } else {
+        None
+    };
+
     // 3. Pick the executor for this run mode. For backtest mode, when the
     //    scenario came from the DB we try to source bars through the
     //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
@@ -1937,6 +2146,8 @@ async fn run_inner(
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
+                agent_runtime,
+                cline_ctx,
             )
             .await?
         }
@@ -2310,6 +2521,7 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
 /// a hard `ApiError::Validation`, and the message names the offending asset
 /// so the operator knows which `xvn bars fetch` to run. The single-asset
 /// error shape is preserved.
+#[allow(clippy::too_many_arguments)]
 async fn build_backtest_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
@@ -2319,6 +2531,8 @@ async fn build_backtest_executor(
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
+    agent_runtime: AgentRuntime,
+    cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
 ) -> ApiResult<Box<dyn RunExecutor>> {
     use crate::eval::executor::asset_set::active_assets;
     // Multi-asset (B7): resolve the active set. `subset` is `None` for full-universe
@@ -2357,7 +2571,8 @@ async fn build_backtest_executor(
             bt = bt
                 .with_warmup(warmup)
                 .with_event_bus(ctx.event_bus.clone())
-                .with_provider_catalogs(provider_catalogs);
+                .with_provider_catalogs(provider_catalogs)
+                .with_cline_runtime(agent_runtime, cline);
             // Task C3: thread the asset subset into the executor so its own
             // `active_assets` call (inside `run`) agrees with the bars we just
             // loaded. Without this the executor would call
@@ -2394,7 +2609,8 @@ async fn build_backtest_executor(
 
     let mut bt = Executor::new()
         .with_event_bus(ctx.event_bus.clone())
-        .with_provider_catalogs(provider_catalogs);
+        .with_provider_catalogs(provider_catalogs)
+        .with_cline_runtime(agent_runtime, cline);
     // Task C3: thread the subset through for the legacy path too.
     if let Some(subset) = assets_subset {
         bt = bt.with_asset_subset(subset.to_vec());
@@ -2618,6 +2834,27 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             .with_catalogs(obs_catalogs.clone())
     });
 
+    // Stage 1 (Cline runtime unification, Task 6): same resolution as
+    // `run_inner`. When `Cline` is selected, spawn the sidecar + ctx.
+    let agent_runtime = resolve_agent_runtime(ctx).await;
+    let cline_ctx = if matches!(agent_runtime, AgentRuntime::Cline) {
+        let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
+        let cfg_path = runtime_config_path(ctx);
+        let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
+            .await
+            .map_err(|u| {
+                ApiError::Validation(format!(
+                    "agent_runtime = cline: provider `{}` is not launchable (reason={}): {}",
+                    u.provider,
+                    u.reason.as_str(),
+                    u.hint
+                ))
+            })?;
+        Some(spawn_cline_ctx(ctx, entry, tools.clone()).await?)
+    } else {
+        None
+    };
+
     let executor: Box<dyn RunExecutor> = match req.mode {
         RunMode::Backtest => {
             build_backtest_executor(
@@ -2629,6 +2866,8 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
+                agent_runtime,
+                cline_ctx,
             )
             .await?
         }

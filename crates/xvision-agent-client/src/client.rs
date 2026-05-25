@@ -4,9 +4,9 @@ use std::sync::Arc;
 use crate::errors::{AgentClientError, Result};
 use crate::event_sink::{start_event_sink, EventSinkHandle, SidecarFingerprint};
 use crate::protocol::{
-    EndRunParams, EndRunResult, RuntimeHealthResult, StartRunParams, StartRunResult, StepParams, StepResult,
-    ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams, ToolRegistrySetResult,
-    SUPPORTED_PROTOCOL_VERSION,
+    EndRunParams, EndRunResult, ReplayLoadParams, ReplayLoadResult, RuntimeHealthResult, StartRunParams,
+    StartRunResult, StepParams, StepResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams,
+    ToolRegistrySetResult, SUPPORTED_PROTOCOL_VERSION,
 };
 use crate::supervisor::Supervisor;
 use crate::tool_dispatch::{serve_callbacks, ToolDispatch};
@@ -117,6 +117,23 @@ impl AgentClient {
     pub async fn end_run(&self, params: EndRunParams) -> Result<EndRunResult> {
         self.transport
             .call::<EndRunParams, EndRunResult>("session.end_run", Some(params))
+            .await
+    }
+
+    /// Load a recorded trajectory into the sidecar so that the next
+    /// [`AgentClient::step`] call drives the agent from the replay model
+    /// instead of a live provider.
+    ///
+    /// Must be called *after* [`AgentClient::start_run`] and *before* the
+    /// first `step` for the given `run_id`.  The sidecar stores the frames
+    /// keyed by `run_id`; subsequent `step` calls consume them in order.
+    ///
+    /// Returns the count of frames accepted.  A mismatch between
+    /// `params.frames.len()` and `result.loaded` should be treated as a
+    /// protocol error.
+    pub async fn replay_load(&self, params: ReplayLoadParams) -> Result<ReplayLoadResult> {
+        self.transport
+            .call::<ReplayLoadParams, ReplayLoadResult>("session.replay_load", Some(params))
             .await
     }
 

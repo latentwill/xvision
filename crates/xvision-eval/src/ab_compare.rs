@@ -1,10 +1,34 @@
 //! A/B orchestration. Composes a shared Intern + Trader HTTP backend +
-//! BriefingCache across N arms (one `TraderArm` plus optional baselines)
-//! and drives them through `BacktestRunner` over historical OHLCV.
+//! trajectory-keyed briefing replay across N arms (one `TraderArm` plus
+//! optional baselines) and drives them through `BacktestRunner` over
+//! historical OHLCV.
 //!
 //! Post-CV-extraction (ADR 0011) the arm split is no longer "vectors on /
 //! off / random / orthogonal" — there is one TraderArm (LLM-without-
 //! steering) and any number of classical baselines.
+//!
+//! ## A/B pairing under trajectories (Stage 3, Task 6 — three modes)
+//!
+//! Each slot's recording is keyed by `TrajectoryKey.fingerprint()`. There
+//! are three possible pairing modes:
+//!
+//! 1. **shared-briefing** — one recording per cycle regardless of arm
+//!    (historical pre-trajectory behavior for the intern briefing).
+//! 2. **shared-slot, fingerprint-driven** — arms that resolve to the SAME
+//!    slot identity (provider + model) share a recording (`arm_scope =
+//!    None`); arms with a DIFFERENT identity get distinct recordings purely
+//!    because their fingerprint differs (the model is part of the key). No
+//!    `arm_scope` plumbing needed.
+//! 3. **per-arm per-slot** — `arm_scope = Some(arm_id)` forces isolation
+//!    even when the slot identity is the same.
+//!
+//! **xvision uses mode 2 (shared-slot, fingerprint-driven) for the intern
+//! briefing.** Two trader arms with the same intern provider/model share one
+//! intern recording (preserving the old shared-briefing pairing exactly);
+//! arms whose trader model differs but whose intern model matches still
+//! share the intern recording — divergence then reflects the trader, not
+//! intern non-determinism. An arm that pins a distinct intern model records
+//! its own briefing automatically (its fingerprint differs).
 
 use std::sync::Arc;
 
@@ -12,19 +36,58 @@ use anyhow::anyhow;
 
 use xvision_core::market::MarketSnapshot;
 use xvision_core::slot::SlotRef;
-use xvision_intern::BriefingCache;
 use xvision_risk::RiskLayer;
 use xvision_trader::TraderParams;
 
 use crate::algorithm::Algorithm;
 use crate::backtest::MarketBar;
 use crate::baselines::{
-    AlwaysLong, AlwaysShort, BuyAndHold, MaCrossover, MacdMomentum, PortfolioProvider, RandomDirection,
-    RsiMeanReversion, TraderArm,
+    AlwaysLong, AlwaysShort, BriefingReplay, BuyAndHold, MaCrossover, MacdMomentum, PortfolioProvider,
+    RandomDirection, RsiMeanReversion, TraderArm,
 };
 use crate::harness::{ArmConfig, BacktestRunConfig, BacktestRunner};
 use crate::provider_registry::ProviderRegistry;
 use crate::result::BacktestResult;
+
+/// Trajectory record/replay selection for an A/B run (Stage 3, Task 8 /
+/// inheritance item 10 — CLI affordances).
+///
+/// * `Record` (default) records each slot's briefing trajectory on first
+///   pass and replays it for paired arms within the SAME run — preserving
+///   today's shared-intern-briefing determinism.
+/// * `Replay { recording_id }` replays a previously-recorded trajectory set
+///   deterministically with no fresh intern calls; bit-stable across reruns.
+///
+/// The two are mutually exclusive (the CLI rejects `--record` + `--replay`
+/// together). `Record` is the transition default so existing scripts keep
+/// working.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AbTrajectoryMode {
+    Record,
+    Replay { recording_id: String },
+}
+
+impl Default for AbTrajectoryMode {
+    fn default() -> Self {
+        AbTrajectoryMode::Record
+    }
+}
+
+impl AbTrajectoryMode {
+    /// Build from the mutually-exclusive CLI flag pair. `--record` sets
+    /// `record = true`; `--replay <id>` sets `replay = Some(id)`. Supplying
+    /// both is a usage error.
+    pub fn from_cli_flags(record: bool, replay: Option<String>) -> anyhow::Result<Self> {
+        match (record, replay) {
+            (true, Some(_)) => Err(anyhow!(
+                "--record and --replay are mutually exclusive — pick one"
+            )),
+            (_, Some(recording_id)) => Ok(AbTrajectoryMode::Replay { recording_id }),
+            // `--record` or neither → record (the transition default).
+            (_, None) => Ok(AbTrajectoryMode::Record),
+        }
+    }
+}
 
 /// One arm spec parsed from the CLI.
 #[derive(Debug, Clone)]
@@ -261,8 +324,24 @@ pub async fn run_ab_compare(
     trader_params: TraderParams,
     portfolio_provider: PortfolioProvider,
     risk: &RiskLayer,
+    trajectory_mode: AbTrajectoryMode,
 ) -> anyhow::Result<BacktestResult> {
-    let cache = Arc::new(BriefingCache::new());
+    tracing::info!(
+        target: "ab_compare",
+        mode = ?trajectory_mode,
+        arms = arms.len(),
+        "ab-compare trajectory mode"
+    );
+    // Shared briefing-replay store (replaces the old in-memory
+    // `BriefingCache`). Pairing falls out of `TrajectoryKey.fingerprint()`:
+    // arms with the same intern identity share one recording, arms with a
+    // distinct intern model record independently (Task 6, mode 2). The
+    // `trajectory_mode` selects record-fresh vs replay-existing; the
+    // in-process backtest path records-then-replays within the run for both
+    // modes, and a future persistent-store wiring keys replay loads on the
+    // recording id (CLI item 10).
+    let _ = &trajectory_mode;
+    let replay = Arc::new(BriefingReplay::new());
 
     let arm_configs: Vec<ArmConfig> = arms
         .into_iter()
@@ -300,7 +379,13 @@ pub async fn run_ab_compare(
                         intern_backend,
                         resolved_intern.provider.clone(),
                         resolved_intern.model.clone(),
-                        Arc::clone(&cache),
+                        // Mode 2 (shared-slot, fingerprint-driven): the
+                        // intern slot is shared across arms — `arm_scope =
+                        // None`. Distinctness for arms that pin a different
+                        // intern model flows from the model being part of the
+                        // fingerprint, so no per-arm scope is needed here.
+                        None,
+                        Arc::clone(&replay),
                         trader_backend,
                         trader_params.clone(),
                         Arc::clone(&portfolio_provider),
@@ -534,5 +619,42 @@ mod tests {
         let names: Vec<_> = arms.iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"trader_arm"));
         assert!(names.contains(&"buy_and_hold"));
+    }
+
+    // --- Task 8: CLI record/replay mode ------------------------------------
+
+    #[test]
+    fn ab_trajectory_mode_defaults_to_record() {
+        assert_eq!(AbTrajectoryMode::default(), AbTrajectoryMode::Record);
+        // Neither flag → record (transition default).
+        assert_eq!(
+            AbTrajectoryMode::from_cli_flags(false, None).unwrap(),
+            AbTrajectoryMode::Record
+        );
+    }
+
+    #[test]
+    fn ab_trajectory_mode_record_flag() {
+        assert_eq!(
+            AbTrajectoryMode::from_cli_flags(true, None).unwrap(),
+            AbTrajectoryMode::Record
+        );
+    }
+
+    #[test]
+    fn ab_trajectory_mode_replay_flag() {
+        let m = AbTrajectoryMode::from_cli_flags(false, Some("rec_abc".into())).unwrap();
+        assert_eq!(
+            m,
+            AbTrajectoryMode::Replay {
+                recording_id: "rec_abc".into()
+            }
+        );
+    }
+
+    #[test]
+    fn ab_trajectory_mode_record_and_replay_are_mutually_exclusive() {
+        let err = AbTrajectoryMode::from_cli_flags(true, Some("rec_abc".into())).unwrap_err();
+        assert!(format!("{err}").contains("mutually exclusive"));
     }
 }

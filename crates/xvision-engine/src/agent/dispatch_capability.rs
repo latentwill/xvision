@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use xvision_core::trading::AssetSymbol;
 
 use crate::agent::execute::{execute_slot, SlotInput};
+use crate::agent::execute_cline::{execute_slot_cline, ClineSlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
 use crate::agent::memory_recorder::MemoryRecorder;
 use crate::agent::observability::ObsEmitter;
@@ -44,8 +45,28 @@ use crate::agent::pipeline::ResolvedAgentSlot;
 use crate::agents::Capability;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry};
 use xvision_core::providers::Catalog;
 use xvision_observability::Recorder;
+
+/// Everything the Cline branch of a capability dispatch needs that the
+/// `LlmDispatch` branch does not: the live sidecar client plus the
+/// provider identity + key required to start a Cline run. Threaded from
+/// `PipelineInputs` so the dispatcher stays oblivious to how the client
+/// was spawned. `None` (the default) keeps every dispatch on the
+/// `LlmDispatch` path regardless of the `runtime` flag.
+#[derive(Clone)]
+pub struct ClineDispatchCtx {
+    /// The shared, already-spawned sidecar client (one per run).
+    pub client: Arc<AgentClient>,
+    /// Resolved provider config for the run's provider. Mapped to a Cline
+    /// gateway selection per slot via `map_provider`.
+    pub provider_entry: ProviderEntry,
+    /// API key for the provider, resolved from its env var by the eval
+    /// entry point. `None`/empty for keyless local endpoints.
+    pub api_key: Option<String>,
+}
 
 /// Scope at which a `FilterSignal` is meaningful. First-class so cross-asset
 /// and global signals are not second-class "synthetic asset name" hacks.
@@ -238,6 +259,18 @@ pub struct DispatchInput<'a> {
     /// without code changes. Phase D's pipeline + executor wiring sets
     /// this explicitly.
     pub recorder: Option<&'a dyn Recorder>,
+    /// Stage 1 (Cline runtime unification): which runtime drives the
+    /// Trader / Router LLM calls. `LlmDispatch` (the default) keeps the
+    /// raw-reqwest path; `Cline` routes the slot through the sidecar via
+    /// [`execute_slot_cline`] — but only when `cline` is `Some` (the eval
+    /// entry point spawned a client). When `runtime == Cline` and `cline`
+    /// is `None` the dispatcher falls back to `LlmDispatch` so tests and
+    /// non-eval callers that flip the flag without wiring a client keep
+    /// working.
+    pub runtime: AgentRuntime,
+    /// The live sidecar context, present only when the eval entry point
+    /// spawned a Cline client for this run. See [`ClineDispatchCtx`].
+    pub cline: Option<ClineDispatchCtx>,
 }
 
 /// Result of `dispatch_capability`: the typed `AgentOutput` AND the
@@ -366,34 +399,90 @@ impl DispatchInput<'_> {
     }
 }
 
-/// Trader handler — byte-identical to the pre-Phase-B path. The
-/// surrounding pipeline still handles the `noop_skip` short-circuit
-/// before reaching this seam, so the LLM call below is unconditional.
-async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
-    let resp = execute_slot(SlotInput {
+/// True when this dispatch should route through the Cline sidecar:
+/// the runtime flag selects `Cline` AND the entry point actually spawned
+/// a client. When the flag is `Cline` but no client is wired (tests,
+/// non-eval callers), this returns `false` and the caller stays on the
+/// `LlmDispatch` path — never a silent empty decision.
+fn should_use_cline(input: &DispatchInput<'_>) -> bool {
+    matches!(input.runtime, AgentRuntime::Cline) && input.cline.is_some()
+}
+
+/// Build the Cline idempotency `run_id` (item 2) for a slot invocation:
+/// `{eval_run_id}::{role}::cycle{cycle_idx}`. Unique per logical slot per
+/// cycle so a retried cycle re-uses the same id and the sidecar dedups it.
+fn cline_run_id(input: &DispatchInput<'_>) -> String {
+    let base = if input.run_id.is_empty() {
+        input.scenario_id.as_str()
+    } else {
+        input.run_id.as_str()
+    };
+    format!("{base}::{}::cycle{}", input.resolved.role, input.cycle_idx)
+}
+
+/// Run the slot's LLM call through whichever runtime is selected. The
+/// Cline branch (item 4 of the Stage 1 design) builds a `ClineSlotInput`
+/// from the dispatch context and calls [`execute_slot_cline`]; otherwise
+/// it falls through to the unchanged [`execute_slot`] path.
+async fn execute_slot_for_runtime(
+    input: &DispatchInput<'_>,
+    response_schema: ResponseSchema,
+) -> anyhow::Result<LlmResponse> {
+    if should_use_cline(input) {
+        let ctx = input.cline.as_ref().expect("should_use_cline checked Some");
+        let run_id = cline_run_id(input);
+        return execute_slot_cline(ClineSlotInput {
+            slot: input.slot,
+            provider_entry: &ctx.provider_entry,
+            api_key: ctx.api_key.clone(),
+            system_prompt: input.system_prompt.clone(),
+            upstream_inputs: input.upstream_inputs.clone(),
+            response_schema,
+            allowed_tools: input.slot.allowed_tools.clone(),
+            max_tokens: input.max_tokens,
+            run_id,
+            cline_client: ctx.client.clone(),
+            // Eval/live dispatch always records; replay is driven from the
+            // dedicated CLI record/replay entry points (Stage 3 Task 8),
+            // not the per-cycle pipeline dispatch.
+            trajectory_mode: crate::agent::execute_cline::TrajectoryMode::Record,
+        })
+        .await;
+    }
+
+    execute_slot(SlotInput {
         slot: input.slot,
-        system_prompt: input.system_prompt,
-        upstream_inputs: input.upstream_inputs,
-        dispatch: input.dispatch,
-        tools: input.tools,
-        response_schema: Some(ResponseSchema::trader_output()),
+        system_prompt: input.system_prompt.clone(),
+        upstream_inputs: input.upstream_inputs.clone(),
+        dispatch: input.dispatch.clone(),
+        tools: input.tools.clone(),
+        response_schema: Some(response_schema),
         max_tokens: input.max_tokens,
         temperature: input.temperature,
-        obs: input.obs,
-        memory: input.memory,
+        obs: input.obs.clone(),
+        memory: input.memory.clone(),
         memory_mode: input.memory_mode,
-        agent_id: input.agent_id,
+        agent_id: input.agent_id.clone(),
         scenario_start: input.scenario_start,
-        run_id: input.run_id,
-        scenario_id: input.scenario_id,
+        run_id: input.run_id.clone(),
+        scenario_id: input.scenario_id.clone(),
         cycle_idx: input.cycle_idx,
-        catalog: input.catalog,
+        catalog: input.catalog.clone(),
         delta_briefing: input.delta_briefing,
-        prev_briefing: input.prev_briefing,
-        trace_name: input.trace_name,
-        trace_attrs: input.trace_attrs,
+        prev_briefing: input.prev_briefing.clone(),
+        trace_name: input.trace_name.clone(),
+        trace_attrs: input.trace_attrs.clone(),
     })
-    .await?;
+    .await
+}
+
+/// Trader handler — byte-identical to the pre-Phase-B path on the
+/// `LlmDispatch` runtime. The surrounding pipeline still handles the
+/// `noop_skip` short-circuit before reaching this seam, so the LLM call
+/// below is unconditional. Stage 1: when `runtime == Cline` and a client
+/// is wired, the call routes through the sidecar instead.
+async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
+    let resp = execute_slot_for_runtime(&input, ResponseSchema::trader_output()).await?;
 
     let input_tokens = resp.input_tokens;
     let output_tokens = resp.output_tokens;
@@ -440,30 +529,7 @@ fn dispatch_intern_stub() -> DispatchOutcome {
 async fn dispatch_router(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
     let current_index = input.current_index;
     let total_agents = input.total_agents;
-    let resp = execute_slot(SlotInput {
-        slot: input.slot,
-        system_prompt: input.system_prompt,
-        upstream_inputs: input.upstream_inputs,
-        dispatch: input.dispatch,
-        tools: input.tools,
-        response_schema: Some(router_response_schema()),
-        max_tokens: input.max_tokens,
-        temperature: input.temperature,
-        obs: input.obs,
-        memory: input.memory,
-        memory_mode: input.memory_mode,
-        agent_id: input.agent_id,
-        scenario_start: input.scenario_start,
-        run_id: input.run_id,
-        scenario_id: input.scenario_id,
-        cycle_idx: input.cycle_idx,
-        catalog: input.catalog,
-        delta_briefing: input.delta_briefing,
-        prev_briefing: input.prev_briefing,
-        trace_name: input.trace_name,
-        trace_attrs: input.trace_attrs,
-    })
-    .await?;
+    let resp = execute_slot_for_runtime(&input, router_response_schema()).await?;
 
     let input_tokens = resp.input_tokens;
     let output_tokens = resp.output_tokens;

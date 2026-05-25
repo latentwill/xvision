@@ -101,9 +101,10 @@ MCP surface without explicit operator authorization."
 `xvn-mcp` is a separate binary installed alongside `xvn`. It is not a
 subcommand of `xvn` — it is started as a standalone process by the MCP host.
 
-### Registration in `acpx.config.json`
+### Registration in an MCP host
 
-The intended host is `acpx`. Add the server to the `mcpServers` list:
+Add the server to your MCP host's `mcpServers` list (e.g. the `xvision-agentd`
+Cline sidecar, or Claude Code's `claude_desktop_config.json` — see below):
 
 ```json
 {

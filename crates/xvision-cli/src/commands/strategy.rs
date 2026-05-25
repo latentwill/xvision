@@ -2116,6 +2116,11 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             filter_ctx: None,
             trace_attrs: None,
             recorder: None,
+            // Stage 1: this CLI rehearsal path stays on the LlmDispatch
+            // runtime (no sidecar wired); the eval entry point is the only
+            // caller that selects Cline.
+            runtime: Default::default(),
+            cline: None,
         })
         .await
         .exit_with(XvnExit::Upstream)?;
