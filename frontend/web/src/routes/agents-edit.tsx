@@ -14,6 +14,7 @@ import {
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { AgentDetailTabs } from "@/components/agent/AgentDetailTabs";
+import { ImproveAgentPanel } from "@/components/agent/ImproveAgentPanel";
 
 export function AgentsEditRoute() {
   const params = useParams<{ id?: string }>();
@@ -46,10 +47,14 @@ export function AgentsEditRoute() {
           onSkip={() => setPickedTemplateId("__blank__")}
         />
       ) : (
-        <AgentDetailTabs
-          agentId={agentId}
-          initialSlots={seededSlots ?? undefined}
-        />
+        <>
+          <AgentDetailTabs
+            agentId={agentId}
+            initialSlots={seededSlots ?? undefined}
+          />
+          {/* Phase 3.7: link to optimizer runs that can improve this agent. */}
+          {agentId ? <ImproveAgentPanel agentId={agentId} /> : null}
+        </>
       )}
     </>
   );
