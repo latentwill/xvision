@@ -94,7 +94,7 @@ pub fn required_tools_for(cap: Capability) -> &'static [&'static str] {
 /// they cannot be launched even though they persist cleanly.
 ///
 /// See `docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md`.
-fn is_runtime_supported(cap: Capability) -> bool {
+pub fn is_runtime_supported(cap: Capability) -> bool {
     matches!(cap, Capability::Trader | Capability::Filter)
 }
 
