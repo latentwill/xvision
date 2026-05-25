@@ -1,4 +1,5 @@
 import { Icon } from "@/components/primitives/Icon";
+import { BrandMark } from "@/components/primitives/BrandMark";
 
 export function MobileTopBar({
   title,
@@ -30,9 +31,7 @@ export function MobileTopBar({
             <span className="font-mono truncate">{context}</span>
           </div>
         ) : (
-          <span className="font-sans font-semibold text-[24px] tracking-tight text-text">
-            xvn
-          </span>
+          <BrandMark height={18} />
         )}
       </div>
       <button
