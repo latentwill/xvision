@@ -17,7 +17,7 @@ use xvision_observability::{
     ArtifactWrittenEvent, EventScope, UnifiedEvent, UnifiedPayload,
 };
 
-use super::hook::{Hook, HookDecision, HookError, HookOutcome};
+use super::hook::{Hook, HookError, HookOutcome};
 
 /// Observer hook that records a JSON snapshot of each observed event as an
 /// `ArtifactWritten` evidence row. Never denies.
