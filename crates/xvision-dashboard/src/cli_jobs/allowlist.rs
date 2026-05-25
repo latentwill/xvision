@@ -286,6 +286,30 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
     },
 ];
 
+/// Every real command/subcommand path the remote policy *references*
+/// (allowed heads, strict-template heads, and nested-denied paths), for
+/// the CLI-surface drift test. Excludes pseudo-flags (--help/-h/--version/-V/help)
+/// and the defensive DENYLIST (which may name commands that don't exist as
+/// xvn subcommands on purpose).
+pub fn referenced_command_paths() -> Vec<Vec<&'static str>> {
+    let mut paths: Vec<Vec<&'static str>> = Vec::new();
+    for t in STRICT_TEMPLATES {
+        paths.push(t.head.to_vec());
+    }
+    for s in SUPPORTED_SUBCOMMANDS {
+        if s.starts_with('-') || *s == "help" {
+            continue;
+        }
+        paths.push(vec![*s]);
+    }
+    for d in DENIED_NESTED_SUBCOMMANDS {
+        let mut p = vec![d.head];
+        p.extend_from_slice(d.path);
+        paths.push(p);
+    }
+    paths
+}
+
 /// Check argv against the remote CLI policy. Empty argv is the caller's
 /// concern (the route validates that separately) — this function
 /// assumes at least one element.
