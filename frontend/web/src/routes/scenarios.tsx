@@ -207,8 +207,6 @@ export function ScenariosRoute() {
 
       <ResponsiveListCard<Scenario>
         listId="scenarios"
-        title="Scenarios"
-        count={total}
         toolbar={{
           search: { ...list.search, placeholder: "Search scenarios…" },
           filters: list.filters,

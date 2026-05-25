@@ -58,26 +58,28 @@ export function MListCard<T>(props: MListCardProps<T>) {
 
   return (
     <div className={`flex flex-col h-full min-h-0 bg-bg ${className}`}>
-      <div className="flex items-baseline justify-between gap-2.5 px-4 pt-4 pb-1.5">
-        <div className="flex items-baseline gap-2 min-w-0">
-          {title && (
-            <h2 className="m-0 font-sans font-medium text-[26px] tracking-tight text-text truncate">
-              {title}
-            </h2>
-          )}
-          {count != null && (
-            <span className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 rounded-full bg-gold/15 border border-gold/35 text-gold font-mono text-[11px] tabular-nums">
-              {count}
-            </span>
-          )}
-          {subtitle && (
-            <span className="font-mono text-[11.5px] text-text-3 ml-1 truncate">
-              {subtitle}
-            </span>
-          )}
+      {(title || count != null || subtitle || rightAction) && (
+        <div className="flex items-baseline justify-between gap-2.5 px-4 pt-4 pb-1.5">
+          <div className="flex items-baseline gap-2 min-w-0">
+            {title && (
+              <h2 className="m-0 font-sans font-medium text-[26px] tracking-tight text-text truncate">
+                {title}
+              </h2>
+            )}
+            {count != null && (
+              <span className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 rounded-full bg-gold/15 border border-gold/35 text-gold font-mono text-[11px] tabular-nums">
+                {count}
+              </span>
+            )}
+            {subtitle && (
+              <span className="font-mono text-[11.5px] text-text-3 ml-1 truncate">
+                {subtitle}
+              </span>
+            )}
+          </div>
+          {rightAction}
         </div>
-        {rightAction}
-      </div>
+      )}
 
       <div className="px-4 pt-1.5 pb-2 flex flex-col gap-2 border-b border-border-soft">
         {toolbar.search && (

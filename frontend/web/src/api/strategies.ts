@@ -22,6 +22,10 @@ export type StrategyListItem = {
   providers?: string[];
   models?: string[];
   provider_models?: ProviderModelPair[];
+  agent_count?: number;
+  filter_count?: number;
+  asset_universe?: string[];
+  execution_mode?: string;
 };
 
 export type ProviderModelPair = {

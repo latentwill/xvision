@@ -164,10 +164,10 @@ fn complete_trader_strategy_is_launchable_and_optimizable() {
     assert_eq!(line.required_tools, vec!["ohlcv".to_string()]);
 }
 
-// ── Missing required tool → not launchable, typed unmet list ─────────────
+// ── Built-in required tools are launchable without manifest grants ───────
 
 #[test]
-fn trader_missing_required_tool_blocks_launch() {
+fn trader_builtin_required_tool_is_granted_without_manifest_entry() {
     let a = agent(
         "01HZAGENT1",
         "trader-agent",
@@ -178,31 +178,19 @@ fn trader_missing_required_tool_blocks_launch() {
             &[Capability::Trader],
         ),
     );
-    // Manifest does NOT declare the `ohlcv` tool the Trader needs.
+    // Manifest does NOT declare the `ohlcv` tool the Trader needs. The
+    // default runtime registry provides it as a built-in, so diagnostics
+    // must agree with eval preflight and allow launch.
     let s = strategy(&[aref("01HZAGENT1", "trader", Some(Capability::Trader))], &[]);
 
     let diag = diagnose(&s, &[a]);
 
-    assert!(!diag.launchable, "missing tool must block launch");
-    assert_eq!(diag.required_unmet.len(), 1);
-    let unmet = &diag.required_unmet[0];
-    assert_eq!(unmet.capability, Capability::Trader);
-    assert_eq!(
-        unmet.status,
-        CapabilityStatus::MissingTool { tool: "ohlcv".into() }
+    assert!(
+        diag.launchable,
+        "built-in ohlcv should satisfy trader tool requirement"
     );
-
-    let err = assert_launchable(&diag).unwrap_err();
-    match err {
-        DiagnosticsError::NotLaunchable { unmet, summary, .. } => {
-            assert_eq!(unmet.len(), 1);
-            assert!(
-                summary.contains("trader:trader=missing_tool"),
-                "summary: {summary}"
-            );
-        }
-        other => panic!("expected NotLaunchable, got {other:?}"),
-    }
+    assert!(diag.required_unmet.is_empty());
+    assert!(assert_launchable(&diag).is_ok());
 }
 
 // ── Missing prompt blocks ────────────────────────────────────────────────

@@ -358,7 +358,11 @@ fn required_capability(agent_ref: &AgentRef, slot: &AgentSlot) -> Capability {
 /// agents v1 slots don't carry `allowed_tools`, so this is the manifest
 /// path in practice) or the strategy manifest's `required_tools`.
 fn tool_granted(strategy: &Strategy, tool: &str) -> bool {
-    strategy.manifest.required_tools.iter().any(|t| t == tool)
+    crate::tools::ToolRegistry::default_with_builtins()
+        .list()
+        .into_iter()
+        .any(|t| t.as_str() == tool)
+        || strategy.manifest.required_tools.iter().any(|t| t == tool)
 }
 
 /// Compute the typed status for `cap` at this position. Precedence:

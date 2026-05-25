@@ -318,15 +318,15 @@ async fn launch_refused_missing_prompt() {
 }
 
 #[tokio::test]
-async fn launch_refused_missing_tool() {
+async fn launch_does_not_treat_builtin_trader_tool_as_missing() {
     let (ctx, _d) = ctx_with_tables().await;
     write_config(ctx.xvn_home.as_path(), &["anthropic"]);
     let strategy_id = "01LAUNCHGATE000000000000TOOL";
 
-    // Trader slot fully bound (prompt + provider + model) but the strategy
-    // manifest does NOT grant the `ohlcv` tool the Trader capability
-    // requires. diagnostics + the guardrail both flag missing_tool. The
-    // launch must refuse.
+    // Trader slot is fully bound (prompt + provider + model) and the strategy
+    // manifest does NOT grant `ohlcv`. The runtime registry provides `ohlcv`
+    // as a built-in, so launch must get past the capability/tool gate and fail
+    // later on provider availability in this keyless test config.
     let agent_id = seed_agent(
         &ctx,
         "notool-trader",
@@ -347,17 +347,17 @@ async fn launch_refused_missing_tool() {
             role: "trader".into(),
             activates: None,
         }],
-        vec![], // no ohlcv grant
+        vec![], // no explicit ohlcv grant; built-in registry supplies it
     )
     .await;
 
     let err = eval::start_run(&ctx, eval_request(strategy_id))
         .await
-        .expect_err("launch must be refused for a missing required tool");
+        .expect_err("launch must reach provider preflight, not missing_tool");
     match &err {
         ApiError::Validation(msg) => assert!(
-            msg.contains("missing_tool") || (msg.contains("not launchable") && msg.contains("ohlcv")),
-            "expected missing_tool / not-launchable naming ohlcv, got: {msg}"
+            msg.contains("key_missing") || msg.contains("no api_key_env"),
+            "expected provider availability failure after tool gate, got: {msg}"
         ),
         other => panic!("expected ApiError::Validation, got {other:?}"),
     }

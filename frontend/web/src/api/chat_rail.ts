@@ -168,6 +168,13 @@ export type ResolveSessionResp = {
   history: ChatMessage[];
 };
 
+export type ChatSessionMode = "research" | "act";
+
+export type SetSessionModeResp = {
+  session_id: string;
+  mode: ChatSessionMode;
+};
+
 export type ChatSessionSummary = {
   id: string;
   scope: ContextScope;
@@ -214,6 +221,19 @@ export function listSessions(): Promise<ChatSessionSummary[]> {
 export function loadSessionHistory(sessionId: string): Promise<ChatMessage[]> {
   return apiFetch<ChatMessage[]>(
     `/api/chat-rail/sessions/${encodeURIComponent(sessionId)}/history`,
+  );
+}
+
+export function setSessionMode(
+  sessionId: string,
+  mode: ChatSessionMode,
+): Promise<SetSessionModeResp> {
+  return apiFetch<SetSessionModeResp>(
+    `/api/chat-rail/sessions/${encodeURIComponent(sessionId)}/mode`,
+    {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    },
   );
 }
 

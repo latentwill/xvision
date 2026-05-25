@@ -52,6 +52,9 @@ describe("ResponsiveListCard", () => {
     );
     expect(screen.getByTestId("d-1")).toBeInTheDocument();
     expect(screen.queryByTestId("m-1")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { level: 2, name: "Strategies" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders ListCard on tablet (tablet matches desktop shape)", () => {
@@ -103,6 +106,9 @@ describe("ResponsiveListCard", () => {
     );
     expect(screen.getByTestId("m-1")).toBeInTheDocument();
     expect(screen.queryByTestId("d-1")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { level: 2, name: "Strategies" }),
+    ).not.toBeInTheDocument();
   });
 
   it("phone breakpoint redirects when mobileFallback is set", () => {

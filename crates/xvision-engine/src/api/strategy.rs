@@ -61,6 +61,13 @@ pub struct StrategySummary {
     /// Explicit provider-model pairs required by this strategy's executable slots.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_models: Vec<ProviderModelPair>,
+    /// Number of attached strategy AgentRefs. Deterministic filters are not
+    /// agents and must not be counted here.
+    #[serde(default)]
+    pub agent_count: usize,
+    /// Number of deterministic strategy-level filters.
+    #[serde(default)]
+    pub filter_count: usize,
     /// Asset universe from the strategy manifest (e.g. `["BTC/USD", "ETH/USD"]`).
     #[serde(default)]
     pub asset_universe: Vec<String>,
@@ -349,6 +356,8 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             providers: inventory.providers,
             models: inventory.models,
             provider_models: inventory.provider_models,
+            agent_count: strategy.agents.len(),
+            filter_count: usize::from(strategy.filter.is_some()),
             asset_universe: strategy.manifest.asset_universe.clone(),
             execution_mode,
         });
@@ -1179,6 +1188,10 @@ async fn collect_strategy_runtime_requirements(
             } else {
                 format!("agent '{}' slot '{}'", agent_ref.role, slot.name)
             };
+            if slot.system_prompt.trim().is_empty() {
+                errors.push(format!("{context} has no system_prompt"));
+                break;
+            }
             collect_runtime_requirements_for_slot(
                 &context,
                 Some(&slot.provider),

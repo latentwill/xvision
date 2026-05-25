@@ -47,9 +47,9 @@ export function ResponsiveListCard<T>(props: ResponsiveListCardProps<T>) {
     }
     return (
       <MListCard<T>
-        title={props.title}
-        count={props.count}
-        subtitle={props.subtitle}
+        title={undefined}
+        count={undefined}
+        subtitle={undefined}
         rightAction={props.rightAction}
         toolbar={props.toolbar}
         rows={props.rows}
@@ -65,9 +65,9 @@ export function ResponsiveListCard<T>(props: ResponsiveListCardProps<T>) {
   return (
     <ListCard<T>
       listId={props.listId}
-      title={props.title}
-      count={props.count}
-      subtitle={props.subtitle}
+      title={undefined}
+      count={undefined}
+      subtitle={undefined}
       density={props.density}
       toolbar={props.toolbar}
       columns={props.columns}

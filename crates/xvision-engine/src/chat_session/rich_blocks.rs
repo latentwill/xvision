@@ -829,6 +829,8 @@ mod tests {
             providers: vec!["anthropic".into()],
             models: vec!["claude".into()],
             provider_models: vec![],
+            agent_count: 1,
+            filter_count: 0,
             asset_universe: vec!["BTC/USD".into()],
             execution_mode: "per_asset".into(),
         };

@@ -25,6 +25,15 @@ models: Array<string>,
  */
 provider_models: Array<ProviderModelPair>, 
 /**
+ * Number of attached strategy AgentRefs. Deterministic filters are not
+ * agents and must not be counted here.
+ */
+agent_count: number, 
+/**
+ * Number of deterministic strategy-level filters.
+ */
+filter_count: number, 
+/**
  * Asset universe from the strategy manifest (e.g. `["BTC/USD", "ETH/USD"]`).
  */
 asset_universe: Array<string>, 

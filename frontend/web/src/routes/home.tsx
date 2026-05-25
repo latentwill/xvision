@@ -55,7 +55,8 @@ export function HomeRoute() {
 
   const recent = (runs.data ?? []).slice(0, 5);
   const latestRun = recent[0];
-  const latestRunId = latestRun?.id ?? "";
+  const latestChartableRun = recent.find(isChartableRun);
+  const latestRunId = latestChartableRun?.id ?? "";
   const latestChart = useQuery({
     queryKey: chartKeys.run(latestRunId),
     queryFn: () => getRunChart(latestRunId),
@@ -107,7 +108,8 @@ export function HomeRoute() {
             loadingChart={latestChart.isPending}
             chartError={latestChart.error}
             chart={latestChart.data}
-            latestRun={latestRun}
+            latestRun={latestChartableRun ?? latestRun}
+            chartableRun={latestChartableRun}
             strategies={strategies.data ?? []}
             scenarios={scenarios.data ?? []}
           />
@@ -341,6 +343,7 @@ function ControlChartCard({
   chartError,
   chart,
   latestRun,
+  chartableRun,
   strategies,
   scenarios,
 }: {
@@ -350,6 +353,7 @@ function ControlChartCard({
   chartError: unknown;
   chart: Awaited<ReturnType<typeof getRunChart>> | undefined;
   latestRun: RunSummary | undefined;
+  chartableRun: RunSummary | undefined;
   strategies: StrategyListItem[];
   scenarios: Scenario[];
 }) {
@@ -388,6 +392,10 @@ function ControlChartCard({
         <div className="text-text-3 text-[13px] text-center py-6">
           No runs yet. Start one from Eval.
         </div>
+      ) : !chartableRun ? (
+        <div className="text-text-3 text-[13px] text-center py-6">
+          No scenario-backed run is available for a chart yet.
+        </div>
       ) : loadingChart ? (
         <div className="text-text-3 text-[13px] text-center py-6">
           Loading chart…
@@ -404,6 +412,10 @@ function ControlChartCard({
       ) : null}
     </Card>
   );
+}
+
+function isChartableRun(run: RunSummary): boolean {
+  return run.mode !== "live" && run.scenario_id.trim().length > 0;
 }
 
 function CountCard({

@@ -46,6 +46,7 @@ import {
 } from "@/lib/storage";
 import {
   type ChatMessage,
+  type ChatSessionMode,
   type ContentBlock,
   type ContextScope,
   type WizardEvent,
@@ -59,6 +60,7 @@ import {
   resolveSession,
   scopeFromPath,
   scopeKey,
+  setSessionMode,
   streamChat,
 } from "@/api/chat_rail";
 import { listProviders, settingsKeys } from "@/api/settings";
@@ -76,6 +78,7 @@ import type {
 const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
+const RAIL_MODE_LS_PREFIX = "xvn.chat_rail.mode.";
 
 export type ChatRailProps = {
   variant?: "desktop" | "panel";
@@ -106,6 +109,8 @@ export function ChatRail({
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ChatSessionMode>("research");
+  const [modePending, setModePending] = useState(false);
   const [providerName, setProviderName] = useState<string | null>(
     () => safeStorageGet(RAIL_PROVIDER_LS),
   );
@@ -213,6 +218,7 @@ export function ChatRail({
         if (cancelled) return;
         sessionIdRef.current = resolved.session_id;
         setSessionId(resolved.session_id);
+        setMode(storedMode(resolved.session_id));
         setBubbles(historyToBubbles(resolved.history));
       } catch (e) {
         if (cancelled) return;
@@ -301,6 +307,8 @@ export function ChatRail({
       resetSessionEvents(created.session_id);
       sessionIdRef.current = created.session_id;
       setSessionId(created.session_id);
+      setMode("research");
+      safeStorageSet(`${RAIL_MODE_LS_PREFIX}${created.session_id}`, "research");
       setBubbles(historyToBubbles(created.history));
       lastScopeKeyRef.current = key;
       void sessionsQ.refetch();
@@ -413,6 +421,7 @@ export function ChatRail({
                     try {
                       sessionIdRef.current = s.id;
                       setSessionId(s.id);
+                      setMode(storedMode(s.id));
                       const h = await loadSessionHistory(s.id);
                       setBubbles(historyToBubbles(h));
                     } catch (e) {
@@ -431,6 +440,23 @@ export function ChatRail({
         loading={providers.isPending}
         provider={providerName}
         model={modelId}
+        mode={mode}
+        modePending={modePending}
+        modeDisabled={!sessionId || isStreaming}
+        onModeChange={async (next) => {
+          if (!sessionId || modePending || next === mode) return;
+          setModePending(true);
+          setError(null);
+          try {
+            const out = await setSessionMode(sessionId, next);
+            setMode(out.mode);
+            safeStorageSet(`${RAIL_MODE_LS_PREFIX}${sessionId}`, out.mode);
+          } catch (e) {
+            setError(formatErr(e));
+          } finally {
+            setModePending(false);
+          }
+        }}
         onChange={(p, m) => {
           setProviderName(p);
           setModelId(m);
@@ -477,30 +503,71 @@ function RailModelBar({
   loading,
   provider,
   model,
+  mode,
+  modePending,
+  modeDisabled,
+  onModeChange,
   onChange,
 }: {
   rows: ProviderRow[];
   loading: boolean;
   provider: string | null;
   model: string;
+  mode: ChatSessionMode;
+  modePending: boolean;
+  modeDisabled: boolean;
+  onModeChange: (mode: ChatSessionMode) => void | Promise<void>;
   onChange: (provider: string | null, model: string) => void;
 }) {
   return (
-    <div className="border-b border-border-soft px-4 py-2 bg-surface-2/30 flex items-center gap-2">
-      <label className="text-[11px] text-text-3 uppercase tracking-wider">
-        Model
-      </label>
-      <ModelPicker
-        rows={rows}
-        loading={loading}
-        provider={provider}
-        model={model}
-        onChange={onChange}
-        className="flex-1 min-w-0 text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text font-mono"
-        emptyHint="no models picked — visit Settings → Providers"
-      />
+    <div className="border-b border-border-soft px-4 py-2 bg-surface-2/30 space-y-2">
+      <div className="flex items-center gap-2">
+        <label className="text-[11px] text-text-3 uppercase tracking-wider">
+          Model
+        </label>
+        <ModelPicker
+          rows={rows}
+          loading={loading}
+          provider={provider}
+          model={model}
+          onChange={onChange}
+          className="flex-1 min-w-0 text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text font-mono"
+          emptyHint="no models picked — visit Settings → Providers"
+        />
+      </div>
+      <div
+        role="group"
+        aria-label="Chat mode"
+        className="grid grid-cols-2 overflow-hidden rounded border border-border-soft"
+      >
+        {(["research", "act"] as ChatSessionMode[]).map((value) => (
+          <button
+            key={value}
+            type="button"
+            disabled={modeDisabled || modePending}
+            onClick={() => void onModeChange(value)}
+            aria-pressed={mode === value}
+            className={[
+              "h-7 text-[11px] font-semibold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+              mode === value
+                ? value === "act"
+                  ? "bg-gold text-bg"
+                  : "bg-surface-elev text-text"
+                : "bg-transparent text-text-3 hover:text-text",
+            ].join(" ")}
+          >
+            {value === "act" ? "ACT" : "THINK"}
+          </button>
+        ))}
+      </div>
     </div>
   );
+}
+
+function storedMode(sessionId: string): ChatSessionMode {
+  return safeStorageGet(`${RAIL_MODE_LS_PREFIX}${sessionId}`) === "act"
+    ? "act"
+    : "research";
 }
 
 // ---------------------------------------------------------------------------

@@ -45,14 +45,14 @@ const SHAPE_FILTER: FilterDef = {
 
 /** True if a `StrategyListItem` looks like a multi-agent strategy.
  *
- * `StrategyListItem` doesn't expose `agents[]` directly — the runtime
- * shape is summarised via the parallel `providers[]` / `models[]`
- * arrays (legacy) and `provider_models[]` (preferred). We treat a
- * strategy with more than one (provider, model) pair as multi-agent
- * and otherwise as trader-only. Returns the agent count as a number so
- * the row meta can show "1 agent" / "3 agents" without recomputing.
+ * Newer backends expose `agent_count`, which is the only trustworthy
+ * number because deterministic filters are not agents. Older backends
+ * only expose provider/model summaries, so keep a conservative fallback.
  */
 function agentCount(row: StrategyListItem): number {
+  if (typeof row.agent_count === "number") {
+    return row.agent_count;
+  }
   if (row.provider_models && row.provider_models.length > 0) {
     return row.provider_models.length;
   }
@@ -65,6 +65,12 @@ function agentCount(row: StrategyListItem): number {
 
 function shapeOf(row: StrategyListItem): "single" | "multi" {
   return agentCount(row) > 1 ? "multi" : "single";
+}
+
+function filterLabel(row: StrategyListItem): string | null {
+  const count = row.filter_count ?? 0;
+  if (count <= 0) return null;
+  return `${count} ${count === 1 ? "filter" : "filters"}`;
 }
 
 type StrategiesView = "list" | "folder";
@@ -247,7 +253,6 @@ function StrategiesListView() {
     { key: "tags", label: "Tags" },
     { key: "cadence", label: "Time frame" },
     { key: "model", label: "Model" },
-    { key: "status", label: "Status" },
     { key: "actions", label: "" },
   ];
 
@@ -315,11 +320,8 @@ function StrategiesListView() {
             subtitle={`${row.template} · ${formatCadence(row.decision_cadence_minutes)}`}
             meta={modelSummary(row)}
             rightTop={
-              agentCount(row) > 0
-                ? `${agentCount(row)} ${agentCount(row) === 1 ? "agent" : "agents"}`
-                : undefined
+              rowMeta(row)
             }
-            rightSub="draft"
           />
         )}
       />
@@ -396,8 +398,13 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
         <Pill tone={shape === "multi" ? "info" : "default"}>
           {shape === "multi"
             ? `multi · ${agentCount(row)} agents`
-            : "trader-only"}
+            : `${agentCount(row) || 1} agent`}
         </Pill>
+        {filterLabel(row) ? (
+          <span className="ml-1.5">
+            <Pill tone="default">{filterLabel(row)}</Pill>
+          </span>
+        ) : null}
       </td>
       <td className="px-3 py-3">
         <TagList tags={row.tags ?? []} />
@@ -407,11 +414,6 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
       </td>
       <td className="max-w-[180px] px-3 py-3 break-all font-mono text-[12px] text-text-2">
         {row.model ?? <span className="font-medium text-text-3">—</span>}
-      </td>
-      <td className="px-3 py-3">
-        <Pill>
-          <span className="h-1.5 w-1.5 rounded-full bg-text-3" /> draft
-        </Pill>
       </td>
       <td className="px-5 py-3 text-right text-text-3">
         <Link
@@ -424,6 +426,15 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
       </td>
     </tr>
   );
+}
+
+function rowMeta(row: StrategyListItem): string | undefined {
+  const agents = agentCount(row);
+  const filters = row.filter_count ?? 0;
+  const parts: string[] = [];
+  if (agents > 0) parts.push(`${agents} ${agents === 1 ? "agent" : "agents"}`);
+  if (filters > 0) parts.push(`${filters} ${filters === 1 ? "filter" : "filters"}`);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 function displayName(row: StrategyListItem) {

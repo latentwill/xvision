@@ -2137,7 +2137,7 @@ impl WizardLoop {
             .system_prompt
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_default();
+            .unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
         let skill_ids = tools_for_strategy_role(&strategy, &role);
         let agent = api_agents::create(
             &self.api_context,
@@ -2263,6 +2263,22 @@ fn tools_for_strategy_role(strategy: &xvision_engine::strategies::Strategy, role
             .unwrap_or_default();
     }
     Vec::new()
+}
+
+fn default_strategy_agent_prompt(strategy: &xvision_engine::strategies::Strategy, role: &str) -> String {
+    let role = role.trim();
+    let assets = if strategy.manifest.asset_universe.is_empty() {
+        "the configured asset universe".to_string()
+    } else {
+        strategy.manifest.asset_universe.join(", ")
+    };
+    let cadence = strategy.manifest.decision_cadence_minutes;
+    format!(
+        "You are the {role} agent for strategy '{}'. Evaluate {assets} on {cadence}-minute bars. \
+         Use the provided OHLCV, indicator, filter, and risk context. Return only the structured \
+         decision required by the runtime; do not invent unavailable data.",
+        strategy.manifest.display_name
+    )
 }
 
 fn strategy_resolution_json(strategy: &api_strategy::StrategySummary) -> serde_json::Value {

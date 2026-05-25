@@ -718,6 +718,10 @@ function StartEvalDialog({
   const selectedStrategy = (strategies.data ?? []).find(
     (s) => s.agent_id === agentId,
   );
+  const selectedStrategyAssets =
+    selectedStrategy?.asset_universe?.filter((asset) => asset.trim().length > 0) ?? [];
+  const selectedStrategyFirstAsset = selectedStrategyAssets[0];
+  const effectiveLiveAsset = selectedStrategyFirstAsset ?? liveAsset;
   const reviewProviderRows = (providers.data?.providers ?? []).filter(
     (row) => row.enabled_models.length > 0,
   );
@@ -731,6 +735,12 @@ function StartEvalDialog({
   const displayedError =
     preflightError ?? (start.isError ? errorDetail(start.error) : null);
   const setupAction = preflightSetupAction(displayedError);
+
+  useEffect(() => {
+    if (selectedStrategyFirstAsset && selectedStrategyFirstAsset !== liveAsset) {
+      setLiveAsset(selectedStrategyFirstAsset);
+    }
+  }, [liveAsset, selectedStrategyFirstAsset]);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -746,8 +756,8 @@ function StartEvalDialog({
       const capital = Number(liveCapital);
       const barLimit = Number(liveBarLimit);
       const warmupBars = Number(liveWarmupBars);
-      if (!liveAsset.trim()) {
-        setPreflightError("Enter a live asset before starting Live.");
+      if (!effectiveLiveAsset.trim()) {
+        setPreflightError("Select a strategy with an asset before starting Live.");
         return;
       }
       if (!Number.isFinite(capital) || capital <= 0) {
@@ -789,8 +799,8 @@ function StartEvalDialog({
             assets: [
               {
                 class: "Crypto",
-                symbol: liveAsset.split("/")[0] || liveAsset,
-                venue_symbol: liveAsset,
+                symbol: effectiveLiveAsset.split("/")[0] || effectiveLiveAsset,
+                venue_symbol: effectiveLiveAsset,
               },
             ],
             capital: { initial: capitalNum, currency: "USD" },
@@ -803,7 +813,7 @@ function StartEvalDialog({
             venue_label: "paper",
             warmup_bars: warmupBarsNum,
             safety_limits: null,
-            display_name: `Live Alpaca ${liveAsset}`,
+            display_name: `Live Alpaca ${effectiveLiveAsset}`,
             description: null,
             tags: ["live", "alpaca"],
             notes: null,
@@ -947,40 +957,47 @@ function StartEvalDialog({
           </fieldset>
 
           {mode === "live" ? (
-            <fieldset className="grid grid-cols-2 gap-2">
+            <fieldset className="grid grid-cols-2 gap-3">
               <legend className="col-span-2 block text-[12px] text-text-2 mb-1 px-0">
-                Live Alpaca
+                Live Alpaca paper
               </legend>
-              <input
-                aria-label="Live asset"
-                value={liveAsset}
-                onChange={(e) => setLiveAsset(e.target.value)}
-                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+              <LabeledInput
+                label="Asset"
+                help="From strategy asset universe"
+                ariaLabel="Live asset"
+                value={effectiveLiveAsset}
+                readOnly
               />
-              <input
-                aria-label="Live capital"
+              <LabeledInput
+                label="Capital"
+                ariaLabel="Live capital"
                 type="number"
                 min="1"
                 value={liveCapital}
-                onChange={(e) => setLiveCapital(e.target.value)}
-                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+                onChange={setLiveCapital}
               />
-              <input
-                aria-label="Live bar limit"
+              <LabeledInput
+                label="Bars to run"
+                help="Stop after this many live bars"
+                ariaLabel="Live bar limit"
                 type="number"
                 min="1"
                 value={liveBarLimit}
-                onChange={(e) => setLiveBarLimit(e.target.value)}
-                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+                onChange={setLiveBarLimit}
               />
-              <input
-                aria-label="Live warmup bars"
+              <LabeledInput
+                label="Warmup bars"
+                help="Historical context loaded before the first live bar"
+                ariaLabel="Live warmup bars"
                 type="number"
                 min="0"
                 value={liveWarmupBars}
-                onChange={(e) => setLiveWarmupBars(e.target.value)}
-                className="px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+                onChange={setLiveWarmupBars}
               />
+              <p className="col-span-2 m-0 text-[11px] leading-snug text-text-3">
+                Timeframe comes from the live Alpaca bar stream; this launch is
+                bounded by the bar count above, not an open-ended daemon.
+              </p>
             </fieldset>
           ) : null}
 
@@ -1073,6 +1090,49 @@ function StartEvalDialog({
         </form>
       </div>
     </div>
+  );
+}
+
+function LabeledInput({
+  label,
+  help,
+  ariaLabel,
+  value,
+  onChange,
+  type = "text",
+  min,
+  readOnly = false,
+}: {
+  label: string;
+  help?: string;
+  ariaLabel?: string;
+  value: string;
+  onChange?: (value: string) => void;
+  type?: string;
+  min?: string;
+  readOnly?: boolean;
+}) {
+  return (
+    <label className="min-w-0">
+      <span className="mb-1 block text-[11px] text-text-3">{label}</span>
+      <input
+        aria-label={ariaLabel ?? label}
+        type={type}
+        min={min}
+        value={value}
+        readOnly={readOnly}
+        onChange={(e) => onChange?.(e.target.value)}
+        className={[
+          "w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3",
+          readOnly ? "text-text-3" : "",
+        ].join(" ")}
+      />
+      {help ? (
+        <span className="mt-1 block text-[10.5px] leading-snug text-text-3">
+          {help}
+        </span>
+      ) : null}
+    </label>
   );
 }
 

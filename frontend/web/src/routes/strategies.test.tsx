@@ -177,6 +177,8 @@ describe("StrategiesRoute", () => {
           template: "trend_follower",
           decision_cadence_minutes: 240,
           provider_models: [{ provider: "openai", model: "gpt-4.1-mini" }],
+          agent_count: 1,
+          filter_count: 0,
         },
         {
           agent_id: "01MULTI",
@@ -187,6 +189,8 @@ describe("StrategiesRoute", () => {
             { provider: "openai", model: "gpt-4.1-mini" },
             { provider: "anthropic", model: "claude-sonnet-4" },
           ],
+          agent_count: 2,
+          filter_count: 0,
         },
       ],
       total: 2,
