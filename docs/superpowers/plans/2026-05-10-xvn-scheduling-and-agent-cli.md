@@ -5,11 +5,133 @@
 > **Replaces:** Plan 2c's scheduler module (the per-deployment cron inside the live daemon stays; the system-wide scheduler is this plan).
 > **Defers:** Dashboard `/schedule` route + Live cockpit panel — separate follow-up plan that extends Plan 2d.
 
+> **2026-05-25 amendment:** do not execute this plan literally. Main has since
+> shipped `xvision_engine::api`, `api_audit`, typed CLI exit codes, remote CLI
+> jobs, `xvn run inspect`, and several modern CLI domains. The remaining
+> CLI-agent work is now output/error consistency, agent workbench coverage,
+> remote allowlist drift tests, and MCP parity. The scheduler/deploy sections
+> need a fresh current-state design before implementation. See the amendment
+> section below before assigning work from this plan.
+
 **Goal:** Ship the foundation that makes "daily at 4pm EST review all strategies and deactivate any with rolling-30d Sharpe below 0.5" runnable end-to-end: typed engine API across 7 domains, CLI surface mirroring it, internal tool-use agent runner, SQLite-backed cron scheduler firing scheduled prompts, EOD report integration, and pre-paused default schedules.
 
 **Architecture:** Engine API in `xvision-engine/src/api/` is the single source of truth — typed async functions per domain (strategy, risk, deploy, report, maintenance, schedule, autoresearch). CLI handlers in `xvision-cli/src/commands/` thin-wrap them. `xvision-engine/src/agent_runner/` is a generic tool-use loop using `xvision-intern`'s LLM dispatch; tools are thin shims around engine API functions. `xvision-engine/src/scheduler/` is a SQLite-backed cron daemon that spawns AgentRunner invocations on schedule. EOD report reuses `xvision_eval::report::render` over live `scheduler_events` data.
 
 **Tech Stack:** Rust 2021. New deps: `cron 0.13` (cron parser), `chrono-tz 0.10` (IANA timezone DST), `glob 0.3` (tool-pattern matching). Reuses `tokio`, `sqlx` (workspace), `chrono`, `serde`, `tracing`, `anyhow`, `thiserror`, `async-trait`, `ulid`, `tempfile` (dev).
+
+---
+
+## 2026-05-25 Agent CLI Press Audit Amendment
+
+### Review findings
+
+The requested spec path,
+`docs/superpowers/specs/2026-05-25-agent-cli-press-audit.md`, was not present
+in this checkout. This amendment reviews the current code surface against the
+closest prior inputs:
+`docs/superpowers/research/2026-05-11-printing-press-review-xvn-cli.md`,
+`docs/superpowers/specs/2026-05-10-xvn-scheduling-and-agent-cli-design.md`,
+and `docs/superpowers/specs/2026-05-12-agent-access-and-cli-discoverability-spec.md`.
+If the missing 2026-05-25 spec appears later, reconcile these findings against
+it before implementation.
+
+The original plan is stale in these concrete ways:
+
+- `xvision_engine::api` already exists with `ApiContext`, `Actor`,
+  `api_audit`, migrations, and domain modules. Do not create a second
+  `api/mod.rs`, do not reserve migration `002`, and do not add parallel audit
+  tables unless a domain has a concrete extra audit requirement.
+- Typed CLI exit codes already exist in `crates/xvision-cli/src/exit.rs`.
+  The remaining work is coverage and error mapping, not inventing `XvnExit`.
+- Agent-run export already exists as `xvn run inspect <id>` plus dashboard
+  `/api/agent-runs/:id/export.{json,md}`. Do not add another export location.
+- Remote CLI jobs already exist under `/api/cli/jobs` with typed argv,
+  allowlist policy, output/runtime caps, SSE, restart recovery, and real
+  cancellation via `DELETE /api/cli/jobs/:id`.
+- The current CLI already has modern surfaces absent from the old plan:
+  `eval`, `scenario`, `provider`, `bars`, `agent get`, `experiment`,
+  `model bakeoff`, `obs`, `memory`, `strategies`, and `run inspect`.
+
+Remaining issues and missed surfaces:
+
+- `xvn agent` is read-only and object-only: `get/show` exists, but there is no
+  CLI `list`, `create`, `update`, `archive`, `lint`, or `attach-to-strategy`
+  surface even though agents are central to the current strategy model.
+- The old plan's `deploy`, `schedule`, and deployment-risk commands do not
+  map cleanly to current code. Current `xvn risk` is an evaluation/config
+  surface, not deployment knob mutation. Treat deploy/schedule as a separate
+  product slice, not part of this Press audit cleanup.
+- CLI output conventions are inconsistent. Some object commands use
+  `--format json|json-compact`; others use `--json`; some table/list commands
+  have no compact machine-readable mode. There is no repo-wide "JSON stdout
+  only, diagnostics stderr only" conformance matrix.
+- Typed exit codes are not applied uniformly. Some commands still route
+  `anyhow` into the default `Upstream` bucket, so not-found and validation
+  failures can be misleading for agents.
+- Remote CLI allowlist coverage is manually curated and can drift when new
+  top-level verbs or safe subcommands are added. There is no test that compares
+  the clap command tree against the remote policy and the wiki CLI reference.
+- MCP parity is incomplete. `xvision-mcp` has a large bespoke tool surface;
+  it is not generated from, nor systematically checked against, the current
+  engine API / CLI workbench verbs.
+- Documentation references are close but not complete: README describes
+  job creation/output/events, but cancellation and allowlist policy live in
+  separate runbooks. Agents need one canonical "drive xvn remotely" path.
+- The Press recommendation for `--dry-run` is partially implemented
+  (`migrate`, `strategy migrate-agents`, `experiment run`, `model bakeoff`),
+  but mutating strategy/agent/provider/scenario operations do not share one
+  preview convention.
+
+### Revised implementation batches
+
+- [ ] **Batch 1: Freeze the current surface.** Generate a checked-in CLI
+  surface inventory from `Cli::command()` covering top-level verbs,
+  subcommands, aliases, output flags, and obvious mutation markers. Add
+  regression tests that fail when a new top-level `xvn` verb is added without
+  updating `crates/xvision-dashboard/wiki/cli-reference.md`, and when the
+  remote CLI allowlist references a non-existent or undocumented command.
+- [ ] **Batch 2: Agent CLI workbench.** Extend `xvn agent` with
+  `ls --format table|json|json-compact`. Add `xvn agent lint [--json]` for
+  prompt/tool/schema drift, placeholder prompts, name/asset mismatch, missing
+  provider/model, and invalid token settings. Add `xvn agent create
+  --from-file <json|toml> [--json]` only if the engine API already supports
+  full object creation cleanly; otherwise document dashboard-only authoring.
+- [ ] **Batch 3: Output and error contract.** Normalize object commands on
+  `--format json|json-compact` while keeping legacy `--json` flags as aliases
+  where they already exist. Add machine-readable output for agent-used list
+  commands: `agent ls`, `provider list`, `scenario ls`, `strategy ls`,
+  `eval list`, `experiment ls`, and `model status`. Add JSON stdout contract
+  tests and typed-exit integration tests for usage, auth, not-found, upstream,
+  and conflict categories.
+- [ ] **Batch 4: Dry-run and mutation safety.** Define one CLI convention:
+  `--dry-run` validates and prints the would-be mutation without writing;
+  `--yes` is required only for broad fan-out or expensive launches. Apply it
+  first to `strategy new/create`, `strategy clone`, `scenario
+  create/clone/archive/rm`, `provider add/remove/refresh-models`, and agent
+  create/update if added. Remote CLI policy continues to reject these mutation
+  paths unless a specific command is read-only, scoped, hard-limited,
+  cancellable, and covered by an allowlist test.
+- [ ] **Batch 5: Remote agent path.** Update README, dashboard wiki, and
+  `scripts/xvn-remote.py` docs so one flow covers create, poll, output, SSE,
+  and cancellation: `POST /api/cli/jobs`, `GET /api/cli/jobs/:id`,
+  `GET /api/cli/jobs/:id/output`, `GET /api/cli/jobs/:id/events`, and
+  `DELETE /api/cli/jobs/:id`. Document argv-array-only execution and safe
+  remote eval/model/experiment examples with decision, token, wall-clock,
+  sequential, and cancellation controls.
+- [ ] **Batch 6: MCP and embedded-agent parity.** Inventory `xvision-mcp`
+  tools against `xvision_engine::api` modules. Mark each API function as
+  `mcp exposed`, `cli only`, `dashboard only`, or `intentionally hidden`.
+  Any new agent workbench function must decide its MCP posture in the same PR.
+
+Explicit deferrals:
+
+- Do not implement `xvn schedule` in this Press audit slice. The old schedule
+  design needs a fresh pass against the current `xvision-agentd`,
+  `xvision-agent-client`, agent-run observability, and remote CLI job system.
+- Do not add `deploy` mutation verbs until the deployment model, safety pause,
+  broker surface, and non-custodial constraints have one current spec.
+- Do not rename binaries to Printing Press-style names. `xvn` and `xvn-mcp`
+  are the established product surfaces.
 
 ---
 
@@ -943,4 +1065,3 @@ git commit -m "feat(engine/api): risk module — per-deployment knobs + audit"
 ---
 
 > **Plan continues in subsequent files.** Tasks 4–29 follow the same pattern: tests first, implementation second, commit third. Next file: `2026-05-10-xvn-scheduling-and-agent-cli-part2.md` covers Task 4 (deploy module) through Task 9 (autoresearch stub). Part 3 covers agent runner. Part 4 covers scheduler. Part 5 covers CLI completeness + polish.
-
