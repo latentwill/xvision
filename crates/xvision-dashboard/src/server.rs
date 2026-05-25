@@ -140,7 +140,8 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail, cli,
+    agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail,
+    checkpoints as checkpoints_route, cli,
     docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs,
@@ -251,6 +252,11 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/chat-rail/sessions", get(chat_rail::list_sessions))
         // Phase 2.3: read the persisted three-state tool-policy for a scope.
         .route("/api/chat-rail/tool-policy", get(chat_rail::get_tool_policy))
+        // Phase 2.5: list a session's checkpoints (newest first).
+        .route(
+            "/api/chat-rail/sessions/:id/checkpoints",
+            get(checkpoints_route::list),
+        )
         .with_state(state)
 }
 
@@ -398,6 +404,11 @@ fn mutating_router(state: AppState) -> Router {
             put(chat_rail::put_tool_policy),
         )
         .route("/api/chat-rail/chat", post(chat_rail::chat))
+        // Phase 2.5: rewind every artifact captured by a checkpoint, verbatim.
+        .route(
+            "/api/chat-rail/checkpoints/:cid/restore",
+            post(checkpoints_route::restore),
+        )
         // ── Apply require_auth middleware to ALL mutating routes ───────────
         .route_layer(axum::middleware::from_fn_with_state(
             pool,
