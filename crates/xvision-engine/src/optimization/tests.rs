@@ -147,6 +147,19 @@ async fn candidates_round_trip_and_order_by_index() {
     );
     assert!(cands[1].selected);
     assert!(!cands[0].selected);
+
+    // re-select a different winner: exactly one selected, the rest cleared.
+    store.mark_candidate_selected(&run.id, 2).await.unwrap();
+    let cands = store.list_candidates(&run.id).await.unwrap();
+    let selected: Vec<_> = cands.iter().filter(|c| c.selected).collect();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].candidate_index, 2);
+
+    // selecting a non-existent index is NotFound.
+    assert!(matches!(
+        store.mark_candidate_selected(&run.id, 99).await,
+        Err(ApiError::NotFound(_))
+    ));
 }
 
 #[tokio::test]

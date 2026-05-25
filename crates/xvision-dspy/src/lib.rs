@@ -46,3 +46,8 @@ pub mod snapshot;
 pub use capability::Capability;
 pub use error::{OptimizerError, OptimizerResult};
 pub use snapshot::{LineageId, OptimizationSnapshot, SnapshotDemo};
+
+/// Re-export of the `dspy-rs` `MetaSignature` trait so downstream consumers
+/// (the `xvn optimize` CLI) can call `.instruction()` / `.input_fields()` on a
+/// [`signatures::BoxedSignature`] without taking a direct `dspy-rs` dependency.
+pub use dspy_rs::core::MetaSignature;

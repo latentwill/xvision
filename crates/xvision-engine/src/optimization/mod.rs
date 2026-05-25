@@ -355,6 +355,33 @@ impl OptimizationStore {
         })
     }
 
+    /// Mark exactly one candidate (by index) as the run's selected winner,
+    /// clearing the flag on all others under the same run.
+    pub async fn mark_candidate_selected(
+        &self,
+        run_id: &str,
+        candidate_index: i64,
+    ) -> ApiResult<()> {
+        sqlx::query("UPDATE optimization_candidates SET selected = 0 WHERE run_id = ?")
+            .bind(run_id)
+            .execute(&self.pool)
+            .await?;
+        let res = sqlx::query(
+            "UPDATE optimization_candidates SET selected = 1 \
+             WHERE run_id = ? AND candidate_index = ?",
+        )
+        .bind(run_id)
+        .bind(candidate_index)
+        .execute(&self.pool)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(ApiError::NotFound(format!(
+                "optimization_candidate run={run_id} index={candidate_index}"
+            )));
+        }
+        Ok(())
+    }
+
     /// List a run's candidates by ascending candidate_index.
     pub async fn list_candidates(&self, run_id: &str) -> ApiResult<Vec<OptimizationCandidate>> {
         let rows: Vec<OptCandidateRow> = sqlx::query_as(

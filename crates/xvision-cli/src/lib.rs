@@ -294,6 +294,10 @@ pub enum Command {
     Model(commands::model::ModelCmd),
     /// Trajectory store operations — inspect / validate / purge / reindex.
     Trajectory(commands::trajectory::TrajectoryCmd),
+    /// Offline DSPy prompt/demonstration optimizer (Phase 3.6): run an
+    /// optimization pass over a corpus, inspect/export/import results, and
+    /// accept a snapshot as a child agent. See `xvn optimize --help`.
+    Optimize(commands::optimize::OptimizeCmd),
 }
 
 impl Cli {
@@ -419,6 +423,7 @@ impl Cli {
             Command::Memory(cmd) => commands::memory::run(cmd).await,
             Command::Model(cmd) => commands::model::run(cmd).await,
             Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
+            Command::Optimize(cmd) => commands::optimize::run(cmd).await,
         }
     }
 }
