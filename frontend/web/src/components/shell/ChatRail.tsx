@@ -69,7 +69,6 @@ import {
 } from "@/stores/session-events";
 import { useTraceDock } from "@/stores/trace-dock";
 import type {
-  AssistantRow,
   MessageRow,
   ToolRow,
 } from "@/stores/message-row-reducer";

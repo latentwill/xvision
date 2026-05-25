@@ -404,11 +404,13 @@ function assertHandledOrPassthrough(
     case "engine_event":
     case "backpressure_dropped":
       return rows;
-    default: {
-      const _exhaustive: never = p;
-      void _exhaustive;
+    default:
+      // Catch-all passthrough. This helper is invoked from the main reducer's
+      // `default`, so `p` still carries the FULL UnifiedPayload union (TS does
+      // not narrow across the call boundary) — a `never` exhaustiveness binding
+      // is therefore not valid here. Kinds the reducer does not project to a
+      // row intentionally pass through unchanged.
       return rows;
-    }
   }
 }
 

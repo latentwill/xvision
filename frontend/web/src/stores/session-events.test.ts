@@ -102,7 +102,7 @@ function toolLifecycle(): UnifiedEvent[] {
     ev(
       {
         kind: "span_finished",
-        data: { span_id: SPAN, ended_at: "2026-05-24T12:00:01Z", status: "ok" },
+        data: { span_id: SPAN, ended_at: "2026-05-24T12:00:01Z", status: "ok", error_json: null },
       },
       { event_id: "lc_span_fin", seq: 4, span_id: SPAN, session_id: SESSION },
     ),
