@@ -54,9 +54,7 @@ impl Provenance {
     /// Fold a single call's [`LmUsage`] into the running totals.
     pub fn record_usage(&mut self, usage: &LmUsage) {
         self.prompt_tokens = self.prompt_tokens.saturating_add(usage.prompt_tokens);
-        self.completion_tokens = self
-            .completion_tokens
-            .saturating_add(usage.completion_tokens);
+        self.completion_tokens = self.completion_tokens.saturating_add(usage.completion_tokens);
     }
 
     /// Total tokens across prompt + completion.
@@ -83,11 +81,7 @@ pub trait OptimizerModel: Send + Sync {
     /// Run a single completion over `chat`. `seed_example` is the DSRs
     /// [`Example`] context the call is attached to (used by the deterministic
     /// model's cache + by real backends to thread structured inputs).
-    async fn complete(
-        &self,
-        seed_example: Example,
-        chat: Chat,
-    ) -> OptimizerResult<ModelCompletion>;
+    async fn complete(&self, seed_example: Example, chat: Chat) -> OptimizerResult<ModelCompletion>;
 
     /// Current accumulated provenance (provider/model + token/cost totals).
     fn provenance(&self) -> Provenance;
@@ -141,20 +135,13 @@ impl DeterministicTestModel {
     }
 
     fn provenance_snapshot(&self) -> Provenance {
-        self.provenance
-            .lock()
-            .expect("provenance mutex poisoned")
-            .clone()
+        self.provenance.lock().expect("provenance mutex poisoned").clone()
     }
 }
 
 #[async_trait::async_trait]
 impl OptimizerModel for DeterministicTestModel {
-    async fn complete(
-        &self,
-        seed_example: Example,
-        chat: Chat,
-    ) -> OptimizerResult<ModelCompletion> {
+    async fn complete(&self, seed_example: Example, chat: Chat) -> OptimizerResult<ModelCompletion> {
         self.complete_inner(seed_example, chat).await
     }
 

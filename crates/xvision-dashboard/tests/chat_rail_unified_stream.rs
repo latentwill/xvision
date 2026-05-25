@@ -22,9 +22,7 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 use xvision_dashboard::{server::build_router, AppState};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope, SessionEventLog};
-use xvision_observability::{
-    Actor, EventScope, EventSource, UnifiedEvent, UnifiedPayload,
-};
+use xvision_observability::{Actor, EventScope, EventSource, UnifiedEvent, UnifiedPayload};
 
 async fn boot_server() -> (String, TempDir, AppState) {
     let tmp = TempDir::new().unwrap();

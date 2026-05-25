@@ -219,7 +219,10 @@ mod tests {
         let base = base_key();
         let other = base.clone().with_arm_scope(Some("trader_arm[deepseek]"));
         assert_ne!(base.fingerprint(), other.fingerprint());
-        assert_ne!(base.clone().with_model("claude-sonnet-4-6").fingerprint(), base.fingerprint());
+        assert_ne!(
+            base.clone().with_model("claude-sonnet-4-6").fingerprint(),
+            base.fingerprint()
+        );
     }
 
     #[test]

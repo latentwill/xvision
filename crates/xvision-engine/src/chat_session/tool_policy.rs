@@ -65,9 +65,18 @@ impl ToolPolicy {
     /// - Dangerous → disabled
     pub fn default_for(class: ToolClass) -> Self {
         match class {
-            ToolClass::Read => ToolPolicy { enabled: true, auto_approve: true },
-            ToolClass::Write => ToolPolicy { enabled: true, auto_approve: false },
-            ToolClass::Dangerous => ToolPolicy { enabled: false, auto_approve: false },
+            ToolClass::Read => ToolPolicy {
+                enabled: true,
+                auto_approve: true,
+            },
+            ToolClass::Write => ToolPolicy {
+                enabled: true,
+                auto_approve: false,
+            },
+            ToolClass::Dangerous => ToolPolicy {
+                enabled: false,
+                auto_approve: false,
+            },
         }
     }
 }
@@ -213,11 +222,7 @@ impl ToolPolicyStore {
 
     /// The effective policy for one tool: the persisted override if present,
     /// else the class default. The single resolution point enforcement reads.
-    pub async fn effective(
-        pool: &SqlitePool,
-        user_scope: &str,
-        tool_name: &str,
-    ) -> Result<ToolPolicy> {
+    pub async fn effective(pool: &SqlitePool, user_scope: &str, tool_name: &str) -> Result<ToolPolicy> {
         Ok(match Self::get_policy(pool, user_scope, tool_name).await? {
             Some(p) => p,
             None => ToolPolicy::default_for(classify(tool_name)),
@@ -311,15 +316,24 @@ mod tests {
     fn defaults_match_spec() {
         assert_eq!(
             ToolPolicy::default_for(ToolClass::Read),
-            ToolPolicy { enabled: true, auto_approve: true }
+            ToolPolicy {
+                enabled: true,
+                auto_approve: true
+            }
         );
         assert_eq!(
             ToolPolicy::default_for(ToolClass::Write),
-            ToolPolicy { enabled: true, auto_approve: false }
+            ToolPolicy {
+                enabled: true,
+                auto_approve: false
+            }
         );
         assert_eq!(
             ToolPolicy::default_for(ToolClass::Dangerous),
-            ToolPolicy { enabled: false, auto_approve: false }
+            ToolPolicy {
+                enabled: false,
+                auto_approve: false
+            }
         );
     }
 
@@ -327,7 +341,10 @@ mod tests {
 
     #[test]
     fn decide_disabled_is_denied_in_any_mode_or_class() {
-        let disabled = ToolPolicy { enabled: false, auto_approve: true };
+        let disabled = ToolPolicy {
+            enabled: false,
+            auto_approve: true,
+        };
         for mode in ["research", "act"] {
             for class in [ToolClass::Read, ToolClass::Write, ToolClass::Dangerous] {
                 assert_eq!(
@@ -341,8 +358,14 @@ mod tests {
 
     #[test]
     fn decide_read_is_auto_approved_in_research_and_act() {
-        assert_eq!(decide("research", ToolClass::Read, read_default()), ToolPolicyOutcome::AutoApproved);
-        assert_eq!(decide("act", ToolClass::Read, read_default()), ToolPolicyOutcome::AutoApproved);
+        assert_eq!(
+            decide("research", ToolClass::Read, read_default()),
+            ToolPolicyOutcome::AutoApproved
+        );
+        assert_eq!(
+            decide("act", ToolClass::Read, read_default()),
+            ToolPolicyOutcome::AutoApproved
+        );
     }
 
     #[test]
@@ -352,8 +375,14 @@ mod tests {
             ToolPolicyOutcome::Denied
         );
         // Even an auto_approve write is denied in research mode.
-        let auto = ToolPolicy { enabled: true, auto_approve: true };
-        assert_eq!(decide("research", ToolClass::Write, auto), ToolPolicyOutcome::Denied);
+        let auto = ToolPolicy {
+            enabled: true,
+            auto_approve: true,
+        };
+        assert_eq!(
+            decide("research", ToolClass::Write, auto),
+            ToolPolicyOutcome::Denied
+        );
     }
 
     #[test]
@@ -366,19 +395,40 @@ mod tests {
 
     #[test]
     fn decide_write_in_act_auto_approve_runs() {
-        let auto = ToolPolicy { enabled: true, auto_approve: true };
-        assert_eq!(decide("act", ToolClass::Write, auto), ToolPolicyOutcome::AutoApproved);
+        let auto = ToolPolicy {
+            enabled: true,
+            auto_approve: true,
+        };
+        assert_eq!(
+            decide("act", ToolClass::Write, auto),
+            ToolPolicyOutcome::AutoApproved
+        );
     }
 
     #[test]
     fn decide_dangerous_enabled_behaves_like_write() {
         // Dangerous is disabled by default (rule 1), but once enabled it
         // follows the write rules.
-        let enabled = ToolPolicy { enabled: true, auto_approve: false };
-        assert_eq!(decide("research", ToolClass::Dangerous, enabled), ToolPolicyOutcome::Denied);
-        assert_eq!(decide("act", ToolClass::Dangerous, enabled), ToolPolicyOutcome::NeedsApproval);
-        let auto = ToolPolicy { enabled: true, auto_approve: true };
-        assert_eq!(decide("act", ToolClass::Dangerous, auto), ToolPolicyOutcome::AutoApproved);
+        let enabled = ToolPolicy {
+            enabled: true,
+            auto_approve: false,
+        };
+        assert_eq!(
+            decide("research", ToolClass::Dangerous, enabled),
+            ToolPolicyOutcome::Denied
+        );
+        assert_eq!(
+            decide("act", ToolClass::Dangerous, enabled),
+            ToolPolicyOutcome::NeedsApproval
+        );
+        let auto = ToolPolicy {
+            enabled: true,
+            auto_approve: true,
+        };
+        assert_eq!(
+            decide("act", ToolClass::Dangerous, auto),
+            ToolPolicyOutcome::AutoApproved
+        );
     }
 
     #[test]
@@ -399,12 +449,18 @@ mod tests {
     fn effective_policy_prefers_override_else_default() {
         let overrides = vec![(
             "create_strategy".to_string(),
-            ToolPolicy { enabled: false, auto_approve: false },
+            ToolPolicy {
+                enabled: false,
+                auto_approve: false,
+            },
         )];
         // Override wins.
         assert_eq!(
             effective_policy("create_strategy", &overrides),
-            ToolPolicy { enabled: false, auto_approve: false }
+            ToolPolicy {
+                enabled: false,
+                auto_approve: false
+            }
         );
         // No override → class default (Write).
         assert_eq!(effective_policy("update_slot", &overrides), write_default());
@@ -428,7 +484,9 @@ mod tests {
         let pool = fresh_pool().await;
         // No override yet → effective is the class default.
         assert_eq!(
-            ToolPolicyStore::effective(&pool, GLOBAL_SCOPE, "create_strategy").await.unwrap(),
+            ToolPolicyStore::effective(&pool, GLOBAL_SCOPE, "create_strategy")
+                .await
+                .unwrap(),
             write_default()
         );
 
@@ -437,7 +495,10 @@ mod tests {
             &pool,
             GLOBAL_SCOPE,
             "create_strategy",
-            ToolPolicy { enabled: false, auto_approve: false },
+            ToolPolicy {
+                enabled: false,
+                auto_approve: false,
+            },
         )
         .await
         .unwrap();
@@ -452,12 +513,23 @@ mod tests {
             &pool,
             GLOBAL_SCOPE,
             "create_strategy",
-            ToolPolicy { enabled: true, auto_approve: true },
+            ToolPolicy {
+                enabled: true,
+                auto_approve: true,
+            },
         )
         .await
         .unwrap();
-        let p = ToolPolicyStore::effective(&pool, GLOBAL_SCOPE, "create_strategy").await.unwrap();
-        assert_eq!(p, ToolPolicy { enabled: true, auto_approve: true });
+        let p = ToolPolicyStore::effective(&pool, GLOBAL_SCOPE, "create_strategy")
+            .await
+            .unwrap();
+        assert_eq!(
+            p,
+            ToolPolicy {
+                enabled: true,
+                auto_approve: true
+            }
+        );
 
         let all = ToolPolicyStore::get_policies(&pool, GLOBAL_SCOPE).await.unwrap();
         assert_eq!(all.len(), 1, "PK upsert must not create a duplicate row");
@@ -471,12 +543,21 @@ mod tests {
             &pool,
             "user_42",
             "run_eval",
-            ToolPolicy { enabled: false, auto_approve: false },
+            ToolPolicy {
+                enabled: false,
+                auto_approve: false,
+            },
         )
         .await
         .unwrap();
         // Global scope unaffected.
-        assert!(ToolPolicyStore::get_policy(&pool, GLOBAL_SCOPE, "run_eval").await.unwrap().is_none());
-        assert!(ToolPolicyStore::get_policy(&pool, "user_42", "run_eval").await.unwrap().is_some());
+        assert!(ToolPolicyStore::get_policy(&pool, GLOBAL_SCOPE, "run_eval")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(ToolPolicyStore::get_policy(&pool, "user_42", "run_eval")
+            .await
+            .unwrap()
+            .is_some());
     }
 }

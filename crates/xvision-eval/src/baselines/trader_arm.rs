@@ -69,12 +69,7 @@ impl BriefingReplay {
     /// hashes are intentionally empty here: the briefing pairing key is
     /// `(cycle_id, slot_role, provider, model, arm_scope)`, mirroring the
     /// old `CacheKey` plus the arm-scope dimension.
-    pub fn key(
-        cycle_id: Uuid,
-        provider: &str,
-        model: &str,
-        arm_scope: Option<&str>,
-    ) -> TrajectoryKey {
+    pub fn key(cycle_id: Uuid, provider: &str, model: &str, arm_scope: Option<&str>) -> TrajectoryKey {
         TrajectoryKey {
             cycle_id,
             slot_role: "intern".to_string(),

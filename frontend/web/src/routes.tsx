@@ -19,6 +19,7 @@ const StrategiesNewRoute = lazy(() => import("./routes/strategies-new").then((m)
 const StrategiesFolderRoute = lazy(() => import("./routes/strategies-folder").then((m) => ({ default: m.StrategiesFolderRoute })));
 const AgentsRoute = lazy(() => import("./routes/agents").then((m) => ({ default: m.AgentsRoute })));
 const AgentsEditRoute = lazy(() => import("./routes/agents-edit").then((m) => ({ default: m.AgentsEditRoute })));
+const AgentsFlywheelRoute = lazy(() => import("./routes/agents-flywheel").then((m) => ({ default: m.AgentsFlywheelRoute })));
 const OptimizationDetailRoute = lazy(() => import("./routes/optimizations-detail").then((m) => ({ default: m.OptimizationDetailRoute })));
 const AgentDiagnosticsRoute = lazy(() => import("./routes/diagnostics-mobile").then((m) => ({ default: m.AgentDiagnosticsRoute })));
 const StrategyDiagnosticsRoute = lazy(() => import("./routes/diagnostics-mobile").then((m) => ({ default: m.StrategyDiagnosticsRoute })));
@@ -109,6 +110,7 @@ export const router = createBrowserRouter([
       { path: "agents/memory", element: page(<MemoryPage />) },
       { path: "agents/skills", element: page(<SettingsSkillsRoute />) },
       { path: "agents/new", element: page(<AgentsEditRoute />) },
+      { path: "agents/:id/flywheel", element: page(<AgentsFlywheelRoute />) },
       { path: "agents/:id", element: page(<AgentsEditRoute />) },
       {
         path: "agents/:id/diagnostics",

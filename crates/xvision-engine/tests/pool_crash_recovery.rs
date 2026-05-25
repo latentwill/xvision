@@ -98,9 +98,7 @@ impl MockSidecar {
 }
 
 type MockFactory = Box<
-    dyn Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = MockSidecar> + Send>>
-        + Send
-        + Sync,
+    dyn Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = MockSidecar> + Send>> + Send + Sync,
 >;
 
 fn make_pool(n: usize) -> SidecarPool<MockSidecar, MockFactory> {
@@ -175,11 +173,7 @@ async fn crashed_sidecar_recording_is_marked_incomplete() {
     let db = migrated_pool().await;
     let tmp = TempDir::new().unwrap();
     let blob = BlobStore::new(tmp.path().to_path_buf());
-    let store = Arc::new(TrajectoryStore::new(
-        db.clone(),
-        blob,
-        RetentionMode::FullDebug,
-    ));
+    let store = Arc::new(TrajectoryStore::new(db.clone(), blob, RetentionMode::FullDebug));
 
     // Begin a recording.
     let key = TrajectoryKeyBuilder::default()
@@ -252,11 +246,7 @@ async fn pool_mates_unaffected_by_crash() {
     let db = migrated_pool().await;
     let tmp = TempDir::new().unwrap();
     let blob = BlobStore::new(tmp.path().to_path_buf());
-    let store = Arc::new(TrajectoryStore::new(
-        db.clone(),
-        blob,
-        RetentionMode::FullDebug,
-    ));
+    let store = Arc::new(TrajectoryStore::new(db.clone(), blob, RetentionMode::FullDebug));
 
     let pool = Arc::new(make_pool(3));
 
@@ -379,38 +369,29 @@ async fn pool_mates_unaffected_by_crash() {
 
     // Verify restart count = 1.
     let stats = pool.stats();
-    assert_eq!(
-        stats.restarts, 1,
-        "exactly one restart; others unaffected"
-    );
+    assert_eq!(stats.restarts, 1, "exactly one restart; others unaffected");
 
     // Verify slot_0 and slot_2 have the correct number of frames.
-    let count_0: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM trajectory_frames WHERE recording_id = ?",
-    )
-    .bind(rec_0.as_str())
-    .fetch_one(&db)
-    .await
-    .unwrap();
+    let count_0: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM trajectory_frames WHERE recording_id = ?")
+        .bind(rec_0.as_str())
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!(count_0.0, 10, "slot_0 must have 10 frames");
 
-    let count_2: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM trajectory_frames WHERE recording_id = ?",
-    )
-    .bind(rec_2.as_str())
-    .fetch_one(&db)
-    .await
-    .unwrap();
+    let count_2: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM trajectory_frames WHERE recording_id = ?")
+        .bind(rec_2.as_str())
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!(count_2.0, 10, "slot_2 must have 10 frames");
 
     // slot_1 has only the 5 frames written before the crash.
-    let count_1: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM trajectory_frames WHERE recording_id = ?",
-    )
-    .bind(rec_1.as_str())
-    .fetch_one(&db)
-    .await
-    .unwrap();
+    let count_1: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM trajectory_frames WHERE recording_id = ?")
+        .bind(rec_1.as_str())
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!(count_1.0, 5, "slot_1 must have only 5 pre-crash frames");
 }
 

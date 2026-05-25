@@ -67,13 +67,12 @@ async fn migration_045_fresh_db_creates_all_tables_and_indexes() {
         "optimization_snapshots",
         "agent_lineage",
     ] {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
-        )
-        .bind(table)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+                .bind(table)
+                .fetch_one(pool)
+                .await
+                .unwrap();
         assert_eq!(count.0, 1, "table {table} missing after migration 045");
     }
     for index in [
@@ -82,13 +81,12 @@ async fn migration_045_fresh_db_creates_all_tables_and_indexes() {
         "idx_optimization_snapshots_run",
         "idx_agent_lineage_parent",
     ] {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
-        )
-        .bind(index)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?")
+                .bind(index)
+                .fetch_one(pool)
+                .await
+                .unwrap();
         assert_eq!(count.0, 1, "index {index} missing after migration 045");
     }
 }

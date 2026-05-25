@@ -61,6 +61,14 @@
 // 50. POST   /api/chat-rail/sessions                  chat_rail::create_session
 // 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
+// 53. POST   /api/autoresearch/run                    flywheel::autoresearch_run
+// 54. POST   /api/memory/:id/activate                 memory::activate_pattern
+// 55. POST   /api/memory/:id/demote                   memory::demote_pattern
+// 56. POST   /api/autoresearch/:id/gate               flywheel::autoresearch_gate
+// 57. POST   /api/autoresearch/:id/promote            flywheel::autoresearch_promote
+// 58. POST   /api/autoresearch/:id/demote             flywheel::autoresearch_demote
+// 59. POST   /api/optimize/memory-demos               flywheel::optimize_memory_demos
+// 60. POST   /api/optimize/memory-demos/:id/gate      flywheel::optimize_memory_demos_gate
 //
 // READ-ONLY routes (GET, GET SSE) — no require_auth layer:
 //
@@ -116,14 +124,19 @@
 //  R50. GET  /api/chat-rail/sessions/:id/history
 //  R51. GET  /api/chat-rail/sessions
 //  R52. GET  /api/v2/charts/market-context
-//  R53. GET  /api/auth/session/current   (auth endpoint — own handler)
+//  R53. GET  /api/flywheel/status
+//  R54. GET  /api/flywheel/velocity
+//  R55. GET  /api/flywheel/lineage
+//  R56. GET  /api/autoresearch
+//  R57. GET  /api/autoresearch/:id
+//  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
 //  A1.  POST   /api/auth/session
 //  A2.  DELETE /api/auth/session
 //  A3.  GET    /api/auth/session/current
 //
-// Total: 52 mutating handlers audited.
+// Total: 54 mutating handlers audited.
 // =============================================================================
 
 use std::net::SocketAddr;
@@ -141,15 +154,13 @@ use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail,
-    checkpoints as checkpoints_route, cli,
-    diagnostics as diagnostics_route,
-    docs,
+    checkpoints as checkpoints_route, cli, diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
-    eval_runs, focus as focus_route,
+    eval_runs, flywheel, focus as focus_route,
     health::health,
-    memory as memory_route, optimizations as optimizations_route, safety as safety_route,
-    scenarios, search as search_route, settings, skills,
-    static_files, strategies, strategies_folder as strategies_folder_route, wizard,
+    memory as memory_route, optimizations as optimizations_route, safety as safety_route, scenarios,
+    search as search_route, settings, skills, static_files, strategies,
+    strategies_folder as strategies_folder_route, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -234,12 +245,26 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/agent-runs/:id/export.md", get(agent_runs::export_md))
         .route("/api/agent-runs/:id/stream", get(agent_runs::stream))
         .route("/api/agent-runs/:id/blobs/:ref", get(agent_runs::get_blob))
+        .route(
+            "/api/agent-runs/:id/memory-recalls",
+            get(agent_runs::list_memory_recalls),
+        )
+        .route(
+            "/api/agent-runs/:id/memory-events",
+            get(agent_runs::list_memory_events),
+        )
         .route("/api/eval/runs/:id/reviews", get(eval_review::list_for_run))
         .route("/api/eval/reviews/:id", get(eval_review::get))
         .route("/api/eval/agent-profiles", get(eval_agent_profiles::list))
         .route("/api/eval/agent-profiles/:id", get(eval_agent_profiles::get))
         .route("/api/memory", get(memory_route::list))
+        .route("/api/memory/namespaces", get(memory_route::namespaces))
         .route("/api/memory/:id", get(memory_route::get))
+        .route("/api/flywheel/status", get(flywheel::status))
+        .route("/api/flywheel/velocity", get(flywheel::velocity))
+        .route("/api/flywheel/lineage", get(flywheel::lineage))
+        .route("/api/autoresearch", get(flywheel::autoresearch_list))
+        .route("/api/autoresearch/:id", get(flywheel::autoresearch_get))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
         .route("/api/cli/jobs/:id/output", get(cli::output))
@@ -341,8 +366,37 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/eval/agent-profiles/:id", patch(eval_agent_profiles::patch))
         // ── Memory ────────────────────────────────────────────────────────
         .route("/api/memory", delete(memory_route::forget))
+        .route("/api/memory/attestations", post(memory_route::create_attestation))
         .route("/api/memory/patterns", post(memory_route::create_pattern))
+        .route("/api/memory/undo-forget", post(memory_route::undo_forget))
+        .route(
+            "/api/memory/:id/activate",
+            post(memory_route::activate_pattern),
+        )
+        .route("/api/memory/:id/demote", post(memory_route::demote_pattern))
         .route("/api/memory/:id", delete(memory_route::delete_one))
+        // ── Flywheel / offline self-improvement ─────────────────────────
+        .route("/api/autoresearch/run", post(flywheel::autoresearch_run))
+        .route(
+            "/api/autoresearch/:id/gate",
+            post(flywheel::autoresearch_gate),
+        )
+        .route(
+            "/api/autoresearch/:id/promote",
+            post(flywheel::autoresearch_promote),
+        )
+        .route(
+            "/api/autoresearch/:id/demote",
+            post(flywheel::autoresearch_demote),
+        )
+        .route(
+            "/api/optimize/memory-demos",
+            post(flywheel::optimize_memory_demos),
+        )
+        .route(
+            "/api/optimize/memory-demos/:id/gate",
+            post(flywheel::optimize_memory_demos_gate),
+        )
         // ── CLI jobs ──────────────────────────────────────────────────────
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", delete(cli::delete))

@@ -289,14 +289,18 @@ pub enum Command {
     /// over the operator memory store (`$XVN_MEMORY_DB` or
     /// `~/.xvn/memory.db`).
     Memory(commands::memory::MemoryCmd),
+    /// Offline autoresearcher operations over memory Observations.
+    Autoresearch(commands::autoresearch::AutoresearchCmd),
+    /// Flywheel observability over memory + autoresearch activity.
+    Flywheel(commands::flywheel::FlywheelCmd),
     /// Bounded (strategy × model) bakeoff verb. See
     /// `team/contracts/cli-model-bakeoff.md`.
     Model(commands::model::ModelCmd),
     /// Trajectory store operations — inspect / validate / purge / reindex.
     Trajectory(commands::trajectory::TrajectoryCmd),
     /// Offline DSPy prompt/demonstration optimizer (Phase 3.6): run an
-    /// optimization pass over a corpus, inspect/export/import results, and
-    /// accept a snapshot as a child agent. See `xvn optimize --help`.
+    /// optimization pass over a corpus, compile memory demos, inspect/export/import
+    /// results, and accept a snapshot as a child agent. See `xvn optimize --help`.
     Optimize(commands::optimize::OptimizeCmd),
 }
 
@@ -421,6 +425,8 @@ impl Cli {
             Command::Run(cmd) => commands::run::run(cmd).await,
             Command::Experiment(cmd) => commands::experiment::run(cmd).await,
             Command::Memory(cmd) => commands::memory::run(cmd).await,
+            Command::Autoresearch(cmd) => commands::autoresearch::run(cmd).await,
+            Command::Flywheel(cmd) => commands::flywheel::run(cmd).await,
             Command::Model(cmd) => commands::model::run(cmd).await,
             Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
             Command::Optimize(cmd) => commands::optimize::run(cmd).await,

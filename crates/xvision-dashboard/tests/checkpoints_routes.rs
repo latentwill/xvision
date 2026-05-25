@@ -153,9 +153,7 @@ async fn list_then_restore_rewinds_strategy_byte_identical_and_emits_event() {
 #[tokio::test]
 async fn restore_unknown_checkpoint_404s() {
     let (server, _tmp, _state) = boot().await;
-    let resp = server
-        .post("/api/chat-rail/checkpoints/ckpt_nope/restore")
-        .await;
+    let resp = server.post("/api/chat-rail/checkpoints/ckpt_nope/restore").await;
     assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
     let body: Value = resp.json();
     assert_eq!(body["code"].as_str().unwrap(), "not_found");
@@ -206,7 +204,10 @@ async fn restore_agent_slots_roundtrips_and_emits_event() {
         .snapshot(
             &session_id,
             CheckpointKind::Manual,
-            SnapshotRequest { agent_id: Some(agent_id.clone()), ..Default::default() },
+            SnapshotRequest {
+                agent_id: Some(agent_id.clone()),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -222,7 +223,10 @@ async fn restore_agent_slots_roundtrips_and_emits_event() {
         )
         .await
         .unwrap();
-    assert_ne!(agent_store.get(&agent_id).await.unwrap().unwrap().slots, original.slots);
+    assert_ne!(
+        agent_store.get(&agent_id).await.unwrap().unwrap().slots,
+        original.slots
+    );
 
     let resp = server
         .post(&format!(

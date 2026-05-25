@@ -77,8 +77,7 @@ pub async fn open_store(
                 exit: XvnExit::Upstream,
                 source: anyhow::anyhow!("apply trajectory migration: {e}"),
             })?;
-        let blob_root = blob_override
-            .unwrap_or_else(|| xvn_home.join("agent_runs").join("blobs"));
+        let blob_root = blob_override.unwrap_or_else(|| xvn_home.join("agent_runs").join("blobs"));
         (pool, blob_root)
     } else {
         // Canonical path: ApiContext::open migrates `$XVN_HOME/xvn.db` (incl.
@@ -89,8 +88,7 @@ pub async fn open_store(
                 exit: XvnExit::Upstream,
                 source: anyhow::anyhow!("open xvn.db ({}): {e}", xvn_home.display()),
             })?;
-        let blob_root = blob_override
-            .unwrap_or_else(|| ctx.xvn_home.join("agent_runs").join("blobs"));
+        let blob_root = blob_override.unwrap_or_else(|| ctx.xvn_home.join("agent_runs").join("blobs"));
         (ctx.db.clone(), blob_root)
     };
 

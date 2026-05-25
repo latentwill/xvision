@@ -37,9 +37,7 @@ mod runner;
 pub use builtin::{DenyOnPolicyHook, DenyPredicate, EvidenceCaptureHook};
 pub use hook::{Hook, HookDecision, HookError, HookOutcome};
 pub use policy::{FailureMode, HookMode, HookPolicy};
-pub use runner::{
-    AsyncHandle, EmitSink, EventEmitter, EventIdGen, HookRunner, PrimaryVerdict, RunReport,
-};
+pub use runner::{AsyncHandle, EmitSink, EventEmitter, EventIdGen, HookRunner, PrimaryVerdict, RunReport};
 
 #[cfg(test)]
 mod tests;

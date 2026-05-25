@@ -112,10 +112,7 @@ pub enum ShortCircuit {
     /// with no corresponding persisted row — the change would vanish on
     /// reload.
     #[error("dashboard action '{action}' produced artifact '{artifact_kind}' with no persisted row")]
-    DashboardArtifactWithoutPersistedRow {
-        action: String,
-        artifact_kind: String,
-    },
+    DashboardArtifactWithoutPersistedRow { action: String, artifact_kind: String },
 }
 
 impl ShortCircuit {
@@ -130,12 +127,8 @@ impl ShortCircuit {
             ShortCircuit::InvalidOutputSchema { .. } => "invalid_output_schema",
             ShortCircuit::EmptyDemoSet { .. } => "empty_demo_set",
             ShortCircuit::StaleOptimizedPrompt { .. } => "stale_optimized_prompt",
-            ShortCircuit::FilterSignalRequestedButAbsent { .. } => {
-                "filter_signal_requested_but_absent"
-            }
-            ShortCircuit::StrategyReferencesUnattachedSlot { .. } => {
-                "strategy_references_unattached_slot"
-            }
+            ShortCircuit::FilterSignalRequestedButAbsent { .. } => "filter_signal_requested_but_absent",
+            ShortCircuit::StrategyReferencesUnattachedSlot { .. } => "strategy_references_unattached_slot",
             ShortCircuit::DashboardArtifactWithoutPersistedRow { .. } => {
                 "dashboard_artifact_without_persisted_row"
             }
@@ -208,16 +201,15 @@ impl ShortCircuit {
             ShortCircuit::MissingTool { .. } | ShortCircuit::DisabledTool { .. } => {
                 UnifiedPayload::ErrorMissingTool(err)
             }
-            ShortCircuit::ProviderUnavailable { .. } => {
-                UnifiedPayload::ErrorProviderUnavailable(err)
-            }
+            ShortCircuit::ProviderUnavailable { .. } => UnifiedPayload::ErrorProviderUnavailable(err),
             ShortCircuit::MissingPrompt { .. }
             | ShortCircuit::FilterSignalRequestedButAbsent { .. }
             | ShortCircuit::StrategyReferencesUnattachedSlot { .. } => {
                 UnifiedPayload::ErrorMissingCapability(err)
             }
-            ShortCircuit::InvalidOutputSchema { .. }
-            | ShortCircuit::StaleOptimizedPrompt { .. } => UnifiedPayload::ErrorInvalidSchema(err),
+            ShortCircuit::InvalidOutputSchema { .. } | ShortCircuit::StaleOptimizedPrompt { .. } => {
+                UnifiedPayload::ErrorInvalidSchema(err)
+            }
             ShortCircuit::EmptyDemoSet { .. } => UnifiedPayload::ErrorPolicyDenied(err),
             ShortCircuit::DashboardArtifactWithoutPersistedRow { .. } => {
                 UnifiedPayload::ErrorPersistenceFailed(err)
@@ -270,11 +262,7 @@ fn typed_error_event_kind(p: &UnifiedPayload) -> &'static str {
 ///
 /// Wire into: the eval-launch preflight / `dispatch_capability` tool-bind
 /// step (alongside `diagnostics::required_tools_for`).
-pub fn check_missing_tool(
-    role: &str,
-    tool: &str,
-    available_tools: &[String],
-) -> Result<(), ShortCircuit> {
+pub fn check_missing_tool(role: &str, tool: &str, available_tools: &[String]) -> Result<(), ShortCircuit> {
     if available_tools.iter().any(|t| t == tool) {
         Ok(())
     } else {
@@ -445,11 +433,7 @@ pub fn check_filter_signal_present(
 /// Wire into: the eval-launch preflight, after agent resolution (mirrors
 /// the `agent_resolved=false` / no-slot diagnostics blockers, but as a
 /// hard short-circuit).
-pub fn check_slot_attached(
-    role: &str,
-    agent_id: &str,
-    slot_attached: bool,
-) -> Result<(), ShortCircuit> {
+pub fn check_slot_attached(role: &str, agent_id: &str, slot_attached: bool) -> Result<(), ShortCircuit> {
     if slot_attached {
         Ok(())
     } else {

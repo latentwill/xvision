@@ -282,15 +282,21 @@ impl ChatSessionStore {
     /// Load the durable rail state (migration 041). Returns an error if the
     /// session does not exist.
     pub async fn load_rail_state(pool: &SqlitePool, session_id: &str) -> Result<ChatSessionRailState> {
-        let row: Option<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>)> =
-            sqlx::query_as(
-                "SELECT event_cursor, mode, focus_path, tool_policy_json, checkpoint_head, participants_json \
+        let row: Option<(
+            i64,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT event_cursor, mode, focus_path, tool_policy_json, checkpoint_head, participants_json \
                  FROM chat_sessions WHERE id = ?1",
-            )
-            .bind(session_id)
-            .fetch_optional(pool)
-            .await
-            .context("read chat_session rail state")?;
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .context("read chat_session rail state")?;
         let (event_cursor, mode, focus_path, tool_policy_json, checkpoint_head, participants_json) =
             row.ok_or_else(|| anyhow::anyhow!("session {session_id} not found"))?;
         Ok(ChatSessionRailState {
@@ -483,7 +489,9 @@ mod tests {
         ChatSessionStore::set_tool_policy(&pool, &sid, Some(r#"{"create_strategy":{"enabled":true}}"#))
             .await
             .unwrap();
-        ChatSessionStore::set_checkpoint_head(&pool, &sid, Some("ckpt_1")).await.unwrap();
+        ChatSessionStore::set_checkpoint_head(&pool, &sid, Some("ckpt_1"))
+            .await
+            .unwrap();
 
         let st = ChatSessionStore::load_rail_state(&pool, &sid).await.unwrap();
         assert_eq!(st.event_cursor, 42);
@@ -496,7 +504,9 @@ mod tests {
     #[tokio::test]
     async fn rail_state_update_unknown_session_errors() {
         let pool = fresh_pool().await;
-        let err = ChatSessionStore::set_mode(&pool, "nope", "act").await.unwrap_err();
+        let err = ChatSessionStore::set_mode(&pool, "nope", "act")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("not found"), "got: {err}");
     }
 

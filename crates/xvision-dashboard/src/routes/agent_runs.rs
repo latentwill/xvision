@@ -145,13 +145,6 @@ fn map_err(e: ExportError) -> DashboardError {
 /// handler decodes those rows back into the typed shape and groups by
 /// `decision_id` so the eval-review surface can render
 /// "Decision N → [memory items]" rows.
-///
-/// Note (route wiring): not yet attached to the dashboard router — the
-/// route table lives in `server.rs`, outside this contract's allowed
-/// paths. A follow-up will wire `GET /api/agent-runs/:id/memory-recalls`
-/// once the contract author re-scopes. Until then the handler stays
-/// callable from tests + provides the projection logic for downstream
-/// consumers that query the events table directly.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryRecallListResponse {
     pub run_id: String,
@@ -207,6 +200,54 @@ pub async fn list_memory_recalls(
     }
 
     Ok(Json(MemoryRecallListResponse { run_id: id, recalls }))
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryEventListResponse {
+    pub run_id: String,
+    pub events: Vec<MemoryEventDto>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryEventDto {
+    pub kind: String,
+    pub created_at: String,
+    pub payload: serde_json::Value,
+}
+
+/// Project all persisted memory flywheel events for `run_id`.
+/// The strict `xvn.agent_run.v1` export intentionally excludes generic
+/// events, so dashboard surfaces that need recall/write ribbons use this
+/// route instead.
+pub async fn list_memory_events(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<MemoryEventListResponse>, DashboardError> {
+    let rows: Vec<(String, Option<String>, String)> = sqlx::query_as(
+        "SELECT kind, payload_json, created_at FROM events \
+         WHERE run_id = ? AND kind IN ('memory_recall', 'memory_write') \
+         ORDER BY CAST(json_extract(payload_json, '$.decision_id') AS INTEGER) ASC, \
+                  created_at ASC",
+    )
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("list_memory_events: {e}")))?;
+
+    let mut events = Vec::with_capacity(rows.len());
+    for (kind, payload_opt, created_at) in rows {
+        let payload = payload_opt
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+            .unwrap_or(serde_json::Value::Null);
+        events.push(MemoryEventDto {
+            kind,
+            created_at,
+            payload,
+        });
+    }
+
+    Ok(Json(MemoryEventListResponse { run_id: id, events }))
 }
 
 /// Match `^[0-9a-f]{64}$` without pulling in a regex dep. Refuses

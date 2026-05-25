@@ -57,7 +57,10 @@ fn no_briefing_cache_code_references_remain() {
     assert!(!files.is_empty(), "expected to find .rs files under {root:?}");
 
     // This guard file itself necessarily contains the literal string.
-    let this_file = Path::new(file!()).file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let this_file = Path::new(file!())
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
 
     let mut offenders: Vec<String> = Vec::new();
     for f in &files {

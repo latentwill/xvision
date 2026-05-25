@@ -1290,10 +1290,7 @@ fn status_token(s: &CapabilityStatus) -> String {
 /// Plain-text diagnostics report for the non-`--json` path.
 fn print_diagnostics_text(diag: &StrategyDiagnostics) {
     println!("strategy: {}", diag.strategy_id);
-    println!(
-        "launchable: {}",
-        if diag.launchable { "yes" } else { "NO" }
-    );
+    println!("launchable: {}", if diag.launchable { "yes" } else { "NO" });
     if !diag.required_capabilities.is_empty() {
         let caps: Vec<&str> = diag.required_capabilities.iter().map(|c| cap_key(*c)).collect();
         println!("required capabilities: {}", caps.join(", "));
@@ -2382,6 +2379,8 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             obs: None,
             memory_recorder: None,
             scenario_start: None,
+            source_window_start: None,
+            source_window_end: None,
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,

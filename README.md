@@ -191,6 +191,10 @@ opens others:
   Backtest mode replays cached bars through `BacktestExecutor`; paper mode
   uses Alpaca broker-surface credentials. Runs, decisions, equity, findings,
   and attestations persist in SQLite.
+- **Memory subsystem:** `xvision-memory` provides the current Observation /
+  Pattern memory substrate and is planned to become a trading-safety adapter
+  over [gambletan/cortex](https://github.com/gambletan/cortex), the MIT-
+  licensed persistent memory engine credited in `CREDITS.md`.
 - **Dashboard runtime:** `xvision-dashboard` serves the embedded SPA, JSON API,
   wizard/chat SSE, CLI-job SSE, and live run chart streams from one axum
   binary.

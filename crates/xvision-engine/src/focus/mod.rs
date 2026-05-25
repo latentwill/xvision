@@ -130,9 +130,7 @@ pub fn scope_address(scope: &ContextScope) -> (String, Option<String>) {
         ContextScope::Route { route } => ("route".into(), Some(route.clone())),
         ContextScope::Run { run_id } => ("run".into(), Some(run_id.clone())),
         ContextScope::Strategy { draft_id } => ("strategy".into(), Some(draft_id.clone())),
-        ContextScope::Deployment { deployment_id } => {
-            ("deployment".into(), Some(deployment_id.clone()))
-        }
+        ContextScope::Deployment { deployment_id } => ("deployment".into(), Some(deployment_id.clone())),
         // Set/list scopes have no single stable id; they share the no-id
         // sentinel so the workspace-level focus applies. The injector can
         // still load these; the route layer never derives an unsafe segment
@@ -277,10 +275,7 @@ mod tests {
     fn accepts_well_formed_components_and_stays_under_scopes_root() {
         let home = Path::new("/tmp/xvn");
         let p = focus_path(home, "strategy", Some("01HABCDEF")).unwrap();
-        assert_eq!(
-            p,
-            Path::new("/tmp/xvn/scopes/strategy/01HABCDEF/focus.md")
-        );
+        assert_eq!(p, Path::new("/tmp/xvn/scopes/strategy/01HABCDEF/focus.md"));
         // The resolved path must be inside the scopes root.
         assert!(p.starts_with(scopes_root(home)));
     }
@@ -294,9 +289,14 @@ mod tests {
 
     #[test]
     fn scope_address_matches_serde_tags() {
-        assert_eq!(scope_address(&ContextScope::Workspace), ("workspace".into(), None));
         assert_eq!(
-            scope_address(&ContextScope::Strategy { draft_id: "d1".into() }),
+            scope_address(&ContextScope::Workspace),
+            ("workspace".into(), None)
+        );
+        assert_eq!(
+            scope_address(&ContextScope::Strategy {
+                draft_id: "d1".into()
+            }),
             ("strategy".into(), Some("d1".into()))
         );
         assert_eq!(
@@ -310,7 +310,9 @@ mod tests {
     #[tokio::test]
     async fn load_absent_is_none() {
         let dir = tempdir().unwrap();
-        let scope = ContextScope::Strategy { draft_id: "missing".into() };
+        let scope = ContextScope::Strategy {
+            draft_id: "missing".into(),
+        };
         let loaded = load(dir.path(), &scope).await.unwrap();
         assert!(loaded.is_none());
     }
@@ -318,7 +320,9 @@ mod tests {
     #[tokio::test]
     async fn save_then_load_round_trips_with_stable_hash() {
         let dir = tempdir().unwrap();
-        let scope = ContextScope::Strategy { draft_id: "btc-momentum".into() };
+        let scope = ContextScope::Strategy {
+            draft_id: "btc-momentum".into(),
+        };
         let content = "# Focus\n\nKeep position sizing conservative.\n";
 
         let saved = save(dir.path(), &scope, content).await.unwrap();
@@ -327,7 +331,10 @@ mod tests {
 
         let loaded = load(dir.path(), &scope).await.unwrap().expect("focus exists");
         assert_eq!(loaded.content, content);
-        assert_eq!(loaded.content_hash, saved.content_hash, "hash stable across save→load");
+        assert_eq!(
+            loaded.content_hash, saved.content_hash,
+            "hash stable across save→load"
+        );
         assert_eq!(loaded.path, saved.path);
 
         // The file actually lives at the safe path.
@@ -352,7 +359,9 @@ mod tests {
     #[tokio::test]
     async fn workspace_scope_persists_under_sentinel_dir() {
         let dir = tempdir().unwrap();
-        let saved = save(dir.path(), &ContextScope::Workspace, "ws focus").await.unwrap();
+        let saved = save(dir.path(), &ContextScope::Workspace, "ws focus")
+            .await
+            .unwrap();
         assert!(saved.path.ends_with("/scopes/workspace/_/focus.md"));
         let loaded = load(dir.path(), &ContextScope::Workspace).await.unwrap().unwrap();
         assert_eq!(loaded.content, "ws focus");

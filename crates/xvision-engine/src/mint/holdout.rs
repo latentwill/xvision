@@ -41,7 +41,9 @@ pub struct OverfitConfig {
 
 impl Default for OverfitConfig {
     fn default() -> Self {
-        Self { threshold: DEFAULT_OVERFIT_THRESHOLD }
+        Self {
+            threshold: DEFAULT_OVERFIT_THRESHOLD,
+        }
     }
 }
 
@@ -110,7 +112,10 @@ pub struct HoldoutStore {
 impl HoldoutStore {
     /// Build a store with the default overfit threshold.
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool, cfg: OverfitConfig::default() }
+        Self {
+            pool,
+            cfg: OverfitConfig::default(),
+        }
     }
 
     /// Build a store with an explicit overfit threshold.
@@ -393,7 +398,7 @@ mod tests {
     #[test]
     fn detect_overfit_trips_above_threshold() {
         let cfg = OverfitConfig::default(); // 0.30
-        // train 1.0, holdout 0.5 → ratio 0.5 > 0.30 → warning.
+                                            // train 1.0, holdout 0.5 → ratio 0.5 > 0.30 → warning.
         let (warn, ratio) = detect_overfit(1.0, 0.5, cfg);
         assert!(warn);
         assert!((ratio.unwrap() - 0.5).abs() < 1e-9);

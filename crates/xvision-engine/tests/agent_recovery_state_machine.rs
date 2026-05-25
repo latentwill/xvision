@@ -152,6 +152,8 @@ fn build_input<'a>(
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         scenario_start: None,
+        source_window_start: None,
+        source_window_end: None,
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,

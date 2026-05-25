@@ -123,10 +123,7 @@ pub struct SidecarPool<T, F> {
 impl<T, F> SidecarPool<T, F>
 where
     T: Send + 'static,
-    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>> + Send + Sync + 'static,
 {
     /// Create a pool with `capacity` slots using `initial_clients`.
     pub fn from_clients(capacity: usize, initial_clients: Vec<T>, factory: F) -> Self {
@@ -163,12 +160,7 @@ where
         for (idx, slot) in self.slots.iter().enumerate() {
             if slot
                 .status
-                .compare_exchange(
-                    STATUS_IDLE,
-                    STATUS_LEASED,
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                )
+                .compare_exchange(STATUS_IDLE, STATUS_LEASED, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
                 return PoolLease {
@@ -218,10 +210,7 @@ where
 pub struct PoolLease<T, F>
 where
     T: Send + 'static,
-    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>> + Send + Sync + 'static,
 {
     idx: usize,
     /// Atomic status of this slot (shared with the pool).
@@ -237,10 +226,7 @@ where
 impl<T, F> PoolLease<T, F>
 where
     T: Send + 'static,
-    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>> + Send + Sync + 'static,
 {
     /// Acquire a lock on the client for use.  The guard must be dropped
     /// before the lease itself is dropped.
@@ -266,10 +252,7 @@ where
 impl<T, F> Drop for PoolLease<T, F>
 where
     T: Send + 'static,
-    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>> + Send + Sync + 'static,
 {
     fn drop(&mut self) {
         if self.crashed {
@@ -328,10 +311,7 @@ where
 impl<T, F> SidecarPool<T, F>
 where
     T: Send + 'static,
-    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>> + Send + Sync + 'static,
 {
     // (The method is on the main impl block above; we add the spin here as
     //  a note.  The actual implementation is in the `lease` method above which
@@ -400,9 +380,7 @@ mod tests {
     }
 
     type MockFactory = Box<
-        dyn Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = MockSlot> + Send>>
-            + Send
-            + Sync,
+        dyn Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = MockSlot> + Send>> + Send + Sync,
     >;
     type MockPool = SidecarPool<MockSlot, MockFactory>;
 
@@ -480,8 +458,7 @@ mod tests {
 
         // Each slot tracks its own run count; we wrap them in Arcs so we can
         // read the counts after the pool is done.
-        let run_counts: Vec<Arc<AtomicUsize>> =
-            (0..N).map(|_| Arc::new(AtomicUsize::new(0))).collect();
+        let run_counts: Vec<Arc<AtomicUsize>> = (0..N).map(|_| Arc::new(AtomicUsize::new(0))).collect();
         let slots: Vec<MockSlot> = run_counts
             .iter()
             .map(|c| MockSlot {
@@ -591,9 +568,6 @@ mod tests {
         }
 
         let stats = pool.stats();
-        assert_eq!(
-            stats.restarts, 1,
-            "exactly one restart (the crashed slot)"
-        );
+        assert_eq!(stats.restarts, 1, "exactly one restart (the crashed slot)");
     }
 }

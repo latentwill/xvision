@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+Attribution: the long-term memory-engine reference is
+[gambletan/cortex](https://github.com/gambletan/cortex), MIT-licensed. V2D
+started with an in-tree `xvision-memory` implementation; the follow-on
+Phase 1.5 plan adopts `cortex-core` behind the xvision trading-safety adapter
+while preserving the F+L+T leakage contract.
+
 **Goal:** Give each `AgentSlot` an optional persistent memory (off / global / agent-scoped) backed by an embedded SQLite vector store, with automatic recall before dispatch and automatic recording after each decision, and surface memory activity in eval review.
 
 **Architecture:** A new `xvision-memory` crate owns a SQLite-backed cosine-top-k store at `~/.xvn/memory.db`. `AgentSlot` gains a `memory_mode: MemoryMode` field (engine migration 029). The `execute_slot` dispatcher seam in `crates/xvision-engine/src/agent/execute.rs` recalls top-k matches and prepends them to `system_prompt` for non-off slots, then a post-dispatch recorder writes the decision back to the slot's namespace. Two new `events.jsonl` event kinds (`memory_recall` / `memory_write`) drive the eval-review UI. Sidecar / cortex-http boundary is deferred to v2 per `team/intake/2026-05-21-v2d-agent-memory.md` Decision 1.

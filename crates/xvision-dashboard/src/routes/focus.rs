@@ -26,9 +26,7 @@ use ulid::Ulid;
 
 use xvision_engine::chat_session::SessionEventLog;
 use xvision_engine::focus::{self, FocusDoc};
-use xvision_observability::{
-    Actor, EventScope, EventSource, FocusEvent, UnifiedEvent, UnifiedPayload,
-};
+use xvision_observability::{Actor, EventScope, EventSource, FocusEvent, UnifiedEvent, UnifiedPayload};
 
 use crate::error::DashboardError;
 use crate::state::AppState;

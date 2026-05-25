@@ -236,5 +236,8 @@ async fn cline_duplicate_run_id_is_rejected() {
         .expect_err("duplicate run_id must be rejected");
     let msg = format!("{second:#}");
     assert!(msg.contains("start_run failed"), "got: {msg}");
-    assert!(msg.contains("dup-run::trader"), "error should name the run_id; got: {msg}");
+    assert!(
+        msg.contains("dup-run::trader"),
+        "error should name the run_id; got: {msg}"
+    );
 }

@@ -89,10 +89,7 @@ async fn cli_open_store_reads_recording_written_to_migrated_xvn_db() {
     assert_eq!(info.recording_id, rid.as_str());
     assert_eq!(info.slot_role, SLOT_ROLE);
 
-    let counts = cli_store
-        .frame_counts(rid.as_str())
-        .await
-        .expect("frame_counts");
+    let counts = cli_store.frame_counts(rid.as_str()).await.expect("frame_counts");
     let total: i64 = counts.iter().map(|c| c.count).sum();
     assert_eq!(total, 1, "the appended frame is visible through the CLI store");
 

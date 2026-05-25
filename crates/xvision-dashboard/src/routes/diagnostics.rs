@@ -43,8 +43,8 @@ use serde::Serialize;
 use xvision_engine::agents::{Agent, AgentSlot, Capability};
 use xvision_engine::api::agents as agents_api;
 use xvision_engine::diagnostics::{
-    capability_diagnostics, is_optimizable, is_runtime_supported, required_tools_for,
-    CapabilityStatus, StrategyDiagnostics,
+    capability_diagnostics, is_optimizable, is_runtime_supported, required_tools_for, CapabilityStatus,
+    StrategyDiagnostics,
 };
 
 use crate::error::DashboardError;
@@ -180,10 +180,7 @@ fn diagnose_agent_level(agent: &Agent) -> AgentDiagnosticsResponse {
                     AgentCapabilityLine {
                         capability: cap,
                         status,
-                        required_tools: required_tools_for(cap)
-                            .iter()
-                            .map(|s| s.to_string())
-                            .collect(),
+                        required_tools: required_tools_for(cap).iter().map(|s| s.to_string()).collect(),
                         optimizable: is_optimizable(cap),
                     }
                 })

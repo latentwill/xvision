@@ -97,12 +97,26 @@ pub struct MemoryItem {
     pub run_id: Option<String>,
     pub scenario_id: Option<String>,
     pub cycle_idx: Option<i64>,
+    /// Market-data window that contributed to an Observation. Required
+    /// on Observations so autoresearcher can compute Pattern
+    /// `training_window_end` from source data, not wall-clock time.
+    /// Must be `None` on Patterns.
+    pub source_window_start: Option<chrono::DateTime<chrono::Utc>>,
+    pub source_window_end: Option<chrono::DateTime<chrono::Utc>>,
     /// Latest bar timestamp across the Observations that contributed
     /// to this Pattern. REQUIRED on autoresearcher-distilled Patterns;
     /// MAY be `None` on operator-attested manual seeds (recalled in
     /// every scenario; operator owns the safety guarantee). MUST be
     /// `None` on Observations.
     pub training_window_end: Option<chrono::DateTime<chrono::Utc>>,
+    /// Pattern lifecycle state. `None` is treated as active for legacy
+    /// rows; new Patterns should write `Some("active")` or
+    /// `Some("staged")`. Observations must leave this unset.
+    pub promotion_state: Option<String>,
+    /// Required for operator-seeded Patterns with
+    /// `training_window_end = NULL`. The API records the corresponding
+    /// row in `operator_attestations`.
+    pub attestation_id: Option<String>,
     /// Soft-delete timestamp. `None` on live rows; `Some(_)` on rows
     /// that `forget` has marked. Rows with non-null `forgotten_at` are
     /// skipped by queries until either `undo_forget` clears the flag

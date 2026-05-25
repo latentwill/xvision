@@ -56,7 +56,12 @@ type RecallPayload = {
    */
   decision_id?: number;
 };
-type WritePayload = { namespace: string; id: string; text_preview: string };
+type WritePayload = {
+  namespace: string;
+  id?: string;
+  memory_item_id?: string;
+  text_preview?: string;
+};
 type DisabledPayload = { namespace: string };
 
 type MemoryEvent =
@@ -128,12 +133,20 @@ export const MemoryPanel: FC<{ events: MemoryPanelEvent[] }> = ({ events }) => {
             );
           }
           if (e.kind === "memory_write") {
+            const memoryItemId = e.payload.id ?? e.payload.memory_item_id;
             return (
               <li key={i} className="text-[12px]">
                 <div className="text-text-3">
                   write · <code className="font-mono">{e.payload.namespace}</code>
+                  {memoryItemId ? (
+                    <>
+                      {" "}· <code className="font-mono">{memoryItemId}</code>
+                    </>
+                  ) : null}
                 </div>
-                <div className="text-text-2">{e.payload.text_preview}</div>
+                {e.payload.text_preview ? (
+                  <div className="text-text-2">{e.payload.text_preview}</div>
+                ) : null}
               </li>
             );
           }

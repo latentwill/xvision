@@ -928,6 +928,11 @@ impl Executor {
                     }
                     _ => history_slice,
                 };
+                let source_window_start = history_slice
+                    .first()
+                    .map(|b| b.timestamp)
+                    .unwrap_or(bar.timestamp);
+                let source_window_end = bar.timestamp;
                 let bar_history = build_bar_history(history_slice, inputs_policy);
 
                 // F-6: `Causal` drops `decision_index` + `timestamp` from
@@ -1140,12 +1145,8 @@ impl Executor {
                             };
                             let payload = sc.to_typed_error();
                             let payload_json = serde_json::to_string(&payload).ok();
-                            obs.emit_engine_event(
-                                sc.code(),
-                                Some(decision_span_id.clone()),
-                                payload_json,
-                            )
-                            .await;
+                            obs.emit_engine_event(sc.code(), Some(decision_span_id.clone()), payload_json)
+                                .await;
                         }
                     };
                 }
@@ -1170,6 +1171,8 @@ impl Executor {
                     // anything trained inside the replay window. Run/scenario
                     // provenance flows down to Observation writes.
                     scenario_start: Some(scenario.time_window.start),
+                    source_window_start: Some(source_window_start),
+                    source_window_end: Some(source_window_end),
                     run_id: run.id.clone(),
                     scenario_id: scenario.id.clone(),
                     cycle_idx: decision_idx as i64,
@@ -2511,6 +2514,11 @@ impl Executor {
             }
         };
         let bar_history = build_bar_history(&history_slice, inputs_policy);
+        let source_window_start = history_slice
+            .first()
+            .map(|b| b.timestamp)
+            .unwrap_or(bar.timestamp);
+        let source_window_end = bar.timestamp;
 
         // For live the next-open reference is the current bar's close — we
         // don't have a T+1 bar yet (the broker fills at the live market
@@ -2565,6 +2573,8 @@ impl Executor {
             obs: self.obs_emitter.clone(),
             memory_recorder: self.memory_recorder.clone(),
             scenario_start: None,
+            source_window_start: Some(source_window_start),
+            source_window_end: Some(source_window_end),
             run_id: run.id.clone(),
             scenario_id: scenario.id.clone(),
             cycle_idx: decision_idx as i64,

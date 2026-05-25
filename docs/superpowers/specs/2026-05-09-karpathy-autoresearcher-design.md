@@ -6,6 +6,11 @@
 > **Reference:** github.com/karpathy/autoresearch (March 2026)
 > **Hackathon deadline:** 2026-06-15 (5 weeks)
 
+Memory attribution: the flywheel memory substrate this autoresearcher now
+distills is aligned with [gambletan/cortex](https://github.com/gambletan/cortex),
+MIT-licensed, with xvision-specific Observation/Pattern naming and F+L+T
+leakage protection layered on top.
+
 ---
 
 ## 1. Purpose, scope, and personas

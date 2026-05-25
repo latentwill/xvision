@@ -51,6 +51,5 @@ pub use holdout::{
     HoldoutStore, NewHoldoutResult, OverfitConfig, DEFAULT_OVERFIT_THRESHOLD,
 };
 pub use metrics::{
-    is_known_capability, missing_metrics, required_metrics, FILTER_REQUIRED_METRICS,
-    TRADER_REQUIRED_METRICS,
+    is_known_capability, missing_metrics, required_metrics, FILTER_REQUIRED_METRICS, TRADER_REQUIRED_METRICS,
 };

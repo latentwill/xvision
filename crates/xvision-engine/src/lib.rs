@@ -51,8 +51,7 @@ pub use checkpoint::{
 // + holdout store + per-capability metric registry. dspy-free.
 pub use mint::{
     check_accept, check_marketplace_mint, AcceptDecision, AcceptInputs, AcceptRefusal, EvalProof,
-    HoldoutResult, HoldoutStore, MintDecision, MintInputs, MintRefusal, NewHoldoutResult,
-    OverfitConfig,
+    HoldoutResult, HoldoutStore, MintDecision, MintInputs, MintRefusal, NewHoldoutResult, OverfitConfig,
 };
 
 // Re-export strategy risk types so consumers don't have to depend on

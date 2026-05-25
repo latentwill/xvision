@@ -12,8 +12,7 @@
 //! to avoid cross-test races.
 
 use xvision_core::config::{
-    emergency_llm_dispatch_enabled, resolve_routine_runtime, AgentRuntime,
-    EMERGENCY_LLM_DISPATCH_ENV,
+    emergency_llm_dispatch_enabled, resolve_routine_runtime, AgentRuntime, EMERGENCY_LLM_DISPATCH_ENV,
 };
 
 #[test]

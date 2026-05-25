@@ -127,14 +127,26 @@ fn complete_trader_strategy_is_launchable_and_optimizable() {
     let a = agent(
         "01HZAGENT1",
         "trader-agent",
-        slot("anthropic", "claude-sonnet-4-6", GOOD_PROMPT, &[Capability::Trader]),
+        slot(
+            "anthropic",
+            "claude-sonnet-4-6",
+            GOOD_PROMPT,
+            &[Capability::Trader],
+        ),
     );
-    let s = strategy(&[aref("01HZAGENT1", "trader", Some(Capability::Trader))], &["ohlcv"]);
+    let s = strategy(
+        &[aref("01HZAGENT1", "trader", Some(Capability::Trader))],
+        &["ohlcv"],
+    );
 
     let diag = diagnose(&s, &[a]);
 
     assert!(diag.launchable, "complete trader strategy must be launchable");
-    assert!(diag.required_unmet.is_empty(), "no unmet requirements: {:?}", diag.required_unmet);
+    assert!(
+        diag.required_unmet.is_empty(),
+        "no unmet requirements: {:?}",
+        diag.required_unmet
+    );
     assert_eq!(diag.required_capabilities, vec![Capability::Trader]);
     // Trader has a dspy optimizer → flagged optimizable.
     assert_eq!(diag.optimizable, vec![Capability::Trader]);
@@ -159,7 +171,12 @@ fn trader_missing_required_tool_blocks_launch() {
     let a = agent(
         "01HZAGENT1",
         "trader-agent",
-        slot("anthropic", "claude-sonnet-4-6", GOOD_PROMPT, &[Capability::Trader]),
+        slot(
+            "anthropic",
+            "claude-sonnet-4-6",
+            GOOD_PROMPT,
+            &[Capability::Trader],
+        ),
     );
     // Manifest does NOT declare the `ohlcv` tool the Trader needs.
     let s = strategy(&[aref("01HZAGENT1", "trader", Some(Capability::Trader))], &[]);
@@ -179,7 +196,10 @@ fn trader_missing_required_tool_blocks_launch() {
     match err {
         DiagnosticsError::NotLaunchable { unmet, summary, .. } => {
             assert_eq!(unmet.len(), 1);
-            assert!(summary.contains("trader:trader=missing_tool"), "summary: {summary}");
+            assert!(
+                summary.contains("trader:trader=missing_tool"),
+                "summary: {summary}"
+            );
         }
         other => panic!("expected NotLaunchable, got {other:?}"),
     }
@@ -194,7 +214,10 @@ fn empty_prompt_blocks_launch() {
         "trader-agent",
         slot("anthropic", "claude-sonnet-4-6", "   ", &[Capability::Trader]),
     );
-    let s = strategy(&[aref("01HZAGENT1", "trader", Some(Capability::Trader))], &["ohlcv"]);
+    let s = strategy(
+        &[aref("01HZAGENT1", "trader", Some(Capability::Trader))],
+        &["ohlcv"],
+    );
 
     let diag = diagnose(&s, &[a]);
     assert!(!diag.launchable);
@@ -210,11 +233,17 @@ fn empty_model_blocks_launch() {
         "trader-agent",
         slot("anthropic", "", GOOD_PROMPT, &[Capability::Trader]),
     );
-    let s = strategy(&[aref("01HZAGENT1", "trader", Some(Capability::Trader))], &["ohlcv"]);
+    let s = strategy(
+        &[aref("01HZAGENT1", "trader", Some(Capability::Trader))],
+        &["ohlcv"],
+    );
 
     let diag = diagnose(&s, &[a]);
     assert!(!diag.launchable);
-    assert_eq!(diag.required_unmet[0].status, CapabilityStatus::MissingModelBinding);
+    assert_eq!(
+        diag.required_unmet[0].status,
+        CapabilityStatus::MissingModelBinding
+    );
 }
 
 // ── Optional-only gap → still launchable ─────────────────────────────────
@@ -235,7 +264,10 @@ fn declared_but_unrequired_capability_is_optional_not_a_blocker() {
             &[Capability::Trader, Capability::Router],
         ),
     );
-    let s = strategy(&[aref("01HZAGENT1", "trader", Some(Capability::Trader))], &["ohlcv"]);
+    let s = strategy(
+        &[aref("01HZAGENT1", "trader", Some(Capability::Trader))],
+        &["ohlcv"],
+    );
 
     let diag = diagnose(&s, &[a]);
 
@@ -268,7 +300,12 @@ fn required_router_is_unsupported_and_blocks() {
     let a = agent(
         "01HZAGENT1",
         "router-agent",
-        slot("anthropic", "claude-sonnet-4-6", GOOD_PROMPT, &[Capability::Router]),
+        slot(
+            "anthropic",
+            "claude-sonnet-4-6",
+            GOOD_PROMPT,
+            &[Capability::Router],
+        ),
     );
     let s = strategy(&[aref("01HZAGENT1", "router", Some(Capability::Router))], &[]);
 
@@ -285,7 +322,12 @@ fn complete_filter_is_optimizable() {
     let a = agent(
         "01HZFILTER",
         "filter-agent",
-        slot("anthropic", "claude-haiku-4-5", GOOD_PROMPT, &[Capability::Filter]),
+        slot(
+            "anthropic",
+            "claude-haiku-4-5",
+            GOOD_PROMPT,
+            &[Capability::Filter],
+        ),
     );
     let s = strategy(
         &[aref("01HZFILTER", "scout", Some(Capability::Filter))],
@@ -310,7 +352,12 @@ fn required_critic_is_unsupported() {
     let a = agent(
         "01HZCRITIC",
         "critic-agent",
-        slot("anthropic", "claude-sonnet-4-6", GOOD_PROMPT, &[Capability::Critic]),
+        slot(
+            "anthropic",
+            "claude-sonnet-4-6",
+            GOOD_PROMPT,
+            &[Capability::Critic],
+        ),
     );
     let s = strategy(&[aref("01HZCRITIC", "critic", Some(Capability::Critic))], &[]);
 
@@ -326,12 +373,18 @@ fn required_critic_is_unsupported() {
 #[test]
 fn dangling_agent_ref_blocks_launch() {
     // Strategy references an agent id that isn't in the resolved set.
-    let s = strategy(&[aref("01HZMISSING", "trader", Some(Capability::Trader))], &["ohlcv"]);
+    let s = strategy(
+        &[aref("01HZMISSING", "trader", Some(Capability::Trader))],
+        &["ohlcv"],
+    );
     let diag = diagnose(&s, &[]);
 
     assert!(!diag.launchable);
     assert!(!diag.per_agent[0].agent_resolved);
-    assert_eq!(diag.required_unmet[0].status, CapabilityStatus::MissingModelBinding);
+    assert_eq!(
+        diag.required_unmet[0].status,
+        CapabilityStatus::MissingModelBinding
+    );
 }
 
 // ── Zero-agent strategy → not launchable, NoAgents error ─────────────────
@@ -355,7 +408,12 @@ fn multi_agent_partial_completeness_lists_only_the_unmet() {
     let trader = agent(
         "01HZAGENT1",
         "trader-agent",
-        slot("anthropic", "claude-sonnet-4-6", GOOD_PROMPT, &[Capability::Trader]),
+        slot(
+            "anthropic",
+            "claude-sonnet-4-6",
+            GOOD_PROMPT,
+            &[Capability::Trader],
+        ),
     );
     let filter = agent(
         "01HZAGENT2",
@@ -396,9 +454,17 @@ fn strategy_diagnostics_serde_round_trips() {
     let a = agent(
         "01HZAGENT1",
         "trader-agent",
-        slot("anthropic", "claude-sonnet-4-6", GOOD_PROMPT, &[Capability::Trader]),
+        slot(
+            "anthropic",
+            "claude-sonnet-4-6",
+            GOOD_PROMPT,
+            &[Capability::Trader],
+        ),
     );
-    let s = strategy(&[aref("01HZAGENT1", "trader", Some(Capability::Trader))], &["ohlcv"]);
+    let s = strategy(
+        &[aref("01HZAGENT1", "trader", Some(Capability::Trader))],
+        &["ohlcv"],
+    );
     let diag = diagnose(&s, &[a]);
 
     let wire = serde_json::to_string(&diag).unwrap();
@@ -422,7 +488,12 @@ fn activates_none_uses_first_declared_capability() {
     let a = agent(
         "01HZAGENT1",
         "legacy-agent",
-        slot("anthropic", "claude-sonnet-4-6", GOOD_PROMPT, &[Capability::Trader]),
+        slot(
+            "anthropic",
+            "claude-sonnet-4-6",
+            GOOD_PROMPT,
+            &[Capability::Trader],
+        ),
     );
     let s = strategy(&[aref("01HZAGENT1", "trader", None)], &["ohlcv"]);
 

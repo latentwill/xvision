@@ -44,19 +44,19 @@ use xvision_engine::chat_session::{
     InlineAction, ToolClass, ToolPolicyStore, GLOBAL_SCOPE,
 };
 use xvision_engine::checkpoint::{CheckpointKind, Checkpointer, SnapshotRequest};
-use xvision_engine::focus;
-use xvision_observability::{
-    Actor as UnifiedActor, CheckpointWrittenEvent, FocusEvent, ToolDenied, ToolPolicyChecked,
-    ToolPolicyOutcome, TypedError, UnifiedPayload,
-};
 use xvision_engine::eval::{
     findings::Finding,
     run::{RunMode, RunStatus},
     scenario::Scenario,
     store::RunStore,
 };
+use xvision_engine::focus;
 use xvision_engine::strategies::ActivationMode;
 use xvision_engine::strategies_folder;
+use xvision_observability::{
+    Actor as UnifiedActor, CheckpointWrittenEvent, FocusEvent, ToolDenied, ToolPolicyChecked,
+    ToolPolicyOutcome, TypedError, UnifiedPayload,
+};
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 
@@ -1229,7 +1229,10 @@ impl WizardLoop {
                     error = %e,
                     "failed to read tool policy; failing closed (denied)",
                 );
-                xvision_engine::chat_session::ToolPolicy { enabled: false, auto_approve: false }
+                xvision_engine::chat_session::ToolPolicy {
+                    enabled: false,
+                    auto_approve: false,
+                }
             }
         };
         let outcome = decide_tool_policy(&mode, class, policy);
@@ -1254,7 +1257,9 @@ impl WizardLoop {
                     (
                         "tool_disabled",
                         format!("Tool `{name}` is disabled by the current tool policy."),
-                        Some(format!("Enable `{name}` in the chat tool-policy settings to use it.")),
+                        Some(format!(
+                            "Enable `{name}` in the chat tool-policy settings to use it."
+                        )),
                     )
                 } else {
                     (
@@ -1399,9 +1404,12 @@ impl WizardLoop {
             .await
         {
             Ok(ckpt) => {
-                if let Err(e) =
-                    ChatSessionStore::set_checkpoint_head(&self.pool, &self.session_id, Some(&ckpt.checkpoint_id))
-                        .await
+                if let Err(e) = ChatSessionStore::set_checkpoint_head(
+                    &self.pool,
+                    &self.session_id,
+                    Some(&ckpt.checkpoint_id),
+                )
+                .await
                 {
                     // The snapshot blobs + row are durable; only the head
                     // pointer update failed. Fail closed so the operator never
@@ -3291,7 +3299,10 @@ mod tests {
                 pool,
                 GLOBAL_SCOPE,
                 &def.name,
-                xvision_engine::chat_session::ToolPolicy { enabled: true, auto_approve: true },
+                xvision_engine::chat_session::ToolPolicy {
+                    enabled: true,
+                    auto_approve: true,
+                },
             )
             .await
             .unwrap();
@@ -5250,9 +5261,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
     /// Drain the loop while also collecting every queued PolicyEvent in
     /// emission order — mirrors what the chat_rail route does between
     /// `next_event` calls (`take_policy_events`).
-    async fn drain_with_policy_events(
-        wl: &mut WizardLoop,
-    ) -> (Vec<WizardEvent>, Vec<PolicyEvent>) {
+    async fn drain_with_policy_events(wl: &mut WizardLoop) -> (Vec<WizardEvent>, Vec<PolicyEvent>) {
         let mut events = vec![];
         let mut policy = vec![];
         while let Some(ev) = wl.next_event().await {
@@ -5297,7 +5306,9 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
                 serde_json::json!({ "id": strategy_id, "decision_cadence_minutes": 30 }),
             ),
             LlmResponse {
-                content: vec![ContentBlock::Text { text: "Updated the cadence.".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "Updated the cadence.".into(),
+                }],
                 stop_reason: StopReason::EndTurn,
                 input_tokens: 1,
                 output_tokens: 1,
@@ -5319,16 +5330,22 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let (events, policy_events) = drain_with_policy_events(&mut wl).await;
 
         // The tool actually ran (not blocked by the checkpoint hook).
-        let updated = events.iter().any(|e| matches!(
-            e,
-            WizardEvent::ToolResult { tool, result }
-                if tool == "update_manifest" && result.get("error").is_none()
-        ));
+        let updated = events.iter().any(|e| {
+            matches!(
+                e,
+                WizardEvent::ToolResult { tool, result }
+                    if tool == "update_manifest" && result.get("error").is_none()
+            )
+        });
         assert!(updated, "update_manifest should have run: {events:#?}");
 
         // checkpoint_head is set on the session.
-        let rail = ChatSessionStore::load_rail_state(&pool, &session_id).await.unwrap();
-        let head = rail.checkpoint_head.expect("checkpoint_head must be set after a write tool");
+        let rail = ChatSessionStore::load_rail_state(&pool, &session_id)
+            .await
+            .unwrap();
+        let head = rail
+            .checkpoint_head
+            .expect("checkpoint_head must be set after a write tool");
 
         // A CheckpointCreated event was queued referencing that same id.
         let created = policy_events.iter().find_map(|pe| match &pe.payload {
@@ -5347,7 +5364,10 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         assert_eq!(list[0].kind, CheckpointKind::PreTool);
         let labels: Vec<&str> = list[0].artifacts.iter().map(|a| a.label()).collect();
         assert!(labels.contains(&"strategy"), "captured strategy: {labels:?}");
-        assert!(labels.contains(&"tool_policy"), "captured tool policy: {labels:?}");
+        assert!(
+            labels.contains(&"tool_policy"),
+            "captured tool policy: {labels:?}"
+        );
         assert!(labels.contains(&"focus"), "captured focus marker: {labels:?}");
     }
 
@@ -5358,7 +5378,9 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let mock = Arc::new(MockDispatch::sequence(vec![
             MockDispatch::tool_use("tu_1", "list_strategies", serde_json::json!({})),
             LlmResponse {
-                content: vec![ContentBlock::Text { text: "Here they are.".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "Here they are.".into(),
+                }],
                 stop_reason: StopReason::EndTurn,
                 input_tokens: 1,
                 output_tokens: 1,
@@ -5373,7 +5395,10 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             .any(|pe| matches!(pe.payload, UnifiedPayload::CheckpointCreated(_)));
         assert!(!any_ckpt, "read-only tool must not checkpoint");
         let rail = ChatSessionStore::load_rail_state(&pool, &sid).await.unwrap();
-        assert!(rail.checkpoint_head.is_none(), "no checkpoint_head for read-only tool");
+        assert!(
+            rail.checkpoint_head.is_none(),
+            "no checkpoint_head for read-only tool"
+        );
     }
 
     /// The scope's focus document is spliced into the assembled system prompt
@@ -5382,7 +5407,9 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
     #[tokio::test]
     async fn focus_doc_is_injected_into_system_prompt() {
         let (pool, td) = fresh_pool().await;
-        let scope = ContextScope::Strategy { draft_id: "btc-momentum".into() };
+        let scope = ContextScope::Strategy {
+            draft_id: "btc-momentum".into(),
+        };
         let session_id = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
 
         // Operator pins focus notes for this scope.
@@ -5422,9 +5449,19 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let (_events, policy_events) = drain_with_policy_events(&mut wl).await;
 
         // The focus content is spliced into the system prompt under "## Focus".
-        let system = last_system.lock().unwrap().clone().expect("a system prompt was assembled");
-        assert!(system.contains("## Focus"), "system prompt has a Focus section: {system}");
-        assert!(system.contains(focus_text), "focus content spliced into prompt: {system}");
+        let system = last_system
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("a system prompt was assembled");
+        assert!(
+            system.contains("## Focus"),
+            "system prompt has a Focus section: {system}"
+        );
+        assert!(
+            system.contains(focus_text),
+            "focus content spliced into prompt: {system}"
+        );
 
         // A FocusInjected event with the saved content hash was emitted.
         let injected = policy_events.iter().find_map(|pe| match &pe.payload {
@@ -5434,7 +5471,10 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let injected = injected.expect("a FocusInjected event must be emitted");
         assert_eq!(injected.scope_kind, "strategy");
         assert_eq!(injected.scope_id.as_deref(), Some("btc-momentum"));
-        assert_eq!(injected.content_hash.as_deref(), Some(saved.content_hash.as_str()));
+        assert_eq!(
+            injected.content_hash.as_deref(),
+            Some(saved.content_hash.as_str())
+        );
     }
 
     /// With no focus file for the scope, no Focus section and no FocusInjected
@@ -5442,8 +5482,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
     #[tokio::test]
     async fn no_focus_doc_means_no_focus_section() {
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (mut wl, _pool, _td, _sid) =
-            loop_with_session(mock, "hi", ContextScope::Workspace).await;
+        let (mut wl, _pool, _td, _sid) = loop_with_session(mock, "hi", ContextScope::Workspace).await;
         let (_events, policy_events) = drain_with_policy_events(&mut wl).await;
         let any_focus = policy_events
             .iter()

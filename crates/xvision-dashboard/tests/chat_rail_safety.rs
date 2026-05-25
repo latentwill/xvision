@@ -13,9 +13,7 @@ use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::wizard_loop::{PolicyEvent, WizardEvent, WizardLoop};
 use xvision_dashboard::AppState;
-use xvision_engine::agent::llm::{
-    ContentBlock, LlmDispatch, MockDispatch, StopReason,
-};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, MockDispatch, StopReason};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope, ToolPolicyStore, GLOBAL_SCOPE};
 use xvision_observability::UnifiedPayload;
 
@@ -104,7 +102,11 @@ async fn write_tool_in_research_mode_is_denied_and_does_not_execute() {
     // The tool_result fed back to the model is a typed denial — the tool did
     // NOT execute.
     let result = tool_result_for(&events, "create_strategy").expect("create_strategy tool_result");
-    assert_eq!(result["denied"], json!(true), "write tool must be denied: {result}");
+    assert_eq!(
+        result["denied"],
+        json!(true),
+        "write tool must be denied: {result}"
+    );
     assert_eq!(result["code"], json!("write_tool_in_research_mode"));
 
     // The denial did not create a strategy. The denial result carries no `id`
@@ -113,13 +115,15 @@ async fn write_tool_in_research_mode_is_denied_and_does_not_execute() {
 
     // Unified safety events: a ToolPolicyChecked{Denied} + ToolDenied +
     // ErrorPolicyDenied were queued.
-    let has_denied_check = policy.iter().any(|pe| matches!(
-        &pe.payload,
-        UnifiedPayload::ToolPolicyChecked(c)
-            if c.tool_name == "create_strategy"
-            && matches!(c.outcome, xvision_observability::ToolPolicyOutcome::Denied)
-            && c.mode == "research"
-    ));
+    let has_denied_check = policy.iter().any(|pe| {
+        matches!(
+            &pe.payload,
+            UnifiedPayload::ToolPolicyChecked(c)
+                if c.tool_name == "create_strategy"
+                && matches!(c.outcome, xvision_observability::ToolPolicyOutcome::Denied)
+                && c.mode == "research"
+        )
+    });
     assert!(has_denied_check, "expected ToolPolicyChecked{{Denied, research}}");
 
     let tool_denied = policy.iter().find_map(|pe| match &pe.payload {
@@ -129,10 +133,12 @@ async fn write_tool_in_research_mode_is_denied_and_does_not_execute() {
     let d = tool_denied.expect("expected a ToolDenied for create_strategy");
     assert_eq!(d.code, "write_tool_in_research_mode");
 
-    let has_policy_error = policy.iter().any(|pe| matches!(
-        &pe.payload,
-        UnifiedPayload::ErrorPolicyDenied(e) if e.code == "write_tool_in_research_mode"
-    ));
+    let has_policy_error = policy.iter().any(|pe| {
+        matches!(
+            &pe.payload,
+            UnifiedPayload::ErrorPolicyDenied(e) if e.code == "write_tool_in_research_mode"
+        )
+    });
     assert!(has_policy_error, "expected an ErrorPolicyDenied typed error");
 }
 
@@ -149,7 +155,9 @@ async fn read_tool_runs_in_research_mode() {
     let mock: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::sequence(vec![
         MockDispatch::tool_use("tu_1", "list_strategies", json!({})),
         xvision_engine::agent::llm::LlmResponse {
-            content: vec![ContentBlock::Text { text: "here they are".into() }],
+            content: vec![ContentBlock::Text {
+                text: "here they are".into(),
+            }],
             stop_reason: StopReason::EndTurn,
             input_tokens: 1,
             output_tokens: 1,
@@ -170,15 +178,20 @@ async fn read_tool_runs_in_research_mode() {
 
     let (events, policy) = drain_with_policy(&mut wl).await;
     let result = tool_result_for(&events, "list_strategies").expect("list_strategies ran");
-    assert!(result.get("denied").is_none(), "read tool must not be denied in research mode");
+    assert!(
+        result.get("denied").is_none(),
+        "read tool must not be denied in research mode"
+    );
 
     // A Read tool emits ToolPolicyChecked{AutoApproved} for visibility.
-    let auto = policy.iter().any(|pe| matches!(
-        &pe.payload,
-        UnifiedPayload::ToolPolicyChecked(c)
-            if c.tool_name == "list_strategies"
-            && matches!(c.outcome, xvision_observability::ToolPolicyOutcome::AutoApproved)
-    ));
+    let auto = policy.iter().any(|pe| {
+        matches!(
+            &pe.payload,
+            UnifiedPayload::ToolPolicyChecked(c)
+                if c.tool_name == "list_strategies"
+                && matches!(c.outcome, xvision_observability::ToolPolicyOutcome::AutoApproved)
+        )
+    });
     assert!(auto, "read tool should auto-approve");
 }
 
@@ -195,12 +208,17 @@ async fn db_mode_is_authoritative_act_unlocks_then_research_blocks() {
     let session_act = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
         .await
         .unwrap();
-    ChatSessionStore::set_mode(&state.pool, &session_act, "act").await.unwrap();
+    ChatSessionStore::set_mode(&state.pool, &session_act, "act")
+        .await
+        .unwrap();
     ToolPolicyStore::upsert_policy(
         &state.pool,
         GLOBAL_SCOPE,
         "create_strategy",
-        xvision_engine::chat_session::ToolPolicy { enabled: true, auto_approve: true },
+        xvision_engine::chat_session::ToolPolicy {
+            enabled: true,
+            auto_approve: true,
+        },
     )
     .await
     .unwrap();
@@ -217,7 +235,10 @@ async fn db_mode_is_authoritative_act_unlocks_then_research_blocks() {
     .unwrap();
     let (events, _policy) = drain_with_policy(&mut wl).await;
     let result = tool_result_for(&events, "create_strategy").expect("create_strategy ran in act");
-    assert!(result.get("denied").is_none(), "act mode must allow the write: {result}");
+    assert!(
+        result.get("denied").is_none(),
+        "act mode must allow the write: {result}"
+    );
     assert!(
         result.get("id").and_then(|v| v.as_str()).is_some(),
         "act-mode create_strategy returns an id: {result}"
@@ -255,7 +276,9 @@ async fn write_tool_in_act_without_auto_approve_needs_approval_and_does_not_exec
     let session_id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
         .await
         .unwrap();
-    ChatSessionStore::set_mode(&state.pool, &session_id, "act").await.unwrap();
+    ChatSessionStore::set_mode(&state.pool, &session_id, "act")
+        .await
+        .unwrap();
     // Default Write policy: enabled + NOT auto_approve → NeedsApproval.
 
     let mut wl = WizardLoop::new(
@@ -272,16 +295,25 @@ async fn write_tool_in_act_without_auto_approve_needs_approval_and_does_not_exec
 
     let (events, policy) = drain_with_policy(&mut wl).await;
     let result = tool_result_for(&events, "create_strategy").expect("tool_result present");
-    assert_eq!(result["needs_approval"], json!(true), "must block pending approval: {result}");
+    assert_eq!(
+        result["needs_approval"],
+        json!(true),
+        "must block pending approval: {result}"
+    );
     assert!(result.get("id").is_none(), "needs-approval tool must not execute");
 
-    let needs_approval_check = policy.iter().any(|pe| matches!(
-        &pe.payload,
-        UnifiedPayload::ToolPolicyChecked(c)
-            if c.tool_name == "create_strategy"
-            && matches!(c.outcome, xvision_observability::ToolPolicyOutcome::NeedsApproval)
-    ));
-    assert!(needs_approval_check, "expected ToolPolicyChecked{{NeedsApproval}}");
+    let needs_approval_check = policy.iter().any(|pe| {
+        matches!(
+            &pe.payload,
+            UnifiedPayload::ToolPolicyChecked(c)
+                if c.tool_name == "create_strategy"
+                && matches!(c.outcome, xvision_observability::ToolPolicyOutcome::NeedsApproval)
+        )
+    });
+    assert!(
+        needs_approval_check,
+        "expected ToolPolicyChecked{{NeedsApproval}}"
+    );
 }
 
 #[tokio::test]
@@ -291,12 +323,17 @@ async fn disabled_write_tool_is_not_offered_to_the_model_and_denied_if_called() 
         .await
         .unwrap();
     // Act mode (writes otherwise allowed) but create_strategy is DISABLED.
-    ChatSessionStore::set_mode(&state.pool, &session_id, "act").await.unwrap();
+    ChatSessionStore::set_mode(&state.pool, &session_id, "act")
+        .await
+        .unwrap();
     ToolPolicyStore::upsert_policy(
         &state.pool,
         GLOBAL_SCOPE,
         "create_strategy",
-        xvision_engine::chat_session::ToolPolicy { enabled: false, auto_approve: false },
+        xvision_engine::chat_session::ToolPolicy {
+            enabled: false,
+            auto_approve: false,
+        },
     )
     .await
     .unwrap();
@@ -319,11 +356,16 @@ async fn disabled_write_tool_is_not_offered_to_the_model_and_denied_if_called() 
     assert_eq!(result["denied"], json!(true));
     assert_eq!(result["code"], json!("tool_disabled"));
 
-    let tool_disabled_denied = policy.iter().any(|pe| matches!(
-        &pe.payload,
-        UnifiedPayload::ToolDenied(d) if d.tool_name == "create_strategy" && d.code == "tool_disabled"
-    ));
-    assert!(tool_disabled_denied, "disabled tool must emit ToolDenied{{tool_disabled}}");
+    let tool_disabled_denied = policy.iter().any(|pe| {
+        matches!(
+            &pe.payload,
+            UnifiedPayload::ToolDenied(d) if d.tool_name == "create_strategy" && d.code == "tool_disabled"
+        )
+    });
+    assert!(
+        tool_disabled_denied,
+        "disabled tool must emit ToolDenied{{tool_disabled}}"
+    );
 }
 
 // ── 2.3: tool-policy endpoints ───────────────────────────────────────────────
@@ -427,7 +469,9 @@ async fn set_mode_persists_and_rejects_invalid() {
         .json(&json!({"mode": "act"}))
         .await;
     resp.assert_status_ok();
-    let st = ChatSessionStore::load_rail_state(&state.pool, &session_id).await.unwrap();
+    let st = ChatSessionStore::load_rail_state(&state.pool, &session_id)
+        .await
+        .unwrap();
     assert_eq!(st.mode, "act", "mode persisted to the DB column");
 
     // Invalid mode → 400, DB unchanged.
@@ -436,7 +480,9 @@ async fn set_mode_persists_and_rejects_invalid() {
         .json(&json!({"mode": "yolo"}))
         .await;
     assert_eq!(resp.status_code(), axum::http::StatusCode::BAD_REQUEST);
-    let st = ChatSessionStore::load_rail_state(&state.pool, &session_id).await.unwrap();
+    let st = ChatSessionStore::load_rail_state(&state.pool, &session_id)
+        .await
+        .unwrap();
     assert_eq!(st.mode, "act", "invalid mode must not mutate the column");
 }
 

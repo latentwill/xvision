@@ -216,10 +216,7 @@ async fn await_frames(
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    store
-        .read_frames(rid, SLOT_ROLE, 0)
-        .await
-        .unwrap_or_default()
+    store.read_frames(rid, SLOT_ROLE, 0).await.unwrap_or_default()
 }
 
 /// §2-A review finding (a) — Rust half of the shared golden fixture check.

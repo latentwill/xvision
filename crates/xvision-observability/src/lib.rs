@@ -9,7 +9,6 @@
 //! janitor.
 
 pub mod blobs;
-pub mod trajectory;
 pub mod bus;
 pub mod bus_subscriber;
 pub mod config;
@@ -25,6 +24,7 @@ pub mod redactor;
 pub mod retention;
 pub mod rows;
 pub mod sqlite;
+pub mod trajectory;
 pub mod types;
 pub mod unified_event;
 
@@ -36,18 +36,13 @@ pub use config::{
     ENV_OVERRIDE_PREFIX,
 };
 pub use eval_recorder::{EvalRecorder, TraceBuf, TraceBufCounts};
-pub use unified_event::{
-    Actor, CheckpointRestoreFailed, CheckpointRestored, EventScope, EventSource, FocusEvent,
-    OptimizationCandidate, OptimizationCandidateMetric, OptimizationCompleted, RunEventProjector,
-    ToolDenied, ToolPolicyChecked, ToolPolicyOutcome, TypedError, UnifiedEvent, UnifiedPayload,
-};
 pub use events::{
     ArtifactWrittenEvent, AssistantTextDeltaEvent, BackpressureDroppedEvent, BrokerCallFinishedEvent,
     BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide, CheckpointWrittenEvent, EngineEvent,
-    MemoryRecallEvent, MemoryRecallItem, ModelCallFinishedEvent, RunEvent, RunFinishedEvent,
-    RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent, SpanStartedEvent,
-    SupervisorNoteEvent, ToolCallCancelledEvent, ToolCallFailedEvent, ToolCallFinishedEvent,
-    ToolCallStartedEvent,
+    MemoryRecallEvent, MemoryRecallItem, MemoryWriteEvent, ModelCallFinishedEvent, RunEvent,
+    RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent,
+    SpanStartedEvent, SupervisorNoteEvent, ToolCallCancelledEvent, ToolCallFailedEvent,
+    ToolCallFinishedEvent, ToolCallStartedEvent,
 };
 pub use export::{
     build_export, build_report, find_blob_owner, render_report, AgentRunExport, AgentRunReport, ExportError,
@@ -75,6 +70,11 @@ pub use rows::{
 pub use sqlite::SqliteRecorder;
 pub use types::{
     CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanAttributes, SpanKind, SpanStatus, ToolOrigin,
+};
+pub use unified_event::{
+    Actor, CheckpointRestoreFailed, CheckpointRestored, EventScope, EventSource, FocusEvent,
+    OptimizationCandidate, OptimizationCandidateMetric, OptimizationCompleted, RunEventProjector, ToolDenied,
+    ToolPolicyChecked, ToolPolicyOutcome, TypedError, UnifiedEvent, UnifiedPayload,
 };
 
 #[cfg(feature = "otel")]

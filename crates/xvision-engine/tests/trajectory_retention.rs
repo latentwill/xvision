@@ -7,10 +7,10 @@
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use uuid::Uuid;
-use xvision_observability::{BlobStore, RetentionMode};
 use xvision_observability::trajectory::frame::TrajectoryFrame;
 use xvision_observability::trajectory::key::{TrajectoryKey, TRAJECTORY_SCHEMA_VERSION};
 use xvision_observability::trajectory::store::TrajectoryStore;
+use xvision_observability::{BlobStore, RetentionMode};
 
 async fn open_store_with_ttl(tmp: &TempDir, mode: RetentionMode, ttl_secs: u64) -> TrajectoryStore {
     let db_path = tmp.path().join("test_retention.db");
@@ -116,7 +116,9 @@ async fn begin_recording_sets_expires_at() {
     let rid = store.begin_recording(&key).await.unwrap();
 
     let info = store.get_recording(rid.as_str()).await.unwrap();
-    let expires_at = info.expires_at.expect("expires_at must be set when TTL is configured");
+    let expires_at = info
+        .expires_at
+        .expect("expires_at must be set when TTL is configured");
 
     // expires_at should be roughly created_at + 3600 * 1000ms
     let expected_min = before_ms + 3600 * 1000 - 100; // allow 100ms slack
@@ -133,7 +135,10 @@ async fn purge_expired_deletes_past_ttl() {
 
     let key = make_key("trader");
     let rid = store.begin_recording(&key).await.unwrap();
-    let f = TrajectoryFrame::TextDelta { ts_ms: 1, text: "test".into() };
+    let f = TrajectoryFrame::TextDelta {
+        ts_ms: 1,
+        text: "test".into(),
+    };
     store.append_frame(&rid, "trader", 0, 0, &f).await.unwrap();
     store.complete_recording(&rid).await.unwrap();
 

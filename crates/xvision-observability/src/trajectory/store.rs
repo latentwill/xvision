@@ -290,11 +290,7 @@ impl TrajectoryStore {
     /// Mark a recording as `incomplete`.  Called when the sidecar crashes
     /// mid-run; the in-flight recording is permanently marked as unusable
     /// for replay but can still be inspected.
-    pub async fn mark_incomplete(
-        &self,
-        recording_id: &RecordingId,
-        reason: &str,
-    ) -> Result<(), StoreError> {
+    pub async fn mark_incomplete(&self, recording_id: &RecordingId, reason: &str) -> Result<(), StoreError> {
         sqlx::query(
             "UPDATE trajectory_recordings \
              SET status = ?, recovery_reason = ? \
@@ -309,10 +305,7 @@ impl TrajectoryStore {
     }
 
     /// Mark a recording as `complete`.
-    pub async fn complete_recording(
-        &self,
-        recording_id: &RecordingId,
-    ) -> Result<(), StoreError> {
+    pub async fn complete_recording(&self, recording_id: &RecordingId) -> Result<(), StoreError> {
         let now_ms = now_ms();
         sqlx::query(
             "UPDATE trajectory_recordings \
@@ -329,11 +322,7 @@ impl TrajectoryStore {
 
     /// Mark a recording as `corrupt` with a reason.  Called when the frame
     /// channel signals that the consumer died before all frames were flushed.
-    pub async fn mark_corrupt(
-        &self,
-        recording_id: &RecordingId,
-        reason: &str,
-    ) -> Result<(), StoreError> {
+    pub async fn mark_corrupt(&self, recording_id: &RecordingId, reason: &str) -> Result<(), StoreError> {
         sqlx::query(
             "UPDATE trajectory_recordings \
              SET status = ?, recovery_reason = ? \
@@ -407,14 +396,28 @@ impl TrajectoryStore {
     }
 
     /// Look up a recording by id.
-    pub async fn get_recording(
-        &self,
-        recording_id: &str,
-    ) -> Result<RecordingInfo, StoreError> {
-        let row = sqlx::query_as::<_, (String, i64, String, String, String, String,
-                                       Option<String>, Option<String>, String, String,
-                                       Option<String>, String, Option<String>, i64,
-                                       Option<i64>, Option<i64>)>(
+    pub async fn get_recording(&self, recording_id: &str) -> Result<RecordingInfo, StoreError> {
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                i64,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                i64,
+                Option<i64>,
+                Option<i64>,
+            ),
+        >(
             "SELECT recording_id, schema_version, status, key_fingerprint, \
                     cycle_id, slot_role, arm_scope, simulation_id, \
                     provider, model, model_version, system_prompt_hash, \
@@ -448,10 +451,7 @@ impl TrajectoryStore {
     }
 
     /// Return per-(slot, step) frame counts for a recording — used by `inspect`.
-    pub async fn frame_counts(
-        &self,
-        recording_id: &str,
-    ) -> Result<Vec<FrameCount>, StoreError> {
+    pub async fn frame_counts(&self, recording_id: &str) -> Result<Vec<FrameCount>, StoreError> {
         let rows = sqlx::query_as::<_, (String, i64, i64)>(
             "SELECT slot_role, step_index, COUNT(*) \
              FROM trajectory_frames \
@@ -580,22 +580,43 @@ impl TrajectoryStore {
     /// field with an empty default); it must NOT be called across a breaking
     /// schema version bump without also bumping `schema_version`.
     pub async fn reindex(&self) -> Result<u64, StoreError> {
-        let rows: Vec<(String, String, String, Option<String>, Option<String>,
-                        String, String, Option<String>, i64, String, String)> =
-            sqlx::query_as(
-                "SELECT recording_id, cycle_id, slot_role, arm_scope, simulation_id, \
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            i64,
+            String,
+            String,
+        )> = sqlx::query_as(
+            "SELECT recording_id, cycle_id, slot_role, arm_scope, simulation_id, \
                         provider, model, model_version, schema_version, \
                         system_prompt_hash, \
                         COALESCE(system_prompt_hash, '') \
                  FROM trajectory_recordings",
-            )
-            .fetch_all(&self.pool)
-            .await?;
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut updated = 0u64;
         for row in rows {
-            let (rec_id, cycle_id, slot_role, arm_scope, simulation_id,
-                 provider, model, model_version_opt, schema_ver, system_hash, _) = row;
+            let (
+                rec_id,
+                cycle_id,
+                slot_role,
+                arm_scope,
+                simulation_id,
+                provider,
+                model,
+                model_version_opt,
+                schema_ver,
+                system_hash,
+                _,
+            ) = row;
 
             let cycle_uuid: Uuid = cycle_id.parse().unwrap_or(Uuid::nil());
             let key = TrajectoryKey {
@@ -695,16 +716,13 @@ impl TrajectoryStore {
     async fn gc_blobs(&self, candidates: Vec<String>) -> Result<(), StoreError> {
         for blob_hash in candidates {
             // Check if any remaining frame still references this blob.
-            let still_referenced: (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM trajectory_frames WHERE payload_ref = ?",
-            )
-            .bind(&blob_hash)
-            .fetch_one(&self.pool)
-            .await?;
+            let still_referenced: (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM trajectory_frames WHERE payload_ref = ?")
+                    .bind(&blob_hash)
+                    .fetch_one(&self.pool)
+                    .await?;
             if still_referenced.0 == 0 {
-                let _ = self
-                    .blob
-                    .delete(&crate::blobs::BlobRef(blob_hash));
+                let _ = self.blob.delete(&crate::blobs::BlobRef(blob_hash));
             }
         }
         Ok(())
@@ -756,11 +774,7 @@ impl BatchedFrameWriter {
     ///
     /// `flush_at` is the batch size threshold.  64 is a reasonable default
     /// that maps to roughly one SQLite transaction per 64 frames.
-    pub fn new(
-        store: std::sync::Arc<TrajectoryStore>,
-        recording_id: RecordingId,
-        flush_at: usize,
-    ) -> Self {
+    pub fn new(store: std::sync::Arc<TrajectoryStore>, recording_id: RecordingId, flush_at: usize) -> Self {
         Self {
             store,
             recording_id,
@@ -777,7 +791,8 @@ impl BatchedFrameWriter {
         frame_index: i64,
         frame: TrajectoryFrame,
     ) {
-        self.buffer.push((slot_role.into(), step_index, frame_index, frame));
+        self.buffer
+            .push((slot_role.into(), step_index, frame_index, frame));
     }
 
     /// Flush if the buffer has reached `flush_at` frames.
@@ -799,9 +814,7 @@ impl BatchedFrameWriter {
             .iter()
             .map(|(r, s, f, fr)| (r.as_str(), *s, *f, fr.clone()))
             .collect();
-        self.store
-            .append_frame_batch(&self.recording_id, &rows)
-            .await?;
+        self.store.append_frame_batch(&self.recording_id, &rows).await?;
         self.buffer.clear();
         Ok(())
     }

@@ -115,9 +115,7 @@ fn canonical_json(value: &serde_json::Value) -> String {
                     map.iter().map(|(k, v)| (k.clone(), sort_value(v))).collect();
                 serde_json::to_value(sorted).unwrap_or(serde_json::Value::Null)
             }
-            serde_json::Value::Array(arr) => {
-                serde_json::Value::Array(arr.iter().map(sort_value).collect())
-            }
+            serde_json::Value::Array(arr) => serde_json::Value::Array(arr.iter().map(sort_value).collect()),
             other => other.clone(),
         }
     }

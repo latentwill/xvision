@@ -219,7 +219,11 @@ impl Checkpointer {
     pub fn new(pool: SqlitePool, xvn_home: impl Into<PathBuf>) -> Self {
         let xvn_home = xvn_home.into();
         let blobs = BlobStore::new(xvn_home.join("checkpoints").join("blobs"));
-        Self { pool, blobs, xvn_home }
+        Self {
+            pool,
+            blobs,
+            xvn_home,
+        }
     }
 
     fn strategies_dir(&self) -> PathBuf {
@@ -251,8 +255,7 @@ impl Checkpointer {
                 })?;
             // Capture the EXACT bytes the store persists (to_vec_pretty), so a
             // byte-compare of the restored file against the original is identical.
-            let bytes = serde_json::to_vec_pretty(&strategy)
-                .map_err(|e| CheckpointError::Other(e.into()))?;
+            let bytes = serde_json::to_vec_pretty(&strategy).map_err(|e| CheckpointError::Other(e.into()))?;
             let blob = self.blobs.write(&bytes)?;
             artifacts.push(CapturedArtifact::Strategy {
                 id: strategy_id.clone(),
@@ -266,11 +269,8 @@ impl Checkpointer {
                 .get(agent_id)
                 .await
                 .map_err(|e| CheckpointError::Other(e))?
-                .ok_or_else(|| {
-                    CheckpointError::Other(anyhow::anyhow!("agent not found: {agent_id}"))
-                })?;
-            let bytes = serde_json::to_vec(&agent.slots)
-                .map_err(|e| CheckpointError::Other(e.into()))?;
+                .ok_or_else(|| CheckpointError::Other(anyhow::anyhow!("agent not found: {agent_id}")))?;
+            let bytes = serde_json::to_vec(&agent.slots).map_err(|e| CheckpointError::Other(e.into()))?;
             let blob = self.blobs.write(&bytes)?;
             artifacts.push(CapturedArtifact::AgentSlots {
                 agent_id: agent_id.clone(),
@@ -325,8 +325,7 @@ impl Checkpointer {
         // Canonical manifest JSON → content hash. Same artifacts at the same
         // hashes produce the same content_hash, so a no-op checkpoint is
         // recognizable.
-        let captured_json =
-            serde_json::to_string(&manifest).map_err(|e| CheckpointError::Other(e.into()))?;
+        let captured_json = serde_json::to_string(&manifest).map_err(|e| CheckpointError::Other(e.into()))?;
         let content_hash = hex::encode(Sha256::digest(captured_json.as_bytes()));
 
         let checkpoint_id = Ulid::new().to_string();
@@ -416,19 +415,21 @@ impl Checkpointer {
             match artifact {
                 CapturedArtifact::Strategy { id, blob_hash } => {
                     let bytes = self.blobs.read(&BlobRef(blob_hash.clone()))?;
-                    let strategy: Strategy = serde_json::from_slice(&bytes).map_err(|e| {
-                        CheckpointError::Restore {
+                    let strategy: Strategy =
+                        serde_json::from_slice(&bytes).map_err(|e| CheckpointError::Restore {
                             checkpoint_id: checkpoint_id.to_string(),
                             artifact: "strategy",
                             source: e.into(),
-                        }
-                    })?;
+                        })?;
                     let store = FilesystemStore::new(self.strategies_dir());
-                    store.save(&strategy).await.map_err(|e| CheckpointError::Restore {
-                        checkpoint_id: checkpoint_id.to_string(),
-                        artifact: "strategy",
-                        source: e,
-                    })?;
+                    store
+                        .save(&strategy)
+                        .await
+                        .map_err(|e| CheckpointError::Restore {
+                            checkpoint_id: checkpoint_id.to_string(),
+                            artifact: "strategy",
+                            source: e,
+                        })?;
                     let _ = id;
                     restored.push("strategy".to_string());
                 }
@@ -446,7 +447,10 @@ impl Checkpointer {
                     agent_store
                         .update(
                             agent_id,
-                            UpdateAgent { slots: Some(slots), ..Default::default() },
+                            UpdateAgent {
+                                slots: Some(slots),
+                                ..Default::default()
+                            },
                         )
                         .await
                         .map_err(|e| CheckpointError::Restore {
@@ -467,20 +471,20 @@ impl Checkpointer {
                             source: e.into(),
                         })?)
                     };
-                    ChatSessionStore::set_tool_policy(
-                        &self.pool,
-                        &checkpoint.session_id,
-                        json.as_deref(),
-                    )
-                    .await
-                    .map_err(|e| CheckpointError::Restore {
-                        checkpoint_id: checkpoint_id.to_string(),
-                        artifact: "tool_policy",
-                        source: e,
-                    })?;
+                    ChatSessionStore::set_tool_policy(&self.pool, &checkpoint.session_id, json.as_deref())
+                        .await
+                        .map_err(|e| CheckpointError::Restore {
+                            checkpoint_id: checkpoint_id.to_string(),
+                            artifact: "tool_policy",
+                            source: e,
+                        })?;
                     restored.push("tool_policy".to_string());
                 }
-                CapturedArtifact::Focus { was_set, path, blob_hash } => {
+                CapturedArtifact::Focus {
+                    was_set,
+                    path,
+                    blob_hash,
+                } => {
                     if *was_set {
                         let bytes = self.blobs.read(&BlobRef(blob_hash.clone()))?;
                         let abs = self.xvn_home.join(path);
@@ -493,24 +497,20 @@ impl Checkpointer {
                                 }
                             })?;
                         }
-                        tokio::fs::write(&abs, &bytes).await.map_err(|e| {
-                            CheckpointError::Restore {
+                        tokio::fs::write(&abs, &bytes)
+                            .await
+                            .map_err(|e| CheckpointError::Restore {
                                 checkpoint_id: checkpoint_id.to_string(),
                                 artifact: "focus",
                                 source: e.into(),
-                            }
-                        })?;
-                        ChatSessionStore::set_focus_path(
-                            &self.pool,
-                            &checkpoint.session_id,
-                            Some(path),
-                        )
-                        .await
-                        .map_err(|e| CheckpointError::Restore {
-                            checkpoint_id: checkpoint_id.to_string(),
-                            artifact: "focus",
-                            source: e,
-                        })?;
+                            })?;
+                        ChatSessionStore::set_focus_path(&self.pool, &checkpoint.session_id, Some(path))
+                            .await
+                            .map_err(|e| CheckpointError::Restore {
+                                checkpoint_id: checkpoint_id.to_string(),
+                                artifact: "focus",
+                                source: e,
+                            })?;
                     } else {
                         // Snapshot had no focus — clear whatever was set later.
                         ChatSessionStore::set_focus_path(&self.pool, &checkpoint.session_id, None)
@@ -784,7 +784,11 @@ mod tests {
 
         let err = ckpt.restore(&snapshot.checkpoint_id).await.unwrap_err();
         match &err {
-            CheckpointError::MissingBlob { artifact, blob_hash: bh, .. } => {
+            CheckpointError::MissingBlob {
+                artifact,
+                blob_hash: bh,
+                ..
+            } => {
                 assert_eq!(*artifact, "strategy");
                 assert_eq!(bh, &blob_hash);
             }
@@ -822,7 +826,10 @@ mod tests {
             .snapshot(
                 &session_id,
                 CheckpointKind::PreTool,
-                SnapshotRequest { agent_id: Some(agent_id.clone()), ..Default::default() },
+                SnapshotRequest {
+                    agent_id: Some(agent_id.clone()),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap();
@@ -877,7 +884,11 @@ mod tests {
             .snapshot(
                 &session_id,
                 CheckpointKind::Manual,
-                SnapshotRequest { tool_policy: true, label: Some("before edit".into()), ..Default::default() },
+                SnapshotRequest {
+                    tool_policy: true,
+                    label: Some("before edit".into()),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap();
@@ -897,7 +908,9 @@ mod tests {
         let outcome = ckpt.restore(&snapshot.checkpoint_id).await.unwrap();
         assert_eq!(outcome.restored, vec!["tool_policy".to_string()]);
 
-        let rail = ChatSessionStore::load_rail_state(&pool, &session_id).await.unwrap();
+        let rail = ChatSessionStore::load_rail_state(&pool, &session_id)
+            .await
+            .unwrap();
         assert_eq!(
             rail.tool_policy_json.as_deref(),
             Some(r#"{"create_strategy":"needs_approval"}"#)

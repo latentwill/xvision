@@ -426,7 +426,10 @@ fn diagnose_agent(strategy: &Strategy, agent_ref: &AgentRef, agent: Option<&Agen
                 capability: required,
                 status: CapabilityStatus::MissingModelBinding,
                 required: true,
-                required_tools: required_tools_for(required).iter().map(|s| s.to_string()).collect(),
+                required_tools: required_tools_for(required)
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
                 optimizable: is_optimizable(required),
             }],
         };
@@ -448,7 +451,10 @@ fn diagnose_agent(strategy: &Strategy, agent_ref: &AgentRef, agent: Option<&Agen
                 capability: required,
                 status: CapabilityStatus::MissingModelBinding,
                 required: true,
-                required_tools: required_tools_for(required).iter().map(|s| s.to_string()).collect(),
+                required_tools: required_tools_for(required)
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
                 optimizable: is_optimizable(required),
             }],
         };

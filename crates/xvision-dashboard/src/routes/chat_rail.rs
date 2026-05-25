@@ -147,7 +147,10 @@ pub async fn set_mode(
     ChatSessionStore::set_mode(&state.pool, &id, &req.mode)
         .await
         .map_err(|_| DashboardError::NotFound(format!("session '{id}'")))?;
-    Ok(Json(SetModeResp { session_id: id, mode: req.mode }))
+    Ok(Json(SetModeResp {
+        session_id: id,
+        mode: req.mode,
+    }))
 }
 
 /// Query for `GET /api/chat-rail/tool-policy`. `scope` selects which
@@ -196,7 +199,10 @@ pub async fn put_tool_policy(
         });
     }
     let scope = req.scope.as_deref().unwrap_or(GLOBAL_SCOPE);
-    let policy = ToolPolicy { enabled: req.enabled, auto_approve: req.auto_approve };
+    let policy = ToolPolicy {
+        enabled: req.enabled,
+        auto_approve: req.auto_approve,
+    };
     ToolPolicyStore::upsert_policy(&state.pool, scope, &req.tool_name, policy)
         .await
         .map_err(DashboardError::Internal)?;
@@ -302,7 +308,8 @@ pub async fn chat(
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|_| doc.path.clone());
                 if let Err(e) =
-                    ChatSessionStore::set_focus_path(&projector_pool, &projector_session_id, Some(&rel_path)).await
+                    ChatSessionStore::set_focus_path(&projector_pool, &projector_session_id, Some(&rel_path))
+                        .await
                 {
                     tracing::error!(
                         target: "xvision::dashboard::chat_rail",
@@ -412,12 +419,9 @@ pub async fn chat(
             // Project + persist + publish BEFORE forwarding the legacy event,
             // so a unified-stream consumer never observes the legacy bubble
             // update without the durable record behind it.
-            let unified = projector.project(
-                Ulid::new().to_string(),
-                ev.clone(),
-                Utc::now(),
-                || Ulid::new().to_string(),
-            );
+            let unified = projector.project(Ulid::new().to_string(), ev.clone(), Utc::now(), || {
+                Ulid::new().to_string()
+            });
             if let Err(e) = SessionEventLog::append(&projector_pool, &unified).await {
                 // Never-silent discipline: log the persistence failure. The
                 // legacy stream still proceeds so the operator isn't left with

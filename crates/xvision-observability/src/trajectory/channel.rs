@@ -43,7 +43,9 @@ pub enum ChannelStatus {
     Closed,
     /// Consumer died before draining all frames.  The recording MUST be
     /// marked `corrupt` with `reason`.
-    Corrupt { reason: String },
+    Corrupt {
+        reason: String,
+    },
 }
 
 /// Sender half — held by the producer (the agent harness / sidecar client).
@@ -196,8 +198,14 @@ mod tests {
         let (tx, rx) = FrameChannel::new(cap).split();
 
         // Fill to capacity.
-        let f1 = TrajectoryFrame::TextDelta { ts_ms: 1, text: "a".into() };
-        let f2 = TrajectoryFrame::TextDelta { ts_ms: 2, text: "b".into() };
+        let f1 = TrajectoryFrame::TextDelta {
+            ts_ms: 1,
+            text: "a".into(),
+        };
+        let f2 = TrajectoryFrame::TextDelta {
+            ts_ms: 2,
+            text: "b".into(),
+        };
         tx.send(f1).await.unwrap();
         tx.send(f2).await.unwrap();
 
@@ -206,12 +214,12 @@ mod tests {
 
         // The next send must fail (receiver gone), signalling the caller
         // to mark the recording corrupt.
-        let f3 = TrajectoryFrame::TextDelta { ts_ms: 3, text: "c".into() };
+        let f3 = TrajectoryFrame::TextDelta {
+            ts_ms: 3,
+            text: "c".into(),
+        };
         let result = tx.send(f3).await;
-        assert!(
-            result.is_err(),
-            "send should fail when receiver is dropped"
-        );
+        assert!(result.is_err(), "send should fail when receiver is dropped");
         // Verify the returned frame is the one we tried to send.
         let returned = result.unwrap_err();
         if let TrajectoryFrame::TextDelta { ts_ms, .. } = returned {

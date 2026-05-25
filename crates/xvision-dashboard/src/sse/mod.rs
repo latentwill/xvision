@@ -58,6 +58,7 @@ fn event_name(ev: &RunEvent) -> &'static str {
         // registration only — the SSE forwarder treats it like any
         // other run-scoped event.
         RunEvent::MemoryRecall(_) => "memory_recall",
+        RunEvent::MemoryWrite(_) => "memory_write",
         // Carryover build-fix (2026-05-22): `EngineEvent` was added to
         // `xvision_observability::RunEvent` upstream and this match
         // wasn't extended, breaking every `cargo build` against

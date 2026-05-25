@@ -29,8 +29,7 @@ use ulid::Ulid;
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope, SessionEventLog};
 use xvision_engine::checkpoint::{Checkpoint, CheckpointError, Checkpointer, RestoreOutcome};
 use xvision_observability::{
-    Actor, CheckpointRestoreFailed, CheckpointRestored, EventScope, EventSource, UnifiedEvent,
-    UnifiedPayload,
+    Actor, CheckpointRestoreFailed, CheckpointRestored, EventScope, EventSource, UnifiedEvent, UnifiedPayload,
 };
 
 use crate::error::DashboardError;
@@ -43,10 +42,7 @@ pub async fn list(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<Checkpoint>>, DashboardError> {
     let ckpt = Checkpointer::new(state.pool.clone(), state.xvn_home.clone());
-    let checkpoints = ckpt
-        .list(&session_id)
-        .await
-        .map_err(map_checkpoint_error)?;
+    let checkpoints = ckpt.list(&session_id).await.map_err(map_checkpoint_error)?;
     Ok(Json(checkpoints))
 }
 
@@ -98,12 +94,7 @@ pub async fn restore(
 /// session's current `next_seq` so the unified seq continues monotonically
 /// across turns. Best-effort: a persistence error is logged, never panicked —
 /// the restore itself already succeeded/failed independently.
-async fn emit_session_event(
-    state: &AppState,
-    session_id: &str,
-    scope: EventScope,
-    payload: UnifiedPayload,
-) {
+async fn emit_session_event(state: &AppState, session_id: &str, scope: EventScope, payload: UnifiedPayload) {
     let seq = match SessionEventLog::next_seq(&state.pool, session_id).await {
         Ok(s) => s.max(0) as u64,
         Err(e) => {
@@ -166,9 +157,7 @@ fn context_scope_to_event_scope(scope: &ContextScope) -> EventScope {
 /// 404; everything else surfaces as a 500 with the typed cause logged.
 fn map_checkpoint_error(err: CheckpointError) -> DashboardError {
     match err {
-        CheckpointError::NotFound(id) => {
-            DashboardError::NotFound(format!("checkpoint not found: {id}"))
-        }
+        CheckpointError::NotFound(id) => DashboardError::NotFound(format!("checkpoint not found: {id}")),
         other => DashboardError::Internal(anyhow::anyhow!(other)),
     }
 }
@@ -189,7 +178,9 @@ mod tests {
         assert_eq!(s.kind, "strategy");
         assert_eq!(s.id.as_deref(), Some("strat_1"));
 
-        let r = context_scope_to_event_scope(&ContextScope::Run { run_id: "run_9".into() });
+        let r = context_scope_to_event_scope(&ContextScope::Run {
+            run_id: "run_9".into(),
+        });
         assert_eq!(r.kind, "run");
         assert_eq!(r.id.as_deref(), Some("run_9"));
     }

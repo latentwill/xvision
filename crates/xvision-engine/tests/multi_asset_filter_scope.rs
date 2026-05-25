@@ -424,6 +424,8 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
             obs: None,
             memory_recorder: None,
             scenario_start: None,
+            source_window_start: None,
+            source_window_end: None,
             run_id: "test-b6".into(),
             scenario_id: "s".into(),
             cycle_idx: 0,

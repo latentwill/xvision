@@ -496,6 +496,22 @@ impl AgentRunRecorder for SqliteRecorder {
                 .await?;
             }
 
+            RunEvent::MemoryWrite(e) => {
+                let id = format!("memwrite_{}", uuid::Uuid::new_v4());
+                let payload_json = serde_json::to_string(e).unwrap_or_else(|_| "{}".to_string());
+                sqlx::query(
+                    "INSERT INTO events (\
+                        id, run_id, span_id, kind, payload_json, created_at) \
+                     VALUES (?, ?, NULL, 'memory_write', ?, ?)",
+                )
+                .bind(id)
+                .bind(&e.run_id)
+                .bind(payload_json)
+                .bind(ts(&Utc::now()))
+                .execute(&self.pool)
+                .await?;
+            }
+
             RunEvent::EngineEvent(e) => {
                 // F43 (`trace-dock-emitters`): the migration-018 `events`
                 // table previously had zero writers; this is the writer.

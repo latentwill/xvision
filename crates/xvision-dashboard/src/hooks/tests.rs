@@ -7,12 +7,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use tokio::sync::Notify;
-use xvision_observability::{
-    Actor, EventScope, EventSource, UnifiedEvent, UnifiedPayload,
-};
+use xvision_observability::{Actor, EventScope, EventSource, UnifiedEvent, UnifiedPayload};
 
-use super::*;
 use super::hook::{Hook, HookError, HookOutcome};
+use super::*;
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -159,8 +157,8 @@ fn failure_notes(events: &[UnifiedEvent]) -> Vec<String> {
 async fn blocking_hook_denies_and_runner_reports_deny() {
     let (sink, collector) = collecting();
     let (id_gen, _) = test_id_gen();
-    let runner = HookRunner::new(sink, id_gen)
-        .register(Arc::new(AlwaysDeny), HookPolicy::blocking(observed()));
+    let runner =
+        HookRunner::new(sink, id_gen).register(Arc::new(AlwaysDeny), HookPolicy::blocking(observed()));
 
     let report = runner.run(&trigger()).await;
 
@@ -173,7 +171,11 @@ async fn blocking_hook_denies_and_runner_reports_deny() {
     }
     // The deny is surfaced as a hook event so traces show it.
     let events = collector.snapshot();
-    assert_eq!(deny_records(&events), 1, "deny should emit one ErrorPolicyDenied event");
+    assert_eq!(
+        deny_records(&events),
+        1,
+        "deny should emit one ErrorPolicyDenied event"
+    );
     let denied = events
         .iter()
         .find(|e| matches!(e.payload, UnifiedPayload::ErrorPolicyDenied(_)))
@@ -199,7 +201,10 @@ async fn blocking_hook_timeout_fail_closed_denies() {
     assert!(report.verdict.is_deny(), "fail-closed timeout must deny");
     if let PrimaryVerdict::Deny { hook_id, reason } = &report.verdict {
         assert_eq!(hook_id, "sleep-forever");
-        assert!(reason.contains("fail-closed"), "reason should mention fail-closed: {reason}");
+        assert!(
+            reason.contains("fail-closed"),
+            "reason should mention fail-closed: {reason}"
+        );
     }
 }
 
@@ -214,11 +219,17 @@ async fn blocking_hook_timeout_fail_open_allows() {
 
     let report = runner.run(&trigger()).await;
 
-    assert_eq!(report.verdict, PrimaryVerdict::Allow, "fail-open timeout must allow");
+    assert_eq!(
+        report.verdict,
+        PrimaryVerdict::Allow,
+        "fail-open timeout must allow"
+    );
     // Even when allowing, the failure is still RECORDED (no silent swallow).
     let notes = failure_notes(&collector.snapshot());
     assert!(
-        notes.iter().any(|n| n.contains("sleep-forever") && n.contains("timed out")),
+        notes
+            .iter()
+            .any(|n| n.contains("sleep-forever") && n.contains("timed out")),
         "fail-open timeout should still record a failure note, got: {notes:?}"
     );
 }
@@ -229,8 +240,8 @@ async fn async_hook_failure_does_not_change_primary_status_but_records_event() {
     let (id_gen, _) = test_id_gen();
     // Async, fail-open by construction; even fail-closed would not matter
     // because async hooks have no veto.
-    let runner = HookRunner::new(sink, id_gen)
-        .register(Arc::new(AlwaysFail), HookPolicy::async_observer(observed()));
+    let runner =
+        HookRunner::new(sink, id_gen).register(Arc::new(AlwaysFail), HookPolicy::async_observer(observed()));
 
     let report = runner.run(&trigger()).await;
 
@@ -241,7 +252,9 @@ async fn async_hook_failure_does_not_change_primary_status_but_records_event() {
     report.join_async().await;
     let notes = failure_notes(&collector.snapshot());
     assert!(
-        notes.iter().any(|n| n.contains("always-fail") && n.contains("boom")),
+        notes
+            .iter()
+            .any(|n| n.contains("always-fail") && n.contains("boom")),
         "async failure must be recorded as a hook event, got: {notes:?}"
     );
 }
@@ -299,8 +312,15 @@ async fn non_observed_event_skips_hooks() {
 
     let report = runner.run(&trigger()).await;
 
-    assert_eq!(report.verdict, PrimaryVerdict::Allow, "unobserved event must not be denied");
-    assert!(collector.snapshot().is_empty(), "no hook events for an unobserved kind");
+    assert_eq!(
+        report.verdict,
+        PrimaryVerdict::Allow,
+        "unobserved event must not be denied"
+    );
+    assert!(
+        collector.snapshot().is_empty(),
+        "no hook events for an unobserved kind"
+    );
 }
 
 #[tokio::test]
@@ -337,8 +357,7 @@ async fn deny_on_policy_hook_denies_matching_kind() {
     let (sink, _collector) = collecting();
     let (id_gen, _) = test_id_gen();
     let hook = DenyOnPolicyHook::deny_kinds("policy", vec!["assistant_token_delta".to_string()]);
-    let runner =
-        HookRunner::new(sink, id_gen).register(Arc::new(hook), HookPolicy::blocking(observed()));
+    let runner = HookRunner::new(sink, id_gen).register(Arc::new(hook), HookPolicy::blocking(observed()));
 
     let report = runner.run(&trigger()).await;
     assert!(report.verdict.is_deny());
@@ -372,8 +391,12 @@ async fn blocking_hook_retries_then_fails() {
     let (id_gen, _) = test_id_gen();
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = HookPolicy::blocking(observed()).with_retries(1);
-    let runner = HookRunner::new(sink, id_gen)
-        .register(Arc::new(FailOnce { calls: Arc::clone(&calls) }), policy);
+    let runner = HookRunner::new(sink, id_gen).register(
+        Arc::new(FailOnce {
+            calls: Arc::clone(&calls),
+        }),
+        policy,
+    );
 
     let report = runner.run(&trigger()).await;
     assert_eq!(report.verdict, PrimaryVerdict::Allow, "retry should recover");

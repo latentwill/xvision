@@ -144,7 +144,9 @@ async fn get_rejects_separator_in_scope_kind() {
 #[tokio::test]
 async fn save_with_session_id_emits_focus_edited_event() {
     let (server, _tmp, state) = boot().await;
-    let scope = ContextScope::Strategy { draft_id: "s1".into() };
+    let scope = ContextScope::Strategy {
+        draft_id: "s1".into(),
+    };
     let session_id = ChatSessionStore::create_session(&state.pool, &scope)
         .await
         .unwrap();

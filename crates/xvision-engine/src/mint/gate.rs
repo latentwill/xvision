@@ -89,10 +89,7 @@ pub fn check_accept(inputs: &AcceptInputs<'_>) -> Result<AcceptDecision, AcceptR
             overfit_warning: h.overfit_warning,
         }),
         None => {
-            let reason = inputs
-                .override_reason
-                .map(str::trim)
-                .filter(|r| !r.is_empty());
+            let reason = inputs.override_reason.map(str::trim).filter(|r| !r.is_empty());
             match reason {
                 Some(r) => Ok(AcceptDecision {
                     holdout_present: false,
@@ -356,51 +353,56 @@ mod tests {
 
     #[test]
     fn mint_refused_without_lineage() {
-        let proof = EvalProof { eval_run_id: "ev1".into(), metric: "sharpe".into() };
+        let proof = EvalProof {
+            eval_run_id: "ev1".into(),
+            metric: "sharpe".into(),
+        };
         let metrics = all_trader_metrics();
-        let err = check_marketplace_mint(&mint_inputs(false, Some(&proof), None, &metrics))
-            .unwrap_err();
+        let err = check_marketplace_mint(&mint_inputs(false, Some(&proof), None, &metrics)).unwrap_err();
         assert_eq!(err.machine_code(), "mint_missing_lineage");
     }
 
     #[test]
     fn mint_refused_without_eval_proof() {
         let metrics = all_trader_metrics();
-        let err =
-            check_marketplace_mint(&mint_inputs(true, None, None, &metrics)).unwrap_err();
+        let err = check_marketplace_mint(&mint_inputs(true, None, None, &metrics)).unwrap_err();
         assert_eq!(err.machine_code(), "mint_missing_eval_proof");
     }
 
     #[test]
     fn mint_blocked_by_unwaived_overfit() {
-        let proof = EvalProof { eval_run_id: "ev1".into(), metric: "sharpe".into() };
+        let proof = EvalProof {
+            eval_run_id: "ev1".into(),
+            metric: "sharpe".into(),
+        };
         let h = holdout(true, None);
         let metrics = all_trader_metrics();
-        let err =
-            check_marketplace_mint(&mint_inputs(true, Some(&proof), Some(&h), &metrics))
-                .unwrap_err();
+        let err = check_marketplace_mint(&mint_inputs(true, Some(&proof), Some(&h), &metrics)).unwrap_err();
         assert_eq!(err.machine_code(), "mint_unwaived_overfit");
     }
 
     #[test]
     fn mint_allowed_when_overfit_waived() {
-        let proof = EvalProof { eval_run_id: "ev1".into(), metric: "sharpe".into() };
+        let proof = EvalProof {
+            eval_run_id: "ev1".into(),
+            metric: "sharpe".into(),
+        };
         let h = holdout(true, Some("acceptable for high-vol regime; reviewed 2026-05-24"));
         let metrics = all_trader_metrics();
-        let d = check_marketplace_mint(&mint_inputs(true, Some(&proof), Some(&h), &metrics))
-            .unwrap();
+        let d = check_marketplace_mint(&mint_inputs(true, Some(&proof), Some(&h), &metrics)).unwrap();
         assert!(d.overfit_waived);
         assert_eq!(d.eval_run_id, "ev1");
     }
 
     #[test]
     fn mint_refused_with_incomplete_metric_coverage() {
-        let proof = EvalProof { eval_run_id: "ev1".into(), metric: "sharpe".into() };
+        let proof = EvalProof {
+            eval_run_id: "ev1".into(),
+            metric: "sharpe".into(),
+        };
         let h = holdout(false, None);
         let metrics = vec!["sharpe".to_string()]; // far short of the trader battery
-        let err =
-            check_marketplace_mint(&mint_inputs(true, Some(&proof), Some(&h), &metrics))
-                .unwrap_err();
+        let err = check_marketplace_mint(&mint_inputs(true, Some(&proof), Some(&h), &metrics)).unwrap_err();
         assert_eq!(err.machine_code(), "mint_incomplete_metrics");
         match err {
             MintRefusal::IncompleteMetrics { missing, .. } => {
@@ -412,11 +414,13 @@ mod tests {
 
     #[test]
     fn mint_allowed_full_proof_no_overfit() {
-        let proof = EvalProof { eval_run_id: "ev1".into(), metric: "sharpe".into() };
+        let proof = EvalProof {
+            eval_run_id: "ev1".into(),
+            metric: "sharpe".into(),
+        };
         let h = holdout(false, None);
         let metrics = all_trader_metrics();
-        let d = check_marketplace_mint(&mint_inputs(true, Some(&proof), Some(&h), &metrics))
-            .unwrap();
+        let d = check_marketplace_mint(&mint_inputs(true, Some(&proof), Some(&h), &metrics)).unwrap();
         assert!(!d.overfit_waived);
         assert_eq!(d.holdout_snapshot_id.as_deref(), Some("snap1"));
     }

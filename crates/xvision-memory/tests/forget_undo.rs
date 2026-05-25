@@ -41,7 +41,11 @@ fn pattern(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
         run_id: None,
         scenario_id: None,
         cycle_idx: None,
+        source_window_start: None,
+        source_window_end: None,
         training_window_end: None,
+        promotion_state: Some("active".into()),
+        attestation_id: Some("attest-test".into()),
         forgotten_at: None,
     }
 }

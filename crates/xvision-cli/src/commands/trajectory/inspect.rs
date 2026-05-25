@@ -79,7 +79,10 @@ pub async fn run(args: InspectArgs) -> CliResult<()> {
     } else {
         println!("\nframe counts by (slot_role, step_index):");
         for c in &counts {
-            println!("  {:<20} step {:>3}  {:>6} frames", c.slot_role, c.step_index, c.count);
+            println!(
+                "  {:<20} step {:>3}  {:>6} frames",
+                c.slot_role, c.step_index, c.count
+            );
         }
     }
 

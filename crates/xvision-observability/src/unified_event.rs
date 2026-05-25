@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::events::{
     ArtifactWrittenEvent, BackpressureDroppedEvent, BrokerCallFinishedEvent, BrokerCallStartedEvent,
-    CheckpointWrittenEvent, EngineEvent, MemoryRecallEvent, ModelCallFinishedEvent, RunEvent,
-    RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent,
+    CheckpointWrittenEvent, EngineEvent, MemoryRecallEvent, MemoryWriteEvent, ModelCallFinishedEvent,
+    RunEvent, RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent,
     SpanStartedEvent, SupervisorNoteEvent, ToolCallCancelledEvent, ToolCallFailedEvent,
     ToolCallFinishedEvent, ToolCallStartedEvent,
 };
@@ -207,6 +207,7 @@ pub enum UnifiedPayload {
 
     // ── Provenance / supervision (reused) ───────────────────────────────
     MemoryRecall(MemoryRecallEvent),
+    MemoryWrite(MemoryWriteEvent),
     ArtifactWritten(ArtifactWrittenEvent),
     SupervisorNote(SupervisorNoteEvent),
     EngineEvent(EngineEvent),
@@ -377,6 +378,7 @@ fn payload_event_name(p: &UnifiedPayload) -> &'static str {
         OptimizationCandidateSelected(_) => "optimization_candidate_selected",
         OptimizationCompleted(_) => "optimization_completed",
         MemoryRecall(_) => "memory_recall",
+        MemoryWrite(_) => "memory_write",
         ArtifactWritten(_) => "artifact_written",
         SupervisorNote(_) => "supervisor_note",
         EngineEvent(_) => "engine_event",
@@ -468,6 +470,7 @@ fn run_event_to_payload(ev: RunEvent) -> (Actor, UnifiedPayload) {
         RunEvent::SidecarError(e) => (Actor::System, UnifiedPayload::SidecarError(e)),
         RunEvent::BackpressureDropped(e) => (Actor::System, UnifiedPayload::BackpressureDropped(e)),
         RunEvent::MemoryRecall(e) => (Actor::System, UnifiedPayload::MemoryRecall(e)),
+        RunEvent::MemoryWrite(e) => (Actor::System, UnifiedPayload::MemoryWrite(e)),
         RunEvent::EngineEvent(e) => (Actor::System, UnifiedPayload::EngineEvent(e)),
     }
 }

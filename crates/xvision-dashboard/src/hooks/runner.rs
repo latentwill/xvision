@@ -69,7 +69,10 @@ pub enum PrimaryVerdict {
     Allow,
     /// A blocking hook denied (or fail-closed timed out). `hook_id` is the
     /// hook that produced the deny; `reason` is its explanation.
-    Deny { hook_id: String, reason: String },
+    Deny {
+        hook_id: String,
+        reason: String,
+    },
 }
 
 impl PrimaryVerdict {
@@ -113,7 +116,12 @@ pub struct HookRunner {
 impl HookRunner {
     /// Build a runner from registered hooks, an emit sink, and an id generator.
     pub fn new(emit: EmitSink, id_gen: EventIdGen) -> Self {
-        Self { hooks: Vec::new(), emit, id_gen, async_sem: Arc::new(Semaphore::new(usize::MAX >> 4)) }
+        Self {
+            hooks: Vec::new(),
+            emit,
+            id_gen,
+            async_sem: Arc::new(Semaphore::new(usize::MAX >> 4)),
+        }
     }
 
     /// Register a hook with its policy. Blocking hooks run in registration
@@ -158,7 +166,10 @@ impl HookRunner {
             match self.run_blocking(reg, event).await {
                 HookDecision::Allow => {}
                 HookDecision::Deny { reason } => {
-                    verdict = PrimaryVerdict::Deny { hook_id: reg.hook.id().to_string(), reason };
+                    verdict = PrimaryVerdict::Deny {
+                        hook_id: reg.hook.id().to_string(),
+                        reason,
+                    };
                     break;
                 }
             }
@@ -185,7 +196,10 @@ impl HookRunner {
             async_handles.push(AsyncHandle(handle));
         }
 
-        RunReport { verdict, async_handles }
+        RunReport {
+            verdict,
+            async_handles,
+        }
     }
 
     /// Run one blocking hook honoring timeout, retries, and failure mode.
@@ -282,7 +296,8 @@ async fn run_async_detached(
         match tokio::time::timeout(policy.timeout, hook.run(&event)).await {
             Ok(Ok(outcome)) => {
                 for ev in &outcome.events {
-                    emit.emit(stamp_hook_event(&id_gen, &event, ev.payload.clone())).await;
+                    emit.emit(stamp_hook_event(&id_gen, &event, ev.payload.clone()))
+                        .await;
                 }
                 // Async hooks have no veto; a returned deny is recorded as a
                 // note but does NOT change primary status (no lying about
@@ -306,14 +321,15 @@ async fn run_async_detached(
             }
             Ok(Err(e)) => last_err = Some(e),
             Err(_) => {
-                last_err =
-                    Some(HookError::failed(format!("timed out after {:?}", policy.timeout)));
+                last_err = Some(HookError::failed(format!("timed out after {:?}", policy.timeout)));
             }
         }
     }
 
     // Failure is RECORDED but primary status is unchanged.
-    let detail = last_err.map(|e| e.to_string()).unwrap_or_else(|| "hook failed".to_string());
+    let detail = last_err
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "hook failed".to_string());
     emit.emit(stamp_hook_event(
         &id_gen,
         &event,
@@ -342,11 +358,7 @@ fn hook_note(
 }
 
 /// Build a hook-authored envelope inheriting the trigger's session/run/scope.
-fn stamp_hook_event(
-    id_gen: &EventIdGen,
-    trigger: &UnifiedEvent,
-    payload: UnifiedPayload,
-) -> UnifiedEvent {
+fn stamp_hook_event(id_gen: &EventIdGen, trigger: &UnifiedEvent, payload: UnifiedPayload) -> UnifiedEvent {
     UnifiedEvent {
         event_id: (id_gen)(),
         session_id: trigger.session_id.clone(),

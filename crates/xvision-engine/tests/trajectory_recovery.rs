@@ -9,9 +9,9 @@
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use uuid::Uuid;
-use xvision_observability::{BlobStore, RetentionMode};
 use xvision_observability::trajectory::key::{TrajectoryKey, TRAJECTORY_SCHEMA_VERSION};
 use xvision_observability::trajectory::store::{TrajectoryStore, STATUS_CORRUPT, STATUS_INCOMPLETE};
+use xvision_observability::{BlobStore, RetentionMode};
 
 async fn make_store(tmp: &TempDir) -> TrajectoryStore {
     let db_path = tmp.path().join("recovery.db");
@@ -92,10 +92,7 @@ async fn open_recording_fails_validate() {
     // Do NOT complete — simulates sidecar crash.
 
     let result = store.validate(rid.as_str()).await;
-    assert!(
-        result.is_err(),
-        "an 'open' recording must fail validate"
-    );
+    assert!(result.is_err(), "an 'open' recording must fail validate");
     let msg = result.unwrap_err();
     assert!(
         msg.contains("open"),
@@ -153,10 +150,7 @@ async fn re_recording_same_key_supersedes_open() {
 
     // The first recording must be gone (superseded).
     let gone = store.get_recording(rid1.as_str()).await;
-    assert!(
-        gone.is_err(),
-        "prior open recording must be deleted on re-record"
-    );
+    assert!(gone.is_err(), "prior open recording must be deleted on re-record");
 
     // The new recording must be open.
     let info2 = store.get_recording(rid2.as_str()).await.unwrap();
@@ -210,7 +204,10 @@ async fn validate_complete_with_contiguous_frames_passes() {
     store.complete_recording(&rid).await.unwrap();
 
     let result = store.validate(rid.as_str()).await;
-    assert!(result.is_ok(), "contiguous complete recording must pass validate: {result:?}");
+    assert!(
+        result.is_ok(),
+        "contiguous complete recording must pass validate: {result:?}"
+    );
 }
 
 #[tokio::test]

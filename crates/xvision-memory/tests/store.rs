@@ -49,6 +49,10 @@ fn observation(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
         run_id: Some("run-1".into()),
         scenario_id: Some("scenario-1".into()),
         cycle_idx: Some(0),
+        source_window_start: Some(chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+        source_window_end: Some(chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 1, 0).unwrap()),
+        promotion_state: None,
+        attestation_id: None,
         ..memory_item(id, ns, text, emb)
     }
 }
@@ -68,7 +72,11 @@ fn memory_item(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
         run_id: None,
         scenario_id: None,
         cycle_idx: None,
+        source_window_start: None,
+        source_window_end: None,
         training_window_end: None,
+        promotion_state: Some("active".into()),
+        attestation_id: Some("attest-test".into()),
         forgotten_at: None,
     }
 }
@@ -159,6 +167,10 @@ async fn upsert_observation_requires_provenance() {
     let mut item = observation("o3", "global", "obs", vec![1.0, 0.0]);
     item.cycle_idx = None;
     assert!(store.upsert_observation(&item, "test").await.is_err());
+
+    let mut item = observation("o4", "global", "obs", vec![1.0, 0.0]);
+    item.source_window_end = None;
+    assert!(store.upsert_observation(&item, "test").await.is_err());
 }
 
 #[tokio::test]
@@ -190,6 +202,10 @@ async fn upsert_pattern_rejects_provenance() {
 
     let mut item = pattern("p3", "global", "pat", vec![1.0, 0.0]);
     item.cycle_idx = Some(3);
+    assert!(store.upsert_pattern(&item, "test").await.is_err());
+
+    let mut item = pattern("p4", "global", "pat", vec![1.0, 0.0]);
+    item.source_window_end = Some(chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
     assert!(store.upsert_pattern(&item, "test").await.is_err());
 }
 
@@ -254,6 +270,17 @@ async fn query_includes_null_training_window_patterns() {
     let hits = store.query("global", &[1.0, 0.0], 5, Some(any)).await.unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].id, "p1");
+}
+
+#[tokio::test]
+async fn query_excludes_staged_patterns() {
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    let mut staged = pattern("p1", "global", "STAGED", vec![1.0, 0.0]);
+    staged.promotion_state = Some("staged".into());
+    store.upsert_pattern(&staged, "test").await.unwrap();
+
+    let hits = store.query("global", &[1.0, 0.0], 5, None).await.unwrap();
+    assert!(hits.is_empty(), "staged Patterns must not be recall-active");
 }
 
 #[tokio::test]

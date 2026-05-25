@@ -14,9 +14,7 @@ pub enum OptimizerError {
     ///
     /// Carries remediation text so the caller can surface an actionable message
     /// rather than a bare "unsupported".
-    #[error(
-        "no optimizer for capability `{capability}`: {remediation}"
-    )]
+    #[error("no optimizer for capability `{capability}`: {remediation}")]
     MissingCapabilityOptimizer {
         /// The capability key (e.g. `decision_grader`).
         capability: &'static str,

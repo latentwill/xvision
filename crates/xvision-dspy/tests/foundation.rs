@@ -10,9 +10,7 @@ use dspy_rs::{Chat, Example, Message};
 use xvision_dspy::adapter::{DeterministicTestModel, OptimizerModel};
 use xvision_dspy::capability::Capability;
 use xvision_dspy::error::OptimizerError;
-use xvision_dspy::signatures::{
-    self, validate_confidence, validate_size_fraction, TraderAction,
-};
+use xvision_dspy::signatures::{self, validate_confidence, validate_size_fraction, TraderAction};
 use xvision_dspy::snapshot::{signature_hash, OptimizationSnapshot, SnapshotDemo};
 
 /// Build a minimal DSRs Example for seeding DummyLM calls.
@@ -61,8 +59,7 @@ async fn signature_compile_and_optimize_boundary_smoke() {
     // "compile/optimize smoke": construct the trader signature, run a scripted
     // model completion against it, and parse/validate the output back through the
     // signature boundary — no optimizer search, no network.
-    let sig = signatures::signature_for(Capability::Trader)
-        .expect("trader signature must exist");
+    let sig = signatures::signature_for(Capability::Trader).expect("trader signature must exist");
 
     assert!(!sig.instruction().is_empty());
     assert!(sig.input_fields().get("briefing").is_some());
@@ -71,10 +68,7 @@ async fn signature_compile_and_optimize_boundary_smoke() {
     // A scripted model "decision" that the validate boundary accepts.
     let model = DeterministicTestModel::new("buy").await;
     let completion = model
-        .complete(
-            seed_example(),
-            Chat::new(vec![Message::user(sig.instruction())]),
-        )
+        .complete(seed_example(), Chat::new(vec![Message::user(sig.instruction())]))
         .await
         .expect("completion must succeed");
 
@@ -89,7 +83,13 @@ async fn signature_compile_and_optimize_boundary_smoke() {
 
     // Bad action string is a typed validate error, not a panic.
     let err = TraderAction::parse("yolo").unwrap_err();
-    assert!(matches!(err, OptimizerError::Signature { phase: "validate", .. }));
+    assert!(matches!(
+        err,
+        OptimizerError::Signature {
+            phase: "validate",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -157,10 +157,7 @@ fn snapshot_round_trips_through_json() {
         serde_json::Value::String("regime: trending".to_string()),
     );
     let mut outputs = BTreeMap::new();
-    outputs.insert(
-        "action".to_string(),
-        serde_json::Value::String("buy".to_string()),
-    );
+    outputs.insert("action".to_string(), serde_json::Value::String("buy".to_string()));
 
     let trader = signatures::signature_for(Capability::Trader).unwrap();
 

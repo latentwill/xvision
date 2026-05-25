@@ -38,10 +38,9 @@ use xvision_dspy::signatures::signature_for;
 use xvision_dspy::snapshot::{signature_hash, OptimizationSnapshot, SnapshotDemo};
 use xvision_dspy::{Capability as DspyCapability, OptimizerError};
 
-use xvision_engine::api::{ApiContext, Actor};
-use xvision_engine::optimization::{
-    NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore,
-};
+use xvision_engine::api::optimize::{MemoryDemoOptimizeRequest, OptimizationGateRequest};
+use xvision_engine::api::{memory, optimize as memory_optimize, Actor, ApiContext};
+use xvision_engine::optimization::{NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore};
 
 use crate::exit::{CliError, CliResult, XvnExit};
 use crate::io::print_json;
@@ -57,6 +56,10 @@ pub struct OptimizeCmd {
 enum OptimizeAction {
     /// Run an optimization pass over a corpus for one agent slot/capability.
     Run(RunArgs),
+    /// Compile an Observation demo pool into a child agent prompt prefix.
+    MemoryDemos(MemoryDemosArgs),
+    /// Record dev/holdout gate results for a memory-demo optimization.
+    MemoryDemosGate(MemoryDemosGateArgs),
     /// Show a persisted optimization run, its candidates, and snapshots.
     Inspect(InspectArgs),
     /// Export the demos of a snapshot (or demo set) as canonical JSON.
@@ -226,9 +229,100 @@ struct ExplainArgs {
     json: bool,
 }
 
+#[derive(Args, Debug)]
+struct MemoryDemosArgs {
+    /// Agent whose slot should receive the compiled memory demo block.
+    #[arg(long)]
+    agent: String,
+    /// Slot name to patch. Defaults to the first slot.
+    #[arg(long)]
+    slot: Option<String>,
+    /// Exact memory namespace, e.g. `global` or `agent:<id>`.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// Shorthand for `--namespace agent:<id>` when the memory source differs.
+    #[arg(long, conflicts_with = "namespace")]
+    memory_agent: Option<String>,
+    /// Optional Observation provenance filter.
+    #[arg(long)]
+    scenario: Option<String>,
+    /// Optional Observation provenance filter.
+    #[arg(long)]
+    run: Option<String>,
+    /// Demo source selector: frozen-snapshot, fresh-recorder, or manual-csv.
+    #[arg(long, default_value = "frozen-snapshot")]
+    demo_source: String,
+    /// Train/dev/holdout split, e.g. 70/15/15.
+    #[arg(long, default_value = "70/15/15")]
+    holdout_split: String,
+    /// Verbatim cohort selector recorded for reproducibility.
+    #[arg(long)]
+    cohort_query: Option<String>,
+    /// CSV file containing Observation ids for --demo-source manual-csv.
+    #[arg(long)]
+    manual_csv: Option<PathBuf>,
+    /// Pattern id to include as an optimizer prior. Repeatable.
+    #[arg(long = "prior-pattern")]
+    prior_patterns: Vec<String>,
+    /// Also include recently recalled live Patterns from the namespace as priors.
+    #[arg(long = "auto-priors")]
+    auto_priors: bool,
+    /// Maximum recently recalled Patterns to append when --auto-priors is set.
+    #[arg(long = "prior-limit", default_value_t = 5)]
+    prior_limit: i64,
+    /// Max Observation demos to include.
+    #[arg(long, default_value_t = 8)]
+    limit: i64,
+    /// Max characters in the rendered `<memory_demos>` block.
+    #[arg(long, default_value_t = 6000)]
+    max_demo_chars: usize,
+    /// Child agent name when minting with `--yes`.
+    #[arg(long)]
+    child_name: Option<String>,
+    /// Actually mint the child agent; otherwise this is a side-effect-free preview.
+    #[arg(long)]
+    yes: bool,
+    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
+    #[arg(long)]
+    xvn_home: Option<PathBuf>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug)]
+struct MemoryDemosGateArgs {
+    /// Optimization id returned by `xvn optimize memory-demos --yes`.
+    optimization_id: String,
+    /// Metric name for the dev score.
+    #[arg(long, default_value = "score_delta")]
+    dev_metric: String,
+    /// Metric name for the holdout score. Defaults to --dev-metric.
+    #[arg(long)]
+    holdout_metric: Option<String>,
+    #[arg(long)]
+    parent_dev_score: f64,
+    #[arg(long)]
+    child_dev_score: f64,
+    #[arg(long)]
+    parent_holdout_score: f64,
+    #[arg(long)]
+    child_holdout_score: f64,
+    #[arg(long, default_value_t = 0.0)]
+    gate_epsilon: f64,
+    #[arg(long)]
+    reason: Option<String>,
+    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
+    #[arg(long)]
+    xvn_home: Option<PathBuf>,
+    #[arg(long)]
+    json: bool,
+}
+
 pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
     match cmd.action {
         OptimizeAction::Run(args) => run_optimize(args).await,
+        OptimizeAction::MemoryDemos(args) => run_memory_demos(args).await,
+        OptimizeAction::MemoryDemosGate(args) => run_memory_demos_gate(args).await,
         OptimizeAction::Inspect(args) => inspect(args).await,
         OptimizeAction::ExportDemos(args) => export_demos(args).await,
         OptimizeAction::ImportDemos(args) => import_demos(args).await,
@@ -258,11 +352,9 @@ struct ResolvedCorpus {
 fn resolve_corpus(corpus: &str) -> CliResult<ResolvedCorpus> {
     let path = PathBuf::from(corpus);
     if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|e| {
-            CliError {
-                exit: XvnExit::OptValidation,
-                source: anyhow::anyhow!("read corpus file {}: {e}", path.display()),
-            }
+        let text = std::fs::read_to_string(&path).map_err(|e| CliError {
+            exit: XvnExit::OptValidation,
+            source: anyhow::anyhow!("read corpus file {}: {e}", path.display()),
         })?;
         let demos: Vec<SnapshotDemo> = serde_json::from_str(&text).map_err(|e| CliError {
             exit: XvnExit::OptValidation,
@@ -306,22 +398,13 @@ fn validate_capability(cap: DspyCapability) -> CliResult<String> {
 
 /// Known objective metrics. Optimizing against an unknown metric is exit 13.
 fn validate_metric(metric: &str) -> CliResult<()> {
-    const KNOWN: &[&str] = &[
-        "delta_sharpe",
-        "sharpe",
-        "grader_score",
-        "hit_rate",
-        "pnl",
-    ];
+    const KNOWN: &[&str] = &["delta_sharpe", "sharpe", "grader_score", "hit_rate", "pnl"];
     if KNOWN.contains(&metric) {
         Ok(())
     } else {
         Err(CliError {
             exit: XvnExit::OptMetric,
-            source: anyhow::anyhow!(
-                "unknown metric `{metric}`; known: {}",
-                KNOWN.join(", ")
-            ),
+            source: anyhow::anyhow!("unknown metric `{metric}`; known: {}", KNOWN.join(", ")),
         })
     }
 }
@@ -462,10 +545,7 @@ async fn run_optimize(args: RunArgs) -> CliResult<()> {
         exit: XvnExit::OptValidation,
         source: anyhow::anyhow!("serialize demos: {e}"),
     })?;
-    let demo_set = store
-        .put_demo_set(&demos_json)
-        .await
-        .map_err(persistence_err)?;
+    let demo_set = store.put_demo_set(&demos_json).await.map_err(persistence_err)?;
 
     // Deterministic optimization: produce `max_rounds` candidate instructions
     // (seeded by rng_seed so the same inputs yield the same search), score each
@@ -635,7 +715,11 @@ async fn inspect(args: InspectArgs) -> CliResult<()> {
             report.reproduction_recipe.rng_seed,
             report.reproduction_recipe.optimizer,
             report.reproduction_recipe.metric,
-            report.reproduction_recipe.signature_hash.as_deref().unwrap_or("-"),
+            report
+                .reproduction_recipe
+                .signature_hash
+                .as_deref()
+                .unwrap_or("-"),
         );
     }
     Ok(())
@@ -823,14 +907,12 @@ fn explain_missing_data(args: ExplainArgs) -> CliResult<()> {
                 "file",
                 0,
                 "corpus file parsed but contained 0 rows".to_string(),
-                "add {inputs, outputs} exemplars to the file, or widen the query"
-                    .to_string(),
+                "add {inputs, outputs} exemplars to the file, or widen the query".to_string(),
             ),
             None => (
                 "file",
                 0,
-                "corpus file did not parse as a JSON array of {inputs, outputs}"
-                    .to_string(),
+                "corpus file did not parse as a JSON array of {inputs, outputs}".to_string(),
                 "fix the file shape: a top-level JSON array of objects with \
                  `inputs` and `outputs` maps"
                     .to_string(),
@@ -867,12 +949,146 @@ fn explain_missing_data(args: ExplainArgs) -> CliResult<()> {
 }
 
 // ---------------------------------------------------------------------------
+// memory-demo optimizer bridge
+// ---------------------------------------------------------------------------
+
+async fn run_memory_demos(args: MemoryDemosArgs) -> CliResult<()> {
+    if args.agent.trim().is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--agent is required")));
+    }
+    let ctx = open_api_context(args.xvn_home.clone(), XvnExit::Upstream).await?;
+    let store = memory::open_default_store()
+        .await
+        .map_err(|e| api_to_cli("optimize memory-demos", e))?;
+
+    let out = memory_optimize::compile_memory_demos(
+        &ctx,
+        &store,
+        MemoryDemoOptimizeRequest {
+            target_agent_id: args.agent,
+            slot: args.slot,
+            namespace: args.namespace,
+            memory_agent: args.memory_agent,
+            scenario_id: args.scenario,
+            run_id: args.run,
+            demo_source: Some(args.demo_source),
+            holdout_split: Some(args.holdout_split),
+            cohort_query: args.cohort_query,
+            manual_observation_ids: read_manual_csv_ids(args.manual_csv.as_ref())?,
+            prior_pattern_ids: if args.prior_patterns.is_empty() {
+                None
+            } else {
+                Some(args.prior_patterns)
+            },
+            auto_prior_patterns: args.auto_priors,
+            prior_pattern_limit: Some(args.prior_limit),
+            limit: Some(args.limit),
+            max_demo_chars: Some(args.max_demo_chars),
+            apply: args.yes,
+            child_name: args.child_name,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("optimize memory-demos", e))?;
+
+    if args.json {
+        print_json(&out)?;
+    } else {
+        println!("status: {}", out.status);
+        if let Some(id) = &out.optimization_id {
+            println!("optimization_id: {id}");
+        }
+        println!("namespace: {}", out.namespace);
+        println!("target_agent_id: {}", out.target_agent_id);
+        println!("demo_source: {}", out.demo_source);
+        println!("holdout_split: {}", out.holdout_split);
+        println!("cohort_query: {}", out.cohort_query);
+        if let Some(child) = out.child_agent_id {
+            println!("child_agent_id: {child}");
+        } else {
+            println!("child_agent_id: <dry-run>");
+            println!("rerun with --yes to mint the child agent");
+        }
+        println!("slot: {}", out.slot);
+        println!("demo_count: {}", out.demo_count);
+        println!("pattern_demo_source_count: {}", out.pattern_demo_source_count);
+        println!("pattern_prior_count: {}", out.pattern_prior_count);
+        println!("dev_count: {}", out.dev_observation_ids.len());
+        println!("holdout_count: {}", out.holdout_observation_ids.len());
+        println!("prompt_prefix_chars: {}", out.prompt_prefix_chars);
+    }
+    Ok(())
+}
+
+async fn run_memory_demos_gate(args: MemoryDemosGateArgs) -> CliResult<()> {
+    if args.optimization_id.trim().is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("optimization_id is required")));
+    }
+    let ctx = open_api_context(args.xvn_home.clone(), XvnExit::Upstream).await?;
+    let out = memory_optimize::gate_memory_demo_optimization(
+        &ctx,
+        &args.optimization_id,
+        OptimizationGateRequest {
+            dev_metric: Some(args.dev_metric),
+            holdout_metric: args.holdout_metric,
+            parent_dev_score: args.parent_dev_score,
+            child_dev_score: args.child_dev_score,
+            parent_holdout_score: args.parent_holdout_score,
+            child_holdout_score: args.child_holdout_score,
+            gate_epsilon: Some(args.gate_epsilon),
+            gate_reason: args.reason,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("optimize memory-demos-gate", e))?;
+    if args.json {
+        print_json(&out)?;
+    } else {
+        println!("optimization_id: {}", out.optimization_id);
+        println!("gate_verdict: {}", out.gate_verdict);
+        println!("dev_metric: {}", out.dev_metric);
+        println!("holdout_metric: {}", out.holdout_metric);
+        println!("delta_dev: {}", out.delta_dev);
+        println!("delta_holdout: {}", out.delta_holdout);
+        println!("gate_reason: {}", out.gate_reason);
+    }
+    Ok(())
+}
+
+fn read_manual_csv_ids(path: Option<&PathBuf>) -> CliResult<Option<Vec<String>>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read --manual-csv {}: {e}", path.display())))?;
+    let mut ids = Vec::new();
+    for cell in raw.split([',', '\n', '\r', '\t']) {
+        let cell = cell.trim().trim_matches('"');
+        if cell.is_empty() || cell.eq_ignore_ascii_case("id") || cell.eq_ignore_ascii_case("observation_id") {
+            continue;
+        }
+        ids.push(cell.to_string());
+    }
+    if ids.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--manual-csv did not contain any Observation ids"
+        )));
+    }
+    Ok(Some(ids))
+}
+
+// ---------------------------------------------------------------------------
 // shared helpers
 // ---------------------------------------------------------------------------
 
 /// Open the optimization store against the resolved XVN home. Store open failure
 /// is a persistence failure (exit 15).
 async fn open_store(xvn_home: Option<PathBuf>) -> CliResult<OptimizationStore> {
+    let ctx = open_api_context(xvn_home, XvnExit::OptPersistence).await?;
+    Ok(OptimizationStore::new(ctx.db))
+}
+
+async fn open_api_context(xvn_home: Option<PathBuf>, exit: XvnExit) -> CliResult<ApiContext> {
     let home = crate::commands::home::resolve_xvn_home(xvn_home).map_err(|e| CliError {
         exit: XvnExit::OptValidation,
         source: e,
@@ -880,13 +1096,12 @@ async fn open_store(xvn_home: Option<PathBuf>) -> CliResult<OptimizationStore> {
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
-    let ctx = ApiContext::open(&home, Actor::Cli { user })
+    ApiContext::open(&home, Actor::Cli { user })
         .await
         .map_err(|e| CliError {
-            exit: XvnExit::OptPersistence,
+            exit,
             source: anyhow::anyhow!("open store: {e}"),
-        })?;
-    Ok(OptimizationStore::new(ctx.db))
+        })
 }
 
 /// Map a store ApiError to a persistence failure (exit 15).
@@ -906,5 +1121,16 @@ fn not_found_err(e: xvision_engine::api::ApiError) -> CliError {
             source: anyhow::anyhow!("{m}"),
         },
         other => persistence_err(other),
+    }
+}
+
+fn api_to_cli(op: &str, e: xvision_engine::api::ApiError) -> CliError {
+    match e {
+        xvision_engine::api::ApiError::Validation(msg) => CliError::usage(anyhow::anyhow!("{op}: {msg}")),
+        xvision_engine::api::ApiError::NotFound(msg) => CliError::not_found(anyhow::anyhow!("{op}: {msg}")),
+        other => CliError {
+            exit: XvnExit::Upstream,
+            source: anyhow::anyhow!("{op}: {other}"),
+        },
     }
 }

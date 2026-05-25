@@ -71,6 +71,11 @@ pub enum RunEvent {
     /// scoped to memory provenance.
     MemoryRecall(MemoryRecallEvent),
 
+    /// V2D Observation write, bound to the decision that produced it.
+    /// Persisted as a generic `events` row so flywheel surfaces can
+    /// correlate recall -> model call -> remembered Observation.
+    MemoryWrite(MemoryWriteEvent),
+
     /// Bar-level engine lifecycle event. Persists as a row in the
     /// migration-018 `events` table (no dedicated table), which is the
     /// schema-018 design for sparse/extensible bar-level signals such as
@@ -278,6 +283,12 @@ pub struct BackpressureDroppedEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRecallEvent {
     pub run_id: String,
+    /// Stable cycle correlation key used by flywheel surfaces to stitch
+    /// capture -> observe -> recall -> outcome across event families.
+    /// New emitters populate this as `<run_id>:<decision_id>`; optional
+    /// for backward compatibility with already-persisted payload_json.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flywheel_cycle_id: Option<String>,
     /// Per-decision identifier the recall fed into. Encoded as the
     /// engine's `cycle_idx: i64` (the per-decision integer carried on
     /// `SlotInput` and threaded through `MemoryRecorder::recall`). The
@@ -307,6 +318,17 @@ pub struct MemoryRecallItem {
     /// First ~160 chars of the item's text. The recorder DOES NOT carry
     /// the full body — that lives in `memory_items.text`. Operators who
     /// want the full text follow the `id` deep link.
+    pub text_preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryWriteEvent {
+    pub run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flywheel_cycle_id: Option<String>,
+    pub decision_id: i64,
+    pub namespace: String,
+    pub memory_item_id: String,
     pub text_preview: String,
 }
 
@@ -452,6 +474,7 @@ impl RunEvent {
             Self::SidecarError(e) => &e.run_id,
             Self::BackpressureDropped(e) => &e.run_id,
             Self::MemoryRecall(e) => &e.run_id,
+            Self::MemoryWrite(e) => &e.run_id,
             Self::EngineEvent(e) => &e.run_id,
         }
     }
@@ -480,7 +503,8 @@ impl RunEvent {
             | Self::ArtifactWritten(_)
             | Self::SidecarError(_)
             | Self::BackpressureDropped(_)
-            | Self::MemoryRecall(_) => None,
+            | Self::MemoryRecall(_)
+            | Self::MemoryWrite(_) => None,
         }
     }
 

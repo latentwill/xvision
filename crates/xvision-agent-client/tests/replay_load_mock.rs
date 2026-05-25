@@ -231,7 +231,10 @@ async fn replay_load_params_wire_shape_has_kind_tags() {
             tools: json!([]),
             system_prompt: Some("sp".into()),
         },
-        TrajectoryFrame::TextDelta { ts_ms: 101, text: "hi".into() },
+        TrajectoryFrame::TextDelta {
+            ts_ms: 101,
+            text: "hi".into(),
+        },
         TrajectoryFrame::Usage {
             ts_ms: 102,
             input_tokens: 5,
@@ -240,12 +243,18 @@ async fn replay_load_params_wire_shape_has_kind_tags() {
             cache_write_tokens: 0,
             total_cost: 0.0,
         },
-        TrajectoryFrame::Finish { ts_ms: 103, reason: "stop".into(), error: None },
+        TrajectoryFrame::Finish {
+            ts_ms: 103,
+            reason: "stop".into(),
+            error: None,
+        },
     ];
 
     // Serialize typed frames → Vec<Value> (the caller-side conversion).
-    let frames_json: Vec<serde_json::Value> =
-        frames_typed.iter().map(|f| serde_json::to_value(f).unwrap()).collect();
+    let frames_json: Vec<serde_json::Value> = frames_typed
+        .iter()
+        .map(|f| serde_json::to_value(f).unwrap())
+        .collect();
 
     let params = ReplayLoadParams {
         run_id: "wire-test".into(),

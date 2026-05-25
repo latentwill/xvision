@@ -28,8 +28,7 @@ use xvision_engine::agents::store::{AgentStore, NewAgent};
 use xvision_engine::agents::{default_capabilities, AgentSlot};
 use xvision_engine::strategies::agent_ref::AgentRef;
 use xvision_engine::strategies::{
-    manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore,
-    Strategy,
+    manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore, Strategy,
 };
 
 const TRADER_PROMPT: &str = "You are a careful trader. Analyse the OHLCV data and respond with a \
@@ -79,12 +78,7 @@ async fn seed_agent(state: &AppState, name: &str, prompt: &str) -> String {
 
 /// Seed a strategy referencing `agent_id` as a trader, with `required_tools`
 /// granting (or not) the trader's `ohlcv` tool.
-async fn seed_strategy(
-    tmp: &TempDir,
-    strategy_id: &str,
-    agent_id: &str,
-    required_tools: Vec<String>,
-) {
+async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, required_tools: Vec<String>) {
     let store = FilesystemStore::new(tmp.path().join("strategies"));
     store
         .save(&Strategy {
@@ -184,7 +178,9 @@ async fn agent_diagnostics_missing_prompt_flips_ready() {
 #[tokio::test]
 async fn agent_diagnostics_unknown_id_404s() {
     let (server, _tmp, _state) = boot().await;
-    let resp = server.get("/api/agents/01JNONEXISTENT0000000000000/diagnostics").await;
+    let resp = server
+        .get("/api/agents/01JNONEXISTENT0000000000000/diagnostics")
+        .await;
     assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
 }
 
@@ -198,7 +194,9 @@ async fn strategy_diagnostics_launchable_when_tool_granted() {
     // Manifest grants the trader's required `ohlcv` tool → launchable.
     seed_strategy(&tmp, strategy_id, &agent_id, vec!["ohlcv".into()]).await;
 
-    let resp = server.get(&format!("/api/strategy/{strategy_id}/diagnostics")).await;
+    let resp = server
+        .get(&format!("/api/strategy/{strategy_id}/diagnostics"))
+        .await;
     resp.assert_status_ok();
     let body: Value = resp.json();
 
@@ -212,7 +210,11 @@ async fn strategy_diagnostics_launchable_when_tool_granted() {
     // Trader is required and optimizable.
     let req_caps = body["required_capabilities"].as_array().unwrap();
     assert!(req_caps.iter().any(|c| c == "trader"));
-    assert!(body["optimizable"].as_array().unwrap().iter().any(|c| c == "trader"));
+    assert!(body["optimizable"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c == "trader"));
 }
 
 #[tokio::test]
@@ -223,7 +225,9 @@ async fn strategy_diagnostics_blocks_without_required_tool() {
     // Manifest grants NO tools → trader's `ohlcv` is a MissingTool blocker.
     seed_strategy(&tmp, strategy_id, &agent_id, vec![]).await;
 
-    let resp = server.get(&format!("/api/strategy/{strategy_id}/diagnostics")).await;
+    let resp = server
+        .get(&format!("/api/strategy/{strategy_id}/diagnostics"))
+        .await;
     resp.assert_status_ok();
     let body: Value = resp.json();
 
@@ -238,6 +242,8 @@ async fn strategy_diagnostics_blocks_without_required_tool() {
 #[tokio::test]
 async fn strategy_diagnostics_unknown_id_404s() {
     let (server, _tmp, _state) = boot().await;
-    let resp = server.get("/api/strategy/01JNONEXISTENT0000000000000/diagnostics").await;
+    let resp = server
+        .get("/api/strategy/01JNONEXISTENT0000000000000/diagnostics")
+        .await;
     assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
 }

@@ -138,7 +138,9 @@ pub enum ClineRuntimeError {
     /// `step` failed — a transport error or a sidecar crash mid-step. This
     /// is the crash boundary: the cycle fails, the decision is never
     /// silently dropped.
-    #[error("cline runtime: step failed (sidecar transport/crash) for run_id={run_id} (role={role}): {source}")]
+    #[error(
+        "cline runtime: step failed (sidecar transport/crash) for run_id={run_id} (role={role}): {source}"
+    )]
     StepTransport {
         run_id: String,
         role: String,
@@ -160,7 +162,9 @@ pub enum ClineRuntimeError {
     /// there is no structured decision to parse. Failing here (rather than
     /// synthesizing an empty/hold decision) is the item-2 guarantee that a
     /// missing decision fails the cycle visibly.
-    #[error("cline runtime: run completed without calling submit_decision for run_id={run_id} (role={role})")]
+    #[error(
+        "cline runtime: run completed without calling submit_decision for run_id={run_id} (role={role})"
+    )]
     NoDecision { run_id: String, role: String },
 
     /// `submit_decision` returned a payload that is not valid JSON. The
@@ -178,7 +182,9 @@ pub enum ClineRuntimeError {
     /// store (missing recording, missing slot/step frames, decode error).
     /// A replay run NEVER falls back to a live provider — a bad recording
     /// is a hard abort (item 4 reconstitution rule).
-    #[error("cline runtime: replay frames unavailable for recording_id={recording_id} (role={role}): {source}")]
+    #[error(
+        "cline runtime: replay frames unavailable for recording_id={recording_id} (role={role}): {source}"
+    )]
     ReplayFramesUnavailable {
         recording_id: String,
         role: String,
@@ -373,11 +379,7 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     // The recorded frames are validated for sufficiency here (item 4
     // bounds) before they go over the wire — a recording that has no
     // frames for this slot/step is corrupt and aborts the cycle.
-    if let TrajectoryMode::Replay {
-        recording_id,
-        store,
-    } = &input.trajectory_mode
-    {
+    if let TrajectoryMode::Replay { recording_id, store } = &input.trajectory_mode {
         load_replay_frames(&input, &role, recording_id, store).await?;
     }
 
@@ -418,11 +420,7 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     // one as a belt-and-suspenders divergence gate so a "replay model
     // yields recorded frame, therefore matches itself" false-green cannot
     // slip through.
-    if let TrajectoryMode::Replay {
-        recording_id,
-        store,
-    } = &input.trajectory_mode
-    {
+    if let TrajectoryMode::Replay { recording_id, store } = &input.trajectory_mode {
         check_replay_outcome(&role, recording_id, store, &step).await?;
     }
 
@@ -493,14 +491,13 @@ async fn load_replay_frames(
     // Step 0 holds the slot's first model call. Multi-step slots address
     // later steps by step_index; v1 replay drives one step (matching the
     // single-step live path in this executor).
-    let frames = store
-        .read_frames(recording_id, role, 0)
-        .await
-        .map_err(|source| ClineRuntimeError::ReplayFramesUnavailable {
+    let frames = store.read_frames(recording_id, role, 0).await.map_err(|source| {
+        ClineRuntimeError::ReplayFramesUnavailable {
             recording_id: recording_id.to_string(),
             role: role.to_string(),
             source,
-        })?;
+        }
+    })?;
 
     if frames.is_empty() {
         // No frames for this slot/step — bounded feed has nothing to
@@ -575,9 +572,7 @@ async fn check_replay_outcome(
             .into());
         }
         if reason == STEP_ERR_REPLAY_DIVERGENCE {
-            let _ = store
-                .mark_corrupt(recording_id, RECOVERY_REPLAY_DIVERGENCE)
-                .await;
+            let _ = store.mark_corrupt(recording_id, RECOVERY_REPLAY_DIVERGENCE).await;
             return Err(ClineRuntimeError::ReplayDivergence {
                 recording_id: recording_id.to_string(),
                 slot: role.to_string(),
@@ -603,9 +598,7 @@ async fn check_replay_outcome(
                 Err(_) => return Ok(()),
             };
             if recorded != replayed_val {
-                let _ = store
-                    .mark_corrupt(recording_id, RECOVERY_REPLAY_DIVERGENCE)
-                    .await;
+                let _ = store.mark_corrupt(recording_id, RECOVERY_REPLAY_DIVERGENCE).await;
                 return Err(ClineRuntimeError::ReplayDivergence {
                     recording_id: recording_id.to_string(),
                     slot: role.to_string(),
@@ -726,7 +719,10 @@ mod tests {
 
         let from_extra = plus(vec!["indicators.rsi".into()]);
         assert_eq!(from_extra.len(), 2);
-        assert_eq!(from_extra.iter().filter(|t| *t == SUBMIT_DECISION_TOOL).count(), 1);
+        assert_eq!(
+            from_extra.iter().filter(|t| *t == SUBMIT_DECISION_TOOL).count(),
+            1
+        );
 
         let already = plus(vec![SUBMIT_DECISION_TOOL.into()]);
         assert_eq!(already.iter().filter(|t| *t == SUBMIT_DECISION_TOOL).count(), 1);

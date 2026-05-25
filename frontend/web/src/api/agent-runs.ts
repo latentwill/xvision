@@ -26,6 +26,7 @@ import {
 import { useTraceDock } from "@/stores/trace-dock";
 import type {
   AgentRunDetail,
+  AgentRunMemoryEventsResponse,
   AgentRunStreamEvent,
   AgentRunSummary,
   RetentionMode,
@@ -491,6 +492,14 @@ export async function getAgentRun(id: string): Promise<AgentRunDetail> {
   return validateAgentRunDetail(payload);
 }
 
+export async function getAgentRunMemoryEvents(
+  id: string,
+): Promise<AgentRunMemoryEventsResponse> {
+  return apiFetch<AgentRunMemoryEventsResponse>(
+    `/api/agent-runs/${encodeURIComponent(id)}/memory-events`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // SSE
 // ---------------------------------------------------------------------------
@@ -553,6 +562,8 @@ const REAL_SSE_EVENTS = [
   "supervisor_note",
   "artifact_written",
   "backpressure_dropped",
+  "memory_recall",
+  "memory_write",
   "lagged",
 ] as const;
 type RealSseEventName = (typeof REAL_SSE_EVENTS)[number];

@@ -16,8 +16,7 @@ use sha2::{Digest, Sha256};
 use xvision_engine::chat_session::ContextScope;
 use xvision_observability::types::{RiskLevel, SideEffectLevel, ToolOrigin};
 use xvision_observability::{
-    Actor, EventScope, EventSource, ToolCallFinishedEvent, ToolCallStartedEvent, UnifiedEvent,
-    UnifiedPayload,
+    Actor, EventScope, EventSource, ToolCallFinishedEvent, ToolCallStartedEvent, UnifiedEvent, UnifiedPayload,
 };
 
 use crate::wizard_loop::WizardEvent;
@@ -35,9 +34,7 @@ pub fn scope_to_event_scope(scope: &ContextScope) -> EventScope {
             EventScope::new("deployment", Some(deployment_id.clone()))
         }
         ContextScope::Compare { run_ids } => EventScope::new("compare", Some(run_ids.join(","))),
-        ContextScope::JournalFilter { kinds } => {
-            EventScope::new("journal_filter", Some(kinds.join(",")))
-        }
+        ContextScope::JournalFilter { kinds } => EventScope::new("journal_filter", Some(kinds.join(","))),
         ContextScope::Selection { items } => EventScope::new("selection", Some(items.join(","))),
         ContextScope::Seed { seed_id } => EventScope::new("seed", Some(seed_id.clone())),
     }
@@ -136,15 +133,17 @@ impl WizardEventProjector {
         mut span_minter: impl FnMut() -> String,
     ) -> UnifiedEvent {
         let (actor, span_id, payload) = match ev {
-            WizardEvent::Token { text } => {
-                (Actor::Agent, None, UnifiedPayload::AssistantTokenDelta { text })
-            }
-            WizardEvent::ContentBlock { block } => {
-                (Actor::Agent, None, UnifiedPayload::AssistantContentBlock { block })
-            }
-            WizardEvent::Done { draft_id } => {
-                (Actor::Agent, None, UnifiedPayload::AssistantMessageDone { draft_id })
-            }
+            WizardEvent::Token { text } => (Actor::Agent, None, UnifiedPayload::AssistantTokenDelta { text }),
+            WizardEvent::ContentBlock { block } => (
+                Actor::Agent,
+                None,
+                UnifiedPayload::AssistantContentBlock { block },
+            ),
+            WizardEvent::Done { draft_id } => (
+                Actor::Agent,
+                None,
+                UnifiedPayload::AssistantMessageDone { draft_id },
+            ),
             WizardEvent::Error { message } => {
                 (Actor::System, None, UnifiedPayload::SessionFailed { message })
             }
@@ -219,16 +218,22 @@ mod tests {
     use serde_json::json;
 
     fn ts() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-05-24T12:00:00Z").unwrap().with_timezone(&Utc)
+        DateTime::parse_from_rfc3339("2026-05-24T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     #[test]
     fn scope_flattens_all_variants() {
         assert_eq!(scope_to_event_scope(&ContextScope::Workspace).kind, "workspace");
-        let s = scope_to_event_scope(&ContextScope::Strategy { draft_id: "abc".into() });
+        let s = scope_to_event_scope(&ContextScope::Strategy {
+            draft_id: "abc".into(),
+        });
         assert_eq!(s.kind, "strategy");
         assert_eq!(s.id.as_deref(), Some("abc"));
-        let c = scope_to_event_scope(&ContextScope::Compare { run_ids: vec!["r1".into(), "r2".into()] });
+        let c = scope_to_event_scope(&ContextScope::Compare {
+            run_ids: vec!["r1".into(), "r2".into()],
+        });
         assert_eq!(c.id.as_deref(), Some("r1,r2"));
     }
 
@@ -243,7 +248,9 @@ mod tests {
         let e0 = p.project("e0", WizardEvent::Token { text: "hi".into() }, ts(), &mut mint);
         let e1 = p.project(
             "e1",
-            WizardEvent::Done { draft_id: Some("strat_1".into()) },
+            WizardEvent::Done {
+                draft_id: Some("strat_1".into()),
+            },
             ts(),
             &mut mint,
         );
@@ -264,7 +271,10 @@ mod tests {
         };
         let call = p.project(
             "e0",
-            WizardEvent::ToolCall { tool: "create_strategy".into(), args: json!({"name": "x"}) },
+            WizardEvent::ToolCall {
+                tool: "create_strategy".into(),
+                args: json!({"name": "x"}),
+            },
             ts(),
             &mut mint,
         );
@@ -295,7 +305,14 @@ mod tests {
         // A prior turn persisted events 0..=4; the next turn's projector is
         // seeded with next_seq = 5 so the unified sequence is gap-free.
         let mut p = WizardEventProjector::new_seeded("sess_seed", &ContextScope::Workspace, 5);
-        let e0 = p.project("e0", WizardEvent::Token { text: "resume".into() }, ts(), || "sp".into());
+        let e0 = p.project(
+            "e0",
+            WizardEvent::Token {
+                text: "resume".into(),
+            },
+            ts(),
+            || "sp".into(),
+        );
         let e1 = p.project("e1", WizardEvent::Done { draft_id: None }, ts(), || "sp".into());
         assert_eq!(e0.seq, 5);
         assert_eq!(e1.seq, 6);
@@ -306,7 +323,9 @@ mod tests {
         let mut p = WizardEventProjector::new("sess_3", &ContextScope::Workspace);
         let ev = p.project(
             "e0",
-            WizardEvent::Error { message: "loop cap hit".into() },
+            WizardEvent::Error {
+                message: "loop cap hit".into(),
+            },
             ts(),
             || "sp".into(),
         );

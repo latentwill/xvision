@@ -124,6 +124,8 @@ async fn execute_slot_caps_runaway_tool_use_loop() {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         scenario_start: None,
+        source_window_start: None,
+        source_window_end: None,
         run_id: String::new(),
         scenario_id: String::new(),
         cycle_idx: 0,

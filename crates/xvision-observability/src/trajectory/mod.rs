@@ -17,9 +17,7 @@ pub mod frame;
 pub mod key;
 pub mod store;
 
-pub use channel::{
-    ChannelStatus, FrameChannel, FrameReceiver, FrameSender, DEFAULT_FRAME_CHANNEL_CAPACITY,
-};
+pub use channel::{ChannelStatus, FrameChannel, FrameReceiver, FrameSender, DEFAULT_FRAME_CHANNEL_CAPACITY};
 pub use frame::TrajectoryFrame;
 pub use key::{RecordingId, TrajectoryKey, TrajectoryKeyBuilder, TRAJECTORY_SCHEMA_VERSION};
 pub use store::{

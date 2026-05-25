@@ -322,11 +322,7 @@ impl OptimizationStore {
     }
 
     /// Insert a candidate row under a run.
-    pub async fn add_candidate(
-        &self,
-        run_id: &str,
-        req: NewCandidate,
-    ) -> ApiResult<OptimizationCandidate> {
+    pub async fn add_candidate(&self, run_id: &str, req: NewCandidate) -> ApiResult<OptimizationCandidate> {
         let id = Ulid::new().to_string();
         sqlx::query(
             "INSERT INTO optimization_candidates \
@@ -357,11 +353,7 @@ impl OptimizationStore {
 
     /// Mark exactly one candidate (by index) as the run's selected winner,
     /// clearing the flag on all others under the same run.
-    pub async fn mark_candidate_selected(
-        &self,
-        run_id: &str,
-        candidate_index: i64,
-    ) -> ApiResult<()> {
+    pub async fn mark_candidate_selected(&self, run_id: &str, candidate_index: i64) -> ApiResult<()> {
         sqlx::query("UPDATE optimization_candidates SET selected = 0 WHERE run_id = ?")
             .bind(run_id)
             .execute(&self.pool)
@@ -423,11 +415,7 @@ impl OptimizationStore {
     }
 
     /// Insert a snapshot row under a run.
-    pub async fn add_snapshot(
-        &self,
-        run_id: &str,
-        req: NewSnapshot,
-    ) -> ApiResult<OptimizationSnapshotRow> {
+    pub async fn add_snapshot(&self, run_id: &str, req: NewSnapshot) -> ApiResult<OptimizationSnapshotRow> {
         let created_at = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO optimization_snapshots \
@@ -518,18 +506,15 @@ impl OptimizationStore {
                 optimization_run_id: optimization_run_id.to_string(),
                 created_at,
             }),
-            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => Err(ApiError::Conflict(
-                format!("agent_lineage child_agent_id {child_agent_id} already recorded"),
-            )),
+            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => Err(ApiError::Conflict(format!(
+                "agent_lineage child_agent_id {child_agent_id} already recorded"
+            ))),
             Err(e) => Err(e.into()),
         }
     }
 
     /// Fetch the lineage edge for a child agent, if any.
-    pub async fn get_lineage_for_child(
-        &self,
-        child_agent_id: &str,
-    ) -> ApiResult<Option<LineageEdge>> {
+    pub async fn get_lineage_for_child(&self, child_agent_id: &str) -> ApiResult<Option<LineageEdge>> {
         let row: Option<LineageRow> = sqlx::query_as(
             "SELECT child_agent_id, parent_agent_id, optimization_run_id, created_at \
              FROM agent_lineage WHERE child_agent_id = ?",

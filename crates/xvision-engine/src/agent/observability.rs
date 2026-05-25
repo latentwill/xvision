@@ -28,8 +28,8 @@ use crate::eval::cost::compute_token_cost_usd_from_catalog;
 use xvision_core::providers::Catalog;
 use xvision_observability::{
     AssistantTextDeltaEvent, BlobStore, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
-    BrokerSide, EngineEvent, MemoryRecallEvent, MemoryRecallItem, ModelCallFinishedEvent, Redactor,
-    RetentionMode, RiskLevel, RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent, RunStatus,
+    BrokerSide, EngineEvent, MemoryRecallEvent, MemoryRecallItem, MemoryWriteEvent, ModelCallFinishedEvent,
+    Redactor, RetentionMode, RiskLevel, RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent, RunStatus,
     SideEffectLevel, SpanAttributes, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
     SupervisorNoteEvent, ToolCallFailedEvent, ToolCallFinishedEvent, ToolCallStartedEvent, ToolOrigin,
 };
@@ -1199,9 +1199,29 @@ impl ObsEmitter {
         self.bus
             .publish(RunEvent::MemoryRecall(MemoryRecallEvent {
                 run_id: self.run_id.clone(),
+                flywheel_cycle_id: Some(format!("{}:{decision_id}", self.run_id)),
                 decision_id,
                 namespace: namespace.to_string(),
                 items,
+            }))
+            .await;
+    }
+
+    pub async fn emit_memory_write(
+        &self,
+        decision_id: i64,
+        namespace: &str,
+        memory_item_id: &str,
+        text: &str,
+    ) {
+        self.bus
+            .publish(RunEvent::MemoryWrite(MemoryWriteEvent {
+                run_id: self.run_id.clone(),
+                flywheel_cycle_id: Some(format!("{}:{decision_id}", self.run_id)),
+                decision_id,
+                namespace: namespace.to_string(),
+                memory_item_id: memory_item_id.to_string(),
+                text_preview: preview_text(text),
             }))
             .await;
     }

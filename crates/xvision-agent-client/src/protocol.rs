@@ -339,9 +339,15 @@ mod tests {
         let with = serde_json::to_value(&base).unwrap();
         assert!(with.get("decision_schema").is_some());
 
-        let without = StartRunParams { decision_schema: None, ..base };
+        let without = StartRunParams {
+            decision_schema: None,
+            ..base
+        };
         let v = serde_json::to_value(&without).unwrap();
-        assert!(v.get("decision_schema").is_none(), "None must be skipped on the wire");
+        assert!(
+            v.get("decision_schema").is_none(),
+            "None must be skipped on the wire"
+        );
     }
 
     #[test]
@@ -366,8 +372,14 @@ mod tests {
         // Default false: omitted from the wire so existing sidecars/tests
         // see exactly the pre-record shape.
         let off = serde_json::to_value(&base).unwrap();
-        assert!(off.get("record").is_none(), "record=false must be skipped on the wire");
-        assert!(off.get("slot_role").is_none(), "slot_role=None must be skipped on the wire");
+        assert!(
+            off.get("record").is_none(),
+            "record=false must be skipped on the wire"
+        );
+        assert!(
+            off.get("slot_role").is_none(),
+            "slot_role=None must be skipped on the wire"
+        );
 
         // Recording on: the field is present and true; slot_role rides along
         // exactly as the engine sets it.
@@ -378,7 +390,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(on.get("record"), Some(&serde_json::Value::Bool(true)));
-        assert_eq!(on.get("slot_role"), Some(&serde_json::Value::String("trader".into())));
+        assert_eq!(
+            on.get("slot_role"),
+            Some(&serde_json::Value::String("trader".into()))
+        );
     }
 
     #[test]

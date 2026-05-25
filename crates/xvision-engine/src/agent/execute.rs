@@ -134,6 +134,11 @@ pub struct SlotInput<'a> {
     /// the safe default for live/paper mode (no replay risk) and for
     /// every non-eval call site (unit tests, legacy `LLMSlot` pipeline).
     pub scenario_start: Option<chrono::DateTime<chrono::Utc>>,
+    /// Market-data window that contributed to this slot's briefing.
+    /// Persisted on Observation writes so autoresearcher can compute
+    /// Pattern `training_window_end` from source data.
+    pub source_window_start: Option<chrono::DateTime<chrono::Utc>>,
+    pub source_window_end: Option<chrono::DateTime<chrono::Utc>>,
     /// V2D Phase 1.5 — current run id. Plumbed into Observation
     /// provenance on write. Empty string when memory is off / the
     /// slot has no associated run (the recorder will no-op).
@@ -582,6 +587,48 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             // namespace. No-op when memory is None / Off / no embedder.
             if let Some(recorder) = &input.memory {
                 if !assistant_text.is_empty() {
+                    let ns = Namespace::for_mode(input.memory_mode, &input.agent_id);
+                    let source_window = match (input.source_window_start, input.source_window_end) {
+                        (Some(start), Some(end)) => Some((start, end)),
+                        _ if ns.is_active() => {
+                            let payload = serde_json::json!({
+                                "run_id": input.run_id.clone(),
+                                "flywheel_cycle_id": format!("{}:{}", input.run_id, input.cycle_idx),
+                                "decision_id": input.cycle_idx,
+                                "namespace": ns.as_str(),
+                                "agent_id": input.agent_id.clone(),
+                                "scenario_id": input.scenario_id.clone(),
+                                "missing_source_window_start": input.source_window_start.is_none(),
+                                "missing_source_window_end": input.source_window_end.is_none(),
+                            });
+                            if let Some(obs) = input.obs.as_ref() {
+                                obs.emit_engine_event(
+                                    "memory_write_missing_source_window",
+                                    None,
+                                    Some(payload.to_string()),
+                                )
+                                .await;
+                            }
+                            tracing::warn!(
+                                event = "memory_write_missing_source_window",
+                                namespace = %ns.as_str(),
+                                run_id = %input.run_id,
+                                scenario_id = %input.scenario_id,
+                                cycle_idx = input.cycle_idx,
+                                "V2D memory write skipped because source_window_start/source_window_end were not both supplied",
+                            );
+                            None
+                        }
+                        _ => None,
+                    };
+                    let Some((source_window_start, source_window_end)) = source_window else {
+                        return Ok(LlmResponse {
+                            content: resp.content,
+                            stop_reason: resp.stop_reason,
+                            input_tokens: total_input_tokens,
+                            output_tokens: total_output_tokens,
+                        });
+                    };
                     match recorder
                         .record(
                             input.memory_mode,
@@ -590,11 +637,16 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                             input.run_id.clone(),
                             input.scenario_id.clone(),
                             input.cycle_idx,
+                            source_window_start,
+                            source_window_end,
                         )
                         .await
                     {
                         Ok(Some(id)) => {
-                            let ns = Namespace::for_mode(input.memory_mode, &input.agent_id);
+                            if let Some(obs) = input.obs.as_ref() {
+                                obs.emit_memory_write(input.cycle_idx, ns.as_str(), &id, &assistant_text)
+                                    .await;
+                            }
                             tracing::info!(
                                 event = "memory_write",
                                 namespace = %ns.as_str(),
@@ -1061,6 +1113,8 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             scenario_start: None,
+            source_window_start: None,
+            source_window_end: None,
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
@@ -1120,6 +1174,8 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             scenario_start: None,
+            source_window_start: None,
+            source_window_end: None,
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,

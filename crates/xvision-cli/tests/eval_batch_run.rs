@@ -597,7 +597,12 @@ async fn review_with_skips_review_for_failed_run() {
     let tools = Arc::new(ToolRegistry::empty());
     let rev_dispatch = review_dispatch();
 
-    let mut req = batch_request(strategy_id, vec!["does-not-exist-scenario".into()], dispatch, tools);
+    let mut req = batch_request(
+        strategy_id,
+        vec!["does-not-exist-scenario".into()],
+        dispatch,
+        tools,
+    );
     req.review_with = Some("reasoning-agent".into());
     req.review_dispatch = Some(rev_dispatch);
 

@@ -35,15 +35,9 @@ pub enum TrajectoryFrame {
         system_prompt: Option<String>,
     },
     /// A streamed text token from the model.
-    TextDelta {
-        ts_ms: u64,
-        text: String,
-    },
+    TextDelta { ts_ms: u64, text: String },
     /// A streamed reasoning/thinking token (extended thinking models).
-    ReasoningDelta {
-        ts_ms: u64,
-        text: String,
-    },
+    ReasoningDelta { ts_ms: u64, text: String },
     /// A streamed tool-call delta (may arrive in multiple chunks).
     ToolCallDelta {
         ts_ms: u64,
@@ -70,10 +64,7 @@ pub enum TrajectoryFrame {
     /// A retry or cancel decision made by the harness (item 1 — required for
     /// replay determinism: the replayer must know that a retry happened so it
     /// can re-issue rather than using the cached response).
-    RetryOrCancel {
-        ts_ms: u64,
-        reason: String,
-    },
+    RetryOrCancel { ts_ms: u64, reason: String },
     /// The model call is done (either normally or with an error).
     Finish {
         ts_ms: u64,

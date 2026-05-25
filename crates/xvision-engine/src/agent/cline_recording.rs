@@ -82,12 +82,7 @@ pub async fn open_store(
 /// `begin_recording` dedup is on the key fingerprint). `slot_role` is the
 /// primary recorded slot's role — the SAME value the dispatcher stamps on
 /// `StartRunParams.slot_role` (footgun c coupling).
-pub fn build_key(
-    run_id: &str,
-    slot_role: &str,
-    provider: &str,
-    model: &str,
-) -> TrajectoryKey {
+pub fn build_key(run_id: &str, slot_role: &str, provider: &str, model: &str) -> TrajectoryKey {
     TrajectoryKey::builder()
         .cycle_id(cycle_id_for_run(run_id))
         .slot_role(slot_role)
@@ -115,18 +110,14 @@ pub fn cycle_id_for_run(run_id: &str) -> Uuid {
     // UUID v5 (SHA-1, name-based) is deterministic. Namespace is an
     // arbitrary fixed UUID for the xvision trajectory domain.
     const NS: Uuid = Uuid::from_bytes([
-        0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
-        0xc8,
+        0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
     ]);
     Uuid::new_v5(&NS, run_id.as_bytes())
 }
 
 /// Begin a recording for `key`, returning the [`RecordingId`]. Thin wrapper
 /// so the eval path imports one module.
-pub async fn begin(
-    store: &TrajectoryStore,
-    key: &TrajectoryKey,
-) -> Result<RecordingId, StoreError> {
+pub async fn begin(store: &TrajectoryStore, key: &TrajectoryKey) -> Result<RecordingId, StoreError> {
     store.begin_recording(key).await
 }
 

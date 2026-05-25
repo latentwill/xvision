@@ -243,7 +243,11 @@ async fn replay_is_byte_identical_across_reruns_with_no_live_call() {
     .expect("replay #2 must succeed");
 
     // BYTE-IDENTICAL: same decision text and same token counts.
-    assert_eq!(r1.text(), r2.text(), "replayed decision text must be byte-identical");
+    assert_eq!(
+        r1.text(),
+        r2.text(),
+        "replayed decision text must be byte-identical"
+    );
     assert_eq!(r1.input_tokens, r2.input_tokens);
     assert_eq!(r1.output_tokens, r2.output_tokens);
 
@@ -292,8 +296,14 @@ async fn replay_frame_exhaustion_marks_corrupt_and_fails() {
 
     // The recording is marked corrupt with the matching recovery_reason.
     let rec = store.get_recording(rid.as_str()).await.unwrap();
-    assert_eq!(rec.status, xvision_observability::trajectory::store::STATUS_CORRUPT);
-    assert_eq!(rec.recovery_reason.as_deref(), Some(RECOVERY_REPLAY_FRAMES_EXHAUSTED));
+    assert_eq!(
+        rec.status,
+        xvision_observability::trajectory::store::STATUS_CORRUPT
+    );
+    assert_eq!(
+        rec.recovery_reason.as_deref(),
+        Some(RECOVERY_REPLAY_FRAMES_EXHAUSTED)
+    );
 
     Arc::try_unwrap(client).ok().unwrap().shutdown().await.unwrap();
 }
@@ -367,10 +377,16 @@ async fn replay_divergence_marks_corrupt_and_reports_point() {
     .expect_err("divergence must fail the cycle");
     let msg = format!("{err:#}");
     assert!(msg.contains("divergence"), "got: {msg}");
-    assert!(msg.contains("trader"), "divergence must name the slot; got: {msg}");
+    assert!(
+        msg.contains("trader"),
+        "divergence must name the slot; got: {msg}"
+    );
 
     let rec = store.get_recording(rid.as_str()).await.unwrap();
-    assert_eq!(rec.status, xvision_observability::trajectory::store::STATUS_CORRUPT);
+    assert_eq!(
+        rec.status,
+        xvision_observability::trajectory::store::STATUS_CORRUPT
+    );
     assert_eq!(rec.recovery_reason.as_deref(), Some(RECOVERY_REPLAY_DIVERGENCE));
 
     Arc::try_unwrap(client).ok().unwrap().shutdown().await.unwrap();
@@ -423,7 +439,10 @@ async fn replay_decision_mismatch_is_rust_side_divergence() {
 
     // The recording stays complete (not corrupt) on a clean replay.
     let rec = store.get_recording(rid.as_str()).await.unwrap();
-    assert_eq!(rec.status, xvision_observability::trajectory::store::STATUS_COMPLETE);
+    assert_eq!(
+        rec.status,
+        xvision_observability::trajectory::store::STATUS_COMPLETE
+    );
 
     Arc::try_unwrap(client).ok().unwrap().shutdown().await.unwrap();
 }

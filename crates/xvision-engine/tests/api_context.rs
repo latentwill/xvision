@@ -103,6 +103,16 @@ async fn api_context_open_creates_db_and_runs_migrations() {
         .await
         .expect("eval_runs must exist (migration 002)");
     assert_eq!(count.0, 0);
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_slot_optimizations")
+        .fetch_one(&ctx.db)
+        .await
+        .expect("agent_slot_optimizations must exist (migration 039)");
+    assert_eq!(count.0, 0);
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pattern_optimizations")
+        .fetch_one(&ctx.db)
+        .await
+        .expect("pattern_optimizations must exist (migration 040)");
+    assert_eq!(count.0, 0);
 }
 
 #[tokio::test]

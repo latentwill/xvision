@@ -11,6 +11,7 @@ pub mod diagnostics;
 pub mod docs;
 pub mod eval;
 pub mod eval_runs;
+pub mod flywheel;
 pub mod focus;
 pub mod health;
 pub mod memory;

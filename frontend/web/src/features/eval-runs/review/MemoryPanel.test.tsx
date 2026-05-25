@@ -76,6 +76,23 @@ describe("MemoryPanel (V2D)", () => {
     expect(screen.getByText(/decided to hold/)).toBeInTheDocument();
   });
 
+  it("renders persisted memory_write events that use memory_item_id", () => {
+    renderPanel([
+      {
+        kind: "memory_write",
+        payload: {
+          namespace: "agent:01HZTEST",
+          memory_item_id: "persisted-write-1",
+          text_preview: "persisted observation text",
+        },
+      },
+    ]);
+
+    expect(screen.getByText(/agent:01HZTEST/)).toBeInTheDocument();
+    expect(screen.getByText(/persisted-write-1/)).toBeInTheDocument();
+    expect(screen.getByText(/persisted observation text/)).toBeInTheDocument();
+  });
+
   it("renders an amber warning row when memory_disabled_no_embedder is present", () => {
     const evt = {
       kind: "memory_disabled_no_embedder",

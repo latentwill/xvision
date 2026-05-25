@@ -13,9 +13,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use xvision_observability::{
-    ArtifactWrittenEvent, EventScope, UnifiedEvent, UnifiedPayload,
-};
+use xvision_observability::{ArtifactWrittenEvent, EventScope, UnifiedEvent, UnifiedPayload};
 
 use super::hook::{Hook, HookError, HookOutcome};
 
@@ -91,7 +89,10 @@ pub struct DenyOnPolicyHook {
 
 impl DenyOnPolicyHook {
     pub fn new(id: impl Into<String>, predicate: DenyPredicate) -> Self {
-        Self { id: id.into(), predicate }
+        Self {
+            id: id.into(),
+            predicate,
+        }
     }
 
     /// Convenience: deny every event whose `event_name()` is in `deny_kinds`.

@@ -231,10 +231,7 @@ async fn await_frames(
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    store
-        .read_frames(rid, SLOT_ROLE, 0)
-        .await
-        .unwrap_or_default()
+    store.read_frames(rid, SLOT_ROLE, 0).await.unwrap_or_default()
 }
 
 #[tokio::test]
@@ -275,9 +272,7 @@ async fn built_sidecar_records_real_emit_frames_then_replays_from_store() {
     // slot in record mode; the real emit.ts/frame-recorder.ts path emits frames
     // on the event socket; assert they persist into the store (NO seeding).
     let sidecar_dir = TempDir::new().unwrap();
-    let client = Arc::new(
-        spawn_recording_client(&bin, &sidecar_dir, store.clone(), rid.clone()).await,
-    );
+    let client = Arc::new(spawn_recording_client(&bin, &sidecar_dir, store.clone(), rid.clone()).await);
     let slot = slot();
     let entry = entry();
 
@@ -357,7 +352,11 @@ async fn built_sidecar_records_real_emit_frames_then_replays_from_store() {
         frames.iter().map(|f| f.kind_str()).collect::<Vec<_>>()
     );
     let kinds: Vec<&str> = frames.iter().map(|f| f.kind_str()).collect();
-    assert_eq!(kinds.first().copied(), Some("Request"), "first frame is the Request");
+    assert_eq!(
+        kinds.first().copied(),
+        Some("Request"),
+        "first frame is the Request"
+    );
     assert!(
         kinds.contains(&"ToolCallDelta"),
         "the submit_decision tool call was recorded as a ToolCallDelta; got {kinds:?}"
@@ -416,14 +415,9 @@ async fn built_sidecar_records_real_emit_frames_then_replays_from_store() {
         }
     }
     let replay_client = Arc::new(
-        AgentClient::spawn_with_callbacks(
-            &bin,
-            &replay_sock,
-            &replay_cb,
-            Arc::new(NoTools),
-        )
-        .await
-        .expect("spawn BUILT replay sidecar"),
+        AgentClient::spawn_with_callbacks(&bin, &replay_sock, &replay_cb, Arc::new(NoTools))
+            .await
+            .expect("spawn BUILT replay sidecar"),
     );
 
     let replayed = execute_slot_cline(replay_input(

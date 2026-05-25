@@ -5,6 +5,12 @@
 > This note is the source for Phase 1.5 (tier split + scaffolding) and
 > Phase 6 (operator-facing docs).
 
+Attribution: this tier design is aligned with
+[gambletan/cortex](https://github.com/gambletan/cortex), an MIT-licensed
+persistent memory engine. xvision uses the operator-facing
+Observation/Pattern names and adds trading-specific F+L+T leakage protection
+around that substrate.
+
 ## Problem statement
 
 V2D as originally decomposed (`team/intake/2026-05-21-v2d-agent-memory.md`)

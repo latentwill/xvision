@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use crate::errors::{AgentClientError, Result};
 use crate::event_sink::{
-    start_event_sink, EventSinkHandle, SidecarFingerprint, TrajectoryFramePersister,
-    TrajectoryFrameSink,
+    start_event_sink, EventSinkHandle, SidecarFingerprint, TrajectoryFramePersister, TrajectoryFrameSink,
 };
 use crate::protocol::{
     EndRunParams, EndRunResult, ReplayLoadParams, ReplayLoadResult, RuntimeHealthResult, StartRunParams,
@@ -233,8 +232,10 @@ impl AgentClient {
         // complete-vs-corrupt.
         let mut recording_persister: Option<Arc<TrajectoryFramePersister>> = None;
         let frame_sink = recording.map(|(store, recording_id)| {
-            let persister =
-                Arc::new(TrajectoryFramePersister::spawn(recording_id, DEFAULT_FRAME_CHANNEL_CAPACITY));
+            let persister = Arc::new(TrajectoryFramePersister::spawn(
+                recording_id,
+                DEFAULT_FRAME_CHANNEL_CAPACITY,
+            ));
             recording_persister = Some(persister.clone());
             TrajectoryFrameSink::new(store, persister)
         });
@@ -247,21 +248,15 @@ impl AgentClient {
         // connection errors).
         // Start with an empty fingerprint; populated after handshake.
         let initial_fp = SidecarFingerprint::default();
-        let event_sink = match start_event_sink(
-            event_socket_path,
-            bus.clone(),
-            initial_fp,
-            frame_sink.clone(),
-        )
-        .await
-        {
-            Ok(h) => h,
-            Err(e) => {
-                callback_handle.abort();
-                let _ = std::fs::remove_file(callback_socket_path);
-                return Err(AgentClientError::from(e));
-            }
-        };
+        let event_sink =
+            match start_event_sink(event_socket_path, bus.clone(), initial_fp, frame_sink.clone()).await {
+                Ok(h) => h,
+                Err(e) => {
+                    callback_handle.abort();
+                    let _ = std::fs::remove_file(callback_socket_path);
+                    return Err(AgentClientError::from(e));
+                }
+            };
 
         let supervisor = match Supervisor::spawn(
             bin,

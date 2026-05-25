@@ -230,9 +230,7 @@ async fn build_scenario_payload_uses_requested_granularity_cache_key() {
 async fn build_scenario_payload_defaults_to_btc_preview_asset() {
     use xvision_engine::api::chart::build_scenario_payload;
     let ctx = test_ctx().await;
-    let payload = build_scenario_payload(&ctx, "crypto-bull-q1-2025")
-        .await
-        .unwrap();
+    let payload = build_scenario_payload(&ctx, "crypto-bull-q1-2025").await.unwrap();
     assert_eq!(
         payload.preview_asset, "BTC",
         "default preview asset must be BTC when no asset is requested"
@@ -265,10 +263,9 @@ async fn build_scenario_payload_uses_requested_asset_cache_key() {
     );
     assert_ne!(btc_key, eth_key, "sanity: ETH and BTC cache keys differ");
 
-    let payload =
-        build_scenario_payload_with_granularity(&ctx, &scenario.id, None, Some("ETH/USD"))
-            .await
-            .unwrap();
+    let payload = build_scenario_payload_with_granularity(&ctx, &scenario.id, None, Some("ETH/USD"))
+        .await
+        .unwrap();
 
     assert_eq!(payload.preview_asset, "ETH");
     assert_eq!(
@@ -287,14 +284,9 @@ async fn build_scenario_payload_uses_requested_asset_cache_key() {
 async fn build_scenario_payload_rejects_unknown_asset() {
     use xvision_engine::api::chart::build_scenario_payload_with_granularity;
     let ctx = test_ctx().await;
-    let err = build_scenario_payload_with_granularity(
-        &ctx,
-        "crypto-bull-q1-2025",
-        None,
-        Some("NOTACOIN"),
-    )
-    .await
-    .unwrap_err();
+    let err = build_scenario_payload_with_granularity(&ctx, "crypto-bull-q1-2025", None, Some("NOTACOIN"))
+        .await
+        .unwrap_err();
     assert!(
         matches!(err, xvision_engine::api::ApiError::Validation(_)),
         "expected Validation for unknown asset, got: {err:?}"

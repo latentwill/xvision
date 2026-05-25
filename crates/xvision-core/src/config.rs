@@ -982,8 +982,14 @@ rate_limit_rpm = 600
         assert_eq!(AgentRuntime::from_str("cline").unwrap(), AgentRuntime::Cline);
         // LlmDispatch remains a valid, reachable flag value (the fallback per
         // runtime-unification invariant 6) even after the default flipped.
-        assert_eq!(AgentRuntime::from_str("llm-dispatch").unwrap(), AgentRuntime::LlmDispatch);
-        assert_eq!(AgentRuntime::from_str("llm_dispatch").unwrap(), AgentRuntime::LlmDispatch);
+        assert_eq!(
+            AgentRuntime::from_str("llm-dispatch").unwrap(),
+            AgentRuntime::LlmDispatch
+        );
+        assert_eq!(
+            AgentRuntime::from_str("llm_dispatch").unwrap(),
+            AgentRuntime::LlmDispatch
+        );
         assert!(AgentRuntime::from_str("bogus").is_err());
     }
 

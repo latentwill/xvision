@@ -24,7 +24,9 @@ impl HookDecision {
     }
 
     pub fn deny(reason: impl Into<String>) -> Self {
-        HookDecision::Deny { reason: reason.into() }
+        HookDecision::Deny {
+            reason: reason.into(),
+        }
     }
 }
 
@@ -44,12 +46,18 @@ pub struct HookOutcome {
 impl HookOutcome {
     /// An allow with no emitted events.
     pub fn allow() -> Self {
-        Self { decision: Some(HookDecision::Allow), events: Vec::new() }
+        Self {
+            decision: Some(HookDecision::Allow),
+            events: Vec::new(),
+        }
     }
 
     /// A deny with the given reason.
     pub fn deny(reason: impl Into<String>) -> Self {
-        Self { decision: Some(HookDecision::deny(reason)), events: Vec::new() }
+        Self {
+            decision: Some(HookDecision::deny(reason)),
+            events: Vec::new(),
+        }
     }
 
     /// Attach an event to surface alongside this outcome.

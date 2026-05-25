@@ -9,10 +9,10 @@
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use uuid::Uuid;
-use xvision_observability::{BlobStore, RetentionMode};
 use xvision_observability::trajectory::frame::TrajectoryFrame;
 use xvision_observability::trajectory::key::{TrajectoryKey, TRAJECTORY_SCHEMA_VERSION};
 use xvision_observability::trajectory::store::TrajectoryStore;
+use xvision_observability::{BlobStore, RetentionMode};
 
 async fn make_store(tmp: &TempDir) -> TrajectoryStore {
     let db_path = tmp.path().join("recon.db");
@@ -175,7 +175,9 @@ async fn full_reconstruction_multi_slot_multi_step() {
     // --- Validate all recordings pass ---
     for slot in &slots {
         let rid = &recording_ids[*slot];
-        store.validate(rid.as_str()).await
+        store
+            .validate(rid.as_str())
+            .await
             .unwrap_or_else(|e| panic!("validate failed for slot '{slot}': {e}"));
     }
 

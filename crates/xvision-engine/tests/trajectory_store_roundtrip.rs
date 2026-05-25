@@ -8,10 +8,10 @@
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use uuid::Uuid;
-use xvision_observability::{BlobStore, RetentionMode};
 use xvision_observability::trajectory::frame::TrajectoryFrame;
 use xvision_observability::trajectory::key::{TrajectoryKey, TRAJECTORY_SCHEMA_VERSION};
 use xvision_observability::trajectory::store::{TrajectoryStore, STATUS_COMPLETE, STATUS_OPEN};
+use xvision_observability::{BlobStore, RetentionMode};
 
 async fn open_store(tmp: &TempDir, mode: RetentionMode) -> TrajectoryStore {
     let db_path = tmp.path().join("test.db");
@@ -133,10 +133,7 @@ async fn full_retention_roundtrip_byte_identical() {
 
     let frames = sample_frames();
     for (i, f) in frames.iter().enumerate() {
-        store
-            .append_frame(&rid, "trader", 0, i as i64, f)
-            .await
-            .unwrap();
+        store.append_frame(&rid, "trader", 0, i as i64, f).await.unwrap();
     }
     store.complete_recording(&rid).await.unwrap();
 
@@ -145,10 +142,7 @@ async fn full_retention_roundtrip_byte_identical() {
     assert_eq!(got.len(), frames.len(), "frame count must match");
 
     for (original, roundtripped) in frames.iter().zip(got.iter()) {
-        assert_eq!(
-            original, roundtripped,
-            "frame must roundtrip byte-identical"
-        );
+        assert_eq!(original, roundtripped, "frame must roundtrip byte-identical");
     }
 }
 
@@ -159,7 +153,10 @@ async fn hash_only_stores_no_payload_ref() {
 
     let key = sample_key();
     let rid = store.begin_recording(&key).await.unwrap();
-    let f = TrajectoryFrame::TextDelta { ts_ms: 1, text: "hello".into() };
+    let f = TrajectoryFrame::TextDelta {
+        ts_ms: 1,
+        text: "hello".into(),
+    };
     store.append_frame(&rid, "trader", 0, 0, &f).await.unwrap();
 
     // The blob directory must be empty (no payload written).
@@ -243,11 +240,17 @@ async fn frame_counts_aggregated() {
     let rid = store.begin_recording(&key).await.unwrap();
 
     for fi in 0..4i64 {
-        let f = TrajectoryFrame::TextDelta { ts_ms: fi as u64, text: "x".into() };
+        let f = TrajectoryFrame::TextDelta {
+            ts_ms: fi as u64,
+            text: "x".into(),
+        };
         store.append_frame(&rid, "trader", 0, fi, &f).await.unwrap();
     }
     for fi in 0..2i64 {
-        let f = TrajectoryFrame::TextDelta { ts_ms: fi as u64, text: "y".into() };
+        let f = TrajectoryFrame::TextDelta {
+            ts_ms: fi as u64,
+            text: "y".into(),
+        };
         store.append_frame(&rid, "intern", 0, fi, &f).await.unwrap();
     }
     store.complete_recording(&rid).await.unwrap();

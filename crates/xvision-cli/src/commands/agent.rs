@@ -308,7 +308,11 @@ async fn run_inspect(args: InspectArgs) -> CliResult<()> {
             line.slot,
             if line.has_prompt { "ok" } else { "MISSING" },
             if line.has_model_binding { "ok" } else { "MISSING" },
-            if line.runtime_supported { "supported" } else { "UNSUPPORTED" },
+            if line.runtime_supported {
+                "supported"
+            } else {
+                "UNSUPPORTED"
+            },
             if line.optimizable { "yes" } else { "no" },
             tools,
         );

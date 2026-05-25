@@ -275,7 +275,10 @@ async fn accept_without_holdout_allowed_with_override_reason() {
     assert_eq!(body["override_reason"], "manual review by quant lead 2026-05-24");
     // The override is recorded on the child agent description.
     let desc = body["child_agent"]["description"].as_str().unwrap();
-    assert!(desc.contains("accepted without holdout"), "desc records override: {desc}");
+    assert!(
+        desc.contains("accepted without holdout"),
+        "desc records override: {desc}"
+    );
 }
 
 #[tokio::test]
@@ -286,7 +289,9 @@ async fn accept_allowed_with_holdout_present() {
 
     // Record a clean (non-overfit) holdout result.
     server
-        .post(&format!("/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"))
+        .post(&format!(
+            "/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"
+        ))
         .json(&serde_json::json!({
             "metric": "sharpe", "train_metric_value": 1.0, "holdout_metric_value": 0.9
         }))
@@ -313,13 +318,14 @@ async fn accept_refused_when_optimized_prompt_is_stale() {
     // applying its instruction would feed the model a prompt for a different
     // signature shape. The Phase 4.2 `stale_optimized_prompt` guardrail must
     // refuse BEFORE the instruction is written onto the cloned slot.
-    let (run_id, snapshot_id) =
-        seed_run_with_signatures(&pool, &parent, "sig-current", "sig-stale").await;
+    let (run_id, snapshot_id) = seed_run_with_signatures(&pool, &parent, "sig-current", "sig-stale").await;
 
     // Record a clean holdout so the holdout gate passes and the stale-prompt
     // guardrail is unambiguously the thing that refuses.
     server
-        .post(&format!("/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"))
+        .post(&format!(
+            "/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"
+        ))
         .json(&serde_json::json!({
             "metric": "sharpe", "train_metric_value": 1.0, "holdout_metric_value": 0.9
         }))
@@ -360,11 +366,12 @@ async fn accept_allowed_when_signature_matches() {
     // not always-on).
     let (server, pool, _home, _tmp) = boot().await;
     let parent = make_agent(&pool, "Parent").await;
-    let (run_id, snapshot_id) =
-        seed_run_with_signatures(&pool, &parent, "sig-same", "sig-same").await;
+    let (run_id, snapshot_id) = seed_run_with_signatures(&pool, &parent, "sig-same", "sig-same").await;
 
     server
-        .post(&format!("/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"))
+        .post(&format!(
+            "/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"
+        ))
         .json(&serde_json::json!({
             "metric": "sharpe", "train_metric_value": 1.0, "holdout_metric_value": 0.9
         }))
@@ -389,7 +396,9 @@ async fn overfit_blocks_mint_until_waived() {
 
     // Record an OVERFIT holdout (train 1.0, holdout 0.4 → ratio 0.6 > 0.30).
     let h = server
-        .post(&format!("/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"))
+        .post(&format!(
+            "/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"
+        ))
         .json(&serde_json::json!({
             "metric": "sharpe", "train_metric_value": 1.0, "holdout_metric_value": 0.4
         }))
@@ -425,7 +434,9 @@ async fn overfit_blocks_mint_until_waived() {
 
     // Waive the overfit warning with a recorded reason.
     server
-        .post(&format!("/api/optimizations/{run_id}/snapshots/{snapshot_id}/waive-overfit"))
+        .post(&format!(
+            "/api/optimizations/{run_id}/snapshots/{snapshot_id}/waive-overfit"
+        ))
         .json(&serde_json::json!({ "reason": "acceptable for high-vol regime; reviewed" }))
         .await
         .assert_status_ok();
@@ -454,7 +465,9 @@ async fn mint_refused_without_eval_proof_is_typed() {
     let parent = make_agent(&pool, "Parent").await;
     let (run_id, snapshot_id) = seed_run(&pool, &parent).await;
     server
-        .post(&format!("/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"))
+        .post(&format!(
+            "/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"
+        ))
         .json(&serde_json::json!({
             "metric": "sharpe", "train_metric_value": 1.0, "holdout_metric_value": 0.9
         }))
@@ -482,7 +495,10 @@ async fn mint_refused_without_eval_proof_is_typed() {
         }))
         .await;
     assert_eq!(resp.status_code(), StatusCode::BAD_REQUEST);
-    assert_eq!(resp.json::<serde_json::Value>()["field"], "mint_incomplete_metrics");
+    assert_eq!(
+        resp.json::<serde_json::Value>()["field"],
+        "mint_incomplete_metrics"
+    );
 }
 
 #[tokio::test]
@@ -549,7 +565,10 @@ async fn swap_agent_is_checkpointed_and_reversible() {
         .any(|v| v == "strategy"));
 
     let reverted = store.load(&strategy_id).await.unwrap();
-    assert_eq!(reverted.agents[0].agent_id, parent, "restore recovers the original AgentRef");
+    assert_eq!(
+        reverted.agents[0].agent_id, parent,
+        "restore recovers the original AgentRef"
+    );
     // Byte-identical to the original.
     let orig_bytes = serde_json::to_vec_pretty(&before).unwrap();
     let reverted_bytes = serde_json::to_vec_pretty(&reverted).unwrap();

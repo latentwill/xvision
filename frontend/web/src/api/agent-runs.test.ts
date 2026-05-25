@@ -4,6 +4,7 @@ import {
   agentRunKeys,
   fetchAgentRunBlob,
   getAgentRun,
+  getAgentRunMemoryEvents,
   openAgentRunStream,
   shouldUseMockAgentRuns,
   validateAgentRunDetail,
@@ -482,6 +483,21 @@ describe("agent-runs real-mode branch", () => {
         delta_len: 11,
       });
       fire("lagged", { dropped: 7 });
+      fire("memory_recall", {
+        run_id: "run_stream_1",
+        flywheel_cycle_id: "run_stream_1:3",
+        decision_id: 3,
+        namespace: "agent:A",
+        items: [],
+      });
+      fire("memory_write", {
+        run_id: "run_stream_1",
+        flywheel_cycle_id: "run_stream_1:3",
+        decision_id: 3,
+        namespace: "agent:A",
+        memory_item_id: "obs_3",
+        text_preview: "remembered",
+      });
 
       // 4) Terminal span event.
       fire("span_finished", {
@@ -497,6 +513,8 @@ describe("agent-runs real-mode branch", () => {
         "span_started",
         "assistant_text_delta",
         "lagged",
+        "memory_recall",
+        "memory_write",
         "span_finished",
       ]);
 
@@ -548,6 +566,48 @@ describe("agent-runs real-mode branch", () => {
       (globalThis as { EventSource: unknown }).EventSource = original;
       useTraceDock.getState().setActiveRun(null, "post-hoc");
     }
+  });
+});
+
+describe("getAgentRunMemoryEvents", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("fetches persisted memory events for a run", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          run_id: "run_mem",
+          events: [
+            {
+              kind: "memory_write",
+              created_at: "2026-05-25T00:00:00Z",
+              payload: {
+                run_id: "run_mem",
+                flywheel_cycle_id: "run_mem:1",
+                decision_id: 1,
+                namespace: "agent:A",
+                memory_item_id: "obs_1",
+                text_preview: "remembered",
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const body = await getAgentRunMemoryEvents("run/mem");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/agent-runs/run%2Fmem/memory-events",
+      expect.any(Object),
+    );
+    expect(body.events[0]?.kind).toBe("memory_write");
+    expect(body.events[0]?.payload).toMatchObject({
+      flywheel_cycle_id: "run_mem:1",
+      memory_item_id: "obs_1",
+    });
   });
 });
 

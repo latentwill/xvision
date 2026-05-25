@@ -21,8 +21,8 @@ use xvision_engine::authoring::{
     self, CreateStrategyOut, CreateStrategyReq, SetFilterReq, SetRiskConfigOut, SetRiskConfigReq,
     TemplateInfo, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
-use xvision_engine::checkpoint::{CheckpointKind, Checkpointer, SnapshotRequest};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
+use xvision_engine::checkpoint::{CheckpointKind, Checkpointer, SnapshotRequest};
 use xvision_engine::strategies::risk::RiskConfig;
 use xvision_engine::strategies::store::{
     strategy_store_dir, FilesystemStore, MetadataPatchError, StrategyMetadataPatch, StrategyStore,
@@ -387,12 +387,11 @@ pub async fn swap_agent(
     // Resolve / create the owning session for the checkpoint.
     let session_id = match body.session_id.clone() {
         Some(s) => s,
-        None => ChatSessionStore::create_session(
-            &state.pool,
-            &ContextScope::Strategy { draft_id: id.clone() },
-        )
-        .await
-        .map_err(DashboardError::Internal)?,
+        None => {
+            ChatSessionStore::create_session(&state.pool, &ContextScope::Strategy { draft_id: id.clone() })
+                .await
+                .map_err(DashboardError::Internal)?
+        }
     };
 
     // Checkpoint the strategy (PreSwap) so the pre-swap AgentRef is recoverable.
@@ -403,7 +402,10 @@ pub async fn swap_agent(
             CheckpointKind::Other("pre_swap".into()),
             SnapshotRequest {
                 strategy_id: Some(id.clone()),
-                label: Some(format!("pre-swap {} → {}", previous_agent_id, body.child_agent_id)),
+                label: Some(format!(
+                    "pre-swap {} → {}",
+                    previous_agent_id, body.child_agent_id
+                )),
                 ..Default::default()
             },
         )
@@ -418,10 +420,7 @@ pub async fn swap_agent(
         .find(|a| a.role == body.role || a.canonical_role() == canonical)
         .expect("role was located above");
     slot.agent_id = body.child_agent_id.clone();
-    store
-        .save(&swapped)
-        .await
-        .map_err(DashboardError::Internal)?;
+    store.save(&swapped).await.map_err(DashboardError::Internal)?;
 
     Ok(Json(SwapAgentResponse {
         strategy_id: id,

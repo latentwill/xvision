@@ -21,6 +21,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { MemoryPage } from "./MemoryPage";
+import * as flywheelApi from "@/api/flywheel";
 import * as memoryApi from "@/api/memory";
 
 vi.mock("@/api/memory", async () => {
@@ -31,8 +32,31 @@ vi.mock("@/api/memory", async () => {
     ...actual,
     listMemory: vi.fn(),
     createPattern: vi.fn(),
+    createOperatorAttestation: vi.fn(),
+    activatePattern: vi.fn(),
+    demotePattern: vi.fn(),
     deleteMemoryItem: vi.fn(),
     forgetMemory: vi.fn(),
+  };
+});
+
+vi.mock("@/api/flywheel", async () => {
+  const actual = await vi.importActual<typeof import("@/api/flywheel")>(
+    "@/api/flywheel",
+  );
+  return {
+    ...actual,
+    getFlywheelStatus: vi.fn(),
+    getFlywheelVelocity: vi.fn(),
+    getFlywheelLineage: vi.fn(),
+    listAutoresearchRuns: vi.fn(),
+    runAutoresearch: vi.fn(),
+    getAutoresearchRun: vi.fn(),
+    gateAutoresearchRun: vi.fn(),
+    gateOptimization: vi.fn(),
+    promoteAutoresearchRun: vi.fn(),
+    demoteAutoresearchRun: vi.fn(),
+    optimizeMemoryDemos: vi.fn(),
   };
 });
 
@@ -90,9 +114,169 @@ function renderPage(initialEntries: string[] = ["/agents/memory"]) {
 }
 
 beforeEach(() => {
+  vi.mocked(flywheelApi.getFlywheelStatus).mockResolvedValue({
+    namespace: "global",
+    observations: 2,
+    active_patterns: 1,
+    staged_patterns: 0,
+    forgotten_patterns: 0,
+    autoresearch_runs: 1,
+    latest_autoresearch_run_id: "ar-1",
+    latest_autoresearch_created_at: "2026-05-21T12:00:00Z",
+  });
+  vi.mocked(flywheelApi.getFlywheelVelocity).mockResolvedValue({
+    namespace: "global",
+    days: 7,
+    since: "2026-05-18T00:00:00Z",
+    observations_captured: 2,
+    patterns_promoted: 1,
+    patterns_demoted: 0,
+    autoresearch_runs: 1,
+    optimized_child_agents: 0,
+    average_lineage_depth: 0,
+    latest_activity_at: "2026-05-21T12:00:00Z",
+  });
+  vi.mocked(flywheelApi.getFlywheelLineage).mockResolvedValue({
+    namespace: "global",
+    total: 1,
+    items: [
+      {
+        optimization_id: "opt-global",
+        target_agent_id: "agent-1",
+        child_agent_id: "agent-child",
+        slot: "main",
+        method: "memory-demos",
+        demo_source: "frozen-snapshot",
+        reproducible: true,
+        holdout_split: "70/15/15",
+        cohort_query: "namespace=global,limit=8",
+        train_observation_count: 1,
+        dev_observation_count: 1,
+        holdout_observation_count: 1,
+        train_hash: "sha256:train",
+        dev_hash: "sha256:dev",
+        holdout_hash: "sha256:holdout",
+        demo_source_pattern_ids: ["pat-demo"],
+        prior_pattern_ids: [],
+        prompt_prefix_chars: 120,
+        status: "minted",
+        created_at: "2026-05-21T12:00:00Z",
+      },
+    ],
+  });
+  vi.mocked(flywheelApi.runAutoresearch).mockResolvedValue({
+    id: "ar-new",
+    namespace: "global",
+    observation_ids: ["obs-1", "obs-2"],
+    pattern_id: "pat-staged",
+    pattern_text: "Reduce risk.",
+    promotion_state: "staged",
+    min_observations: 2,
+    created_at: "2026-05-21T12:00:00Z",
+    status: "completed",
+  });
+  vi.mocked(flywheelApi.listAutoresearchRuns).mockResolvedValue({
+    items: [
+      {
+        id: "ar-1",
+        namespace: "global",
+        observation_ids: ["obs-1", "obs-2"],
+        pattern_id: "pat-staged",
+        pattern_text: "Reduce risk.",
+        promotion_state: "staged",
+        gate_passed: true,
+        finding_blind: true,
+        min_observations: 2,
+        created_at: "2026-05-21T12:00:00Z",
+        status: "completed",
+      },
+    ],
+    total: 1,
+  });
+  vi.mocked(flywheelApi.promoteAutoresearchRun).mockResolvedValue({
+    id: "ar-1",
+    namespace: "global",
+    observation_ids: ["obs-1", "obs-2"],
+    pattern_id: "pat-staged",
+    pattern_text: "Reduce risk.",
+    promotion_state: "active",
+    min_observations: 2,
+    created_at: "2026-05-21T12:00:00Z",
+    status: "completed",
+  });
+  vi.mocked(flywheelApi.gateAutoresearchRun).mockResolvedValue({
+    id: "ar-1",
+    namespace: "global",
+    observation_ids: ["obs-1", "obs-2"],
+    pattern_id: "pat-staged",
+    pattern_text: "Reduce risk.",
+    promotion_state: "staged",
+    min_observations: 2,
+    created_at: "2026-05-21T12:00:00Z",
+    status: "completed",
+    gate_verdict: "passed",
+  });
+  vi.mocked(flywheelApi.gateOptimization).mockResolvedValue({
+    optimization_id: "opt-global",
+    dev_metric: "sharpe",
+    holdout_metric: "sharpe",
+    parent_dev_score: 1,
+    child_dev_score: 1.1,
+    parent_holdout_score: 0.7,
+    child_holdout_score: 0.9,
+    gate_epsilon: 0,
+    delta_dev: 0.1,
+    delta_holdout: 0.2,
+    gate_verdict: "passed",
+    gate_reason: "global gate",
+    gated_at: "2026-05-21T12:10:00Z",
+  });
+  vi.mocked(flywheelApi.demoteAutoresearchRun).mockResolvedValue({
+    id: "ar-1",
+    namespace: "global",
+    observation_ids: ["obs-1", "obs-2"],
+    pattern_id: "pat-staged",
+    pattern_text: "Reduce risk.",
+    promotion_state: "demoted",
+    min_observations: 2,
+    created_at: "2026-05-21T12:00:00Z",
+    status: "completed",
+  });
+  vi.mocked(flywheelApi.optimizeMemoryDemos).mockResolvedValue({
+    status: "minted",
+    namespace: "global",
+    target_agent_id: "agent-1",
+    child_agent_id: "agent-child",
+    slot: "main",
+    demo_count: 2,
+    observation_ids: ["obs-1", "obs-2"],
+    train_observation_ids: ["obs-1", "obs-2"],
+    holdout_observation_ids: ["obs-3"],
+    demo_source_pattern_ids: ["pat-demo"],
+    pattern_demo_source_count: 1,
+    prior_pattern_ids: [],
+    pattern_prior_count: 0,
+    observations: [],
+    prompt_prefix_chars: 120,
+    prompt_preview: "<memory_demos />",
+  });
   vi.mocked(memoryApi.listMemory).mockResolvedValue(emptyList());
   vi.mocked(memoryApi.createPattern).mockResolvedValue(
     pattern("pat-new", "global wisdom", "global"),
+  );
+  vi.mocked(memoryApi.createOperatorAttestation).mockResolvedValue({
+    id: "attest-global",
+    operator_initials: "QA",
+    surface: "dashboard",
+    warning_text_hash: "sha256:test",
+    created_at: "2026-05-21T12:00:00Z",
+    signature: null,
+  });
+  vi.mocked(memoryApi.activatePattern).mockResolvedValue(
+    pattern("pat-staged", "staged wisdom", "global"),
+  );
+  vi.mocked(memoryApi.demotePattern).mockResolvedValue(
+    pattern("pat-staged", "staged wisdom", "global"),
   );
   vi.mocked(memoryApi.deleteMemoryItem).mockResolvedValue();
   vi.mocked(memoryApi.forgetMemory).mockResolvedValue({ deleted: 0 });
@@ -145,6 +329,74 @@ describe("MemoryPage — empty state", () => {
       expect(patternCall).toBeTruthy();
     });
   });
+
+  it("renders flywheel status for the global namespace", async () => {
+    renderPage();
+
+    expect(await screen.findByText("Flywheel")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText("Observations").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("2").length).toBeGreaterThan(0);
+      expect(flywheelApi.getFlywheelStatus).toHaveBeenCalledWith({
+        namespace: "global",
+      });
+      expect(flywheelApi.getFlywheelVelocity).toHaveBeenCalledWith({
+        namespace: "global",
+        days: 7,
+      });
+      expect(flywheelApi.getFlywheelLineage).toHaveBeenCalledWith({
+        namespace: "global",
+        limit: 1,
+      });
+      expect(screen.getByText("Obs / 7d")).toBeInTheDocument();
+      expect(screen.getByText("Latest Lineage")).toBeInTheDocument();
+    });
+  });
+});
+
+describe("MemoryPage — Flywheel panel", () => {
+  it("stages an autoresearch pattern for global memory", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(
+      await screen.findByLabelText(/Candidate Pattern/i),
+      "Reduce risk.",
+    );
+    await user.click(screen.getByRole("button", { name: /Stage Pattern/i }));
+
+    await waitFor(() => {
+      expect(flywheelApi.runAutoresearch).toHaveBeenCalledWith({
+        namespace: "global",
+        pattern_text: "Reduce risk.",
+        embedding: [1, 0],
+        min_observations: 2,
+      });
+    });
+  });
+
+  it("promotes and demotes recent autoresearch runs", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText("Recent Autoresearch Runs")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(flywheelApi.listAutoresearchRuns).toHaveBeenCalledWith({
+        namespace: "global",
+        limit: 5,
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: /^Promote$/i }));
+    await waitFor(() => {
+      expect(flywheelApi.promoteAutoresearchRun).toHaveBeenCalledWith("ar-1");
+    });
+
+    await user.click(screen.getByRole("button", { name: /^Demote$/i }));
+    await waitFor(() => {
+      expect(flywheelApi.demoteAutoresearchRun).toHaveBeenCalledWith("ar-1");
+    });
+  });
 });
 
 describe("MemoryPage — Add Pattern defaults to global", () => {
@@ -166,15 +418,74 @@ describe("MemoryPage — Add Pattern defaults to global", () => {
       "Operator-attested wisdom.",
     );
     await user.click(
+      within(dialog).getByRole("checkbox", {
+        name: /may be recalled in every scenario/i,
+      }),
+    );
+    await user.type(within(dialog).getByLabelText(/Operator initials/i), "QA");
+    await user.click(
       within(dialog).getByRole("button", { name: /^Add Pattern$/i }),
     );
 
     await waitFor(() => {
+      expect(
+        vi.mocked(memoryApi.createOperatorAttestation),
+      ).toHaveBeenCalledWith({
+        operator_initials: "QA",
+        surface: "dashboard",
+      });
       expect(vi.mocked(memoryApi.createPattern)).toHaveBeenCalledTimes(1);
     });
     const body = vi.mocked(memoryApi.createPattern).mock.calls[0]?.[0];
     expect(body?.namespace).toBe("global");
     expect(body?.text).toBe("Operator-attested wisdom.");
+    expect(body?.attestation_id).toBe("attest-global");
+  });
+});
+
+describe("MemoryPage — Pattern lifecycle controls", () => {
+  it("filters staged patterns and activates or demotes by pattern id", async () => {
+    const user = userEvent.setup();
+    vi.mocked(flywheelApi.listAutoresearchRuns).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.mocked(memoryApi.listMemory).mockImplementation(async (q) => {
+      if (q?.tier === "pattern" && q?.promotion_state === "staged") {
+        return {
+          items: [
+            {
+              ...pattern("pat-staged", "staged wisdom", "global"),
+              promotion_state: "staged",
+            },
+          ],
+          total: 1,
+        };
+      }
+      return emptyList();
+    });
+
+    renderPage();
+
+    await user.selectOptions(await screen.findByLabelText(/Lifecycle/i), "staged");
+    expect(await screen.findByText("staged wisdom")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(memoryApi.listMemory).toHaveBeenCalledWith({
+        tier: "pattern",
+        namespace: "global",
+        promotion_state: "staged",
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: /^Activate$/i }));
+    await waitFor(() => {
+      expect(memoryApi.activatePattern).toHaveBeenCalledWith("pat-staged");
+    });
+
+    await user.click(screen.getByRole("button", { name: /^Demote$/i }));
+    await waitFor(() => {
+      expect(memoryApi.demotePattern).toHaveBeenCalledWith("pat-staged");
+    });
   });
 });
 

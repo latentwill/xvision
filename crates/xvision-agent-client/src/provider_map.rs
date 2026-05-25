@@ -44,8 +44,10 @@ pub struct ClineProvider {
 /// Why a provider could not be mapped onto the Cline runtime.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderMapError {
-    #[error("provider kind {kind:?} has no Cline mapping (provider '{name}'); \
-             it stays on the LlmDispatch fallback")]
+    #[error(
+        "provider kind {kind:?} has no Cline mapping (provider '{name}'); \
+             it stays on the LlmDispatch fallback"
+    )]
     Unsupported { name: String, kind: ProviderKind },
 }
 
@@ -69,7 +71,11 @@ pub fn map_provider(entry: &ProviderEntry, model_id: &str) -> Result<ClineProvid
             })
         }
     };
-    Ok(ClineProvider { provider_id, model_id: model_id.to_string(), base_url })
+    Ok(ClineProvider {
+        provider_id,
+        model_id: model_id.to_string(),
+        base_url,
+    })
 }
 
 #[cfg(test)]

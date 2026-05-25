@@ -127,7 +127,6 @@ async fn start_run_round_trip() {
     assert_eq!(res.started_at_ms, 42);
 }
 
-
 #[tokio::test]
 async fn step_round_trip() {
     let dir = TempDir::new().unwrap();

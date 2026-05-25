@@ -26,13 +26,12 @@ impl SessionEventLog {
     /// A fresh session returns `0`. Callers seed a projector with this so the
     /// per-session sequence continues monotonically across turns.
     pub async fn next_seq(pool: &SqlitePool, session_id: &str) -> Result<i64> {
-        let next: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(seq), -1) + 1 FROM session_events WHERE session_id = ?1",
-        )
-        .bind(session_id)
-        .fetch_one(pool)
-        .await
-        .context("compute next session_events seq")?;
+        let next: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(seq), -1) + 1 FROM session_events WHERE session_id = ?1")
+                .bind(session_id)
+                .fetch_one(pool)
+                .await
+                .context("compute next session_events seq")?;
         Ok(next)
     }
 
@@ -46,10 +45,9 @@ impl SessionEventLog {
     /// `session_id` cannot be logged to a session and is rejected loudly
     /// rather than silently dropped (typed-error / never-silent discipline).
     pub async fn append(pool: &SqlitePool, event: &UnifiedEvent) -> Result<()> {
-        let session_id = event
-            .session_id
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("UnifiedEvent has no session_id; cannot append to session_events"))?;
+        let session_id = event.session_id.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("UnifiedEvent has no session_id; cannot append to session_events")
+        })?;
 
         // EventSource serializes (serde rename_all = "snake_case") to a bare
         // JSON string; strip the surrounding quotes to store the snake_case
@@ -173,12 +171,10 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_session_events_seq ON session_events(session_id, seq)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_session_events_seq ON session_events(session_id, seq)")
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 
@@ -296,12 +292,11 @@ mod tests {
 
         ChatSessionStore::delete_session(&pool, &sid).await.unwrap();
 
-        let leftover: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")
-                .bind(&sid)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let leftover: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")
+            .bind(&sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(leftover, 0, "ON DELETE CASCADE should clear session_events");
     }
 }

@@ -21,6 +21,7 @@ use xvision_data::alpaca::AlpacaBarsFetcher;
 
 pub mod agents;
 pub mod audit;
+pub mod autoresearch;
 /// `xvn model bakeoff` orchestrator. File lives at
 /// `api/eval/bakeoff.rs` per contract `cli-model-bakeoff`; routed here
 /// with `#[path]` so the public module path stays `api::bakeoff`
@@ -34,8 +35,10 @@ pub mod charts_dashboards;
 pub mod charts_market_context;
 pub mod eval;
 pub mod experiment;
+pub mod flywheel;
 pub mod health;
 pub mod memory;
+pub mod optimize;
 pub mod safety;
 pub mod scenario;
 pub mod search;
@@ -94,6 +97,12 @@ const MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID: &str =
     include_str!("../../migrations/036_agents_scope_strategy_id.sql");
 const MIGRATION_038_EVAL_RUNS_LIVE_CONFIG: &str =
     include_str!("../../migrations/038_eval_runs_live_config.sql");
+const MIGRATION_039_AGENT_SLOT_OPTIMIZATIONS: &str =
+    include_str!("../../migrations/039_agent_slot_optimizations.sql");
+const MIGRATION_040_PATTERN_OPTIMIZATIONS: &str =
+    include_str!("../../migrations/040_pattern_optimizations.sql");
+const MIGRATION_041_AGENT_SLOT_OPTIMIZATION_GATES: &str =
+    include_str!("../../migrations/041_agent_slot_optimization_gates.sql");
 /// Stage 1 (Cline runtime unification, operational-visibility contract
 /// item 3): adds `trajectory_mode` (+ sibling Stage 2-3 columns) to
 /// `agent_runs`. Applied via `migrate_run_trajectory_mode` because the
@@ -342,6 +351,8 @@ impl ApiContext {
         migrate_agents_scope_strategy_id(&pool).await?;
         migrate_review_annotations_and_autofire(&pool).await?;
         migrate_eval_runs_live_config(&pool).await?;
+        migrate_agent_slot_optimizations(&pool).await?;
+        migrate_pattern_optimizations(&pool).await?;
         migrate_run_trajectory_mode(&pool).await?;
         migrate_trajectory_frames(&pool).await?;
         migrate_chat_session_rail_state(&pool).await?;
@@ -1117,6 +1128,31 @@ async fn migrate_eval_runs_live_config(pool: &SqlitePool) -> ApiResult<()> {
         .execute(pool)
         .await?;
     sqlx::query(MIGRATION_012_RUNS_FK).execute(pool).await?;
+    Ok(())
+}
+
+/// Apply migration 039: durable lineage rows for offline slot optimizers.
+async fn migrate_agent_slot_optimizations(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "agent_slot_optimizations").await? {
+        sqlx::query(MIGRATION_039_AGENT_SLOT_OPTIMIZATIONS)
+            .execute(pool)
+            .await?;
+    }
+    if !table_has_column(pool, "agent_slot_optimizations", "gate_verdict").await? {
+        sqlx::query(MIGRATION_041_AGENT_SLOT_OPTIMIZATION_GATES)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 040: Pattern prior/demo-source links for optimizer lineage.
+async fn migrate_pattern_optimizations(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "pattern_optimizations").await? {
+        sqlx::query(MIGRATION_040_PATTERN_OPTIMIZATIONS)
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 

@@ -79,9 +79,7 @@ impl AbTrajectoryMode {
     /// both is a usage error.
     pub fn from_cli_flags(record: bool, replay: Option<String>) -> anyhow::Result<Self> {
         match (record, replay) {
-            (true, Some(_)) => Err(anyhow!(
-                "--record and --replay are mutually exclusive — pick one"
-            )),
+            (true, Some(_)) => Err(anyhow!("--record and --replay are mutually exclusive — pick one")),
             (_, Some(recording_id)) => Ok(AbTrajectoryMode::Replay { recording_id }),
             // `--record` or neither → record (the transition default).
             (_, None) => Ok(AbTrajectoryMode::Record),

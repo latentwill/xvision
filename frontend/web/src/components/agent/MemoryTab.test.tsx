@@ -18,6 +18,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
 import { MemoryTab } from "./MemoryTab";
+import * as flywheelApi from "@/api/flywheel";
 import * as memoryApi from "@/api/memory";
 
 vi.mock("@/api/memory", async () => {
@@ -28,8 +29,31 @@ vi.mock("@/api/memory", async () => {
     ...actual,
     listMemory: vi.fn(),
     createPattern: vi.fn(),
+    createOperatorAttestation: vi.fn(),
+    activatePattern: vi.fn(),
+    demotePattern: vi.fn(),
     deleteMemoryItem: vi.fn(),
     forgetMemory: vi.fn(),
+  };
+});
+
+vi.mock("@/api/flywheel", async () => {
+  const actual = await vi.importActual<typeof import("@/api/flywheel")>(
+    "@/api/flywheel",
+  );
+  return {
+    ...actual,
+    getFlywheelStatus: vi.fn(),
+    getFlywheelVelocity: vi.fn(),
+    getFlywheelLineage: vi.fn(),
+    listAutoresearchRuns: vi.fn(),
+    runAutoresearch: vi.fn(),
+    getAutoresearchRun: vi.fn(),
+    gateAutoresearchRun: vi.fn(),
+    gateOptimization: vi.fn(),
+    promoteAutoresearchRun: vi.fn(),
+    demoteAutoresearchRun: vi.fn(),
+    optimizeMemoryDemos: vi.fn(),
   };
 });
 
@@ -84,9 +108,181 @@ function renderTab(agentId = "agent-1") {
 }
 
 beforeEach(() => {
+  vi.mocked(flywheelApi.getFlywheelStatus).mockResolvedValue({
+    namespace: "agent:agent-1",
+    observations: 3,
+    active_patterns: 1,
+    staged_patterns: 1,
+    forgotten_patterns: 0,
+    autoresearch_runs: 2,
+    latest_autoresearch_run_id: "ar-1",
+    latest_autoresearch_created_at: "2026-05-21T12:00:00Z",
+  });
+  vi.mocked(flywheelApi.getFlywheelVelocity).mockResolvedValue({
+    namespace: "agent:agent-1",
+    days: 7,
+    since: "2026-05-18T00:00:00Z",
+    observations_captured: 3,
+    patterns_promoted: 1,
+    patterns_demoted: 0,
+    autoresearch_runs: 2,
+    optimized_child_agents: 1,
+    average_lineage_depth: 1,
+    latest_activity_at: "2026-05-21T12:00:00Z",
+  });
+  vi.mocked(flywheelApi.getFlywheelLineage).mockResolvedValue({
+    namespace: "agent:agent-1",
+    total: 1,
+    items: [
+      {
+        optimization_id: "opt-agent",
+        target_agent_id: "agent-1",
+        child_agent_id: "agent-child",
+        slot: "main",
+        method: "memory-demos",
+        demo_source: "frozen-snapshot",
+        reproducible: true,
+        holdout_split: "70/15/15",
+        cohort_query: "namespace=agent:agent-1,limit=8",
+        train_observation_count: 1,
+        dev_observation_count: 1,
+        holdout_observation_count: 1,
+        train_hash: "sha256:train",
+        dev_hash: "sha256:dev",
+        holdout_hash: "sha256:holdout",
+        demo_source_pattern_ids: ["pat-demo"],
+        prior_pattern_ids: ["pat-prior"],
+        prompt_prefix_chars: 120,
+        status: "minted",
+        created_at: "2026-05-21T12:00:00Z",
+        gate_verdict: "passed",
+        delta_dev: 0.2,
+        delta_holdout: 0.3,
+        gate_reason: "child beat parent",
+      },
+    ],
+  });
+  vi.mocked(flywheelApi.runAutoresearch).mockResolvedValue({
+    id: "ar-new",
+    namespace: "agent:agent-1",
+    observation_ids: ["obs-1", "obs-2"],
+    pattern_id: "pat-staged",
+    pattern_text: "Reduce risk.",
+    promotion_state: "staged",
+    min_observations: 2,
+    created_at: "2026-05-21T12:00:00Z",
+    status: "completed",
+  });
+  vi.mocked(flywheelApi.listAutoresearchRuns).mockResolvedValue({
+    items: [
+      {
+        id: "ar-1",
+        namespace: "agent:agent-1",
+        observation_ids: ["obs-1", "obs-2"],
+        pattern_id: "pat-staged",
+        pattern_text: "Reduce risk.",
+        promotion_state: "staged",
+        gate_passed: true,
+        finding_blind: true,
+        min_observations: 2,
+        created_at: "2026-05-21T12:00:00Z",
+        status: "completed",
+      },
+    ],
+    total: 1,
+  });
+  vi.mocked(flywheelApi.promoteAutoresearchRun).mockResolvedValue({
+    id: "ar-1",
+    namespace: "agent:agent-1",
+    observation_ids: ["obs-1", "obs-2"],
+    pattern_id: "pat-staged",
+    pattern_text: "Reduce risk.",
+    promotion_state: "active",
+    min_observations: 2,
+    created_at: "2026-05-21T12:00:00Z",
+    status: "completed",
+  });
+  vi.mocked(flywheelApi.gateAutoresearchRun).mockResolvedValue({
+    id: "ar-1",
+    namespace: "agent:agent-1",
+    observation_ids: ["obs-1", "obs-2"],
+    pattern_id: "pat-staged",
+    pattern_text: "Reduce risk.",
+    promotion_state: "staged",
+    min_observations: 2,
+    created_at: "2026-05-21T12:00:00Z",
+    status: "completed",
+    gate_verdict: "passed",
+    gate_reason: "day and holdout improved",
+    parent_day_score: 1,
+    child_day_score: 1.25,
+    parent_holdout_score: 0.8,
+    child_holdout_score: 0.95,
+    gate_epsilon: 0.01,
+    delta_day: 0.25,
+    delta_holdout: 0.15,
+  });
+  vi.mocked(flywheelApi.gateOptimization).mockResolvedValue({
+    optimization_id: "opt-agent",
+    dev_metric: "sharpe",
+    holdout_metric: "sharpe",
+    parent_dev_score: 1,
+    child_dev_score: 1.2,
+    parent_holdout_score: 0.8,
+    child_holdout_score: 1.1,
+    gate_epsilon: 0.01,
+    delta_dev: 0.2,
+    delta_holdout: 0.3,
+    gate_verdict: "passed",
+    gate_reason: "child beat parent",
+    gated_at: "2026-05-21T12:10:00Z",
+  });
+  vi.mocked(flywheelApi.demoteAutoresearchRun).mockResolvedValue({
+    id: "ar-1",
+    namespace: "agent:agent-1",
+    observation_ids: ["obs-1", "obs-2"],
+    pattern_id: "pat-staged",
+    pattern_text: "Reduce risk.",
+    promotion_state: "demoted",
+    min_observations: 2,
+    created_at: "2026-05-21T12:00:00Z",
+    status: "completed",
+  });
+  vi.mocked(flywheelApi.optimizeMemoryDemos).mockResolvedValue({
+    status: "minted",
+    namespace: "agent:agent-1",
+    target_agent_id: "agent-1",
+    child_agent_id: "agent-child",
+    slot: "main",
+    demo_count: 2,
+    observation_ids: ["obs-1", "obs-2"],
+    train_observation_ids: ["obs-1", "obs-2"],
+    holdout_observation_ids: ["obs-3"],
+    demo_source_pattern_ids: ["pat-demo"],
+    pattern_demo_source_count: 1,
+    prior_pattern_ids: ["pat-prior"],
+    pattern_prior_count: 1,
+    observations: [],
+    prompt_prefix_chars: 120,
+    prompt_preview: "<memory_demos />",
+  });
   vi.mocked(memoryApi.listMemory).mockResolvedValue(emptyList());
   vi.mocked(memoryApi.createPattern).mockResolvedValue(
     pattern("pat-new", "fresh wisdom", "agent:agent-1"),
+  );
+  vi.mocked(memoryApi.createOperatorAttestation).mockResolvedValue({
+    id: "attest-1",
+    operator_initials: "QA",
+    surface: "dashboard",
+    warning_text_hash: "sha256:test",
+    created_at: "2026-05-21T12:00:00Z",
+    signature: null,
+  });
+  vi.mocked(memoryApi.activatePattern).mockResolvedValue(
+    pattern("pat-staged", "staged wisdom", "agent:agent-1"),
+  );
+  vi.mocked(memoryApi.demotePattern).mockResolvedValue(
+    pattern("pat-staged", "staged wisdom", "agent:agent-1"),
   );
   vi.mocked(memoryApi.deleteMemoryItem).mockResolvedValue();
   vi.mocked(memoryApi.forgetMemory).mockResolvedValue({ deleted: 0 });
@@ -108,6 +304,161 @@ describe("MemoryTab — empty state", () => {
     expect(
       screen.getByRole("button", { name: /Add Pattern/i }),
     ).toBeInTheDocument();
+  });
+
+  it("queries flywheel status for the agent namespace", async () => {
+    renderTab();
+
+    expect(await screen.findByText("Flywheel")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(flywheelApi.getFlywheelStatus).toHaveBeenCalledWith({
+        agent: "agent-1",
+      });
+      expect(flywheelApi.getFlywheelVelocity).toHaveBeenCalledWith({
+        agent: "agent-1",
+        days: 7,
+      });
+      expect(flywheelApi.getFlywheelLineage).toHaveBeenCalledWith({
+        agent: "agent-1",
+        limit: 1,
+      });
+      expect(screen.getByText("Children / 7d")).toBeInTheDocument();
+      expect(screen.getByText("Latest Lineage")).toBeInTheDocument();
+    });
+  });
+});
+
+describe("MemoryTab — Flywheel panel", () => {
+  it("mints a memory-demo child agent", async () => {
+    const user = userEvent.setup();
+    renderTab();
+
+    await user.type(
+      await screen.findByLabelText(/Child Agent Name/i),
+      "Agent child",
+    );
+    await user.click(screen.getByLabelText(/Use recalled Pattern priors/i));
+    await user.click(screen.getByRole("button", { name: /Mint Child/i }));
+
+    await waitFor(() => {
+      expect(flywheelApi.optimizeMemoryDemos).toHaveBeenCalledWith({
+        target_agent_id: "agent-1",
+        demo_source: "frozen-snapshot",
+        holdout_split: "70/15/15",
+        auto_prior_patterns: true,
+        prior_pattern_limit: 5,
+        apply: true,
+        child_name: "Agent child",
+      });
+    });
+    expect(await screen.findByText("Demo Patterns")).toBeInTheDocument();
+    expect(screen.getByText("Prior Patterns")).toBeInTheDocument();
+    expect(screen.getByText(/gate passed/)).toBeInTheDocument();
+    expect(screen.getByText(/holdout 0.300/)).toBeInTheDocument();
+  });
+
+  it("records the day and holdout gate for a staged autoresearch run", async () => {
+    const user = userEvent.setup();
+    renderTab();
+
+    await user.type(await screen.findByLabelText(/Parent day score ar-1/i), "1");
+    await user.type(screen.getByLabelText(/Child day score ar-1/i), "1.25");
+    await user.type(screen.getByLabelText(/Parent holdout score ar-1/i), "0.8");
+    await user.type(screen.getByLabelText(/Child holdout score ar-1/i), "0.95");
+    await user.clear(screen.getByLabelText(/Gate epsilon ar-1/i));
+    await user.type(screen.getByLabelText(/Gate epsilon ar-1/i), "0.01");
+    await user.type(
+      screen.getByLabelText(/Gate reason ar-1/i),
+      "day and holdout improved",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Record Gate ar-1/i }),
+    );
+
+    await waitFor(() => {
+      expect(flywheelApi.gateAutoresearchRun).toHaveBeenCalledWith("ar-1", {
+        parent_day_score: 1,
+        child_day_score: 1.25,
+        parent_holdout_score: 0.8,
+        child_holdout_score: 0.95,
+        gate_epsilon: 0.01,
+        gate_reason: "day and holdout improved",
+      });
+    });
+  });
+
+  it("records the dev and holdout gate for an optimization lineage row", async () => {
+    vi.mocked(flywheelApi.getFlywheelLineage).mockResolvedValue({
+      namespace: "agent:agent-1",
+      total: 1,
+      items: [
+        {
+          optimization_id: "opt-agent",
+          target_agent_id: "agent-1",
+          child_agent_id: "agent-child",
+          slot: "main",
+          method: "memory-demos",
+          demo_source: "frozen-snapshot",
+          reproducible: true,
+          holdout_split: "70/15/15",
+          cohort_query: "namespace=agent:agent-1,limit=8",
+          train_observation_count: 1,
+          dev_observation_count: 1,
+          holdout_observation_count: 1,
+          train_hash: "sha256:train",
+          dev_hash: "sha256:dev",
+          holdout_hash: "sha256:holdout",
+          demo_source_pattern_ids: ["pat-demo"],
+          prior_pattern_ids: ["pat-prior"],
+          prompt_prefix_chars: 120,
+          status: "minted",
+          created_at: "2026-05-21T12:00:00Z",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderTab();
+
+    await user.type(
+      await screen.findByLabelText(/Parent dev score opt-agent/i),
+      "1",
+    );
+    await user.type(screen.getByLabelText(/Child dev score opt-agent/i), "1.2");
+    await user.type(
+      screen.getByLabelText(/Parent optimization holdout score opt-agent/i),
+      "0.8",
+    );
+    await user.type(
+      screen.getByLabelText(/Child optimization holdout score opt-agent/i),
+      "1.1",
+    );
+    await user.clear(
+      screen.getByLabelText(/Optimization gate epsilon opt-agent/i),
+    );
+    await user.type(
+      screen.getByLabelText(/Optimization gate epsilon opt-agent/i),
+      "0.01",
+    );
+    await user.type(
+      screen.getByLabelText(/Optimization gate reason opt-agent/i),
+      "child beat parent",
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /Record Optimization Gate opt-agent/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(flywheelApi.gateOptimization).toHaveBeenCalledWith("opt-agent", {
+        parent_dev_score: 1,
+        child_dev_score: 1.2,
+        parent_holdout_score: 0.8,
+        child_holdout_score: 1.1,
+        gate_epsilon: 0.01,
+        gate_reason: "child beat parent",
+      });
+    });
   });
 });
 

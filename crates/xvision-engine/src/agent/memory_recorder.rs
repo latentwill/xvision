@@ -128,6 +128,8 @@ impl MemoryRecorder {
         run_id: String,
         scenario_id: String,
         cycle_idx: i64,
+        source_window_start: DateTime<Utc>,
+        source_window_end: DateTime<Utc>,
     ) -> anyhow::Result<Option<String>> {
         let ns = Namespace::for_mode(mode, agent_id);
         if !ns.is_active() {
@@ -148,7 +150,11 @@ impl MemoryRecorder {
             run_id: Some(run_id),
             scenario_id: Some(scenario_id),
             cycle_idx: Some(cycle_idx),
+            source_window_start: Some(source_window_start),
+            source_window_end: Some(source_window_end),
             training_window_end: None,
+            promotion_state: None,
+            attestation_id: None,
             forgotten_at: None,
         };
         self.store.upsert_observation(&item, embedder.id()).await?;

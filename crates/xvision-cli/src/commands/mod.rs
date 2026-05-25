@@ -1,6 +1,7 @@
 pub mod ab_compare;
 pub mod agent;
 pub mod asset;
+pub mod autoresearch;
 pub mod bars;
 pub mod dashboard;
 pub mod doctor;
@@ -10,6 +11,7 @@ pub mod example;
 pub mod experiment;
 pub mod experiment_run;
 pub mod fire_trade;
+pub mod flywheel;
 pub mod home;
 pub mod indicator;
 pub mod intern;
