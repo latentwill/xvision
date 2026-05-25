@@ -63,18 +63,22 @@ session stream w/ resume + one-source rail/dock reducer, all surfaces tested,
 live SSE + screenshot evidence captured.
 
 ### Phase 2 — chat rail safety
-- [ ] `chat-rail/research-act-deny-write.txt` (server-side denial, spoofed frontend mode)
-- [ ] `chat-rail/restore-checkpoint.txt` (mutate → restore → byte-compare)
-- [ ] Tool policy migration test + ask/auto-approve API tests
-- [ ] Focus-chain filesystem test + reinjection event
-- [ ] Hook timeout / fail-open / fail-closed tests
+- [x] Research/Act server-side enforcement + tool policy — `chat-rail/research-act-tool-policy-tests.txt` (14 engine + 11 dashboard; DB-authoritative, spoof-proof, ask/auto/disabled)
+- [x] Checkpoints + restore (mutate → restore → byte-identical) — `chat-rail/restore-checkpoint.txt` (6 engine + 3 route)
+- [x] Focus-chain filesystem + path-safety + reinjection event — `chat-rail/focus-chain.txt` (12 engine + 7 route)
+- [x] Tool-row registry (read/write/denial/approval rows) — `chat-rail/tool-rows-tests.txt` (23 vitest)
+- [x] Live-loop wiring: pre-tool checkpoint + per-turn focus injection — `chat-rail/integration-wiring.txt` (4 tests; wizard_loop 59 pass)
+- [ ] Hook engine (2.6) timeout / fail-open / fail-closed tests
+- [ ] NeedsApproval interactive approve→resume round-trip (deferred from 2.3)
+- [ ] 2.7 CLI/MCP/docs/skills for the rail
 
 ### Phase 3 — DSPy foundation
 - [x] `dspy/dependency-spike.txt` + `cargo tree` excerpt — GO, dspy-rs=0.7.3
 - [x] `dspy/crate-foundation.txt` — DummyLM deterministic compile (no network), 5 tests
 - [x] `cargo tree -p xvision-engine` proof: engine clean of dspy-rs/rig-core (foundation + integrated)
-- [ ] `dspy/optimize-cli-baseline.json` / `dspy/optimize-cli-candidate.json` (needs `xvn optimize` — 3.6)
-- [ ] `dspy/optimization-lineage-row.json` (needs demo/optimization store — 3.5)
+- [x] `dspy/optimize-cli.txt` — `xvn optimize` (run/inspect/export/import/accept/revert), all 6 failure-class exit codes (10-15), deterministic DummyLM
+- [x] `dspy/optimization-lineage-row.json` — optimization store (migration 045, reproducible-from-inputs)
+- [ ] 3.7 optimizer dashboard surfaces (tune/candidate/diff/accept) + 3.8 docs/skills
 
 ### Phase 4 — strategy agents
 - [ ] `strategy-agents/missing-capability-proof.txt`
