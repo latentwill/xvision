@@ -93,9 +93,11 @@ impl StopPolicy {
 /// `eval_runs.live_config_json` (Phase B migration).
 ///
 /// `strategy_id` references the strategy artifact that drives the run.
-/// `assets` is `Vec` for forward-compat with multi-asset Live launches
-/// (see `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md`);
-/// v1 hard-walls it to `len() == 1`.
+/// `assets` is `Vec` for forward-compat with multi-asset Live launches;
+/// v1 hard-walls it to `len() == 1`. The wall is lifted by the cline-live L2
+/// loop once the invariants in
+/// `docs/superpowers/notes/2026-05-25-live-multi-asset-invariants.md` hold
+/// (impl: `docs/superpowers/plans/2026-05-25-cline-live-followups.md` §4).
 ///
 /// `broker_creds_ref` resolves to a configured broker-credentials row;
 /// the engine never stores the secret material itself in `LiveConfig`.
@@ -159,7 +161,8 @@ impl LiveConfig {
             return Err(E::BrokerCredsEmpty);
         }
 
-        // Single-asset wall (v1). Lifted by the multi-asset-alpaca plan.
+        // Single-asset wall (v1). Lifted by the cline-live L2 loop — see
+        // docs/superpowers/notes/2026-05-25-live-multi-asset-invariants.md.
         if self.assets.len() != 1 {
             return Err(E::AssetCount {
                 actual: self.assets.len(),
@@ -309,7 +312,16 @@ impl std::fmt::Display for LiveConfigValidationError {
             Self::DisplayNameEmpty => f.write_str("display_name must be non-empty"),
             Self::StrategyIdEmpty => f.write_str("strategy_id must be non-empty"),
             Self::BrokerCredsEmpty => f.write_str("broker_creds_ref must be non-empty"),
-            Self::AssetCount { actual } => write!(f, "v1 Live runs require exactly 1 asset (got {actual})"),
+            Self::AssetCount { actual } if *actual > 1 => write!(
+                f,
+                "multi-asset Live runs are not available yet — pick a single asset (got {actual}). \
+                 Backtest multi-asset is supported; live multi-asset is gated until the cline-live \
+                 L2 loop lands (docs/superpowers/plans/2026-05-25-cline-live-followups.md)."
+            ),
+            Self::AssetCount { actual } => write!(
+                f,
+                "Live runs require exactly 1 asset; none were provided (got {actual})"
+            ),
             Self::AssetNotWhitelisted { symbol, .. } => {
                 write!(f, "asset '{symbol}' is not on the Alpaca crypto whitelist")
             }
@@ -425,6 +437,25 @@ mod tests {
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, LiveConfigValidationError::AssetCount { actual: 2 }));
         assert_eq!(err.field_path(), "/assets");
+    }
+
+    /// The multi-asset rejection message must be actionable: name the
+    /// multi-asset limitation and tell the operator to pick a single asset,
+    /// rather than the bare `exactly 1` arithmetic. Operators only ever see
+    /// this string (the engine surfaces `Display`, not the Debug variant).
+    #[test]
+    fn multi_asset_live_rejection_message_is_actionable() {
+        let mut cfg = valid_config();
+        cfg.assets = vec![whitelisted_btc_asset(), whitelisted_btc_asset()];
+        let msg = cfg.validate().unwrap_err().to_string();
+        assert!(
+            msg.contains("multi-asset"),
+            "message should name the multi-asset limitation: {msg}"
+        );
+        assert!(
+            msg.contains("single asset"),
+            "message should tell the operator to pick a single asset: {msg}"
+        );
     }
 
     #[test]

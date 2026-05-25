@@ -1076,7 +1076,9 @@ fn validate_live_request_shape(req: &EvalRunRequest) -> ApiResult<()> {
     match (&req.mode, req.live_config.as_ref()) {
         (RunMode::Live, Some(cfg)) => cfg
             .validate()
-            .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path()))),
+            // Surface `Display` (human-readable, actionable), not the `{e:?}`
+            // Debug variant — operators (CLI + dashboard) see this string.
+            .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e}", e.field_path()))),
         (RunMode::Live, None) => Err(ApiError::Validation(
             "mode=live requires live_config (strategy_id, assets, capital, broker_creds_ref, stop_policy)"
                 .into(),
