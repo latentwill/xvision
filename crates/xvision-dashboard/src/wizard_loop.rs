@@ -39,7 +39,14 @@ use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
 use xvision_engine::api::strategy as api_strategy;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
-use xvision_engine::chat_session::{action_confirmation_card, ChatSessionStore, ContextScope, InlineAction};
+use xvision_engine::chat_session::{
+    action_confirmation_card, classify_tool, decide_tool_policy, ChatSessionStore, ContextScope,
+    InlineAction, ToolPolicyStore, GLOBAL_SCOPE,
+};
+use xvision_observability::{
+    Actor as UnifiedActor, ToolDenied, ToolPolicyChecked, ToolPolicyOutcome, TypedError,
+    UnifiedPayload,
+};
 use xvision_engine::eval::{
     findings::Finding,
     run::{RunMode, RunStatus},
@@ -135,6 +142,27 @@ pub enum WizardEvent {
     Error { message: String },
 }
 
+/// A net-new unified-event the legacy [`WizardEvent`] vocabulary can't carry,
+/// produced by the Phase 2 safety enforcement inside the loop. The chat route
+/// drains these alongside the `WizardEvent` stream and projects them through
+/// the same per-session projector so the unified `seq` stays gap-free.
+///
+/// `actor` is the unified-event actor (`Hook` for policy enforcement); `span_id`
+/// correlates the event with the tool the check ran for.
+pub struct PolicyEvent {
+    pub actor: UnifiedActor,
+    pub span_id: Option<String>,
+    pub payload: UnifiedPayload,
+}
+
+/// Outcome of the per-tool safety gate. `Allow` means the caller executes the
+/// tool; `Blocked` carries the typed denial tool_result fed back to the model
+/// (the tool did NOT run).
+enum PolicyVerdict {
+    Allow,
+    Blocked(serde_json::Value),
+}
+
 pub struct WizardLoop {
     api_context: ApiContext,
     dispatch: Arc<dyn LlmDispatch>,
@@ -146,6 +174,15 @@ pub struct WizardLoop {
     scope: ContextScope,
     profile: AgentProfile,
     cli_runner: Option<Arc<CliJobRunner>>,
+    /// Effective Research/Act mode + tool-policy scope. The mode is the
+    /// source-of-truth value read FROM THE DB at construction (never a client
+    /// field); enforcement re-reads it per tool so a `/mode` POST mid-stream is
+    /// respected. `user_scope` selects which `tool_policies` rows apply.
+    user_scope: String,
+    /// Net-new unified safety events queued during the current `next_event`
+    /// invocation (ToolPolicyChecked / ToolDenied / ErrorPolicyDenied). Drained
+    /// by the route via `take_policy_events`.
+    policy_events: Vec<PolicyEvent>,
     /// Tracked across iterations: the most recent strategy id mentioned in
     /// a tool-call/-result. Used to populate `Done.draft_id`.
     last_draft_id: Option<String>,
@@ -637,6 +674,10 @@ impl WizardLoop {
             scope,
             profile,
             cli_runner,
+            // v1: single workspace scope. Per-user identity threads in here
+            // once auth carries a user id to the chat route.
+            user_scope: GLOBAL_SCOPE.to_string(),
+            policy_events: Vec::new(),
             last_draft_id: None,
             last_tool_error: None,
             last_tool_failure: None,
@@ -665,6 +706,87 @@ impl WizardLoop {
         // back — reverse so the caller streams in the right sequence.
         self.pending.reverse();
         self.pending.pop()
+    }
+
+    /// Drain the net-new unified safety events queued during the last turn
+    /// (ToolPolicyChecked / ToolDenied / ErrorPolicyDenied). The chat route
+    /// calls this after each `next_event` and projects them through the shared
+    /// session projector so the unified stream carries the enforcement record.
+    /// Returns the events in chronological (emission) order.
+    pub fn take_policy_events(&mut self) -> Vec<PolicyEvent> {
+        std::mem::take(&mut self.policy_events)
+    }
+
+    /// The tool set offered to the model for this turn: the profile's tools
+    /// minus any whose persisted policy is `enabled = false`. Disabled tools
+    /// must never be presented (defense-in-depth: even if the model knew the
+    /// name, the per-tool enforcement in `run_one_turn` denies it). Reads the
+    /// `tool_policies` overrides for this scope once; unknown DB errors fall
+    /// back to the unfiltered set so a transient read failure can't silently
+    /// strip the model's whole toolbelt — enforcement still gates writes.
+    async fn enabled_tool_defs(&mut self) -> Vec<ToolDefinition> {
+        let defs = agent_tool_defs(self.profile);
+        let overrides = match ToolPolicyStore::get_policies(&self.pool, &self.user_scope).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::error!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %self.session_id,
+                    error = %e,
+                    "failed to load tool_policies; offering unfiltered tool set (enforcement still gates writes)",
+                );
+                return defs;
+            }
+        };
+        let mut out = Vec::with_capacity(defs.len());
+        for def in defs {
+            // A disabled override hides the tool; otherwise (override-enabled or
+            // no override) keep it. The class default is never "disabled" for
+            // the chat authoring verbs (only the reserved Dangerous class is,
+            // and none are classified Dangerous yet), so absence of a row keeps
+            // the tool visible.
+            let disabled = overrides
+                .iter()
+                .find(|r| r.tool_name == def.name)
+                .map(|r| !r.enabled)
+                .unwrap_or(false);
+            if disabled {
+                // Visibility: a hidden tool emits a ToolPolicyChecked{Denied}
+                // so the operator can see it was withheld this turn.
+                let span = Ulid::new().to_string();
+                self.policy_events.push(PolicyEvent {
+                    actor: UnifiedActor::Hook,
+                    span_id: Some(span.clone()),
+                    payload: UnifiedPayload::ToolPolicyChecked(ToolPolicyChecked {
+                        span_id: span,
+                        tool_name: def.name.clone(),
+                        outcome: ToolPolicyOutcome::Denied,
+                        mode: self.current_mode().await,
+                    }),
+                });
+                continue;
+            }
+            out.push(def);
+        }
+        out
+    }
+
+    /// Read the session's current Research/Act mode FROM THE DB. The column is
+    /// the source of truth; the client-sent mode is never consulted. Defaults
+    /// to `research` (fail closed) if the rail state can't be read.
+    async fn current_mode(&self) -> String {
+        match ChatSessionStore::load_rail_state(&self.pool, &self.session_id).await {
+            Ok(st) => st.mode,
+            Err(e) => {
+                tracing::error!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %self.session_id,
+                    error = %e,
+                    "failed to read session mode; failing closed to research",
+                );
+                "research".to_string()
+            }
+        }
     }
 
     fn system_prompt(&self) -> String {
@@ -696,13 +818,17 @@ impl WizardLoop {
     async fn run_one_turn(&mut self) -> anyhow::Result<()> {
         for _ in 0..MAX_TOOL_LOOP_ITERATIONS {
             let messages = self.load_messages_from_store().await?;
+            // Phase 2.3: offer only enabled tools. Disabled tools are filtered
+            // out (and emit a ToolPolicyChecked{Denied} for visibility) so the
+            // model never even sees a tool the operator has turned off.
+            let tools = self.enabled_tool_defs().await;
             let req = LlmRequest {
                 model: self.model.clone(),
                 system_prompt: self.system_prompt(),
                 messages,
                 max_tokens: Some(1500),
                 temperature: None,
-                tools: agent_tool_defs(self.profile),
+                tools,
                 response_schema: None,
                 cache_control: None,
             };
@@ -756,14 +882,23 @@ impl WizardLoop {
                     tool: name.clone(),
                     args: input.clone(),
                 });
-                let result = self.run_tool(&name, input).await;
-                let result_value = match result {
-                    Ok(v) => v,
-                    Err(e) => {
-                        let msg = e.to_string();
-                        self.last_tool_error = Some((name.clone(), msg.clone()));
-                        serde_json::json!({ "error": msg })
+                // Phase 2.2 + 2.3 SAFETY CORE: gate the tool against the
+                // session's mode (read FROM THE DB) and its persisted policy
+                // BEFORE executing. Returns a typed denial result + queues the
+                // unified safety events when the tool must not run.
+                let result_value = match self.enforce_tool_policy(&name).await {
+                    PolicyVerdict::Allow => {
+                        let result = self.run_tool(&name, input).await;
+                        match result {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let msg = e.to_string();
+                                self.last_tool_error = Some((name.clone(), msg.clone()));
+                                serde_json::json!({ "error": msg })
+                            }
+                        }
                     }
+                    PolicyVerdict::Blocked(denial) => denial,
                 };
                 self.maybe_track_draft_id(&name, &result_value);
                 self.update_tool_failure_streak(&name, &result_value);
@@ -980,6 +1115,137 @@ impl WizardLoop {
                 .and_then(|v| v.as_str())
             {
                 self.last_draft_id = Some(id.to_string());
+            }
+        }
+    }
+
+    /// Server-side tool-policy gate (Phase 2.2 + 2.3). Reads the session's
+    /// mode FROM THE DB and the tool's effective policy, runs the pure
+    /// `decide`, emits a `ToolPolicyChecked` for visibility, and:
+    ///
+    /// - `AutoApproved` → [`PolicyVerdict::Allow`] (the caller executes).
+    /// - `Denied` → queues `ToolDenied` + `ErrorPolicyDenied`, returns a typed
+    ///   denial tool_result so the model SEES the refusal and can adapt
+    ///   (e.g. switch to Act mode or ask the operator). The tool does NOT run.
+    /// - `NeedsApproval` → SCOPE BOUNDARY: the interactive approve→resume
+    ///   round-trip is deferred. The decision is persisted via the
+    ///   `ToolPolicyChecked{NeedsApproval}` event; at execution time the tool is
+    ///   treated as blocked-pending-approval and does NOT run, returning a typed
+    ///   result telling the model an operator must approve it.
+    async fn enforce_tool_policy(&mut self, name: &str) -> PolicyVerdict {
+        let mode = self.current_mode().await;
+        let class = classify_tool(name);
+        let policy = match ToolPolicyStore::effective(&self.pool, &self.user_scope, name).await {
+            Ok(p) => p,
+            Err(e) => {
+                // Fail closed: an unreadable policy denies the tool rather than
+                // defaulting to allow.
+                tracing::error!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %self.session_id,
+                    tool = name,
+                    error = %e,
+                    "failed to read tool policy; failing closed (denied)",
+                );
+                xvision_engine::chat_session::ToolPolicy { enabled: false, auto_approve: false }
+            }
+        };
+        let outcome = decide_tool_policy(&mode, class, policy);
+
+        let span = Ulid::new().to_string();
+        // Always emit the policy-check record (visibility for every outcome).
+        self.policy_events.push(PolicyEvent {
+            actor: UnifiedActor::Hook,
+            span_id: Some(span.clone()),
+            payload: UnifiedPayload::ToolPolicyChecked(ToolPolicyChecked {
+                span_id: span.clone(),
+                tool_name: name.to_string(),
+                outcome,
+                mode: mode.clone(),
+            }),
+        });
+
+        match outcome {
+            ToolPolicyOutcome::AutoApproved => PolicyVerdict::Allow,
+            ToolPolicyOutcome::Denied => {
+                let (code, message, remediation) = if !policy.enabled {
+                    (
+                        "tool_disabled",
+                        format!("Tool `{name}` is disabled by the current tool policy."),
+                        Some(format!("Enable `{name}` in the chat tool-policy settings to use it.")),
+                    )
+                } else {
+                    (
+                        "write_tool_in_research_mode",
+                        format!(
+                            "Tool `{name}` writes/mutates state and is blocked in research mode \
+                             (read-only). Switch the session to Act mode to use it."
+                        ),
+                        Some("Switch this chat session to Act mode, then retry.".to_string()),
+                    )
+                };
+                // ToolDenied (tool-row signal) + ErrorPolicyDenied (typed,
+                // never-silent error) onto the unified log + bus.
+                self.policy_events.push(PolicyEvent {
+                    actor: UnifiedActor::Hook,
+                    span_id: Some(span.clone()),
+                    payload: UnifiedPayload::ToolDenied(ToolDenied {
+                        span_id: span.clone(),
+                        tool_name: name.to_string(),
+                        code: code.to_string(),
+                        message: message.clone(),
+                    }),
+                });
+                self.policy_events.push(PolicyEvent {
+                    actor: UnifiedActor::Hook,
+                    span_id: Some(span),
+                    payload: UnifiedPayload::ErrorPolicyDenied(TypedError {
+                        code: code.to_string(),
+                        message: message.clone(),
+                        remediation,
+                    }),
+                });
+                // Feed the denial back into the loop so the model sees it as a
+                // tool_result and can adapt rather than retrying blindly.
+                PolicyVerdict::Blocked(serde_json::json!({
+                    "error": message,
+                    "denied": true,
+                    "code": code,
+                }))
+            }
+            ToolPolicyOutcome::NeedsApproval => {
+                // SCOPE BOUNDARY: persist + decide the NeedsApproval outcome
+                // (the ToolPolicyChecked above), but do NOT execute. The
+                // interactive approve→resume flow is a follow-up.
+                let message = format!(
+                    "Tool `{name}` requires operator approval before it runs. \
+                     The request was recorded; an operator must approve it. \
+                     (Interactive approval round-trip is not yet wired.)"
+                );
+                self.policy_events.push(PolicyEvent {
+                    actor: UnifiedActor::Hook,
+                    span_id: Some(span),
+                    payload: UnifiedPayload::ErrorPolicyDenied(TypedError {
+                        code: "tool_needs_approval".to_string(),
+                        message: message.clone(),
+                        remediation: Some(
+                            "Enable auto-approve for this tool, or approve the pending request once \
+                             the approval flow is available."
+                                .to_string(),
+                        ),
+                    }),
+                });
+                tracing::info!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %self.session_id,
+                    tool = name,
+                    "tool needs approval; blocked pending approval (interactive flow deferred)",
+                );
+                PolicyVerdict::Blocked(serde_json::json!({
+                    "error": message,
+                    "needs_approval": true,
+                    "code": "tool_needs_approval",
+                }))
             }
         }
     }
@@ -2845,6 +3111,26 @@ mod tests {
         (pool, td)
     }
 
+    /// Put a session into Act mode and auto-approve every write tool. Used by
+    /// the pre-Phase-2 unit tests, which exercise tool *execution* mechanics
+    /// (not the safety gate): without this, the default research mode +
+    /// needs-approval policy would correctly block the write tools they drive.
+    /// The dedicated Phase 2 gate behaviour is covered by
+    /// `tests/chat_rail_safety.rs`.
+    async fn unlock_writes_for_tests(pool: &SqlitePool, session_id: &str) {
+        ChatSessionStore::set_mode(pool, session_id, "act").await.unwrap();
+        for def in agent_tool_defs(AgentProfile::Workspace) {
+            ToolPolicyStore::upsert_policy(
+                pool,
+                GLOBAL_SCOPE,
+                &def.name,
+                xvision_engine::chat_session::ToolPolicy { enabled: true, auto_approve: true },
+            )
+            .await
+            .unwrap();
+        }
+    }
+
     async fn loop_with_session(
         dispatch: Arc<dyn LlmDispatch>,
         msg: &str,
@@ -2852,6 +3138,7 @@ mod tests {
     ) -> (WizardLoop, SqlitePool, tempfile::TempDir, String) {
         let (pool, td) = fresh_pool().await;
         let session_id = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
+        unlock_writes_for_tests(&pool, &session_id).await;
         let wl = WizardLoop::new(
             td.path().to_path_buf(),
             dispatch,
