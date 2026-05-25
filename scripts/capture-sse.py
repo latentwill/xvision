@@ -36,6 +36,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import sys
 import time
 import urllib.error
@@ -147,30 +148,33 @@ def main() -> int:
     try:
         req = build_request(args.method, url, body)
         with urllib.request.urlopen(req, timeout=args.idle_timeout or None) as resp:
-            for sse_event, data_str in iter_sse_frames(resp, args.idle_timeout):
-                try:
-                    data_obj = json.loads(data_str)
-                except json.JSONDecodeError:
-                    data_obj = data_str
-                kind = event_kind(sse_event, data_obj)
-                if kind:
-                    seen_kinds.add(kind)
-                record = {
-                    "seq": count,
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "event": sse_event,
-                    "kind": kind,
-                    "data": redact(data_obj),
-                }
-                line = json.dumps(record, ensure_ascii=False)
-                if out_fh:
-                    out_fh.write(line + "\n")
-                    out_fh.flush()
-                else:
-                    print(line)
-                count += 1
-                if args.max_events and count >= args.max_events:
-                    break
+            try:
+                for sse_event, data_str in iter_sse_frames(resp, args.idle_timeout):
+                    try:
+                        data_obj = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        data_obj = data_str
+                    kind = event_kind(sse_event, data_obj)
+                    if kind:
+                        seen_kinds.add(kind)
+                    record = {
+                        "seq": count,
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "event": sse_event,
+                        "kind": kind,
+                        "data": redact(data_obj),
+                    }
+                    line = json.dumps(record, ensure_ascii=False)
+                    if out_fh:
+                        out_fh.write(line + "\n")
+                        out_fh.flush()
+                    else:
+                        print(line)
+                    count += 1
+                    if args.max_events and count >= args.max_events:
+                        break
+            except (TimeoutError, socket.timeout):
+                sys.stderr.write(f"idle timeout after {args.idle_timeout}s for {args.method.upper()} {url}\n")
     except urllib.error.HTTPError as exc:
         sys.stderr.write(f"HTTP {exc.code} {exc.reason} for {args.method.upper()} {url}\n")
         return 3

@@ -82,6 +82,69 @@ export function WizardPreviewChart({
       : null,
   );
 
+  // Keep hook order stable across loading/error/data renders. The preview used
+  // to call this memo only after query.data existed, which changes the hook
+  // count when the fetch resolves.
+  const payload: ScenarioChartPayload | null = useMemo(() => {
+    if (!query.data) return null;
+    return {
+      scenario: {
+        id: 'preview',
+        parent_scenario_id: null,
+        source: 'User',
+        display_name: 'Preview',
+        description: '',
+        notes: null,
+        asset_class: 'Crypto',
+        asset: [
+          {
+            class: 'Crypto',
+            symbol: debounced.asset,
+            venue_symbol: `${debounced.asset}/USD`,
+          },
+        ],
+        quote_currency: 'Usd',
+        time_window: { start: debounced.from, end: debounced.to },
+        granularity: previewGranularityToScenario(debounced.granularity),
+        timezone: 'UTC',
+        calendar: 'Continuous24x7',
+        data_source: { type: 'AlpacaHistorical', feed: null, adjustment: 'Raw' },
+        venue: {
+          venue: 'Alpaca',
+          fees: { maker_bps: 10, taker_bps: 25 },
+          slippage: { model: 'linear', bps: 5 },
+          latency: { decision_to_fill_ms: 500 },
+          fill_model: {
+            market_order_fill: 'FullAtClose',
+            limit_order_fill: 'NeverFills',
+            partial_fills: false,
+            volume_constraints: null,
+          },
+        },
+        replay_mode: { mode: 'Continuous' },
+        bar_cache_policy: {
+          cache_key: query.data.cache_key,
+          refresh_policy: 'NeverRefresh',
+          data_fetched_at: null,
+        },
+        tags: [],
+        created_at: PREVIEW_CREATED_AT,
+        created_by: '',
+        archived_at: null,
+      } as unknown as ScenarioChartPayload['scenario'],
+      bars: query.data.bars,
+      indicators: emptyIndicators(),
+      cache_status: query.data.cache_status,
+      preview_asset: debounced.asset,
+    };
+  }, [
+    debounced.asset,
+    debounced.from,
+    debounced.granularity,
+    debounced.to,
+    query.data,
+  ]);
+
   if (!ready) {
     return (
       <div className="text-text-3 text-[12px]">
@@ -111,69 +174,7 @@ export function WizardPreviewChart({
       </div>
     );
   }
-  if (!query.data) return null;
-
-  // Reuse ScenarioChart for visual consistency by synthesising the minimum
-  // Scenario shape it needs. The chart only reads scenario.granularity +
-  // bar_cache_policy.cache_key + asset[0] + tags.
-  const payload: ScenarioChartPayload = useMemo(() => ({
-    scenario: {
-      id: 'preview',
-      parent_scenario_id: null,
-      source: 'User',
-      display_name: 'Preview',
-      description: '',
-      notes: null,
-      asset_class: 'Crypto',
-      asset: [
-        {
-          class: 'Crypto',
-          symbol: debounced.asset,
-          venue_symbol: `${debounced.asset}/USD`,
-        },
-      ],
-      quote_currency: 'Usd',
-      time_window: { start: debounced.from, end: debounced.to },
-      granularity: previewGranularityToScenario(debounced.granularity),
-      timezone: 'UTC',
-      calendar: 'Continuous24x7',
-      data_source: { type: 'AlpacaHistorical', feed: null, adjustment: 'Raw' },
-      venue: {
-        venue: 'Alpaca',
-        fees: { maker_bps: 10, taker_bps: 25 },
-        slippage: { model: 'linear', bps: 5 },
-        latency: { decision_to_fill_ms: 500 },
-        fill_model: {
-          market_order_fill: 'FullAtClose',
-          limit_order_fill: 'NeverFills',
-          partial_fills: false,
-          volume_constraints: null,
-        },
-      },
-      replay_mode: { mode: 'Continuous' },
-      bar_cache_policy: {
-        cache_key: query.data.cache_key,
-        refresh_policy: 'NeverRefresh',
-        data_fetched_at: null,
-      },
-      tags: [],
-      created_at: PREVIEW_CREATED_AT,
-      created_by: '',
-      archived_at: null,
-    } as unknown as ScenarioChartPayload['scenario'],
-    bars: query.data.bars,
-    indicators: emptyIndicators(),
-    cache_status: query.data.cache_status,
-    preview_asset: debounced.asset,
-  }), [
-    debounced.asset,
-    debounced.from,
-    debounced.granularity,
-    debounced.to,
-    query.data.bars,
-    query.data.cache_key,
-    query.data.cache_status,
-  ]);
+  if (!query.data || !payload) return null;
 
   return (
     <div className="border border-border rounded">

@@ -38,7 +38,7 @@ export function UplotDrawdownPane({
   const values = points.map((p) => p.value);
   const minVal = values.length > 0 ? Math.min(...values) : -0.01;
   // Pad 5 % so the fill area is visible.
-  const paddedMin = minVal * 1.05;
+  const paddedMin = minVal === 0 ? -0.01 : minVal * 1.05;
 
   const baseOpts = themeToUplotOptions(theme) as Partial<uPlot.Options>;
 

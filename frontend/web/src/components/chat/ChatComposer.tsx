@@ -23,6 +23,10 @@ export function ChatComposer({
     <form
       onSubmit={(e) => {
         e.preventDefault();
+        if (busy) {
+          onCancel?.();
+          return;
+        }
         onSubmit();
       }}
       className="border-t border-border-soft px-3 py-2.5 flex gap-2 bg-surface-2/30"

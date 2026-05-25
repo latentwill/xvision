@@ -57,13 +57,21 @@ function pillFor(status: string): PillStyle {
         pulse: false,
       };
     case "completed":
-    default:
       return {
         label: "EVAL COMPLETED",
         bg: "var(--gold-bg)",
         bd: "var(--gold-soft)",
         fg: "var(--gold)",
         dot: "var(--gold)",
+        pulse: false,
+      };
+    default:
+      return {
+        label: status ? `EVAL ${status.toUpperCase()}` : "EVAL UNKNOWN",
+        bg: "rgba(153,153,153,0.10)",
+        bd: "var(--border)",
+        fg: "var(--text-2)",
+        dot: "var(--text-3)",
         pulse: false,
       };
   }
