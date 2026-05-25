@@ -31,13 +31,35 @@ async function main(): Promise<void> {
 
   // Test-only: install a deterministic mock-model script before sessions
   // can start. Gated by env var so production builds never trigger this
-  // path. Sets the script to: one echo tool-call, one "done" text.
+  // path.
+  //
+  // `XVISION_TEST_MOCK_SCRIPT` (when set to a JSON-encoded `MockTurn[]`)
+  // overrides the default script. This lets a built-sidecar integration test
+  // drive a recordable run hermetically — e.g. a `submit_decision` tool turn
+  // so `execute_slot_cline` receives a structured decision through the real
+  // Agent loop + emit.ts/frame-recorder.ts path. Falls back to the canonical
+  // echo+done script when the var is absent / unparseable.
   if (process.env.XVISION_TEST_MOCK_PROVIDER === "1") {
     installMockProvider()
-    setMockScript([
-      { toolCall: { name: "echo", input: { msg: "from-sidecar" } } },
-      { text: "done" },
-    ])
+    let scripted = false
+    const raw = process.env.XVISION_TEST_MOCK_SCRIPT
+    if (raw) {
+      try {
+        const turns = JSON.parse(raw)
+        if (Array.isArray(turns)) {
+          setMockScript(turns)
+          scripted = true
+        }
+      } catch {
+        // Unparseable override → fall through to the default script.
+      }
+    }
+    if (!scripted) {
+      setMockScript([
+        { toolCall: { name: "echo", input: { msg: "from-sidecar" } } },
+        { text: "done" },
+      ])
+    }
   }
 
   const server = await startUdsServer(socketPath)

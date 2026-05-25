@@ -145,6 +145,46 @@ describe("run_finished terminal status (Gap #2)", () => {
     expect((f.error as string).length).toBeGreaterThan(0)
   })
 
+  // ── 2b. buildAgent throws synchronously → run_finished{failed}, no open row ──
+  // §2-C review nit #2: `buildAgent` is called INSIDE the try in
+  // handleSessionStep. A synchronous throw from buildAgent (bad provider
+  // config) must still close the run row with a terminal run_finished{failed}
+  // — before the fix it was constructed outside the try, so the throw left the
+  // recorder's run row OPEN.
+  it("buildAgent synchronous throw → run_finished{status:failed}, run row never left open", async () => {
+    const buildAgentMod = await import("../../src/session/build-agent.js")
+    vi.spyOn(buildAgentMod, "buildAgent").mockImplementation(() => {
+      // Simulate the "unknown provider / missing credentials" synchronous
+      // throw from build-agent.ts's real-provider gateway construction.
+      throw new Error("unknown provider: bogus-provider")
+    })
+
+    handleSessionStartRun(makeParams("run-gap2-buildthrow"))
+
+    let threw = false
+    try {
+      await handleSessionStep({ run_id: "run-gap2-buildthrow", prompt: "go" })
+    } catch {
+      threw = true
+    }
+    expect(threw).toBe(true)
+
+    // Terminal run_finished{failed} must have been emitted from the catch
+    // path (proving the run row is closed, not left open).
+    const finisheds = capturedForMethod(emitSpy, NOTIFY.RunFinished)
+    expect(finisheds).toHaveLength(1)
+    const f = finisheds[0] as Record<string, unknown>
+    expect(f.status).toBe("failed")
+    expect(f.run_id).toBe("run-gap2-buildthrow")
+    expect(typeof f.error).toBe("string")
+    expect((f.error as string)).toContain("unknown provider")
+
+    // The double-emit guard latched, so a follow-up end_run does NOT emit a
+    // second terminal — exactly one run_finished for the run.
+    handleSessionEndRun({ run_id: "run-gap2-buildthrow" })
+    expect(capturedForMethod(emitSpy, NOTIFY.RunFinished)).toHaveLength(1)
+  })
+
   // ── 3. end_run with status:cancelled for an aborted run ────────────────────
   it("end_run{status:cancelled} emits run_finished{status:cancelled}", async () => {
     // A normal successful step (Rust caller decides to abort after inspecting
