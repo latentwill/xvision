@@ -78,10 +78,16 @@ pub struct EventScope {
 
 impl EventScope {
     pub fn workspace() -> Self {
-        Self { kind: "workspace".into(), id: None }
+        Self {
+            kind: "workspace".into(),
+            id: None,
+        }
     }
     pub fn new(kind: impl Into<String>, id: Option<String>) -> Self {
-        Self { kind: kind.into(), id }
+        Self {
+            kind: kind.into(),
+            id,
+        }
     }
 }
 
@@ -401,7 +407,12 @@ pub struct RunEventProjector {
 
 impl RunEventProjector {
     pub fn new(session_id: Option<String>, run_id: impl Into<String>, scope: EventScope) -> Self {
-        Self { session_id, run_id: run_id.into(), scope, seq: 0 }
+        Self {
+            session_id,
+            run_id: run_id.into(),
+            scope,
+            seq: 0,
+        }
     }
 
     /// Current sequence cursor (the seq the next projected event will use).
@@ -448,9 +459,10 @@ fn run_event_to_payload(ev: RunEvent) -> (Actor, UnifiedPayload) {
         RunEvent::BrokerCallStarted(e) => (Actor::System, UnifiedPayload::BrokerCallStarted(e)),
         RunEvent::BrokerCallFinished(e) => (Actor::System, UnifiedPayload::BrokerCallFinished(e)),
         RunEvent::CheckpointWritten(e) => (Actor::System, UnifiedPayload::CheckpointCreated(e)),
-        RunEvent::AssistantTextDelta(e) => {
-            (Actor::Agent, UnifiedPayload::AssistantTokenDelta { text: e.delta_text })
-        }
+        RunEvent::AssistantTextDelta(e) => (
+            Actor::Agent,
+            UnifiedPayload::AssistantTokenDelta { text: e.delta_text },
+        ),
         RunEvent::SupervisorNote(e) => (Actor::System, UnifiedPayload::SupervisorNote(e)),
         RunEvent::ArtifactWritten(e) => (Actor::Agent, UnifiedPayload::ArtifactWritten(e)),
         RunEvent::SidecarError(e) => (Actor::System, UnifiedPayload::SidecarError(e)),
@@ -467,7 +479,9 @@ mod tests {
     use crate::types::{RiskLevel, RunStatus, SideEffectLevel, ToolOrigin};
 
     fn ts() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-05-24T12:00:00Z").unwrap().with_timezone(&Utc)
+        DateTime::parse_from_rfc3339("2026-05-24T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     fn sample_envelope(payload: UnifiedPayload) -> UnifiedEvent {
@@ -517,10 +531,15 @@ mod tests {
         // Guards against two variants mapping to the same SSE name.
         use std::collections::HashSet;
         let names = [
-            payload_event_name(&UnifiedPayload::SessionCreated { scope_label: "x".into() }),
+            payload_event_name(&UnifiedPayload::SessionCreated {
+                scope_label: "x".into(),
+            }),
             payload_event_name(&UnifiedPayload::AssistantMessageStarted),
             payload_event_name(&UnifiedPayload::AssistantMessageDone { draft_id: None }),
-            payload_event_name(&UnifiedPayload::ToolApproved { span_id: "s".into(), approver: "op".into() }),
+            payload_event_name(&UnifiedPayload::ToolApproved {
+                span_id: "s".into(),
+                approver: "op".into(),
+            }),
             payload_event_name(&UnifiedPayload::FocusLoaded(FocusEvent {
                 scope_kind: "strategy".into(),
                 scope_id: None,
@@ -552,6 +571,7 @@ mod tests {
             source_cli_job_id: None,
             started_at: ts(),
             retention_mode: "summary".into(),
+            trajectory_mode: None,
             sidecar_version: None,
             cline_sdk_version: None,
             protocol_version: None,

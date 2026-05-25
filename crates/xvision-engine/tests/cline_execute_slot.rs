@@ -94,6 +94,7 @@ fn slot_input<'a>(
         run_id: run_id.into(),
         cline_client: client,
         trajectory_mode: xvision_engine::agent::execute_cline::TrajectoryMode::Record,
+        record_slot_role: None,
     }
 }
 

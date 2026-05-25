@@ -19,6 +19,7 @@
 
 import type { AgentModelRequest } from "./model-wrapper.js"
 import { emitFrame } from "./emit.js"
+import { activeRunId } from "./active-run.js"
 import type {
   TrajectoryFrame,
   ToolResultFrame,
@@ -54,6 +55,14 @@ type AgentModelEvent =
 
 export interface FrameRecorder {
   /**
+   * Advance to the next step (one `session.step` invocation). Bumps
+   * `step_index` so frames from this step land in their own
+   * `(recording_id, slot_role, step_index)` group on the Rust side. Call
+   * once per `session.step` before the agent runs.
+   */
+  beginStep(): void
+
+  /**
    * Record the Request frame BEFORE the first event from stream().
    * Must be called exactly once per stream() invocation.
    */
@@ -72,8 +81,36 @@ export interface FrameRecorder {
   recordToolResult(toolCallId: string, output: unknown, error?: string): void
 }
 
-/** Create a FrameRecorder. One recorder is used per stream() invocation. */
-export function createFrameRecorder(): FrameRecorder {
+export interface FrameRecorderOptions {
+  /**
+   * The slot role this recording is for (e.g. "trader"). Stamped on every
+   * emitted frame envelope as `slot_role` so the Rust consumer keys frames
+   * to the matching `TrajectoryKey.slot_role`. Free-form per the terminology
+   * lock (slot names are user-defined). Defaults to `"default"` when the
+   * caller does not supply one.
+   */
+  slotRole?: string
+}
+
+/**
+ * Create a FrameRecorder for one recording (one run). The same recorder
+ * instance is shared across all steps + model calls of the run; `step_index`
+ * is bumped per `session.step` via `beginStep()` and `frame_index` is
+ * monotonic across the whole recording, so every emitted frame has a unique,
+ * ordered `(step_index, frame_index)` coordinate.
+ */
+export function createFrameRecorder(opts: FrameRecorderOptions = {}): FrameRecorder {
+  const slotRole = opts.slotRole ?? "default"
+  // step_index starts at -1 so the first beginStep() lands on step 0. If a
+  // caller records a frame before any beginStep() (defensive), it is stamped
+  // step 0 via the clamp in emit().
+  let stepIndex = -1
+  // frame_index is monotonic across the entire recording (never reset). The
+  // Rust store PK is (recording_id, slot_role, step_index, frame_index), so a
+  // globally-monotonic frame_index is trivially unique+ordered within any
+  // step group as well.
+  let frameIndex = 0
+
   // lastTs ensures non-decreasing tsMs even if two frames land at the same
   // wall-clock millisecond.
   let lastTs = 0
@@ -89,10 +126,23 @@ export function createFrameRecorder(): FrameRecorder {
   }
 
   function emit(frame: TrajectoryFrame): void {
-    emitFrame(frame)
+    emitFrame({
+      // run_id is read at emit time from the module-local active-run
+      // registry (set by session.step). Empty string when no run is active
+      // (defensive — recording is only enabled inside an active step).
+      run_id: activeRunId() ?? "",
+      slot_role: slotRole,
+      step_index: stepIndex < 0 ? 0 : stepIndex,
+      frame_index: frameIndex++,
+      frame,
+    })
   }
 
   return {
+    beginStep(): void {
+      stepIndex += 1
+    },
+
     recordRequest(request: AgentModelRequest): void {
       const frame: RequestFrame = {
         kind: "Request",

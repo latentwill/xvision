@@ -28,7 +28,7 @@ import {
 } from "../../src/testing/mock-provider.js"
 import * as eventClient from "../../src/transport/event-client.js"
 import type { TrajectoryFrame } from "../../src/session/frame-types.js"
-import { NOTIFY } from "../../src/session/emit.js"
+import { NOTIFY, type TrajectoryFrameEnvelope } from "../../src/session/emit.js"
 
 type EmitSpy = { mock: { calls: unknown[][] } }
 
@@ -57,11 +57,16 @@ function makeParams(run_id: string, allowed_tools: string[] = ["echo"]) {
   }
 }
 
-/** Collect trajectory frames emitted during a test via the notification spy. */
-function collectFrames(spy: EmitSpy): TrajectoryFrame[] {
+/** Collect the trajectory frame ENVELOPES emitted during a test. */
+function collectEnvelopes(spy: EmitSpy): TrajectoryFrameEnvelope[] {
   return spy.mock.calls
     .filter((call) => call[0] === NOTIFY.TrajectoryFrame)
-    .map((call) => call[1] as TrajectoryFrame)
+    .map((call) => call[1] as TrajectoryFrameEnvelope)
+}
+
+/** Collect trajectory frame bodies (unwrapped from the envelope). */
+function collectFrames(spy: EmitSpy): TrajectoryFrame[] {
+  return collectEnvelopes(spy).map((env) => env.frame)
 }
 
 describe("trajectory frame recording", () => {
@@ -217,6 +222,78 @@ describe("trajectory frame recording", () => {
       const prev = frames[i - 1] as { ts_ms: number }
       const curr = frames[i] as { ts_ms: number }
       expect(curr.ts_ms).toBeGreaterThanOrEqual(prev.ts_ms)
+    }
+  })
+
+  // -----------------------------------------------------------------------
+  // Gap #8: coordinate envelope shape matches the Rust parser
+  // -----------------------------------------------------------------------
+
+  it("each frame travels in a {run_id, slot_role, step_index, frame_index, frame} envelope", async () => {
+    setMockScript([{ text: "envelope check" }])
+    handleSessionStartRun({ ...makeParams("run-frame-env"), slot_role: "trader" })
+
+    await handleSessionStep({ run_id: "run-frame-env", prompt: "hi" })
+    handleSessionEndRun({ run_id: "run-frame-env" })
+
+    const envelopes = collectEnvelopes(emitSpy)
+    expect(envelopes.length).toBeGreaterThanOrEqual(3)
+
+    for (const env of envelopes) {
+      // All four coordinate fields the Rust `parse_trajectory_frame_notification`
+      // requires, plus the frame body under `frame`.
+      expect(env.run_id).toBe("run-frame-env")
+      expect(env.slot_role).toBe("trader")
+      expect(typeof env.step_index).toBe("number")
+      expect(typeof env.frame_index).toBe("number")
+      expect(env.frame).toBeDefined()
+      expect(typeof env.frame.kind).toBe("string")
+    }
+
+    // Single step → step_index 0 for every frame.
+    expect(envelopes.every((e) => e.step_index === 0)).toBe(true)
+
+    // frame_index is strictly increasing (monotonic) across the recording.
+    for (let i = 1; i < envelopes.length; i++) {
+      expect(envelopes[i]!.frame_index).toBeGreaterThan(envelopes[i - 1]!.frame_index)
+    }
+    // First frame_index is 0.
+    expect(envelopes[0]!.frame_index).toBe(0)
+  })
+
+  it("defaults slot_role to \"default\" when the run omits it", async () => {
+    setMockScript([{ text: "no slot role" }])
+    handleSessionStartRun(makeParams("run-frame-default-slot"))
+
+    await handleSessionStep({ run_id: "run-frame-default-slot", prompt: "hi" })
+    handleSessionEndRun({ run_id: "run-frame-default-slot" })
+
+    const envelopes = collectEnvelopes(emitSpy)
+    expect(envelopes.length).toBeGreaterThan(0)
+    expect(envelopes.every((e) => e.slot_role === "default")).toBe(true)
+  })
+
+  it("bumps step_index per session.step across multiple steps", async () => {
+    // Two steps in one run → frames from step 2 carry step_index 1.
+    setMockScript([{ text: "step one" }])
+    handleSessionStartRun({ ...makeParams("run-frame-multistep"), slot_role: "trader" })
+
+    await handleSessionStep({ run_id: "run-frame-multistep", prompt: "first" })
+    const afterFirst = collectEnvelopes(emitSpy).length
+    expect(collectEnvelopes(emitSpy).every((e) => e.step_index === 0)).toBe(true)
+
+    setMockScript([{ text: "step two" }])
+    await handleSessionStep({ run_id: "run-frame-multistep", prompt: "second" })
+    handleSessionEndRun({ run_id: "run-frame-multistep" })
+
+    const all = collectEnvelopes(emitSpy)
+    expect(all.length).toBeGreaterThan(afterFirst)
+    const secondStepFrames = all.slice(afterFirst)
+    expect(secondStepFrames.length).toBeGreaterThan(0)
+    expect(secondStepFrames.every((e) => e.step_index === 1)).toBe(true)
+    // frame_index stays monotonic across step boundaries (never resets).
+    for (let i = 1; i < all.length; i++) {
+      expect(all[i]!.frame_index).toBeGreaterThan(all[i - 1]!.frame_index)
     }
   })
 

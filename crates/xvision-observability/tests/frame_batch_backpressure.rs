@@ -233,10 +233,7 @@ async fn lossless_channel_zero_drops_under_fast_producer() {
     assert_eq!(count as usize, N, "consumer must have received all N frames");
 
     // Verify frame count in DB.
-    let frames = store
-        .read_frames(&recording_id, "trader", 0)
-        .await
-        .unwrap();
+    let frames = store.read_frames(&recording_id, "trader", 0).await.unwrap();
     assert_eq!(frames.len(), N);
 }
 
@@ -317,6 +314,7 @@ async fn run_event_bus_drops_non_lifecycle_lossy_contract() {
         source_cli_job_id: None,
         started_at: now,
         retention_mode: "hash_only".into(),
+        trajectory_mode: None,
         sidecar_version: None,
         cline_sdk_version: None,
         protocol_version: None,

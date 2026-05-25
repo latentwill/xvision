@@ -64,6 +64,8 @@ interface StartRunParams {
   decision_schema?: unknown
   /** Optional — enables trajectory frame recording for this run. */
   record?: unknown
+  /** Optional — slot role stamped on recorded trajectory frames. */
+  slot_role?: unknown
 }
 
 interface StartRunResult {
@@ -73,6 +75,13 @@ interface StartRunResult {
 
 interface EndRunParams {
   run_id?: unknown
+  /**
+   * Terminal status for the run. Defaults to `"completed"` when omitted.
+   * Pass `"cancelled"` when the run was budget/wall-aborted; `"failed"` for
+   * unrecoverable errors. Must be one of the strings `parse_run_status` on
+   * the Rust side recognises: `"completed"`, `"failed"`, `"cancelled"`.
+   */
+  status?: unknown
 }
 
 interface EndRunResult {
@@ -101,6 +110,7 @@ export function handleSessionStartRun(raw: unknown): StartRunResult {
     started_at_ms: s.created_at_ms,
     provider_id: config.provider_id,
     model_id: config.model_id,
+    ...(config.record === true ? { trajectory_mode: "record" as const } : {}),
   })
   return { run_id: s.run_id, started_at_ms: s.created_at_ms }
 }
@@ -109,11 +119,27 @@ export function handleSessionEndRun(raw: unknown): EndRunResult {
   const p = (raw ?? {}) as EndRunParams
   if (typeof p.run_id !== "string" || p.run_id.length === 0)
     throw new TypeError("params.run_id must be a non-empty string")
+
+  // Validate the optional status field.
+  const VALID_TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const
+  type TerminalStatus = typeof VALID_TERMINAL_STATUSES[number]
+  let terminalStatus: TerminalStatus = "completed"
+  if (p.status !== undefined) {
+    if (!VALID_TERMINAL_STATUSES.includes(p.status as TerminalStatus))
+      throw new TypeError(
+        `params.status must be one of: ${VALID_TERMINAL_STATUSES.join(", ")} (got ${JSON.stringify(p.status)})`,
+      )
+    terminalStatus = p.status as TerminalStatus
+  }
+
+  // Guard: if the catch path in session.step already emitted a terminal
+  // run_finished for this run, skip the emit here to avoid double-emission.
+  const alreadyEmitted = store.isRunFinishedEmitted(p.run_id)
   const ended = store.end(p.run_id)
-  if (ended) {
+  if (ended && !alreadyEmitted) {
     emitRunFinished({
       run_id: p.run_id,
-      status: "completed",
+      status: terminalStatus,
       finished_at_ms: Date.now(),
     })
   }
@@ -151,6 +177,8 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     throw new TypeError("params.base_url must be a string when present")
   if (p.record !== undefined && typeof p.record !== "boolean")
     throw new TypeError("params.record must be a boolean when present")
+  if (p.slot_role !== undefined && (typeof p.slot_role !== "string" || p.slot_role.length === 0))
+    throw new TypeError("params.slot_role must be a non-empty string when present")
   const limits = validateBudget(p.budget_limits)
   // exactOptionalPropertyTypes: spread the optional fields only when present.
   return {
@@ -163,6 +191,7 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     budget_limits: limits,
     ...(decisionSchemaOk ? { decision_schema: p.decision_schema as Record<string, unknown> } : {}),
     ...(typeof p.record === "boolean" ? { record: p.record } : {}),
+    ...(typeof p.slot_role === "string" && p.slot_role.length > 0 ? { slot_role: p.slot_role } : {}),
   }
 }
 
@@ -305,46 +334,72 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
   const remaining = remainingWallMs(session.created_at_ms, limits, store.now())
   if (remaining <= 0) return abortedStepResult("budget_wall_ms_exceeded")
 
-  // Lazy: build the Agent on first step (or after replay_load resets it).
-  // Wire submit_decision's local capture to this run's store slot so the
-  // decision lands on the StepResult. Pass replay frames when loaded.
-  if (!session.agent) {
-    const replayFrames = store.getReplayFrames(p.run_id)
-    const agent = buildAgent(session.config, {
-      captureDecision: (json) => store.setDecisionJson(p.run_id as string, json),
-      ...(replayFrames ? { replayFrames } : {}),
-    })
-    store.attachAgent(p.run_id, agent)
-  }
-  const agent = session.agent!
-
   const runId = p.run_id
-  // Both the mock-provider and real-provider paths are now wrapped by
-  // `wrapAgentModel` in `build-agent.ts`, which emits per-`stream()`
-  // ModelCallStarted + ModelCallFinished pairs. The aggregate span that
-  // used to live here for the real-provider path has been removed now that
-  // `buildProviderModel` + `wrapAgentModel` handle real providers too.
-  setActiveRun(runId, session.config.provider_id, session.config.model_id)
 
-  // Arm the wall-clock timer. When it fires we call `agent.abort()`,
-  // which causes the in-flight `agent.run` / `agent.continue` to resolve
-  // with `status: "aborted"` (see `AgentRunStatus` in @cline/shared).
-  const timer: WallTimer = armWallTimer(remaining, {
-    ...(timerOverrides.schedule ? { schedule: timerOverrides.schedule } : {}),
-    ...(timerOverrides.cancel ? { cancel: timerOverrides.cancel } : {}),
-  })
-  const onTimerFire = (): void => {
-    // `agent.abort` is idempotent; safe to call from the timer callback.
-    try {
-      agent.abort(new Error("budget_wall_ms_exceeded"))
-    } catch {
-      // Best-effort: if the SDK throws synchronously here, the awaited
-      // promise will still settle below and we'll classify the result.
-    }
-  }
-  timer.signal.addEventListener("abort", onTimerFire, { once: true })
+  // §2-C review nit #2: agent construction (`buildAgent`) is INSIDE the try
+  // below, not before it. `buildAgent` can throw synchronously on a bad
+  // provider config (unknown provider id, missing credentials — see
+  // `build-agent.ts`'s "throw a clear error rather than silently falling
+  // back" path). If that throw escaped before the try, the run row would be
+  // left OPEN (no terminal `run_finished`), defeating Gap #2's "always close
+  // the run row" guarantee. By building inside the try, a synchronous
+  // buildAgent throw flows into the catch block and emits a terminal
+  // `run_finished{status:"failed"}` before re-throwing.
+  //
+  // `timer`/`onTimerFire` are declared (nullable) before the try because the
+  // `finally` must clean them up — and they are only armed AFTER the agent
+  // is successfully built, so when buildAgent throws they are still null and
+  // the finally skips them.
+  let timer: WallTimer | null = null
+  let onTimerFire: (() => void) | null = null
 
   try {
+    // Lazy: build the Agent on first step (or after replay_load resets it).
+    // Wire submit_decision's local capture to this run's store slot so the
+    // decision lands on the StepResult. Pass replay frames when loaded. When
+    // recording is enabled, retain the FrameRecorder so we can advance
+    // `step_index` per step below.
+    if (!session.agent) {
+      const replayFrames = store.getReplayFrames(runId)
+      const built = buildAgent(session.config, {
+        captureDecision: (json) => store.setDecisionJson(runId, json),
+        onRecorder: (recorder) => store.setRecorder(runId, recorder),
+        ...(replayFrames ? { replayFrames } : {}),
+      })
+      store.attachAgent(runId, built)
+    }
+    const agent = session.agent!
+
+    // Advance the recording's step index for this `session.step` so frames
+    // emitted during it land in their own (slot_role, step_index) group on
+    // the Rust side. No-op when recording is disabled.
+    store.getRecorder(runId)?.beginStep()
+
+    // Both the mock-provider and real-provider paths are now wrapped by
+    // `wrapAgentModel` in `build-agent.ts`, which emits per-`stream()`
+    // ModelCallStarted + ModelCallFinished pairs. The aggregate span that
+    // used to live here for the real-provider path has been removed now that
+    // `buildProviderModel` + `wrapAgentModel` handle real providers too.
+    setActiveRun(runId, session.config.provider_id, session.config.model_id)
+
+    // Arm the wall-clock timer. When it fires we call `agent.abort()`,
+    // which causes the in-flight `agent.run` / `agent.continue` to resolve
+    // with `status: "aborted"` (see `AgentRunStatus` in @cline/shared).
+    timer = armWallTimer(remaining, {
+      ...(timerOverrides.schedule ? { schedule: timerOverrides.schedule } : {}),
+      ...(timerOverrides.cancel ? { cancel: timerOverrides.cancel } : {}),
+    })
+    onTimerFire = (): void => {
+      // `agent.abort` is idempotent; safe to call from the timer callback.
+      try {
+        agent.abort(new Error("budget_wall_ms_exceeded"))
+      } catch {
+        // Best-effort: if the SDK throws synchronously here, the awaited
+        // promise will still settle below and we'll classify the result.
+      }
+    }
+    timer.signal.addEventListener("abort", onTimerFire, { once: true })
+
     const result = agent.hasRun
       ? await agent.continue(p.prompt)
       : await agent.run(p.prompt)
@@ -362,7 +417,9 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
     //   4. Otherwise -> pass the SDK's status through verbatim.
     let status: StepResult["status"] = result.status
     let errorMsg: string | undefined = result.error?.message
-    if (result.status === "aborted" && timer.fired()) {
+    if (result.status === "aborted" && timer?.fired()) {
+      // `timer` is non-null here: it was armed earlier in this same try block
+      // before `agent.run`/`continue` could resolve.
       errorMsg = "budget_wall_ms_exceeded"
     } else {
       const postTokenReason = checkTokenCapsAfterStep(cumulative, limits)
@@ -401,15 +458,35 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
       ...(decisionJson ? { decision_json: decisionJson } : {}),
     }
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    // Emit the error detail first so the Rust side has context.
     emitError({
       run_id: runId,
-      message: err instanceof Error ? err.message : String(err),
+      message: errMsg,
       severity: "error",
+    })
+    // Always close the observability stream with a terminal run_finished so
+    // the recorder's run row is never left open. We emit `failed` here because
+    // an uncaught SDK exception is an unrecoverable error (distinct from a
+    // budget abort which the Rust caller signals via end_run{status:cancelled}).
+    // Latch the guard before emitting so end_run will not double-emit.
+    store.markRunFinishedEmitted(runId)
+    emitRunFinished({
+      run_id: runId,
+      status: "failed",
+      finished_at_ms: Date.now(),
+      error: errMsg,
     })
     throw err
   } finally {
-    timer.signal.removeEventListener("abort", onTimerFire)
-    timer.clear()
+    // `timer`/`onTimerFire` may be null if `buildAgent` (or an earlier
+    // statement in the try) threw before the timer was armed — guard so the
+    // cleanup itself never throws. `clearActiveRun` is always safe: it is a
+    // no-op when no run is active (buildAgent throw → setActiveRun never ran).
+    if (timer && onTimerFire) {
+      timer.signal.removeEventListener("abort", onTimerFire)
+    }
+    timer?.clear()
     clearActiveRun()
   }
 }

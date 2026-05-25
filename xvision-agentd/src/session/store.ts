@@ -2,6 +2,7 @@ import type { Agent } from "@cline/sdk"
 import type { CumulativeUsage } from "./budget.js"
 import { emptyUsage } from "./budget.js"
 import type { TrajectoryFrame } from "./frame-types.js"
+import type { FrameRecorder } from "./frame-recorder.js"
 
 export interface BudgetLimits {
   max_input_tokens: number
@@ -35,6 +36,14 @@ export interface StartRunConfig {
    * replay.
    */
   record?: boolean
+  /**
+   * The slot role this run records under (e.g. "trader"). Stamped on every
+   * trajectory frame envelope as `slot_role` so the Rust consumer keys frames
+   * to the matching recording. Free-form (slot names are user-defined per the
+   * terminology lock). Only meaningful when `record` is true; defaults to
+   * `"default"` in the recorder when omitted.
+   */
+  slot_role?: string
 }
 
 export interface Session {
@@ -60,12 +69,29 @@ export interface Session {
    * a live provider or mock. Set via `session.replay_load`.
    */
   replayFrames?: TrajectoryFrame[]
+  /**
+   * The FrameRecorder for this run, retained when recording is enabled so
+   * `session.step` can advance `step_index` via `recorder.beginStep()` per
+   * step. Undefined when `config.record` is not true.
+   */
+  recorder?: FrameRecorder
+  /**
+   * Set to true once a terminal `event.run_finished` has been emitted for this
+   * run (e.g. from the error catch path in `session.step`). Guards against
+   * double-emission: `session.end_run` checks this flag and skips the emit
+   * when the run already has a terminal event on the wire.
+   */
+  runFinishedEmitted?: boolean
 }
 
 export interface SessionStore {
   create(run_id: string, config: StartRunConfig): Session
   get(run_id: string): Session | undefined
   attachAgent(run_id: string, agent: Agent): void
+  /** Retain the FrameRecorder for this run (recording-enabled runs only). */
+  setRecorder(run_id: string, recorder: FrameRecorder): void
+  /** Read the FrameRecorder for this run, if recording is enabled. */
+  getRecorder(run_id: string): FrameRecorder | undefined
   /**
    * Add an observed step's usage to this run's cumulative totals. Called
    * by `session.step` after each successful or aborted step; budget caps
@@ -84,6 +110,19 @@ export interface SessionStore {
   setReplayFrames(run_id: string, frames: TrajectoryFrame[]): void
   /** Read the replay frames loaded for this run, if any. */
   getReplayFrames(run_id: string): TrajectoryFrame[] | undefined
+  /**
+   * Latch the `runFinishedEmitted` flag for this run. Called from
+   * `session.step`'s error catch path after emitting `event.run_finished`
+   * so that the subsequent `session.end_run` call does not double-emit the
+   * terminal event. Safe to call on a run that has already been ended
+   * (it no-ops when the session is not found).
+   */
+  markRunFinishedEmitted(run_id: string): void
+  /**
+   * Return true if a terminal `event.run_finished` has already been emitted
+   * for this run (i.e. `markRunFinishedEmitted` was called).
+   */
+  isRunFinishedEmitted(run_id: string): boolean
   /**
    * Current monotonic clock for this store. Budget enforcement reads
    * this so the same clock that stamped `created_at_ms` also computes
@@ -128,6 +167,14 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
       if (!s) throw new Error(`session not found: ${run_id}`)
       s.agent = agent
     },
+    setRecorder(run_id, recorder) {
+      const s = sessions.get(run_id)
+      if (!s) throw new Error(`session not found: ${run_id}`)
+      s.recorder = recorder
+    },
+    getRecorder(run_id) {
+      return sessions.get(run_id)?.recorder
+    },
     addUsage(run_id, delta) {
       const s = sessions.get(run_id)
       if (!s) throw new Error(`session not found: ${run_id}`)
@@ -154,6 +201,13 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
     },
     getReplayFrames(run_id) {
       return sessions.get(run_id)?.replayFrames
+    },
+    markRunFinishedEmitted(run_id) {
+      const s = sessions.get(run_id)
+      if (s) s.runFinishedEmitted = true
+    },
+    isRunFinishedEmitted(run_id) {
+      return sessions.get(run_id)?.runFinishedEmitted === true
     },
     now() {
       return now()

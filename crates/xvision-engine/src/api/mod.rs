@@ -98,8 +98,15 @@ const MIGRATION_038_EVAL_RUNS_LIVE_CONFIG: &str =
 /// item 3): adds `trajectory_mode` (+ sibling Stage 2-3 columns) to
 /// `agent_runs`. Applied via `migrate_run_trajectory_mode` because the
 /// columns may already exist on a partially-migrated DB.
-const MIGRATION_039_RUN_TRAJECTORY_MODE: &str =
-    include_str!("../../migrations/039_run_trajectory_mode.sql");
+const MIGRATION_039_RUN_TRAJECTORY_MODE: &str = include_str!("../../migrations/039_run_trajectory_mode.sql");
+/// Stage 2 (Cline runtime unification, Trajectory Record): the
+/// `trajectory_recordings` + `trajectory_frames` tables. Applied via
+/// `migrate_trajectory_frames` (guarded on the recordings table existing)
+/// so re-opening an already-migrated home is a no-op. Moved here from the
+/// ad-hoc `cline_recording::ensure_tables` idempotent-apply (§6): every
+/// `ApiContext::open` now provisions the trajectory store schema, and the
+/// store itself opens against the already-migrated pool.
+const MIGRATION_040_TRAJECTORY_FRAMES: &str = include_str!("../../migrations/040_trajectory_frames.sql");
 /// Phase 1.3 (chat-rail durable rail state): additive columns on
 /// `chat_sessions`. Applied via `migrate_chat_session_rail_state`, which runs
 /// each `ALTER TABLE … ADD COLUMN` on its own (sqlx::query is single-statement)
@@ -113,8 +120,7 @@ const MIGRATION_041_CHAT_SESSION_RAIL_STATE: &str =
 /// table's existence) because the file is two statements — CREATE TABLE +
 /// CREATE INDEX — which a single `sqlx::query` cannot run together. The DDL
 /// is duplicated as the two constants below so each runs on its own.
-const MIGRATION_042_SESSION_EVENTS_TABLE: &str =
-    "CREATE TABLE IF NOT EXISTS session_events (\
+const MIGRATION_042_SESSION_EVENTS_TABLE: &str = "CREATE TABLE IF NOT EXISTS session_events (\
          event_id    TEXT PRIMARY KEY, \
          session_id  TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE, \
          seq         INTEGER NOT NULL, \
@@ -139,8 +145,7 @@ const MIGRATION_043_TOOL_POLICIES: &str = include_str!("../../migrations/043_too
 /// is two statements — CREATE TABLE + CREATE INDEX — which a single
 /// `sqlx::query` cannot run together, so the DDL is duplicated as the two
 /// constants below and each runs on its own.
-const MIGRATION_044_CHECKPOINTS_TABLE: &str =
-    "CREATE TABLE IF NOT EXISTS chat_checkpoints (\
+const MIGRATION_044_CHECKPOINTS_TABLE: &str = "CREATE TABLE IF NOT EXISTS chat_checkpoints (\
          checkpoint_id TEXT PRIMARY KEY, \
          session_id    TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE, \
          created_at    TEXT NOT NULL, \
@@ -161,8 +166,7 @@ const MIGRATION_044_CHECKPOINTS_INDEX: &str =
 /// Driven straight off the committed migration file so the runtime path and the
 /// committed file never drift. HARD INVARIANT: the engine persists these rows
 /// as opaque JSON + scalar columns and does NOT depend on `xvision-dspy`.
-const MIGRATION_045_OPTIMIZATION_STORE: &str =
-    include_str!("../../migrations/045_optimization_store.sql");
+const MIGRATION_045_OPTIMIZATION_STORE: &str = include_str!("../../migrations/045_optimization_store.sql");
 /// Phase 4.4 (metrics & holdout discipline): the `optimization_holdout_results`
 /// table — one paired train/holdout result per acceptable snapshot plus the
 /// overfit-detection bookkeeping that gates `accept` and marketplace mint.
@@ -339,6 +343,7 @@ impl ApiContext {
         migrate_review_annotations_and_autofire(&pool).await?;
         migrate_eval_runs_live_config(&pool).await?;
         migrate_run_trajectory_mode(&pool).await?;
+        migrate_trajectory_frames(&pool).await?;
         migrate_chat_session_rail_state(&pool).await?;
         migrate_session_events(&pool).await?;
         migrate_tool_policies(&pool).await?;
@@ -373,6 +378,20 @@ impl ApiContext {
         crate::eval::scenario_seed::run_seed_if_needed(&ctx).await?;
 
         Ok(ctx)
+    }
+
+    /// Apply migration 040 (the trajectory tables) to an arbitrary pool.
+    ///
+    /// `ApiContext::open` already runs this as part of the main migrator, so
+    /// the canonical record/replay path never needs it. It is exposed for
+    /// out-of-band tooling that opens a trajectory store over a DB file that
+    /// was NOT necessarily created through `open` — e.g. the `xvn trajectory`
+    /// CLI honouring a `--db <path>` override. The underlying
+    /// `migrate_trajectory_frames` gates on the recordings table already
+    /// existing and the DDL is idempotent, so this is a no-op on an
+    /// already-migrated file.
+    pub async fn ensure_trajectory_schema(pool: &SqlitePool) -> ApiResult<()> {
+        migrate_trajectory_frames(pool).await
     }
 
     /// Construct an `ApiContext` from an already-prepared pool and actor.
@@ -1116,6 +1135,27 @@ async fn migrate_run_trajectory_mode(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+/// Stage 2 (Cline runtime unification, Trajectory Record) + §6 relocation.
+/// Creates the `trajectory_recordings` + `trajectory_frames` tables. The
+/// migration SQL uses plain `CREATE TABLE` (not `IF NOT EXISTS`), so this
+/// is guarded on the recordings table existing — re-opening an
+/// already-migrated home short-circuits and is a no-op. The two
+/// `CREATE TABLE` + index statements run as a single multi-statement query
+/// (the SQLite driver executes the whole script).
+///
+/// Before §2-D/§6 this schema was applied ad-hoc + idempotently inside
+/// `cline_recording::open_store::ensure_tables`. Folding it into the main
+/// migrator means every `ApiContext::open` (and every test harness that
+/// builds a `RunStore` / opens a pool through `open`) has the trajectory
+/// tables, and the trajectory store opens against the already-migrated DB
+/// instead of self-applying.
+async fn migrate_trajectory_frames(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "trajectory_recordings").await? {
+        sqlx::query(MIGRATION_040_TRAJECTORY_FRAMES).execute(pool).await?;
+    }
+    Ok(())
+}
+
 /// Apply migration 042 (`session_events`, the unified-event log). The two
 /// DDL statements are run separately because `sqlx::query` executes a single
 /// statement at a time. Both use `IF NOT EXISTS`, so the helper is idempotent
@@ -1359,12 +1399,10 @@ mod migration_registry_tests {
         migrate_tool_policies(&pool).await.unwrap();
 
         // Defaults: enabled=1, auto_approve=0 when only PK columns are given.
-        sqlx::query(
-            "INSERT INTO tool_policies (user_scope, tool_name) VALUES ('global', 'create_strategy')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO tool_policies (user_scope, tool_name) VALUES ('global', 'create_strategy')")
+            .execute(&pool)
+            .await
+            .unwrap();
         let (enabled, auto_approve): (i64, i64) = sqlx::query_as(
             "SELECT enabled, auto_approve FROM tool_policies \
              WHERE user_scope = 'global' AND tool_name = 'create_strategy'",
@@ -1489,7 +1527,9 @@ mod migration_registry_tests {
             "created_at",
         ] {
             assert!(
-                table_has_column(&pool, "optimization_holdout_results", col).await.unwrap(),
+                table_has_column(&pool, "optimization_holdout_results", col)
+                    .await
+                    .unwrap(),
                 "column {col} missing after migrate_holdout"
             );
         }

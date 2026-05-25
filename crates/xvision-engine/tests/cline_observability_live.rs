@@ -50,6 +50,7 @@ fn run_started(run_id: &str) -> RunEvent {
         source_cli_job_id: None,
         started_at: chrono::Utc::now(),
         retention_mode: "hash_only".into(),
+        trajectory_mode: None,
         sidecar_version: Some("mock-0.0.1".into()),
         cline_sdk_version: Some("mock-cline".into()),
         protocol_version: Some("0.1.0".into()),
@@ -73,7 +74,10 @@ async fn run_started_records_trajectory_mode_live() {
         .fetch_one(&pool)
         .await
         .expect("agent_runs row must exist");
-    assert_eq!(mode, "live", "Stage 1 live runs must record trajectory_mode = 'live'");
+    assert_eq!(
+        mode, "live",
+        "Stage 1 live runs must record trajectory_mode = 'live'"
+    );
 }
 
 #[tokio::test]

@@ -313,6 +313,7 @@ async fn run_one_arm(
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: api_eval::RunTrajectoryMode::default(),
     };
     match api_eval::run_with_deps(
         ctx,

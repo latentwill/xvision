@@ -1769,6 +1769,7 @@ impl WizardLoop {
                     auto_fire_review: false,
                     review_model: None,
                     max_annotations_per_review: Some(8),
+                    trajectory_mode: api_eval::RunTrajectoryMode::default(),
                 };
                 let out = api_eval::start_run(
                     &xvision_engine::api::ApiContext::new(

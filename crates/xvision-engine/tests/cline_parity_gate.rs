@@ -168,6 +168,7 @@ async fn cline_record_matches_llm_dispatch_over_fixed_cycles() {
             run_id: format!("parity-{i}::trader"),
             cline_client: client.clone(),
             trajectory_mode: TrajectoryMode::Record,
+            record_slot_role: None,
         })
         .await
         .expect("cline-record must produce an LlmResponse");

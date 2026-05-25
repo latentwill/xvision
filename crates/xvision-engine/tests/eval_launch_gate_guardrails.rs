@@ -184,9 +184,11 @@ fn eval_request(strategy_id: &str) -> EvalRunRequest {
         // reachability) is the thing under test.
         skip_preflight: true,
         provider_override: None,
+        assets_subset: None,
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: Default::default(),
     }
 }
 

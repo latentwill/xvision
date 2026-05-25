@@ -1,4 +1,5 @@
 pub mod briefing;
+pub mod cline_recording;
 pub mod dispatch_capability;
 pub mod edge_predicate;
 pub mod execute;

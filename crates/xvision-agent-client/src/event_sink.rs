@@ -47,15 +47,50 @@ impl EventSinkHandle {
     }
 }
 
+/// Optional trajectory-recording sink threaded through the event listener.
+///
+/// When present, the reader routes `event.trajectory_frame` notifications to
+/// the [`TrajectoryFramePersister`] (lossless append to the store) instead of
+/// dropping them. When `None`, frame notifications are ignored exactly as
+/// before (non-recording callers / existing tests).
+///
+/// Holds the store + persister behind `Arc` so the per-connection reader task
+/// (spawned with a `'static` lifetime) can own a clone.
+#[derive(Clone)]
+pub struct TrajectoryFrameSink {
+    store: Arc<TrajectoryStore>,
+    persister: Arc<TrajectoryFramePersister>,
+}
+
+impl TrajectoryFrameSink {
+    /// Bundle a store + persister for routing through [`start_event_sink`].
+    pub fn new(store: Arc<TrajectoryStore>, persister: Arc<TrajectoryFramePersister>) -> Self {
+        Self { store, persister }
+    }
+
+    /// Persist one parsed frame. Returns `Err` (with reason) on a store
+    /// fatal or a dead consumer — the caller marks the recording corrupt.
+    async fn persist(&self, parsed: ParsedTrajectoryFrame) -> Result<(), String> {
+        self.persister.persist(&self.store, parsed).await
+    }
+}
+
 /// Spawn a listener on `socket_path` that translates incoming sidecar
 /// notifications to `RunEvent`s on `bus`.
 ///
 /// Fingerprint is captured separately at `AgentClient::spawn_*` time
 /// (handshake) and threaded onto `RunStarted` here. Pass it in.
+///
+/// When `frame_sink` is `Some`, `event.trajectory_frame` notifications are
+/// parsed via [`parse_trajectory_frame_notification`] and routed to the
+/// [`TrajectoryFramePersister`] (lossless). When `None`, those notifications
+/// are silently ignored — identical to the pre-recording behaviour, so
+/// non-recording callers are unaffected.
 pub async fn start_event_sink(
     socket_path: &Path,
     bus: Arc<RunEventBus>,
     fingerprint: SidecarFingerprint,
+    frame_sink: Option<TrajectoryFrameSink>,
 ) -> std::io::Result<EventSinkHandle> {
     // Best-effort unlink — same pattern as the callback socket.
     let _ = std::fs::remove_file(socket_path);
@@ -69,6 +104,7 @@ pub async fn start_event_sink(
             };
             let bus = bus.clone();
             let fp = fingerprint.clone();
+            let frame_sink = frame_sink.clone();
             tokio::spawn(async move {
                 let (r, _w) = conn.into_split();
                 let mut br = BufReader::new(r);
@@ -77,9 +113,7 @@ pub async fn start_event_sink(
                     if n == 0 {
                         break;
                     }
-                    for ev in parse_notification(&line, &fp) {
-                        bus.publish(ev).await;
-                    }
+                    handle_notification_line(&line, &fp, &bus, frame_sink.as_ref()).await;
                     line.clear();
                 }
             });
@@ -91,6 +125,57 @@ pub async fn start_event_sink(
         accept_handle: handle,
     })
 }
+
+/// Route one raw NDJSON notification line.
+///
+/// Trajectory frames travel a separate, non-droppable path from the lossy
+/// `RunEvent` bus: an `event.trajectory_frame` notification is parsed into its
+/// `(coords, frame)` and persisted via the [`TrajectoryFrameSink`] when one is
+/// configured. Everything else dispatches to `RunEvent`s on the bus. A frame
+/// notification with no sink configured is ignored (the `dispatch` arm for
+/// `event.trajectory_frame` returns an empty Vec), preserving the
+/// pre-recording behaviour for non-recording callers.
+async fn handle_notification_line(
+    line: &str,
+    fp: &SidecarFingerprint,
+    bus: &RunEventBus,
+    frame_sink: Option<&TrajectoryFrameSink>,
+) {
+    let Ok(n) = serde_json::from_str::<Notification>(line.trim_end_matches('\n')) else {
+        return;
+    };
+    if n.method == TRAJECTORY_FRAME_METHOD {
+        if let Some(sink) = frame_sink {
+            if let Some(parsed) = parse_trajectory_frame_notification(&n.params) {
+                // Lossless append; on a fatal store / dead-consumer error
+                // the recording is corrupt. The notification reader is
+                // fire-and-forget (it does not own the recording lifecycle),
+                // so it only logs here AND latches the failure on the
+                // persister's shared `failed` flag (set inside `persist`).
+                // The eval-side finalizer reads that flag after the run
+                // (`AgentClient::recording_failed`) and calls
+                // `TrajectoryStore::mark_corrupt` — §2-B footgun d, now wired
+                // end-to-end rather than only logged.
+                if let Err(reason) = sink.persist(parsed).await {
+                    tracing::error!(
+                        target: "xvision_agent_client::event_sink",
+                        recording_id = %sink.persister.recording_id(),
+                        "trajectory frame persist failed (recording will be marked corrupt at finalize): {reason}"
+                    );
+                }
+            }
+        }
+        // Frame notifications never become RunEvents; done.
+        return;
+    }
+    for ev in dispatch(&n.method, &n.params, fp) {
+        bus.publish(ev).await;
+    }
+}
+
+/// JSON-RPC method name for trajectory frame notifications. Must match
+/// `NOTIFY.TrajectoryFrame` in `xvision-agentd/src/session/emit.ts`.
+const TRAJECTORY_FRAME_METHOD: &str = "event.trajectory_frame";
 
 /// Captured at IPC handshake time, stamped on every `RunStarted` event
 /// the sink publishes. Lets `agent_runs.sidecar_version` /
@@ -119,13 +204,6 @@ struct Notification {
     jsonrpc: String,
     method: String,
     params: serde_json::Value,
-}
-
-fn parse_notification(line: &str, fp: &SidecarFingerprint) -> Vec<RunEvent> {
-    let Ok(n) = serde_json::from_str::<Notification>(line.trim_end_matches('\n')) else {
-        return Vec::new();
-    };
-    dispatch(&n.method, &n.params, fp)
 }
 
 /// Translate a sidecar notification to zero or more `RunEvent`s. Returns
@@ -168,6 +246,7 @@ fn dispatch_inner(
             source_cli_job_id: None,
             started_at: ms_to_utc(u64_field("started_at_ms")?),
             retention_mode: "hash_only".to_string(),
+            trajectory_mode: str_field("trajectory_mode"),
             sidecar_version: fp.sidecar_version.clone(),
             cline_sdk_version: fp.cline_sdk_version.clone(),
             protocol_version: fp.protocol_version.clone(),
@@ -370,6 +449,14 @@ fn dispatch_inner(
             note: str_field("note").unwrap_or_else(|| "sidecar reported overload".to_string()),
         })],
 
+        // Trajectory frames are NOT RunEvents — they travel a separate,
+        // non-droppable path to the `TrajectoryFramePersister`. The reader
+        // (`handle_notification_line`) intercepts `event.trajectory_frame`
+        // before reaching `dispatch`, so this arm is only hit if a frame
+        // notification slips through (e.g. a future direct caller). Return
+        // an empty Vec so it never lands on the lossy bus.
+        TRAJECTORY_FRAME_METHOD => return Some(Vec::new()),
+
         // Unknown notification — silently drop. Future sidecar versions
         // may add events older Rust clients don't understand; ignoring
         // is forward-compatible.
@@ -465,10 +552,21 @@ pub fn parse_trajectory_frame_notification(params: &serde_json::Value) -> Option
 /// reader calls [`TrajectoryFramePersister::persist`] for each parsed frame;
 /// on a fatal store error the consumer exits and subsequent `persist` calls
 /// return `Err`, at which point the caller marks the recording corrupt.
+///
+/// The persister also carries a shared `failed` flag (§2-B footgun d): when
+/// `persist` returns `Err` the flag is latched, so the eval-side finalizer
+/// can observe the failure AFTER the run and call
+/// [`xvision_observability::trajectory::store::TrajectoryStore::mark_corrupt`].
+/// The flag is the bridge from the fire-and-forget notification reader (which
+/// only logs) to the synchronous finalizer (which owns the store + recording
+/// id and can mark corrupt). See [`TrajectoryFramePersister::failed`].
 pub struct TrajectoryFramePersister {
     recording_id: RecordingId,
     sender: FrameSender,
     consumer: JoinHandle<()>,
+    /// Latched on the first `persist` failure (store fatal / dead consumer).
+    /// Read by the eval finalizer to decide complete-vs-corrupt.
+    failed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TrajectoryFramePersister {
@@ -499,7 +597,18 @@ impl TrajectoryFramePersister {
             recording_id,
             sender,
             consumer,
+            failed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Whether any `persist` call has failed for this recording (latched).
+    /// §2-B footgun d: the eval finalizer reads this after `end_run` to
+    /// decide whether to `complete_recording` or `mark_corrupt`. The
+    /// notification reader itself only logs the failure (it is
+    /// fire-and-forget and does not own the recording lifecycle), so this
+    /// flag is the bridge back to the finalizer.
+    pub fn failed(&self) -> bool {
+        self.failed.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Persist one parsed frame losslessly. Appends to the store at the
@@ -516,7 +625,7 @@ impl TrajectoryFramePersister {
         parsed: ParsedTrajectoryFrame,
     ) -> Result<(), String> {
         // Append at the verbatim coordinates (lossless ordering).
-        store
+        if let Err(e) = store
             .append_frame(
                 &self.recording_id,
                 &parsed.slot_role,
@@ -525,13 +634,16 @@ impl TrajectoryFramePersister {
                 &parsed.frame,
             )
             .await
-            .map_err(|e| format!("trajectory append failed: {e}"))?;
+        {
+            self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            return Err(format!("trajectory append failed: {e}"));
+        }
         // Push through the channel to apply backpressure + surface a dead
         // consumer (storage fatal) as the corrupt signal.
-        self.sender
-            .send(parsed.frame)
-            .await
-            .map_err(|_| "frame channel consumer died".to_string())?;
+        if self.sender.send(parsed.frame).await.is_err() {
+            self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            return Err("frame channel consumer died".to_string());
+        }
         Ok(())
     }
 
@@ -585,6 +697,7 @@ mod tests {
             "started_at_ms": 1_700_000_000_000_u64,
             "provider_id": "anthropic",
             "model_id": "claude-opus-4-7",
+            "trajectory_mode": "record",
         });
         let events = dispatch("event.run_started", &p, &fp);
         assert_eq!(events.len(), 1);
@@ -594,6 +707,7 @@ mod tests {
                 assert_eq!(rs.sidecar_version.as_deref(), Some("0.1.0"));
                 assert_eq!(rs.cline_sdk_version.as_deref(), Some("0.0.41"));
                 assert_eq!(rs.protocol_version.as_deref(), Some("0.1.0"));
+                assert_eq!(rs.trajectory_mode.as_deref(), Some("record"));
             }
             _ => panic!("wrong variant"),
         }
@@ -857,6 +971,235 @@ mod tests {
         let frames = store.read_frames(&rid, "trader", 0).await.unwrap();
         assert_eq!(frames.len(), 3, "all frames persisted losslessly");
         persister.shutdown();
+    }
+
+    // ── §2-A: emit↔parse byte-for-byte roundtrip ──────────────────────
+    //
+    // These assert that the EXACT JSON shape the sidecar's `emitFrame`
+    // now produces (envelope `{ run_id, slot_role, step_index,
+    // frame_index, frame }`) parses cleanly on the Rust side. If the TS
+    // emit shape and this parser ever diverge, these fail.
+
+    /// Build the envelope the way `emit.ts::emitFrame` does for a given
+    /// frame body + coordinates — mirror of the wire contract.
+    fn emit_envelope(
+        run_id: &str,
+        slot_role: &str,
+        step_index: i64,
+        frame_index: i64,
+        frame: serde_json::Value,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "run_id": run_id,
+            "slot_role": slot_role,
+            "step_index": step_index,
+            "frame_index": frame_index,
+            "frame": frame,
+        })
+    }
+
+    #[test]
+    fn emit_shape_parses_for_every_frame_variant() {
+        // The frame bodies here are exactly what `frame-recorder.ts`
+        // serializes (snake_case fields, `kind` tag) — one per variant.
+        let bodies = vec![
+            serde_json::json!({
+                "kind": "Request", "ts_ms": 1,
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [], "system_prompt": "you are a trader"
+            }),
+            serde_json::json!({ "kind": "TextDelta", "ts_ms": 2, "text": "Analyzing" }),
+            serde_json::json!({ "kind": "ReasoningDelta", "ts_ms": 3, "text": "trend up" }),
+            serde_json::json!({
+                "kind": "ToolCallDelta", "ts_ms": 4,
+                "tool_call_id": "c1", "tool_name": "submit_decision",
+                "input": { "action": "long_open" }
+            }),
+            serde_json::json!({
+                "kind": "ToolResult", "ts_ms": 5,
+                "tool_call_id": "c1", "output": { "ok": true }
+            }),
+            serde_json::json!({
+                "kind": "Usage", "ts_ms": 6,
+                "input_tokens": 100, "output_tokens": 50,
+                "cache_read_tokens": 10, "cache_write_tokens": 5, "total_cost": 0.01
+            }),
+            serde_json::json!({ "kind": "Finish", "ts_ms": 7, "reason": "stop" }),
+        ];
+        for (i, body) in bodies.into_iter().enumerate() {
+            let kind = body["kind"].as_str().unwrap().to_string();
+            let env = emit_envelope("r1", "trader", 0, i as i64, body);
+            let parsed = parse_trajectory_frame_notification(&env)
+                .unwrap_or_else(|| panic!("emit envelope for {kind} must parse"));
+            assert_eq!(parsed.run_id, "r1");
+            assert_eq!(parsed.slot_role, "trader");
+            assert_eq!(parsed.step_index, 0);
+            assert_eq!(parsed.frame_index, i as i64);
+            assert_eq!(
+                parsed.frame.kind_str(),
+                kind,
+                "frame body decoded to wrong variant"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn trajectory_frame_notification_routes_to_persister_and_store() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        use xvision_observability::trajectory::key::{TrajectoryKey, TRAJECTORY_SCHEMA_VERSION};
+        use xvision_observability::{BlobStore, RetentionMode};
+
+        // In-memory store + recording (begin_recording mints the RecordingId).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let url = format!("sqlite://{}?mode=rwc", tmp.path().join("t.db").display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE trajectory_recordings (recording_id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'open', key_fingerprint TEXT NOT NULL UNIQUE, cycle_id TEXT NOT NULL, slot_role TEXT NOT NULL, arm_scope TEXT, simulation_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL, model_version TEXT, system_prompt_hash TEXT NOT NULL, recovery_reason TEXT, created_at INTEGER NOT NULL, completed_at INTEGER, expires_at INTEGER)",
+        ).execute(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE trajectory_frames (recording_id TEXT NOT NULL REFERENCES trajectory_recordings(recording_id) ON DELETE CASCADE, slot_role TEXT NOT NULL, step_index INTEGER NOT NULL, frame_index INTEGER NOT NULL, frame_kind TEXT NOT NULL, ts_ms INTEGER NOT NULL, payload_hash TEXT NOT NULL, payload_ref TEXT, PRIMARY KEY (recording_id, slot_role, step_index, frame_index))",
+        ).execute(&pool).await.unwrap();
+
+        let store = Arc::new(TrajectoryStore::new(
+            pool,
+            BlobStore::new(tmp.path().join("blobs")),
+            RetentionMode::FullDebug,
+        ));
+        let key = TrajectoryKey::builder()
+            .cycle_id(uuid::Uuid::new_v4())
+            .slot_role("trader")
+            .arm_scope(None::<String>)
+            .simulation_id(None::<String>)
+            .provider("anthropic")
+            .model("m")
+            .model_version("v")
+            .schema_version(TRAJECTORY_SCHEMA_VERSION)
+            .system_prompt_hash("s")
+            .user_prompt_hash("u")
+            .build();
+        let rid = store.begin_recording(&key).await.unwrap();
+
+        let persister = Arc::new(TrajectoryFramePersister::spawn(rid.clone(), 16));
+        let sink = TrajectoryFrameSink::new(store.clone(), persister);
+        let bus = RunEventBus::new(Vec::new());
+        let fp = SidecarFingerprint::default();
+
+        // Feed the EXACT NDJSON lines `emit.ts` produces — a JSON-RPC
+        // notification whose params carry the coordinate envelope.
+        for fi in 0..3i64 {
+            let line = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "event.trajectory_frame",
+                "params": {
+                    "run_id": "r1",
+                    "slot_role": "trader",
+                    "step_index": 0,
+                    "frame_index": fi,
+                    "frame": { "kind": "TextDelta", "ts_ms": fi, "text": format!("f{fi}") }
+                }
+            })
+            .to_string();
+            handle_notification_line(&line, &fp, &bus, Some(&sink)).await;
+        }
+
+        // A non-frame notification must still route to the bus, not the
+        // persister (no panic / no frame written).
+        let other = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "event.run_started",
+            "params": { "run_id": "r1", "objective": "o", "started_at_ms": 1_700_000_000_000_u64 }
+        })
+        .to_string();
+        handle_notification_line(&other, &fp, &bus, Some(&sink)).await;
+
+        store.complete_recording(&rid).await.unwrap();
+        let frames = store.read_frames(&rid, "trader", 0).await.unwrap();
+        assert_eq!(
+            frames.len(),
+            3,
+            "all three trajectory_frame notifications persisted"
+        );
+    }
+
+    #[tokio::test]
+    async fn persist_failure_latches_failed_flag() {
+        // §2-B footgun d: when `persist` fails (here: append to a recording
+        // id with no row → FK violation), the persister latches `failed()`
+        // so the eval finalizer can mark the recording corrupt.
+        use sqlx::sqlite::SqlitePoolOptions;
+        use xvision_observability::{BlobStore, RetentionMode};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let url = format!("sqlite://{}?mode=rwc", tmp.path().join("t.db").display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        // Enforce FK so the append to a missing recording row fails.
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE trajectory_recordings (recording_id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'open', key_fingerprint TEXT NOT NULL UNIQUE, cycle_id TEXT NOT NULL, slot_role TEXT NOT NULL, arm_scope TEXT, simulation_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL, model_version TEXT, system_prompt_hash TEXT NOT NULL, recovery_reason TEXT, created_at INTEGER NOT NULL, completed_at INTEGER, expires_at INTEGER)",
+        ).execute(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE trajectory_frames (recording_id TEXT NOT NULL REFERENCES trajectory_recordings(recording_id) ON DELETE CASCADE, slot_role TEXT NOT NULL, step_index INTEGER NOT NULL, frame_index INTEGER NOT NULL, frame_kind TEXT NOT NULL, ts_ms INTEGER NOT NULL, payload_hash TEXT NOT NULL, payload_ref TEXT, PRIMARY KEY (recording_id, slot_role, step_index, frame_index))",
+        ).execute(&pool).await.unwrap();
+
+        let store = TrajectoryStore::new(
+            pool,
+            BlobStore::new(tmp.path().join("blobs")),
+            RetentionMode::FullDebug,
+        );
+        // A recording id that was never inserted → FK violation on append.
+        let rid = RecordingId::new("rec_does_not_exist");
+        let persister = TrajectoryFramePersister::spawn(rid.clone(), 16);
+        assert!(!persister.failed(), "no failure latched before any persist");
+
+        let parsed = ParsedTrajectoryFrame {
+            run_id: "r1".into(),
+            slot_role: "trader".into(),
+            step_index: 0,
+            frame_index: 0,
+            frame: TrajectoryFrame::TextDelta {
+                ts_ms: 0,
+                text: "x".into(),
+            },
+        };
+        let res = persister.persist(&store, parsed).await;
+        assert!(res.is_err(), "append to missing recording must fail");
+        assert!(persister.failed(), "failure must be latched for the finalizer");
+        persister.shutdown();
+    }
+
+    #[tokio::test]
+    async fn trajectory_frame_notification_ignored_when_no_sink() {
+        // Non-recording caller (frame_sink = None): a frame notification is
+        // silently ignored, exactly as before recording was wired. No panic,
+        // and dispatch yields no RunEvents for it.
+        let bus = RunEventBus::new(Vec::new());
+        let fp = SidecarFingerprint::default();
+        let line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "event.trajectory_frame",
+            "params": {
+                "run_id": "r1", "slot_role": "trader", "step_index": 0, "frame_index": 0,
+                "frame": { "kind": "TextDelta", "ts_ms": 0, "text": "ignored" }
+            }
+        })
+        .to_string();
+        // Must not panic with no sink.
+        handle_notification_line(&line, &fp, &bus, None).await;
+
+        // And dispatch alone produces no RunEvents for the frame method.
+        let params = serde_json::json!({ "run_id": "r1", "slot_role": "trader" });
+        assert!(dispatch("event.trajectory_frame", &params, &fp).is_empty());
     }
 
     #[test]

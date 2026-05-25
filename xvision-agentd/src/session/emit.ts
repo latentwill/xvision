@@ -40,6 +40,7 @@ export function emitRunStarted(params: {
   started_at_ms: number
   provider_id: string
   model_id: string
+  trajectory_mode?: "record" | "live" | "replay"
 }): void {
   void emitNotification(NOTIFY.RunStarted, {
     run_id: params.run_id,
@@ -47,6 +48,7 @@ export function emitRunStarted(params: {
     started_at_ms: params.started_at_ms,
     provider_id: params.provider_id,
     model_id: params.model_id,
+    ...(params.trajectory_mode !== undefined ? { trajectory_mode: params.trajectory_mode } : {}),
   })
 }
 
@@ -158,6 +160,24 @@ export function emitError(params: { run_id: string; message: string; severity: "
 }
 
 /**
+ * Coordinate envelope wrapping one trajectory frame for the
+ * `event.trajectory_frame` notification.
+ *
+ * Mirrors `ParsedTrajectoryFrame` / `parse_trajectory_frame_notification` in
+ * `crates/xvision-agent-client/src/event_sink.rs`. The Rust parser requires
+ * ALL of `run_id`, `slot_role`, `step_index`, `frame_index` and the frame body
+ * under the `frame` key; a payload missing any of them parses to `None` and is
+ * silently dropped. Keep this shape byte-for-byte in sync with that parser.
+ */
+export interface TrajectoryFrameEnvelope {
+  run_id: string
+  slot_role: string
+  step_index: number
+  frame_index: number
+  frame: TrajectoryFrame
+}
+
+/**
  * Emit a single trajectory frame over the notification socket.
  *
  * Frames are non-droppable (a missing frame invalidates the recording), so
@@ -166,11 +186,12 @@ export function emitError(params: { run_id: string; message: string; severity: "
  * notifications to the bounded `FrameChannel` which applies backpressure
  * (blocks the producer) rather than dropping.
  *
- * The `run_id` is deliberately not included here: frames are tied to a
- * recording id on the Rust side, not a sidecar run id. The transport layer
- * delivers them in order on the notification socket, so the consumer can
- * associate frames with the current open recording.
+ * The frame travels inside a coordinate envelope so the Rust consumer can
+ * route it to the correct `RecordingId` at the correct `(slot_role,
+ * step_index, frame_index)` position. `run_id` comes from `activeRunId()`;
+ * `slot_role` / `step_index` / `frame_index` are threaded by the
+ * `FrameRecorder` (see `frame-recorder.ts`).
  */
-export function emitFrame(frame: TrajectoryFrame): void {
-  void emitNotification(NOTIFY.TrajectoryFrame, frame)
+export function emitFrame(envelope: TrajectoryFrameEnvelope): void {
+  void emitNotification(NOTIFY.TrajectoryFrame, envelope)
 }

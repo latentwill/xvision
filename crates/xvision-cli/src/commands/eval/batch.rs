@@ -278,6 +278,7 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),
+            trajectory_mode: eval::RunTrajectoryMode::default(),
         };
 
         let entry = match eval::run_with_deps(
@@ -640,6 +641,7 @@ pub(crate) async fn run_batch_via_env_with_assets(
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),
+            trajectory_mode: eval::RunTrajectoryMode::default(),
         };
 
         let entry = match eval::run(ctx, run_req).await {

@@ -205,6 +205,7 @@ fn eval_request_for_scenario(agent_id: &str, scenario_id: &str, mode: RunMode) -
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: Default::default(),
     }
 }
 
@@ -672,6 +673,7 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),
+            trajectory_mode: Default::default(),
         },
     )
     .await;

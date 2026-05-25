@@ -66,6 +66,18 @@ pub struct ClineDispatchCtx {
     /// API key for the provider, resolved from its env var by the eval
     /// entry point. `None`/empty for keyless local endpoints.
     pub api_key: Option<String>,
+    /// §2-B: the `slot_role` the recording was keyed by at
+    /// `begin_recording`, when this run is recording a trajectory.
+    ///
+    /// `Some` ⇒ recording is on: the dispatcher sets `StartRunParams.record
+    /// = true` and stamps THIS exact `slot_role` so frames are keyed to the
+    /// recording's `TrajectoryKey.slot_role` (footgun c — read_frames filters
+    /// on slot_role, so a mismatch silently hides frames). The recording was
+    /// minted in `spawn_cline_ctx` against the same role.
+    ///
+    /// `None` ⇒ no recording (live/backtest default): `record = false`,
+    /// `slot_role = None` — byte-identical to the pre-§2-B path.
+    pub recording_slot_role: Option<String>,
 }
 
 /// Scope at which a `FilterSignal` is meaningful. First-class so cross-asset
@@ -431,6 +443,19 @@ async fn execute_slot_for_runtime(
     if should_use_cline(input) {
         let ctx = input.cline.as_ref().expect("should_use_cline checked Some");
         let run_id = cline_run_id(input);
+        // §2-B: enable recording for this slot ONLY when the run minted a
+        // recording AND the recording's slot_role matches THIS slot's role.
+        // The recording is keyed per (cycle/run, slot_role); the persister
+        // appends frames at the envelope's (slot_role, step_index,
+        // frame_index), so stamping the matching role keeps frames readable
+        // on replay (footgun c). A slot whose role differs from the
+        // recording's role is not recorded (record=false) — never silently
+        // mis-keyed.
+        let record_slot_role = ctx
+            .recording_slot_role
+            .as_deref()
+            .filter(|r| *r == input.slot.role.as_str())
+            .map(str::to_string);
         return execute_slot_cline(ClineSlotInput {
             slot: input.slot,
             provider_entry: &ctx.provider_entry,
@@ -446,6 +471,7 @@ async fn execute_slot_for_runtime(
             // dedicated CLI record/replay entry points (Stage 3 Task 8),
             // not the per-cycle pipeline dispatch.
             trajectory_mode: crate::agent::execute_cline::TrajectoryMode::Record,
+            record_slot_role,
         })
         .await;
     }

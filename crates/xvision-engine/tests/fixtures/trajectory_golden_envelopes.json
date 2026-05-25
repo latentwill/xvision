@@ -1,0 +1,81 @@
+{
+  "_doc": "§2-A review finding (a) — shared golden fixture of the event.trajectory_frame emit envelope, one representative recording covering every TrajectoryFrame variant. Checked by BOTH a vitest (xvision-agentd emit produces this envelope shape) AND a Rust parse test (parse_trajectory_frame_notification accepts each), so the cross-language wire shape cannot drift silently. The mock sidecar (tests/fixtures/mock_agentd.js) also emits these exact envelopes on the event socket in record mode, so the eval-side recording integration test persists them and replays them back. Keep run_id/slot_role/step_index/frame_index + the frame body byte-for-byte in sync with emit.ts::TrajectoryFrameEnvelope and event_sink.rs::ParsedTrajectoryFrame.",
+  "run_id": "golden-run::trader::cycle0",
+  "slot_role": "trader",
+  "envelopes": [
+    {
+      "run_id": "golden-run::trader::cycle0",
+      "slot_role": "trader",
+      "step_index": 0,
+      "frame_index": 0,
+      "frame": {
+        "kind": "Request",
+        "ts_ms": 1,
+        "messages": [{ "role": "user", "content": "decide" }],
+        "tools": [{ "name": "submit_decision" }],
+        "system_prompt": "Decide whether to trade."
+      }
+    },
+    {
+      "run_id": "golden-run::trader::cycle0",
+      "slot_role": "trader",
+      "step_index": 0,
+      "frame_index": 1,
+      "frame": { "kind": "TextDelta", "ts_ms": 2, "text": "Analyzing the bars." }
+    },
+    {
+      "run_id": "golden-run::trader::cycle0",
+      "slot_role": "trader",
+      "step_index": 0,
+      "frame_index": 2,
+      "frame": { "kind": "ReasoningDelta", "ts_ms": 3, "text": "Trend is up." }
+    },
+    {
+      "run_id": "golden-run::trader::cycle0",
+      "slot_role": "trader",
+      "step_index": 0,
+      "frame_index": 3,
+      "frame": {
+        "kind": "ToolCallDelta",
+        "ts_ms": 4,
+        "tool_call_id": "call_sd",
+        "tool_name": "submit_decision",
+        "input": { "action": "long_open", "conviction": 0.8, "justification": "golden" }
+      }
+    },
+    {
+      "run_id": "golden-run::trader::cycle0",
+      "slot_role": "trader",
+      "step_index": 0,
+      "frame_index": 4,
+      "frame": {
+        "kind": "ToolResult",
+        "ts_ms": 5,
+        "tool_call_id": "call_sd",
+        "output": { "ok": true }
+      }
+    },
+    {
+      "run_id": "golden-run::trader::cycle0",
+      "slot_role": "trader",
+      "step_index": 0,
+      "frame_index": 5,
+      "frame": {
+        "kind": "Usage",
+        "ts_ms": 6,
+        "input_tokens": 123,
+        "output_tokens": 45,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "total_cost": 0.0
+      }
+    },
+    {
+      "run_id": "golden-run::trader::cycle0",
+      "slot_role": "trader",
+      "step_index": 0,
+      "frame_index": 6,
+      "frame": { "kind": "Finish", "ts_ms": 7, "reason": "stop" }
+    }
+  ]
+}

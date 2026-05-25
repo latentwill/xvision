@@ -143,6 +143,9 @@ impl AgentRunRecorder for SqliteRecorder {
                 .bind(&e.mcp_servers_json)
                 .execute(&self.pool)
                 .await?;
+                if let Some(mode) = e.trajectory_mode.as_deref() {
+                    self.set_run_replay_metrics(&e.run_id, mode, None, None).await?;
+                }
             }
 
             RunEvent::RunFinished(e) => {
