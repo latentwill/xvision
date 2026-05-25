@@ -163,6 +163,13 @@ const MIGRATION_044_CHECKPOINTS_INDEX: &str =
 /// as opaque JSON + scalar columns and does NOT depend on `xvision-dspy`.
 const MIGRATION_045_OPTIMIZATION_STORE: &str =
     include_str!("../../migrations/045_optimization_store.sql");
+/// Phase 4.4 (metrics & holdout discipline): the `optimization_holdout_results`
+/// table — one paired train/holdout result per acceptable snapshot plus the
+/// overfit-detection bookkeeping that gates `accept` and marketplace mint.
+/// Applied via `migrate_holdout` (guarded on the table's existence). HARD
+/// INVARIANT: holdout metric values are scalars produced by the eval harness;
+/// the engine does NOT depend on `xvision-dspy`.
+const MIGRATION_046_HOLDOUT: &str = include_str!("../../migrations/046_holdout.sql");
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -337,6 +344,7 @@ impl ApiContext {
         migrate_tool_policies(&pool).await?;
         migrate_checkpoints(&pool).await?;
         migrate_optimization_store(&pool).await?;
+        migrate_holdout(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -1178,6 +1186,20 @@ async fn migrate_optimization_store(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+async fn migrate_holdout(pool: &SqlitePool) -> ApiResult<()> {
+    // Phase 4.4: the `optimization_holdout_results` table + its run index. The
+    // migration file is several statements (CREATE TABLE / CREATE INDEX, all
+    // with IF NOT EXISTS), so we split on `;` and run each on its own. The
+    // leading table-existence guard skips the whole set on an already-migrated
+    // DB, so a re-open is a no-op.
+    if !table_exists(pool, "optimization_holdout_results").await? {
+        for stmt in split_sql_statements(MIGRATION_046_HOLDOUT) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    Ok(())
+}
+
 /// Split a multi-statement migration file into executable statements.
 ///
 /// Strips `--` line comments first (an inline comment such as `provider's id`
@@ -1437,6 +1459,43 @@ mod migration_registry_tests {
 
         // Second pass is a no-op (guarded on table existence) — re-open safe.
         migrate_optimization_store(&pool).await.unwrap();
+    }
+
+    /// Phase 4.4: migration 046 (the holdout-discipline table) is applied by the
+    /// hand-maintained `ApiContext::open` registry via `migrate_holdout`, not
+    /// `sqlx::migrate!`. Without the wiring the `optimization_holdout_results`
+    /// table never exists at runtime and the `HoldoutStore` fails with "no such
+    /// table". This proves the helper creates the table + its columns on a fresh
+    /// DB (after 045, which it FK-references) and that re-running is a no-op.
+    #[tokio::test]
+    async fn migrate_holdout_creates_table_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        // 046 FK-references the 045 tables, so apply 045 first (matching the
+        // ApiContext::open ordering).
+        migrate_optimization_store(&pool).await.unwrap();
+        assert!(!table_exists(&pool, "optimization_holdout_results").await.unwrap());
+
+        migrate_holdout(&pool).await.unwrap();
+        assert!(table_exists(&pool, "optimization_holdout_results").await.unwrap());
+        for col in [
+            "snapshot_id",
+            "run_id",
+            "metric",
+            "train_metric_value",
+            "holdout_metric_value",
+            "overfit_warning",
+            "overfit_ratio",
+            "overfit_waiver_reason",
+            "created_at",
+        ] {
+            assert!(
+                table_has_column(&pool, "optimization_holdout_results", col).await.unwrap(),
+                "column {col} missing after migrate_holdout"
+            );
+        }
+
+        // Second pass is a no-op (guarded on table existence) — re-open safe.
+        migrate_holdout(&pool).await.unwrap();
     }
 
     #[test]

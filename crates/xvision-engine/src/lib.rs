@@ -13,6 +13,7 @@ pub mod diagnostics;
 pub mod error;
 pub mod eval;
 pub mod focus;
+pub mod mint;
 pub mod optimization;
 pub mod providers;
 pub mod safety;
@@ -38,6 +39,14 @@ pub use diagnostics::{
 // restore of a session's mutable authoring artifacts.
 pub use checkpoint::{
     CapturedArtifact, Checkpoint, CheckpointError, CheckpointKind, Checkpointer, RestoreOutcome,
+};
+
+// Phase 4.3/4.4 tune-&-mint discipline: pure accept-gate + marketplace-mint-gate
+// + holdout store + per-capability metric registry. dspy-free.
+pub use mint::{
+    check_accept, check_marketplace_mint, AcceptDecision, AcceptInputs, AcceptRefusal, EvalProof,
+    HoldoutResult, HoldoutStore, MintDecision, MintInputs, MintRefusal, NewHoldoutResult,
+    OverfitConfig,
 };
 
 // Re-export strategy risk types so consumers don't have to depend on
