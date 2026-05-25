@@ -16,6 +16,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { createSession } from "@/api/auth";
 import { useAuth } from "@/stores/auth";
 import { ApiError } from "@/api/client";
+import { BrandMark } from "@/components/primitives/BrandMark";
 
 export function LoginRoute() {
   const navigate = useNavigate();
@@ -50,10 +51,8 @@ export function LoginRoute() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-surface px-4">
       <div className="w-full max-w-sm space-y-6">
-        <div className="space-y-1 text-center">
-          <h1 className="font-sans font-medium text-[28px] tracking-tight text-text">
-            xvision
-          </h1>
+        <div className="space-y-3 text-center flex flex-col items-center">
+          <BrandMark height={28} />
           <p className="text-[13px] text-text-3">
             Dashboard access requires a session token.
           </p>

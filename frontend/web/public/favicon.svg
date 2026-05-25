@@ -1,6 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#0F0E0C"/>
-  <text x="16" y="22" text-anchor="middle" fill="#D4A547"
-        font-family="Cormorant Garamond, serif" font-style="italic"
-        font-weight="500" font-size="20" letter-spacing="-0.02em">x</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- XVN · BRKT lockup on a Carbon tile. Brackets = Signal Green; wordmark white.
+       Geometry matches src/components/primitives/BrandMark.tsx (24:7 viewBox). -->
+  <rect width="48" height="48" rx="10" fill="#0A0A0A"/>
+  <g transform="translate(4.32 18.26) scale(0.82)">
+    <g stroke="#00E676" stroke-width="1.4" fill="none" stroke-linecap="square">
+      <path d="M4 1 H1 V13 H4"/>
+      <path d="M44 1 H47 V13 H44"/>
+    </g>
+    <text x="24" y="7" fill="#FFFFFF"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="13" font-weight="700" letter-spacing="0.14em"
+          dominant-baseline="central" text-anchor="middle">XVN</text>
+  </g>
 </svg>

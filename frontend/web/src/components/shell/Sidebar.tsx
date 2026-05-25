@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { Icon, type IconName } from "@/components/primitives/Icon";
+import { BrandMark } from "@/components/primitives/BrandMark";
 import { useTheme } from "@/theme/useTheme";
 
 type Item = { to: string; label: string; icon: IconName };
@@ -31,9 +32,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
       ].join(" ")}
     >
       <div className="px-6 pb-8">
-        <span className="font-sans font-semibold text-[38px] tracking-tight text-text leading-none">
-          xvn
-        </span>
+        <BrandMark height={24} />
       </div>
 
       <nav className="flex-1 flex flex-col">

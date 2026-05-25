@@ -15,7 +15,7 @@
 // run id now lives in exactly two places — this breadcrumb and the body H1.
 
 import { Link } from "react-router-dom";
-import { BrandMark } from "./BrandMark";
+import { BrandMark } from "@/components/primitives/BrandMark";
 
 type PillStyle = {
   label: string;
