@@ -13,6 +13,7 @@ pub mod llm_dispatch;
 pub mod redact;
 pub mod routes;
 pub mod server;
+pub mod session_bus;
 pub mod sse;
 pub mod state;
 pub mod wizard_loop;
