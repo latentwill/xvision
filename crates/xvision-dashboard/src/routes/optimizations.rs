@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::agents::store::{AgentStore, NewAgent};
 use xvision_engine::agents::Agent;
+use xvision_engine::guardrails::check_optimized_prompt_fresh;
 use xvision_engine::mint::{
     check_accept, check_marketplace_mint, AcceptInputs, EvalProof, HoldoutResult, HoldoutStore,
     MintDecision, MintInputs, NewHoldoutResult,
@@ -242,6 +243,32 @@ pub async fn accept(
                 run.agent_id, run.slot_name
             ),
         })?;
+
+    // GUARDRAIL(stale_optimized_prompt) — Phase 4.2: before writing the
+    // snapshot's tuned instruction onto the slot, verify the snapshot's
+    // `signature_hash` still matches the run's bound signature shape. If
+    // they diverge, the optimized prompt was tuned for a DIFFERENT schema
+    // and applying it would feed the model a prompt for the wrong
+    // signature. The engine is dspy-free, so the "current" reference is the
+    // run's recorded `signature_hash` (the bound shape at optimization
+    // time); when the run has no recorded signature we cannot verify and
+    // skip the guard (it only fires on a CONFIRMED mismatch, never on
+    // missing provenance). The typed short-circuit is surfaced as a
+    // validation refusal carrying its stable machine `code()` so the swap
+    // is recorded as a refused write rather than a silent stale apply.
+    if let Some(current_signature_hash) = run.signature_hash.as_deref() {
+        if let Err(sc) = check_optimized_prompt_fresh(
+            &run.slot_name,
+            &snapshot.signature_hash,
+            current_signature_hash,
+        ) {
+            return Err(DashboardError::Validation {
+                field: sc.code().into(),
+                msg: format!("{sc} — {}", sc.remediation()),
+            });
+        }
+    }
+
     slot.system_prompt = selected.instruction.clone();
     // Force a fresh prompt_version recompute at persist time.
     slot.prompt_version = String::new();
