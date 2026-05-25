@@ -181,6 +181,61 @@ describe("reduceRows", () => {
     rows = reduceRows(rows, ev({ kind: "tool_started", data: { span_id: "sp_z" } }, { event_id: "z1", seq: 1, span_id: "sp_z" }));
     const t = toolRows(rows)[0];
     expect(t.status).toBe("finished");
+    expect(t.seq).toBe(1);
+  });
+
+  it("terminal session events close open tool rows so the rail does not spin forever", () => {
+    let rows = reduceRows(
+      [],
+      ev(
+        {
+          kind: "tool_started",
+          data: { span_id: "sp_stuck" },
+        },
+        { event_id: "stuck_0", seq: 0, span_id: "sp_stuck" },
+      ),
+    );
+    rows = reduceRows(
+      rows,
+      ev(
+        { kind: "session_failed", data: { message: "sidecar transport crashed" } },
+        { event_id: "stuck_1", seq: 1, actor: "system" },
+      ),
+    );
+
+    const t = toolRows(rows)[0];
+    expect(t.status).toBe("failed");
+    expect(t.errorMessage).toBe("sidecar transport crashed");
+  });
+
+  it("span_finished closes an open tool row when the tool terminal event is missing", () => {
+    let rows = reduceRows(
+      [],
+      ev(
+        {
+          kind: "tool_started",
+          data: { span_id: "sp_span" },
+        },
+        { event_id: "span_0", seq: 0, span_id: "sp_span" },
+      ),
+    );
+    rows = reduceRows(
+      rows,
+      ev(
+        {
+          kind: "span_finished",
+          data: {
+            span_id: "sp_span",
+            ended_at: "2026-05-24T12:00:01Z",
+            status: "cancelled",
+            error_json: null,
+          },
+        },
+        { event_id: "span_1", seq: 1, span_id: "sp_span" },
+      ),
+    );
+
+    expect(toolRows(rows)[0].status).toBe("cancelled");
   });
 
   it("renders rows in seq order regardless of arrival order", () => {

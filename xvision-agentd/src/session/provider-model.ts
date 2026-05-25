@@ -61,7 +61,9 @@ export interface BuildProviderModelOptions {
  *   - The gateway itself throws during model construction.
  */
 export function buildProviderModel(opts: BuildProviderModelOptions): AgentModel {
-  const { providerId, modelId, apiKey, baseUrl } = opts
+  const { modelId, apiKey, baseUrl } = opts
+  const providerId =
+    opts.providerId === "openai-compat" ? "openai-compatible" : opts.providerId
 
   // Create a fresh gateway. Built-in providers are auto-registered.
   const gateway = Llms.createGateway()

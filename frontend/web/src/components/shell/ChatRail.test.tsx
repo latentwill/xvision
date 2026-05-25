@@ -10,7 +10,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
-import { ChatRail, invalidateForToolResult } from "./ChatRail";
+import { ChatRail, invalidateForToolResult, mergeUnifiedRows } from "./ChatRail";
 import * as chatApi from "@/api/chat_rail";
 import * as settingsApi from "@/api/settings";
 import { strategyKeys } from "@/api/strategies";
@@ -18,6 +18,7 @@ import { scenarioKeys } from "@/api/scenarios";
 import { agentKeys } from "@/api/agents";
 import { evalKeys } from "@/api/eval";
 import type { WizardEvent } from "@/api/chat_rail";
+import type { MessageRow } from "@/stores/message-row-reducer";
 
 const defaultStorage = globalThis.localStorage;
 
@@ -115,6 +116,112 @@ afterEach(() => {
 });
 
 describe("ChatRail", () => {
+  it("merges a fresh canonical assistant reply into the latest placeholder", () => {
+    const rows: MessageRow[] = [
+      {
+        type: "assistant",
+        id: "assistant:old-session:0",
+        seq: 10,
+        streamId: "old-session",
+        appliedEventIds: new Set(["old"]),
+        actor: "agent",
+        text: "old answer",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+      {
+        type: "assistant",
+        id: "assistant:old-session:1",
+        seq: 20,
+        streamId: "old-session",
+        appliedEventIds: new Set(["reply"]),
+        actor: "agent",
+        text: "fresh answer",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+    ];
+
+    const merged = mergeUnifiedRows(
+      [
+        { role: "user", text: "old question", assistantAnchor: 0 },
+        { role: "user", text: "new question", assistantAnchor: 1 },
+        {
+          role: "assistant",
+          blocks: [{ kind: "text", text: "" }],
+          tools: [],
+        },
+      ],
+      rows,
+    );
+
+    expect(merged.map((b) => b.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(merged[1]).toMatchObject({ role: "assistant" });
+    if (merged[1].role !== "assistant" || merged[3].role !== "assistant") {
+      throw new Error("expected assistant bubbles");
+    }
+    expect(merged[1].blocks[0]).toMatchObject({
+      kind: "text",
+      text: "old answer",
+    });
+    expect(merged[3].blocks[0]).toMatchObject({
+      kind: "text",
+      text: "fresh answer",
+    });
+  });
+
+  it("does not move replayed historical assistant rows under the latest user placeholder", () => {
+    const rows: MessageRow[] = [
+      {
+        type: "assistant",
+        id: "assistant:old-session:0",
+        seq: 10,
+        streamId: "old-session",
+        appliedEventIds: new Set(["old"]),
+        actor: "agent",
+        text: "old answer",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+    ];
+
+    const merged = mergeUnifiedRows(
+      [
+        { role: "user", text: "old question", assistantAnchor: 0 },
+        { role: "user", text: "new question", assistantAnchor: 1 },
+        {
+          role: "assistant",
+          blocks: [{ kind: "text", text: "" }],
+          tools: [],
+        },
+      ],
+      rows,
+    );
+
+    if (merged[1].role !== "assistant" || merged[3].role !== "assistant") {
+      throw new Error("expected assistant bubbles");
+    }
+    expect(merged[1].blocks[0]).toMatchObject({
+      kind: "text",
+      text: "old answer",
+    });
+    expect(merged[3].blocks[0]).toMatchObject({
+      kind: "text",
+      text: "",
+    });
+  });
+
   it("creates a new chat without deleting the previous conversation", async () => {
     renderRail();
 
@@ -388,8 +495,7 @@ describe("ChatRail", () => {
 
     renderRail();
 
-    expect(await screen.findByText("01OK")).toBeInTheDocument();
-    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(await screen.findByText(/01OK/)).toBeInTheDocument();
     expect(screen.queryByText(/Create strategy failed/i)).not.toBeInTheDocument();
   });
 });

@@ -12,7 +12,7 @@
 //! Mapping:
 //! - [`ProviderKind::Anthropic`] → `"anthropic"` (also a Cline built-in id, so it
 //!   works through Cline's internal construction even before the gateway lands).
-//! - [`ProviderKind::OpenaiCompat`] → `"openai-compat"` with `base_url`
+//! - [`ProviderKind::OpenaiCompat`] → `"openai-compatible"` with `base_url`
 //!   passed through; the sidecar configures `createOpenAICompatibleProvider`
 //!   with that base URL. Routing a known OpenAI-compatible service to its
 //!   specific Cline built-in id (`openrouter`, `deepseek`, `groq`, `together`,
@@ -27,9 +27,9 @@ use xvision_core::config::{ProviderEntry, ProviderKind};
 /// Cline gateway provider id for Anthropic (a Cline built-in id).
 pub const CLINE_PROVIDER_ANTHROPIC: &str = "anthropic";
 /// Cline gateway provider id under which the sidecar registers
-/// `createOpenAICompatibleProvider`. Mirrors Cline's `"openai-compat"`
+/// `createOpenAICompatibleProvider`. Mirrors Cline's `"openai-compatible"`
 /// provider *category*; `base_url` is the per-service discriminant.
-pub const CLINE_PROVIDER_OPENAI_COMPAT: &str = "openai-compat";
+pub const CLINE_PROVIDER_OPENAI_COMPAT: &str = "openai-compatible";
 
 /// A resolved Cline gateway selection for one slot invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]

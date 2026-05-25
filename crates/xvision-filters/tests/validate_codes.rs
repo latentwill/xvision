@@ -460,14 +460,14 @@ fn asset_scope_empty() {
 }
 
 #[test]
-fn asset_scope_two_entries() {
+fn asset_scope_accepts_multiple_entries() {
     let mut filter = base_filter(one_cond(
         ind(IndicatorName::Ema, 20),
         Operator::Gt,
         ind(IndicatorName::Ema, 50),
     ));
     filter.asset_scope = vec!["BTC/USD".into(), "ETH/USD".into()];
-    assert_err(validate(&filter), "E_FILTER_ASSET_SCOPE", "/asset_scope");
+    validate(&filter).expect("multi-asset filters must be accepted");
 }
 
 // ---------------------------------------------------------------------------

@@ -709,7 +709,7 @@ export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void 
  * appended last, but only when the projection has not yet produced an
  * assistant row to cover it.
  */
-function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[] {
+export function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[] {
   const projected = unifiedRowsToBubbles(rows);
   if (projected.length === 0) return bubbles;
 
@@ -945,6 +945,21 @@ function applyEvent(
       a.blocks.push(contentBlockToRenderable(ev.block));
     } else if (ev.type === "error") {
       appendAssistantText(a, `\n\n[stream error: ${ev.message}]`);
+      a.tools = a.tools.map((t) =>
+        t.pending
+          ? {
+              ...t,
+              ok: false,
+              pending: false,
+              resultSummary: ev.message,
+              result: { error: ev.message },
+            }
+          : t,
+      );
+    } else if (ev.type === "done") {
+      a.tools = a.tools.map((t) =>
+        t.pending ? { ...t, pending: false } : t,
+      );
     }
     next[next.length - 1] = a;
     return next;
