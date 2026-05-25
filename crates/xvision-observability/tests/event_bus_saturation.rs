@@ -168,6 +168,7 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
         source_cli_job_id: None,
         started_at: now,
         retention_mode: "hash_only".to_string(),
+        trajectory_mode: None,
         sidecar_version: None,
         cline_sdk_version: None,
         protocol_version: None,

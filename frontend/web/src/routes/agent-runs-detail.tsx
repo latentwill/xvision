@@ -14,6 +14,7 @@ import { FilterBar } from "@/features/agent-runs/FilterBar";
 import { useSpanFilter } from "@/features/agent-runs/use-span-filter";
 import { deriveDecisions } from "@/features/agent-runs/decisions";
 import { useTraceDock } from "@/stores/trace-dock";
+import { TrajectoryModeBadge } from "@/features/agent-runs/TrajectoryModeBadge";
 
 export function AgentRunDetailRoute() {
   const { runId = "" } = useParams<{ runId: string }>();
@@ -153,7 +154,7 @@ export function AgentRunDetailRoute() {
           {detail.summary.run_id}
         </div>
         <Pill tone={detail.summary.error_count > 0 ? "danger" : "default"}>{detail.summary.status}</Pill>
-        {/* Retention-mode badge intentionally disabled; backend field is kept for later restoration. */}
+        <TrajectoryModeBadge summary={detail.summary} />
         <span className="font-mono text-[12px] text-text-2">spans: {detail.summary.span_count}</span>
         <span
           className="font-mono text-[12px] text-text-2"
@@ -241,6 +242,7 @@ export function AgentRunDetailRoute() {
               simpleMode={!advancedView}
               hiddenInSimpleMode={selectedSpanHiddenInSimple}
               onRequestAdvanced={() => setAdvancedView(true)}
+              runSummary={detail.summary}
               onRerun={(spanId) => {
                 // Phase 4 stub — checkpoint design pending.
                 console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });

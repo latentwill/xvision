@@ -11,10 +11,13 @@
 //! are deferred to follow-up PRs.
 
 pub mod context;
+pub mod event_log;
 pub mod rich_blocks;
 pub mod store;
+pub mod tool_policy;
 
 pub use context::ContextScope;
+pub use event_log::SessionEventLog;
 pub use rich_blocks::{
     action_confirmation_card, build_inline_chart, inline_compare_chart_from_report,
     inline_equity_chart_from_run_detail, inline_returns_histogram_from_runs,
@@ -23,4 +26,8 @@ pub use rich_blocks::{
     InlineChartSeries, InlineChartSource, InlineMetric, InlinePoint, InlineTone, RichBlockError,
     RichContentBlock,
 };
-pub use store::{ChatMessage, ChatSessionStore, ChatSessionSummary};
+pub use store::{ChatMessage, ChatSessionRailState, ChatSessionStore, ChatSessionSummary};
+pub use tool_policy::{
+    classify as classify_tool, decide as decide_tool_policy, effective_policy, ToolClass, ToolPolicy,
+    ToolPolicyRow, ToolPolicyStore, GLOBAL_SCOPE,
+};

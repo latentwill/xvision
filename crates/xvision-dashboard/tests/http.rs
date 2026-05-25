@@ -1168,6 +1168,43 @@ async fn scenario_chart_returns_cache_status_for_canonical() {
 }
 
 #[tokio::test]
+async fn scenario_chart_defaults_preview_asset_to_btc() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios/crypto-bull-q1-2025/chart").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(
+        body["preview_asset"], "BTC",
+        "absent asset param must default the preview to BTC"
+    );
+}
+
+#[tokio::test]
+async fn scenario_chart_honours_asset_query_param() {
+    let (server, _tmp) = boot().await;
+    // ETH%2FUSD == "ETH/USD" url-encoded.
+    let response = server
+        .get("/api/scenarios/crypto-bull-q1-2025/chart?asset=ETH%2FUSD")
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(
+        body["preview_asset"], "ETH",
+        "asset query param must override the preview asset"
+    );
+}
+
+#[tokio::test]
+async fn scenario_chart_rejects_unknown_asset() {
+    let (server, _tmp) = boot().await;
+    let response = server
+        .get("/api/scenarios/crypto-bull-q1-2025/chart?asset=NOTACOIN")
+        .await;
+    // Unknown asset is a validation error, not a silent BTC fallback.
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
 async fn scenario_chart_returns_404_for_unknown() {
     let (server, _tmp) = boot().await;
     let response = server.get("/api/scenarios/no-such-scenario/chart").await;

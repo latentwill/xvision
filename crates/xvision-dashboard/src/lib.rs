@@ -5,13 +5,16 @@
 //! that wrap `xvision_engine::api::*`.
 
 pub mod auth;
+pub mod chat_unified;
 pub mod cli_jobs;
 pub mod embed;
 pub mod error;
+pub mod hooks;
 pub mod llm_dispatch;
 pub mod redact;
 pub mod routes;
 pub mod server;
+pub mod session_bus;
 pub mod sse;
 pub mod state;
 pub mod wizard_loop;

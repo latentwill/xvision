@@ -29,12 +29,13 @@ import {
   newSpanId,
 } from "./emit.js"
 import { activeRunId } from "./active-run.js"
+import type { FrameRecorder } from "./frame-recorder.js"
 
 // Structural mirror of @cline/shared agent.d.ts — same approach as
 // mock-provider.ts. We can't import the types directly because the
 // package's `export *` re-exports without `.js` extensions, which our
 // `NodeNext` resolution rejects.
-interface AgentModelRequest {
+export interface AgentModelRequest {
   messages: readonly unknown[]
   tools?: readonly unknown[]
   systemPrompt?: string
@@ -74,6 +75,13 @@ export interface WrapModelOptions {
   provider: string
   /** Model id stamped onto emitted events. */
   model: string
+  /**
+   * When provided, each stream() invocation will record a Request frame
+   * before the first event and one frame per AgentModelEvent via the recorder.
+   * ToolResult frames are recorded by tool-shim.ts using the same recorder
+   * instance; pass the same recorder to shimRegistryToTools.
+   */
+  recorder?: FrameRecorder
 }
 
 /**
@@ -98,6 +106,12 @@ export function wrapAgentModel(
       let inputTokens = 0
       let outputTokens = 0
       let totalCost: number | undefined
+
+      // Record the Request frame BEFORE the first downstream event so
+      // replay can reconstruct the full input side of this step.
+      if (opts.recorder) {
+        opts.recorder.recordRequest(request)
+      }
 
       const innerStream = await inner.stream(request)
       try {
@@ -126,6 +140,13 @@ export function wrapAgentModel(
             if (typeof u.totalCost === "number") {
               totalCost = (totalCost ?? 0) + u.totalCost
             }
+          }
+
+          // Record the event frame BEFORE yielding so the recorder sees
+          // events in the same order the consumer does. Errors in recording
+          // must not suppress the event — yield regardless.
+          if (opts.recorder) {
+            opts.recorder.recordEvent(ev)
           }
 
           yield ev

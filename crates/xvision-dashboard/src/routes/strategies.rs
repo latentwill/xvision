@@ -21,8 +21,12 @@ use xvision_engine::authoring::{
     self, CreateStrategyOut, CreateStrategyReq, SetFilterReq, SetRiskConfigOut, SetRiskConfigReq,
     TemplateInfo, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
+use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
+use xvision_engine::checkpoint::{CheckpointKind, Checkpointer, SnapshotRequest};
 use xvision_engine::strategies::risk::RiskConfig;
-use xvision_engine::strategies::store::{MetadataPatchError, StrategyMetadataPatch};
+use xvision_engine::strategies::store::{
+    strategy_store_dir, FilesystemStore, MetadataPatchError, StrategyMetadataPatch, StrategyStore,
+};
 use xvision_engine::strategies::Strategy;
 use xvision_filters::{parse_json as parse_filter_json, Filter, FilterId, StrategyId};
 
@@ -302,6 +306,131 @@ pub async fn put_pipeline(
     )
     .await?;
     Ok(Json(out))
+}
+
+/// `POST /api/strategy/:id/swap-agent` request body (Phase 4.3).
+///
+/// Swaps the `AgentRef` at `role` to point at `child_agent_id` (typically an
+/// optimization child minted via `/api/optimizations/:id/accept`). The strategy
+/// is checkpointed BEFORE the swap so the original `AgentRef` is recoverable via
+/// `POST /api/chat-rail/checkpoints/:cid/restore`. `session_id` is optional: when
+/// omitted the route creates an ephemeral session scoped to the strategy so the
+/// checkpoint has an owner.
+#[derive(Debug, Deserialize)]
+pub struct SwapAgentBody {
+    pub role: String,
+    pub child_agent_id: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+/// `POST /api/strategy/:id/swap-agent` response — the reversible diff + the
+/// checkpoint id that restores the pre-swap strategy verbatim.
+#[derive(Debug, Serialize)]
+pub struct SwapAgentResponse {
+    pub strategy_id: String,
+    pub role: String,
+    /// The `agent_id` the role pointed at before the swap (restore target).
+    pub previous_agent_id: String,
+    /// The `agent_id` the role points at after the swap.
+    pub new_agent_id: String,
+    /// The checkpoint that restores the pre-swap strategy bytes. POST it to
+    /// `/api/chat-rail/checkpoints/:cid/restore` to revert.
+    pub checkpoint_id: String,
+    /// The session the checkpoint is owned by (created if not supplied).
+    pub session_id: String,
+    pub strategy: Strategy,
+}
+
+/// `POST /api/strategy/:id/swap-agent` — checkpoint the strategy, then swap the
+/// `AgentRef` at `role` to the child agent. Reversible: the returned
+/// `checkpoint_id` restores the original strategy (including the original
+/// `AgentRef`) byte-for-byte.
+pub async fn swap_agent(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<SwapAgentBody>,
+) -> Result<Json<SwapAgentResponse>, DashboardError> {
+    let store = FilesystemStore::new(strategy_store_dir(&state.xvn_home));
+
+    // Load + locate the AgentRef BEFORE checkpointing so an unknown strategy /
+    // role fails without taking a snapshot.
+    let strategy = store
+        .load(&id)
+        .await
+        .map_err(|e| DashboardError::NotFound(format!("strategy {id}: {e}")))?;
+    let canonical = body.role.trim();
+    let target = strategy
+        .agents
+        .iter()
+        .find(|a| a.role == body.role || a.canonical_role() == canonical)
+        .ok_or_else(|| DashboardError::Validation {
+            field: "role".into(),
+            msg: format!("strategy {id} has no agent at role {}", body.role),
+        })?;
+    let previous_agent_id = target.agent_id.clone();
+
+    // The child agent must exist.
+    let agent_store = xvision_engine::agents::store::AgentStore::new(state.pool.clone());
+    if agent_store
+        .get(&body.child_agent_id)
+        .await
+        .map_err(DashboardError::Internal)?
+        .is_none()
+    {
+        return Err(DashboardError::NotFound(format!(
+            "child agent {} not found",
+            body.child_agent_id
+        )));
+    }
+
+    // Resolve / create the owning session for the checkpoint.
+    let session_id = match body.session_id.clone() {
+        Some(s) => s,
+        None => {
+            ChatSessionStore::create_session(&state.pool, &ContextScope::Strategy { draft_id: id.clone() })
+                .await
+                .map_err(DashboardError::Internal)?
+        }
+    };
+
+    // Checkpoint the strategy (PreSwap) so the pre-swap AgentRef is recoverable.
+    let ckpt = Checkpointer::new(state.pool.clone(), state.xvn_home.clone());
+    let checkpoint = ckpt
+        .snapshot(
+            &session_id,
+            CheckpointKind::Other("pre_swap".into()),
+            SnapshotRequest {
+                strategy_id: Some(id.clone()),
+                label: Some(format!(
+                    "pre-swap {} → {}",
+                    previous_agent_id, body.child_agent_id
+                )),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+
+    // Perform the swap and persist.
+    let mut swapped = strategy.clone();
+    let slot = swapped
+        .agents
+        .iter_mut()
+        .find(|a| a.role == body.role || a.canonical_role() == canonical)
+        .expect("role was located above");
+    slot.agent_id = body.child_agent_id.clone();
+    store.save(&swapped).await.map_err(DashboardError::Internal)?;
+
+    Ok(Json(SwapAgentResponse {
+        strategy_id: id,
+        role: body.role,
+        previous_agent_id,
+        new_agent_id: body.child_agent_id,
+        checkpoint_id: checkpoint.checkpoint_id,
+        session_id,
+        strategy: swapped,
+    }))
 }
 
 #[derive(Deserialize)]

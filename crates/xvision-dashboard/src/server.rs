@@ -153,13 +153,14 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail, cli,
-    docs,
+    agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail,
+    checkpoints as checkpoints_route, cli, diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
-    eval_runs, flywheel,
+    eval_runs, flywheel, focus as focus_route,
     health::health,
-    memory as memory_route, safety as safety_route, scenarios, search as search_route, settings, skills,
-    static_files, strategies, strategies_folder as strategies_folder_route, wizard,
+    memory as memory_route, optimizations as optimizations_route, safety as safety_route, scenarios,
+    search as search_route, settings, skills, static_files, strategies,
+    strategies_folder as strategies_folder_route, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -180,11 +181,23 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/agents/:id", get(agents::get))
         .route("/api/agents/:id/strategies", get(agents::deployed_in))
         .route("/api/agents/:id/runs", get(agents::recent_runs))
+        // Phase 4.5: per-agent capability diagnostics (dspy-free; reads the
+        // engine diagnostics helpers against the agent's slots).
+        .route(
+            "/api/agents/:id/diagnostics",
+            get(diagnostics_route::agent),
+        )
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/strategies", get(strategies::list))
         .route("/api/templates", get(strategies::list_templates))
         .route("/api/strategy/:id", get(strategies::get))
+        // Phase 4.5: strategy capability-readiness diagnostics. Surfaces WHY
+        // a strategy can't launch (typed per-agent blockers) BEFORE launch.
+        .route(
+            "/api/strategy/:id/diagnostics",
+            get(diagnostics_route::strategy),
+        )
         .route("/api/strategies/:id/chart", get(strategies::chart))
         .route(
             "/api/strategies-folder/list",
@@ -272,7 +285,23 @@ fn readonly_router(state: AppState) -> Router {
             get(settings::providers::get_catalog),
         )
         .route("/api/chat-rail/sessions/:id/history", get(chat_rail::history))
+        // Phase 1.2 unified session stream: replay persisted UnifiedEvents
+        // (resume by ?after_seq=<n>, default -1) then tail live events.
+        .route("/api/chat-rail/sessions/:id/stream", get(chat_rail::stream))
         .route("/api/chat-rail/sessions", get(chat_rail::list_sessions))
+        // Phase 2.3: read the persisted three-state tool-policy for a scope.
+        .route("/api/chat-rail/tool-policy", get(chat_rail::get_tool_policy))
+        // Phase 2.4: read the per-scope focus.md file.
+        .route("/api/chat-rail/focus", get(focus_route::get))
+        // Phase 2.5: list a session's checkpoints (newest first).
+        .route(
+            "/api/chat-rail/sessions/:id/checkpoints",
+            get(checkpoints_route::list),
+        )
+        // Phase 3.7: optimizer run list + detail (dspy-free; reads the
+        // engine OptimizationStore).
+        .route("/api/optimizations", get(optimizations_route::list))
+        .route("/api/optimizations/:id", get(optimizations_route::get))
         .with_state(state)
 }
 
@@ -312,6 +341,7 @@ fn mutating_router(state: AppState) -> Router {
             delete(strategies::delete_agent).patch(strategies::patch_agent_role),
         )
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
+        .route("/api/strategy/:id/swap-agent", post(strategies::swap_agent))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
         .route("/api/strategy/:id/filter", put(strategies::put_filter))
         .route("/api/strategy/:id/validate", post(strategies::post_validate))
@@ -421,6 +451,28 @@ fn mutating_router(state: AppState) -> Router {
             "/api/settings/danger/factory-reset",
             post(settings::danger::factory_reset),
         )
+        // ── Optimizations (Phase 3.7) ─────────────────────────────────────
+        .route(
+            "/api/optimizations/:id/accept",
+            post(optimizations_route::accept),
+        )
+        .route(
+            "/api/optimizations/:id/revert",
+            post(optimizations_route::revert),
+        )
+        // ── Holdout discipline + marketplace mint gate (Phase 4.3/4.4) ────
+        .route(
+            "/api/optimizations/:id/snapshots/:sid/holdout",
+            post(optimizations_route::record_holdout),
+        )
+        .route(
+            "/api/optimizations/:id/snapshots/:sid/waive-overfit",
+            post(optimizations_route::waive_overfit),
+        )
+        .route(
+            "/api/optimizations/:id/mint",
+            post(optimizations_route::mint),
+        )
         // Safety API: pause gate + audit log (v2b-broker-wallet-kill-switch).
         .route("/api/safety/state", get(safety_route::get_state_handler))
         .route("/api/safety/pause", post(safety_route::pause_handler))
@@ -438,7 +490,24 @@ fn mutating_router(state: AppState) -> Router {
             "/api/chat-rail/sessions/:id",
             delete(chat_rail::delete_session),
         )
+        // Phase 2.2: set the server-enforced Research/Act mode for a session.
+        .route(
+            "/api/chat-rail/sessions/:id/mode",
+            post(chat_rail::set_mode),
+        )
+        // Phase 2.3: upsert one tool's three-state policy for a scope.
+        .route(
+            "/api/chat-rail/tool-policy",
+            put(chat_rail::put_tool_policy),
+        )
+        // Phase 2.4: save the per-scope focus.md file.
+        .route("/api/chat-rail/focus", put(focus_route::put))
         .route("/api/chat-rail/chat", post(chat_rail::chat))
+        // Phase 2.5: rewind every artifact captured by a checkpoint, verbatim.
+        .route(
+            "/api/chat-rail/checkpoints/:cid/restore",
+            post(checkpoints_route::restore),
+        )
         // ── Apply require_auth middleware to ALL mutating routes ───────────
         .route_layer(axum::middleware::from_fn_with_state(
             pool,

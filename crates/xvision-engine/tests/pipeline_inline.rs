@@ -152,6 +152,8 @@ async fn three_slot_pipeline_chains_outputs() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .unwrap();
@@ -214,6 +216,8 @@ async fn skips_missing_optional_slots() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .unwrap();
@@ -296,6 +300,8 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .unwrap();
@@ -382,6 +388,8 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .unwrap();

@@ -1,7 +1,7 @@
 ---
 track: cli-strategy-clone-model-override
 worker: claude-opus
-phase: ready-for-review
+phase: pr-open
 last_update: 2026-05-23
 ---
 

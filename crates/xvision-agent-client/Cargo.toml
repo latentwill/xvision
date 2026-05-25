@@ -16,6 +16,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }  # used from Task 6 onwards
 async-trait = { workspace = true }
 xvision-observability = { path = "../xvision-observability" }
+xvision-core = { path = "../xvision-core" }
 chrono = { workspace = true }
 
 [dev-dependencies]
@@ -23,3 +24,4 @@ tempfile = "3"
 xvision-engine = { path = "../xvision-engine" }
 async-trait = { workspace = true }
 sqlx = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }

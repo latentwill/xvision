@@ -215,6 +215,7 @@ async fn provider_override_partial_provider_only_rejects_as_validation() {
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: Default::default(),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -260,6 +261,7 @@ async fn provider_override_unknown_provider_refuses_with_provider_unknown_reason
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: Default::default(),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -315,6 +317,7 @@ async fn provider_override_missing_key_refuses_with_key_missing_reason() {
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: Default::default(),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -365,6 +368,7 @@ async fn provider_override_disabled_model_refuses_with_model_disabled_reason() {
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: Default::default(),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -421,6 +425,7 @@ async fn provider_override_receipt_round_trips_via_load_provider_override() {
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: Default::default(),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"override-receipt"}"#,
@@ -469,6 +474,7 @@ async fn no_provider_override_leaves_load_provider_override_none() {
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),
+        trajectory_mode: Default::default(),
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"no-override"}"#,

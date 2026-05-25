@@ -1,0 +1,60 @@
+[package]
+name        = "xvision-dspy"
+description = "Offline DSPy-style prompt optimizer for xvision strategy agents (non-default-member; heavy transitive tree isolated here)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xvision_dspy"
+path = "src/lib.rs"
+
+# IMPORTANT: this crate is intentionally NOT a member of `default-members` in the
+# root Cargo.toml. It pulls the heavy dspy-rs / rig-core transitive tree, which
+# must stay out of `xvision-engine`, the CLI, and the slim deploy image. Bare
+# `cargo build` / `cargo test` (no -p, no --workspace) skip it by design.
+#
+# HARD INVARIANT: do NOT add `xvision-engine` (or any runtime crate) as a
+# dependency here, and do NOT make any existing crate depend on `xvision-dspy`.
+# This crate is a leaf in the dependency graph.
+
+[dependencies]
+# Offline optimizer engine. Pinned EXACTLY per the Phase 3.1 dependency spike
+# (docs/superpowers/evidence/.../dspy/dependency-spike.txt). 0.x API churn means
+# any version bump must be deliberate. Import path is `dspy_rs`; derive macros
+# live in `dsrs_macros`.
+dspy-rs     = "=0.7.3"
+dsrs_macros = "=0.7.2"
+
+# Serialization for signatures + the optimization snapshot type.
+serde      = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Required by the `dsrs_macros::Signature` attribute macro: its generated
+# `MetaSignature` impl references `anyhow::Result` directly, so anyhow must be a
+# direct dependency wherever `#[Signature]` is used (API surprise vs the spike).
+anyhow = { workspace = true }
+
+# Deterministic signature hashing (snapshot provenance).
+sha2 = "0.10"
+
+# Async runtime for the adapter + DummyLM-backed tests. dspy-rs already pulls
+# tokio 1.x (full); the workspace pin unifies to a single tokio.
+tokio = { workspace = true }
+
+# Typed errors for the optimizer surface (missing capability, provider
+# unavailable). Workspace pins thiserror 2.
+thiserror = { workspace = true }
+
+# Object-safe async trait for the model adapter boundary.
+async-trait = { workspace = true }
+
+[features]
+# `live` opts in a feature-gated, stubbed provider-backed model. It does NOT
+# call the network; promoting it to a real backend is a deliberate later task.
+live = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }

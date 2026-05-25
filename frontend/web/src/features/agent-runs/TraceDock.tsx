@@ -7,6 +7,10 @@ import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs"
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
+import {
+  type SpanProjection,
+  useSessionSpans,
+} from "@/stores/session-events";
 import { DockResizeHandle } from "./DockResizeHandle";
 import { FlameGraph } from "./FlameGraph";
 import { SpanInspector } from "./SpanInspector";
@@ -50,11 +54,61 @@ const SIMPLE_HIDDEN_KINDS: ReadonlySet<string> = new Set([
  */
 const ALWAYS_HIDDEN_KINDS: ReadonlySet<string> = new Set(["state.transition"]);
 
+/**
+ * Project a unified `SpanProjection` (from the shared `session-events` store)
+ * onto the dock's `RunSpan` model so a chat session and a standalone agent
+ * run feed the SAME flame-graph / inspector surface — one event log, two
+ * projections (Phase 1.2/1.4). Kinds that aren't `SpanKind` variants fall
+ * back to `agent.run` so the trace tree still renders.
+ */
+const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
+  "agent.run",
+  "agent.plan",
+  "model.call",
+  "tool.call",
+  "tool.validate_input",
+  "tool.validate_output",
+  "approval.request",
+  "approval.response",
+  "sandbox.exec",
+  "supervisor.review",
+  "financial.eval",
+  "artifact.write",
+  "ipc.notification",
+  "skill.invoke",
+  "broker.call",
+  "recovery.attempt",
+  "state.transition",
+]);
+type SpanKindLike = RunSpan["kind"];
+
+function projectionToRunSpan(p: SpanProjection): RunSpan {
+  const kind = (
+    KNOWN_SPAN_KINDS.has(p.kind) ? p.kind : "agent.run"
+  ) as RunSpan["kind"];
+  return {
+    span_id: p.spanId,
+    parent_span_id: p.parentSpanId,
+    name: p.name,
+    kind,
+    started_at: p.startedAt,
+    finished_at: p.finishedAt,
+    status:
+      p.status === "in_progress"
+        ? "in_progress"
+        : p.status === "error"
+          ? "error"
+          : "ok",
+    attributes: {},
+  };
+}
+
 export function TraceDock() {
   const {
     height,
     heightPx,
     activeRunId,
+    activeSessionId,
     selectedSpanId,
     minimize,
     setSelectedSpan,
@@ -62,6 +116,18 @@ export function TraceDock() {
     setAdvancedView,
   } = useTraceDock();
   const navigate = useNavigate();
+
+  // Unified-session span projection — the chat-session path. When a chat
+  // session is bound (and no standalone agent run is active), the dock
+  // projects from the shared session-events store instead of the agent-run
+  // SSE wire. The agent-run path below is left untouched.
+  const sessionSpans = useSessionSpans(
+    activeRunId ? null : activeSessionId,
+  );
+  const sessionRunSpans = useMemo(
+    () => sessionSpans.map(projectionToRunSpan),
+    [sessionSpans],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -89,9 +155,15 @@ export function TraceDock() {
     }
   }, [activeRunId, q.error]);
 
+  // The dock has one span source at a time: the agent-run query when a run is
+  // active, else the unified session projection when a chat session is bound.
+  const sourceSpans: RunSpan[] = activeRunId
+    ? (q.data?.spans ?? [])
+    : sessionRunSpans;
+
   const filter = useSpanFilter({
-    runId: activeRunId ?? "",
-    spans: q.data?.spans ?? [],
+    runId: activeRunId ?? activeSessionId ?? "",
+    spans: sourceSpans,
   });
 
   // Simple mode hides instrumentation kinds at the render boundary
@@ -129,7 +201,7 @@ export function TraceDock() {
     SIMPLE_HIDDEN_KINDS.has(selectedSpan.kind);
 
   // Decisions derived from spans that carry a decision_idx, deduped and sorted.
-  const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);
+  const decisions = useMemo(() => deriveDecisions(sourceSpans), [sourceSpans]);
 
   // F-7 (qa round 7): the Trade quick-filter is enabled iff the run
   // carries at least one broker.call span. When the executor stage
@@ -139,9 +211,8 @@ export function TraceDock() {
   // operator knows it's a first-class concept, but a click would be a
   // no-op.
   const brokerCallSpans = useMemo(
-    () =>
-      (q.data?.spans ?? []).filter((s) => s.kind === "broker.call"),
-    [q.data?.spans],
+    () => sourceSpans.filter((s) => s.kind === "broker.call"),
+    [sourceSpans],
   );
   const tradeAvailable = brokerCallSpans.length > 0;
   const onShowTrade = () => {
@@ -265,7 +336,12 @@ export function TraceDock() {
     return close;
   }, [activeRunId, isLive, qc]);
 
-  if (!activeRunId) return null;
+  // The dock renders for a standalone agent run, OR for a chat session that
+  // has produced trace-worthy spans in the unified log (one source, two
+  // projections). A bound session with no spans yet keeps the dock dormant
+  // so it never pops open uninvited (NO-POPUP rule).
+  const hasSessionTrace = !activeRunId && sessionRunSpans.length > 0;
+  if (!activeRunId && !hasSessionTrace) return null;
   if (height === "collapsed") return null;
 
   return (
@@ -390,28 +466,32 @@ export function TraceDock() {
             `qa-trace-error-surfacing`) to add adjacent controls without a
             merge conflict. Keep new export-style controls inside this group.
           */}
-          <div data-testid="trace-dock-export" className="flex items-center gap-1">
-            <TraceDownloadButton runId={activeRunId} />
-          </div>
-          <span aria-hidden className="opacity-30 px-1">|</span>
-          <button
-            type="button"
-            aria-label="pop out to dedicated view"
-            title="Open in dedicated route"
-            onClick={() => {
-              // QA22 / `trace-capsule-fullscreen-minimize`: the
-              // dedicated agent-run route shows the same trace at full
-              // size, so the dock + the route would be redundant.
-              // Minimize the dock as we navigate.
-              minimize();
-              navigate(`/agent-runs/${activeRunId}`);
-            }}
-            className="h-7 w-8 inline-flex items-center justify-center rounded text-text-3 hover:text-text hover:bg-surface-elev"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M6 3h7v7M13 3l-7 7M3 8v5h5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          {activeRunId ? (
+            <>
+              <div data-testid="trace-dock-export" className="flex items-center gap-1">
+                <TraceDownloadButton runId={activeRunId} />
+              </div>
+              <span aria-hidden className="opacity-30 px-1">|</span>
+              <button
+                type="button"
+                aria-label="pop out to dedicated view"
+                title="Open in dedicated route"
+                onClick={() => {
+                  // QA22 / `trace-capsule-fullscreen-minimize`: the
+                  // dedicated agent-run route shows the same trace at full
+                  // size, so the dock + the route would be redundant.
+                  // Minimize the dock as we navigate.
+                  minimize();
+                  navigate(`/agent-runs/${activeRunId}`);
+                }}
+                className="h-7 w-8 inline-flex items-center justify-center rounded text-text-3 hover:text-text hover:bg-surface-elev"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6 3h7v7M13 3l-7 7M3 8v5h5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </>
+          ) : null}
           <button
             type="button"
             aria-label="minimize dock"
@@ -435,7 +515,7 @@ export function TraceDock() {
       />
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
         <div className="min-w-0 flex-1 border-r border-border">
-          {q.data ? (
+          {q.data || hasSessionTrace ? (
             <FlameGraph
               spans={displaySpans}
               selectedSpanId={selectedSpan?.span_id ?? null}
@@ -451,6 +531,7 @@ export function TraceDock() {
               simpleMode={!advanced_view}
               hiddenInSimpleMode={selectedSpanHiddenInSimple}
               onRequestAdvanced={() => setAdvancedView(true)}
+              runSummary={q.data?.summary}
               onRerun={(spanId) => {
                 // Phase 4 stub — checkpoint design pending.
                 console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });

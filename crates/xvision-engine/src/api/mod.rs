@@ -103,6 +103,86 @@ const MIGRATION_040_PATTERN_OPTIMIZATIONS: &str =
     include_str!("../../migrations/040_pattern_optimizations.sql");
 const MIGRATION_041_AGENT_SLOT_OPTIMIZATION_GATES: &str =
     include_str!("../../migrations/041_agent_slot_optimization_gates.sql");
+/// Stage 1 (Cline runtime unification, operational-visibility contract
+/// item 3): adds `trajectory_mode` (+ sibling Stage 2-3 columns) to
+/// `agent_runs`. Applied via `migrate_run_trajectory_mode` because the
+/// columns may already exist on a partially-migrated DB.
+const MIGRATION_039_RUN_TRAJECTORY_MODE: &str = include_str!("../../migrations/039_run_trajectory_mode.sql");
+/// Stage 2 (Cline runtime unification, Trajectory Record): the
+/// `trajectory_recordings` + `trajectory_frames` tables. Applied via
+/// `migrate_trajectory_frames` (guarded on the recordings table existing)
+/// so re-opening an already-migrated home is a no-op. Moved here from the
+/// ad-hoc `cline_recording::ensure_tables` idempotent-apply (§6): every
+/// `ApiContext::open` now provisions the trajectory store schema, and the
+/// store itself opens against the already-migrated pool.
+const MIGRATION_040_TRAJECTORY_FRAMES: &str = include_str!("../../migrations/040_trajectory_frames.sql");
+/// Phase 1.3 (chat-rail durable rail state): additive columns on
+/// `chat_sessions`. Applied via `migrate_chat_session_rail_state`, which runs
+/// each `ALTER TABLE … ADD COLUMN` on its own (sqlx::query is single-statement)
+/// and guards each on column existence so re-opening an already-migrated DB is
+/// a no-op. Driven straight off the migration file so the runtime path and the
+/// committed file never drift.
+const MIGRATION_041_CHAT_SESSION_RAIL_STATE: &str =
+    include_str!("../../migrations/041_chat_session_rail_state.sql");
+/// Phase 1.2 (chat-rail unified stream): the persisted unified-event log
+/// (`session_events`). Applied via `migrate_session_events` (guarded on the
+/// table's existence) because the file is two statements — CREATE TABLE +
+/// CREATE INDEX — which a single `sqlx::query` cannot run together. The DDL
+/// is duplicated as the two constants below so each runs on its own.
+const MIGRATION_042_SESSION_EVENTS_TABLE: &str = "CREATE TABLE IF NOT EXISTS session_events (\
+         event_id    TEXT PRIMARY KEY, \
+         session_id  TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE, \
+         seq         INTEGER NOT NULL, \
+         ts          TEXT NOT NULL, \
+         source      TEXT NOT NULL, \
+         kind        TEXT NOT NULL, \
+         payload_json TEXT NOT NULL\
+     )";
+const MIGRATION_042_SESSION_EVENTS_INDEX: &str =
+    "CREATE INDEX IF NOT EXISTS idx_session_events_seq ON session_events(session_id, seq)";
+/// Phase 2.3 (chat-rail SAFETY CORE): three-state tool-policy persistence
+/// (`tool_policies`). Applied via `migrate_tool_policies` (guarded on the
+/// table's existence) so re-opening an already-migrated DB is a no-op. Driven
+/// straight off the committed migration file so the runtime path and the file
+/// never drift.
+const MIGRATION_043_TOOL_POLICIES: &str = include_str!("../../migrations/043_tool_policies.sql");
+/// Phase 2.5 (chat-rail checkpoints): the `chat_checkpoints` snapshot table.
+/// NB the name is `chat_checkpoints`, not `checkpoints` — migration 018 already
+/// owns a `checkpoints` table for agent-run replay, a different concept.
+/// Applied via `migrate_checkpoints` (guarded on the table's existence) so
+/// re-opening an already-migrated DB is a no-op. Like `session_events` the file
+/// is two statements — CREATE TABLE + CREATE INDEX — which a single
+/// `sqlx::query` cannot run together, so the DDL is duplicated as the two
+/// constants below and each runs on its own.
+const MIGRATION_044_CHECKPOINTS_TABLE: &str = "CREATE TABLE IF NOT EXISTS chat_checkpoints (\
+         checkpoint_id TEXT PRIMARY KEY, \
+         session_id    TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE, \
+         created_at    TEXT NOT NULL, \
+         kind          TEXT NOT NULL, \
+         content_hash  TEXT NOT NULL, \
+         captured_json TEXT NOT NULL, \
+         label         TEXT\
+     )";
+const MIGRATION_044_CHECKPOINTS_INDEX: &str =
+    "CREATE INDEX IF NOT EXISTS idx_chat_checkpoints_session ON chat_checkpoints(session_id, created_at)";
+/// Phase 3.5 (DSPy optimization store): the durable, reproducible record of
+/// offline prompt/demonstration optimization runs. Five tables —
+/// `optimization_runs`, `optimization_candidates`, `optimization_demos`,
+/// `optimization_snapshots`, `agent_lineage`. Applied via
+/// `migrate_optimization_store`, which splits the file into individual
+/// statements (one `sqlx::query` cannot batch the CREATE TABLE + CREATE INDEX
+/// set) and guards on the first table's existence so a re-open is a no-op.
+/// Driven straight off the committed migration file so the runtime path and the
+/// committed file never drift. HARD INVARIANT: the engine persists these rows
+/// as opaque JSON + scalar columns and does NOT depend on `xvision-dspy`.
+const MIGRATION_045_OPTIMIZATION_STORE: &str = include_str!("../../migrations/045_optimization_store.sql");
+/// Phase 4.4 (metrics & holdout discipline): the `optimization_holdout_results`
+/// table — one paired train/holdout result per acceptable snapshot plus the
+/// overfit-detection bookkeeping that gates `accept` and marketplace mint.
+/// Applied via `migrate_holdout` (guarded on the table's existence). HARD
+/// INVARIANT: holdout metric values are scalars produced by the eval harness;
+/// the engine does NOT depend on `xvision-dspy`.
+const MIGRATION_046_HOLDOUT: &str = include_str!("../../migrations/046_holdout.sql");
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -273,6 +353,14 @@ impl ApiContext {
         migrate_eval_runs_live_config(&pool).await?;
         migrate_agent_slot_optimizations(&pool).await?;
         migrate_pattern_optimizations(&pool).await?;
+        migrate_run_trajectory_mode(&pool).await?;
+        migrate_trajectory_frames(&pool).await?;
+        migrate_chat_session_rail_state(&pool).await?;
+        migrate_session_events(&pool).await?;
+        migrate_tool_policies(&pool).await?;
+        migrate_checkpoints(&pool).await?;
+        migrate_optimization_store(&pool).await?;
+        migrate_holdout(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -301,6 +389,20 @@ impl ApiContext {
         crate::eval::scenario_seed::run_seed_if_needed(&ctx).await?;
 
         Ok(ctx)
+    }
+
+    /// Apply migration 040 (the trajectory tables) to an arbitrary pool.
+    ///
+    /// `ApiContext::open` already runs this as part of the main migrator, so
+    /// the canonical record/replay path never needs it. It is exposed for
+    /// out-of-band tooling that opens a trajectory store over a DB file that
+    /// was NOT necessarily created through `open` — e.g. the `xvn trajectory`
+    /// CLI honouring a `--db <path>` override. The underlying
+    /// `migrate_trajectory_frames` gates on the recordings table already
+    /// existing and the DDL is idempotent, so this is a no-op on an
+    /// already-migrated file.
+    pub async fn ensure_trajectory_schema(pool: &SqlitePool) -> ApiResult<()> {
+        migrate_trajectory_frames(pool).await
     }
 
     /// Construct an `ApiContext` from an already-prepared pool and actor.
@@ -1054,6 +1156,150 @@ async fn migrate_pattern_optimizations(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+/// Stage 1 (Cline runtime unification, operational-visibility contract
+/// item 3). Adds `trajectory_mode` (+ Stage 2-3 sibling columns) to
+/// `agent_runs`. Idempotent: guarded on `trajectory_mode` existing so
+/// re-opening the same `xvn_home` is a no-op. The four `ALTER TABLE ADD
+/// COLUMN` statements in `MIGRATION_039_RUN_TRAJECTORY_MODE` execute as a
+/// single multi-statement query (the SQLite driver runs all of them).
+async fn migrate_run_trajectory_mode(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agent_runs", "trajectory_mode").await? {
+        sqlx::query(MIGRATION_039_RUN_TRAJECTORY_MODE)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Stage 2 (Cline runtime unification, Trajectory Record) + §6 relocation.
+/// Creates the `trajectory_recordings` + `trajectory_frames` tables. The
+/// migration SQL uses plain `CREATE TABLE` (not `IF NOT EXISTS`), so this
+/// is guarded on the recordings table existing — re-opening an
+/// already-migrated home short-circuits and is a no-op. The two
+/// `CREATE TABLE` + index statements run as a single multi-statement query
+/// (the SQLite driver executes the whole script).
+///
+/// Before §2-D/§6 this schema was applied ad-hoc + idempotently inside
+/// `cline_recording::open_store::ensure_tables`. Folding it into the main
+/// migrator means every `ApiContext::open` (and every test harness that
+/// builds a `RunStore` / opens a pool through `open`) has the trajectory
+/// tables, and the trajectory store opens against the already-migrated DB
+/// instead of self-applying.
+async fn migrate_trajectory_frames(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "trajectory_recordings").await? {
+        sqlx::query(MIGRATION_040_TRAJECTORY_FRAMES).execute(pool).await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 042 (`session_events`, the unified-event log). The two
+/// DDL statements are run separately because `sqlx::query` executes a single
+/// statement at a time. Both use `IF NOT EXISTS`, so the helper is idempotent
+/// across re-opens of the same `xvn_home`.
+async fn migrate_chat_session_rail_state(pool: &SqlitePool) -> ApiResult<()> {
+    // Each `ALTER TABLE chat_sessions ADD COLUMN <col> …` line in migration 041
+    // runs on its own and is skipped when the column already exists, so a
+    // partially-migrated or already-migrated DB re-opens cleanly.
+    for line in MIGRATION_041_CHAT_SESSION_RAIL_STATE.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("ALTER TABLE chat_sessions ADD COLUMN ") {
+            let col = rest.split_whitespace().next().unwrap_or_default();
+            if !col.is_empty() && !table_has_column(pool, "chat_sessions", col).await? {
+                sqlx::query(line.trim_end_matches(';')).execute(pool).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn migrate_session_events(pool: &SqlitePool) -> ApiResult<()> {
+    sqlx::query(MIGRATION_042_SESSION_EVENTS_TABLE)
+        .execute(pool)
+        .await?;
+    sqlx::query(MIGRATION_042_SESSION_EVENTS_INDEX)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn migrate_tool_policies(pool: &SqlitePool) -> ApiResult<()> {
+    // Single `CREATE TABLE IF NOT EXISTS` statement; guard on table existence
+    // is implicit in the `IF NOT EXISTS` so a re-open is a no-op.
+    if !table_exists(pool, "tool_policies").await? {
+        sqlx::query(MIGRATION_043_TOOL_POLICIES).execute(pool).await?;
+    }
+    Ok(())
+}
+
+async fn migrate_checkpoints(pool: &SqlitePool) -> ApiResult<()> {
+    // Phase 2.5: the `chat_checkpoints` snapshot table + its session index. Two
+    // DDL statements run separately (one `sqlx::query` cannot batch them). Both
+    // use IF NOT EXISTS so a re-open is a no-op; the table-existence guard skips
+    // the pair entirely on an already-migrated DB. The table is named
+    // `chat_checkpoints` because migration 018 already owns `checkpoints` (the
+    // agent-run replay table).
+    if !table_exists(pool, "chat_checkpoints").await? {
+        sqlx::query(MIGRATION_044_CHECKPOINTS_TABLE).execute(pool).await?;
+        sqlx::query(MIGRATION_044_CHECKPOINTS_INDEX).execute(pool).await?;
+    }
+    Ok(())
+}
+
+async fn migrate_optimization_store(pool: &SqlitePool) -> ApiResult<()> {
+    // Phase 3.5: the five optimization-store tables + their indexes. The
+    // migration file is many statements (CREATE TABLE / CREATE INDEX, all with
+    // IF NOT EXISTS), and a single `sqlx::query` cannot batch them, so we split
+    // on `;` and run each non-empty statement on its own. Every statement uses
+    // IF NOT EXISTS, and the leading table-existence guard skips the whole set
+    // on an already-migrated DB, so a re-open is a no-op. The engine persists
+    // these rows as opaque JSON + scalar columns; it does NOT depend on
+    // `xvision-dspy`.
+    if !table_exists(pool, "optimization_runs").await? {
+        for stmt in split_sql_statements(MIGRATION_045_OPTIMIZATION_STORE) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn migrate_holdout(pool: &SqlitePool) -> ApiResult<()> {
+    // Phase 4.4: the `optimization_holdout_results` table + its run index. The
+    // migration file is several statements (CREATE TABLE / CREATE INDEX, all
+    // with IF NOT EXISTS), so we split on `;` and run each on its own. The
+    // leading table-existence guard skips the whole set on an already-migrated
+    // DB, so a re-open is a no-op.
+    if !table_exists(pool, "optimization_holdout_results").await? {
+        for stmt in split_sql_statements(MIGRATION_046_HOLDOUT) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Split a multi-statement migration file into executable statements.
+///
+/// Strips `--` line comments first (an inline comment such as `provider's id`
+/// contains an apostrophe and a trailing `;` in a later comment could otherwise
+/// be mis-split), then splits on `;` and drops empty fragments. Used by
+/// `migrate_optimization_store` because a single `sqlx::query` cannot batch the
+/// CREATE TABLE + CREATE INDEX set in migration 045.
+fn split_sql_statements(sql: &str) -> Vec<String> {
+    let without_comments: String = sql
+        .lines()
+        .map(|line| match line.find("--") {
+            Some(idx) => &line[..idx],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    without_comments
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 pub enum Actor {
     Cli {
@@ -1109,3 +1355,235 @@ pub enum ApiError {
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
+
+#[cfg(test)]
+mod migration_registry_tests {
+    use super::*;
+
+    /// Regression for the runtime migration-wiring gap: migration 041's
+    /// chat_sessions rail-state columns are applied by the hand-maintained
+    /// `ApiContext::open` registry (via `migrate_chat_session_rail_state`),
+    /// not by `sqlx::migrate!`. Without the wiring the columns silently never
+    /// exist at runtime and the rail-state store methods fail with
+    /// "no such column". This proves the helper adds every column and is
+    /// idempotent on a re-open.
+    #[tokio::test]
+    async fn migrate_chat_session_rail_state_adds_columns_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        // Base table (migration 003) without the rail-state columns.
+        sqlx::query(MIGRATION_003).execute(&pool).await.unwrap();
+        assert!(!table_has_column(&pool, "chat_sessions", "mode").await.unwrap());
+
+        // First migration pass adds all six columns.
+        migrate_chat_session_rail_state(&pool).await.unwrap();
+        for col in [
+            "event_cursor",
+            "focus_path",
+            "mode",
+            "tool_policy_json",
+            "checkpoint_head",
+            "participants_json",
+        ] {
+            assert!(
+                table_has_column(&pool, "chat_sessions", col).await.unwrap(),
+                "column {col} missing after migrate_chat_session_rail_state"
+            );
+        }
+
+        // Second pass is a no-op (guards on column existence) — re-open safe.
+        migrate_chat_session_rail_state(&pool).await.unwrap();
+
+        // The defaults match the migration file (mode='research', cursor=0).
+        sqlx::query(
+            "INSERT INTO chat_sessions (id, started_at, last_activity_at, context_scope_json) \
+             VALUES ('s1', '2026-05-24T00:00:00Z', '2026-05-24T00:00:00Z', '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (mode, cursor): (String, i64) =
+            sqlx::query_as("SELECT mode, event_cursor FROM chat_sessions WHERE id = 's1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(mode, "research");
+        assert_eq!(cursor, 0);
+    }
+
+    /// Phase 2.3: migration 043 (`tool_policies`) is applied by the
+    /// hand-maintained `ApiContext::open` registry via `migrate_tool_policies`,
+    /// not `sqlx::migrate!`. Without the wiring the table never exists at
+    /// runtime and the tool-policy store fails with "no such table". This
+    /// proves the helper creates the table on a fresh DB, that the four
+    /// columns exist, that the DEFAULTs match the migration (enabled=1,
+    /// auto_approve=0), and that re-running is a no-op.
+    #[tokio::test]
+    async fn migrate_tool_policies_creates_table_with_defaults_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        assert!(!table_exists(&pool, "tool_policies").await.unwrap());
+
+        migrate_tool_policies(&pool).await.unwrap();
+        assert!(table_exists(&pool, "tool_policies").await.unwrap());
+        for col in ["user_scope", "tool_name", "enabled", "auto_approve"] {
+            assert!(
+                table_has_column(&pool, "tool_policies", col).await.unwrap(),
+                "column {col} missing after migrate_tool_policies"
+            );
+        }
+
+        // Second pass is a no-op (guarded on table existence) — re-open safe.
+        migrate_tool_policies(&pool).await.unwrap();
+
+        // Defaults: enabled=1, auto_approve=0 when only PK columns are given.
+        sqlx::query("INSERT INTO tool_policies (user_scope, tool_name) VALUES ('global', 'create_strategy')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (enabled, auto_approve): (i64, i64) = sqlx::query_as(
+            "SELECT enabled, auto_approve FROM tool_policies \
+             WHERE user_scope = 'global' AND tool_name = 'create_strategy'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(enabled, 1, "enabled defaults to 1");
+        assert_eq!(auto_approve, 0, "auto_approve defaults to 0");
+    }
+
+    /// Phase 2.5: migration 044 (`chat_checkpoints`) is applied by the
+    /// hand-maintained `ApiContext::open` registry via `migrate_checkpoints`,
+    /// not `sqlx::migrate!`. Without the wiring the table never exists at
+    /// runtime and the Checkpointer fails with "no such table". This proves the
+    /// helper creates the table + index on a fresh DB, that every column exists,
+    /// and that re-running is a no-op. The table is named `chat_checkpoints` to
+    /// avoid colliding with the agent-run `checkpoints` table from migration 018.
+    #[tokio::test]
+    async fn migrate_checkpoints_creates_table_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        assert!(!table_exists(&pool, "chat_checkpoints").await.unwrap());
+
+        migrate_checkpoints(&pool).await.unwrap();
+        assert!(table_exists(&pool, "chat_checkpoints").await.unwrap());
+        for col in [
+            "checkpoint_id",
+            "session_id",
+            "created_at",
+            "kind",
+            "content_hash",
+            "captured_json",
+            "label",
+        ] {
+            assert!(
+                table_has_column(&pool, "chat_checkpoints", col).await.unwrap(),
+                "column {col} missing after migrate_checkpoints"
+            );
+        }
+
+        // Second pass is a no-op (guarded on table existence) — re-open safe.
+        migrate_checkpoints(&pool).await.unwrap();
+    }
+
+    /// Phase 3.5: migration 045 (the optimization store) is applied by the
+    /// hand-maintained `ApiContext::open` registry via
+    /// `migrate_optimization_store`, not `sqlx::migrate!`. Without the wiring the
+    /// five tables never exist at runtime and the `OptimizationStore` fails with
+    /// "no such table". This proves the helper creates every table + index on a
+    /// fresh DB and that re-running is a no-op. The helper splits the
+    /// multi-statement file (one `sqlx::query` cannot batch CREATE TABLE + CREATE
+    /// INDEX) and strips `--` comments before splitting on `;`.
+    #[tokio::test]
+    async fn migrate_optimization_store_creates_tables_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        assert!(!table_exists(&pool, "optimization_runs").await.unwrap());
+
+        migrate_optimization_store(&pool).await.unwrap();
+        for table in [
+            "optimization_runs",
+            "optimization_candidates",
+            "optimization_demos",
+            "optimization_snapshots",
+            "agent_lineage",
+        ] {
+            assert!(
+                table_exists(&pool, table).await.unwrap(),
+                "table {table} missing after migrate_optimization_store"
+            );
+        }
+        // The reproduction-recipe columns must all exist on optimization_runs.
+        for col in [
+            "agent_id",
+            "slot_name",
+            "capability",
+            "optimizer",
+            "metric",
+            "corpus_query",
+            "rng_seed",
+            "model_provider",
+            "model_name",
+            "signature_hash",
+            "optimizer_version",
+            "status",
+            "created_at",
+        ] {
+            assert!(
+                table_has_column(&pool, "optimization_runs", col).await.unwrap(),
+                "column {col} missing on optimization_runs"
+            );
+        }
+
+        // Second pass is a no-op (guarded on table existence) — re-open safe.
+        migrate_optimization_store(&pool).await.unwrap();
+    }
+
+    /// Phase 4.4: migration 046 (the holdout-discipline table) is applied by the
+    /// hand-maintained `ApiContext::open` registry via `migrate_holdout`, not
+    /// `sqlx::migrate!`. Without the wiring the `optimization_holdout_results`
+    /// table never exists at runtime and the `HoldoutStore` fails with "no such
+    /// table". This proves the helper creates the table + its columns on a fresh
+    /// DB (after 045, which it FK-references) and that re-running is a no-op.
+    #[tokio::test]
+    async fn migrate_holdout_creates_table_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        // 046 FK-references the 045 tables, so apply 045 first (matching the
+        // ApiContext::open ordering).
+        migrate_optimization_store(&pool).await.unwrap();
+        assert!(!table_exists(&pool, "optimization_holdout_results").await.unwrap());
+
+        migrate_holdout(&pool).await.unwrap();
+        assert!(table_exists(&pool, "optimization_holdout_results").await.unwrap());
+        for col in [
+            "snapshot_id",
+            "run_id",
+            "metric",
+            "train_metric_value",
+            "holdout_metric_value",
+            "overfit_warning",
+            "overfit_ratio",
+            "overfit_waiver_reason",
+            "created_at",
+        ] {
+            assert!(
+                table_has_column(&pool, "optimization_holdout_results", col)
+                    .await
+                    .unwrap(),
+                "column {col} missing after migrate_holdout"
+            );
+        }
+
+        // Second pass is a no-op (guarded on table existence) — re-open safe.
+        migrate_holdout(&pool).await.unwrap();
+    }
+
+    #[test]
+    fn split_sql_statements_strips_comments_and_splits() {
+        let sql = "-- a header comment\n\
+                   CREATE TABLE t (x TEXT); -- inline trailing comment\n\
+                   CREATE INDEX i ON t(x);\n";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].starts_with("CREATE TABLE t"));
+        assert!(stmts[1].starts_with("CREATE INDEX i"));
+        assert!(!stmts[0].contains("--"));
+        assert!(!stmts[1].contains("--"));
+    }
+}

@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use xvision_engine::api::eval::{
-    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride,
+    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride, RunTrajectoryMode,
 };
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
@@ -37,6 +37,18 @@ use xvision_engine::eval::store::RunStore;
 use xvision_engine::safety::VenueLabel;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
+
+/// Output format for list/status commands.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// Human-readable tab-separated columns (default).
+    #[default]
+    Table,
+    /// Pretty-printed JSON.
+    Json,
+    /// Compact single-line JSON.
+    JsonCompact,
+}
 
 /// Map an engine ApiError to our exit-code-bearing CliError. Variants
 /// carry meaning that's worth preserving on the wire, so we don't fall
@@ -116,15 +128,22 @@ pub struct RunArgs {
     #[arg(long)]
     pub scenario: Option<String>,
     /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
+    /// Current live mode is Alpaca paper trading only — real market data,
+    /// paper (simulated) money via https://paper-api.alpaca.markets. Real-money
+    /// venues are not yet supported.
     #[arg(long, default_value = "backtest")]
     pub mode: String,
     /// Live Alpaca asset, e.g. BTC/USD. Required for --mode live.
     #[arg(long)]
     pub live_asset: Option<String>,
-    /// Initial live paper capital in USD. Required for --mode live.
+    /// Initial live paper capital in USD. Required for --mode live. This is
+    /// paper/simulated capital — no real money is at risk in the current live scope.
     #[arg(long)]
     pub live_capital: Option<f64>,
-    /// Broker credential reference. v1 accepts only "alpaca".
+    /// Broker credential set to use for this live run. Selects WHICH set of
+    /// stored credentials to load (not the venue/environment — venue selection
+    /// is a separate future plan). Current live scope accepts only "alpaca"
+    /// (Alpaca paper trading). Real-money credentials are out of scope for now.
     #[arg(long, default_value = "alpaca")]
     pub live_broker_creds_ref: String,
     /// Stop after N live bars. At least one live stop flag is required.
@@ -211,6 +230,13 @@ pub struct RunArgs {
     /// Maximum chart annotations a review should emit.
     #[arg(long, default_value_t = 8)]
     pub max_review_annotations: u32,
+    /// Record the Cline agent trajectory for this run (§2-D). Only effective
+    /// when the run's `agent_runtime` resolves to `cline`; mints a trajectory
+    /// recording for the run's primary recorded slot so the run can later be
+    /// replayed deterministically. Off by default (no recording — the run is
+    /// byte-identical to a non-recorded run). Mirrors `xvn ab-compare --record`.
+    #[arg(long)]
+    pub record_trajectory: bool,
 }
 
 #[derive(Args, Debug)]
@@ -227,7 +253,12 @@ pub struct ListArgs {
     /// Only show runs in this status (queued | running | completed | failed | cancelled).
     #[arg(long)]
     pub status: Option<String>,
-    /// Output as JSON (otherwise tab-separated columns).
+    /// Output format: `table` (default), `json` (pretty), or `json-compact` (single line).
+    /// `--json` is an alias for `--format json-compact`.
+    #[arg(long, value_name = "FORMAT", default_value = "table")]
+    pub format: OutputFormat,
+    /// Output as compact JSON (alias for `--format json-compact`).
+    /// Explicit `--format` takes precedence.
     #[arg(long)]
     pub json: bool,
 }
@@ -635,6 +666,13 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         auto_fire_review: args.auto_fire_review,
         review_model,
         max_annotations_per_review: Some(args.max_review_annotations),
+        // §2-D: `--record-trajectory` selects Record; default is Live (no
+        // recording — byte-identical to a non-recorded run).
+        trajectory_mode: if args.record_trajectory {
+            RunTrajectoryMode::Record
+        } else {
+            RunTrajectoryMode::Live
+        },
     };
 
     // Banner — operator-facing progress, never on stdout. Stays visible
@@ -718,10 +756,29 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
     let runs = eval::list(&ctx, req)
         .await
         .map_err(|e| api_to_cli("eval list", e))?;
-    if args.json {
-        crate::io::print_json(&runs)?;
-        return Ok(());
+
+    // Resolve effective format: explicit --format wins; --json is alias for
+    // json-compact (matches the legacy behaviour).
+    let effective_format = if args.format != OutputFormat::Table {
+        args.format
+    } else if args.json {
+        OutputFormat::JsonCompact
+    } else {
+        OutputFormat::Table
+    };
+
+    match effective_format {
+        OutputFormat::Json => {
+            crate::io::print_json(&runs)?;
+            return Ok(());
+        }
+        OutputFormat::JsonCompact => {
+            crate::io::print_json_compact(&runs)?;
+            return Ok(());
+        }
+        OutputFormat::Table => {}
     }
+
     if runs.is_empty() {
         println!("(no runs)");
         return Ok(());

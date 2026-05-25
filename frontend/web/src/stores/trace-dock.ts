@@ -57,6 +57,14 @@ type State = {
   heightPx: number;
   selectedSpanId: string | null;
   activeRunId: string | null;
+  /**
+   * Chat-rail session the dock is bound to, when the active surface is a
+   * chat session rather than a standalone agent run. When set, the dock's
+   * span view projects from the unified `session-events` store (one stream,
+   * two projections — Phase 1.2/1.4) instead of the agent-run SSE wire.
+   * `null` keeps the existing agent-run path untouched.
+   */
+  activeSessionId: string | null;
   mode: DockMode;
   /** Last non-collapsed height — restored by toggle(). */
   lastOpenHeight: DockHeight;
@@ -84,6 +92,8 @@ type Actions = {
   minimize: () => void;
   setSelectedSpan: (id: string | null) => void;
   setActiveRun: (id: string | null, mode: DockMode) => void;
+  /** Bind (or clear) the chat-rail session whose unified log feeds the dock. */
+  setActiveSession: (sessionId: string | null) => void;
   markSpanActive: (spanId: string, meta?: ActiveSpanMeta) => void;
   markSpanInactive: (spanId: string) => void;
   appendDelta: (spanId: string, len: number, text?: string) => void;
@@ -177,6 +187,7 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
   heightPx: readPersistedHeightPx(),
   selectedSpanId: null,
   activeRunId: null,
+  activeSessionId: null,
   mode: "post-hoc",
   lastOpenHeight: "working",
   streamingState: EMPTY_STREAMING,
@@ -210,6 +221,7 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
       selectedSpanId: null,
       streamingState: freshStreaming(),
     }),
+  setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
   markSpanActive: (spanId, meta) =>
     set((s) => {
       const next = new Set(s.streamingState.activeSpanIds);

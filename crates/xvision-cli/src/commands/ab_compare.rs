@@ -28,7 +28,9 @@ use xvision_core::trading::{AssetSymbol, PortfolioState};
 use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::bars::{compute_cache_key, load_bars, BarCacheArgs};
-use xvision_eval::ab_compare::{auto_suffix_arm_names, default_arms, parse_arm_spec, run_ab_compare};
+use xvision_eval::ab_compare::{
+    auto_suffix_arm_names, default_arms, parse_arm_spec, run_ab_compare, AbTrajectoryMode,
+};
 use xvision_eval::backtest::MarketBar;
 use xvision_eval::baselines::PortfolioProvider;
 use xvision_eval::harness::BacktestRunConfig;
@@ -56,7 +58,12 @@ pub async fn run(
     trader_base_url: String,
     trader_model: String,
     trader_api_key_env: String,
+    record: bool,
+    replay: Option<String>,
 ) -> CliResult<()> {
+    // Stage 3 Task 8 / item 10: record vs replay select. Mutually exclusive;
+    // neither flag → record (transition default).
+    let trajectory_mode = AbTrajectoryMode::from_cli_flags(record, replay).map_err(CliError::usage)?;
     let asset_sym = AssetSymbol::from_str(&asset).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
 
     let cycles_raw = std::fs::read(&cycles).exit_with(XvnExit::Upstream)?;
@@ -165,6 +172,7 @@ pub async fn run(
         TraderParams::default(),
         portfolio_provider,
         &risk,
+        trajectory_mode,
     )
     .await
     .exit_with(XvnExit::Upstream)?;

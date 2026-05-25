@@ -49,6 +49,15 @@ fn sqlite_error_label(e: &sqlx::Error) -> &'static str {
     }
 }
 
+/// Turn a zero-rows-affected UPDATE into a "session not found" error so
+/// callers never silently no-op against a missing session id.
+fn ensure_session_existed(rows_affected: u64, session_id: &str) -> Result<()> {
+    if rows_affected == 0 {
+        anyhow::bail!("session {session_id} not found");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
     pub id: String,
@@ -65,6 +74,27 @@ pub struct ChatSessionSummary {
     pub scope: ContextScope,
     pub started_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
+}
+
+/// Durable per-session rail state (migration 041). Drives unified-stream
+/// resume and the Phase 2 safety surfaces. All fields have defaults so a
+/// freshly-created session is immediately usable in read-only `research`
+/// mode with an empty cursor.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatSessionRailState {
+    /// Last unified-event `seq` the client acknowledged consuming.
+    pub event_cursor: i64,
+    /// `research` (read-only, default) | `act` (write tools available).
+    pub mode: String,
+    /// Pinned focus-chain file path for the session's scope, if attached.
+    pub focus_path: Option<String>,
+    /// Snapshot of the three-state tool policy in force, serialized JSON.
+    /// `None` = inherit the user/global default.
+    pub tool_policy_json: Option<String>,
+    /// Id of the most recent checkpoint written for this session.
+    pub checkpoint_head: Option<String>,
+    /// Optional participant list, serialized JSON.
+    pub participants_json: Option<String>,
 }
 
 /// Stateless CRUD over `chat_sessions` + `chat_messages`. Holds nothing —
@@ -249,6 +279,98 @@ impl ChatSessionStore {
         Ok(serde_json::from_str(&json).unwrap_or_default())
     }
 
+    /// Load the durable rail state (migration 041). Returns an error if the
+    /// session does not exist.
+    pub async fn load_rail_state(pool: &SqlitePool, session_id: &str) -> Result<ChatSessionRailState> {
+        let row: Option<(
+            i64,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT event_cursor, mode, focus_path, tool_policy_json, checkpoint_head, participants_json \
+                 FROM chat_sessions WHERE id = ?1",
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .context("read chat_session rail state")?;
+        let (event_cursor, mode, focus_path, tool_policy_json, checkpoint_head, participants_json) =
+            row.ok_or_else(|| anyhow::anyhow!("session {session_id} not found"))?;
+        Ok(ChatSessionRailState {
+            event_cursor,
+            mode,
+            focus_path,
+            tool_policy_json,
+            checkpoint_head,
+            participants_json,
+        })
+    }
+
+    /// Advance the unified-stream resume cursor. The client acks the last
+    /// `seq` it rendered; resume replays from `event_cursor + 1`.
+    pub async fn set_event_cursor(pool: &SqlitePool, session_id: &str, cursor: i64) -> Result<()> {
+        let affected = sqlx::query("UPDATE chat_sessions SET event_cursor = ?1 WHERE id = ?2")
+            .bind(cursor)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .context("update chat_sessions.event_cursor")?
+            .rows_affected();
+        ensure_session_existed(affected, session_id)
+    }
+
+    /// Set the Research / Act mode. Server-side enforcement (Phase 2.2) reads
+    /// this; the column is the source of truth, never the client-sent flag.
+    pub async fn set_mode(pool: &SqlitePool, session_id: &str, mode: &str) -> Result<()> {
+        let affected = sqlx::query("UPDATE chat_sessions SET mode = ?1 WHERE id = ?2")
+            .bind(mode)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .context("update chat_sessions.mode")?
+            .rows_affected();
+        ensure_session_existed(affected, session_id)
+    }
+
+    /// Attach / clear the pinned focus-chain file path (Phase 2.4).
+    pub async fn set_focus_path(pool: &SqlitePool, session_id: &str, path: Option<&str>) -> Result<()> {
+        let affected = sqlx::query("UPDATE chat_sessions SET focus_path = ?1 WHERE id = ?2")
+            .bind(path)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .context("update chat_sessions.focus_path")?
+            .rows_affected();
+        ensure_session_existed(affected, session_id)
+    }
+
+    /// Snapshot the three-state tool policy in force (Phase 2.3).
+    pub async fn set_tool_policy(pool: &SqlitePool, session_id: &str, json: Option<&str>) -> Result<()> {
+        let affected = sqlx::query("UPDATE chat_sessions SET tool_policy_json = ?1 WHERE id = ?2")
+            .bind(json)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .context("update chat_sessions.tool_policy_json")?
+            .rows_affected();
+        ensure_session_existed(affected, session_id)
+    }
+
+    /// Record the latest checkpoint id written for this session (Phase 2.5).
+    pub async fn set_checkpoint_head(pool: &SqlitePool, session_id: &str, ckpt: Option<&str>) -> Result<()> {
+        let affected = sqlx::query("UPDATE chat_sessions SET checkpoint_head = ?1 WHERE id = ?2")
+            .bind(ckpt)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .context("update chat_sessions.checkpoint_head")?
+            .rows_affected();
+        ensure_session_existed(affected, session_id)
+    }
+
     /// Delete a session. Cascades to its messages via the FK.
     pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM chat_sessions WHERE id = ?1")
@@ -303,6 +425,19 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        // Phase 1.3 rail-state columns. The migration is several ALTER
+        // statements; sqlx's simple `query` runs one statement at a time, so
+        // run each `ALTER TABLE …` line on its own. SQLite tolerates the
+        // leading `--` comment lines, so we just keep lines that start an
+        // ALTER and feed them through.
+        let m041 = include_str!("../../migrations/041_chat_session_rail_state.sql");
+        for line in m041.lines() {
+            let line = line.trim();
+            if line.starts_with("ALTER") {
+                let stmt = line.trim_end_matches(';');
+                sqlx::query(stmt).execute(&pool).await.unwrap();
+            }
+        }
         pool
     }
 
@@ -328,6 +463,51 @@ mod tests {
         assert_eq!(m1.seq, 0);
         assert_eq!(m2.seq, 1);
         assert_eq!(m3.seq, 2);
+    }
+
+    #[tokio::test]
+    async fn rail_state_defaults_and_updates() {
+        let pool = fresh_pool().await;
+        let sid = ChatSessionStore::create_session(&pool, &ContextScope::Workspace)
+            .await
+            .unwrap();
+
+        // Fresh session: read-only research mode, empty cursor, no focus/policy.
+        let st = ChatSessionStore::load_rail_state(&pool, &sid).await.unwrap();
+        assert_eq!(st.mode, "research");
+        assert_eq!(st.event_cursor, 0);
+        assert_eq!(st.focus_path, None);
+        assert_eq!(st.tool_policy_json, None);
+        assert_eq!(st.checkpoint_head, None);
+
+        // Mutate each field, reload, confirm persistence.
+        ChatSessionStore::set_event_cursor(&pool, &sid, 42).await.unwrap();
+        ChatSessionStore::set_mode(&pool, &sid, "act").await.unwrap();
+        ChatSessionStore::set_focus_path(&pool, &sid, Some("scopes/strategy/abc/focus.md"))
+            .await
+            .unwrap();
+        ChatSessionStore::set_tool_policy(&pool, &sid, Some(r#"{"create_strategy":{"enabled":true}}"#))
+            .await
+            .unwrap();
+        ChatSessionStore::set_checkpoint_head(&pool, &sid, Some("ckpt_1"))
+            .await
+            .unwrap();
+
+        let st = ChatSessionStore::load_rail_state(&pool, &sid).await.unwrap();
+        assert_eq!(st.event_cursor, 42);
+        assert_eq!(st.mode, "act");
+        assert_eq!(st.focus_path.as_deref(), Some("scopes/strategy/abc/focus.md"));
+        assert!(st.tool_policy_json.unwrap().contains("create_strategy"));
+        assert_eq!(st.checkpoint_head.as_deref(), Some("ckpt_1"));
+    }
+
+    #[tokio::test]
+    async fn rail_state_update_unknown_session_errors() {
+        let pool = fresh_pool().await;
+        let err = ChatSessionStore::set_mode(&pool, "nope", "act")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"), "got: {err}");
     }
 
     #[tokio::test]

@@ -97,6 +97,10 @@ pub struct RunStartedEvent {
     pub source_cli_job_id: Option<String>,
     pub started_at: DateTime<Utc>,
     pub retention_mode: String,
+    /// Optional run-level trajectory mode for Cline sidecar runs. Omitted by
+    /// older/non-Cline producers, in which case the DB default remains `live`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trajectory_mode: Option<String>,
     pub sidecar_version: Option<String>,
     pub cline_sdk_version: Option<String>,
     pub protocol_version: Option<String>,

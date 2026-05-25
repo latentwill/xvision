@@ -63,6 +63,11 @@ pub struct AppState {
     /// recorder trait.
     pub obs_event_bus: Arc<ObsRunEventBus>,
     pub obs_broadcast: Arc<BroadcastSubscriber>,
+    /// Per-chat-session live fan-out of unified events (Phase 1.2). The chat
+    /// route publishes each projected `UnifiedEvent` here; the unified-stream
+    /// handler (`GET /api/chat-rail/sessions/:id/stream`) subscribes for the
+    /// live tail after replaying the persisted `session_events` log.
+    pub session_event_bus: Arc<crate::session_bus::SessionEventBus>,
     /// Resolved observability config (precedence: CLI > env > file >
     /// default). Threaded into every per-request `ApiContext` so engine
     /// eval handlers can stamp the right `retention_mode` on the
@@ -167,6 +172,7 @@ impl AppState {
             event_bus: Arc::new(RunEventBus::new()),
             obs_event_bus,
             obs_broadcast,
+            session_event_bus: Arc::new(crate::session_bus::SessionEventBus::new()),
             obs_config,
             models_cache: Arc::new(Mutex::new(HashMap::new())),
             eval_run_cache: Arc::new(Mutex::new(HashMap::new())),

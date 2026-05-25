@@ -32,6 +32,11 @@ xvision-filters       = { path = "../xvision-filters" }
 xvision-dashboard     = { path = "../xvision-dashboard" }
 xvision-observability = { path = "../xvision-observability" }
 xvision-memory        = { path = "../xvision-memory" }
+# Offline optimizer. The CLI MAY depend on xvision-dspy (it is not in the
+# deploy-critical engine path); the HARD INVARIANT is only that xvision-engine
+# stays free of dspy-rs. Used by `xvn optimize` for signature/capability
+# validation (--dry-run) and deterministic test-model corpus runs.
+xvision-dspy          = { path = "../xvision-dspy" }
 ulid              = "1"
 dirs              = "5"
 blake3            = "1.5"

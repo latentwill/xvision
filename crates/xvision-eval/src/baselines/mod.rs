@@ -46,7 +46,7 @@ pub use ma_crossover::MaCrossover;
 pub use macd_momentum::MacdMomentum;
 pub use random_direction::RandomDirection;
 pub use rsi_mean_reversion::RsiMeanReversion;
-pub use trader_arm::{PortfolioProvider, TraderArm};
+pub use trader_arm::{BriefingReplay, PortfolioProvider, TraderArm};
 
 use crate::algorithm::Algorithm;
 

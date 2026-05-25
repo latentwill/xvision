@@ -1,9 +1,8 @@
 //! xvn-mcp — Model Context Protocol server exposing the `xvision-data`
 //! indicator surface as agent-callable tools.
 //!
-//! Designed to be advertised by `acpx` (`mcpServers: [...]` in
-//! `acpx.config.json`) so any ACP-compatible agent driving the Stage 1
-//! Intern — Claude Code, Codex, OpenCode, Hermes, etc. — can recompute
+//! Registered as Cline agent tools via the `xvision-agentd` sidecar so any
+//! Cline-driven agent stage (intern, trader, risk, critic, …) can recompute
 //! indicators at parameter sets the snapshot doesn't pre-bake (e.g.
 //! RSI(7) when the snapshot only carries RSI(14)).
 //!

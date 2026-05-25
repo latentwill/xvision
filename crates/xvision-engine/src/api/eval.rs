@@ -54,7 +54,8 @@ use crate::eval::scenario::{
 };
 use crate::eval::store::{ListFilter, RunStore};
 use crate::tools::ToolRegistry;
-use xvision_core::config::{self, ProviderEntry, ProviderKind};
+use xvision_agent_client::{AgentClient, ToolDispatch, ToolDispatchError};
+use xvision_core::config::{self, AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials};
 use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
@@ -637,6 +638,9 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         auto_fire_review: source.auto_fire_review,
         review_model: source.review_model.clone(),
         max_annotations_per_review: source.max_annotations_per_review,
+        // Retries default to no recording (Live); a re-record is requested
+        // explicitly via a fresh launch.
+        trajectory_mode: RunTrajectoryMode::default(),
     };
     let detail = start_run(ctx, req).await?;
     Ok(RetryOutcome {
@@ -913,6 +917,47 @@ pub struct ProviderOverride {
     pub model: String,
 }
 
+/// §2-D — per-run trajectory-recording mode. The operator's chosen driver
+/// for Cline trajectory recording (replaces the §2-B `XVN_TRAJECTORY_RECORD`
+/// env gate). Mirrors the request-field shape the CLI ab-compare path uses
+/// (`xvision_eval::ab_compare::AbTrajectoryMode`): the caller declares intent
+/// on the request, the engine acts on it.
+///
+/// * `Live` (default) — no recording. Byte-identical to the pre-§2-D /
+///   pre-§2-B behaviour for backtest + live + non-record Cline runs:
+///   `trajectory_mode != Record` ⇒ `recording_request = None` ⇒ the §2-B
+///   `None` spawn path (no event sink bound).
+/// * `Record` — mint a trajectory recording for the run's primary recorded
+///   slot and bind the event sink so frames persist into the store.
+///
+/// Replay through the engine eval path is intentionally NOT a variant here:
+/// today replay is driven only from the dedicated CLI record/replay entry
+/// point (`xvn ab-compare --replay`, `AbTrajectoryMode::Replay`) and the
+/// per-cycle pipeline dispatch hard-codes `execute_cline::TrajectoryMode::Record`
+/// (live/record). Adding engine-eval replay would require threading a
+/// recording id + store into every slot dispatch — out of scope for §2-D.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunTrajectoryMode {
+    /// No recording (default — preserves byte-identity for non-record runs).
+    #[default]
+    Live,
+    /// Mint a recording for this run and persist trajectory frames.
+    Record,
+}
+
+impl RunTrajectoryMode {
+    /// True when this run should mint a trajectory recording.
+    pub fn records(self) -> bool {
+        matches!(self, RunTrajectoryMode::Record)
+    }
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -991,6 +1036,15 @@ pub struct EvalRunRequest {
     /// run so UI/CLI launches round-trip their annotation budget.
     #[serde(default)]
     pub max_annotations_per_review: Option<u32>,
+    /// §2-D — per-run Cline trajectory-recording mode. The operator-chosen
+    /// driver for recording (replaces the §2-B `XVN_TRAJECTORY_RECORD` env
+    /// gate). `Live` (default) records nothing and is byte-identical to the
+    /// pre-§2-D behaviour; `Record` mints a trajectory recording for the
+    /// run's primary recorded slot. Only consulted when the run's
+    /// `agent_runtime` resolves to `Cline`; backtest/live LlmDispatch runs
+    /// ignore it. CLI: `--record-trajectory`.
+    #[serde(default)]
+    pub trajectory_mode: RunTrajectoryMode,
 }
 
 /// Stable role string used on the `supervisor_notes` row that captures
@@ -1076,7 +1130,9 @@ fn validate_live_request_shape(req: &EvalRunRequest) -> ApiResult<()> {
     match (&req.mode, req.live_config.as_ref()) {
         (RunMode::Live, Some(cfg)) => cfg
             .validate()
-            .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path()))),
+            // Surface `Display` (human-readable, actionable), not the `{e:?}`
+            // Debug variant — operators (CLI + dashboard) see this string.
+            .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e}", e.field_path()))),
         (RunMode::Live, None) => Err(ApiError::Validation(
             "mode=live requires live_config (strategy_id, assets, capital, broker_creds_ref, stop_policy)"
                 .into(),
@@ -1461,6 +1517,162 @@ async fn validate_provider_preflight(
     Ok(provider_names)
 }
 
+/// Phase 4 launch gate + preflight guardrails (live eval path).
+///
+/// Runs BEFORE the executor is built/spawned in [`start_run`]. It refuses
+/// the launch with a typed `ApiError::Validation` when a strategy is not
+/// launchable for a capability-completeness reason (Phase 4.1
+/// `diagnostics::assert_launchable`) OR when one of the cleanly-reachable
+/// Phase 4.2 short-circuit detectors fires at launch-preflight time:
+///
+///   * `strategy_references_unattached_slot` — an `AgentRef` whose agent
+///     resolves but has no slot fulfilling the role.
+///   * `missing_prompt` — a required-capability slot with an empty/
+///     whitespace-only system prompt.
+///   * `missing_tool` — a tool the required capability needs is granted
+///     nowhere (built-ins ∪ manifest `required_tools` ∪ slot grants).
+///   * `provider_unavailable` — the provider bound to a slot is not in the
+///     resolved provider set for this launch.
+///
+/// Because this runs before the `eval_runs` row (and thus the obs emitter)
+/// exists, a fired guardrail surfaces its typed error synchronously as the
+/// refused-launch `ApiError::Validation` body — the failure is recorded as
+/// the launch refusal rather than a silent success. The message embeds the
+/// guardrail `code()` + `remediation()` so the CLI/UI can branch on it and
+/// the obs run is never spawned. A backtest of a strategy missing a
+/// REQUIRED capability does NOT start.
+async fn assert_launchable_with_guardrails(
+    ctx: &ApiContext,
+    strategy_id: &str,
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> ApiResult<()> {
+    // Resolve the set of providers configured in the runtime config — the
+    // enabled-provider set the `provider_unavailable` guardrail checks slot
+    // bindings against. A slot bound to a provider absent from this set is a
+    // hard short-circuit. A config-load failure leaves the set empty, so any
+    // bound provider is reported unavailable (fail-closed). local-candle and
+    // every other configured kind are included by name.
+    let cfg_path = runtime_config_path(ctx);
+    let available_providers: Vec<String> =
+        match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+            Ok(Ok(cfg)) => cfg.providers.iter().map(|p| p.name.clone()).collect(),
+            _ => Vec::new(),
+        };
+    let available_providers = available_providers.as_slice();
+    // ── Phase 4.1: capability-completeness launch gate ──────────────────
+    // Compute typed diagnostics and refuse the launch if any REQUIRED
+    // capability is unmet. OPTIONAL capabilities never block.
+    let diag = crate::diagnostics::capability_diagnostics(ctx, strategy_id).await?;
+    if let Err(e) = crate::diagnostics::assert_launchable(&diag) {
+        tracing::warn!(
+            strategy_id,
+            error = %e,
+            "eval launch blocked by capability diagnostics (not launchable)",
+        );
+        return Err(ApiError::Validation(format!(
+            "strategy `{strategy_id}` is not launchable: {e}",
+        )));
+    }
+
+    // ── Phase 4.2: launch-preflight short-circuits ─────────────────────
+    // Assemble the set of tools available to the run: built-ins ∪ the
+    // strategy manifest's `required_tools` ∪ any per-slot grants. This is
+    // the same union `check_missing_tool` expects.
+    let mut available_tools: Vec<String> = ToolRegistry::default_with_builtins()
+        .list()
+        .into_iter()
+        .map(|t| t.as_str().to_string())
+        .collect();
+    for t in &strategy.manifest.required_tools {
+        if !available_tools.contains(t) {
+            available_tools.push(t.clone());
+        }
+    }
+
+    // strategy_references_unattached_slot — defense-in-depth.
+    //
+    // NOTE: as the engine resolves slots today (`resolve_agent_slots`),
+    // an `AgentRef` whose agent is missing or has zero slots already fails
+    // EARLIER with `ApiError::NotFound` / "agent has no executable slots",
+    // and a resolved ref always maps the agent's first slot to the ref's
+    // role (so `resolved.role == agent_ref.role` by construction). The
+    // primary trigger for this guardrail is therefore pre-empted upstream.
+    // We keep the cheap check as a regression guard: if the resolution
+    // semantics ever change so a ref can survive resolution without a
+    // matching slot, this fires the typed short-circuit rather than
+    // launching a position that cannot execute.
+    for agent_ref in &strategy.agents {
+        let slot_attached = agent_slots.iter().any(|resolved| {
+            resolved.agent_id == agent_ref.agent_id
+                && resolved.role.trim().eq_ignore_ascii_case(agent_ref.role.trim())
+        });
+        if let Err(sc) =
+            crate::guardrails::check_slot_attached(&agent_ref.role, &agent_ref.agent_id, slot_attached)
+        {
+            return Err(short_circuit_validation(strategy_id, &sc));
+        }
+    }
+
+    // Per-slot prompt / provider / tool preflight. The required tool set is
+    // driven by each slot's primary capability (`required_tools_for`).
+    for resolved in agent_slots {
+        let role = resolved.role.as_str();
+
+        // missing_prompt: a launchable position must have a prompt to send.
+        if let Err(sc) = crate::guardrails::check_prompt_present(role, &resolved.system_prompt) {
+            return Err(short_circuit_validation(strategy_id, &sc));
+        }
+
+        // provider_unavailable: the slot's bound provider must be resolvable.
+        if let Some(provider) = resolved.slot.provider.as_deref() {
+            let provider = provider.trim();
+            if !provider.is_empty() {
+                if let Err(sc) =
+                    crate::guardrails::check_provider_available(role, provider, available_providers)
+                {
+                    return Err(short_circuit_validation(strategy_id, &sc));
+                }
+            }
+        }
+
+        // missing_tool: every tool the slot's primary capability requires
+        // must be granted somewhere. The primary capability is the first
+        // declared one (matching diagnostics' `required_capability`),
+        // falling back to Trader for legacy slots.
+        let primary_cap = resolved
+            .capabilities
+            .iter()
+            .next()
+            .copied()
+            .unwrap_or(crate::agents::Capability::Trader);
+        for tool in crate::diagnostics::required_tools_for(primary_cap) {
+            if let Err(sc) = crate::guardrails::check_missing_tool(role, tool, &available_tools) {
+                return Err(short_circuit_validation(strategy_id, &sc));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Map a launch-preflight [`ShortCircuit`] into the refused-launch
+/// `ApiError::Validation` body. The message carries the stable `code()` and
+/// the operator-facing `remediation()` so the failure is recorded with its
+/// machine identifier rather than a free-text warning.
+fn short_circuit_validation(strategy_id: &str, sc: &crate::guardrails::ShortCircuit) -> ApiError {
+    tracing::warn!(
+        strategy_id,
+        short_circuit = sc.code(),
+        "eval launch blocked by guardrail short-circuit: {sc}",
+    );
+    ApiError::Validation(format!(
+        "[{code}] {sc} — {remediation}",
+        code = sc.code(),
+        remediation = sc.remediation(),
+    ))
+}
+
 /// Persist one `supervisor_notes` row per probed provider, and an additional
 /// `warn`-severity row when `skip_preflight` is true. Best-effort — write
 /// failures are logged but do not abort the run.
@@ -1720,6 +1932,315 @@ async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmD
     }
 }
 
+/// Resolve the API key for a provider entry (mirrors the key-resolution
+/// half of [`dispatch_from_provider`]). Returns `Ok(None)` for keyless
+/// local endpoints, `Ok(Some(key))` otherwise, and a typed validation
+/// error when the configured env var is unset.
+fn resolve_provider_api_key(entry: &ProviderEntry) -> ApiResult<Option<String>> {
+    if entry.api_key_env.is_empty() {
+        return Ok(None);
+    }
+    let key = std::env::var(&entry.api_key_env).map_err(|_| {
+        ApiError::Validation(format!(
+            "no API key for provider `{}` (env var {} is unset). Paste a key in Settings → Providers or export {} before running eval.",
+            entry.name, entry.api_key_env, entry.api_key_env
+        ))
+    })?;
+    if key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+        return Err(ApiError::Validation(format!(
+            "provider `{}` has no API key set. Paste one in Settings → Providers.",
+            entry.name
+        )));
+    }
+    Ok(Some(key))
+}
+
+/// Read the effective agent runtime for an eval run.
+///
+/// The flag default is `Cline` (Task 9 flip). But the Cline path can only
+/// physically run when the `xvision-agentd` sidecar binary is available, so
+/// the eval entry point gates the effective runtime on `XVN_AGENTD_BIN`:
+///
+/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` set → `Cline`.
+/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` UNSET →
+///   `Cline` is still returned, so `spawn_cline_ctx` produces the typed
+///   "set XVN_AGENTD_BIN" error — an operator who explicitly asked for
+///   Cline gets a clear failure, never a silent downgrade (design
+///   decision 5 / failure contract).
+/// * config omits the field (resolves to the `Cline` serde default) but
+///   `XVN_AGENTD_BIN` is UNSET → `LlmDispatch`. This is the safe migration
+///   behavior: an environment that hasn't provisioned the sidecar (most
+///   tests, fresh installs) keeps running through the proven raw-dispatch
+///   path until the operator opts in by provisioning the sidecar.
+/// * config fails to load (no file / parse error) → `LlmDispatch`.
+///
+/// The distinction between "explicitly cline" and "defaulted cline" is read
+/// from the raw config text (the `agent_runtime` key's presence) because
+/// serde collapses both to the same deserialized value.
+async fn resolve_agent_runtime(ctx: &ApiContext) -> AgentRuntime {
+    // Stage 3 Task 10 / inheritance item 6 — emergency off-ramp. When the
+    // documented env var is set, route the routine path back through the
+    // legacy LlmDispatch for incident rollback, with a loud warn naming the
+    // blast radius. This is the ONLY remaining knob that selects LlmDispatch;
+    // the per-config `agent_runtime` field no longer drives the routine path.
+    if config::emergency_llm_dispatch_enabled() {
+        tracing::warn!(
+            target: "agent_runtime",
+            env = config::EMERGENCY_LLM_DISPATCH_ENV,
+            "EMERGENCY ROLLBACK ACTIVE: routing LLM slots through legacy LlmDispatch \
+             (blast radius: this process only, opt-in). Cline is the unconditional \
+             routine runtime; unset {} to restore it. See MANUAL.md (Emergency rollback).",
+            config::EMERGENCY_LLM_DISPATCH_ENV,
+        );
+        return AgentRuntime::LlmDispatch;
+    }
+
+    let cfg_path = runtime_config_path(ctx);
+    let sidecar_available = std::env::var("XVN_AGENTD_BIN")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+
+    let raw = tokio::fs::read_to_string(&cfg_path).await.ok();
+    let explicitly_set = raw
+        .as_deref()
+        .map(|s| {
+            s.lines()
+                .map(str::trim_start)
+                .any(|l| l.starts_with("agent_runtime") && l.contains('='))
+        })
+        .unwrap_or(false);
+
+    let configured = match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+        Ok(Ok(cfg)) => cfg.agent_runtime,
+        _ => return AgentRuntime::LlmDispatch,
+    };
+
+    match configured {
+        AgentRuntime::Cline if explicitly_set || sidecar_available => AgentRuntime::Cline,
+        // Defaulted-to-Cline without a provisioned sidecar: stay on the
+        // proven raw-dispatch path until the operator opts in.
+        AgentRuntime::Cline => AgentRuntime::LlmDispatch,
+        AgentRuntime::LlmDispatch => AgentRuntime::LlmDispatch,
+    }
+}
+
+/// Bridges sidecar tool callbacks to the engine's [`ToolRegistry`]. The
+/// Cline agent invokes registry-backed tools (indicators, ohlcv, …) over
+/// the callback socket; this adapter routes them to the same
+/// `tool_call::invoke` path the `LlmDispatch` executor uses, so both
+/// runtimes share one tool surface. `submit_decision` is NOT routed here —
+/// it is a built-in lifecycle tool captured locally by the sidecar.
+struct ToolRegistryDispatch {
+    tools: Arc<ToolRegistry>,
+}
+
+#[async_trait::async_trait]
+impl ToolDispatch for ToolRegistryDispatch {
+    async fn invoke(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, ToolDispatchError> {
+        match crate::agent::tool_call::invoke(name, input, self.tools.clone()).await {
+            Ok(s) => {
+                // Tool outputs are JSON-shaped strings; pass parsed JSON
+                // through when possible, else wrap the raw string.
+                Ok(serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s)))
+            }
+            Err(e) => Err(ToolDispatchError::Failed(format!("{e:#}"))),
+        }
+    }
+}
+
+/// Stage 1 (Cline runtime unification, Task 6 eval wiring). When the
+/// runtime flag selects `Cline`, spawn the `xvision-agentd` sidecar and
+/// build the [`crate::agent::dispatch_capability::ClineDispatchCtx`] the
+/// executor threads into every slot dispatch.
+///
+/// The sidecar binary is resolved from `XVN_AGENTD_BIN`; a real Cline run
+/// with the env var unset is a hard, clearly-messaged error (NO silent
+/// fallback to LlmDispatch — the operator asked for Cline). The client is
+/// spawned with the observability event sink so live runs surface in the
+/// agent-runs UI; when no obs bus is configured a fresh bus is used so the
+/// spawn still succeeds.
+async fn spawn_cline_ctx(
+    ctx: &ApiContext,
+    entry: ProviderEntry,
+    tools: Arc<ToolRegistry>,
+    recording_request: Option<RecordingRequest>,
+) -> ApiResult<(
+    crate::agent::dispatch_capability::ClineDispatchCtx,
+    Option<crate::agent::cline_recording::RunRecording>,
+)> {
+    use crate::agent::cline_recording as rec;
+
+    let bin = std::env::var("XVN_AGENTD_BIN").map_err(|_| {
+        ApiError::Validation(
+            "agent_runtime = cline but XVN_AGENTD_BIN is unset. Set it to the built \
+             xvision-agentd entrypoint (e.g. xvision-agentd/dist/index.js) or switch \
+             agent_runtime back to llm-dispatch."
+                .to_string(),
+        )
+    })?;
+    let api_key = resolve_provider_api_key(&entry)?;
+
+    // §2-B/§2-D: when recording is requested (per-run `trajectory_mode =
+    // record`) AND we have a primary slot role to key it by, mint the
+    // recording BEFORE spawning the client
+    // so the event sink is bound to the store + recording id. The record
+    // path and the replay path build the same TrajectoryKey
+    // (`cline_recording::build_key`), so a recorded run replays from the
+    // persisted store with no test seeding.
+    let recording = if let Some(req) = recording_request {
+        let blob_root = ctx.xvn_home.join("agent_runs").join("blobs");
+        let store = rec::open_store(ctx.db.clone(), blob_root)
+            .await
+            .map_err(|e| ApiError::Internal(format!("open trajectory store: {e}")))?;
+        let store = Arc::new(store);
+        let key = rec::build_key(&req.run_id, &req.slot_role, &entry.name, &req.model);
+        let recording_id = rec::begin(&store, &key)
+            .await
+            .map_err(|e| ApiError::Internal(format!("begin trajectory recording: {e}")))?;
+        tracing::info!(
+            target: "xvision_engine::cline_recording",
+            recording_id = %recording_id,
+            slot_role = %req.slot_role,
+            run_id = %req.run_id,
+            "trajectory recording minted (record mode)"
+        );
+        Some((store, recording_id, req.slot_role))
+    } else {
+        None
+    };
+
+    // Per-run socket paths under the xvn home so concurrent runs don't
+    // collide. The sidecar process is reaped on client drop.
+    let sock_dir = ctx.xvn_home.join("agent_runs").join("sockets");
+    std::fs::create_dir_all(&sock_dir)
+        .map_err(|e| ApiError::Internal(format!("create sidecar socket dir: {e}")))?;
+    let uniq = ulid::Ulid::new().to_string();
+    let main_sock = sock_dir.join(format!("agentd-{uniq}.sock"));
+    let cb_sock = sock_dir.join(format!("agentd-{uniq}.cb.sock"));
+    let ev_sock = sock_dir.join(format!("agentd-{uniq}.ev.sock"));
+
+    let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch { tools });
+    let bus = ctx
+        .obs_event_bus
+        .clone()
+        .unwrap_or_else(|| Arc::new(xvision_observability::RunEventBus::new(Vec::new())));
+
+    // Bind the recording sink at spawn time (§2-B). `None` keeps the live
+    // path byte-identical to the pre-§2-B behaviour.
+    let sink_recording = recording
+        .as_ref()
+        .map(|(store, rid, _)| (store.clone(), rid.clone()));
+
+    let client = match AgentClient::spawn_with_event_sink(
+        std::path::Path::new(&bin),
+        &main_sock,
+        &cb_sock,
+        &ev_sock,
+        dispatch,
+        bus,
+        sink_recording,
+    )
+    .await
+    {
+        Ok(client) => client,
+        Err(e) => {
+            if let Some((store, recording_id, _)) = recording.as_ref() {
+                let _ = store.mark_corrupt(recording_id, rec::RECOVERY_RUN_FAILED).await;
+            }
+            return Err(ApiError::Internal(format!(
+                "failed to spawn xvision-agentd sidecar (XVN_AGENTD_BIN={bin}): {e}"
+            )));
+        }
+    };
+
+    // Couple the dispatcher's `StartRunParams.slot_role` to the recording's
+    // key slot_role (footgun c): the dispatcher stamps `recording_slot_role`
+    // on frames, and `read_frames` filters on it.
+    let recording_slot_role = recording.as_ref().map(|(_, _, role)| role.clone());
+
+    let run_recording =
+        recording.map(
+            |(store, recording_id, slot_role)| crate::agent::cline_recording::RunRecording {
+                store,
+                recording_id,
+                slot_role,
+            },
+        );
+
+    Ok((
+        crate::agent::dispatch_capability::ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: entry,
+            api_key,
+            recording_slot_role,
+        },
+        run_recording,
+    ))
+}
+
+/// Inputs for minting a per-run trajectory recording at `spawn_cline_ctx`
+/// time (§2-B). Built only when recording is enabled and a primary recorded
+/// slot role is available.
+struct RecordingRequest {
+    /// The eval run id — derives the recording's `cycle_id` + simulation id.
+    run_id: String,
+    /// The primary recorded slot's role. COUPLED to both the
+    /// `TrajectoryKey.slot_role` and the `StartRunParams.slot_role` the
+    /// dispatcher stamps (footgun c).
+    slot_role: String,
+    /// The model id, for the recording key + row.
+    model: String,
+}
+
+/// Pick the `(slot_role, model)` of the primary recorded slot for §2-B
+/// per-run recording. Prefers the trader-role slot (the canonical
+/// decision producer), then the legacy `trader_slot`, then the first
+/// attached slot with a non-empty model. Returns `None` when no slot has a
+/// usable model (a misconfigured strategy that won't reach a Cline run
+/// anyway). The role returned is the EXACT `ResolvedAgentSlot.role` the
+/// dispatcher matches on so `record_slot_role` couples to it (footgun c).
+fn primary_recorded_slot(
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> Option<(String, String)> {
+    // 1. Attached agent slot with role == "trader".
+    if let Some(trader) = agent_slots
+        .iter()
+        .find(|resolved| resolved.role.trim().eq_ignore_ascii_case("trader"))
+    {
+        let model = trader.slot.effective_model();
+        if !model.is_empty() {
+            return Some((trader.role.clone(), model));
+        }
+    }
+    // 2. Legacy `trader_slot` on the strategy — role is conventionally
+    //    "trader".
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        let model = slot.effective_model();
+        if !model.is_empty() {
+            return Some(("trader".to_string(), model));
+        }
+    }
+    // 3. First attached slot with a non-empty model.
+    for resolved in agent_slots {
+        let model = resolved.slot.effective_model();
+        if !model.is_empty() {
+            return Some((resolved.role.clone(), model));
+        }
+    }
+    None
+}
+
+/// Read the spawned Cline client's latched frame-persist-failure flag
+/// (§2-B footgun d). `false` when not recording / no client.
+fn recording_persist_failed(client: &Option<Arc<AgentClient>>) -> bool {
+    client.as_ref().map(|c| c.recording_failed()).unwrap_or(false)
+}
+
 fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
     if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
         if !p.is_empty() {
@@ -1919,12 +2440,63 @@ async fn run_inner(
             .with_catalogs(obs_catalogs.clone())
     });
 
+    // Stage 1 (Cline runtime unification, Task 6): resolve the agent
+    // runtime once. When `Cline` is selected, spawn the sidecar and build
+    // the dispatch ctx so the backtest executor threads it into every slot
+    // dispatch. `LlmDispatch` leaves `build_eval_dispatch` exactly as
+    // before (the `dispatch` arg already in hand). An unmapped provider or
+    // an unset XVN_AGENTD_BIN surfaces as a typed error here — never a
+    // silent fallback (provider-matrix + failure contracts).
+    let agent_runtime = resolve_agent_runtime(ctx).await;
+    // `run_recording` is `Some` only when recording is enabled (per-run
+    // `trajectory_mode = record`) AND a Cline client was spawned with a
+    // recording sink. The eval finalizer below closes it out (complete /
+    // corrupt) after the run.
+    let (cline_ctx, run_recording) = if matches!(agent_runtime, AgentRuntime::Cline) {
+        let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
+        let cfg_path = runtime_config_path(ctx);
+        let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
+            .await
+            .map_err(|u| {
+                ApiError::Validation(format!(
+                    "agent_runtime = cline: provider `{}` is not launchable (reason={}): {}",
+                    u.provider,
+                    u.reason.as_str(),
+                    u.hint
+                ))
+            })?;
+        // §2-D: build the recording request when the run's per-run
+        // `trajectory_mode` selects `Record` (the operator-chosen config
+        // driver — replaces the §2-B env gate) and we can identify a primary
+        // recorded slot (the trader). The recording is keyed by this slot's
+        // role, which the dispatcher then stamps on every recorded frame
+        // (footgun c coupling). `trajectory_mode != Record` ⇒ `None` ⇒ the
+        // spawn binds no sink and the live path is byte-identical to pre-§2-D.
+        let recording_request = if req.trajectory_mode.records() {
+            primary_recorded_slot(&strategy, &agent_slots).map(|(slot_role, model)| RecordingRequest {
+                run_id: run.id.clone(),
+                slot_role,
+                model,
+            })
+        } else {
+            None
+        };
+        let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request).await?;
+        (Some(cctx), rec)
+    } else {
+        (None, None)
+    };
+    // The recorder needs the spawned client's persist-failure flag at
+    // finalize time; clone the Arc so the finalizer can read it after the
+    // client has been threaded into the executor.
+    let recording_client = cline_ctx.as_ref().map(|c| c.client.clone());
+
     // 3. Pick the executor for this run mode. For backtest mode, when the
     //    scenario came from the DB we try to source bars through the
     //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
     //    we fall back to the legacy `data/probes/<cache_key>.parquet`
     //    loader so existing test fixtures keep working.
-    let executor: Box<dyn RunExecutor> = match req.mode {
+    let executor_result: ApiResult<Box<dyn RunExecutor>> = match req.mode {
         RunMode::Backtest => {
             build_backtest_executor(
                 ctx,
@@ -1935,8 +2507,10 @@ async fn run_inner(
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
+                agent_runtime,
+                cline_ctx,
             )
-            .await?
+            .await
         }
         RunMode::Live => {
             build_live_executor(
@@ -1949,26 +2523,57 @@ async fn run_inner(
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
             )
-            .await?
+            .await
+        }
+    };
+    let executor = match executor_result {
+        Ok(executor) => executor,
+        Err(e) => {
+            if let Some(rec) = run_recording.as_ref() {
+                rec.finalize(false, recording_persist_failed(&recording_client))
+                    .await;
+            }
+            return Err(e);
         }
     };
 
     let store = RunStore::new(ctx.db.clone());
-    store
+    if let Err(e) = store
         .create(&run)
         .await
-        .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("create run: {e}")))
+    {
+        if let Some(rec) = run_recording.as_ref() {
+            rec.finalize(false, recording_persist_failed(&recording_client))
+                .await;
+        }
+        return Err(e);
+    }
     // Persist the per-launch override receipt as soon as the run row
     // exists. We write it here (not only in the outer `run` wrapper) so
     // `run_with_deps` callers — including the test surface that injects
     // a pre-built dispatch — also produce the receipt for `xvn eval
     // results --json` and the export.
     record_provider_override_note(&store, &run.id, req.provider_override.as_ref()).await;
-    let started = store
+    let started = match store
         .begin_running(&run.id)
         .await
-        .map_err(|e| ApiError::Internal(format!("begin run: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("begin run: {e}")))
+    {
+        Ok(started) => started,
+        Err(e) => {
+            if let Some(rec) = run_recording.as_ref() {
+                rec.finalize(false, recording_persist_failed(&recording_client))
+                    .await;
+            }
+            return Err(e);
+        }
+    };
     if !started {
+        if let Some(rec) = run_recording.as_ref() {
+            rec.finalize(false, recording_persist_failed(&recording_client))
+                .await;
+        }
         let stopped = store
             .get(&run.id)
             .await
@@ -2015,6 +2620,12 @@ async fn run_inner(
         // lose a finalize.
         let err_msg = e.to_string();
         route_mark_failed(ctx, &store, &run.id, &err_msg).await;
+        // §2-B (footgun d): the run errored while a recording was open —
+        // mark it corrupt so a partial trajectory is never replayed.
+        if let Some(rec) = run_recording.as_ref() {
+            rec.finalize(false, recording_persist_failed(&recording_client))
+                .await;
+        }
         // Index the failed run so it shows up in ⌘K with its current status
         // — operators frequently want to find a recently-failed run by id
         // prefix without leaving the palette.
@@ -2026,6 +2637,15 @@ async fn run_inner(
                 .await;
         }
         return Err(ApiError::Internal(format!("executor: {err_msg}")));
+    }
+
+    // §2-B (footgun d): the run completed — mark the recording complete,
+    // OR corrupt if the frame persist path latched a failure mid-run (store
+    // fatal / dead consumer). `recording_persist_failed` reads the client's
+    // latched flag set by the event-sink persister.
+    if let Some(rec) = run_recording.as_ref() {
+        rec.finalize(true, recording_persist_failed(&recording_client))
+            .await;
     }
 
     if let Some(em) = obs_emitter.as_ref() {
@@ -2308,6 +2928,7 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
 /// a hard `ApiError::Validation`, and the message names the offending asset
 /// so the operator knows which `xvn bars fetch` to run. The single-asset
 /// error shape is preserved.
+#[allow(clippy::too_many_arguments)]
 async fn build_backtest_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
@@ -2317,6 +2938,8 @@ async fn build_backtest_executor(
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
+    agent_runtime: AgentRuntime,
+    cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
 ) -> ApiResult<Box<dyn RunExecutor>> {
     use crate::eval::executor::asset_set::active_assets;
     // Multi-asset (B7): resolve the active set. `subset` is `None` for full-universe
@@ -2355,7 +2978,8 @@ async fn build_backtest_executor(
             bt = bt
                 .with_warmup(warmup)
                 .with_event_bus(ctx.event_bus.clone())
-                .with_provider_catalogs(provider_catalogs);
+                .with_provider_catalogs(provider_catalogs)
+                .with_cline_runtime(agent_runtime, cline);
             // Task C3: thread the asset subset into the executor so its own
             // `active_assets` call (inside `run`) agrees with the bars we just
             // loaded. Without this the executor would call
@@ -2392,7 +3016,8 @@ async fn build_backtest_executor(
 
     let mut bt = Executor::new()
         .with_event_bus(ctx.event_bus.clone())
-        .with_provider_catalogs(provider_catalogs);
+        .with_provider_catalogs(provider_catalogs)
+        .with_cline_runtime(agent_runtime, cline);
     // Task C3: thread the subset through for the legacy path too.
     if let Some(subset) = assets_subset {
         bt = bt.with_asset_subset(subset.to_vec());
@@ -2421,16 +3046,18 @@ async fn build_live_executor(
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
     if cfg.broker_creds_ref != "alpaca" {
+        return Err(ApiError::Validation(format!(
+            "live_config.broker_creds_ref '{}' is not supported in the current live scope. \
+             Current live mode is Alpaca paper trading only; set broker_creds_ref = \"alpaca\". \
+             Other brokers and real-money venues are out of scope for now.",
+            cfg.broker_creds_ref
+        )));
+    }
+    if cfg.assets.is_empty() {
         return Err(ApiError::Validation(
-            "live_config.broker_creds_ref must be 'alpaca' for v1 Live Alpaca".into(),
+            "live_config.assets must contain at least one asset".into(),
         ));
     }
-    let asset = cfg
-        .assets
-        .first()
-        .ok_or_else(|| ApiError::Validation("live_config.assets must contain one asset".into()))?
-        .venue_symbol
-        .clone();
     let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
     let (key_id, secret, trade_base_url) = if let Some(c) = stored {
         (
@@ -2456,9 +3083,12 @@ async fn build_live_executor(
         (key_id, secret, trade_base_url)
     };
     if !trade_base_url.contains("paper-api.alpaca.markets") {
-        return Err(ApiError::Validation(
-            "Live v1 is paper-only; APCA_API_BASE_URL must point at Alpaca paper trading".into(),
-        ));
+        return Err(ApiError::Validation(format!(
+            "current live mode is Alpaca paper trading only; \
+             APCA_API_BASE_URL must point at https://paper-api.alpaca.markets \
+             (got '{trade_base_url}'). \
+             Real-money and other venues are out of scope for the current live scope."
+        )));
     }
 
     let broker: Arc<dyn BrokerSurface> = match broker_override {
@@ -2473,25 +3103,48 @@ async fn build_live_executor(
         key_id: key_id.clone(),
         secret_key: secret.clone(),
     });
-    let ws = live_client
-        .subscribe_bars(&asset, granularity)
-        .await
-        .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars: {e}")))?;
     let data_base_url = std::env::var("APCA_API_DATA_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "https://data.alpaca.markets".into());
-    let poll = AlpacaLivePoll::new(
-        production_fetcher(data_base_url, key_id, secret),
-        asset.clone(),
-        granularity,
-    );
     let warmup_bars = cfg.warmup_bars.unwrap_or(200);
-    let stream =
-        crate::eval::executor::LiveStream::new_with_warmup(ctx, &asset, granularity, warmup_bars, ws, poll)
+
+    // Multi-asset live fanout (§4 L2): build one `LiveStream` per asset in
+    // the LiveConfig (subscribe + poll + warmup each), then merge them into
+    // a `MultiLiveStream`. A single-asset run yields a 1-element
+    // `MultiLiveStream`, which the executor consumes exactly like the L1
+    // single `LiveStream` — preserving single-asset byte-identity.
+    let mut sub_streams: Vec<(
+        xvision_core::trading::AssetSymbol,
+        crate::eval::executor::LiveStream,
+    )> = Vec::with_capacity(cfg.assets.len());
+    for asset_ref in &cfg.assets {
+        let asset = asset_ref.venue_symbol.clone();
+        let asset_sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&asset)
+            .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
+        let ws = live_client
+            .subscribe_bars(&asset, granularity)
             .await
-            .map_err(|e| ApiError::Validation(format!("build LiveStream: {e}")))?;
-    let mut live = Executor::live(cfg, broker, stream, crate::eval::executor::WallClock::new(), obs)
+            .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
+        let poll = AlpacaLivePoll::new(
+            production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
+            asset.clone(),
+            granularity,
+        );
+        let stream = crate::eval::executor::LiveStream::new_with_warmup(
+            ctx,
+            &asset,
+            granularity,
+            warmup_bars,
+            ws,
+            poll,
+        )
+        .await
+        .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?;
+        sub_streams.push((asset_sym, stream));
+    }
+    let multi = crate::eval::executor::MultiLiveStream::new(sub_streams);
+    let mut live = Executor::live(cfg, broker, multi, crate::eval::executor::WallClock::new(), obs)
         .map_err(|e| ApiError::Validation(format!("build Live executor: {e}")))?
         .with_event_bus(ctx.event_bus.clone())
         .with_provider_catalogs(provider_catalogs);
@@ -2574,6 +3227,16 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
 
     let provider_names = validate_provider_preflight(ctx, &req, &strategy, &agent_slots).await?;
 
+    // Phase 4 launch gate + launch-preflight guardrails (live eval path).
+    // Refuses the launch BEFORE the executor is built/spawned when the
+    // strategy is not launchable (missing REQUIRED capability) or a
+    // cleanly-reachable short-circuit (unattached slot / missing prompt /
+    // missing tool / provider unavailable) fires. A backtest of a strategy
+    // missing a required capability never starts. Live mode runs the same
+    // gate: a non-launchable strategy must not reach the executor in either
+    // mode.
+    assert_launchable_with_guardrails(ctx, &req.agent_id, &strategy, &agent_slots).await?;
+
     let (dispatch, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
@@ -2616,6 +3279,34 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             .with_catalogs(obs_catalogs.clone())
     });
 
+    // Stage 1 (Cline runtime unification, Task 6): same resolution as
+    // `run_inner`. When `Cline` is selected, spawn the sidecar + ctx.
+    // §2-B note: this async/background entry point does NOT mint a
+    // recording — it passes `None` so the spawn binds no sink and the path
+    // is unchanged. Eval-side recording is wired through the synchronous
+    // `run_inner` path whose finalizer can close the recording out
+    // (complete/corrupt). Extending recording to this path needs a finalize
+    // hook inside the spawned task (future work).
+    let agent_runtime = resolve_agent_runtime(ctx).await;
+    let cline_ctx = if matches!(agent_runtime, AgentRuntime::Cline) {
+        let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
+        let cfg_path = runtime_config_path(ctx);
+        let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
+            .await
+            .map_err(|u| {
+                ApiError::Validation(format!(
+                    "agent_runtime = cline: provider `{}` is not launchable (reason={}): {}",
+                    u.provider,
+                    u.reason.as_str(),
+                    u.hint
+                ))
+            })?;
+        let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None).await?;
+        Some(cctx)
+    } else {
+        None
+    };
+
     let executor: Box<dyn RunExecutor> = match req.mode {
         RunMode::Backtest => {
             build_backtest_executor(
@@ -2627,6 +3318,8 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
+                agent_runtime,
+                cline_ctx,
             )
             .await?
         }

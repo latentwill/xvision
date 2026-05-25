@@ -11,7 +11,7 @@ Crate layout, pipeline stages, slot model. Cross-reference: top-level `architect
 | `xvision-cli` | `xvn` binary; subcommands under `crates/xvision-cli/src/commands/*.rs` |
 | `xvision-dashboard` | axum HTTP server + embedded SPA; routes under `src/routes/*.rs` |
 | `xvision-eval` | Eval harness — A/B compare, baselines (`src/baselines/`), gate logic |
-| `xvision-intern` | Intern backends (`OpenAICompatIntern`, `AnthropicIntern`, `AcpxIntern`) |
+| `xvision-intern` | Intern backends (`OpenAICompatIntern`, `AnthropicIntern`) |
 | `xvision-mcp` | MCP tool surface (rsi/sma/ema/macd/bollinger/atr/donchian/fib/health) |
 | `xvision-execution` | Venue executors (Alpaca, Orderly) — used by `fire-trade` / `close-position` |
 | `xvision-identity` | ERC-8004 IdentityRegistry + ReputationRegistry client (opt-in — `cargo build -p xvision-identity`) |
@@ -34,7 +34,6 @@ surface was removed in ADR 0012.
 |---|---|
 | `OpenAICompatIntern` | Backtests — deterministic, cache-pairable per cycle_id. Default. |
 | `AnthropicIntern` | Backtests — same property, against Anthropic. |
-| `AcpxIntern` | Forward-paper / live only — **agentic, breaks deterministic pairing**. Never for A/B compare. |
 | OpenRouter (F24) | Same shape as `OpenAICompatIntern`, routes via openrouter.ai. |
 
 ## Eval harness — A/B pairing

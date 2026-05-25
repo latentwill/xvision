@@ -176,6 +176,8 @@ async fn noop_skip_fires_when_seed_allows_only_hold() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("run_pipeline must succeed");
@@ -247,6 +249,8 @@ async fn noop_skip_does_not_fire_just_because_portfolio_is_long() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("run_pipeline must succeed");
@@ -291,8 +295,10 @@ async fn noop_skip_disabled_calls_llm_even_when_only_hold_is_available() {
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
         filter_ctx: None,
-        recorder: None,
         trace_attrs: None,
+        recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("run_pipeline must succeed");
@@ -339,6 +345,8 @@ async fn noop_skip_does_not_fire_when_portfolio_flat() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("run_pipeline must succeed");

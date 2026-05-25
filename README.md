@@ -133,13 +133,30 @@ the design synthesis.
 ## Remote CLI over Tailscale
 
 Live-node command execution is exposed through the dashboard's typed remote CLI
-job API, not arbitrary SSH access.
+job API, not arbitrary SSH access. The API accepts a typed argv array only —
+no shell, no caller-controlled cwd or env.
 
-- Use `scripts/xvn-remote.py exec ...` for a shell-free helper.
+See **[`crates/xvision-dashboard/wiki/remote-cli.md`](crates/xvision-dashboard/wiki/remote-cli.md)**
+for the full canonical reference: endpoint table, request/response fields,
+polling vs SSE, allowlist policy, and safe-to-surface command examples.
+
+Quick summary:
+
+- Use `scripts/xvn-remote.py exec ...` for a shell-free helper (create/poll/output in one call).
 - Use `POST /api/cli/jobs` with a typed argv array for direct API access.
-- Long-running jobs can be resumed through `GET /api/cli/jobs/:id` and
-  `GET /api/cli/jobs/:id/output`.
+- Long-running jobs can be polled through `GET /api/cli/jobs/:id` and output
+  retrieved via `GET /api/cli/jobs/:id/output`.
 - SSE progress is available at `GET /api/cli/jobs/:id/events`.
+- Cancel a running job with `DELETE /api/cli/jobs/:id` (preferred) or
+  `POST /api/cli/jobs/:id/cancel` (legacy alias). Both send SIGTERM then
+  SIGKILL after a 5-second grace period and are idempotent on terminal jobs.
+- Every job is checked against the allowlist policy before spawning. Read-only
+  heads (`eval list/show/results/watch/compare`, `strategy show/validate`,
+  `scenario show/select`, `doctor`, etc.) are allowed without configuration.
+  Mutating/destructive nested paths and server/live-trading heads (`dashboard`,
+  `mcp`, `fire-trade`, `close-position`, `migrate`, etc.) are rejected.
+  Bounded eval/experiment/bakeoff jobs require their strict-template flag set
+  (`--max-decisions`, `--max-wall-clock`, etc.).
 
 ## Safety
 

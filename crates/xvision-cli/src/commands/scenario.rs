@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use chrono::NaiveDate;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::scenario as api_scenario;
@@ -23,6 +23,21 @@ use xvision_engine::eval::scenario::{
 use xvision_engine::eval::scenario_store;
 
 use crate::exit::{CliError, CliResult, XvnExit};
+use crate::io::{print_json, print_json_compact};
+
+/// Output format for list / collection subcommands (`ls`, `select`).
+/// Mirrors the convention from `xvn agent ls`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub enum ListFormat {
+    /// Human-readable table (default).
+    Table,
+    /// Pretty-printed JSON array.
+    Json,
+    /// Compact single-line JSON array, suitable for piping.
+    #[clap(name = "json-compact")]
+    JsonCompact,
+}
 
 /// Map an engine ApiError to a CliError with the appropriate exit code.
 fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
@@ -65,11 +80,19 @@ pub enum ScenarioOp {
     Archive {
         /// Scenario id.
         id: String,
+        /// Validate and preview the would-be change without writing anything.
+        /// Exits 0 when valid; exits non-zero on validation failure.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Hard-delete a scenario by id (blocked when eval runs reference it).
     Rm {
         /// Scenario id.
         id: String,
+        /// Validate and preview the would-be delete without writing anything.
+        /// Exits 0 when valid; exits non-zero when the id is not found.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Print the lineage tree for a scenario (ancestors + immediate children).
     Tree {
@@ -159,6 +182,11 @@ pub struct CreateArgs {
     /// are ignored when this is set).
     #[arg(long)]
     pub from_file: Option<PathBuf>,
+    /// Validate args and resolve references without persisting the scenario.
+    /// Prints a preview of the would-be create. Exits 0 on valid input;
+    /// exits non-zero on validation failure.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Args, Debug)]
@@ -212,6 +240,11 @@ pub struct CloneArgs {
     /// supported mutation path.
     #[arg(long)]
     pub warmup_bars: Option<u32>,
+    /// Validate and preview the would-be clone without writing anything.
+    /// Resolves the source scenario (read-only) and prints a preview.
+    /// Exits 0 on valid input; exits non-zero on validation failure.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Args, Debug)]
@@ -286,9 +319,15 @@ pub struct SelectArgs {
     pub count: usize,
 
     /// Emit output as a JSON array of `{id, name, timeframe, decision_count}`.
-    /// Without this flag a plain-text table is printed.
+    /// Alias for `--format json-compact`. Explicit `--format` wins.
     #[arg(long)]
     pub json: bool,
+    /// Output format: `table` (default), `json`, or `json-compact`.
+    /// When `--json` is also set and `--format` is not explicitly supplied,
+    /// `--json` is treated as `--format json-compact`.
+    /// Leave unset (None) to use the default (`table`, or `json-compact` when `--json`).
+    #[arg(long, value_enum)]
+    pub format: Option<ListFormat>,
 }
 
 /// Arguments for `xvn scenario classify`.
@@ -306,6 +345,12 @@ pub struct ClassifyArgs {
     /// Overwrite even operator-set labels (regime_derived = false).
     #[arg(long)]
     pub force: bool,
+
+    /// Compute labels and print the preview without writing to the DB.
+    /// Exits 0 when bars are available and classification succeeds;
+    /// exits non-zero when bars are missing or classification fails.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// Arguments for `xvn scenario set-regime`.
@@ -325,6 +370,11 @@ pub struct SetRegimeArgs {
     /// Trend direction. One of: up | down | sideways.
     #[arg(long)]
     pub direction: Option<String>,
+
+    /// Validate and preview the would-be label update without writing to the DB.
+    /// Exits 0 on valid input; exits non-zero on validation failure.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
@@ -335,20 +385,8 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
         ScenarioOp::Show(a) => run_show(&ctx, a).await,
         ScenarioOp::Clone(a) => run_clone(&ctx, a).await,
         ScenarioOp::Validate(a) => run_validate(&ctx, a).await,
-        ScenarioOp::Archive { id } => {
-            api_scenario::archive(&ctx, &id)
-                .await
-                .map_err(|e| api_to_cli("scenario archive", e))?;
-            println!("archived {id}");
-            Ok(())
-        }
-        ScenarioOp::Rm { id } => {
-            api_scenario::delete(&ctx, &id)
-                .await
-                .map_err(|e| api_to_cli("scenario rm", e))?;
-            println!("removed {id}");
-            Ok(())
-        }
+        ScenarioOp::Archive { id, dry_run } => run_archive(&ctx, id, dry_run).await,
+        ScenarioOp::Rm { id, dry_run } => run_rm(&ctx, id, dry_run).await,
         ScenarioOp::Tree { id } => run_tree(&ctx, id).await,
         ScenarioOp::Inspect(a) => run_inspect(&ctx, a).await,
         ScenarioOp::Select(a) => run_select(&ctx, a).await,
@@ -435,12 +473,30 @@ fn scenario_to_create_request(s: &Scenario) -> api_scenario::CreateScenarioReque
 // ---- handlers ---------------------------------------------------------------
 
 async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
+    let dry_run = a.dry_run;
+
     // --from-file path: load a TOML file containing a CreateScenarioRequest.
     if let Some(path) = a.from_file {
         let body = std::fs::read_to_string(&path)
             .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
         let req: api_scenario::CreateScenarioRequest =
             toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?;
+        if dry_run {
+            // Validate the request without persisting.
+            api_scenario::validate_request(&req, ctx)
+                .await
+                .map_err(|e| api_to_cli("scenario create --dry-run", e))?;
+            if a.json {
+                print_json(&serde_json::json!({
+                    "dry_run": true,
+                    "action": "create",
+                    "display_name": req.display_name,
+                }))?;
+            } else {
+                eprintln!("DRY RUN — would create scenario '{}'", req.display_name);
+            }
+            return Ok(());
+        }
         let s = api_scenario::create(ctx, req)
             .await
             .map_err(|e| api_to_cli("scenario create", e))?;
@@ -511,6 +567,23 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         warmup_bars: a.warmup_bars,
     };
 
+    if dry_run {
+        // Validate the request without persisting.
+        api_scenario::validate_request(&req, ctx)
+            .await
+            .map_err(|e| api_to_cli("scenario create --dry-run", e))?;
+        if a.json {
+            print_json(&serde_json::json!({
+                "dry_run": true,
+                "action": "create",
+                "display_name": req.display_name,
+            }))?;
+        } else {
+            eprintln!("DRY RUN — would create scenario '{}'", req.display_name);
+        }
+        return Ok(());
+    }
+
     let s = api_scenario::create(ctx, req)
         .await
         .map_err(|e| api_to_cli("scenario create", e))?;
@@ -540,12 +613,7 @@ async fn run_ls(ctx: &ApiContext, a: LsArgs) -> CliResult<()> {
         .map_err(|e| api_to_cli("scenario ls", e))?;
 
     if a.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&rows)
-                .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize: {e}")))?
-        );
-        return Ok(());
+        return print_json(&rows);
     }
 
     if rows.is_empty() {
@@ -605,6 +673,19 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
         }
     };
 
+    if a.dry_run {
+        // Read-only: resolve the source scenario to confirm it exists.
+        let source = api_scenario::get(ctx, &a.id)
+            .await
+            .map_err(|e| api_to_cli("scenario clone --dry-run", e))?;
+        let new_name = a.name.as_deref().unwrap_or(&source.display_name);
+        eprintln!(
+            "DRY RUN — would clone '{}' ({}) to new scenario '{}'",
+            source.display_name, a.id, new_name
+        );
+        return Ok(());
+    }
+
     let mutations = api_scenario::ScenarioMutations {
         display_name: a.name,
         time_window,
@@ -620,6 +701,38 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("scenario clone", e))?;
     println!("cloned to {} (parent: {})", s.id, a.id);
+    Ok(())
+}
+
+async fn run_archive(ctx: &ApiContext, id: String, dry_run: bool) -> CliResult<()> {
+    if dry_run {
+        // Read-only: resolve the scenario to confirm it exists.
+        let s = api_scenario::get(ctx, &id)
+            .await
+            .map_err(|e| api_to_cli("scenario archive --dry-run", e))?;
+        eprintln!("DRY RUN — would archive '{}' ({})", s.display_name, id);
+        return Ok(());
+    }
+    api_scenario::archive(ctx, &id)
+        .await
+        .map_err(|e| api_to_cli("scenario archive", e))?;
+    println!("archived {id}");
+    Ok(())
+}
+
+async fn run_rm(ctx: &ApiContext, id: String, dry_run: bool) -> CliResult<()> {
+    if dry_run {
+        // Read-only: resolve the scenario to confirm it exists.
+        let s = api_scenario::get(ctx, &id)
+            .await
+            .map_err(|e| api_to_cli("scenario rm --dry-run", e))?;
+        eprintln!("DRY RUN — would remove '{}' ({})", s.display_name, id);
+        return Ok(());
+    }
+    api_scenario::delete(ctx, &id)
+        .await
+        .map_err(|e| api_to_cli("scenario rm", e))?;
+    println!("removed {id}");
     Ok(())
 }
 
@@ -1050,13 +1163,17 @@ async fn run_select(ctx: &ApiContext, a: SelectArgs) -> CliResult<()> {
     )
     .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
 
-    if a.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&rows)
-                .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize: {e}")))?
-        );
-        return Ok(());
+    // Resolve effective format: explicit --format wins; --json is alias for json-compact.
+    let effective_format = match a.format {
+        Some(fmt) => fmt,
+        None if a.json => ListFormat::JsonCompact,
+        None => ListFormat::Table,
+    };
+
+    match effective_format {
+        ListFormat::Json => return print_json(&rows),
+        ListFormat::JsonCompact => return print_json_compact(&rows),
+        ListFormat::Table => {}
     }
 
     // Plain-text table.
@@ -1111,8 +1228,9 @@ fn validate_trend_direction(v: &str) -> Result<(), String> {
 
 /// Classify a single scenario by id.  Loads bars from the cache (the cache
 /// must have been warmed via `xvn bars fetch`; we don't fetch live here).
-/// Returns `Ok(true)` when labels were written, `Ok(false)` when skipped.
-async fn classify_one(ctx: &ApiContext, id: &str, force: bool) -> CliResult<bool> {
+/// Returns `Ok(true)` when labels were written (or previewed in dry-run),
+/// `Ok(false)` when skipped.
+async fn classify_one(ctx: &ApiContext, id: &str, force: bool, dry_run: bool) -> CliResult<bool> {
     let s = api_scenario::get(ctx, id)
         .await
         .map_err(|e| api_to_cli("scenario classify", e))?;
@@ -1163,6 +1281,16 @@ async fn classify_one(ctx: &ApiContext, id: &str, force: bool) -> CliResult<bool
     let volatility_label = labels.volatility_label.as_deref();
     let trend_direction = labels.trend_direction.as_deref();
 
+    if dry_run {
+        eprintln!(
+            "DRY RUN — would classify {id}: regime={} vol={} direction={}",
+            regime_label.unwrap_or("null"),
+            volatility_label.unwrap_or("null"),
+            trend_direction.unwrap_or("null"),
+        );
+        return Ok(true);
+    }
+
     xvision_engine::eval::scenario_store::update_regime_labels(
         ctx,
         id,
@@ -1184,6 +1312,7 @@ async fn classify_one(ctx: &ApiContext, id: &str, force: bool) -> CliResult<bool
 }
 
 async fn run_classify(ctx: &ApiContext, a: ClassifyArgs) -> CliResult<()> {
+    let dry_run = a.dry_run;
     if a.all {
         // Classify every scenario that either has no regime_label (NULL) or
         // has auto-derived labels and force is set.
@@ -1208,7 +1337,7 @@ async fn run_classify(ctx: &ApiContext, a: ClassifyArgs) -> CliResult<()> {
                 skipped += 1;
                 continue;
             }
-            match classify_one(ctx, &s.id, a.force).await {
+            match classify_one(ctx, &s.id, a.force, dry_run).await {
                 Ok(true) => classified += 1,
                 Ok(false) => skipped += 1,
                 Err(e) => {
@@ -1224,7 +1353,7 @@ async fn run_classify(ctx: &ApiContext, a: ClassifyArgs) -> CliResult<()> {
     // Single id mode.
     let id =
         a.id.ok_or_else(|| CliError::usage(anyhow::anyhow!("specify a scenario id or --all")))?;
-    classify_one(ctx, &id, a.force).await?;
+    classify_one(ctx, &id, a.force, dry_run).await?;
     Ok(())
 }
 
@@ -1256,6 +1385,17 @@ async fn run_set_regime(ctx: &ApiContext, a: SetRegimeArgs) -> CliResult<()> {
     let regime_label = a.regime.as_deref().or(current.regime_label.as_deref());
     let volatility_label = a.volatility.as_deref().or(current.volatility_label.as_deref());
     let trend_direction = a.direction.as_deref().or(current.trend_direction.as_deref());
+
+    if a.dry_run {
+        eprintln!(
+            "DRY RUN — would set-regime for {}: regime={} vol={} direction={}",
+            a.id,
+            regime_label.unwrap_or("null"),
+            volatility_label.unwrap_or("null"),
+            trend_direction.unwrap_or("null"),
+        );
+        return Ok(());
+    }
 
     xvision_engine::eval::scenario_store::update_regime_labels(
         ctx,

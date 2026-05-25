@@ -161,6 +161,8 @@ async fn run_cycle(
         }),
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("pipeline runs");

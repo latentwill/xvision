@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { emitNotification } from "../transport/event-client.js"
+import type { TrajectoryFrame } from "./frame-types.js"
 
 /**
  * Notification methods sent from the sidecar to the Rust client.
@@ -20,6 +21,7 @@ export const NOTIFY = {
   AssistantTextDelta: "event.assistant_text_delta",
   Overloaded: "event.overloaded",
   Error: "event.error",
+  TrajectoryFrame: "event.trajectory_frame",
 } as const
 
 export function newSpanId(): string {
@@ -38,6 +40,7 @@ export function emitRunStarted(params: {
   started_at_ms: number
   provider_id: string
   model_id: string
+  trajectory_mode?: "record" | "live" | "replay"
 }): void {
   void emitNotification(NOTIFY.RunStarted, {
     run_id: params.run_id,
@@ -45,6 +48,7 @@ export function emitRunStarted(params: {
     started_at_ms: params.started_at_ms,
     provider_id: params.provider_id,
     model_id: params.model_id,
+    ...(params.trajectory_mode !== undefined ? { trajectory_mode: params.trajectory_mode } : {}),
   })
 }
 
@@ -153,4 +157,41 @@ export function emitOverloaded(params: {
 
 export function emitError(params: { run_id: string; message: string; severity: "info" | "warn" | "error" }): void {
   void emitNotification(NOTIFY.Error, params)
+}
+
+/**
+ * Coordinate envelope wrapping one trajectory frame for the
+ * `event.trajectory_frame` notification.
+ *
+ * Mirrors `ParsedTrajectoryFrame` / `parse_trajectory_frame_notification` in
+ * `crates/xvision-agent-client/src/event_sink.rs`. The Rust parser requires
+ * ALL of `run_id`, `slot_role`, `step_index`, `frame_index` and the frame body
+ * under the `frame` key; a payload missing any of them parses to `None` and is
+ * silently dropped. Keep this shape byte-for-byte in sync with that parser.
+ */
+export interface TrajectoryFrameEnvelope {
+  run_id: string
+  slot_role: string
+  step_index: number
+  frame_index: number
+  frame: TrajectoryFrame
+}
+
+/**
+ * Emit a single trajectory frame over the notification socket.
+ *
+ * Frames are non-droppable (a missing frame invalidates the recording), so
+ * this always emits — unlike the lossy observability ring that can drop events
+ * under pressure. The Rust consumer routes `event.trajectory_frame`
+ * notifications to the bounded `FrameChannel` which applies backpressure
+ * (blocks the producer) rather than dropping.
+ *
+ * The frame travels inside a coordinate envelope so the Rust consumer can
+ * route it to the correct `RecordingId` at the correct `(slot_role,
+ * step_index, frame_index)` position. `run_id` comes from `activeRunId()`;
+ * `slot_role` / `step_index` / `frame_index` are threaded by the
+ * `FrameRecorder` (see `frame-recorder.ts`).
+ */
+export function emitFrame(envelope: TrajectoryFrameEnvelope): void {
+  void emitNotification(NOTIFY.TrajectoryFrame, envelope)
 }

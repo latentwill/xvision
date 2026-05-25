@@ -24,7 +24,9 @@ pub mod redactor;
 pub mod retention;
 pub mod rows;
 pub mod sqlite;
+pub mod trajectory;
 pub mod types;
+pub mod unified_event;
 
 pub use blobs::{BlobRef, BlobStore, BlobStoreError};
 pub use bus::RunEventBus;
@@ -68,6 +70,11 @@ pub use rows::{
 pub use sqlite::SqliteRecorder;
 pub use types::{
     CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanAttributes, SpanKind, SpanStatus, ToolOrigin,
+};
+pub use unified_event::{
+    Actor, CheckpointRestoreFailed, CheckpointRestored, EventScope, EventSource, FocusEvent,
+    OptimizationCandidate, OptimizationCandidateMetric, OptimizationCompleted, RunEventProjector, ToolDenied,
+    ToolPolicyChecked, ToolPolicyOutcome, TypedError, UnifiedEvent, UnifiedPayload,
 };
 
 #[cfg(feature = "otel")]

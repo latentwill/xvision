@@ -140,7 +140,7 @@ async fn pool_with_migrations() -> SqlitePool {
 fn minimal_strategy() -> Strategy {
     // OpenAI-compat trader — the scripted dispatcher intercepts before any
     // provider code runs, so the provider/model choice is purely cosmetic.
-    // Per the contract's A/B cache pairing rule, do NOT use AcpxIntern.
+    // Per the contract's A/B cache pairing rule, use a deterministic intern backend.
     Strategy {
         manifest: PublicManifest {
             id: "01TESTSCHEMAPATCHSTRATEGY000".into(),

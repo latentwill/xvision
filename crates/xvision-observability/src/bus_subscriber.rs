@@ -192,6 +192,7 @@ mod tests {
             source_cli_job_id: None,
             started_at: Utc::now(),
             retention_mode: "summary".into(),
+            trajectory_mode: None,
             sidecar_version: None,
             cline_sdk_version: None,
             protocol_version: None,

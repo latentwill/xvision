@@ -1,10 +1,12 @@
 // frontend/web/src/features/agent-runs/SpanInspector.tsx
 import { useCallback, useState, type ReactNode } from "react";
 import type {
+  AgentRunSummary,
   BrokerCallDetail,
   RetentionMode,
   RunSpan,
 } from "@/api/types-agent-runs";
+import { TrajectoryModePill } from "./TrajectoryModeBadge";
 import { fetchAgentRunBlob } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
@@ -18,6 +20,13 @@ type SpanInspectorProps = {
   onRerun: (spanId: string) => void;
   onJumpToDecision: (spanId: string, decisionIdx?: number) => void;
   onCopyJson?: (span: RunSpan) => void;
+  /**
+   * Optional run-level summary carried down so the inspector can surface
+   * trajectory-mode and replay metrics (hit ratio, dropped events,
+   * recovery reason) inline on `agent.run` spans. Absent on callers
+   * that haven't wired it yet — fields are rendered defensively.
+   */
+  runSummary?: AgentRunSummary;
   /**
    * Trace-dock density flag (F-7). When `true`, the FIELDS attribute
    * grid collapses to a single-line summary derived from the typed
@@ -240,6 +249,7 @@ export function SpanInspector({
   simpleMode = false,
   hiddenInSimpleMode = false,
   onRequestAdvanced,
+  runSummary,
 }: SpanInspectorProps) {
   const color = spanColor(span.kind);
   const ms = durationMs(span);
@@ -507,6 +517,71 @@ export function SpanInspector({
               </pre>
             }
           />
+        ) : null}
+
+        {/* Trajectory / replay section — only on agent.run spans and only when
+            the run summary carries trajectory_mode. Rendered inline before the
+            FIELDS grid so replay metrics are immediately visible without
+            scrolling. Omitted on all other span kinds and on pre-migration runs
+            that never set trajectory_mode. No popup / popover. */}
+        {span.kind === "agent.run" && runSummary?.trajectory_mode ? (
+          <div
+            className="mb-3"
+            data-testid="span-inspector-trajectory-section"
+          >
+            <div className="text-[9px] font-mono tracking-[0.18em] text-text-3 mb-1">
+              TRAJECTORY
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <TrajectoryModePill mode={runSummary.trajectory_mode} />
+              {runSummary.trajectory_mode === "replay" &&
+                runSummary.replay_hit_ratio != null && (
+                  <span
+                    data-testid="span-inspector-hit-ratio"
+                    className="text-[11px] font-mono text-text-2"
+                    title="Fraction of model-call steps served from recorded frames"
+                  >
+                    hit {(runSummary.replay_hit_ratio * 100).toFixed(0)}%
+                  </span>
+                )}
+              {runSummary.dropped_events != null &&
+                runSummary.dropped_events > 0 && (
+                  <span
+                    data-testid="span-inspector-dropped-events"
+                    className="text-[11px] font-mono"
+                    style={{ color: "var(--danger)" }}
+                    title="Events dropped due to buffer pressure"
+                  >
+                    {runSummary.dropped_events} dropped
+                  </span>
+                )}
+              {runSummary.recovery_reason ? (
+                <span
+                  data-testid="span-inspector-recovery-reason"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "1px 6px",
+                    borderRadius: 999,
+                    background: "rgba(219,146,48,0.10)",
+                    border: "1px solid rgba(219,146,48,0.40)",
+                    fontFamily:
+                      "var(--font-mono, ui-monospace, monospace)",
+                    fontSize: 10,
+                    color: "var(--warn)",
+                  }}
+                >
+                  <span aria-hidden="true" style={{ fontSize: 9 }}>!</span>
+                  {runSummary.recovery_reason === "replay_divergence"
+                    ? "replay diverged"
+                    : runSummary.recovery_reason === "replay_frames_exhausted"
+                      ? "frames exhausted"
+                      : runSummary.recovery_reason}
+                </span>
+              ) : null}
+            </div>
+          </div>
         ) : null}
 
         {simpleMode ? (

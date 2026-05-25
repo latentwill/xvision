@@ -114,7 +114,7 @@ async fn ipc_emission_records_rows_with_fingerprint() {
         cline_sdk_version: Some("0.0.41".into()),
         protocol_version: Some("0.1.0".into()),
     };
-    let handle = start_event_sink(&sock, bus.clone(), fp).await.unwrap();
+    let handle = start_event_sink(&sock, bus.clone(), fp, None).await.unwrap();
 
     // Fake sidecar: connect, push the full event sequence, disconnect.
     let mut conn = UnixStream::connect(&sock).await.unwrap();
@@ -264,7 +264,7 @@ async fn unknown_notification_method_is_silently_ignored() {
 
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("events.sock");
-    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default())
+    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default(), None)
         .await
         .unwrap();
 
@@ -330,7 +330,7 @@ async fn sidecar_crash_marks_runs_interrupted() {
 
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("events.sock");
-    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default())
+    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default(), None)
         .await
         .unwrap();
 

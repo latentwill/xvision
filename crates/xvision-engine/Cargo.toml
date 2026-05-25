@@ -12,6 +12,7 @@ name = "xvision_engine"
 path = "src/lib.rs"
 
 [dependencies]
+xvision-agent-client  = { path = "../xvision-agent-client" }
 xvision-core          = { path = "../xvision-core" }
 xvision-data          = { path = "../xvision-data" }
 xvision-eval          = { path = "../xvision-eval" }
@@ -32,6 +33,9 @@ toml_edit   = "0.22"
 serde_json  = { workspace = true }
 chrono      = { workspace = true }
 ulid        = { version = "1", features = ["serde"] }
+# v5 (name-based, deterministic) for §2-B trajectory cycle_id derivation;
+# workspace default only ships v4. serde for the workspace API parity.
+uuid        = { version = "1", features = ["v4", "v5", "serde"] }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 async-trait = { workspace = true }

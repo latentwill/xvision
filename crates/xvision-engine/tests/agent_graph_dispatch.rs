@@ -168,6 +168,8 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("pipeline runs");
@@ -243,6 +245,8 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         activates: Capability::Trader,
         trace_attrs: None,
         recorder: None,
+        runtime: Default::default(),
+        cline: None,
     })
     .await
     .expect("dispatch_capability runs");

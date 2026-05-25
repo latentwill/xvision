@@ -110,7 +110,7 @@ async fn v2_assistant_text_delta_publishes_event_but_no_sqlite_row() {
 
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("events.sock");
-    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default())
+    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default(), None)
         .await
         .unwrap();
 
@@ -239,7 +239,7 @@ async fn v2_tool_call_cancelled_closes_span_and_records_detail() {
 
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("events.sock");
-    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default())
+    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default(), None)
         .await
         .unwrap();
 
@@ -321,7 +321,7 @@ async fn v2_overloaded_publishes_backpressure_dropped() {
 
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("events.sock");
-    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default())
+    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default(), None)
         .await
         .unwrap();
 
@@ -402,7 +402,7 @@ async fn v2_per_iteration_model_call_pair_records_model_row() {
 
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("events.sock");
-    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default())
+    let handle = start_event_sink(&sock, bus.clone(), SidecarFingerprint::default(), None)
         .await
         .unwrap();
 

@@ -211,7 +211,7 @@ async fn build_scenario_payload_uses_requested_granularity_cache_key() {
         "alpaca-historical-v1",
     );
 
-    let payload = build_scenario_payload_with_granularity(&ctx, &scenario.id, Some("4h"))
+    let payload = build_scenario_payload_with_granularity(&ctx, &scenario.id, Some("4h"), None)
         .await
         .unwrap();
 
@@ -220,6 +220,76 @@ async fn build_scenario_payload_uses_requested_granularity_cache_key() {
     assert!(
         matches!(payload.cache_status, CacheStatus::NotCached { .. }),
         "expected alternate timeframe to check its own cache row"
+    );
+}
+
+// ── Phase 1 — preview-asset selector tests ──────────────────────────────────
+
+/// Absent `asset` param keeps the BTC/USD preview default (backward compat).
+#[tokio::test]
+async fn build_scenario_payload_defaults_to_btc_preview_asset() {
+    use xvision_engine::api::chart::build_scenario_payload;
+    let ctx = test_ctx().await;
+    let payload = build_scenario_payload(&ctx, "crypto-bull-q1-2025").await.unwrap();
+    assert_eq!(
+        payload.preview_asset, "BTC",
+        "default preview asset must be BTC when no asset is requested"
+    );
+}
+
+/// Requesting `asset=ETH/USD` computes an ETH-specific cache key (distinct
+/// from the BTC default) and reports ETH as the resolved preview asset.
+#[tokio::test]
+async fn build_scenario_payload_uses_requested_asset_cache_key() {
+    use xvision_engine::api::chart::build_scenario_payload_with_granularity;
+    use xvision_engine::api::scenario as api_scenario;
+
+    let ctx = test_ctx().await;
+    let scenario = api_scenario::get(&ctx, "crypto-bull-q1-2025").await.unwrap();
+
+    let btc_key = xvision_engine::eval::bars::compute_cache_key(
+        "BTC/USD",
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
+    let eth_key = xvision_engine::eval::bars::compute_cache_key(
+        "ETH/USD",
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
+    assert_ne!(btc_key, eth_key, "sanity: ETH and BTC cache keys differ");
+
+    let payload = build_scenario_payload_with_granularity(&ctx, &scenario.id, None, Some("ETH/USD"))
+        .await
+        .unwrap();
+
+    assert_eq!(payload.preview_asset, "ETH");
+    assert_eq!(
+        payload.scenario.bar_cache_policy.cache_key, eth_key,
+        "ETH request must use the ETH-specific cache key"
+    );
+    assert_ne!(
+        payload.scenario.bar_cache_policy.cache_key, btc_key,
+        "ETH request must not reuse the BTC cache key"
+    );
+}
+
+/// An unrecognised asset is rejected with a validation error, not silently
+/// coerced to the BTC default.
+#[tokio::test]
+async fn build_scenario_payload_rejects_unknown_asset() {
+    use xvision_engine::api::chart::build_scenario_payload_with_granularity;
+    let ctx = test_ctx().await;
+    let err = build_scenario_payload_with_granularity(&ctx, "crypto-bull-q1-2025", None, Some("NOTACOIN"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, xvision_engine::api::ApiError::Validation(_)),
+        "expected Validation for unknown asset, got: {err:?}"
     );
 }
 

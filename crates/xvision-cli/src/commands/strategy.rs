@@ -12,6 +12,9 @@ use xvision_engine::agent::pipeline::{
 use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
+use xvision_engine::diagnostics::{
+    self, assert_launchable, CapabilityStatus, DiagnosticsError, StrategyDiagnostics,
+};
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{
@@ -26,6 +29,18 @@ use xvision_filters::{parse_json as parse_filter_json, FilterId, StrategyId};
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 use crate::json::{emit_object, ObjectFormat};
+
+/// Output format for list commands (`xvn strategy ls`).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[clap(rename_all = "kebab-case")]
+pub enum ListFormat {
+    /// One id per line, human-readable. Default.
+    Table,
+    /// Pretty-printed JSON array. Suitable for jq / scripting.
+    Json,
+    /// Single-line compact JSON array. Suitable for shell pipes.
+    JsonCompact,
+}
 
 #[derive(Args, Debug)]
 pub struct StrategyCmd {
@@ -131,6 +146,11 @@ enum StrategyAction {
         /// `agent-firing-filter-cli-verbs` acceptance #6.
         #[arg(long = "no-filter-warning", default_value_t = false)]
         no_filter_warning: bool,
+        /// Validate inputs and print a preview of the would-be strategy
+        /// without persisting anything. Exits 0 on valid input; exits with
+        /// a usage code on invalid input. No strategy or agent is created.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
     /// Edit a saved strategy. v1 ships only the firing-filter
     /// acknowledgement toggle; other edits go through the dedicated
@@ -164,9 +184,32 @@ enum StrategyAction {
         #[arg(long)]
         json: bool,
     },
+    /// Capability-completeness diagnostics for a strategy (Phase 4.1).
+    ///
+    /// Loads the strategy + every agent it references and prints typed
+    /// per-capability statuses (Ready / MissingPrompt /
+    /// MissingModelBinding / MissingTool / Unsupported / Optimizable /
+    /// Optional) plus the launch verdict. `--json` emits the full
+    /// `StrategyDiagnostics` serde shape. Exits non-zero with a distinct
+    /// code (`OptValidation` = 14) when the strategy is NOT launchable so
+    /// scripts can branch on readiness without parsing text.
+    Diagnostics {
+        /// Strategy id to diagnose.
+        id: String,
+        /// Emit the full `StrategyDiagnostics` as JSON instead of a text
+        /// summary.
+        #[arg(long)]
+        json: bool,
+    },
     /// List all saved strategy ids.
+    #[command(visible_alias = "list")]
     Ls {
-        /// Emit as JSON array instead of one id per line.
+        /// Output format: `table` (default, one id per line), `json` (pretty
+        /// array), or `json-compact` (single-line array for pipes). Takes
+        /// precedence over the legacy `--json` flag when both are supplied.
+        #[arg(long, value_enum)]
+        format: Option<ListFormat>,
+        /// Emit as JSON array (legacy alias for `--format json`).
         #[arg(long)]
         json: bool,
     },
@@ -352,6 +395,11 @@ enum StrategyAction {
         /// JSON object on stdout instead of the human banner.
         #[arg(long)]
         json: bool,
+        /// Validate inputs and confirm the source strategy exists, then print
+        /// a preview of the would-be clone without writing anything. Exits 0
+        /// when the source is found; exits 4 (NotFound) when it is not.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 }
 
@@ -392,6 +440,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             avoid_regime,
             hypothesis_file,
             no_filter_warning,
+            dry_run,
         } => {
             let hypothesis_flags = HypothesisFlags {
                 family,
@@ -415,6 +464,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
                 timeframe,
                 hypothesis_flags,
                 no_filter_warning,
+                dry_run,
             )
             .await
         }
@@ -424,7 +474,8 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             clear_no_filter_warning,
         } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning).await,
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
-        StrategyAction::Ls { json } => ls(json).await,
+        StrategyAction::Diagnostics { id, json } => diagnostics(&id, json).await,
+        StrategyAction::Ls { format, json } => ls(format, json).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
         StrategyAction::AddAgent {
@@ -464,7 +515,18 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             provider,
             model,
             json,
-        } => clone(&strategy_id, &name, provider.as_deref(), model.as_deref(), json).await,
+            dry_run,
+        } => {
+            clone(
+                &strategy_id,
+                &name,
+                provider.as_deref(),
+                model.as_deref(),
+                json,
+                dry_run,
+            )
+            .await
+        }
     }
 }
 
@@ -635,6 +697,7 @@ async fn new(
     timeframe: Option<String>,
     _hypothesis_flags: HypothesisFlags,
     no_filter_warning: bool,
+    dry_run: bool,
 ) -> CliResult<()> {
     // ── atomic mode: --prompt ─────────────────────────────────────────────
     if let Some(prompt_path) = prompt {
@@ -651,6 +714,7 @@ async fn new(
             timeframe,
             json,
             no_filter_warning,
+            dry_run,
         )
         .await;
     }
@@ -671,6 +735,25 @@ async fn new(
             strategy.acknowledge_no_filter = true;
         }
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+
+        if dry_run {
+            let preview = serde_json::json!({
+                "dry_run": true,
+                "action": "create",
+                "strategy_id": strategy.manifest.id,
+                "name": strategy.manifest.display_name,
+            });
+            if json {
+                crate::io::print_json(&preview)?;
+            } else {
+                eprintln!(
+                    "DRY RUN — would create strategy '{}' (id: {})",
+                    strategy.manifest.display_name, strategy.manifest.id
+                );
+            }
+            return Ok(());
+        }
+
         store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
         let id = strategy.manifest.id.clone();
         if json {
@@ -712,6 +795,7 @@ async fn new_atomic(
     timeframe: Option<String>,
     json: bool,
     no_filter_warning: bool,
+    dry_run: bool,
 ) -> CliResult<()> {
     use std::str::FromStr as _;
     use xvision_core::trading::AssetSymbol;
@@ -768,6 +852,38 @@ async fn new_atomic(
     let creator = creator
         .or_else(|| std::env::var("XVN_CREATOR").ok())
         .unwrap_or_else(|| "@anonymous".to_string());
+
+    // ── dry-run short-circuit ─────────────────────────────────────────────
+    // All inputs validated above. Print a preview and exit without touching
+    // the agent library or strategy store.
+    if dry_run {
+        let preview = serde_json::json!({
+            "dry_run": true,
+            "action": "create",
+            "strategy_id": "<minted at write>",
+            "agent_id": "<minted at write>",
+            "name": name,
+            "provider": provider,
+            "model": model,
+            "role": role,
+            "asset_universe": asset_universe,
+            "decision_cadence_minutes": cadence_minutes,
+            "creator": creator,
+        });
+        if json {
+            crate::io::print_json(&preview)?;
+        } else {
+            eprintln!(
+                "DRY RUN — would create strategy '{}' (provider: {}, model: {}, role: {}, assets: {})",
+                name,
+                provider,
+                model,
+                role,
+                asset_universe.join(", ")
+            );
+        }
+        return Ok(());
+    }
 
     let ctx = open_ctx().await?;
 
@@ -1112,14 +1228,130 @@ fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> 
     }
 }
 
-async fn ls(json: bool) -> CliResult<()> {
-    let ids = store().list().await.exit_with(XvnExit::Upstream)?;
+/// `xvn strategy diagnostics <id> [--json]` — capability-completeness
+/// report (Phase 4.1). Exits non-zero (`OptValidation` = 14) when the
+/// strategy is not launchable so scripts can gate on readiness without
+/// parsing text.
+async fn diagnostics(id: &str, json: bool) -> CliResult<()> {
+    let ctx = open_ctx().await?;
+    let diag = diagnostics::capability_diagnostics(&ctx, id)
+        .await
+        .map_err(|e| api_to_cli("strategy diagnostics", e))?;
+
     if json {
-        crate::io::print_json(&ids)?;
-        return Ok(());
+        crate::io::print_json(&diag)?;
+    } else {
+        print_diagnostics_text(&diag);
     }
-    for id in ids {
-        println!("{id}");
+
+    // Non-zero exit when not launchable. Use the typed launch gate so the
+    // exit reason matches the engine's verdict exactly.
+    match assert_launchable(&diag) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(CliError {
+            exit: XvnExit::OptValidation,
+            source: anyhow::anyhow!("{}", render_diagnostics_error(&e)),
+        }),
+    }
+}
+
+/// One-line human summary of a [`DiagnosticsError`].
+fn render_diagnostics_error(e: &DiagnosticsError) -> String {
+    e.to_string()
+}
+
+/// Stable lowercase capability key for text output (mirrors the serde
+/// wire form). Kept local so the CLI text surface doesn't depend on the
+/// engine exposing a formatter.
+fn cap_key(c: xvision_engine::agents::Capability) -> &'static str {
+    use xvision_engine::agents::Capability::*;
+    match c {
+        Trader => "trader",
+        Filter => "filter",
+        Critic => "critic",
+        Intern => "intern",
+        Router => "router",
+    }
+}
+
+/// Render a `CapabilityStatus` as a short text token for the summary.
+fn status_token(s: &CapabilityStatus) -> String {
+    match s {
+        CapabilityStatus::Ready => "ready".into(),
+        CapabilityStatus::MissingPrompt => "MISSING_PROMPT".into(),
+        CapabilityStatus::MissingModelBinding => "MISSING_MODEL_BINDING".into(),
+        CapabilityStatus::MissingTool { tool } => format!("MISSING_TOOL({tool})"),
+        CapabilityStatus::Unsupported => "UNSUPPORTED".into(),
+        CapabilityStatus::Optimizable => "optimizable".into(),
+        CapabilityStatus::Optional => "optional".into(),
+    }
+}
+
+/// Plain-text diagnostics report for the non-`--json` path.
+fn print_diagnostics_text(diag: &StrategyDiagnostics) {
+    println!("strategy: {}", diag.strategy_id);
+    println!("launchable: {}", if diag.launchable { "yes" } else { "NO" });
+    if !diag.required_capabilities.is_empty() {
+        let caps: Vec<&str> = diag.required_capabilities.iter().map(|c| cap_key(*c)).collect();
+        println!("required capabilities: {}", caps.join(", "));
+    }
+    if !diag.optimizable.is_empty() {
+        let caps: Vec<&str> = diag.optimizable.iter().map(|c| cap_key(*c)).collect();
+        println!("optimizable now (dspy signature): {}", caps.join(", "));
+    }
+    println!();
+    for agent in &diag.per_agent {
+        let name = agent.agent_name.as_deref().unwrap_or("<unresolved>");
+        println!("• role '{}' → agent {} ({})", agent.role, agent.agent_id, name);
+        if !agent.agent_resolved {
+            println!("    ! agent reference does not resolve to a workspace agent");
+        }
+        for cd in &agent.capabilities {
+            let marker = if cd.required { "[required]" } else { "[declared]" };
+            let tools = if cd.required_tools.is_empty() {
+                String::new()
+            } else {
+                format!(" tools={}", cd.required_tools.join(","))
+            };
+            println!(
+                "    {} {:<8} {}{}",
+                marker,
+                cap_key(cd.capability),
+                status_token(&cd.status),
+                tools,
+            );
+        }
+    }
+    if !diag.required_unmet.is_empty() {
+        println!();
+        println!("UNMET REQUIRED CAPABILITIES:");
+        for u in &diag.required_unmet {
+            println!(
+                "  - role '{}' capability '{}': {}",
+                u.role,
+                cap_key(u.capability),
+                status_token(&u.status),
+            );
+        }
+    }
+}
+
+async fn ls(format: Option<ListFormat>, json: bool) -> CliResult<()> {
+    let ids = store().list().await.exit_with(XvnExit::Upstream)?;
+    // Resolve effective format: explicit --format wins, then --json, then default table.
+    let effective = format.unwrap_or(if json { ListFormat::Json } else { ListFormat::Table });
+    match effective {
+        ListFormat::Table => {
+            for id in ids {
+                println!("{id}");
+            }
+        }
+        ListFormat::Json => {
+            crate::io::print_json(&ids)?;
+        }
+        ListFormat::JsonCompact => {
+            crate::io::print_json_compact(&ids)?;
+        }
     }
     Ok(())
 }
@@ -1780,6 +2012,7 @@ async fn clone(
     override_provider: Option<&str>,
     override_model: Option<&str>,
     json: bool,
+    dry_run: bool,
 ) -> CliResult<()> {
     if new_name.trim().is_empty() {
         return Err(CliError::usage(anyhow::anyhow!("--name must be non-empty")));
@@ -1797,6 +2030,43 @@ async fn clone(
             return Err(CliError::usage(anyhow::anyhow!("--model requires --provider")));
         }
         _ => {}
+    }
+
+    // ── dry-run short-circuit ─────────────────────────────────────────────
+    // For clone dry-run: confirm the source strategy exists (read-only),
+    // then print a preview without writing any new strategy or agent.
+    if dry_run {
+        // Load source to confirm it exists and surface its key fields.
+        let source = store().load(source_strategy_id).await.map_err(|_| CliError {
+            exit: XvnExit::NotFound,
+            source: anyhow::anyhow!("strategy `{source_strategy_id}` not found"),
+        })?;
+
+        let preview = serde_json::json!({
+            "dry_run": true,
+            "action": "clone",
+            "source_strategy_id": source_strategy_id,
+            "source_name": source.manifest.display_name,
+            "new_name": new_name,
+            "new_strategy_id": "<minted at write>",
+            "provider": override_provider,
+            "model": override_model,
+        });
+        if json {
+            crate::io::print_json(&preview)?;
+        } else {
+            eprintln!(
+                "DRY RUN — would clone '{}' ({}) → '{}' (new id: <minted at write>{})",
+                source.manifest.display_name,
+                source_strategy_id,
+                new_name,
+                match (override_provider, override_model) {
+                    (Some(p), Some(m)) => format!(", provider: {p}, model: {m}"),
+                    _ => String::new(),
+                }
+            );
+        }
+        return Ok(());
     }
 
     let ctx = open_ctx().await?;
@@ -2118,6 +2388,11 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             filter_ctx: None,
             trace_attrs: None,
             recorder: None,
+            // Stage 1: this CLI rehearsal path stays on the LlmDispatch
+            // runtime (no sidecar wired); the eval entry point is the only
+            // caller that selects Cline.
+            runtime: Default::default(),
+            cline: None,
         })
         .await
         .exit_with(XvnExit::Upstream)?;

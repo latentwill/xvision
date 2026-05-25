@@ -35,6 +35,7 @@ async fn pool_with_run(run_id: &str) -> SqlitePool {
         source_cli_job_id: None,
         started_at: Utc::now(),
         retention_mode: "hash_only".into(),
+        trajectory_mode: None,
         sidecar_version: None,
         cline_sdk_version: None,
         protocol_version: None,
