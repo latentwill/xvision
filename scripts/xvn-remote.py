@@ -1,12 +1,27 @@
 #!/usr/bin/env python3
 """Remote xvn job helper for Tailscale-served xvision nodes.
 
+Full job lifecycle:
+  1. submit  — POST /api/cli/jobs                  → {job_id, status}
+  2. status  — GET  /api/cli/jobs/:id              → metadata (poll until terminal)
+  3. output  — GET  /api/cli/jobs/:id/output       → {stdout, stderr, exit_code, ...}
+  4. events  — GET  /api/cli/jobs/:id/events       → SSE stream (stdout/stderr chunks)
+  5. cancel  — DELETE /api/cli/jobs/:id            → {job_id, status, cancel_requested}
+                                                     (SIGTERM → 5s grace → SIGKILL)
+
+  exec = submit + poll-to-terminal + output in one call.
+
 Examples:
+  scripts/xvn-remote.py exec eval list
   scripts/xvn-remote.py exec eval run --strategy <id> --scenario <name> --mode backtest
-  scripts/xvn-remote.py submit eval list
+  scripts/xvn-remote.py submit eval run --strategy <id> --scenario <name> --mode backtest
   scripts/xvn-remote.py status <job_id>
   scripts/xvn-remote.py output <job_id>
+  scripts/xvn-remote.py events <job_id>
   scripts/xvn-remote.py cancel <job_id>
+
+Environment:
+  XVN_REMOTE_URL  Base URL of the remote node (default: https://xvn.tail2bb69.ts.net)
 """
 
 from __future__ import annotations
@@ -124,8 +139,10 @@ def get_output(base_url: str, job_id: str) -> dict[str, Any]:
 
 
 def cancel_job(base_url: str, job_id: str) -> dict[str, Any]:
+    # Preferred cancellation surface: DELETE /api/cli/jobs/:id
+    # (POST /api/cli/jobs/:id/cancel is the legacy alias — same behaviour).
     result = request_json(
-        "POST", endpoint(base_url, f"/api/cli/jobs/{path_segment(job_id)}/cancel")
+        "DELETE", endpoint(base_url, f"/api/cli/jobs/{path_segment(job_id)}")
     )
     if not isinstance(result.payload, dict):
         raise RemoteCliError("unexpected response shape from cancel")
