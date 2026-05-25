@@ -1,0 +1,4996 @@
+{
+  "commands": [
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--arms",
+        "--asset",
+        "--bars",
+        "--cycles",
+        "--fee-bps",
+        "--from",
+        "--granularity",
+        "--help",
+        "--horizon-hours",
+        "--initial-nav-usd",
+        "--intern",
+        "--intern-model",
+        "--output",
+        "--step-hours",
+        "--to",
+        "--trader-api-key-env",
+        "--trader-base-url",
+        "--trader-model"
+      ],
+      "mutates": false,
+      "path": [
+        "ab-compare"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "agent"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--capability",
+        "--description",
+        "--format",
+        "--help",
+        "--max-tokens",
+        "--model",
+        "--name",
+        "--provider",
+        "--skills",
+        "--system-prompt",
+        "--tags",
+        "--temperature",
+        "--xvn-home"
+      ],
+      "mutates": true,
+      "path": [
+        "agent",
+        "create"
+      ]
+    },
+    {
+      "aliases": [
+        "show"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--format",
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "agent",
+        "get"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "agent",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "agent",
+        "help",
+        "create"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "agent",
+        "help",
+        "get"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "agent",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "bars"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--asset",
+        "--from",
+        "--granularity",
+        "--help",
+        "--to"
+      ],
+      "mutates": true,
+      "path": [
+        "bars",
+        "fetch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--older-than"
+      ],
+      "mutates": true,
+      "path": [
+        "bars",
+        "gc"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "bars",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "bars",
+        "help",
+        "fetch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "bars",
+        "help",
+        "gc"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "bars",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "bars",
+        "help",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "bars",
+        "help",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "bars",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": true,
+      "path": [
+        "bars",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--asset",
+        "--help",
+        "--venue"
+      ],
+      "mutates": true,
+      "path": [
+        "close-position"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "dashboard"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "dashboard",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "dashboard",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "dashboard",
+        "help",
+        "serve"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--bind",
+        "--help",
+        "--home"
+      ],
+      "mutates": false,
+      "path": [
+        "dashboard",
+        "serve"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "doctor"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--hours",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eod"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "eval"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "attest"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "batch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "batch",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "batch",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "batch",
+        "help",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "batch",
+        "help",
+        "status"
+      ]
+    },
+    {
+      "aliases": [
+        "batch"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--mode",
+        "--poll",
+        "--review-with",
+        "--scenarios",
+        "--strategy",
+        "--wait",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "batch",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "batch",
+        "status"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--older-than",
+        "--running",
+        "--strategy",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "cancel"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--batch",
+        "--help",
+        "--json",
+        "--markdown",
+        "--runs",
+        "--sort",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "compare"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--output",
+        "--pretty",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "export"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "attest"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "batch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "batch",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "batch",
+        "status"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "cancel"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "compare"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "export"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "probe-lookahead"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "results"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "review"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "scenarios"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
+        "watch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--scenario",
+        "--status",
+        "--strategy",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--baseline",
+        "--help",
+        "--json",
+        "--run",
+        "--skip-always-signal",
+        "--warmup-bars",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "probe-lookahead"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--behavior",
+        "--help",
+        "--json",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "results"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--agent",
+        "--force",
+        "--format",
+        "--help",
+        "--output",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "review"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--assets",
+        "--auto-fire-review",
+        "--cancel-on-token-limit",
+        "--help",
+        "--json",
+        "--live-asset",
+        "--live-bar-limit",
+        "--live-broker-creds-ref",
+        "--live-capital",
+        "--live-decision-limit",
+        "--live-time-limit-secs",
+        "--live-warmup-bars",
+        "--max-decisions",
+        "--max-input-tokens",
+        "--max-output-tokens",
+        "--max-review-annotations",
+        "--max-wall-clock-secs",
+        "--mode",
+        "--model",
+        "--provider",
+        "--review-model",
+        "--review-provider",
+        "--scenario",
+        "--skip-preflight",
+        "--strategy",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "scenarios"
+      ]
+    },
+    {
+      "aliases": [
+        "get"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--behavior",
+        "--help",
+        "--json",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--mode",
+        "--scenario",
+        "--strategy",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--interval-secs",
+        "--json",
+        "--once",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "watch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "example"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "example",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "example",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "example",
+        "help",
+        "seed"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--reset"
+      ],
+      "mutates": true,
+      "path": [
+        "example",
+        "seed"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "experiment"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "experiment",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "experiment",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "experiment",
+        "help",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "experiment",
+        "help",
+        "new"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "experiment",
+        "help",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "experiment",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "experiment",
+        "help",
+        "update"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "experiment",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [
+        "create"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--decision-budget",
+        "--help",
+        "--json",
+        "--name",
+        "--question",
+        "--scenarios",
+        "--strategy"
+      ],
+      "mutates": true,
+      "path": [
+        "experiment",
+        "new"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--assets",
+        "--compare",
+        "--count",
+        "--decision-budget",
+        "--help",
+        "--json",
+        "--markdown",
+        "--max-decisions",
+        "--max-runs",
+        "--name",
+        "--output",
+        "--question",
+        "--regimes",
+        "--review-with",
+        "--same-decisions",
+        "--scenarios",
+        "--strategy",
+        "--target-decisions",
+        "--timeframe",
+        "--wait",
+        "--xvn-home",
+        "--yes"
+      ],
+      "mutates": true,
+      "path": [
+        "experiment",
+        "run"
+      ]
+    },
+    {
+      "aliases": [
+        "get"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "experiment",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--bind-batch",
+        "--conclusion",
+        "--help",
+        "--json",
+        "--next-recommendation"
+      ],
+      "mutates": true,
+      "path": [
+        "experiment",
+        "update"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--asset",
+        "--help",
+        "--side",
+        "--size-bps",
+        "--stop-loss-pct",
+        "--summary",
+        "--take-profit-pct",
+        "--venue"
+      ],
+      "mutates": true,
+      "path": [
+        "fire-trade"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--baseline",
+        "--block-size",
+        "--help",
+        "--n-resamples",
+        "--report",
+        "--treatment"
+      ],
+      "mutates": false,
+      "path": [
+        "gate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "ab-compare"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "agent"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "agent",
+        "create"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "agent",
+        "get"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "bars"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "bars",
+        "fetch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "bars",
+        "gc"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "bars",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "bars",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "close-position"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "dashboard"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "dashboard",
+        "serve"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "doctor"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eod"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "attest"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "batch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "batch",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "batch",
+        "status"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "cancel"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "compare"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "export"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "probe-lookahead"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "results"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "review"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "scenarios"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
+        "watch"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "example"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "example",
+        "seed"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "experiment"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "experiment",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "experiment",
+        "new"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "experiment",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "experiment",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "experiment",
+        "update"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "fire-trade"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "gate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator",
+        "atr"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator",
+        "bollinger"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator",
+        "donchian"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator",
+        "ema"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator",
+        "fib-retracements"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator",
+        "macd"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator",
+        "rsi"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "indicator",
+        "sma"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "intern"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "intern",
+        "brief"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "intern",
+        "preview"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
+        "add-pattern"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
+        "forget"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "memory",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
+        "undo-forget"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "metrics"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "migrate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "model"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "model",
+        "bakeoff"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "model",
+        "status"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "obs"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "obs",
+        "janitor"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "obs",
+        "janitor",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "obs",
+        "retention"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "obs",
+        "retention",
+        "clear"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "obs",
+        "retention",
+        "set"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "obs",
+        "retention",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "portfolio"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "provider"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "provider",
+        "add"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "provider",
+        "check"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "provider",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "provider",
+        "models"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "provider",
+        "refresh-models"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "provider",
+        "remove"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "provider",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "report"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "risk"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "risk",
+        "evaluate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "risk",
+        "show-config"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "run",
+        "inspect"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "run-setup"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "scenario",
+        "archive"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "scenario",
+        "classify"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "scenario",
+        "clone"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "scenario",
+        "create"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario",
+        "inspect"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "scenario",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario",
+        "select"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "scenario",
+        "set-regime"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario",
+        "tree"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "show-briefing"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "show-decision"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "show-metrics"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "store"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "store",
+        "migrate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "store",
+        "stats"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategies"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategies",
+        "import"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategies",
+        "init"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "strategy",
+        "add-agent"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "add-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "strategy",
+        "clone"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "edit"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "filter-catalog"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "strategy",
+        "migrate-agents"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "strategy",
+        "new"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "strategy",
+        "remove-agent"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "remove-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "set-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "strategy",
+        "set-pipeline"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "templates"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "trader"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "trader",
+        "preview"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "trader",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--hlc",
+        "--period"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "atr"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--k",
+        "--period",
+        "--prices"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "bollinger"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--hl",
+        "--period"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "donchian"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--period",
+        "--prices"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "ema"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--lookback",
+        "--prices"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "fib-retracements"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "atr"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "bollinger"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "donchian"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "ema"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "fib-retracements"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "macd"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "rsi"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "help",
+        "sma"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--fast",
+        "--help",
+        "--prices",
+        "--signal",
+        "--slow"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "macd"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--period",
+        "--prices"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "rsi"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--period",
+        "--prices"
+      ],
+      "mutates": false,
+      "path": [
+        "indicator",
+        "sma"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "intern"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--intern",
+        "--model",
+        "--snapshot"
+      ],
+      "mutates": false,
+      "path": [
+        "intern",
+        "brief"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "intern",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "intern",
+        "help",
+        "brief"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "intern",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "intern",
+        "help",
+        "preview"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--snapshot"
+      ],
+      "mutates": false,
+      "path": [
+        "intern",
+        "preview"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "memory"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--agent",
+        "--force",
+        "--help",
+        "--json",
+        "--namespace",
+        "--training-end"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "add-pattern"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--agent",
+        "--help",
+        "--json",
+        "--namespace"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "forget"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
+        "add-pattern"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
+        "forget"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "memory",
+        "help",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
+        "undo-forget"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--agent",
+        "--help",
+        "--json",
+        "--limit",
+        "--namespace",
+        "--offset",
+        "--run",
+        "--scenario",
+        "--tier"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": true,
+      "path": [
+        "memory",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--agent",
+        "--help",
+        "--json",
+        "--namespace",
+        "--since"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "undo-forget"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--baseline",
+        "--block-size",
+        "--help",
+        "--n-resamples",
+        "--report",
+        "--treatment"
+      ],
+      "mutates": false,
+      "path": [
+        "metrics"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--dry-run",
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": true,
+      "path": [
+        "migrate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "model"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--cancel-on-token-limit",
+        "--clone-name-template",
+        "--compare",
+        "--help",
+        "--json",
+        "--markdown",
+        "--max-decisions",
+        "--max-input-tokens",
+        "--max-output-tokens",
+        "--max-runs",
+        "--max-wall-clock",
+        "--mode",
+        "--models",
+        "--name",
+        "--parallel",
+        "--provider",
+        "--run-mode",
+        "--scenario",
+        "--sequential",
+        "--strategies",
+        "--strategy",
+        "--use-strategy-models",
+        "--wait",
+        "--xvn-home",
+        "--yes"
+      ],
+      "mutates": true,
+      "path": [
+        "model",
+        "bakeoff"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "model",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "model",
+        "help",
+        "bakeoff"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "model",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "model",
+        "help",
+        "status"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "model",
+        "status"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "obs"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "help",
+        "janitor"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "help",
+        "janitor",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "help",
+        "retention"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "help",
+        "retention",
+        "clear"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "obs",
+        "help",
+        "retention",
+        "set"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "help",
+        "retention",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "obs",
+        "janitor"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "janitor",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "janitor",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "janitor",
+        "help",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--blob-root",
+        "--config",
+        "--db",
+        "--help",
+        "--once"
+      ],
+      "mutates": true,
+      "path": [
+        "obs",
+        "janitor",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "obs",
+        "retention"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--config",
+        "--help"
+      ],
+      "mutates": true,
+      "path": [
+        "obs",
+        "retention",
+        "clear"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "retention",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "retention",
+        "help",
+        "clear"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "retention",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "obs",
+        "retention",
+        "help",
+        "set"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "obs",
+        "retention",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--config",
+        "--help",
+        "--max-payload-bytes",
+        "--mode",
+        "--otel-enabled",
+        "--payload-ttl-days",
+        "--redact-secrets",
+        "--sqlite-enabled",
+        "--store-prompts",
+        "--store-responses",
+        "--store-tool-inputs",
+        "--store-tool-outputs"
+      ],
+      "mutates": true,
+      "path": [
+        "obs",
+        "retention",
+        "set"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--config",
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "obs",
+        "retention",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--venue"
+      ],
+      "mutates": false,
+      "path": [
+        "portfolio"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "provider"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--api-key",
+        "--api-key-env",
+        "--base-url",
+        "--help",
+        "--kind",
+        "--name"
+      ],
+      "mutates": true,
+      "path": [
+        "provider",
+        "add"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--name",
+        "--probe"
+      ],
+      "mutates": false,
+      "path": [
+        "provider",
+        "check"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "provider",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "provider",
+        "help",
+        "add"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "provider",
+        "help",
+        "check"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "provider",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "provider",
+        "help",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "provider",
+        "help",
+        "models"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "provider",
+        "help",
+        "refresh-models"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "provider",
+        "help",
+        "remove"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "provider",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--effective",
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "provider",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--name"
+      ],
+      "mutates": false,
+      "path": [
+        "provider",
+        "models"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--name"
+      ],
+      "mutates": true,
+      "path": [
+        "provider",
+        "refresh-models"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--name"
+      ],
+      "mutates": true,
+      "path": [
+        "provider",
+        "remove"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--name"
+      ],
+      "mutates": false,
+      "path": [
+        "provider",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--input",
+        "--output"
+      ],
+      "mutates": false,
+      "path": [
+        "report"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "risk"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--asset",
+        "--decision",
+        "--help",
+        "--portfolio",
+        "--risk-config",
+        "--whitelist"
+      ],
+      "mutates": false,
+      "path": [
+        "risk",
+        "evaluate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "risk",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "risk",
+        "help",
+        "evaluate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "risk",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "risk",
+        "help",
+        "show-config"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--risk-config",
+        "--whitelist"
+      ],
+      "mutates": false,
+      "path": [
+        "risk",
+        "show-config"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "run",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "run",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "run",
+        "help",
+        "inspect"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--format",
+        "--help",
+        "--out",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "run",
+        "inspect"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--intern",
+        "--model",
+        "--snapshot"
+      ],
+      "mutates": false,
+      "path": [
+        "run-setup"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "archive"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--all",
+        "--force",
+        "--help"
+      ],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "classify"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--from",
+        "--help",
+        "--name",
+        "--to",
+        "--warmup-bars"
+      ],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "clone"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--fees-maker",
+        "--fees-taker",
+        "--from",
+        "--from-file",
+        "--granularity",
+        "--help",
+        "--json",
+        "--latency-ms",
+        "--name",
+        "--notes",
+        "--slippage",
+        "--tag",
+        "--to",
+        "--venue",
+        "--warmup-bars"
+      ],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "create"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "help",
+        "archive"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "help",
+        "classify"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "help",
+        "clone"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "help",
+        "create"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "inspect"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "help",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "select"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "help",
+        "set-regime"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "tree"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--card",
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "inspect"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--archived",
+        "--help",
+        "--json",
+        "--source",
+        "--tag"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "rm"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--count",
+        "--help",
+        "--json",
+        "--max-decisions",
+        "--regimes",
+        "--same-decisions",
+        "--target-decisions",
+        "--timeframe"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "select"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--direction",
+        "--help",
+        "--regime",
+        "--volatility"
+      ],
+      "mutates": true,
+      "path": [
+        "scenario",
+        "set-regime"
+      ]
+    },
+    {
+      "aliases": [
+        "get"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--format",
+        "--help",
+        "--toml"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "tree"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--from-file",
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--cycle-id",
+        "--db",
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "show-briefing"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--cycle-id",
+        "--db",
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "show-decision"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--report"
+      ],
+      "mutates": false,
+      "path": [
+        "show-metrics"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "store"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "store",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "store",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "store",
+        "help",
+        "migrate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "store",
+        "help",
+        "stats"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--help"
+      ],
+      "mutates": true,
+      "path": [
+        "store",
+        "migrate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "store",
+        "stats"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "strategies"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategies",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategies",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategies",
+        "help",
+        "import"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategies",
+        "help",
+        "init"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--no-clobber",
+        "--to"
+      ],
+      "mutates": false,
+      "path": [
+        "strategies",
+        "import"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--force",
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "strategies",
+        "init"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--role"
+      ],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "add-agent"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--filter-agent",
+        "--gates",
+        "--help",
+        "--role",
+        "--when"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "add-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--model",
+        "--name",
+        "--provider"
+      ],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "clone"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--clear-no-filter-warning",
+        "--help",
+        "--no-filter-warning"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "edit"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "filter-catalog"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "help",
+        "add-agent"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "add-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "help",
+        "clone"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "edit"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "filter-catalog"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "help",
+        "migrate-agents"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "help",
+        "new"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "help",
+        "remove-agent"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "remove-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "set-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "help",
+        "set-pipeline"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "templates"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--dry-run",
+        "--help"
+      ],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "migrate-agents"
+      ]
+    },
+    {
+      "aliases": [
+        "create"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--asset",
+        "--assets",
+        "--avoid-regime",
+        "--creator",
+        "--execution-mode",
+        "--family",
+        "--from-file",
+        "--help",
+        "--hypothesis",
+        "--hypothesis-file",
+        "--json",
+        "--model",
+        "--name",
+        "--no-filter-warning",
+        "--prompt",
+        "--provider",
+        "--role",
+        "--target-regime",
+        "--timeframe"
+      ],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "new"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--role"
+      ],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "remove-agent"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--role"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "remove-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--decisions",
+        "--fixture",
+        "--help",
+        "--mock"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--from-json",
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "set-filter"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--edge",
+        "--help",
+        "--kind"
+      ],
+      "mutates": true,
+      "path": [
+        "strategy",
+        "set-pipeline"
+      ]
+    },
+    {
+      "aliases": [
+        "get"
+      ],
+      "has_subcommands": false,
+      "long_flags": [
+        "--format",
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "templates"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--scenario"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "trader"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "trader",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "trader",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "trader",
+        "help",
+        "preview"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "trader",
+        "help",
+        "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--briefing",
+        "--help",
+        "--portfolio"
+      ],
+      "mutates": false,
+      "path": [
+        "trader",
+        "preview"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--api-key-env",
+        "--base-url",
+        "--briefing",
+        "--help",
+        "--model",
+        "--portfolio",
+        "--temperature"
+      ],
+      "mutates": false,
+      "path": [
+        "trader",
+        "run"
+      ]
+    }
+  ]
+}
