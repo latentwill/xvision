@@ -31,6 +31,23 @@ export type AssistantBubble = {
   tools: Tool[];
 };
 
-type UserBubble = { role: "user"; text: string };
+type UserBubble = {
+  role: "user";
+  text: string;
+  /**
+   * Number of assistant messages that had already closed when this user
+   * message was sent. Used by `mergeUnifiedRows` to place the user turn at
+   * the correct chronological position when the unified projection contains
+   * MORE assistant rows than legacy `bubbles` does (multi-step turns).
+   */
+  assistantAnchor?: number;
+};
 
-export type Bubble = UserBubble | AssistantBubble;
+export type CheckpointBubble = {
+  role: "checkpoint";
+  checkpointId: string;
+  status: "created" | "restored" | "restore_failed";
+  message?: string | null;
+};
+
+export type Bubble = UserBubble | AssistantBubble | CheckpointBubble;

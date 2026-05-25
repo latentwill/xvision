@@ -976,7 +976,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
         throw new Error("Time frame must be a positive whole number of minutes.");
       }
       if (assetUniverse.length === 0) {
-        throw new Error("Asset universe must include at least one SYMBOL/QUOTE pair.");
+        throw new Error("Assets must include at least one SYMBOL/QUOTE pair.");
       }
       return patchStrategyMetadata(m.id, {
         display_name: displayName,
@@ -1041,19 +1041,19 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
             />
           </Field>
         </div>
-        {/* Multi-asset universe editor: removable chips + add buttons. */}
+        {/* Assets editor: removable green chips + add buttons. */}
         <Field
-          label="Asset universe"
+          label="Assets"
           hint="The SYMBOL/QUOTE pairs this strategy may trade. Add or remove below; saved with the manifest."
         >
           <div className="space-y-2">
-            {/* Removable chips for currently selected assets */}
+            {/* Removable green chips for currently selected assets */}
             <div className="flex flex-wrap gap-1.5">
               {assetUniverse.length > 0 ? (
                 assetUniverse.map((a) => (
                   <span
                     key={a}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-surface-elev border border-border-soft rounded text-[12px] font-mono"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-success/15 border border-success/40 text-success rounded-full text-[12px] font-mono"
                   >
                     {a}
                     <button
@@ -1061,7 +1061,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
                       aria-label={`Remove ${a}`}
                       onClick={() => removeAsset(a)}
                       disabled={patch.isPending}
-                      className="ml-0.5 text-text-3 hover:text-danger disabled:opacity-40 leading-none"
+                      className="ml-0.5 text-success/70 hover:text-danger disabled:opacity-40 leading-none"
                     >
                       ×
                     </button>
@@ -1081,7 +1081,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
                     type="button"
                     onClick={() => addAsset(t)}
                     disabled={patch.isPending}
-                    className="inline-flex items-center px-1.5 py-0.5 rounded border border-border text-[11px] font-mono text-text-2 hover:border-text-3 hover:text-text disabled:opacity-40 transition-colors"
+                    className="inline-flex items-center px-2 py-0.5 rounded-full border border-success/40 text-[11px] font-mono text-success/80 hover:bg-success/10 hover:text-success disabled:opacity-40 transition-colors"
                   >
                     + {t}
                   </button>

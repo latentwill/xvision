@@ -963,7 +963,7 @@ function StartEvalDialog({
               </legend>
               <LabeledInput
                 label="Asset"
-                help="From strategy asset universe"
+                help="From strategy assets"
                 ariaLabel="Live asset"
                 value={effectiveLiveAsset}
                 readOnly
