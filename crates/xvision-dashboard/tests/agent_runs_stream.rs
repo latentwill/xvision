@@ -50,6 +50,7 @@ async fn publish_live_events(bus: &xvision_observability::RunEventBus, run_id: &
         source_cli_job_id: None,
         started_at: Utc::now(),
         retention_mode: "summary".into(),
+        trajectory_mode: None,
         sidecar_version: Some("test-sidecar".into()),
         cline_sdk_version: Some("test-cline".into()),
         protocol_version: Some("xvision/1".into()),

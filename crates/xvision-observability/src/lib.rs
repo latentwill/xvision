@@ -26,6 +26,7 @@ pub mod retention;
 pub mod rows;
 pub mod sqlite;
 pub mod types;
+pub mod unified_event;
 
 pub use blobs::{BlobRef, BlobStore, BlobStoreError};
 pub use bus::RunEventBus;
@@ -35,6 +36,11 @@ pub use config::{
     ENV_OVERRIDE_PREFIX,
 };
 pub use eval_recorder::{EvalRecorder, TraceBuf, TraceBufCounts};
+pub use unified_event::{
+    Actor, CheckpointRestoreFailed, CheckpointRestored, EventScope, EventSource, FocusEvent,
+    OptimizationCandidate, OptimizationCandidateMetric, OptimizationCompleted, RunEventProjector,
+    ToolDenied, ToolPolicyChecked, ToolPolicyOutcome, TypedError, UnifiedEvent, UnifiedPayload,
+};
 pub use events::{
     ArtifactWrittenEvent, AssistantTextDeltaEvent, BackpressureDroppedEvent, BrokerCallFinishedEvent,
     BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide, CheckpointWrittenEvent, EngineEvent,

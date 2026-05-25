@@ -12,7 +12,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Topbar } from "@/components/shell/Topbar";
 import { Icon } from "@/components/primitives/Icon";
 import { Pill } from "@/components/primitives/Pill";
-import { agentKeys, listAgentsPaged, type Agent, type AgentStatus } from "@/api/agents";
+import { CapabilityBadges } from "@/components/diagnostics/CapabilityBadges";
+import {
+  agentKeys,
+  listAgentsPaged,
+  type Agent,
+  type AgentStatus,
+  type Capability,
+} from "@/api/agents";
 import { ApiError } from "@/api/client";
 import {
   ServerPagerStrip,
@@ -138,6 +145,7 @@ export function AgentsRoute() {
   const desktopColumns = [
     { key: "name", label: "Name" },
     { key: "status", label: "Status" },
+    { key: "capabilities", label: "Capabilities" },
     { key: "slots", label: "Slots" },
     { key: "skills", label: "Skills" },
     { key: "updated", label: "Updated" },
@@ -282,6 +290,9 @@ function DesktopRow({
       <td className="px-5 py-3">
         <StatusPill status={status} />
       </td>
+      <td className="px-5 py-3">
+        <CapabilityBadges capabilities={agentCapabilities(row)} />
+      </td>
       <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
         {row.slots.length === 1
           ? `1 (${row.slots[0]?.name ?? "main"})`
@@ -323,6 +334,19 @@ function badgeColorFor(
     default:
       return "muted";
   }
+}
+
+// Collect the distinct capabilities an agent declares across its slots.
+// The slot `capabilities` field is optional on the wire — `undefined`
+// collapses to `["trader"]` (the engine's `default_capabilities`), so a
+// pre-033 single-trader agent still shows a Trader badge.
+function agentCapabilities(agent: Agent): Capability[] {
+  const seen = new Set<Capability>();
+  for (const slot of agent.slots) {
+    const caps = slot.capabilities ?? (["trader"] as Capability[]);
+    for (const c of caps) seen.add(c);
+  }
+  return [...seen];
 }
 
 // Default status when no separately-computed status is provided. In v1

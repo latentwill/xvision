@@ -1517,6 +1517,162 @@ async fn validate_provider_preflight(
     Ok(provider_names)
 }
 
+/// Phase 4 launch gate + preflight guardrails (live eval path).
+///
+/// Runs BEFORE the executor is built/spawned in [`start_run`]. It refuses
+/// the launch with a typed `ApiError::Validation` when a strategy is not
+/// launchable for a capability-completeness reason (Phase 4.1
+/// `diagnostics::assert_launchable`) OR when one of the cleanly-reachable
+/// Phase 4.2 short-circuit detectors fires at launch-preflight time:
+///
+///   * `strategy_references_unattached_slot` — an `AgentRef` whose agent
+///     resolves but has no slot fulfilling the role.
+///   * `missing_prompt` — a required-capability slot with an empty/
+///     whitespace-only system prompt.
+///   * `missing_tool` — a tool the required capability needs is granted
+///     nowhere (built-ins ∪ manifest `required_tools` ∪ slot grants).
+///   * `provider_unavailable` — the provider bound to a slot is not in the
+///     resolved provider set for this launch.
+///
+/// Because this runs before the `eval_runs` row (and thus the obs emitter)
+/// exists, a fired guardrail surfaces its typed error synchronously as the
+/// refused-launch `ApiError::Validation` body — the failure is recorded as
+/// the launch refusal rather than a silent success. The message embeds the
+/// guardrail `code()` + `remediation()` so the CLI/UI can branch on it and
+/// the obs run is never spawned. A backtest of a strategy missing a
+/// REQUIRED capability does NOT start.
+async fn assert_launchable_with_guardrails(
+    ctx: &ApiContext,
+    strategy_id: &str,
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> ApiResult<()> {
+    // Resolve the set of providers configured in the runtime config — the
+    // enabled-provider set the `provider_unavailable` guardrail checks slot
+    // bindings against. A slot bound to a provider absent from this set is a
+    // hard short-circuit. A config-load failure leaves the set empty, so any
+    // bound provider is reported unavailable (fail-closed). local-candle and
+    // every other configured kind are included by name.
+    let cfg_path = runtime_config_path(ctx);
+    let available_providers: Vec<String> =
+        match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+            Ok(Ok(cfg)) => cfg.providers.iter().map(|p| p.name.clone()).collect(),
+            _ => Vec::new(),
+        };
+    let available_providers = available_providers.as_slice();
+    // ── Phase 4.1: capability-completeness launch gate ──────────────────
+    // Compute typed diagnostics and refuse the launch if any REQUIRED
+    // capability is unmet. OPTIONAL capabilities never block.
+    let diag = crate::diagnostics::capability_diagnostics(ctx, strategy_id).await?;
+    if let Err(e) = crate::diagnostics::assert_launchable(&diag) {
+        tracing::warn!(
+            strategy_id,
+            error = %e,
+            "eval launch blocked by capability diagnostics (not launchable)",
+        );
+        return Err(ApiError::Validation(format!(
+            "strategy `{strategy_id}` is not launchable: {e}",
+        )));
+    }
+
+    // ── Phase 4.2: launch-preflight short-circuits ─────────────────────
+    // Assemble the set of tools available to the run: built-ins ∪ the
+    // strategy manifest's `required_tools` ∪ any per-slot grants. This is
+    // the same union `check_missing_tool` expects.
+    let mut available_tools: Vec<String> = ToolRegistry::default_with_builtins()
+        .list()
+        .into_iter()
+        .map(|t| t.as_str().to_string())
+        .collect();
+    for t in &strategy.manifest.required_tools {
+        if !available_tools.contains(t) {
+            available_tools.push(t.clone());
+        }
+    }
+
+    // strategy_references_unattached_slot — defense-in-depth.
+    //
+    // NOTE: as the engine resolves slots today (`resolve_agent_slots`),
+    // an `AgentRef` whose agent is missing or has zero slots already fails
+    // EARLIER with `ApiError::NotFound` / "agent has no executable slots",
+    // and a resolved ref always maps the agent's first slot to the ref's
+    // role (so `resolved.role == agent_ref.role` by construction). The
+    // primary trigger for this guardrail is therefore pre-empted upstream.
+    // We keep the cheap check as a regression guard: if the resolution
+    // semantics ever change so a ref can survive resolution without a
+    // matching slot, this fires the typed short-circuit rather than
+    // launching a position that cannot execute.
+    for agent_ref in &strategy.agents {
+        let slot_attached = agent_slots.iter().any(|resolved| {
+            resolved.agent_id == agent_ref.agent_id
+                && resolved.role.trim().eq_ignore_ascii_case(agent_ref.role.trim())
+        });
+        if let Err(sc) =
+            crate::guardrails::check_slot_attached(&agent_ref.role, &agent_ref.agent_id, slot_attached)
+        {
+            return Err(short_circuit_validation(strategy_id, &sc));
+        }
+    }
+
+    // Per-slot prompt / provider / tool preflight. The required tool set is
+    // driven by each slot's primary capability (`required_tools_for`).
+    for resolved in agent_slots {
+        let role = resolved.role.as_str();
+
+        // missing_prompt: a launchable position must have a prompt to send.
+        if let Err(sc) = crate::guardrails::check_prompt_present(role, &resolved.system_prompt) {
+            return Err(short_circuit_validation(strategy_id, &sc));
+        }
+
+        // provider_unavailable: the slot's bound provider must be resolvable.
+        if let Some(provider) = resolved.slot.provider.as_deref() {
+            let provider = provider.trim();
+            if !provider.is_empty() {
+                if let Err(sc) =
+                    crate::guardrails::check_provider_available(role, provider, available_providers)
+                {
+                    return Err(short_circuit_validation(strategy_id, &sc));
+                }
+            }
+        }
+
+        // missing_tool: every tool the slot's primary capability requires
+        // must be granted somewhere. The primary capability is the first
+        // declared one (matching diagnostics' `required_capability`),
+        // falling back to Trader for legacy slots.
+        let primary_cap = resolved
+            .capabilities
+            .iter()
+            .next()
+            .copied()
+            .unwrap_or(crate::agents::Capability::Trader);
+        for tool in crate::diagnostics::required_tools_for(primary_cap) {
+            if let Err(sc) = crate::guardrails::check_missing_tool(role, tool, &available_tools) {
+                return Err(short_circuit_validation(strategy_id, &sc));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Map a launch-preflight [`ShortCircuit`] into the refused-launch
+/// `ApiError::Validation` body. The message carries the stable `code()` and
+/// the operator-facing `remediation()` so the failure is recorded with its
+/// machine identifier rather than a free-text warning.
+fn short_circuit_validation(strategy_id: &str, sc: &crate::guardrails::ShortCircuit) -> ApiError {
+    tracing::warn!(
+        strategy_id,
+        short_circuit = sc.code(),
+        "eval launch blocked by guardrail short-circuit: {sc}",
+    );
+    ApiError::Validation(format!(
+        "[{code}] {sc} — {remediation}",
+        code = sc.code(),
+        remediation = sc.remediation(),
+    ))
+}
+
 /// Persist one `supervisor_notes` row per probed provider, and an additional
 /// `warn`-severity row when `skip_preflight` is true. Best-effort — write
 /// failures are logged but do not abort the run.
@@ -1840,7 +1996,9 @@ async fn resolve_agent_runtime(ctx: &ApiContext) -> AgentRuntime {
     }
 
     let cfg_path = runtime_config_path(ctx);
-    let sidecar_available = std::env::var("XVN_AGENTD_BIN").map(|v| !v.is_empty()).unwrap_or(false);
+    let sidecar_available = std::env::var("XVN_AGENTD_BIN")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
 
     let raw = tokio::fs::read_to_string(&cfg_path).await.ok();
     let explicitly_set = raw
@@ -1977,7 +2135,7 @@ async fn spawn_cline_ctx(
         .as_ref()
         .map(|(store, rid, _)| (store.clone(), rid.clone()));
 
-    let client = AgentClient::spawn_with_event_sink(
+    let client = match AgentClient::spawn_with_event_sink(
         std::path::Path::new(&bin),
         &main_sock,
         &cb_sock,
@@ -1987,24 +2145,31 @@ async fn spawn_cline_ctx(
         sink_recording,
     )
     .await
-    .map_err(|e| {
-        ApiError::Internal(format!(
-            "failed to spawn xvision-agentd sidecar (XVN_AGENTD_BIN={bin}): {e}"
-        ))
-    })?;
+    {
+        Ok(client) => client,
+        Err(e) => {
+            if let Some((store, recording_id, _)) = recording.as_ref() {
+                let _ = store.mark_corrupt(recording_id, rec::RECOVERY_RUN_FAILED).await;
+            }
+            return Err(ApiError::Internal(format!(
+                "failed to spawn xvision-agentd sidecar (XVN_AGENTD_BIN={bin}): {e}"
+            )));
+        }
+    };
 
     // Couple the dispatcher's `StartRunParams.slot_role` to the recording's
     // key slot_role (footgun c): the dispatcher stamps `recording_slot_role`
     // on frames, and `read_frames` filters on it.
     let recording_slot_role = recording.as_ref().map(|(_, _, role)| role.clone());
 
-    let run_recording = recording.map(|(store, recording_id, slot_role)| {
-        crate::agent::cline_recording::RunRecording {
-            store,
-            recording_id,
-            slot_role,
-        }
-    });
+    let run_recording =
+        recording.map(
+            |(store, recording_id, slot_role)| crate::agent::cline_recording::RunRecording {
+                store,
+                recording_id,
+                slot_role,
+            },
+        );
 
     Ok((
         crate::agent::dispatch_capability::ClineDispatchCtx {
@@ -2308,12 +2473,10 @@ async fn run_inner(
         // (footgun c coupling). `trajectory_mode != Record` ⇒ `None` ⇒ the
         // spawn binds no sink and the live path is byte-identical to pre-§2-D.
         let recording_request = if req.trajectory_mode.records() {
-            primary_recorded_slot(&strategy, &agent_slots).map(|(slot_role, model)| {
-                RecordingRequest {
-                    run_id: run.id.clone(),
-                    slot_role,
-                    model,
-                }
+            primary_recorded_slot(&strategy, &agent_slots).map(|(slot_role, model)| RecordingRequest {
+                run_id: run.id.clone(),
+                slot_role,
+                model,
             })
         } else {
             None
@@ -2333,7 +2496,7 @@ async fn run_inner(
     //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
     //    we fall back to the legacy `data/probes/<cache_key>.parquet`
     //    loader so existing test fixtures keep working.
-    let executor: Box<dyn RunExecutor> = match req.mode {
+    let executor_result: ApiResult<Box<dyn RunExecutor>> = match req.mode {
         RunMode::Backtest => {
             build_backtest_executor(
                 ctx,
@@ -2347,7 +2510,7 @@ async fn run_inner(
                 agent_runtime,
                 cline_ctx,
             )
-            .await?
+            .await
         }
         RunMode::Live => {
             build_live_executor(
@@ -2360,26 +2523,57 @@ async fn run_inner(
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
             )
-            .await?
+            .await
+        }
+    };
+    let executor = match executor_result {
+        Ok(executor) => executor,
+        Err(e) => {
+            if let Some(rec) = run_recording.as_ref() {
+                rec.finalize(false, recording_persist_failed(&recording_client))
+                    .await;
+            }
+            return Err(e);
         }
     };
 
     let store = RunStore::new(ctx.db.clone());
-    store
+    if let Err(e) = store
         .create(&run)
         .await
-        .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("create run: {e}")))
+    {
+        if let Some(rec) = run_recording.as_ref() {
+            rec.finalize(false, recording_persist_failed(&recording_client))
+                .await;
+        }
+        return Err(e);
+    }
     // Persist the per-launch override receipt as soon as the run row
     // exists. We write it here (not only in the outer `run` wrapper) so
     // `run_with_deps` callers — including the test surface that injects
     // a pre-built dispatch — also produce the receipt for `xvn eval
     // results --json` and the export.
     record_provider_override_note(&store, &run.id, req.provider_override.as_ref()).await;
-    let started = store
+    let started = match store
         .begin_running(&run.id)
         .await
-        .map_err(|e| ApiError::Internal(format!("begin run: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("begin run: {e}")))
+    {
+        Ok(started) => started,
+        Err(e) => {
+            if let Some(rec) = run_recording.as_ref() {
+                rec.finalize(false, recording_persist_failed(&recording_client))
+                    .await;
+            }
+            return Err(e);
+        }
+    };
     if !started {
+        if let Some(rec) = run_recording.as_ref() {
+            rec.finalize(false, recording_persist_failed(&recording_client))
+                .await;
+        }
         let stopped = store
             .get(&run.id)
             .await
@@ -2429,7 +2623,8 @@ async fn run_inner(
         // §2-B (footgun d): the run errored while a recording was open —
         // mark it corrupt so a partial trajectory is never replayed.
         if let Some(rec) = run_recording.as_ref() {
-            rec.finalize(false, recording_persist_failed(&recording_client)).await;
+            rec.finalize(false, recording_persist_failed(&recording_client))
+                .await;
         }
         // Index the failed run so it shows up in ⌘K with its current status
         // — operators frequently want to find a recently-failed run by id
@@ -2449,7 +2644,8 @@ async fn run_inner(
     // fatal / dead consumer). `recording_persist_failed` reads the client's
     // latched flag set by the event-sink persister.
     if let Some(rec) = run_recording.as_ref() {
-        rec.finalize(true, recording_persist_failed(&recording_client)).await;
+        rec.finalize(true, recording_persist_failed(&recording_client))
+            .await;
     }
 
     if let Some(em) = obs_emitter.as_ref() {
@@ -3030,6 +3226,16 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
 
     let provider_names = validate_provider_preflight(ctx, &req, &strategy, &agent_slots).await?;
+
+    // Phase 4 launch gate + launch-preflight guardrails (live eval path).
+    // Refuses the launch BEFORE the executor is built/spawned when the
+    // strategy is not launchable (missing REQUIRED capability) or a
+    // cleanly-reachable short-circuit (unattached slot / missing prompt /
+    // missing tool / provider unavailable) fires. A backtest of a strategy
+    // missing a required capability never starts. Live mode runs the same
+    // gate: a non-launchable strategy must not reach the executor in either
+    // mode.
+    assert_launchable_with_guardrails(ctx, &req.agent_id, &strategy, &agent_slots).await?;
 
     let (dispatch, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;

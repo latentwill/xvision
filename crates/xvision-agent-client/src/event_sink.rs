@@ -246,6 +246,7 @@ fn dispatch_inner(
             source_cli_job_id: None,
             started_at: ms_to_utc(u64_field("started_at_ms")?),
             retention_mode: "hash_only".to_string(),
+            trajectory_mode: str_field("trajectory_mode"),
             sidecar_version: fp.sidecar_version.clone(),
             cline_sdk_version: fp.cline_sdk_version.clone(),
             protocol_version: fp.protocol_version.clone(),
@@ -696,6 +697,7 @@ mod tests {
             "started_at_ms": 1_700_000_000_000_u64,
             "provider_id": "anthropic",
             "model_id": "claude-opus-4-7",
+            "trajectory_mode": "record",
         });
         let events = dispatch("event.run_started", &p, &fp);
         assert_eq!(events.len(), 1);
@@ -705,6 +707,7 @@ mod tests {
                 assert_eq!(rs.sidecar_version.as_deref(), Some("0.1.0"));
                 assert_eq!(rs.cline_sdk_version.as_deref(), Some("0.0.41"));
                 assert_eq!(rs.protocol_version.as_deref(), Some("0.1.0"));
+                assert_eq!(rs.trajectory_mode.as_deref(), Some("record"));
             }
             _ => panic!("wrong variant"),
         }
@@ -1032,7 +1035,11 @@ mod tests {
             assert_eq!(parsed.slot_role, "trader");
             assert_eq!(parsed.step_index, 0);
             assert_eq!(parsed.frame_index, i as i64);
-            assert_eq!(parsed.frame.kind_str(), kind, "frame body decoded to wrong variant");
+            assert_eq!(
+                parsed.frame.kind_str(),
+                kind,
+                "frame body decoded to wrong variant"
+            );
         }
     }
 
@@ -1111,7 +1118,11 @@ mod tests {
 
         store.complete_recording(&rid).await.unwrap();
         let frames = store.read_frames(&rid, "trader", 0).await.unwrap();
-        assert_eq!(frames.len(), 3, "all three trajectory_frame notifications persisted");
+        assert_eq!(
+            frames.len(),
+            3,
+            "all three trajectory_frame notifications persisted"
+        );
     }
 
     #[tokio::test]
@@ -1130,7 +1141,10 @@ mod tests {
             .await
             .unwrap();
         // Enforce FK so the append to a missing recording row fails.
-        sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "CREATE TABLE trajectory_recordings (recording_id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'open', key_fingerprint TEXT NOT NULL UNIQUE, cycle_id TEXT NOT NULL, slot_role TEXT NOT NULL, arm_scope TEXT, simulation_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL, model_version TEXT, system_prompt_hash TEXT NOT NULL, recovery_reason TEXT, created_at INTEGER NOT NULL, completed_at INTEGER, expires_at INTEGER)",
         ).execute(&pool).await.unwrap();
@@ -1153,7 +1167,10 @@ mod tests {
             slot_role: "trader".into(),
             step_index: 0,
             frame_index: 0,
-            frame: TrajectoryFrame::TextDelta { ts_ms: 0, text: "x".into() },
+            frame: TrajectoryFrame::TextDelta {
+                ts_ms: 0,
+                text: "x".into(),
+            },
         };
         let res = persister.persist(&store, parsed).await;
         assert!(res.is_err(), "append to missing recording must fail");

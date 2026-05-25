@@ -40,6 +40,7 @@ export function emitRunStarted(params: {
   started_at_ms: number
   provider_id: string
   model_id: string
+  trajectory_mode?: "record" | "live" | "replay"
 }): void {
   void emitNotification(NOTIFY.RunStarted, {
     run_id: params.run_id,
@@ -47,6 +48,7 @@ export function emitRunStarted(params: {
     started_at_ms: params.started_at_ms,
     provider_id: params.provider_id,
     model_id: params.model_id,
+    ...(params.trajectory_mode !== undefined ? { trajectory_mode: params.trajectory_mode } : {}),
   })
 }
 

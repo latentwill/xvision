@@ -329,6 +329,7 @@ async fn sqlite_recorder_persists_positive_cost_usd_for_priced_runs() {
         source_cli_job_id: None,
         started_at: chrono::Utc::now(),
         retention_mode: "hash_only".to_string(),
+        trajectory_mode: None,
         sidecar_version: None,
         cline_sdk_version: None,
         protocol_version: None,

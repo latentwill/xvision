@@ -110,6 +110,7 @@ export function handleSessionStartRun(raw: unknown): StartRunResult {
     started_at_ms: s.created_at_ms,
     provider_id: config.provider_id,
     model_id: config.model_id,
+    ...(config.record === true ? { trajectory_mode: "record" as const } : {}),
   })
   return { run_id: s.run_id, started_at_ms: s.created_at_ms }
 }

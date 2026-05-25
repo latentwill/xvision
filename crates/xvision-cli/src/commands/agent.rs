@@ -14,6 +14,7 @@ use serde::Serialize;
 use xvision_engine::agents::{default_capabilities, AgentSlot, Capability, Severity, ValidationDiagnostic};
 use xvision_engine::api::agents as agents_api;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
+use xvision_engine::diagnostics::{is_optimizable, is_runtime_supported, required_tools_for};
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 use crate::io::{print_json, print_json_compact};
@@ -37,6 +38,16 @@ pub enum Op {
     /// set from `--capability`. `--system-prompt` may be a literal string
     /// or `@<path>` to read the prompt from a file.
     Create(CreateArgs),
+    /// Inspect an agent's capabilities (Phase 4.1). With `--diagnostics`
+    /// (default-on for this verb) prints, per declared capability, whether
+    /// the slot has a prompt + model binding, which tools the capability
+    /// needs, whether the runtime supports it, and whether it has a dspy
+    /// optimizer signature. `--json` emits the structured shape.
+    ///
+    /// Agent-level only — it cannot see the strategy graph, so it reports
+    /// per-slot readiness rather than a launch verdict. Use
+    /// `xvn strategy diagnostics <id>` for the graph-level launch gate.
+    Inspect(InspectArgs),
     /// List agents in the workspace library. Default output is a table;
     /// use `--format json` or `--format json-compact` for machine-readable
     /// output. Alias: `list`.
@@ -59,6 +70,24 @@ pub struct GetArgs {
     /// is a single-line JSON payload suitable for piping.
     #[arg(long, value_enum, default_value_t = ObjectFormat::Json)]
     pub format: ObjectFormat,
+}
+
+#[derive(Args, Debug)]
+pub struct InspectArgs {
+    /// Agent id (ULID) from the workspace library.
+    pub agent_id: String,
+    /// Emit the capability diagnostics (default-on for this verb; the
+    /// flag exists so the intent is explicit and so a future
+    /// non-diagnostic inspect mode can be added without breaking
+    /// scripts).
+    #[arg(long, default_value_t = true)]
+    pub diagnostics: bool,
+    /// Emit structured JSON instead of a text summary.
+    #[arg(long)]
+    pub json: bool,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
 }
 
 /// Output format for `xvn agent ls`. Extends `ObjectFormat` by adding a
@@ -100,6 +129,34 @@ pub struct LintArgs {
     /// Override the xvn home directory.
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
+}
+
+/// Per-capability agent-level diagnostic line. Agent-level only — no
+/// strategy graph, so it reports per-slot readiness rather than a launch
+/// verdict.
+#[derive(Debug, Serialize)]
+struct AgentCapabilityLine {
+    capability: String,
+    /// Slot this capability is declared on.
+    slot: String,
+    /// Whether the slot has a non-empty system_prompt.
+    has_prompt: bool,
+    /// Whether the slot has a provider+model binding.
+    has_model_binding: bool,
+    /// Tools this capability requires at runtime.
+    required_tools: Vec<String>,
+    /// Whether the current runtime has a handler for this capability.
+    runtime_supported: bool,
+    /// Whether this capability has a dspy optimizer signature today.
+    optimizable: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentInspectOut {
+    agent_id: String,
+    name: String,
+    archived: bool,
+    capabilities: Vec<AgentCapabilityLine>,
 }
 
 /// Wire form of the capability classes. Mirrors
@@ -183,9 +240,80 @@ pub async fn run(cmd: AgentCmd) -> CliResult<()> {
     match cmd.op {
         Op::Get(args) => run_get(args).await,
         Op::Create(args) => run_create(args).await,
+        Op::Inspect(args) => run_inspect(args).await,
         Op::Ls(args) => run_ls(args).await,
         Op::Lint(args) => run_lint(args).await,
     }
+}
+
+fn cap_key(c: Capability) -> &'static str {
+    match c {
+        Capability::Trader => "trader",
+        Capability::Filter => "filter",
+        Capability::Critic => "critic",
+        Capability::Intern => "intern",
+        Capability::Router => "router",
+    }
+}
+
+async fn run_inspect(args: InspectArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+    let agent = agents_api::get(&ctx, &args.agent_id)
+        .await
+        .map_err(|e| api_to_cli("agent inspect", e))?;
+
+    let mut lines: Vec<AgentCapabilityLine> = Vec::new();
+    for slot in &agent.slots {
+        for cap in &slot.capabilities {
+            lines.push(AgentCapabilityLine {
+                capability: cap_key(*cap).to_string(),
+                slot: slot.name.clone(),
+                has_prompt: !slot.system_prompt.trim().is_empty(),
+                has_model_binding: !slot.provider.trim().is_empty() && !slot.model.trim().is_empty(),
+                required_tools: required_tools_for(*cap).iter().map(|s| s.to_string()).collect(),
+                runtime_supported: is_runtime_supported(*cap),
+                optimizable: is_optimizable(*cap),
+            });
+        }
+    }
+
+    let out = AgentInspectOut {
+        agent_id: agent.agent_id.clone(),
+        name: agent.name.clone(),
+        archived: agent.archived,
+        capabilities: lines,
+    };
+
+    if args.json {
+        crate::io::print_json(&out)?;
+        return Ok(());
+    }
+
+    println!("agent: {} ({})", out.agent_id, out.name);
+    if out.archived {
+        println!("archived: yes");
+    }
+    println!();
+    for line in &out.capabilities {
+        let tools = if line.required_tools.is_empty() {
+            String::new()
+        } else {
+            format!(" tools={}", line.required_tools.join(","))
+        };
+        println!(
+            "• {:<8} slot={} prompt={} model={} runtime={} optimizable={}{}",
+            line.capability,
+            line.slot,
+            if line.has_prompt { "ok" } else { "MISSING" },
+            if line.has_model_binding { "ok" } else { "MISSING" },
+            if line.runtime_supported { "supported" } else { "UNSUPPORTED" },
+            if line.optimizable { "yes" } else { "no" },
+            tools,
+        );
+    }
+    Ok(())
 }
 
 async fn run_get(args: GetArgs) -> CliResult<()> {

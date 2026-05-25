@@ -48,6 +48,7 @@ async fn seed_run(db_path: &std::path::Path, run_id: &str) {
         source_cli_job_id: None,
         started_at: fixed_ts(0),
         retention_mode: "hash_only".into(),
+        trajectory_mode: None,
         sidecar_version: Some("sidecar-test".into()),
         cline_sdk_version: Some("cline-test".into()),
         protocol_version: Some("xvision/1".into()),
