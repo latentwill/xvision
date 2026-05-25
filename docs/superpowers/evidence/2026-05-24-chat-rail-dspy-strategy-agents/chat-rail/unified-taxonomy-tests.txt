@@ -14,3 +14,16 @@ test unified_event::tests::envelope_round_trips_through_json ... ok
 
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.00s
 
+
+# Phase 1.2 (partial) — chat WizardEvent -> UnifiedEvent projection
+# 2026-05-25T00:21:55Z
+$ cargo test -p xvision-dashboard --lib chat_unified
+
+running 4 tests
+test chat_unified::tests::wizard_error_becomes_session_failed ... ok
+test chat_unified::tests::scope_flattens_all_variants ... ok
+test chat_unified::tests::assistant_stream_projects_with_monotonic_seq ... ok
+test chat_unified::tests::tool_call_and_result_share_a_span_id ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 141 filtered out; finished in 0.00s
+
