@@ -184,6 +184,13 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
 
 /// Mutating, destructive, or host-admin paths below otherwise-supported heads.
 const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
+    // `agent create` is a write path: persists a new agent record in the
+    // workspace library. Read-only agent verbs (get, ls, lint) remain
+    // allowed. Added with the agent dry-run + allowlist gap fix.
+    DeniedNested {
+        head: "agent",
+        path: &["create"],
+    },
     DeniedNested {
         head: "bars",
         path: &["rm"],
@@ -572,5 +579,25 @@ mod tests {
     #[test]
     fn top_level_migrate_is_rejected() {
         assert_reject(&["migrate", "--dry-run"], "not allowed over remote cli");
+    }
+
+    // ── agent allowlist gap: create denied, read-only paths allowed ───────
+
+    #[test]
+    fn agent_create_is_rejected_remotely() {
+        assert_reject(
+            &["agent", "create", "--name", "remote-agent"],
+            "not allowed over remote cli",
+        );
+    }
+
+    #[test]
+    fn agent_read_only_paths_are_allowed() {
+        // get (alias show) — reads a single agent by id
+        assert_allow(&["agent", "get", "ag_1"]);
+        // ls (alias list) — read-only listing
+        assert_allow(&["agent", "ls"]);
+        // lint — read-only diagnostic scan
+        assert_allow(&["agent", "lint"]);
     }
 }
