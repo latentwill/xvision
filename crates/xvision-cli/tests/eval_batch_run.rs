@@ -32,6 +32,31 @@ use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 // Import the batch module from xvision-cli.
 use xvision_cli::commands::eval::batch::{run_batch, BatchRunRequest};
 
+/// Build a `BatchRunRequest` with the fields every batch test shares
+/// (Backtest mode, no broker, default findings model, no review, no asset
+/// subset). Tests that exercise reviews override `review_with` /
+/// `review_dispatch` on the returned value. Replaces the per-test struct
+/// literals (multi-asset-followups Phase 6 — Clawpatch fixture debt).
+fn batch_request(
+    strategy_id: &str,
+    scenario_ids: Vec<String>,
+    dispatch: Arc<dyn LlmDispatch>,
+    tools: Arc<ToolRegistry>,
+) -> BatchRunRequest {
+    BatchRunRequest {
+        agent_id: strategy_id.into(),
+        scenario_ids,
+        mode: RunMode::Backtest,
+        broker: None,
+        dispatch,
+        findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
+        tools,
+        review_with: None,
+        review_dispatch: None,
+        assets_subset: None,
+    }
+}
+
 async fn apply_agent_migrations(pool: &SqlitePool) {
     sqlx::query(include_str!("../../xvision-engine/migrations/005_agents.sql"))
         .execute(pool)
@@ -251,21 +276,15 @@ async fn batch_run_two_scenarios_both_complete() {
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
-    let req = BatchRunRequest {
-        agent_id: strategy_id.into(),
-        scenario_ids: vec![
+    let req = batch_request(
+        strategy_id,
+        vec![
             "flash-crash-2024-08".into(),
             "flash-crash-2024-08".into(), // same scenario twice is fine for shape testing
         ],
-        mode: RunMode::Backtest,
-        broker: None,
         dispatch,
-        findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
-        review_with: None,
-        review_dispatch: None,
-        assets_subset: None,
-    };
+    );
 
     let result = run_batch(&ctx, req).await.expect("run_batch must succeed");
 
@@ -312,18 +331,12 @@ async fn batch_run_partial_failure_surfaces_per_run_error() {
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
-    let req = BatchRunRequest {
-        agent_id: strategy_id.into(),
-        scenario_ids: vec!["flash-crash-2024-08".into(), "does-not-exist-scenario".into()],
-        mode: RunMode::Backtest,
-        broker: None,
+    let req = batch_request(
+        strategy_id,
+        vec!["flash-crash-2024-08".into(), "does-not-exist-scenario".into()],
         dispatch,
-        findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
-        review_with: None,
-        review_dispatch: None,
-        assets_subset: None,
-    };
+    );
 
     let result = run_batch(&ctx, req).await.expect("run_batch itself must not Err");
 
@@ -360,18 +373,7 @@ async fn batch_result_serialises_to_expected_json_shape() {
     let dispatch = long_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
-    let req = BatchRunRequest {
-        agent_id: strategy_id.into(),
-        scenario_ids: vec!["flash-crash-2024-08".into()],
-        mode: RunMode::Backtest,
-        broker: None,
-        dispatch,
-        findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-        review_with: None,
-        review_dispatch: None,
-        assets_subset: None,
-    };
+    let req = batch_request(strategy_id, vec!["flash-crash-2024-08".into()], dispatch, tools);
 
     let result = run_batch(&ctx, req).await.expect("run_batch must succeed");
     let json_str = serde_json::to_string_pretty(&result).expect("must serialise");
@@ -558,18 +560,9 @@ async fn review_with_populates_review_field_for_completed_run() {
     let tools = Arc::new(ToolRegistry::empty());
     let rev_dispatch = review_dispatch();
 
-    let req = BatchRunRequest {
-        agent_id: strategy_id.into(),
-        scenario_ids: vec!["flash-crash-2024-08".into()],
-        mode: RunMode::Backtest,
-        broker: None,
-        dispatch,
-        findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-        review_with: Some("reasoning-agent".into()),
-        review_dispatch: Some(rev_dispatch),
-        assets_subset: None,
-    };
+    let mut req = batch_request(strategy_id, vec!["flash-crash-2024-08".into()], dispatch, tools);
+    req.review_with = Some("reasoning-agent".into());
+    req.review_dispatch = Some(rev_dispatch);
 
     let result = run_batch(&ctx, req).await.expect("run_batch must succeed");
     assert_eq!(result.runs.len(), 1);
@@ -604,18 +597,9 @@ async fn review_with_skips_review_for_failed_run() {
     let tools = Arc::new(ToolRegistry::empty());
     let rev_dispatch = review_dispatch();
 
-    let req = BatchRunRequest {
-        agent_id: strategy_id.into(),
-        scenario_ids: vec!["does-not-exist-scenario".into()],
-        mode: RunMode::Backtest,
-        broker: None,
-        dispatch,
-        findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
-        review_with: Some("reasoning-agent".into()),
-        review_dispatch: Some(rev_dispatch),
-        assets_subset: None,
-    };
+    let mut req = batch_request(strategy_id, vec!["does-not-exist-scenario".into()], dispatch, tools);
+    req.review_with = Some("reasoning-agent".into());
+    req.review_dispatch = Some(rev_dispatch);
 
     let result = run_batch(&ctx, req).await.expect("run_batch must not Err");
     assert_eq!(result.runs.len(), 1);
@@ -639,18 +623,14 @@ async fn review_with_json_shape_review_present_for_completed_absent_for_failed()
     let tools = Arc::new(ToolRegistry::empty());
     let rev_dispatch = review_dispatch();
 
-    let req = BatchRunRequest {
-        agent_id: strategy_id.into(),
-        scenario_ids: vec!["flash-crash-2024-08".into(), "does-not-exist-scenario".into()],
-        mode: RunMode::Backtest,
-        broker: None,
+    let mut req = batch_request(
+        strategy_id,
+        vec!["flash-crash-2024-08".into(), "does-not-exist-scenario".into()],
         dispatch,
-        findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
-        review_with: Some("reasoning-agent".into()),
-        review_dispatch: Some(rev_dispatch),
-        assets_subset: None,
-    };
+    );
+    req.review_with = Some("reasoning-agent".into());
+    req.review_dispatch = Some(rev_dispatch);
 
     let result = run_batch(&ctx, req).await.expect("run_batch must not Err");
     let json_str = serde_json::to_string_pretty(&result).expect("must serialise");
