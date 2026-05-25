@@ -100,6 +100,14 @@ const MIGRATION_038_EVAL_RUNS_LIVE_CONFIG: &str =
 /// columns may already exist on a partially-migrated DB.
 const MIGRATION_039_RUN_TRAJECTORY_MODE: &str =
     include_str!("../../migrations/039_run_trajectory_mode.sql");
+/// Phase 1.3 (chat-rail durable rail state): additive columns on
+/// `chat_sessions`. Applied via `migrate_chat_session_rail_state`, which runs
+/// each `ALTER TABLE … ADD COLUMN` on its own (sqlx::query is single-statement)
+/// and guards each on column existence so re-opening an already-migrated DB is
+/// a no-op. Driven straight off the migration file so the runtime path and the
+/// committed file never drift.
+const MIGRATION_041_CHAT_SESSION_RAIL_STATE: &str =
+    include_str!("../../migrations/041_chat_session_rail_state.sql");
 /// Phase 1.2 (chat-rail unified stream): the persisted unified-event log
 /// (`session_events`). Applied via `migrate_session_events` (guarded on the
 /// table's existence) because the file is two statements — CREATE TABLE +
@@ -286,6 +294,7 @@ impl ApiContext {
         migrate_review_annotations_and_autofire(&pool).await?;
         migrate_eval_runs_live_config(&pool).await?;
         migrate_run_trajectory_mode(&pool).await?;
+        migrate_chat_session_rail_state(&pool).await?;
         migrate_session_events(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
@@ -1062,6 +1071,22 @@ async fn migrate_run_trajectory_mode(pool: &SqlitePool) -> ApiResult<()> {
 /// DDL statements are run separately because `sqlx::query` executes a single
 /// statement at a time. Both use `IF NOT EXISTS`, so the helper is idempotent
 /// across re-opens of the same `xvn_home`.
+async fn migrate_chat_session_rail_state(pool: &SqlitePool) -> ApiResult<()> {
+    // Each `ALTER TABLE chat_sessions ADD COLUMN <col> …` line in migration 041
+    // runs on its own and is skipped when the column already exists, so a
+    // partially-migrated or already-migrated DB re-opens cleanly.
+    for line in MIGRATION_041_CHAT_SESSION_RAIL_STATE.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("ALTER TABLE chat_sessions ADD COLUMN ") {
+            let col = rest.split_whitespace().next().unwrap_or_default();
+            if !col.is_empty() && !table_has_column(pool, "chat_sessions", col).await? {
+                sqlx::query(line.trim_end_matches(';')).execute(pool).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn migrate_session_events(pool: &SqlitePool) -> ApiResult<()> {
     sqlx::query(MIGRATION_042_SESSION_EVENTS_TABLE)
         .execute(pool)
@@ -1127,3 +1152,58 @@ pub enum ApiError {
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
+
+#[cfg(test)]
+mod migration_registry_tests {
+    use super::*;
+
+    /// Regression for the runtime migration-wiring gap: migration 041's
+    /// chat_sessions rail-state columns are applied by the hand-maintained
+    /// `ApiContext::open` registry (via `migrate_chat_session_rail_state`),
+    /// not by `sqlx::migrate!`. Without the wiring the columns silently never
+    /// exist at runtime and the rail-state store methods fail with
+    /// "no such column". This proves the helper adds every column and is
+    /// idempotent on a re-open.
+    #[tokio::test]
+    async fn migrate_chat_session_rail_state_adds_columns_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        // Base table (migration 003) without the rail-state columns.
+        sqlx::query(MIGRATION_003).execute(&pool).await.unwrap();
+        assert!(!table_has_column(&pool, "chat_sessions", "mode").await.unwrap());
+
+        // First migration pass adds all six columns.
+        migrate_chat_session_rail_state(&pool).await.unwrap();
+        for col in [
+            "event_cursor",
+            "focus_path",
+            "mode",
+            "tool_policy_json",
+            "checkpoint_head",
+            "participants_json",
+        ] {
+            assert!(
+                table_has_column(&pool, "chat_sessions", col).await.unwrap(),
+                "column {col} missing after migrate_chat_session_rail_state"
+            );
+        }
+
+        // Second pass is a no-op (guards on column existence) — re-open safe.
+        migrate_chat_session_rail_state(&pool).await.unwrap();
+
+        // The defaults match the migration file (mode='research', cursor=0).
+        sqlx::query(
+            "INSERT INTO chat_sessions (id, started_at, last_activity_at, context_scope_json) \
+             VALUES ('s1', '2026-05-24T00:00:00Z', '2026-05-24T00:00:00Z', '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (mode, cursor): (String, i64) =
+            sqlx::query_as("SELECT mode, event_cursor FROM chat_sessions WHERE id = 's1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(mode, "research");
+        assert_eq!(cursor, 0);
+    }
+}
