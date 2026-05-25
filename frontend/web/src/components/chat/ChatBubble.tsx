@@ -1,12 +1,11 @@
-import type { ReactNode } from "react";
+import { useCallback, useState } from "react";
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ContentBlockView } from "@/components/chat/ContentBlockView";
-import { Pill } from "@/components/primitives/Pill";
 
-import type { Bubble, RenderableBlock, Tool } from "./types";
+import type { Bubble, CheckpointBubble, RenderableBlock, Tool } from "./types";
 
 export function ChatBubble({
   bubble,
@@ -27,68 +26,82 @@ export function ChatBubble({
     );
   }
 
+  if (bubble.role === "checkpoint") {
+    return <CheckpointRow bubble={bubble} />;
+  }
+
   const showDots = isStreaming && isLast;
   const hasRenderableBlocks = bubble.blocks.some(
     (block) => block.kind !== "text" || block.text.length > 0,
   );
-  const narratives = bubble.tools
-    .map((t, i) => ({ i, n: toolLogLine(t) }))
-    .filter(
-      (x): x is { i: number; n: { ok: boolean; content: ReactNode } } =>
-        x.n !== null,
-    );
+  const hasContent = hasRenderableBlocks || bubble.tools.length > 0;
 
   return (
     <div className="min-w-0 max-w-[92%] self-start">
-      <div className="break-words bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
-        {hasRenderableBlocks ? (
-          <>
-            <ContentBlocksView blocks={bubble.blocks} />
-            {showDots && <TypingDots inline />}
-          </>
-        ) : showDots ? (
-          <TypingDots />
-        ) : (
-          <span className="text-text-3 font-medium">thinking...</span>
-        )}
-      </div>
-      {narratives.length > 0 && (
-        <div className="mt-1.5 flex flex-col gap-1">
-          {narratives.map(({ i, n }) => (
-            <div
-              key={`narr-${i}`}
-              className={`text-[12px] flex items-start gap-1.5 ${
-                n.ok ? "text-info" : "text-danger"
-              }`}
-            >
-              <span className="leading-[1.4] flex-shrink-0">
-                {n.ok ? "+" : "!"}
-              </span>
-              <span className="leading-[1.4]">{n.content}</span>
-            </div>
-          ))}
+      {hasRenderableBlocks ? (
+        <div className="break-words bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
+          <ContentBlocksView blocks={bubble.blocks} />
+          {showDots && <TypingDots inline />}
         </div>
-      )}
+      ) : showDots ? (
+        <div className="break-words bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
+          <TypingDots />
+        </div>
+      ) : hasContent ? null : null}
       {bubble.tools.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1 opacity-60">
+        <div className={`${hasRenderableBlocks ? "mt-1.5" : ""} flex flex-col gap-1`}>
           {bubble.tools.map((t, i) => (
-            <Pill key={i} tone={t.ok ? "info" : "danger"}>
-              {t.pending && (
-                <span
-                  className="inline-block w-2 h-2 mr-1 border border-current border-t-transparent rounded-full animate-spin align-middle"
-                  aria-label="running"
-                />
-              )}
-              <span className="font-mono">{t.call}</span>
-              {t.summary && (
-                <span className="text-text-3"> - {t.summary}</span>
-              )}
-            </Pill>
+            <ToolButton key={i} tool={t} />
           ))}
         </div>
       )}
     </div>
   );
+}
+
+function ToolButton({ tool }: { tool: Tool }) {
+  const ok = tool.ok;
+  const pending = tool.pending;
+  const label = friendlyToolLabel(tool);
+  const status = friendlyToolStatus(tool);
+  const tone = !ok
+    ? "border-danger/40 bg-danger/10 text-danger"
+    : pending
+      ? "border-border-soft bg-surface-2/60 text-text-2"
+      : "border-success/40 bg-success/10 text-success";
+  return (
+    <div
+      className={`inline-flex items-center gap-1.5 self-start max-w-full px-2 py-1 rounded-md border text-[12px] ${tone}`}
+    >
+      {pending ? (
+        <span
+          className="inline-block w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin flex-shrink-0"
+          aria-label="running"
+        />
+      ) : ok ? (
+        <span aria-hidden className="flex-shrink-0">✓</span>
+      ) : (
+        <span aria-hidden className="flex-shrink-0">!</span>
+      )}
+      <span className="font-mono truncate">{label}</span>
+      {status && (
+        <span className="text-text-3 truncate" title={status}>
+          · {status}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function friendlyToolLabel(t: Tool): string {
+  return t.call;
+}
+
+function friendlyToolStatus(t: Tool): string {
+  const result = (t.result ?? {}) as Record<string, unknown>;
+  if (typeof result.error === "string") return result.error;
+  if (t.pending) return t.summary ?? "running…";
+  return t.resultSummary ?? t.summary ?? "ok";
 }
 
 function ContentBlocksView({ blocks }: { blocks: RenderableBlock[] }) {
@@ -214,298 +227,76 @@ function TypingDots({ inline }: { inline?: boolean }) {
   );
 }
 
-function toolLogLine(
-  t: Tool,
-): { ok: boolean; content: ReactNode } | null {
-  const args = (t.args ?? {}) as Record<string, unknown>;
-  const result = (t.result ?? {}) as Record<string, unknown>;
-  const errorMsg =
-    typeof result.error === "string" ? result.error : undefined;
-  if (errorMsg || !t.ok) {
-    const detail = errorMsg ?? t.resultSummary ?? t.summary ?? "Tool failed";
-    return {
-      ok: false,
-      content: (
-        <>
-          {friendlyVerb(t.call)} failed: <span>{detail}</span>
-        </>
-      ),
-    };
-  }
-  switch (t.call) {
-    case "get_strategy":
-    case "list_templates": {
-      const arg = args["template"] ?? args["id"] ?? "all";
-      return {
-        ok: true,
-        content: t.pending ? (
-          <>
-            Calling <code className="font-mono text-text">{t.call}</code> with{" "}
-            <code className="font-mono text-text-2">{String(arg)}</code>...
-          </>
-        ) : (
-          <>
-            {t.call} returned{" "}
-            <span className="font-mono text-text">{t.resultSummary ?? ""}</span>
-          </>
-        ),
-      };
-    }
-    case "create_strategy": {
-      const name = String(args["name"] ?? "(unnamed)");
-      const template = String(args["template"] ?? "");
-      const id = typeof result["id"] === "string" ? result["id"] : "";
-      const agentResult = result["agent"];
-      const createdAgent =
-        typeof agentResult === "object" &&
-        agentResult !== null &&
-        "agent_id" in agentResult;
-      if (!t.pending && !id && args["name"] == null) {
-        return {
-          ok: true,
-          content: (
-            <>
-              create_strategy completed
-              {t.resultSummary ? (
-                <span className="text-text-2">: {t.resultSummary}</span>
-              ) : null}
-            </>
-          ),
-        };
-      }
-      return {
-        ok: true,
-        content: t.pending ? (
-          <>
-            Calling <code className="font-mono text-text">create_strategy</code>{" "}
-            for <strong className="text-text font-semibold">{name}</strong>
-            {template && (
-              <>
-                {" "}from{" "}
-                <code className="font-mono text-text-2">{template}</code>
-              </>
-            )}
-          </>
-        ) : (
-          <>
-            Created strategy{" "}
-            <strong className="text-text font-semibold">{name}</strong>
-            {template && (
-              <>
-                {" "}from{" "}
-                <code className="font-mono text-text">{template}</code>
-              </>
-            )}
-            {id && (
-              <>
-                {" "}(<code className="font-mono text-text-2">{id}</code>)
-              </>
-            )}
-            {createdAgent ? <> and attached a trader agent</> : null}
-          </>
-        ),
-      };
-    }
-    case "create_strategy_agent": {
-      const role = String(args["role"] ?? "trader");
-      const agentId =
-        typeof result["agent_id"] === "string" ? result["agent_id"] : "";
-      return {
-        ok: true,
-        content: t.pending ? (
-          <>
-            Creating <code className="font-mono text-text">{role}</code> agent...
-          </>
-        ) : agentId ? (
-          <>
-            Attached <code className="font-mono text-text">{role}</code> agent{" "}
-            <code className="font-mono text-text-2">{agentId}</code>
-          </>
-        ) : (
-          <>Attached strategy agent</>
-        ),
-      };
-    }
-    case "attach_agent": {
-      const role = String(args["role"] ?? "trader");
-      return {
-        ok: true,
-        content: t.pending ? (
-          <>
-            Attaching <code className="font-mono text-text">{role}</code> agent...
-          </>
-        ) : (
-          <>
-            Attached <code className="font-mono text-text">{role}</code> agent
-          </>
-        ),
-      };
-    }
-    case "set_mechanical_param": {
-      const key = String(args["key"] ?? "?");
-      const rawValue = args["value"];
-      const value =
-        rawValue === undefined
-          ? "?"
-          : typeof rawValue === "string"
-            ? rawValue
-            : JSON.stringify(rawValue);
-      return {
-        ok: true,
-        content: (
-          <>
-            {t.pending ? "Calling" : "Set"}{" "}
-            <code className="font-mono text-text">{key}</code> ={" "}
-            <code className="font-mono text-text">{value}</code>
-          </>
-        ),
-      };
-    }
-    case "set_risk_config": {
-      const preset =
-        typeof args["preset"] === "string"
-          ? (args["preset"] as string)
-          : undefined;
-      return {
-        ok: true,
-        content: preset ? (
-          <>
-            Risk preset:{" "}
-            <strong className="text-text font-semibold">{preset}</strong>
-          </>
-        ) : (
-          <>Risk: explicit settings applied</>
-        ),
-      };
-    }
-    case "validate_draft": {
-      const ok = result["ok"] === true;
-      const errs = Array.isArray(result["errors"])
-        ? (result["errors"] as unknown[]).length
-        : 0;
-      return ok
-        ? { ok: true, content: <>Validation passed</> }
-        : {
-            ok: false,
-            content: (
-              <>
-                Validation failed ({errs} error{errs === 1 ? "" : "s"})
-              </>
-            ),
-          };
-    }
-    case "update_slot": {
-      const slot = String(args["slot"] ?? "?");
-      const updated = Array.isArray(result["updated"])
-        ? (result["updated"] as string[]).join(", ")
-        : "";
-      return {
-        ok: true,
-        content: t.pending ? (
-          <>
-            Updating <code className="font-mono text-text">{slot}</code>...
-          </>
-        ) : updated ? (
-          <>
-            Updated <code className="font-mono text-text">{slot}</code>:{" "}
-            {updated}
-          </>
-        ) : (
-          <>
-            Updated <code className="font-mono text-text">{slot}</code>
-          </>
-        ),
-      };
-    }
-    case "update_manifest": {
-      const updated = Array.isArray(result["updated"])
-        ? (result["updated"] as string[]).join(", ")
-        : "";
-      return {
-        ok: true,
-        content: t.pending ? (
-          <>Updating manifest...</>
-        ) : updated ? (
-          <>Updated manifest: {updated}</>
-        ) : (
-          <>Updated manifest</>
-        ),
-      };
-    }
-    case "run_eval": {
-      if (t.pending) {
-        return {
-          ok: true,
-          content: (
-            <>
-              Running <code className="font-mono text-text">eval</code>...
-            </>
-          ),
-        };
-      }
-      const runId =
-        typeof result["run_id"] === "string"
-          ? (result["run_id"] as string)
-          : "";
-      return {
-        ok: true,
-        content: runId ? (
-          <>
-            Eval run <code className="font-mono text-text">{runId}</code>
-            {t.resultSummary ? (
-              <span className="text-text-2"> ({t.resultSummary})</span>
-            ) : null}
-          </>
-        ) : (
-          <>Eval action complete</>
-        ),
-      };
-    }
-    default:
-      if (t.pending) {
-        return {
-          ok: true,
-          content: (
-            <>
-              Calling <code className="font-mono text-text">{t.call}</code>{" "}
-              <span className="text-text-2">{t.summary}</span>...
-            </>
-          ),
-        };
-      }
-      return {
-        ok: true,
-        content: (
-          <>
-            {t.call} completed
-            {t.resultSummary ? (
-              <span className="text-text-2">: {t.resultSummary}</span>
-            ) : null}
-          </>
-        ),
-      };
-  }
-}
+function CheckpointRow({ bubble }: { bubble: CheckpointBubble }) {
+  const [restoring, setRestoring] = useState(false);
+  const [outcome, setOutcome] = useState<"ok" | "error" | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-function friendlyVerb(call: string): string {
-  switch (call) {
-    case "create_strategy":
-      return "Create strategy";
-    case "create_strategy_agent":
-      return "Create agent";
-    case "attach_agent":
-      return "Attach agent";
-    case "set_mechanical_param":
-      return "Set parameter";
-    case "set_risk_config":
-      return "Set risk";
-    case "validate_draft":
-      return "Validate";
-    case "update_slot":
-      return "Update slot";
-    case "update_manifest":
-      return "Update manifest";
-    default:
-      return call;
-  }
+  const onRestore = useCallback(async () => {
+    if (restoring) return;
+    setRestoring(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/chat-rail/checkpoints/${encodeURIComponent(bubble.checkpointId)}/restore`,
+        { method: "POST", headers: { "content-type": "application/json" } },
+      );
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`HTTP ${res.status}: ${body || res.statusText}`);
+      }
+      setOutcome("ok");
+    } catch (e) {
+      setOutcome("error");
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRestoring(false);
+    }
+  }, [bubble.checkpointId, restoring]);
+
+  const label =
+    bubble.status === "restored"
+      ? "Restored"
+      : bubble.status === "restore_failed"
+        ? "Restore failed"
+        : "Checkpoint";
+  const tone =
+    bubble.status === "restore_failed"
+      ? "border-danger/40 bg-danger/10 text-danger"
+      : "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400";
+
+  return (
+    <div className="min-w-0 max-w-[92%] self-start">
+      <div
+        className={`inline-flex items-center gap-2 px-2 py-1 rounded-md border text-[12px] ${tone}`}
+      >
+        <span aria-hidden>◷</span>
+        <span className="font-medium">{label}</span>
+        <code className="font-mono text-[11px] opacity-70 truncate max-w-[160px]">
+          {bubble.checkpointId}
+        </code>
+        {bubble.status === "created" && (
+          <button
+            type="button"
+            onClick={onRestore}
+            disabled={restoring || outcome === "ok"}
+            className="ml-1 px-1.5 py-0.5 rounded border border-current text-[11px] hover:bg-amber-500/15 disabled:opacity-40"
+            title="Rewind workspace to this checkpoint"
+          >
+            {restoring
+              ? "Restoring…"
+              : outcome === "ok"
+                ? "Restored ✓"
+                : "Rewind"}
+          </button>
+        )}
+      </div>
+      {error && (
+        <div className="mt-1 text-[11px] text-danger">{error}</div>
+      )}
+      {bubble.message && (
+        <div className="mt-1 text-[11px] text-text-3">{bubble.message}</div>
+      )}
+    </div>
+  );
 }

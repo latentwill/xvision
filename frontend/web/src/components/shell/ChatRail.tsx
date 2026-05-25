@@ -251,9 +251,14 @@ export function ChatRail({
       setError(null);
       const userText = text.trim();
       setInput("");
+      // Anchor the new user turn to the count of assistant rows that have
+      // already streamed into the unified log. Multi-step prior turns produce
+      // multiple assistant rows for a single legacy bubble, and without this
+      // anchor the merge would place this user message in between them.
+      const anchor = unifiedRows.filter((r) => r.type === "assistant").length;
       setBubbles((b) => [
         ...b,
-        { role: "user", text: userText },
+        { role: "user", text: userText, assistantAnchor: anchor },
         { role: "assistant", blocks: [{ kind: "text", text: "" }], tools: [] },
       ]);
       setIsStreaming(true);
@@ -292,7 +297,7 @@ export function ChatRail({
         }
       }
     },
-    [sessionId, isStreaming, providerName, modelId, key, qc],
+    [sessionId, isStreaming, providerName, modelId, key, qc, unifiedRows],
   );
 
   const stopStreaming = useCallback(() => {
@@ -690,46 +695,84 @@ export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void 
  * with the trace dock) onto the rail's bubble model, then merge with the
  * legacy `bubbles` baseline.
  *
- * Merge rule: keep the legacy USER turns (the unified log doesn't carry the
- * operator's own messages on the rail-send path yet), then render the
- * unified assistant/tool/error/checkpoint/optimizer rows as assistant
- * bubbles AFTER them. The trailing legacy assistant echo (the optimistic
- * "" bubble pushed on send) is dropped in favor of the canonical projection
- * so we don't double-render the agent's reply.
+ * The unified log is authoritative for assistant / tool / checkpoint / error
+ * rows; legacy `bubbles` is authoritative only for USER turns (the rail's
+ * POST send path doesn't go through the unified projector yet). Each user
+ * bubble carries `assistantAnchor` — the number of assistant rows that had
+ * already closed when the user submitted — so we can interleave the user
+ * turn at its true chronological position even when a single legacy
+ * assistant slot expands into multiple unified assistant rows (multi-step
+ * agent turns).
+ *
+ * The trailing optimistic assistant bubble (the empty placeholder pushed on
+ * send so typing dots have a home before the first token arrives) is
+ * appended last, but only when the projection has not yet produced an
+ * assistant row to cover it.
  */
 function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[] {
   const projected = unifiedRowsToBubbles(rows);
   if (projected.length === 0) return bubbles;
 
-  // The unified log is authoritative for assistant/tool rows, but the POST
-  // send path still stores user turns only in legacy `bubbles`. Preserve the
-  // user's chronological positions and replace each legacy assistant bubble
-  // with the next canonical projection instead of moving all user turns above
-  // the entire agent narrative.
-  const out: Bubble[] = [];
-  let projectedIdx = 0;
+  type AnchoredUser = { user: Bubble; anchor: number };
+  const users: AnchoredUser[] = [];
   for (const b of bubbles) {
     if (b.role === "user") {
-      out.push(b);
-      continue;
-    }
-    const replacement = projected[projectedIdx];
-    if (replacement) {
-      out.push(replacement);
-      projectedIdx += 1;
-    } else {
-      out.push(b);
+      users.push({ user: b, anchor: b.assistantAnchor ?? users.length });
     }
   }
-  while (projectedIdx < projected.length) {
-    out.push(projected[projectedIdx]);
-    projectedIdx += 1;
+  users.sort((a, b) => a.anchor - b.anchor);
+
+  const projectedAssistantCount = projected.filter(
+    (p) => p.role === "assistant",
+  ).length;
+
+  // The optimistic trailing assistant placeholder is the empty bubble pushed
+  // by `send()` so typing dots have a home before the first token arrives.
+  // Keep it ONLY while the projection has not yet produced an assistant row
+  // for the most-recently-sent user turn — once the row exists, projection
+  // owns the rendering and the placeholder would just duplicate it.
+  const last = bubbles[bubbles.length - 1];
+  const lastUserAnchor =
+    users.length > 0 ? users[users.length - 1].anchor : 0;
+  const trailingOptimistic =
+    last &&
+    last.role === "assistant" &&
+    projectedAssistantCount <= lastUserAnchor
+      ? last
+      : null;
+
+  const out: Bubble[] = [];
+  let projAssistantCount = 0;
+  let userIdx = 0;
+  while (userIdx < users.length && users[userIdx].anchor <= 0) {
+    out.push(users[userIdx].user);
+    userIdx += 1;
   }
+  for (const p of projected) {
+    if (p.role === "assistant") {
+      projAssistantCount += 1;
+    }
+    out.push(p);
+    while (
+      userIdx < users.length &&
+      users[userIdx].anchor <= projAssistantCount
+    ) {
+      out.push(users[userIdx].user);
+      userIdx += 1;
+    }
+  }
+  while (userIdx < users.length) {
+    out.push(users[userIdx].user);
+    userIdx += 1;
+  }
+  if (trailingOptimistic) out.push(trailingOptimistic);
   return out;
 }
 
 /** One assistant bubble per assistant row; tool/error/etc. rows attach to or
- *  follow the nearest preceding assistant bubble (or open their own). */
+ *  follow the nearest preceding assistant bubble (or open their own).
+ *  Checkpoint rows emit a standalone checkpoint bubble so they render as a
+ *  clickable rewind affordance, ordered inline by `seq`. */
 function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
   const out: Bubble[] = [];
   let current: AssistantBubble | null = null;
@@ -769,8 +812,16 @@ function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
         break;
       }
       case "checkpoint": {
-        const b = ensureBubble();
-        appendAssistantText(b, `\n\n[checkpoint ${row.status}: ${row.checkpointId}]`);
+        // Standalone checkpoint bubble — clickable rewind, ordered inline.
+        out.push({
+          role: "checkpoint",
+          checkpointId: row.checkpointId,
+          status: row.status,
+          message: row.message,
+        });
+        // A subsequent text row should start a fresh assistant bubble after
+        // the checkpoint so we don't fold it into the prior one.
+        current = null;
         break;
       }
       case "optimizer": {
@@ -903,6 +954,12 @@ function applyEvent(
 function historyToBubbles(history: ChatMessage[]): Bubble[] {
   const out: Bubble[] = [];
   let pendingAssistant: AssistantBubble | null = null;
+  // Number of assistant chat-messages already emitted — written onto every
+  // user bubble as `assistantAnchor` so the unified-merge can interleave the
+  // user turn at the chronologically correct spot (matters for multi-step
+  // turns where a single legacy assistant message may correspond to several
+  // unified assistant rows).
+  let assistantCount = 0;
 
   // First pass: collect assistant text + tool_use blocks per message.
   // Then attach matching tool_results from subsequent user messages onto
@@ -912,6 +969,7 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
       if (pendingAssistant) {
         out.push(pendingAssistant);
         pendingAssistant = null;
+        assistantCount += 1;
       }
       // A user turn carrying tool_result blocks updates the prior
       // assistant's tool chips; a plain text user turn becomes its own
@@ -955,7 +1013,8 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
           )
           .map((b) => b.text)
           .join("");
-        if (text) out.push({ role: "user", text });
+        if (text)
+          out.push({ role: "user", text, assistantAnchor: assistantCount });
       }
     } else {
       // assistant

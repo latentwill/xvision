@@ -96,18 +96,31 @@ impl AgentProfile {
         match self {
             AgentProfile::Workspace => {
                 "## Agent profile: workspace\n\
-                 You are the xvision workspace assistant. Inspect existing strategies, scenarios, \
-                 eval runs, and cached market data before recommending work. Prefer typed tools \
-                 and queued xvn CLI jobs over asking the user to run commands."
+                 You are the xvision workspace assistant. You may inspect existing strategies, \
+                 scenarios, eval runs, and cached market data when it informs the user's request, \
+                 but you are FREE to design and build brand-new strategies from scratch — do not \
+                 default to recycling a library entry when the user is asking for something new. \
+                 Prefer typed tools and queued xvn CLI jobs over asking the user to run commands."
             }
             AgentProfile::StrategySetup => {
                 "## Agent profile: strategy setup\n\
                  You are focused on strategy setup: creating, editing, validating, and evaluating \
-                 strategies. Use existing strategies and existing scenarios before creating new \
-                 work. `create_strategy` always starts a blank draft — fill it in via \
-                 `create_strategy_agent` / `update_slot` / `set_mechanical_param`. When you create \
-                 a strategy, ensure it has a trader agent with an explicit provider/model before \
-                 claiming it is eval-ready. \
+                 strategies. You may consult existing strategies and scenarios for inspiration, \
+                 but you are encouraged to design fresh strategies when the user asks for something \
+                 new — do NOT default to picking an existing library entry unless the user \
+                 explicitly asks you to reuse one. \
+                 `create_strategy` always starts a blank draft — fill it in via \
+                 `create_strategy_agent` / `update_slot` / `set_mechanical_param` / `set_filter`. \
+                 ## Completion contract\n\
+                 Before you tell the user the strategy is ready (or surface the Open Strategy \
+                 card), you MUST: (1) attach a trader agent with an explicit provider/model via \
+                 `create_strategy_agent`; (2) attach any filter the user asked for via \
+                 `set_filter` and confirm the tool_result reports success; (3) ensure every \
+                 other configuration item the user requested (cadence, assets, risk preset, \
+                 timeframe, etc.) has a confirming tool_result. Do not present the strategy or \
+                 say it is ready while ANY of those tools is still pending, failed, or \
+                 unattempted. If a step keeps failing, surface the error verbatim and stop — do \
+                 not pretend it succeeded. \
                  Do not say a tool change succeeded until the tool_result says it succeeded. For \
                  strategy tools, pass `id` or `strategy_id` as a top-level field, never nested under \
                  the tool name. Ask one targeted clarification only when the available strategies/scenarios \
@@ -1132,7 +1145,7 @@ impl WizardLoop {
             (
                 "Validation stuck — operator review needed".to_string(),
                 InlineAction {
-                    label: "Open draft".into(),
+                    label: "Open Strategy".into(),
                     href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
@@ -2763,10 +2776,10 @@ fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<
             let id = result.get("id")?.as_str()?;
             action_confirmation_card(
                 format!("strategy-created:{id}"),
-                "Strategy draft created",
-                format!("Draft {id} is ready for inspection."),
+                "Strategy ready",
+                format!("Strategy {id} is ready for inspection."),
                 InlineAction {
-                    label: "Open draft".into(),
+                    label: "Open Strategy".into(),
                     href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
@@ -2832,7 +2845,7 @@ fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<
                 "Validation failed",
                 body,
                 InlineAction {
-                    label: "Open draft".into(),
+                    label: "Open Strategy".into(),
                     href: Some(format!("/strategies/{id}")),
                     command: None,
                 },
@@ -2986,7 +2999,16 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "set_filter".into(),
-            description: "Attach/replace the strategy's deterministic filter. Use `source` for JSON/TOML text (or `format`: `json|toml`) or `filter` for a full JSON filter object (both accepted).".into(),
+            description: "Attach/replace the strategy's deterministic filter. \
+                The filter is a structured DSL — NOT a single `{indicator, operator, value}` triple. \
+                Pass the full object under `filter` (or the raw text under `source` with `format`). \
+                Required fields: `display_name`, `asset_scope` (array of SYMBOL/QUOTE pairs), \
+                `timeframe` (e.g. `4h`), `conditions` (a `{\"all\":[...]}` / `{\"any\":[...]}` tree of \
+                `{lhs, op, rhs}` clauses). Optional: `cooldown_bars`, `max_wakeups_per_day`, \
+                `scan_cadence`, `wake_when_in_position`, `description`. Indicator refs go inside `lhs`/`rhs` \
+                (e.g. `atr_pct_14`, `ema_20`, `rsi_14`, `close`). \
+                Example: `{\"display_name\":\"Elevated ATR Short\",\"asset_scope\":[\"BTC/USD\",\"ETH/USD\"],\"timeframe\":\"4h\",\"cooldown_bars\":3,\"conditions\":{\"all\":[{\"lhs\":\"atr_pct_14\",\"op\":\">\",\"rhs\":0.6}]}}`. \
+                Bare keys like `indicator`/`operator`/`value`/`period` are NOT part of the schema — encode them as a `conditions` clause instead.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

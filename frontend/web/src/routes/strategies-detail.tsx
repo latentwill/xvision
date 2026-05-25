@@ -362,7 +362,7 @@ function StrategyDetailView({ id }: { id: string }) {
         <dd className="font-mono">{m.template}</dd>
         <dt>Creator</dt>
         <dd className="font-mono">{m.creator}</dd>
-        <dt>Asset universe</dt>
+        <dt>Assets</dt>
         <dd>
           {m.asset_universe.length > 0
             ? m.asset_universe.join(", ")
