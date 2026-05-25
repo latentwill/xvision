@@ -426,6 +426,53 @@ fn resolve_xvn_home() -> PathBuf {
     PathBuf::from(home).join(".xvn")
 }
 
+impl XvisionTools {
+    /// Return the sorted list of MCP tool names advertised by this server.
+    ///
+    /// This is the canonical inventory used by `crates/xvision-mcp/tests/parity.rs`
+    /// to guard against untracked additions or removals. When a tool is added
+    /// or removed from the `#[tool_router]` impl below, this constant must also
+    /// be updated — and so must
+    /// `docs/superpowers/evidence/2026-05-25-agent-cli-press-audit/mcp-parity-matrix.md`.
+    pub fn tool_names() -> Vec<&'static str> {
+        let mut names = vec![
+            "xvn_atr",
+            "xvn_bollinger",
+            "xvn_create_strategy",
+            "xvn_donchian",
+            "xvn_ema",
+            "xvn_eval_batch_run",
+            "xvn_eval_batch_status",
+            "xvn_eval_behavior",
+            "xvn_eval_compare",
+            "xvn_eval_compare_ext",
+            "xvn_eval_compare_report",
+            "xvn_eval_findings",
+            "xvn_eval_get",
+            "xvn_eval_list",
+            "xvn_eval_metrics",
+            "xvn_eval_scenarios",
+            "xvn_fib_retracements",
+            "xvn_get_strategy",
+            "xvn_health",
+            "xvn_list_templates",
+            "xvn_macd",
+            "xvn_rsi",
+            "xvn_scenario_inspect_card",
+            "xvn_scenarios_select",
+            "xvn_set_mechanical_param",
+            "xvn_set_risk_config",
+            "xvn_sma",
+            "xvn_strategy_create_atomic",
+            "xvn_strategy_validate_preflight",
+            "xvn_update_slot",
+            "xvn_validate_draft",
+        ];
+        names.sort_unstable();
+        names
+    }
+}
+
 #[tool_router(server_handler)]
 impl XvisionTools {
     pub fn new() -> Self {

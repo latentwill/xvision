@@ -27,6 +27,18 @@ use xvision_filters::{parse_json as parse_filter_json, FilterId, StrategyId};
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 use crate::json::{emit_object, ObjectFormat};
 
+/// Output format for list commands (`xvn strategy ls`).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[clap(rename_all = "kebab-case")]
+pub enum ListFormat {
+    /// One id per line, human-readable. Default.
+    Table,
+    /// Pretty-printed JSON array. Suitable for jq / scripting.
+    Json,
+    /// Single-line compact JSON array. Suitable for shell pipes.
+    JsonCompact,
+}
+
 #[derive(Args, Debug)]
 pub struct StrategyCmd {
     #[command(subcommand)]
@@ -131,6 +143,11 @@ enum StrategyAction {
         /// `agent-firing-filter-cli-verbs` acceptance #6.
         #[arg(long = "no-filter-warning", default_value_t = false)]
         no_filter_warning: bool,
+        /// Validate inputs and print a preview of the would-be strategy
+        /// without persisting anything. Exits 0 on valid input; exits with
+        /// a usage code on invalid input. No strategy or agent is created.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
     /// Edit a saved strategy. v1 ships only the firing-filter
     /// acknowledgement toggle; other edits go through the dedicated
@@ -165,8 +182,14 @@ enum StrategyAction {
         json: bool,
     },
     /// List all saved strategy ids.
+    #[command(visible_alias = "list")]
     Ls {
-        /// Emit as JSON array instead of one id per line.
+        /// Output format: `table` (default, one id per line), `json` (pretty
+        /// array), or `json-compact` (single-line array for pipes). Takes
+        /// precedence over the legacy `--json` flag when both are supplied.
+        #[arg(long, value_enum)]
+        format: Option<ListFormat>,
+        /// Emit as JSON array (legacy alias for `--format json`).
         #[arg(long)]
         json: bool,
     },
@@ -352,6 +375,11 @@ enum StrategyAction {
         /// JSON object on stdout instead of the human banner.
         #[arg(long)]
         json: bool,
+        /// Validate inputs and confirm the source strategy exists, then print
+        /// a preview of the would-be clone without writing anything. Exits 0
+        /// when the source is found; exits 4 (NotFound) when it is not.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 }
 
@@ -392,6 +420,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             avoid_regime,
             hypothesis_file,
             no_filter_warning,
+            dry_run,
         } => {
             let hypothesis_flags = HypothesisFlags {
                 family,
@@ -415,6 +444,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
                 timeframe,
                 hypothesis_flags,
                 no_filter_warning,
+                dry_run,
             )
             .await
         }
@@ -424,7 +454,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             clear_no_filter_warning,
         } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning).await,
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
-        StrategyAction::Ls { json } => ls(json).await,
+        StrategyAction::Ls { format, json } => ls(format, json).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
         StrategyAction::AddAgent {
@@ -464,7 +494,18 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             provider,
             model,
             json,
-        } => clone(&strategy_id, &name, provider.as_deref(), model.as_deref(), json).await,
+            dry_run,
+        } => {
+            clone(
+                &strategy_id,
+                &name,
+                provider.as_deref(),
+                model.as_deref(),
+                json,
+                dry_run,
+            )
+            .await
+        }
     }
 }
 
@@ -635,6 +676,7 @@ async fn new(
     timeframe: Option<String>,
     _hypothesis_flags: HypothesisFlags,
     no_filter_warning: bool,
+    dry_run: bool,
 ) -> CliResult<()> {
     // ── atomic mode: --prompt ─────────────────────────────────────────────
     if let Some(prompt_path) = prompt {
@@ -651,6 +693,7 @@ async fn new(
             timeframe,
             json,
             no_filter_warning,
+            dry_run,
         )
         .await;
     }
@@ -671,6 +714,25 @@ async fn new(
             strategy.acknowledge_no_filter = true;
         }
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+
+        if dry_run {
+            let preview = serde_json::json!({
+                "dry_run": true,
+                "action": "create",
+                "strategy_id": strategy.manifest.id,
+                "name": strategy.manifest.display_name,
+            });
+            if json {
+                crate::io::print_json(&preview)?;
+            } else {
+                eprintln!(
+                    "DRY RUN — would create strategy '{}' (id: {})",
+                    strategy.manifest.display_name, strategy.manifest.id
+                );
+            }
+            return Ok(());
+        }
+
         store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
         let id = strategy.manifest.id.clone();
         if json {
@@ -712,6 +774,7 @@ async fn new_atomic(
     timeframe: Option<String>,
     json: bool,
     no_filter_warning: bool,
+    dry_run: bool,
 ) -> CliResult<()> {
     use std::str::FromStr as _;
     use xvision_core::trading::AssetSymbol;
@@ -768,6 +831,38 @@ async fn new_atomic(
     let creator = creator
         .or_else(|| std::env::var("XVN_CREATOR").ok())
         .unwrap_or_else(|| "@anonymous".to_string());
+
+    // ── dry-run short-circuit ─────────────────────────────────────────────
+    // All inputs validated above. Print a preview and exit without touching
+    // the agent library or strategy store.
+    if dry_run {
+        let preview = serde_json::json!({
+            "dry_run": true,
+            "action": "create",
+            "strategy_id": "<minted at write>",
+            "agent_id": "<minted at write>",
+            "name": name,
+            "provider": provider,
+            "model": model,
+            "role": role,
+            "asset_universe": asset_universe,
+            "decision_cadence_minutes": cadence_minutes,
+            "creator": creator,
+        });
+        if json {
+            crate::io::print_json(&preview)?;
+        } else {
+            eprintln!(
+                "DRY RUN — would create strategy '{}' (provider: {}, model: {}, role: {}, assets: {})",
+                name,
+                provider,
+                model,
+                role,
+                asset_universe.join(", ")
+            );
+        }
+        return Ok(());
+    }
 
     let ctx = open_ctx().await?;
 
@@ -1112,14 +1207,22 @@ fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> 
     }
 }
 
-async fn ls(json: bool) -> CliResult<()> {
+async fn ls(format: Option<ListFormat>, json: bool) -> CliResult<()> {
     let ids = store().list().await.exit_with(XvnExit::Upstream)?;
-    if json {
-        crate::io::print_json(&ids)?;
-        return Ok(());
-    }
-    for id in ids {
-        println!("{id}");
+    // Resolve effective format: explicit --format wins, then --json, then default table.
+    let effective = format.unwrap_or(if json { ListFormat::Json } else { ListFormat::Table });
+    match effective {
+        ListFormat::Table => {
+            for id in ids {
+                println!("{id}");
+            }
+        }
+        ListFormat::Json => {
+            crate::io::print_json(&ids)?;
+        }
+        ListFormat::JsonCompact => {
+            crate::io::print_json_compact(&ids)?;
+        }
     }
     Ok(())
 }
@@ -1780,6 +1883,7 @@ async fn clone(
     override_provider: Option<&str>,
     override_model: Option<&str>,
     json: bool,
+    dry_run: bool,
 ) -> CliResult<()> {
     if new_name.trim().is_empty() {
         return Err(CliError::usage(anyhow::anyhow!("--name must be non-empty")));
@@ -1797,6 +1901,43 @@ async fn clone(
             return Err(CliError::usage(anyhow::anyhow!("--model requires --provider")));
         }
         _ => {}
+    }
+
+    // ── dry-run short-circuit ─────────────────────────────────────────────
+    // For clone dry-run: confirm the source strategy exists (read-only),
+    // then print a preview without writing any new strategy or agent.
+    if dry_run {
+        // Load source to confirm it exists and surface its key fields.
+        let source = store().load(source_strategy_id).await.map_err(|_| CliError {
+            exit: XvnExit::NotFound,
+            source: anyhow::anyhow!("strategy `{source_strategy_id}` not found"),
+        })?;
+
+        let preview = serde_json::json!({
+            "dry_run": true,
+            "action": "clone",
+            "source_strategy_id": source_strategy_id,
+            "source_name": source.manifest.display_name,
+            "new_name": new_name,
+            "new_strategy_id": "<minted at write>",
+            "provider": override_provider,
+            "model": override_model,
+        });
+        if json {
+            crate::io::print_json(&preview)?;
+        } else {
+            eprintln!(
+                "DRY RUN — would clone '{}' ({}) → '{}' (new id: <minted at write>{})",
+                source.manifest.display_name,
+                source_strategy_id,
+                new_name,
+                match (override_provider, override_model) {
+                    (Some(p), Some(m)) => format!(", provider: {p}, model: {m}"),
+                    _ => String::new(),
+                }
+            );
+        }
+        return Ok(());
     }
 
     let ctx = open_ctx().await?;

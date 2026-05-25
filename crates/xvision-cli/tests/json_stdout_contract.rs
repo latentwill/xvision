@@ -225,6 +225,42 @@ const CASES: &[Case] = &[
         pass_json: true,
         extra_args: &[],
     },
+    // ── agent ──────────────────────────────────────────────────────────────
+    // `xvn agent ls --format json` uses --format, not --json; this row
+    // exercises the ObjectFormat-style JSON path (distinct from --json flag).
+    // An empty workspace returns an empty JSON array on stdout.
+    Case {
+        description: "xvn agent ls --format json (empty home)",
+        args: &["agent", "ls", "--format", "json"],
+        pass_json: false,
+        extra_args: &[],
+    },
+    // `xvn agent create --dry-run --format json-compact` must emit a
+    // single-line JSON object on stdout (no trailing text, no newline
+    // beyond the one that terminates the println!). No XVN_HOME write
+    // occurs because --dry-run skips agents_api::create.
+    Case {
+        description: "xvn agent create --dry-run --format json-compact (preview only)",
+        args: &[
+            "agent",
+            "create",
+            "--name",
+            "dry-run-contract-agent",
+            "--capability",
+            "filter",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-haiku-4-5",
+            "--system-prompt",
+            "You are a regime filter for the trader agent. Inspect the supplied OHLCV context, recent volatility, and risk limits, and emit JSON so the downstream trader knows when to dispatch. Stay grounded.",
+            "--format",
+            "json-compact",
+            "--dry-run",
+        ],
+        pass_json: false,
+        extra_args: &[],
+    },
 ];
 
 /// Run one case and return `(stdout_bytes, stderr_string)`.
@@ -293,6 +329,130 @@ fn every_audit_verb_produces_clean_stdout_under_json() {
             failures.join("\n\n"),
         );
     }
+}
+
+/// Additional contract check for `xvn agent create --dry-run --format
+/// json-compact`: stdout must be a single line (no embedded newlines)
+/// containing exactly one parseable JSON object with `"dry_run":true`
+/// and a `"would_create"` key.
+#[test]
+fn agent_create_dry_run_json_compact_is_single_line_object() {
+    let dir = tempdir().unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_xvn"));
+    cmd.env("XVN_HOME", dir.path());
+    cmd.env_remove("XVN_REMOTE_URL");
+    cmd.args(&[
+        "agent",
+        "create",
+        "--name",
+        "compact-line-contract-agent",
+        "--capability",
+        "trader",
+        "--provider",
+        "openrouter",
+        "--model",
+        "anthropic/claude-3.5-sonnet",
+        "--system-prompt",
+        "You are a regime filter for the trader agent. Inspect the supplied OHLCV context, recent volatility, and risk limits, and emit JSON so the downstream trader knows when to dispatch. Stay grounded.",
+        "--format",
+        "json-compact",
+        "--dry-run",
+    ]);
+    let out = cmd.output().expect("spawn xvn");
+    assert_eq!(
+        out.status.code().expect("signal?"),
+        0,
+        "--dry-run must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let stdout = String::from_utf8(out.stdout.clone()).expect("stdout is UTF-8");
+    let trimmed = stdout.trim_end_matches(['\n', '\r', ' ', '\t']);
+
+    // Single-line: no embedded newlines in the JSON payload itself.
+    assert!(
+        !trimmed.contains('\n'),
+        "json-compact stdout must be a single line; got:\n{trimmed}",
+    );
+
+    // Must parse as a JSON object.
+    let val: serde_json::Value = serde_json::from_str(trimmed).expect("stdout must be valid JSON");
+    assert_eq!(val["dry_run"], true, "dry_run field must be true");
+    assert!(
+        val.get("would_create").is_some(),
+        "would_create key must be present; got: {val}"
+    );
+}
+
+#[test]
+fn agent_create_dry_run_long_unicode_prompt_does_not_panic() {
+    let dir = tempdir().unwrap();
+    let prompt = format!("{}é{}", "a".repeat(119), "b".repeat(80));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_xvn"));
+    cmd.env("XVN_HOME", dir.path());
+    cmd.env_remove("XVN_REMOTE_URL");
+    cmd.args(&[
+        "agent",
+        "create",
+        "--name",
+        "unicode-preview-agent",
+        "--capability",
+        "trader",
+        "--provider",
+        "openrouter",
+        "--model",
+        "anthropic/claude-3.5-sonnet",
+        "--system-prompt",
+        &prompt,
+        "--format",
+        "json-compact",
+        "--dry-run",
+    ]);
+
+    let out = cmd.output().expect("spawn xvn");
+    assert_eq!(
+        out.status.code().expect("signal?"),
+        0,
+        "--dry-run must not panic on multibyte prompt truncation; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let val: serde_json::Value = serde_json::from_str(stdout.trim_end()).expect("stdout must be valid JSON");
+    assert_eq!(val["dry_run"], true);
+    let preview = val["would_create"]["system_prompt_preview"]
+        .as_str()
+        .expect("preview must be a string");
+    assert!(
+        preview.contains('é'),
+        "preview should preserve valid UTF-8 chars; got: {preview}"
+    );
+}
+
+/// Additional contract check: `xvn agent ls --format json` on an empty
+/// home emits ONLY a valid JSON array (the empty array `[]`) on stdout.
+#[test]
+fn agent_ls_format_json_empty_home_emits_json_array() {
+    let dir = tempdir().unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_xvn"));
+    cmd.env("XVN_HOME", dir.path());
+    cmd.env_remove("XVN_REMOTE_URL");
+    cmd.args(&["agent", "ls", "--format", "json"]);
+    let out = cmd.output().expect("spawn xvn");
+    assert_eq!(
+        out.status.code().expect("signal?"),
+        0,
+        "agent ls on empty home must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let stdout = out.stdout.clone();
+    let trimmed = trim_trailing_ws(&stdout);
+    let val: serde_json::Value = serde_json::from_slice(trimmed).expect("stdout must be valid JSON");
+    assert!(
+        val.is_array(),
+        "agent ls --format json must emit a JSON array; got: {val}",
+    );
 }
 
 fn trim_trailing_ws(buf: &[u8]) -> &[u8] {

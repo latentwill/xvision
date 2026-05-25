@@ -184,6 +184,13 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
 
 /// Mutating, destructive, or host-admin paths below otherwise-supported heads.
 const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
+    // `agent create` is a write path: persists a new agent record in the
+    // workspace library. Read-only agent verbs (get, ls, lint) remain
+    // allowed. Added with the agent dry-run + allowlist gap fix.
+    DeniedNested {
+        head: "agent",
+        path: &["create"],
+    },
     DeniedNested {
         head: "bars",
         path: &["rm"],
@@ -285,6 +292,30 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
         path: &["migrate"],
     },
 ];
+
+/// Every real command/subcommand path the remote policy *references*
+/// (allowed heads, strict-template heads, and nested-denied paths), for
+/// the CLI-surface drift test. Excludes pseudo-flags (--help/-h/--version/-V/help)
+/// and the defensive DENYLIST (which may name commands that don't exist as
+/// xvn subcommands on purpose).
+pub fn referenced_command_paths() -> Vec<Vec<&'static str>> {
+    let mut paths: Vec<Vec<&'static str>> = Vec::new();
+    for t in STRICT_TEMPLATES {
+        paths.push(t.head.to_vec());
+    }
+    for s in SUPPORTED_SUBCOMMANDS {
+        if s.starts_with('-') || *s == "help" {
+            continue;
+        }
+        paths.push(vec![*s]);
+    }
+    for d in DENIED_NESTED_SUBCOMMANDS {
+        let mut p = vec![d.head];
+        p.extend_from_slice(d.path);
+        paths.push(p);
+    }
+    paths
+}
 
 /// Check argv against the remote CLI policy. Empty argv is the caller's
 /// concern (the route validates that separately) — this function
@@ -548,5 +579,25 @@ mod tests {
     #[test]
     fn top_level_migrate_is_rejected() {
         assert_reject(&["migrate", "--dry-run"], "not allowed over remote cli");
+    }
+
+    // ── agent allowlist gap: create denied, read-only paths allowed ───────
+
+    #[test]
+    fn agent_create_is_rejected_remotely() {
+        assert_reject(
+            &["agent", "create", "--name", "remote-agent"],
+            "not allowed over remote cli",
+        );
+    }
+
+    #[test]
+    fn agent_read_only_paths_are_allowed() {
+        // get (alias show) — reads a single agent by id
+        assert_allow(&["agent", "get", "ag_1"]);
+        // ls (alias list) — read-only listing
+        assert_allow(&["agent", "ls"]);
+        // lint — read-only diagnostic scan
+        assert_allow(&["agent", "lint"]);
     }
 }

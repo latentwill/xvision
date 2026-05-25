@@ -23,13 +23,25 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::strategies_folder::prepop::InitOptions;
 use xvision_engine::strategies_folder::{self, prepop, ImportOptions, ImportOutcome, SUBFOLDER_ALLOWLIST};
 
 use crate::exit::{CliError, CliResult, XvnExit};
+
+/// Output format for `xvn strategies import` and similar output commands.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[clap(rename_all = "kebab-case")]
+pub enum ImportFormat {
+    /// Human-readable summary. Default.
+    Table,
+    /// Pretty-printed JSON. Suitable for jq / scripting.
+    Json,
+    /// Single-line compact JSON. Suitable for shell pipes.
+    JsonCompact,
+}
 
 /// `xvn strategies` parent verb. Sub-verbs live as variants of
 /// [`StrategiesOp`] so additional operators (future `compact`, etc.)
@@ -79,8 +91,13 @@ pub enum StrategiesOp {
         /// Default behavior overwrites (most-recent-edit wins).
         #[arg(long = "no-clobber", default_value_t = false)]
         no_clobber: bool,
-        /// Emit the resulting `ImportOutcome` as JSON instead of a
-        /// human-readable summary.
+        /// Output format: `table` (default, human summary), `json` (pretty
+        /// JSON), or `json-compact` (single-line for pipes). Takes
+        /// precedence over `--json` when both are supplied.
+        #[arg(long, value_enum)]
+        format: Option<ImportFormat>,
+        /// Emit the resulting `ImportOutcome` as JSON (legacy alias for
+        /// `--format json`).
         #[arg(long)]
         json: bool,
     },
@@ -106,8 +123,9 @@ pub async fn run(cmd: StrategiesCmd) -> CliResult<()> {
             path,
             to,
             no_clobber,
+            format,
             json,
-        } => run_import(path, to, no_clobber, json).await,
+        } => run_import(path, to, no_clobber, format, json).await,
     }
 }
 
@@ -180,7 +198,13 @@ fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
     }
 }
 
-async fn run_import(path: PathBuf, to: Option<String>, no_clobber: bool, json: bool) -> CliResult<()> {
+async fn run_import(
+    path: PathBuf,
+    to: Option<String>,
+    no_clobber: bool,
+    format: Option<ImportFormat>,
+    json: bool,
+) -> CliResult<()> {
     if let Some(name) = to.as_deref() {
         if !SUBFOLDER_ALLOWLIST.contains(&name) {
             return Err(CliError::usage(anyhow::anyhow!(
@@ -202,24 +226,30 @@ async fn run_import(path: PathBuf, to: Option<String>, no_clobber: bool, json: b
     .await
     .map_err(|e| api_to_cli("strategies import", e))?;
 
-    emit_outcome(&outcome, json)
+    // Resolve effective format: explicit --format wins, then --json, then table.
+    let effective = format.unwrap_or(if json {
+        ImportFormat::Json
+    } else {
+        ImportFormat::Table
+    });
+    emit_outcome(&outcome, effective)
 }
 
-fn emit_outcome(outcome: &ImportOutcome, json: bool) -> CliResult<()> {
-    if json {
-        let body = serde_json::to_string_pretty(outcome)
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize ImportOutcome: {e}")))?;
-        println!("{body}");
-        return Ok(());
+fn emit_outcome(outcome: &ImportOutcome, format: ImportFormat) -> CliResult<()> {
+    match format {
+        ImportFormat::Json => crate::io::print_json(outcome),
+        ImportFormat::JsonCompact => crate::io::print_json_compact(outcome),
+        ImportFormat::Table => {
+            println!("imported: {}", outcome.entry.rel_path);
+            if let Some(summary) = &outcome.summary {
+                println!("summary:  {}", summary.rel_path);
+            }
+            for finding in &outcome.findings {
+                eprintln!("finding[{}]: {}", finding.code, finding.detail);
+            }
+            Ok(())
+        }
     }
-    println!("imported: {}", outcome.entry.rel_path);
-    if let Some(summary) = &outcome.summary {
-        println!("summary:  {}", summary.rel_path);
-    }
-    for finding in &outcome.findings {
-        eprintln!("finding[{}]: {}", finding.code, finding.detail);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
