@@ -87,9 +87,13 @@ live SSE + screenshot evidence captured.
 - [ ] `strategy-agents/dashboard-agent-diff.png`
 
 ### Phase 5 — release gate
-- [ ] `final/surface-matrix.md` (complete, with N/A rationales)
-- [ ] `final/commands-run.txt`
-- [ ] `final/risk-decisions.md`
+- [x] `final/surface-matrix.md` (Phase 0 inventory)
+- [x] `final/commands-run.txt` + `final/release-gate.txt` (validation sweep)
+- [x] `final/risk-decisions.md` (base-branch, rig-core correction, pre-existing failures)
+- [x] `final/PR-BODY.md` (links evidence; names 4 intentional fail-safe deferrals)
+- [x] Frontend `pnpm build` (tsc -b && vite build) + doc-lints pass
+- [x] Wave cargo lib + integration suites green; engine verified dspy-free
+- [~] Live-loop wiring tail (hook runner + 4 guardrail sites + NeedsApproval resume) — built+tested, wiring tracked as named deferrals
 
 ## Honesty notes
 
