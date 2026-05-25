@@ -131,14 +131,16 @@ const MIGRATION_042_SESSION_EVENTS_INDEX: &str =
 /// straight off the committed migration file so the runtime path and the file
 /// never drift.
 const MIGRATION_043_TOOL_POLICIES: &str = include_str!("../../migrations/043_tool_policies.sql");
-/// Phase 2.5 (chat-rail checkpoints): the `checkpoints` snapshot table. Applied
-/// via `migrate_checkpoints` (guarded on the table's existence) so re-opening an
-/// already-migrated DB is a no-op. Like `session_events` the file is two
-/// statements — CREATE TABLE + CREATE INDEX — which a single `sqlx::query`
-/// cannot run together, so the DDL is duplicated as the two constants below and
-/// each runs on its own.
+/// Phase 2.5 (chat-rail checkpoints): the `chat_checkpoints` snapshot table.
+/// NB the name is `chat_checkpoints`, not `checkpoints` — migration 018 already
+/// owns a `checkpoints` table for agent-run replay, a different concept.
+/// Applied via `migrate_checkpoints` (guarded on the table's existence) so
+/// re-opening an already-migrated DB is a no-op. Like `session_events` the file
+/// is two statements — CREATE TABLE + CREATE INDEX — which a single
+/// `sqlx::query` cannot run together, so the DDL is duplicated as the two
+/// constants below and each runs on its own.
 const MIGRATION_044_CHECKPOINTS_TABLE: &str =
-    "CREATE TABLE IF NOT EXISTS checkpoints (\
+    "CREATE TABLE IF NOT EXISTS chat_checkpoints (\
          checkpoint_id TEXT PRIMARY KEY, \
          session_id    TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE, \
          created_at    TEXT NOT NULL, \
@@ -148,7 +150,7 @@ const MIGRATION_044_CHECKPOINTS_TABLE: &str =
          label         TEXT\
      )";
 const MIGRATION_044_CHECKPOINTS_INDEX: &str =
-    "CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id, created_at)";
+    "CREATE INDEX IF NOT EXISTS idx_chat_checkpoints_session ON chat_checkpoints(session_id, created_at)";
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -1133,11 +1135,13 @@ async fn migrate_tool_policies(pool: &SqlitePool) -> ApiResult<()> {
 }
 
 async fn migrate_checkpoints(pool: &SqlitePool) -> ApiResult<()> {
-    // Phase 2.5: the `checkpoints` snapshot table + its session index. Two DDL
-    // statements run separately (one `sqlx::query` cannot batch them). Both use
-    // IF NOT EXISTS so a re-open is a no-op; the table-existence guard skips the
-    // pair entirely on an already-migrated DB.
-    if !table_exists(pool, "checkpoints").await? {
+    // Phase 2.5: the `chat_checkpoints` snapshot table + its session index. Two
+    // DDL statements run separately (one `sqlx::query` cannot batch them). Both
+    // use IF NOT EXISTS so a re-open is a no-op; the table-existence guard skips
+    // the pair entirely on an already-migrated DB. The table is named
+    // `chat_checkpoints` because migration 018 already owns `checkpoints` (the
+    // agent-run replay table).
+    if !table_exists(pool, "chat_checkpoints").await? {
         sqlx::query(MIGRATION_044_CHECKPOINTS_TABLE).execute(pool).await?;
         sqlx::query(MIGRATION_044_CHECKPOINTS_INDEX).execute(pool).await?;
     }
@@ -1296,19 +1300,20 @@ mod migration_registry_tests {
         assert_eq!(auto_approve, 0, "auto_approve defaults to 0");
     }
 
-    /// Phase 2.5: migration 044 (`checkpoints`) is applied by the
+    /// Phase 2.5: migration 044 (`chat_checkpoints`) is applied by the
     /// hand-maintained `ApiContext::open` registry via `migrate_checkpoints`,
     /// not `sqlx::migrate!`. Without the wiring the table never exists at
     /// runtime and the Checkpointer fails with "no such table". This proves the
     /// helper creates the table + index on a fresh DB, that every column exists,
-    /// and that re-running is a no-op.
+    /// and that re-running is a no-op. The table is named `chat_checkpoints` to
+    /// avoid colliding with the agent-run `checkpoints` table from migration 018.
     #[tokio::test]
     async fn migrate_checkpoints_creates_table_idempotently() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        assert!(!table_exists(&pool, "checkpoints").await.unwrap());
+        assert!(!table_exists(&pool, "chat_checkpoints").await.unwrap());
 
         migrate_checkpoints(&pool).await.unwrap();
-        assert!(table_exists(&pool, "checkpoints").await.unwrap());
+        assert!(table_exists(&pool, "chat_checkpoints").await.unwrap());
         for col in [
             "checkpoint_id",
             "session_id",
@@ -1319,7 +1324,7 @@ mod migration_registry_tests {
             "label",
         ] {
             assert!(
-                table_has_column(&pool, "checkpoints", col).await.unwrap(),
+                table_has_column(&pool, "chat_checkpoints", col).await.unwrap(),
                 "column {col} missing after migrate_checkpoints"
             );
         }

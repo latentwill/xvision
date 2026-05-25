@@ -3,6 +3,11 @@
 -- Phase 2.5 of the chat-rail / DSPy / strategy-agents wave
 -- (docs/superpowers/specs/2026-05-24-chat-rail-and-strategy-agents-evaluation.md).
 --
+-- NOTE on the table name: migration 018 already owns a `checkpoints` table for
+-- agent-run replay (run_id/sequence/span_id). This is a DIFFERENT concept — the
+-- chat-rail authoring snapshot — so it lives in `chat_checkpoints` to avoid the
+-- name collision.
+--
 -- Checkpoint + restore for the chat rail. A checkpoint is an immutable
 -- snapshot of a session's mutable authoring artifacts taken *before* a
 -- mutating tool runs, so an operator can rewind a bad edit. The snapshot is
@@ -34,7 +39,7 @@
 -- Wired at runtime via `migrate_checkpoints` in `ApiContext::open` (the
 -- hand-maintained registry; this repo does NOT apply migrations through
 -- `sqlx::migrate!`). Without that wiring the table never exists at runtime.
-CREATE TABLE IF NOT EXISTS checkpoints (
+CREATE TABLE IF NOT EXISTS chat_checkpoints (
     checkpoint_id TEXT PRIMARY KEY,           -- ULID
     session_id    TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
     created_at    TEXT NOT NULL,              -- RFC3339 UTC
@@ -44,4 +49,4 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     label         TEXT                        -- optional operator label
 );
 
-CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_checkpoints_session ON chat_checkpoints(session_id, created_at);
