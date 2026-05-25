@@ -125,6 +125,7 @@ const chartPayload: ScenarioChartPayload = {
     atr_14: [],
   },
   cache_status: { type: "NotCached", expected_count: 540 },
+  preview_asset: "BTC",
 };
 
 function renderRoute() {
@@ -361,7 +362,60 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     fireEvent.change(selector, { target: { value: "1h" } });
 
     await waitFor(() => {
-      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(scenario.id, "1h");
+      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
+        scenario.id,
+        "1h",
+        "BTC/USD",
+      );
+    });
+  });
+
+  it("refetches the scenario chart when the preview asset changes", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+
+    renderRoute();
+
+    // The standalone preview defaults to BTC/USD.
+    await waitFor(() => {
+      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
+        scenario.id,
+        "4h",
+        "BTC/USD",
+      );
+    });
+
+    const assetSelect = await screen.findByLabelText("Preview asset");
+    fireEvent.change(assetSelect, { target: { value: "ETH/USD" } });
+
+    await waitFor(() => {
+      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
+        scenario.id,
+        "4h",
+        "ETH/USD",
+      );
+    });
+  });
+
+  it("fetches bars for the selected preview asset", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+    vi.mocked(cliApi.createCliJob).mockResolvedValue({
+      job_id: "job-1",
+      status: "queued",
+    });
+
+    renderRoute();
+
+    const assetSelect = await screen.findByLabelText("Preview asset");
+    fireEvent.change(assetSelect, { target: { value: "ETH/USD" } });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Fetch bars" }));
+
+    await waitFor(() => {
+      expect(cliApi.createCliJob).toHaveBeenCalledWith({
+        argv: expect.arrayContaining(["--asset", "ETH/USD"]),
+      });
     });
   });
 });
