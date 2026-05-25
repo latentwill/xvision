@@ -46,6 +46,27 @@ event projection layer do not rewrite Cline internals.
   plan doc into the Cline branch outran the allowlist). Added both paths to
   `ALLOW`. Guard now passes; this unblocks `board-lint`'s acpx gate.
 
+## Plan correction — no rig-core in the workspace (from Phase 3.1 spike)
+
+The wave plan (and the 2026-05-21 optimizer handoff) frames Phase 3.3 as a
+"rig-core completion-model adapter… backed by the same ClineSDK behavior used
+by runtime sessions." The dspy-rs spike found **the workspace does not use
+rig-core at all** — the live LLM path is raw `reqwest` HTTP (`LlmDispatch`) plus
+the Cline sidecar. `rig-core` only enters transitively *through* `dspy-rs`.
+
+Consequence for Phase 3.3: there is no existing rig-core runtime to "match." The
+adapter must bridge dspy-rs's LM interface to the same dispatch behavior runtime
+sessions use (Cline sidecar / `LlmDispatch`), implemented as a rig-core
+completion model because dspy-rs consumes rig-core internally — not as a match to
+a (non-existent) workspace rig-core. Recorded so the Phase 3 implementer does not
+hunt for a rig-core integration that isn't there.
+
+Decision: `dspy-rs = "=0.7.3"` pinned in a new `xvision-dspy` crate **excluded
+from `default-members`** so its 93-package transitive tree (arrow/parquet 56.x,
+foyer, hf-hub, rig-core 0.22) never enters `xvision-engine` or the slim runtime
+image. CI uses dspy-rs's built-in `DummyLM` (deterministic, no network); live
+provider proof is opt-in. Full evidence: `dspy/dependency-spike.txt`.
+
 ## Evidence honesty (running)
 
 - Cline live record→sidecar wiring is incomplete on the base (handoff follow-up

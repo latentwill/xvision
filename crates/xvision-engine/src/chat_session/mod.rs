@@ -23,4 +23,4 @@ pub use rich_blocks::{
     InlineChartSeries, InlineChartSource, InlineMetric, InlinePoint, InlineTone, RichBlockError,
     RichContentBlock,
 };
-pub use store::{ChatMessage, ChatSessionStore, ChatSessionSummary};
+pub use store::{ChatMessage, ChatSessionRailState, ChatSessionStore, ChatSessionSummary};
