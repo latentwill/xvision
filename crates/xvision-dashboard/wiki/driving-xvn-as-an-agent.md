@@ -258,6 +258,137 @@ clients but is not on the hot path. See
 `xvn fire-trade --venue orderly` against mainnet are deliberately out of the
 default `xvn` binary. See `docs/cli-non-surfaced.md`.
 
+## Driving the chat rail (conversational surface)
+
+The sections above cover the **automation** surface: typed `xvn` verbs with
+`--json` shapes for a non-interactive loop. The **chat rail** is the separate
+conversational surface — a persistent session in the dashboard where an agent
+(or a human) drives xvision in natural language, with a unified event stream and
+server-enforced safety. Its HTTP endpoints are stable enough to drive directly,
+unlike the general dashboard CRUD API.
+
+### Unified event stream
+
+A session emits one ordered, replayable event log. Connect with:
+
+```
+GET /api/chat-rail/sessions/:id/stream?after_seq=<n>
+```
+
+`after_seq` defaults to `-1` (replay everything). The stream **replays**
+persisted events past the cursor, emits a `replay_complete` marker carrying the
+`last_seq` it replayed, then **tails live** events. Reconnect after a drop by
+passing the last `seq` you saw as `after_seq` — replay is idempotent because
+every event has a stable `event_id` and a monotonic per-session `seq`. A gap in
+`seq` means a dropped event.
+
+Every row is a `UnifiedEvent` envelope (`event_id`, `session_id`, `run_id?`,
+`span_id?`, `parent_event_id?`, `seq`, `ts`, `scope`, `actor`, `source`,
+`blob_hash?`, `payload`). The `payload` is adjacently tagged
+(`{ "kind": "...", "data": { … } }`); the SSE `event:` name is the same
+snake_case `kind`. Key kinds:
+
+- Session lifecycle: `session_created`, `session_resumed`, `session_interrupted`,
+  `session_completed`, `session_failed`.
+- Assistant output: `assistant_message_started`, `assistant_token_delta`,
+  `assistant_content_block`, `assistant_message_done`.
+- Tool lifecycle: `tool_requested`, `tool_policy_checked`, `tool_approved`,
+  `tool_started`, `tool_delta`, `tool_finished`, `tool_failed`,
+  `tool_cancelled`, `tool_denied`.
+- Checkpoints: `checkpoint_created`, `checkpoint_restored`,
+  `checkpoint_restore_failed`.
+- Focus chain: `focus_loaded`, `focus_edited`, `focus_injected`.
+- Optimization (surfaced live from offline runs): `optimization_candidate_started`,
+  `optimization_candidate_metric` (carries `split`), `optimization_candidate_selected`,
+  `optimization_completed`.
+- Typed errors (never silent): `error_missing_capability`, `error_missing_tool`,
+  `error_invalid_schema`, `error_provider_unavailable`, `error_policy_denied`,
+  `error_persistence_failed`.
+
+Terminal events (`run_finished`, `run_interrupted`, `session_completed`,
+`session_failed`) close the stream. Order + dedupe on `(session_id, seq)`; do
+not assume one event kind per row id.
+
+### Research / Act mode
+
+A session is in one of two modes, server-enforced:
+
+```
+POST /api/chat-rail/sessions/:id/mode   { "mode": "research" | "act" }
+```
+
+- **research** — read tools auto-run; **write tools are denied** before they
+  execute. Safe for exploration.
+- **act** — write tools are allowed, subject to the tool policy below.
+
+Enforcement reads the **persisted mode column** before every write tool — the
+client cannot assert its own mode at execution time. A write tool attempted in
+research mode is denied and emits a `tool_denied` row with a stable code
+(e.g. `write_tool_in_research_mode`); it never runs. Setting an invalid mode is
+a validation error; an unknown session id is `404`.
+
+### Three-state tool policy
+
+Per-scope, per-tool policy overrides the class default:
+
+```
+GET /api/chat-rail/tool-policy?scope=<scope>          # omit scope ⇒ global
+PUT /api/chat-rail/tool-policy   { "scope"?, "tool_name", "enabled", "auto_approve" }
+```
+
+The `(enabled, auto_approve)` pair encodes three states:
+
+| State | enabled | auto_approve | Behaviour |
+|---|---|---|---|
+| Auto | true | true | Runs without prompting. |
+| Ask | true | false | Needs approval before running. |
+| Disabled | false | — | Hidden from the model; denied if called anyway. |
+
+A tool absent from the list uses its **class default**: read tools default to
+Auto, write tools default to Ask. The classifier fails safe — an unknown tool is
+treated as a write. Policy is keyed by scope and scopes are isolated.
+
+### Focus chain
+
+Each scope has a durable `focus.md` the rail re-injects into context each turn —
+a persistent intent/working-set note that survives across turns and reconnects:
+
+```
+GET /api/chat-rail/focus?scope_kind=<kind>&scope_id=<id>
+PUT /api/chat-rail/focus   { focus content }
+```
+
+The file lives at `$XVN_HOME/scopes/<scope_kind>/<scope_id>/focus.md` (a
+workspace-scoped focus uses a sentinel id). Path components are validated:
+absolute paths, separators, `..` traversal, empty/dot/NUL components are
+rejected before any I/O, so a focus write can never escape `$XVN_HOME/scopes/`.
+Editing the focus changes its content hash and emits a `focus_edited` event;
+re-injection each turn emits `focus_injected`.
+
+### Checkpoints & restore
+
+The rail writes a checkpoint before each mutating tool runs, so a session can be
+rewound:
+
+```
+GET  /api/chat-rail/sessions/:id/checkpoints        # newest first
+POST /api/chat-rail/checkpoints/:cid/restore
+```
+
+Restore rewinds the captured artifacts (e.g. `strategy`, `agent_slot`,
+`policy`, `focus`) to the snapshot — a strategy restore is **byte-identical** to
+its pre-mutation state — and emits a `checkpoint_restored` row listing what was
+rewound. A restore of an unknown checkpoint is `404` and is non-destructive; a
+restore whose blob is missing emits a typed `checkpoint_restore_failed` and
+changes nothing.
+
+### What stays on the automation CLI
+
+The rail is the *conversational* surface; the `xvn` automation loop above is
+still the contract for headless batch/eval/experiment work. Don't route a
+non-interactive eval loop through the rail, and don't regex the SSE stream —
+order and dedupe on `(session_id, seq)` and branch on the typed `kind`.
+
 ## Cross-references
 
 - [Strategies](/docs?slug=strategies) — strategy anatomy, atomic create, and
@@ -269,3 +400,7 @@ default `xvn` binary. See `docs/cli-non-surfaced.md`.
   structure, and update contract
 - [CLI Reference](/docs?slug=cli-reference) — complete flag inventory for every
   `xvn` verb
+- [Agents](/docs?slug=agents) — capabilities, diagnostics readiness, and the
+  Improve-this-agent flow
+- [Optimizer](/docs?slug=optimizer) — offline prompt/demo optimization and
+  the optimization event kinds surfaced in the rail
