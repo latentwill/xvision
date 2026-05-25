@@ -124,7 +124,12 @@ pub enum CapabilityStatus {
     /// A tool the capability requires (see [`required_tools_for`]) is not
     /// granted by the slot's `allowed_tools` or the manifest's
     /// `required_tools`. Hard blocker. Carries the missing tool name.
-    MissingTool(String),
+    ///
+    /// Modeled as a struct variant (`{ tool }`) rather than a tuple
+    /// newtype so it round-trips under serde's internal tagging
+    /// (`#[serde(tag = "kind")]`), which cannot serialize a tagged
+    /// newtype wrapping a primitive.
+    MissingTool { tool: String },
     /// The capability's runtime handler does not exist yet (Phase A
     /// persists the shape; Phase B implements the dispatcher). Hard
     /// blocker for launch but distinct from a misconfiguration.
@@ -147,7 +152,7 @@ impl CapabilityStatus {
             self,
             CapabilityStatus::MissingPrompt
                 | CapabilityStatus::MissingModelBinding
-                | CapabilityStatus::MissingTool(_)
+                | CapabilityStatus::MissingTool { .. }
                 | CapabilityStatus::Unsupported
         )
     }
@@ -159,7 +164,7 @@ impl CapabilityStatus {
             CapabilityStatus::Ready => "ready",
             CapabilityStatus::MissingPrompt => "missing_prompt",
             CapabilityStatus::MissingModelBinding => "missing_model_binding",
-            CapabilityStatus::MissingTool(_) => "missing_tool",
+            CapabilityStatus::MissingTool { .. } => "missing_tool",
             CapabilityStatus::Unsupported => "unsupported",
             CapabilityStatus::Optimizable => "optimizable",
             CapabilityStatus::Optional => "optional",
@@ -384,7 +389,9 @@ fn compute_status(
     }
     for tool in required_tools_for(cap) {
         if !tool_granted(strategy, tool) {
-            return CapabilityStatus::MissingTool((*tool).to_string());
+            return CapabilityStatus::MissingTool {
+                tool: (*tool).to_string(),
+            };
         }
     }
 

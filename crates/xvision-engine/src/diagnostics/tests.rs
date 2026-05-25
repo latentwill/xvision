@@ -170,7 +170,10 @@ fn trader_missing_required_tool_blocks_launch() {
     assert_eq!(diag.required_unmet.len(), 1);
     let unmet = &diag.required_unmet[0];
     assert_eq!(unmet.capability, Capability::Trader);
-    assert_eq!(unmet.status, CapabilityStatus::MissingTool("ohlcv".into()));
+    assert_eq!(
+        unmet.status,
+        CapabilityStatus::MissingTool { tool: "ohlcv".into() }
+    );
 
     let err = assert_launchable(&diag).unwrap_err();
     match err {
@@ -404,9 +407,10 @@ fn strategy_diagnostics_serde_round_trips() {
 
     // The tagged-enum status serializes with a `kind` discriminator and
     // MissingTool carries its payload.
-    let mt = CapabilityStatus::MissingTool("ohlcv".into());
+    let mt = CapabilityStatus::MissingTool { tool: "ohlcv".into() };
     let v = serde_json::to_value(&mt).unwrap();
     assert_eq!(v["kind"], "missing_tool");
+    assert_eq!(v["tool"], "ohlcv");
 }
 
 // ── activates=None falls back to the slot's first declared capability ────
