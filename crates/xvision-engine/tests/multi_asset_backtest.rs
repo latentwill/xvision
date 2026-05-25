@@ -22,7 +22,7 @@ use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::scenario::Scenario;
 use xvision_engine::eval::store::RunStore;
-use xvision_engine::strategies::exec_mode::ExecutionMode;
+use xvision_engine::strategies::exec_mode::{CapitalMode, ExecutionMode};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
@@ -431,5 +431,98 @@ async fn portfolio_mode_returns_not_implemented() {
     assert!(
         msg.contains("portfolio"),
         "error must name the portfolio mode, got: {msg}"
+    );
+}
+
+/// Not-implemented guard: `ExecutionMode::Custom(_)` is stored as experimental
+/// but rejected at run time in v1. Flips to a behavior test when a concrete
+/// custom mode is implemented. (Pins existing behavior — see Phase 3 spec.)
+#[tokio::test]
+async fn custom_execution_mode_returns_not_implemented() {
+    let store = fresh_store().await;
+    let scenario = asset_free_scenario();
+    let strategy = build_strategy(
+        "01TESTCUSTOMEXECMODE000000",
+        ExecutionMode::Custom("rotate".into()),
+    );
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> = BTreeMap::from([
+        (AssetSymbol::Btc, daily_bars(3, 50_000.0)),
+        (AssetSymbol::Eth, daily_bars(3, 3_000.0)),
+    ]);
+    let executor = Executor::new().with_asset_bars(asset_bars);
+
+    let err = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect_err("custom execution_mode must error in v1");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("not yet implemented"),
+        "error must say not yet implemented, got: {msg}"
+    );
+    assert!(
+        msg.contains("custom:rotate"),
+        "error must name the custom mode, got: {msg}"
+    );
+}
+
+/// Not-implemented guard: `CapitalMode::PerAsset` (segregated per-asset
+/// sleeves) is stored as experimental but rejected at run time in v1. Flips to
+/// a behavior test when sleeve accounting is implemented. (Pins existing
+/// behavior — see Phase 3 spec.)
+#[tokio::test]
+async fn capital_mode_per_asset_returns_not_implemented() {
+    let store = fresh_store().await;
+    let scenario = asset_free_scenario();
+    let mut strategy = build_strategy("01TESTCAPITALPERASSET00000", ExecutionMode::PerAsset);
+    strategy.manifest.capital_mode = CapitalMode::PerAsset;
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> = BTreeMap::from([
+        (AssetSymbol::Btc, daily_bars(3, 50_000.0)),
+        (AssetSymbol::Eth, daily_bars(3, 3_000.0)),
+    ]);
+    let executor = Executor::new().with_asset_bars(asset_bars);
+
+    let err = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect_err("capital_mode per_asset must error in v1");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("not yet implemented"),
+        "error must say not yet implemented, got: {msg}"
+    );
+    assert!(
+        msg.contains("per_asset"),
+        "error must name capital_mode per_asset, got: {msg}"
     );
 }
