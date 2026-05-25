@@ -4,11 +4,7 @@
 //! counts for a trajectory recording.
 
 use clap::Args;
-use sqlx::sqlite::SqlitePoolOptions;
 use std::path::PathBuf;
-use xvision_observability::BlobStore;
-use xvision_observability::config::RetentionMode;
-use xvision_observability::trajectory::store::TrajectoryStore;
 
 use crate::exit::{CliError, CliResult, XvnExit};
 
@@ -17,18 +13,18 @@ pub struct InspectArgs {
     /// Recording id (e.g. `rec_<ulid>`).
     pub recording_id: String,
 
-    /// Path to the SQLite database (default: `$XVN_HOME/data/store.db`).
+    /// Path to the SQLite database (default: the migrated `$XVN_HOME/xvn.db`
+    /// the record path writes to).
     #[arg(long)]
     pub db: Option<PathBuf>,
 
-    /// Blob store root directory (default: `$XVN_HOME/data/blobs`).
+    /// Blob store root directory (default: `$XVN_HOME/agent_runs/blobs`).
     #[arg(long)]
     pub blob_root: Option<PathBuf>,
 }
 
 pub async fn run(args: InspectArgs) -> CliResult<()> {
-    let (pool, blob_root) = open_pool_and_blob(args.db.as_deref(), args.blob_root.as_deref()).await?;
-    let store = TrajectoryStore::new(pool, BlobStore::new(blob_root), RetentionMode::FullDebug);
+    let store = super::open_store(args.db, args.blob_root).await?;
 
     let info = store
         .get_recording(&args.recording_id)
@@ -88,46 +84,4 @@ pub async fn run(args: InspectArgs) -> CliResult<()> {
     }
 
     Ok(())
-}
-
-async fn open_pool_and_blob(
-    db: Option<&std::path::Path>,
-    blob_root: Option<&std::path::Path>,
-) -> CliResult<(sqlx::SqlitePool, PathBuf)> {
-    let home = default_xvn_home();
-    let db_path = db.map(|p| p.to_path_buf()).unwrap_or_else(|| home.join("data").join("store.db"));
-    let blob = blob_root
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| home.join("data").join("blobs"));
-
-    let url = format!("sqlite://{}?mode=ro", db_path.display());
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await
-        .map_err(|e| {
-            if !db_path.exists() {
-                CliError {
-                    exit: XvnExit::NotFound,
-                    source: anyhow::anyhow!("database not found at {}: {e}", db_path.display()),
-                }
-            } else {
-                CliError {
-                    exit: XvnExit::Upstream,
-                    source: anyhow::anyhow!("open database: {e}"),
-                }
-            }
-        })?;
-
-    Ok((pool, blob))
-}
-
-fn default_xvn_home() -> PathBuf {
-    std::env::var("XVN_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::home_dir()
-                .map(|h| h.join(".xvn"))
-                .unwrap_or_else(|| PathBuf::from(".xvn"))
-        })
 }

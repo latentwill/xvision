@@ -309,6 +309,20 @@ impl ApiContext {
         Ok(ctx)
     }
 
+    /// Apply migration 040 (the trajectory tables) to an arbitrary pool.
+    ///
+    /// `ApiContext::open` already runs this as part of the main migrator, so
+    /// the canonical record/replay path never needs it. It is exposed for
+    /// out-of-band tooling that opens a trajectory store over a DB file that
+    /// was NOT necessarily created through `open` — e.g. the `xvn trajectory`
+    /// CLI honouring a `--db <path>` override. The underlying
+    /// `migrate_trajectory_frames` gates on the recordings table already
+    /// existing and the DDL is idempotent, so this is a no-op on an
+    /// already-migrated file.
+    pub async fn ensure_trajectory_schema(pool: &SqlitePool) -> ApiResult<()> {
+        migrate_trajectory_frames(pool).await
+    }
+
     /// Construct an `ApiContext` from an already-prepared pool and actor.
     /// New fields added after the original three-field public struct
     /// literal (alpaca, bars_singleflight) get sensible defaults here —
