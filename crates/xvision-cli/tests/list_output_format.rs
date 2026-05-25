@@ -166,12 +166,19 @@ fn model_status_format_json_flag_accepted_not_clap_error() {
     // A bogus id will hit NotFound (exit 4), but clap must accept --format json
     // without exiting 2 (usage error).
     let out = xvn(
-        &["model", "status", "bo_NOTREAL00000000000000000", "--format", "json"],
+        &[
+            "model",
+            "status",
+            "bo_NOTREAL00000000000000000",
+            "--format",
+            "json",
+        ],
         dir.path(),
     );
     let code = out.status.code().unwrap_or(-1);
     assert_ne!(
-        code, 2,
+        code,
+        2,
         "clap must not reject --format json for model status; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
@@ -201,7 +208,8 @@ fn model_status_format_json_compact_flag_accepted_not_clap_error() {
     );
     let code = out.status.code().unwrap_or(-1);
     assert_ne!(
-        code, 2,
+        code,
+        2,
         "clap must not reject --format json-compact for model status; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
@@ -230,7 +238,8 @@ fn model_status_legacy_json_flag_accepted_not_clap_error() {
     );
     let code = out.status.code().unwrap_or(-1);
     assert_ne!(
-        code, 2,
+        code,
+        2,
         "clap must not reject --json for model status; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );

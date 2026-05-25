@@ -257,11 +257,7 @@ async fn run_create(args: CreateArgs) -> CliResult<()> {
 
     // --dry-run: validate, build, preview, exit WITHOUT persisting.
     if args.dry_run {
-        let prompt_preview = if system_prompt.len() > 120 {
-            format!("{}…", &system_prompt[..120])
-        } else {
-            system_prompt.clone()
-        };
+        let prompt_preview = preview_text(&system_prompt, 120);
         let preview = DryRunPreview {
             dry_run: true,
             would_create: DryRunWouldCreate {
@@ -368,8 +364,22 @@ fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
-        let end = s.char_indices().nth(max.saturating_sub(1)).map(|(i, _)| i).unwrap_or(s.len());
+        let end = s
+            .char_indices()
+            .nth(max.saturating_sub(1))
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
         format!("{}…", &s[..end])
+    }
+}
+
+fn preview_text(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max_chars).collect();
+        out.push('…');
+        out
     }
 }
 
@@ -480,9 +490,7 @@ async fn run_lint(args: LintArgs) -> CliResult<()> {
     if has_error {
         Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!(
-                "agent lint: one or more agents have error-severity diagnostics"
-            ),
+            source: anyhow::anyhow!("agent lint: one or more agents have error-severity diagnostics"),
         })
     } else {
         Ok(())

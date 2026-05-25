@@ -365,10 +365,7 @@ fn remote_allowlist_paths_exist_in_clap_tree() {
         match resolve_path_in_clap_tree(&root, path) {
             Ok(()) => {}
             Err(msg) => {
-                failures.push(format!(
-                    "  STALE ALLOWLIST ENTRY {:?}: {msg}",
-                    path
-                ));
+                failures.push(format!("  STALE ALLOWLIST ENTRY {:?}: {msg}", path));
             }
         }
     }

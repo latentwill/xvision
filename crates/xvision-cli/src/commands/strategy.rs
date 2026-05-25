@@ -495,7 +495,17 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             model,
             json,
             dry_run,
-        } => clone(&strategy_id, &name, provider.as_deref(), model.as_deref(), json, dry_run).await,
+        } => {
+            clone(
+                &strategy_id,
+                &name,
+                provider.as_deref(),
+                model.as_deref(),
+                json,
+                dry_run,
+            )
+            .await
+        }
     }
 }
 
@@ -1898,15 +1908,10 @@ async fn clone(
     // then print a preview without writing any new strategy or agent.
     if dry_run {
         // Load source to confirm it exists and surface its key fields.
-        let source = store()
-            .load(source_strategy_id)
-            .await
-            .map_err(|_| CliError {
-                exit: XvnExit::NotFound,
-                source: anyhow::anyhow!(
-                    "strategy `{source_strategy_id}` not found"
-                ),
-            })?;
+        let source = store().load(source_strategy_id).await.map_err(|_| CliError {
+            exit: XvnExit::NotFound,
+            source: anyhow::anyhow!("strategy `{source_strategy_id}` not found"),
+        })?;
 
         let preview = serde_json::json!({
             "dry_run": true,

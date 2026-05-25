@@ -1,12 +1,12 @@
 ---
 track: agent-cli-press-audit
-phase: in-progress
+phase: pr-open
 updated: 2026-05-25
 ---
 
 # Status
 
-Implementing the 2026-05-25 Agent CLI Press Audit Amendment (6 batches).
+PR open for the 2026-05-25 Agent CLI Press Audit Amendment (6 batches).
 
 ## Progress
 

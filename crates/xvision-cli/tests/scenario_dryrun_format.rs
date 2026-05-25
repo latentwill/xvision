@@ -184,10 +184,7 @@ fn create_dry_run_exits_ok_and_does_not_persist() {
     );
     // Stderr should mention the dry-run intent.
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        !stderr.is_empty(),
-        "dry-run should emit a preview line to stderr"
-    );
+    assert!(!stderr.is_empty(), "dry-run should emit a preview line to stderr");
 
     // Now confirm the scenario was NOT persisted.
     let ls_out = xvn(&["scenario", "ls", "--json"], dir.path());
@@ -195,7 +192,10 @@ fn create_dry_run_exits_ok_and_does_not_persist() {
     let rows: serde_json::Value = serde_json::from_slice(&ls_out.stdout).unwrap();
     let rows = rows.as_array().expect("ls --json returns array");
     let found = rows.iter().any(|r| {
-        r["display_name"].as_str().map(|n| n == scenario_name).unwrap_or(false)
+        r["display_name"]
+            .as_str()
+            .map(|n| n == scenario_name)
+            .unwrap_or(false)
     });
     assert!(
         !found,

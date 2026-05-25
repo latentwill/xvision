@@ -679,7 +679,10 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
             .await
             .map_err(|e| api_to_cli("scenario clone --dry-run", e))?;
         let new_name = a.name.as_deref().unwrap_or(&source.display_name);
-        eprintln!("DRY RUN — would clone '{}' ({}) to new scenario '{}'", source.display_name, a.id, new_name);
+        eprintln!(
+            "DRY RUN — would clone '{}' ({}) to new scenario '{}'",
+            source.display_name, a.id, new_name
+        );
         return Ok(());
     }
 

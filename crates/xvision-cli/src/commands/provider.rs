@@ -134,7 +134,12 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
     // side-effects tracing on stdout (the "V2D: failed to open
     // memory store" WARN) — fixing the tracing-init upstream is the
     // `cli-json-stdout-contract` sibling track's scope.
-    if let ProviderAction::List { effective, json, format } = &cmd.action {
+    if let ProviderAction::List {
+        effective,
+        json,
+        format,
+    } = &cmd.action
+    {
         // Resolve the effective format: explicit --format wins; then --json
         // (treated as json-compact for back-compat); then table default.
         let resolved = match format {
@@ -174,7 +179,19 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
             api_key_env,
             api_key,
             dry_run,
-        } => add(&ctx, &config_path, name, kind, base_url, api_key_env, api_key, dry_run).await,
+        } => {
+            add(
+                &ctx,
+                &config_path,
+                name,
+                kind,
+                base_url,
+                api_key_env,
+                api_key,
+                dry_run,
+            )
+            .await
+        }
         ProviderAction::Remove { name, dry_run } => remove(&ctx, &config_path, &name, dry_run).await,
         ProviderAction::RefreshModels { name, dry_run } => {
             refresh_models(&ctx, &config_path, name.as_deref(), dry_run).await
@@ -199,7 +216,11 @@ fn resolve_xvn_home() -> Result<PathBuf> {
 /// Canonical "is this provider launchable" view. Path-only — does not
 /// open `ApiContext`, so JSON output is uncontaminated by audit-pool
 /// migration tracing.
-async fn list_effective(xvn_home: &std::path::Path, config_path: &std::path::Path, format: ListFormat) -> Result<()> {
+async fn list_effective(
+    xvn_home: &std::path::Path,
+    config_path: &std::path::Path,
+    format: ListFormat,
+) -> Result<()> {
     let rows = providers::effective_providers_with_paths(xvn_home, config_path)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -582,7 +603,9 @@ api_key_env = "K"
         );
         std::fs::write(&config, src).unwrap();
         let ctx = test_ctx(&dir).await;
-        remove(&ctx, &config, "ephemeral", false /* dry_run */).await.unwrap();
+        remove(&ctx, &config, "ephemeral", false /* dry_run */)
+            .await
+            .unwrap();
         let cfg = xvision_core::config::load_runtime(&config).unwrap();
         assert!(!cfg.providers.iter().any(|p| p.name == "ephemeral"));
     }

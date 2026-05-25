@@ -115,9 +115,8 @@ fn list_format_json_compact_is_single_line() {
         "json-compact must not contain newlines:\n{stdout}"
     );
     // still valid JSON
-    let body: serde_json::Value = serde_json::from_str(trimmed).unwrap_or_else(|e| {
-        panic!("stdout must be JSON: {e}\nstdout: {stdout}")
-    });
+    let body: serde_json::Value = serde_json::from_str(trimmed)
+        .unwrap_or_else(|e| panic!("stdout must be JSON: {e}\nstdout: {stdout}"));
     assert!(body.is_array());
 }
 
@@ -175,9 +174,8 @@ fn add_dry_run_exits_zero_and_does_not_persist() {
     );
     // stdout must contain a JSON preview with the provider name
     let stdout_str = String::from_utf8(add_out.stdout.clone()).unwrap();
-    let preview: serde_json::Value = serde_json::from_str(&stdout_str).unwrap_or_else(|e| {
-        panic!("dry-run add stdout must be JSON: {e}\nstdout: {stdout_str}")
-    });
+    let preview: serde_json::Value = serde_json::from_str(&stdout_str)
+        .unwrap_or_else(|e| panic!("dry-run add stdout must be JSON: {e}\nstdout: {stdout_str}"));
     assert_eq!(preview["action"], "add_provider", "action field must be set");
     assert_eq!(preview["name"], "drytest");
     assert_eq!(preview["api_key_provided"], false);
@@ -231,7 +229,10 @@ fn remove_dry_run_exits_zero_and_does_not_remove() {
     let list: serde_json::Value = serde_json::from_slice(&list_out.stdout).unwrap();
     let providers = list.as_array().unwrap();
     let still_there = providers.iter().any(|p| p["provider"] == "mylocal");
-    assert!(still_there, "dry-run remove must not delete provider; list: {list}");
+    assert!(
+        still_there,
+        "dry-run remove must not delete provider; list: {list}"
+    );
 }
 
 // ── (e) provider refresh-models --dry-run ────────────────────────────────────
@@ -240,13 +241,7 @@ fn remove_dry_run_exits_zero_and_does_not_remove() {
 fn refresh_models_dry_run_known_provider_exits_zero() {
     let dir = setup();
     let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
-        .args([
-            "provider",
-            "refresh-models",
-            "--name",
-            "mylocal",
-            "--dry-run",
-        ])
+        .args(["provider", "refresh-models", "--name", "mylocal", "--dry-run"])
         .env("XVN_HOME", dir.path())
         .output()
         .expect("xvn provider refresh-models --dry-run");

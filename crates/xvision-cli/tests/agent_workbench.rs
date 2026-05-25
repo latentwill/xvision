@@ -38,14 +38,8 @@ fn stderr(out: &std::process::Output) -> String {
 fn agent_ls_json_empty_home_returns_empty_array() {
     let dir = tempdir().unwrap();
     let out = xvn(&["agent", "ls", "--format", "json"], dir.path());
-    assert_eq!(
-        code(&out),
-        0,
-        "expected exit 0; stderr: {}",
-        stderr(&out)
-    );
-    let parsed: serde_json::Value =
-        serde_json::from_str(&stdout(&out)).expect("stdout must be JSON");
+    assert_eq!(code(&out), 0, "expected exit 0; stderr: {}", stderr(&out));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("stdout must be JSON");
     assert!(
         parsed.as_array().unwrap().is_empty(),
         "expected empty array on fresh home, got: {}",
@@ -73,12 +67,7 @@ fn create_agent(home: &Path, name: &str) -> serde_json::Value {
         ],
         home,
     );
-    assert_eq!(
-        code(&out),
-        0,
-        "create agent failed; stderr: {}",
-        stderr(&out)
-    );
+    assert_eq!(code(&out), 0, "create agent failed; stderr: {}", stderr(&out));
     serde_json::from_slice(&out.stdout).expect("create output must be JSON")
 }
 
@@ -88,21 +77,14 @@ fn agent_ls_json_shows_created_agent() {
     let created = create_agent(dir.path(), "workbench-ls-json");
 
     let out = xvn(&["agent", "ls", "--format", "json"], dir.path());
-    assert_eq!(
-        code(&out),
-        0,
-        "expected exit 0; stderr: {}",
-        stderr(&out)
-    );
+    assert_eq!(code(&out), 0, "expected exit 0; stderr: {}", stderr(&out));
 
-    let list: serde_json::Value =
-        serde_json::from_str(&stdout(&out)).expect("stdout must be JSON array");
+    let list: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("stdout must be JSON array");
     let arr = list.as_array().expect("ls --format json must be a JSON array");
 
     assert_eq!(arr.len(), 1, "expected exactly one agent in list");
     assert_eq!(
-        arr[0]["agent_id"],
-        created["agent_id"],
+        arr[0]["agent_id"], created["agent_id"],
         "listed agent_id must match created agent_id"
     );
     assert_eq!(arr[0]["name"], "workbench-ls-json");
@@ -134,12 +116,7 @@ fn agent_ls_json_compact_is_single_line() {
     create_agent(dir.path(), "workbench-ls-compact");
 
     let out = xvn(&["agent", "ls", "--format", "json-compact"], dir.path());
-    assert_eq!(
-        code(&out),
-        0,
-        "expected exit 0; stderr: {}",
-        stderr(&out)
-    );
+    assert_eq!(code(&out), 0, "expected exit 0; stderr: {}", stderr(&out));
 
     let text = stdout(&out);
     // Compact JSON must be a single line (strip trailing newline before checking).
@@ -172,26 +149,23 @@ fn agent_lint_json_on_valid_agent_exits_0_and_parses_as_json() {
     let arr = parsed.as_array().expect("lint --json must be a JSON array");
     assert_eq!(arr.len(), 1, "expected one entry for the requested agent");
     assert_eq!(arr[0]["agent_id"], agent_id);
-    assert!(
-        arr[0]["diagnostics"].is_array(),
-        "diagnostics must be an array"
-    );
+    assert!(arr[0]["diagnostics"].is_array(), "diagnostics must be an array");
 
     // A freshly-created agent with a real prompt should be clean; if it
     // has no error-severity diagnostics the exit must be 0.
     let diags = arr[0]["diagnostics"].as_array().unwrap();
-    let has_error = diags
-        .iter()
-        .any(|d| d["severity"].as_str() == Some("Error"));
+    let has_error = diags.iter().any(|d| d["severity"].as_str() == Some("Error"));
     if has_error {
         assert_eq!(
-            exit, 2,
+            exit,
+            2,
             "exit must be 2 when error diagnostics exist; stderr: {}",
             stderr(&out)
         );
     } else {
         assert_eq!(
-            exit, 0,
+            exit,
+            0,
             "exit must be 0 when no error diagnostics; stderr: {}",
             stderr(&out)
         );
@@ -228,8 +202,7 @@ fn agent_list_alias_works() {
         "alias `list` must exit 0; stderr: {}",
         stderr(&out)
     );
-    let parsed: serde_json::Value =
-        serde_json::from_str(&stdout(&out)).expect("alias output must be JSON");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("alias output must be JSON");
     assert!(
         parsed.as_array().unwrap().len() >= 1,
         "alias must surface the created agent"

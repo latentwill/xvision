@@ -195,8 +195,8 @@ fn strategy_list_format_json_exits_0_and_stdout_parses_as_json() {
         "strategy list --format json must exit 0; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let parsed: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("strategy list --format json must emit valid JSON on stdout");
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .expect("strategy list --format json must emit valid JSON on stdout");
     assert!(
         parsed.is_array(),
         "expected JSON array from strategy list --format json, got: {parsed}"
@@ -209,7 +209,12 @@ fn strategy_list_format_json_compact_exits_0_and_is_single_line() {
     seed_strategy(dir.path());
 
     let out = xvn(&["strategy", "list", "--format", "json-compact"], dir.path());
-    assert_eq!(exit_code(&out), 0, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8(out.stdout).unwrap();
     let trimmed = stdout.trim();
     // Compact JSON: no internal newlines.
@@ -228,7 +233,12 @@ fn strategy_ls_legacy_json_flag_still_works() {
 
     // `--json` (legacy alias) must still produce valid JSON on stdout.
     let out = xvn(&["strategy", "ls", "--json"], dir.path());
-    assert_eq!(exit_code(&out), 0, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let parsed: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("strategy ls --json must emit valid JSON");
     assert!(parsed.is_array());

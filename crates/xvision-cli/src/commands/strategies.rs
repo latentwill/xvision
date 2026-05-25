@@ -227,7 +227,11 @@ async fn run_import(
     .map_err(|e| api_to_cli("strategies import", e))?;
 
     // Resolve effective format: explicit --format wins, then --json, then table.
-    let effective = format.unwrap_or(if json { ImportFormat::Json } else { ImportFormat::Table });
+    let effective = format.unwrap_or(if json {
+        ImportFormat::Json
+    } else {
+        ImportFormat::Table
+    });
     emit_outcome(&outcome, effective)
 }
 
