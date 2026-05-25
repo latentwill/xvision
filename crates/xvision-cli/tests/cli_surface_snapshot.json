@@ -45,6 +45,7 @@
       "long_flags": [
         "--capability",
         "--description",
+        "--dry-run",
         "--format",
         "--help",
         "--max-tokens",
@@ -777,6 +778,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--format",
         "--help",
         "--json",
         "--scenario",
@@ -1091,6 +1093,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--format",
         "--help",
         "--json"
       ],
@@ -3294,6 +3297,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--format",
         "--help",
         "--json",
         "--xvn-home"
@@ -3624,6 +3628,7 @@
         "--api-key",
         "--api-key-env",
         "--base-url",
+        "--dry-run",
         "--help",
         "--kind",
         "--name"
@@ -3751,6 +3756,7 @@
       "has_subcommands": false,
       "long_flags": [
         "--effective",
+        "--format",
         "--help",
         "--json"
       ],
@@ -3777,6 +3783,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
         "--help",
         "--name"
       ],
@@ -3790,6 +3797,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
         "--help",
         "--name"
       ],
@@ -3999,6 +4007,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
         "--help"
       ],
       "mutates": true,
@@ -4012,6 +4021,7 @@
       "has_subcommands": false,
       "long_flags": [
         "--all",
+        "--dry-run",
         "--force",
         "--help"
       ],
@@ -4025,6 +4035,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
         "--from",
         "--help",
         "--name",
@@ -4041,6 +4052,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
         "--fees-maker",
         "--fees-taker",
         "--from",
@@ -4249,6 +4261,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
         "--help"
       ],
       "mutates": true,
@@ -4262,6 +4275,7 @@
       "has_subcommands": false,
       "long_flags": [
         "--count",
+        "--format",
         "--help",
         "--json",
         "--max-decisions",
@@ -4281,6 +4295,7 @@
       "has_subcommands": false,
       "long_flags": [
         "--direction",
+        "--dry-run",
         "--help",
         "--regime",
         "--volatility"
@@ -4509,6 +4524,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--format",
         "--help",
         "--json",
         "--no-clobber",
@@ -4578,6 +4594,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
         "--help",
         "--json",
         "--model",
@@ -4815,9 +4832,12 @@
       ]
     },
     {
-      "aliases": [],
+      "aliases": [
+        "list"
+      ],
       "has_subcommands": false,
       "long_flags": [
+        "--format",
         "--help",
         "--json"
       ],
@@ -4850,6 +4870,7 @@
         "--assets",
         "--avoid-regime",
         "--creator",
+        "--dry-run",
         "--execution-mode",
         "--family",
         "--from-file",
