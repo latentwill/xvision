@@ -164,6 +164,62 @@ async fn seed_run(pool: &SqlitePool, parent_agent_id: &str) -> (String, String) 
     (run.id, snapshot_id)
 }
 
+/// Seed a completed run whose recorded `signature_hash` differs from the
+/// snapshot's — the precondition for the `stale_optimized_prompt` guardrail.
+/// Returns (run_id, snapshot_id).
+async fn seed_run_with_signatures(
+    pool: &SqlitePool,
+    parent_agent_id: &str,
+    run_signature: &str,
+    snapshot_signature: &str,
+) -> (String, String) {
+    let store = OptimizationStore::new(pool.clone());
+    let run = store
+        .create_run(NewOptimizationRun {
+            agent_id: parent_agent_id.to_string(),
+            slot_name: "trader".to_string(),
+            capability: "trader".to_string(),
+            optimizer: "mipro".to_string(),
+            metric: "sharpe".to_string(),
+            corpus_query: "scenario:bull limit=200".to_string(),
+            rng_seed: 42,
+            model_provider: Some("dummy".to_string()),
+            model_name: Some("dummy".to_string()),
+            signature_hash: Some(run_signature.to_string()),
+            optimizer_version: Some("dspy-rs-0.7".to_string()),
+        })
+        .await
+        .unwrap();
+    store
+        .add_candidate(
+            &run.id,
+            NewCandidate {
+                candidate_index: 0,
+                instruction: "Optimized instruction tuned for a now-stale signature.".to_string(),
+                metric_value: Some(0.9),
+                split: "train".to_string(),
+                demo_set: None,
+                selected: true,
+            },
+        )
+        .await
+        .unwrap();
+    let snapshot_id = ulid::Ulid::new().to_string();
+    store
+        .add_snapshot(
+            &run.id,
+            NewSnapshot {
+                id: snapshot_id.clone(),
+                snapshot_json: "{}".to_string(),
+                signature_hash: snapshot_signature.to_string(),
+                demo_set: None,
+            },
+        )
+        .await
+        .unwrap();
+    (run.id, snapshot_id)
+}
+
 fn all_trader_metrics() -> Vec<String> {
     [
         "forward_return_agreement",
@@ -245,6 +301,82 @@ async fn accept_allowed_with_holdout_present() {
     let body: serde_json::Value = resp.json();
     assert_eq!(body["holdout_present"], true);
     assert_eq!(body["overfit_warning"], false);
+}
+
+// ── 4.2: stale_optimized_prompt blocks accept/swap (guardrail wiring) ─────────
+
+#[tokio::test]
+async fn accept_refused_when_optimized_prompt_is_stale() {
+    let (server, pool, _home, _tmp) = boot().await;
+    let parent = make_agent(&pool, "Parent").await;
+    // Run bound signature "sig-current"; snapshot tuned for "sig-stale" —
+    // applying its instruction would feed the model a prompt for a different
+    // signature shape. The Phase 4.2 `stale_optimized_prompt` guardrail must
+    // refuse BEFORE the instruction is written onto the cloned slot.
+    let (run_id, snapshot_id) =
+        seed_run_with_signatures(&pool, &parent, "sig-current", "sig-stale").await;
+
+    // Record a clean holdout so the holdout gate passes and the stale-prompt
+    // guardrail is unambiguously the thing that refuses.
+    server
+        .post(&format!("/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"))
+        .json(&serde_json::json!({
+            "metric": "sharpe", "train_metric_value": 1.0, "holdout_metric_value": 0.9
+        }))
+        .await
+        .assert_status_ok();
+
+    let resp = server
+        .post(&format!("/api/optimizations/{run_id}/accept"))
+        .json(&serde_json::json!({ "snapshot_id": snapshot_id }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json();
+    // The typed short-circuit's machine code surfaces as the validation field.
+    assert_eq!(body["field"], "stale_optimized_prompt");
+    let msg = body["message"].as_str().unwrap_or_default();
+    assert!(
+        msg.contains("stale") && msg.contains("sig-stale") && msg.contains("sig-current"),
+        "message must name the snapshot vs current signature: {msg}"
+    );
+
+    // No child agent was minted — the swap was refused before any write.
+    let agents = AgentStore::new(pool.clone())
+        .list(xvision_engine::agents::store::ListFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        agents.len(),
+        1,
+        "only the parent agent should exist; a stale accept must not mint a child"
+    );
+}
+
+#[tokio::test]
+async fn accept_allowed_when_signature_matches() {
+    // Control: identical signatures → the stale guardrail does NOT fire and
+    // the accept proceeds (mirrors `accept_allowed_with_holdout_present` but
+    // through the custom-signature seed to prove the guard is signature-gated,
+    // not always-on).
+    let (server, pool, _home, _tmp) = boot().await;
+    let parent = make_agent(&pool, "Parent").await;
+    let (run_id, snapshot_id) =
+        seed_run_with_signatures(&pool, &parent, "sig-same", "sig-same").await;
+
+    server
+        .post(&format!("/api/optimizations/{run_id}/snapshots/{snapshot_id}/holdout"))
+        .json(&serde_json::json!({
+            "metric": "sharpe", "train_metric_value": 1.0, "holdout_metric_value": 0.9
+        }))
+        .await
+        .assert_status_ok();
+
+    let resp = server
+        .post(&format!("/api/optimizations/{run_id}/accept"))
+        .json(&serde_json::json!({ "snapshot_id": snapshot_id }))
+        .await;
+    resp.assert_status_ok();
+    assert_eq!(resp.json::<serde_json::Value>()["accepted"], true);
 }
 
 // ── 4.4: overfit blocks marketplace mint unless waived ────────────────────────
