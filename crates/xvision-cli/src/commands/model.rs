@@ -68,6 +68,7 @@ use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::tools::ToolRegistry;
 
+use crate::commands::eval::OutputFormat;
 use crate::exit::{CliError, CliResult, XvnExit};
 
 #[derive(Args, Debug)]
@@ -208,6 +209,13 @@ pub struct StatusArgs {
     /// Bakeoff id (e.g. `bo_01K...`).
     pub bakeoff_id: String,
 
+    /// Output format: `table` (default), `json` (pretty), or `json-compact` (single line).
+    /// `--json` is an alias for `--format json-compact`.
+    #[arg(long, value_name = "FORMAT", default_value = "table")]
+    pub format: OutputFormat,
+
+    /// Emit as compact JSON (alias for `--format json-compact`).
+    /// Explicit `--format` takes precedence.
     #[arg(long)]
     pub json: bool,
 
@@ -632,10 +640,27 @@ async fn run_status_cmd(args: StatusArgs) -> CliResult<()> {
         },
         other => CliError::upstream(anyhow!("get_bakeoff: {other}")),
     })?;
-    if args.json {
-        crate::io::print_json(&result)?;
+
+    // Resolve effective format: explicit --format wins; --json is alias for
+    // json-compact (matches the legacy behaviour).
+    let effective_format = if args.format != OutputFormat::Table {
+        args.format
+    } else if args.json {
+        OutputFormat::JsonCompact
     } else {
-        print_human_summary(&result);
+        OutputFormat::Table
+    };
+
+    match effective_format {
+        OutputFormat::Json => {
+            crate::io::print_json(&result)?;
+        }
+        OutputFormat::JsonCompact => {
+            crate::io::print_json_compact(&result)?;
+        }
+        OutputFormat::Table => {
+            print_human_summary(&result);
+        }
     }
     Ok(())
 }
