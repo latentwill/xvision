@@ -29,9 +29,8 @@ use xvision_dashboard::AppState;
 use xvision_engine::agents::model::InputsPolicy;
 use xvision_engine::agents::store::{AgentStore, NewAgent};
 use xvision_engine::agents::{default_capabilities, AgentSlot};
-use xvision_engine::optimization::{
-    NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore,
-};
+use xvision_engine::mint::{HoldoutStore, NewHoldoutResult};
+use xvision_engine::optimization::{NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore};
 
 const PARENT_PROMPT: &str = "You are a careful trader. Analyse the OHLCV data provided and respond \
     with a JSON object containing: action (buy/sell/hold), size_pct (0-100), and reason. Apply \
@@ -81,11 +80,7 @@ async fn seed_parent_agent(state: &AppState) -> String {
 
 /// Seed a completed run with three candidates (index 1 selected) + a snapshot.
 /// Returns `(run_id, snapshot_id, selected_instruction)`.
-async fn seed_run(
-    state: &AppState,
-    agent_id: &str,
-    status: &str,
-) -> (String, String, String) {
+async fn seed_run(state: &AppState, agent_id: &str, status: &str) -> (String, String, String) {
     let store = OptimizationStore::new(state.pool.clone());
     let run = store
         .create_run(NewOptimizationRun {
@@ -122,7 +117,11 @@ async fn seed_run(
                     candidate_index: idx as i64,
                     instruction: instr.to_string(),
                     metric_value: Some(metric),
-                    split: if idx == 0 { "train".into() } else { "holdout".into() },
+                    split: if idx == 0 {
+                        "train".into()
+                    } else {
+                        "holdout".into()
+                    },
                     demo_set: None,
                     selected: idx == 1,
                 },
@@ -138,7 +137,8 @@ async fn seed_run(
             &run.id,
             NewSnapshot {
                 id: snapshot_id.clone(),
-                snapshot_json: r#"{"instruction":"opaque","demos":[],"signature_hash":"abc123sighash"}"#.to_string(),
+                snapshot_json: r#"{"instruction":"opaque","demos":[],"signature_hash":"abc123sighash"}"#
+                    .to_string(),
                 signature_hash: "abc123sighash".to_string(),
                 demo_set: None,
             },
@@ -156,9 +156,7 @@ async fn list_returns_runs_and_slot_filter_narrows() {
     let (run_id, _snap, _instr) = seed_run(&state, &agent_id, "completed").await;
 
     // Without slot filter.
-    let resp = server
-        .get(&format!("/api/optimizations?agent={agent_id}"))
-        .await;
+    let resp = server.get(&format!("/api/optimizations?agent={agent_id}")).await;
     resp.assert_status_ok();
     let body: Value = resp.json();
     let runs = body["runs"].as_array().unwrap();
@@ -207,9 +205,36 @@ async fn detail_returns_candidate_table_snapshot_and_lineage() {
     let snapshots = body["snapshots"].as_array().unwrap();
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0]["id"].as_str().unwrap(), snapshot_id);
+    assert!(body["holdouts"].as_array().unwrap().is_empty());
 
     // No lineage yet (nothing accepted).
     assert!(body["lineage"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn detail_returns_recorded_holdout_results_for_snapshots() {
+    let (server, _tmp, state) = boot().await;
+    let agent_id = seed_parent_agent(&state).await;
+    let (run_id, snapshot_id, _instr) = seed_run(&state, &agent_id, "completed").await;
+
+    HoldoutStore::new(state.pool.clone())
+        .record(NewHoldoutResult {
+            snapshot_id: snapshot_id.clone(),
+            run_id: run_id.clone(),
+            metric: "delta_sharpe".to_string(),
+            train_metric_value: 0.42,
+            holdout_metric_value: 0.40,
+        })
+        .await
+        .unwrap();
+
+    let resp = server.get(&format!("/api/optimizations/{run_id}")).await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let holdouts = body["holdouts"].as_array().unwrap();
+    assert_eq!(holdouts.len(), 1);
+    assert_eq!(holdouts[0]["snapshot_id"].as_str().unwrap(), snapshot_id);
+    assert_eq!(holdouts[0]["metric"].as_str().unwrap(), "delta_sharpe");
 }
 
 #[tokio::test]
@@ -239,8 +264,7 @@ async fn detail_unknown_run_404s() {
 async fn accept_mints_child_agent_records_lineage_and_leaves_parent_unchanged() {
     let (server, _tmp, state) = boot().await;
     let agent_id = seed_parent_agent(&state).await;
-    let (run_id, snapshot_id, selected_instruction) =
-        seed_run(&state, &agent_id, "completed").await;
+    let (run_id, snapshot_id, selected_instruction) = seed_run(&state, &agent_id, "completed").await;
 
     let resp = server
         .post(&format!("/api/optimizations/{run_id}/accept"))
@@ -266,10 +290,7 @@ async fn accept_mints_child_agent_records_lineage_and_leaves_parent_unchanged() 
         .iter()
         .find(|s| s["name"].as_str() == Some("trader"))
         .unwrap();
-    assert_eq!(
-        trader["system_prompt"].as_str().unwrap(),
-        selected_instruction
-    );
+    assert_eq!(trader["system_prompt"].as_str().unwrap(), selected_instruction);
 
     // Lineage edge child → parent → run.
     assert_eq!(body["lineage"]["child_agent_id"].as_str().unwrap(), child_id);

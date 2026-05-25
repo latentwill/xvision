@@ -57,6 +57,18 @@ export type OptimizationSnapshot = {
   created_at: string;
 };
 
+export type HoldoutResult = {
+  snapshot_id: string;
+  run_id: string;
+  metric: string;
+  train_metric_value: number;
+  holdout_metric_value: number;
+  overfit_warning: boolean;
+  overfit_ratio: number | null;
+  overfit_waiver_reason: string | null;
+  created_at: string;
+};
+
 /// A lineage edge: a child agent minted from an accepted run.
 export type LineageEdge = {
   child_agent_id: string;
@@ -69,6 +81,7 @@ export type RunDetail = {
   run: OptimizationRun;
   candidates: OptimizationCandidate[];
   snapshots: OptimizationSnapshot[];
+  holdouts: HoldoutResult[];
   lineage: LineageEdge[];
 };
 
@@ -77,6 +90,9 @@ export type AcceptResponse = {
   lineage: LineageEdge;
   snapshot_id: string;
   accepted: boolean;
+  holdout_present: boolean;
+  override_reason: string | null;
+  overfit_warning: boolean;
 };
 
 export type RevertResponse = {
@@ -113,6 +129,7 @@ export async function acceptOptimization(
   runId: string,
   snapshotId: string,
   childName?: string,
+  overrideReason?: string,
 ): Promise<AcceptResponse> {
   return apiFetch<AcceptResponse>(
     `/api/optimizations/${encodeURIComponent(runId)}/accept`,
@@ -121,6 +138,7 @@ export async function acceptOptimization(
       body: JSON.stringify({
         snapshot_id: snapshotId,
         ...(childName ? { child_name: childName } : {}),
+        ...(overrideReason ? { override_reason: overrideReason } : {}),
       }),
     },
   );
@@ -142,6 +160,42 @@ export async function revertOptimization(
         snapshot_id: snapshotId,
         child_agent_id: childAgentId,
       }),
+    },
+  );
+}
+
+export async function recordOptimizationHoldout(
+  runId: string,
+  snapshotId: string,
+  body: {
+    metric: string;
+    trainMetricValue: number;
+    holdoutMetricValue: number;
+  },
+): Promise<HoldoutResult> {
+  return apiFetch<HoldoutResult>(
+    `/api/optimizations/${encodeURIComponent(runId)}/snapshots/${encodeURIComponent(snapshotId)}/holdout`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        metric: body.metric,
+        train_metric_value: body.trainMetricValue,
+        holdout_metric_value: body.holdoutMetricValue,
+      }),
+    },
+  );
+}
+
+export async function waiveOptimizationOverfit(
+  runId: string,
+  snapshotId: string,
+  reason: string,
+): Promise<HoldoutResult> {
+  return apiFetch<HoldoutResult>(
+    `/api/optimizations/${encodeURIComponent(runId)}/snapshots/${encodeURIComponent(snapshotId)}/waive-overfit`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason }),
     },
   );
 }

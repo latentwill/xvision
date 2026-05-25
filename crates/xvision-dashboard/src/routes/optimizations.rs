@@ -37,12 +37,11 @@ use xvision_engine::agents::store::{AgentStore, NewAgent};
 use xvision_engine::agents::Agent;
 use xvision_engine::guardrails::check_optimized_prompt_fresh;
 use xvision_engine::mint::{
-    check_accept, check_marketplace_mint, AcceptInputs, EvalProof, HoldoutResult, HoldoutStore,
-    MintDecision, MintInputs, NewHoldoutResult,
+    check_accept, check_marketplace_mint, AcceptInputs, EvalProof, HoldoutResult, HoldoutStore, MintDecision,
+    MintInputs, NewHoldoutResult,
 };
 use xvision_engine::optimization::{
-    LineageEdge, OptimizationCandidate, OptimizationRun, OptimizationSnapshotRow,
-    OptimizationStore,
+    LineageEdge, OptimizationCandidate, OptimizationRun, OptimizationSnapshotRow, OptimizationStore,
 };
 
 use crate::error::DashboardError;
@@ -73,6 +72,7 @@ pub struct RunDetailResponse {
     pub run: OptimizationRun,
     pub candidates: Vec<OptimizationCandidate>,
     pub snapshots: Vec<OptimizationSnapshotRow>,
+    pub holdouts: Vec<HoldoutResult>,
     pub lineage: Vec<LineageEdge>,
 }
 
@@ -155,6 +155,13 @@ pub async fn get(
     let run = s.get_run(&id).await?;
     let candidates = s.list_candidates(&id).await?;
     let snapshots = s.list_snapshots(&id).await?;
+    let holdout_store = HoldoutStore::new(state.pool.clone());
+    let mut holdouts = Vec::new();
+    for snapshot in &snapshots {
+        if let Some(holdout) = holdout_store.get(&snapshot.id).await.map_err(map_holdout_error)? {
+            holdouts.push(holdout);
+        }
+    }
     // Lineage children are keyed by parent agent, not by run; filter to the
     // edges that name THIS run so the detail view only shows children minted
     // from it.
@@ -168,6 +175,7 @@ pub async fn get(
         run,
         candidates,
         snapshots,
+        holdouts,
         lineage,
     }))
 }
@@ -228,9 +236,10 @@ pub async fn accept(
     // Clone the parent agent, swapping the optimized slot's prompt for the
     // selected candidate's instruction. The parent stays untouched.
     let agent_store = AgentStore::new(state.pool.clone());
-    let parent = agent_store.get(&run.agent_id).await?.ok_or_else(|| {
-        DashboardError::NotFound(format!("parent agent {} not found", run.agent_id))
-    })?;
+    let parent = agent_store
+        .get(&run.agent_id)
+        .await?
+        .ok_or_else(|| DashboardError::NotFound(format!("parent agent {} not found", run.agent_id)))?;
 
     let mut slots = parent.slots.clone();
     let slot = slots
@@ -257,11 +266,9 @@ pub async fn accept(
     // validation refusal carrying its stable machine `code()` so the swap
     // is recorded as a refused write rather than a silent stale apply.
     if let Some(current_signature_hash) = run.signature_hash.as_deref() {
-        if let Err(sc) = check_optimized_prompt_fresh(
-            &run.slot_name,
-            &snapshot.signature_hash,
-            current_signature_hash,
-        ) {
+        if let Err(sc) =
+            check_optimized_prompt_fresh(&run.slot_name, &snapshot.signature_hash, current_signature_hash)
+        {
             return Err(DashboardError::Validation {
                 field: sc.code().into(),
                 msg: format!("{sc} — {}", sc.remediation()),
@@ -537,9 +544,7 @@ pub async fn mint(
 fn map_holdout_error(err: xvision_engine::mint::HoldoutError) -> DashboardError {
     use xvision_engine::mint::HoldoutError;
     match err {
-        HoldoutError::NotFound(id) => {
-            DashboardError::NotFound(format!("holdout result not found: {id}"))
-        }
+        HoldoutError::NotFound(id) => DashboardError::NotFound(format!("holdout result not found: {id}")),
         HoldoutError::Db(e) => DashboardError::Internal(anyhow::anyhow!(e)),
     }
 }

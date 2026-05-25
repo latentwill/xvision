@@ -26,7 +26,9 @@ import {
   acceptOptimization,
   getOptimization,
   optimizationKeys,
+  recordOptimizationHoldout,
   revertOptimization,
+  waiveOptimizationOverfit,
   type OptimizationCandidate,
   type RunDetail,
 } from "@/api/optimizations";
@@ -67,6 +69,10 @@ export function OptimizationDetailRoute() {
   // Advanced detail (MIPRO/GEPA internals) collapsed by default — operator-
   // friendly summary is the default surface.
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [trainMetric, setTrainMetric] = useState("");
+  const [holdoutMetric, setHoldoutMetric] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [waiverReason, setWaiverReason] = useState("");
 
   const q = useQuery<RunDetail, ApiError>({
     queryKey: optimizationKeys.detail(rid),
@@ -107,13 +113,33 @@ export function OptimizationDetailRoute() {
   const acceptedSnapshot = detail?.snapshots.find((s) => s.accepted) ?? null;
   const latestSnapshot = detail?.snapshots[0] ?? null;
   const lineageChild = detail?.lineage[0] ?? null;
+  const latestHoldout =
+    latestSnapshot && detail
+      ? (detail.holdouts ?? []).find((h) => h.snapshot_id === latestSnapshot.id) ??
+        null
+      : null;
+  const acceptedHoldout =
+    acceptedSnapshot && detail
+      ? (detail.holdouts ?? []).find(
+          (h) => h.snapshot_id === acceptedSnapshot.id,
+        ) ?? null
+      : null;
+  const canAccept =
+    Boolean(latestSnapshot && selected) &&
+    (Boolean(latestHoldout) || overrideReason.trim().length > 0);
 
   const acceptMut = useMutation({
     mutationFn: () => {
       if (!latestSnapshot) throw new Error("no snapshot to accept");
-      return acceptOptimization(rid, latestSnapshot.id);
+      return acceptOptimization(
+        rid,
+        latestSnapshot.id,
+        undefined,
+        latestHoldout ? undefined : overrideReason.trim(),
+      );
     },
     onSuccess: () => {
+      setOverrideReason("");
       qc.invalidateQueries({ queryKey: optimizationKeys.detail(rid) });
       qc.invalidateQueries({ queryKey: agentKeys.all });
     },
@@ -132,6 +158,40 @@ export function OptimizationDetailRoute() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: optimizationKeys.detail(rid) });
       qc.invalidateQueries({ queryKey: agentKeys.all });
+    },
+  });
+
+  const holdoutMut = useMutation({
+    mutationFn: () => {
+      if (!latestSnapshot) throw new Error("no snapshot to score");
+      const train = Number(trainMetric);
+      const holdout = Number(holdoutMetric);
+      if (!Number.isFinite(train) || !Number.isFinite(holdout)) {
+        throw new Error("train and holdout metrics must be numbers");
+      }
+      return recordOptimizationHoldout(rid, latestSnapshot.id, {
+        metric: run?.metric ?? "metric",
+        trainMetricValue: train,
+        holdoutMetricValue: holdout,
+      });
+    },
+    onSuccess: () => {
+      setTrainMetric("");
+      setHoldoutMetric("");
+      qc.invalidateQueries({ queryKey: optimizationKeys.detail(rid) });
+    },
+  });
+
+  const waiveMut = useMutation({
+    mutationFn: () => {
+      if (!latestSnapshot) throw new Error("no snapshot to waive");
+      const reason = waiverReason.trim();
+      if (!reason) throw new Error("waiver reason is required");
+      return waiveOptimizationOverfit(rid, latestSnapshot.id, reason);
+    },
+    onSuccess: () => {
+      setWaiverReason("");
+      qc.invalidateQueries({ queryKey: optimizationKeys.detail(rid) });
     },
   });
 
@@ -352,10 +412,15 @@ export function OptimizationDetailRoute() {
 
       {/* Actions. */}
       <Card className="mb-10">
-        <div className="px-5 py-4 flex flex-wrap items-center gap-3">
+        <div className="px-5 py-4 flex flex-col gap-4">
           {acceptedSnapshot ? (
-            <>
+            <div className="flex flex-wrap items-center gap-3">
               <Pill tone="info">Accepted</Pill>
+              {acceptedHoldout ? (
+                <Pill tone={acceptedHoldout.overfit_warning ? "warn" : "info"}>
+                  holdout {fmtMetric(acceptedHoldout.holdout_metric_value)}
+                </Pill>
+              ) : null}
               {lineageChild ? (
                 <button
                   type="button"
@@ -377,24 +442,91 @@ export function OptimizationDetailRoute() {
               >
                 {revertMut.isPending ? "Reverting…" : "Reject / revert"}
               </button>
-            </>
+            </div>
           ) : (
             <>
-              <span className="text-[13px] text-text-2">
-                Accept the winning candidate as a new child agent. Your current
-                agent stays unchanged.
-              </span>
-              <button
-                type="button"
-                className="ml-auto px-3 py-1.5 rounded bg-accent text-on-accent text-[13px] font-medium hover:opacity-90 disabled:opacity-50"
-                disabled={
-                  acceptMut.isPending || !latestSnapshot || !selected
-                }
-                onClick={() => acceptMut.mutate()}
-                data-testid="accept-button"
-              >
-                {acceptMut.isPending ? "Accepting…" : "Accept as child agent"}
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-[13px] text-text-2">
+                  Accept the winning candidate as a new child agent. Your
+                  current agent stays unchanged.
+                </span>
+                {latestHoldout ? (
+                  <Pill tone={latestHoldout.overfit_warning ? "warn" : "info"}>
+                    holdout {fmtMetric(latestHoldout.holdout_metric_value)}
+                  </Pill>
+                ) : (
+                  <Pill tone="warn">holdout missing</Pill>
+                )}
+                <button
+                  type="button"
+                  className="ml-auto px-3 py-1.5 rounded bg-accent text-on-accent text-[13px] font-medium hover:opacity-90 disabled:opacity-50"
+                  disabled={acceptMut.isPending || !canAccept}
+                  onClick={() => acceptMut.mutate()}
+                  data-testid="accept-button"
+                >
+                  {acceptMut.isPending ? "Accepting…" : "Accept as child agent"}
+                </button>
+              </div>
+
+              {latestSnapshot && !latestHoldout ? (
+                <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
+                  <input
+                    className="rounded border border-border bg-surface px-3 py-2 text-[13px]"
+                    inputMode="decimal"
+                    placeholder="Train metric"
+                    value={trainMetric}
+                    onChange={(e) => setTrainMetric(e.target.value)}
+                    data-testid="holdout-train-input"
+                  />
+                  <input
+                    className="rounded border border-border bg-surface px-3 py-2 text-[13px]"
+                    inputMode="decimal"
+                    placeholder="Holdout metric"
+                    value={holdoutMetric}
+                    onChange={(e) => setHoldoutMetric(e.target.value)}
+                    data-testid="holdout-value-input"
+                  />
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded border border-border text-[13px] hover:bg-surface-2 disabled:opacity-50"
+                    disabled={holdoutMut.isPending}
+                    onClick={() => holdoutMut.mutate()}
+                    data-testid="record-holdout-button"
+                  >
+                    {holdoutMut.isPending ? "Recording…" : "Record holdout"}
+                  </button>
+                  <input
+                    className="md:col-span-3 rounded border border-border bg-surface px-3 py-2 text-[13px]"
+                    placeholder="Override reason"
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    data-testid="holdout-override-input"
+                  />
+                </div>
+              ) : null}
+
+              {latestSnapshot &&
+              latestHoldout?.overfit_warning &&
+              !latestHoldout.overfit_waiver_reason ? (
+                <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-2">
+                  <input
+                    className="rounded border border-border bg-surface px-3 py-2 text-[13px]"
+                    placeholder="Overfit waiver reason"
+                    value={waiverReason}
+                    onChange={(e) => setWaiverReason(e.target.value)}
+                    data-testid="overfit-waiver-input"
+                  />
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded border border-warn/50 text-warn text-[13px] hover:bg-warn/5 disabled:opacity-50"
+                    disabled={waiveMut.isPending || !waiverReason.trim()}
+                    onClick={() => waiveMut.mutate()}
+                    data-testid="waive-overfit-button"
+                  >
+                    {waiveMut.isPending ? "Waiving…" : "Waive overfit"}
+                  </button>
+                </div>
+              ) : null}
             </>
           )}
           <a
@@ -407,13 +539,18 @@ export function OptimizationDetailRoute() {
             Export evidence (JSON)
           </a>
         </div>
-        {(acceptMut.isError || revertMut.isError) && (
+        {(acceptMut.isError ||
+          revertMut.isError ||
+          holdoutMut.isError ||
+          waiveMut.isError) && (
           <div
             className="px-5 pb-4 text-[13px] text-danger"
             data-testid="action-error"
           >
             {(acceptMut.error as Error)?.message ??
-              (revertMut.error as Error)?.message}
+              (revertMut.error as Error)?.message ??
+              (holdoutMut.error as Error)?.message ??
+              (waiveMut.error as Error)?.message}
           </div>
         )}
       </Card>

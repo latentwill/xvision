@@ -25,6 +25,7 @@ import {
   getOptimization,
   listOptimizations,
   acceptOptimization,
+  recordOptimizationHoldout,
   type RunDetail,
   type OptimizationRun,
 } from "@/api/optimizations";
@@ -42,6 +43,8 @@ vi.mock("@/api/optimizations", async () => {
     listOptimizations: vi.fn(),
     acceptOptimization: vi.fn(),
     revertOptimization: vi.fn(),
+    recordOptimizationHoldout: vi.fn(),
+    waiveOptimizationOverfit: vi.fn(),
   };
 });
 
@@ -140,8 +143,27 @@ function sampleDetail(status = "completed"): RunDetail {
         created_at: "2026-05-24T00:00:00Z",
       },
     ],
+    holdouts: [
+      {
+        snapshot_id: "01SNAP",
+        run_id: "01RUN",
+        metric: "delta_sharpe",
+        train_metric_value: 0.42,
+        holdout_metric_value: 0.4,
+        overfit_warning: false,
+        overfit_ratio: 0.0476,
+        overfit_waiver_reason: null,
+        created_at: "2026-05-24T00:00:00Z",
+      },
+    ],
     lineage: [],
   };
+}
+
+function sampleDetailWithoutHoldout(status = "completed"): RunDetail {
+  const detail = sampleDetail(status);
+  detail.holdouts = [];
+  return detail;
 }
 
 function renderDetail(qc = makeQC()) {
@@ -236,6 +258,9 @@ describe("OptimizationDetailRoute", () => {
       },
       snapshot_id: "01SNAP",
       accepted: true,
+      holdout_present: true,
+      override_reason: null,
+      overfit_warning: false,
     });
 
     renderDetail();
@@ -246,7 +271,94 @@ describe("OptimizationDetailRoute", () => {
     });
 
     await waitFor(() => {
-      expect(acceptOptimization).toHaveBeenCalledWith("01RUN", "01SNAP");
+      expect(acceptOptimization).toHaveBeenCalledWith(
+        "01RUN",
+        "01SNAP",
+        undefined,
+        undefined,
+      );
+    });
+  });
+
+  it("surfaces holdout recording before accept when the snapshot has no holdout", async () => {
+    vi.mocked(getOptimization).mockResolvedValue(sampleDetailWithoutHoldout());
+    vi.mocked(getAgent).mockResolvedValue(sampleAgent());
+    vi.mocked(recordOptimizationHoldout).mockResolvedValue({
+      snapshot_id: "01SNAP",
+      run_id: "01RUN",
+      metric: "delta_sharpe",
+      train_metric_value: 0.42,
+      holdout_metric_value: 0.39,
+      overfit_warning: false,
+      overfit_ratio: 0.0714,
+      overfit_waiver_reason: null,
+      created_at: "2026-05-24T00:00:00Z",
+    });
+
+    renderDetail();
+    await screen.findByTestId("optimization-detail");
+
+    expect(screen.getByTestId("accept-button")).toHaveAttribute("disabled");
+    fireEvent.change(screen.getByTestId("holdout-train-input"), {
+      target: { value: "0.42" },
+    });
+    fireEvent.change(screen.getByTestId("holdout-value-input"), {
+      target: { value: "0.39" },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("record-holdout-button"));
+    });
+
+    await waitFor(() => {
+      expect(recordOptimizationHoldout).toHaveBeenCalledWith(
+        "01RUN",
+        "01SNAP",
+        {
+          metric: "delta_sharpe",
+          trainMetricValue: 0.42,
+          holdoutMetricValue: 0.39,
+        },
+      );
+    });
+  });
+
+  it("passes an override reason to accept when no holdout is recorded", async () => {
+    vi.mocked(getOptimization).mockResolvedValue(sampleDetailWithoutHoldout());
+    vi.mocked(getAgent).mockResolvedValue(sampleAgent());
+    vi.mocked(acceptOptimization).mockResolvedValue({
+      child_agent: { ...sampleAgent(), agent_id: "01CHILD" },
+      lineage: {
+        child_agent_id: "01CHILD",
+        parent_agent_id: "01AGENTPARENT",
+        optimization_run_id: "01RUN",
+        created_at: "2026-05-24T00:00:00Z",
+      },
+      snapshot_id: "01SNAP",
+      accepted: true,
+      holdout_present: false,
+      override_reason: "operator reviewed manually",
+      overfit_warning: false,
+    });
+
+    renderDetail();
+    await screen.findByTestId("optimization-detail");
+
+    fireEvent.change(screen.getByTestId("holdout-override-input"), {
+      target: { value: "operator reviewed manually" },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("accept-button"));
+    });
+
+    await waitFor(() => {
+      expect(acceptOptimization).toHaveBeenCalledWith(
+        "01RUN",
+        "01SNAP",
+        undefined,
+        "operator reviewed manually",
+      );
     });
   });
 
