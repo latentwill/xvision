@@ -41,12 +41,17 @@ applicable (record rationale in `final/surface-matrix.md`).
 - [x] Docs-freshness coverage assessed for new docs/skill files (see surface matrix §Docs gaps)
 
 ### Phase 1 — chat rail foundation
-- [ ] `chat-rail/unified-stream-cli.txt`
-- [ ] `chat-rail/unified-stream-api.jsonl`
-- [ ] `chat-rail/unified-stream-dashboard.png`
-- [ ] Rust event round-trip tests (path recorded here)
-- [ ] Frontend reducer tests for out-of-order + duplicate events
-- [ ] Session resume browser proof
+- [x] Rust event round-trip tests — `chat-rail/unified-taxonomy-tests.txt`
+      (6 obs tests incl. adjacent-tag kind-collision regression; 4 dashboard
+      projection tests)
+- [x] Frontend reducer tests for out-of-order + duplicate events —
+      `chat-rail/frontend-reducer-tests.txt` (11 vitest, tsc clean)
+- [x] Durable session rail-state + migration 041 —
+      `chat-rail/session-persistence-tests.txt` (11 store tests)
+- [ ] `chat-rail/unified-stream-cli.txt` (needs live SSE rewiring — 1.2 remainder)
+- [ ] `chat-rail/unified-stream-api.jsonl` (needs live SSE rewiring)
+- [ ] `chat-rail/unified-stream-dashboard.png` (needs rail wired to reducer)
+- [ ] Session resume browser proof (needs rail wired to reducer)
 
 ### Phase 2 — chat rail safety
 - [ ] `chat-rail/research-act-deny-write.txt` (server-side denial, spoofed frontend mode)
