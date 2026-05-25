@@ -9,14 +9,14 @@ import type { RunStrategyMetadata } from "./RunStrategyMetadata";
  * (future) MCP browse tools so the payload stays bounded as the engine adds
  * internal telemetry fields to `Run`.
  */
-export type RunSummary = { id: string, agent_id: string, scenario_id: string, strategy?: RunStrategyMetadata | null, scenario?: RunScenarioMetadata | null, mode: string, status: string, started_at: string, completed_at: string | null, sharpe: number | null, max_drawdown_pct: number | null, total_return_pct: number | null, error: string | null, actual_input_tokens: number | null, actual_output_tokens: number | null,
+export type RunSummary = { id: string, agent_id: string, scenario_id: string, strategy: RunStrategyMetadata | null, scenario: RunScenarioMetadata | null, mode: string, status: string, started_at: string, completed_at: string | null, sharpe: number | null, max_drawdown_pct: number | null, total_return_pct: number | null, error: string | null, actual_input_tokens: number | null, actual_output_tokens: number | null, 
 /**
  * LLM inference cost aggregated over all model calls for this run (in USD / quote currency).
  * `None` for old runs without pricing data or when the model isn't in the pricing catalog.
  */
-inference_cost_quote_total: number | null,
+inference_cost_quote_total: number | null, 
 /**
  * Net return after deducting LLM inference cost from gross trading return.
  * `None` for old runs without pricing data or when the model isn't in the pricing catalog.
  */
-net_return_pct: number | null, filter_summaries: Array<FilterSummary>, auto_fire_review: boolean, review_model?: ReviewModel | null, max_annotations_per_review?: number | null, };
+net_return_pct: number | null, filter_summaries: Array<FilterSummary>, auto_fire_review: boolean, review_model: ReviewModel | null, max_annotations_per_review: number | null, };

@@ -634,6 +634,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         limits: None,
         skip_preflight: false,
         provider_override: None,
+        assets_subset: None,
         auto_fire_review: source.auto_fire_review,
         review_model: source.review_model.clone(),
         max_annotations_per_review: source.max_annotations_per_review,
@@ -966,6 +967,17 @@ pub struct EvalRunRequest {
     /// Wave B #5: `cli-eval-model-override`.
     #[serde(default)]
     pub provider_override: Option<ProviderOverride>,
+    /// Optional per-run subset of the strategy's `asset_universe`. When set,
+    /// only the listed assets are traded in this run (backtest only — paper
+    /// mode ignores this field today). Every entry must be present in the
+    /// strategy's `asset_universe`; validation is performed inside
+    /// `build_backtest_executor` via `active_assets`.
+    ///
+    /// CLI: `--assets ETH,SOL` (comma-separated). `None` (default) trades
+    /// the full universe as declared in the strategy manifest.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "Array<string> | null"))]
+    pub assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
     /// When true, finalizing a successful run fires the rule-based review
     /// agent and stores chart annotations on `eval_reviews.annotations_json`.
     /// Default false: auto-review is opt-in per run.
@@ -2128,6 +2140,7 @@ async fn run_inner(
                 &scenario,
                 from_db,
                 &strategy,
+                req.assets_subset.as_deref(),
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
@@ -2486,20 +2499,46 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
 // venue-id label is preserved (separate concept from RunMode); see
 // `xvision_risk::config::venue_limits`.
 
+/// Build the backtest executor, fanning out bar-loading over the strategy's
+/// active asset set (multi-asset B7, Task C3).
+///
+/// The active asset set is `active_assets(&strategy.manifest.asset_universe,
+/// assets_subset)`. When `assets_subset` is `Some`, only the listed assets are
+/// loaded and the executor's own `active_assets` call is kept in sync via
+/// `Executor::with_asset_subset`. For the DB-resolved path each active
+/// asset's bars are loaded via `load_bars_for_scenario` and injected as a
+/// per-asset map (`with_asset_bars`).
+///
+/// Single-asset preservation: when exactly one asset is active the DB path
+/// still calls `with_bars(ohlcv)` and the legacy fixture path still calls
+/// `Executor::new()` — byte-identical to the pre-B7 behavior. The
+/// multi-asset map (`with_asset_bars`) is only taken when 2+ assets are
+/// active.
+///
+/// Preflight: for the DB path, missing bars / warmup for ANY active asset is
+/// a hard `ApiError::Validation`, and the message names the offending asset
+/// so the operator knows which `xvn bars fetch` to run. The single-asset
+/// error shape is preserved.
 #[allow(clippy::too_many_arguments)]
 async fn build_backtest_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
     from_db: bool,
     strategy: &crate::strategies::Strategy,
+    assets_subset: Option<&[xvision_core::trading::AssetSymbol]>,
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
     agent_runtime: AgentRuntime,
     cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
 ) -> ApiResult<Box<dyn RunExecutor>> {
-    let active = crate::eval::executor::asset_set::active_assets(&strategy.manifest.asset_universe, None)
-        .map_err(|e| ApiError::Validation(format!("resolve active assets for backtest: {e}")))?;
+    use crate::eval::executor::asset_set::active_assets;
+    // Multi-asset (B7): resolve the active set. `subset` is `None` for full-universe
+    // runs; `Some(slice)` when the CLI `--assets` flag narrows the run (Task C3).
+    // `active_assets` validates that every subset entry is in the universe and
+    // returns the filtered list.
+    let active = active_assets(&strategy.manifest.asset_universe, assets_subset)
+        .map_err(|e| ApiError::Validation(e.to_string()))?;
     let first_asset = *active
         .first()
         .ok_or_else(|| ApiError::Validation("strategy asset_universe resolved empty".into()))?;
@@ -2521,15 +2560,27 @@ async fn build_backtest_executor(
             // operator who set `warmup_bars > 0` expects real
             // pre-window context, not silent emptiness.
             let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, first_asset).await?);
-            let mut bt = (if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
+            let mut bt = if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
                 Executor::with_bars(asset_bars.remove(&first_asset).unwrap())
             } else {
+                // Multi-asset: fan out over the per-asset map.
                 Executor::new().with_asset_bars(asset_bars)
-            })
-            .with_warmup(warmup)
-            .with_event_bus(ctx.event_bus.clone())
-            .with_provider_catalogs(provider_catalogs)
-            .with_cline_runtime(agent_runtime, cline);
+            };
+            bt = bt
+                .with_warmup(warmup)
+                .with_event_bus(ctx.event_bus.clone())
+                .with_provider_catalogs(provider_catalogs)
+                .with_cline_runtime(agent_runtime, cline);
+            // Task C3: thread the asset subset into the executor so its own
+            // `active_assets` call (inside `run`) agrees with the bars we just
+            // loaded. Without this the executor would call
+            // `active_assets(universe, None)` → full universe, then filter to
+            // only assets with bars — functionally equivalent for the DB path,
+            // but the explicit subset makes the two resolutions agree and avoids
+            // any divergence if future executor logic changes.
+            if let Some(subset) = assets_subset {
+                bt = bt.with_asset_subset(subset.to_vec());
+            }
             if let Some(emitter) = obs {
                 bt = bt.with_observability(emitter);
             }
@@ -2558,6 +2609,10 @@ async fn build_backtest_executor(
         .with_event_bus(ctx.event_bus.clone())
         .with_provider_catalogs(provider_catalogs)
         .with_cline_runtime(agent_runtime, cline);
+    // Task C3: thread the subset through for the legacy path too.
+    if let Some(subset) = assets_subset {
+        bt = bt.with_asset_subset(subset.to_vec());
+    }
     if let Some(emitter) = obs {
         bt = bt.with_observability(emitter);
     }
@@ -2805,6 +2860,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 &scenario,
                 from_db,
                 &strategy,
+                req.assets_subset.as_deref(),
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),

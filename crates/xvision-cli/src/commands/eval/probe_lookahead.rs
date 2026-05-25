@@ -17,7 +17,7 @@ use xvision_core::trading::{AssetSymbol, Regime};
 use xvision_data::fixtures::load_ohlcv_fixture;
 use xvision_engine::api::eval;
 use xvision_engine::api::scenario as api_scenario;
-use xvision_engine::eval::findings::{Finding, KIND_LOOKAHEAD_SUSPECTED};
+use xvision_engine::eval::findings::Finding;
 use xvision_eval::baselines::{AlwaysLong, MaCrossover, MacdMomentum, RsiMeanReversion};
 use xvision_eval::prober::{LookaheadFinding, LookaheadProber, ProberConfig};
 
@@ -90,6 +90,9 @@ pub async fn run_probe_lookahead(args: ProbeLookaheadArgs) -> CliResult<()> {
         .map_err(|e| super::api_to_cli("probe-lookahead get scenario", e))?;
 
     let cache_key = &scenario.bar_cache_policy.cache_key;
+    // Scenarios are asset-free. The bar fixture is keyed by `cache_key` alone
+    // (the symbol arg to `load_ohlcv_fixture` is unused), and this symbol only
+    // labels the synthetic snapshots best-effort, so a placeholder suffices.
     let asset_venue_symbol = "BTC/USD";
 
     eprintln!(

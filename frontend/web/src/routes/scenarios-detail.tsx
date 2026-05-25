@@ -30,7 +30,6 @@ import {
   useBarsFetchJob,
 } from "@/components/scenario/useBarsFetchJob";
 import type {
-  AssetRef,
   CreateScenarioRequest,
   Scenario,
   ScenarioMutations,
@@ -72,10 +71,6 @@ function jsonEq(a: unknown, b: unknown): boolean {
 function arraysEqual<T>(a: ReadonlyArray<T>, b: ReadonlyArray<T>): boolean {
   if (a.length !== b.length) return false;
   return jsonEq(a, b);
-}
-
-function assetsEqual(a: ReadonlyArray<AssetRef>, b: ReadonlyArray<AssetRef>): boolean {
-  return arraysEqual(a, b);
 }
 
 function timeWindowEquals(a: TimeWindow, b: TimeWindow): boolean {
@@ -221,11 +216,10 @@ function DetailView({
     display_name: `${s.display_name} (clone)`,
     description: s.description,
     asset_class: s.asset_class,
-    asset: s.asset,
     quote_currency: s.quote_currency,
     time_window: s.time_window,
     capital: s.capital,
-    granularity: s.granularity,
+    granularity: scenarioGranularityToCli(s.granularity),
     timezone: s.timezone,
     calendar: s.calendar,
     venue: s.venue,
@@ -253,11 +247,11 @@ function DetailView({
       time_window: timeWindowEquals(req.time_window, s.time_window)
         ? null
         : req.time_window,
-      asset: assetsEqual(req.asset, s.asset) ? null : req.asset,
       // Compare the current UI granularity strings case-insensitively.
       // ScenarioForm intentionally owns the fixed operator-facing palette.
       granularity:
-        req.granularity.trim().toLowerCase() === s.granularity.trim().toLowerCase()
+        req.granularity.trim().toLowerCase() ===
+        scenarioGranularityToCli(s.granularity).toLowerCase()
           ? null
           : req.granularity,
       venue: venueEquals(req.venue, s.venue) ? null : req.venue,
@@ -436,10 +430,7 @@ function DefinitionTab({ s }: { s: Scenario }) {
     setChartGranularity(scenarioGranularity);
   }, [s.id, scenarioGranularity]);
 
-  const assetLabel =
-    s.asset.length > 0
-      ? s.asset.map((a) => a.symbol).join(", ") + " / " + s.quote_currency
-      : "—";
+  const marketLabel = `${s.asset_class} / ${s.quote_currency}`;
 
   const windowLabel = `${fmtDate(s.time_window.start)} → ${fmtDate(s.time_window.end)}`;
 
@@ -489,8 +480,8 @@ function DefinitionTab({ s }: { s: Scenario }) {
       </div>
 
       <dl className="grid grid-cols-[180px_1fr] gap-y-2.5 text-[13px] px-5 pb-5">
-        <dt className="text-text-3 self-center">Asset</dt>
-        <dd className="font-mono m-0">{assetLabel}</dd>
+        <dt className="text-text-3 self-center">Market</dt>
+        <dd className="font-mono m-0">{marketLabel}</dd>
 
         <dt className="text-text-3 self-center">Window</dt>
         <dd className="font-mono m-0">{windowLabel}</dd>
@@ -814,7 +805,7 @@ function BarCacheTab({ scenario }: { scenario: Scenario }) {
         <dt className="text-text-3">Cache key</dt>
         <dd className="font-mono text-[11px] break-all m-0">{cacheKey}</dd>
 
-        <dt className="text-text-3">Asset</dt>
+        <dt className="text-text-3">Preview asset</dt>
         <dd className="font-mono m-0">{data.asset}</dd>
 
         <dt className="text-text-3">Granularity</dt>
@@ -860,8 +851,7 @@ const CHART_GRANULARITY_OPTIONS = [
 ];
 
 function buildBarsFetchSpec(s: Scenario, granularity?: string) {
-  const asset = s.asset[0]?.symbol;
-  if (!asset) return null;
+  const asset = "BTC/USD";
   const selectedGranularity = granularity ?? scenarioGranularityToCli(s.granularity);
   const scenarioGranularity = scenarioGranularityToCli(s.granularity);
   const invalidateQueryKeys: Array<readonly unknown[]> = [

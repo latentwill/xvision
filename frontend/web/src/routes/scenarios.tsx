@@ -88,10 +88,8 @@ function sourceTokenToFilter(token: string): ScenarioSource | null {
   }
 }
 
-function symbolsOf(row: Scenario): string {
-  return row.asset.length > 0
-    ? row.asset.map((a) => a.symbol).join(", ")
-    : "";
+function marketOf(row: Scenario): string {
+  return `${row.asset_class} / ${row.quote_currency}`;
 }
 
 export function ScenariosRoute() {
@@ -142,7 +140,7 @@ export function ScenariosRoute() {
       const q = query.trim().toLowerCase();
       if (q.length === 0) return true;
       if (row.display_name.toLowerCase().includes(q)) return true;
-      if (symbolsOf(row).toLowerCase().includes(q)) return true;
+      if (marketOf(row).toLowerCase().includes(q)) return true;
       if (row.granularity.toLowerCase().includes(q)) return true;
       return false;
     },
@@ -186,7 +184,7 @@ export function ScenariosRoute() {
 
   const desktopColumns = [
     { key: "name", label: "Name" },
-    { key: "asset", label: "Asset" },
+    { key: "market", label: "Market" },
     { key: "window", label: "Window" },
     { key: "granularity", label: "Granularity" },
     { key: "source", label: "Source" },
@@ -253,7 +251,7 @@ export function ScenariosRoute() {
             title={row.display_name}
             badge={row.source}
             badgeColor={badgeColorFor(row.source)}
-            subtitle={symbolsOf(row) || row.granularity}
+            subtitle={marketOf(row)}
             meta={`${row.granularity} · ${fmtWindow(row.time_window.start, row.time_window.end)}`}
           />
         )}
@@ -316,7 +314,7 @@ function DesktopRow({
         ) : null}
       </td>
       <td className="px-3 py-3 font-mono text-[12px] text-text-2">
-        {symbolsOf(row) || "—"}
+        {marketOf(row)}
       </td>
       <td className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2">
         {fmtWindow(row.time_window.start, row.time_window.end)}

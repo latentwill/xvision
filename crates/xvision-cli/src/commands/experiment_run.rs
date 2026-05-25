@@ -4,7 +4,8 @@
 //! It sits on top of all wave A / B / C primitives:
 //!
 //! - Wave A: `eval::batch::run_batch` — execute one run per scenario.
-//! - Wave B: `scenario::select_scenarios` — filter library by asset/timeframe.
+//! - Wave B: `scenario::select_scenarios` — filter library by timeframe /
+//!           decision-count / regime (scenarios are asset-free).
 //! - Wave C: `api::experiment::{create_experiment, update_experiment}` +
 //!           `ExperimentStore::set_result` — experiment ledger CRUD.
 //!
@@ -12,8 +13,14 @@
 //!
 //! Two modes:
 //! 1. `--scenarios <id1,id2,...>` — caller provides explicit scenario ids.
-//! 2. `--assets / --timeframe / ...` — delegates to `select_scenarios` (wave B).
-//!    Equivalent to calling `xvn scenario select` and feeding the result here.
+//! 2. `--timeframe / --target-decisions / ...` — delegates to
+//!    `select_scenarios` (wave B). Equivalent to calling `xvn scenario select`
+//!    and feeding the result here.
+//!
+//! `--assets` is a RUN-LAYER subset of the strategy universe (which assets to
+//! trade), NOT a scenario filter — scenarios are asset-free. Threaded through
+//! to each `EvalRunRequest.assets_subset` via `run_batch_via_env_with_assets`
+//! (Task C3).
 //!
 //! TODO(scenario-set-persistence): `--scenario-set <name>` (named saved scenario
 //! sets) is NOT implemented here. It would require a persisted scenario-set table
@@ -36,7 +43,8 @@
 //!   --question "<freeform>" \
 //!   --strategy <strategy_id> \
 //!   [--scenarios <id1,id2,...>] \
-//!   [--assets <a1,a2> --timeframe <min> --target-decisions <N> | --same-decisions --max-decisions <N>] \
+//!   [--timeframe <min> --target-decisions <N> | --same-decisions --max-decisions <N>] \
+//!   [--assets <a1,a2>] \
 //!   --decision-budget <N> \
 //!   --wait \
 //!   [--review-with <profile>] \
@@ -56,12 +64,11 @@ use xvision_engine::api::experiment::{CreateExperimentRequest, UpdateExperimentR
 use xvision_engine::api::scenario::ListScenariosFilter;
 use xvision_engine::api::ApiContext;
 use xvision_engine::eval::experiment_store::{Experiment, ExperimentStore};
-use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::BrokerSurface;
 
-use crate::commands::eval::batch::{run_batch, BatchResult, BatchRunRequest};
+use crate::commands::eval::batch::{run_batch, run_batch_via_env_with_assets, BatchResult, BatchRunRequest};
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
 // ── Request type (testable, decoupled from CLI args) ─────────────────────────
@@ -86,6 +93,10 @@ pub struct ExperimentRunRequest {
     pub review_with: Option<String>,
     /// LLM dispatch for review calls. Required when `review_with` is `Some`.
     pub review_dispatch: Option<Arc<dyn LlmDispatch>>,
+    /// Optional per-run subset of the strategy's asset universe (Task C3).
+    /// Passed through to `BatchRunRequest.assets_subset` and onward to each
+    /// `EvalRunRequest.assets_subset`. `None` trades the full universe.
+    pub assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
 }
 
 // ── Result types ──────────────────────────────────────────────────────────────
@@ -205,6 +216,7 @@ pub async fn run_experiment(ctx: &ApiContext, req: ExperimentRunRequest) -> Resu
         tools: req.tools,
         review_with: req.review_with,
         review_dispatch: req.review_dispatch,
+        assets_subset: req.assets_subset,
     };
 
     let batch_result = run_batch(ctx, batch_req).await?;
@@ -321,7 +333,8 @@ pub struct RunArgs {
 
     /// Explicit comma-separated scenario ids (from `xvn scenario ls`).
     ///
-    /// Mutually exclusive with `--assets` / `--timeframe` selector mode.
+    /// Mutually exclusive with the `--timeframe` / `--target-decisions`
+    /// selector mode.
     #[arg(long, value_delimiter = ',')]
     pub scenarios: Vec<String>,
 
@@ -329,8 +342,9 @@ pub struct RunArgs {
     // TODO(scenario-set-persistence): --scenario-set <name> is NOT implemented.
     // Persisted named scenario sets were punted in wave B. Wire this up once
     // the `scenario_sets` table lands in a follow-up track.
-    /// Asset filter for scenario selection (e.g. `BTC/USD,ETH/USD`).
-    /// Only used when `--scenarios` is not provided.
+    /// Subset of the strategy universe to trade (e.g. `BTC/USD,ETH/USD`).
+    /// A run-layer filter, NOT a scenario filter — scenarios are asset-free.
+    /// Threaded to each eval run's `assets_subset` (Task C3).
     #[arg(long, value_delimiter = ',')]
     pub assets: Vec<String>,
 
@@ -436,7 +450,7 @@ pub struct RunArgs {
 ///   4. Bind the persisted batch_id to the experiment row.
 ///   5. Compute and persist `result_json` summary.
 pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
-    use crate::commands::eval::batch::{run_batch_via_env, BatchRunArgs};
+    use crate::commands::eval::batch::BatchRunArgs;
     use crate::commands::eval::open_ctx;
     use xvision_engine::api::experiment::{
         create_experiment, update_experiment, CreateExperimentRequest, UpdateExperimentRequest,
@@ -447,13 +461,36 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         .await
         .exit_with(XvnExit::Upstream)?;
 
+    // `--assets` is a RUN-LAYER subset of the strategy universe (which assets
+    // to trade), NOT a scenario filter — scenarios are asset-free. Task C3:
+    // parse and thread through to each eval run via run_batch_via_env_with_assets.
+    let asset_subset: Option<Vec<xvision_core::trading::AssetSymbol>> = if args.assets.is_empty() {
+        None
+    } else {
+        let mut parsed = Vec::with_capacity(args.assets.len());
+        for raw in &args.assets {
+            let sym = crate::commands::asset::parse_asset(raw).map_err(|e| CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--assets: {e}"),
+            })?;
+            parsed.push(sym);
+        }
+        Some(parsed)
+    };
+
+    // Scenario selection is driven by the remaining (asset-free) selector
+    // flags: --timeframe / --target-decisions / --same-decisions / --regimes.
+    let selector_requested = args.timeframe.is_some()
+        || args.target_decisions.is_some()
+        || args.same_decisions
+        || !args.regimes.is_empty();
+
     // Resolve scenario ids: explicit list OR selector.
     let mut scenario_ids: Vec<String> = if !args.scenarios.is_empty() {
         args.scenarios.clone()
-    } else if !args.assets.is_empty() {
+    } else if selector_requested {
         resolve_scenarios_via_selector(
             &ctx,
-            &args.assets,
             args.timeframe,
             &args.regimes,
             args.target_decisions,
@@ -465,14 +502,19 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
     } else {
         return Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("either --scenarios <ids> or --assets (with --timeframe) is required"),
+            source: anyhow::anyhow!(
+                "either --scenarios <ids> or a selector (--timeframe / --target-decisions / \
+                 --same-decisions / --regimes) is required"
+            ),
         });
     };
 
     if scenario_ids.is_empty() {
         return Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("no scenarios resolved; check --assets / --timeframe / --count"),
+            source: anyhow::anyhow!(
+                "no scenarios resolved; check --timeframe / --target-decisions / --count"
+            ),
         });
     }
 
@@ -498,6 +540,12 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         eprintln!("  question:          {q}");
     }
     eprintln!("  strategy:          {}", args.strategy);
+    if let Some(ref sub) = asset_subset {
+        // Run-layer subset of the strategy universe (Task C3): threaded through
+        // to each eval run via run_batch_via_env_with_assets.
+        let names: Vec<String> = sub.iter().map(|a| a.to_string()).collect();
+        eprintln!("  asset subset:      {}", names.join(","));
+    }
     eprintln!(
         "  runs to launch:    {}{}",
         scenario_ids.len(),
@@ -565,7 +613,7 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         review_with: args.review_with.clone(),
         xvn_home: args.xvn_home.clone(),
     };
-    let batch_result = run_batch_via_env(&ctx, &batch_args).await?;
+    let batch_result = run_batch_via_env_with_assets(&ctx, &batch_args, asset_subset).await?;
 
     // Step 3: Bind the persisted batch to the experiment row.
     update_experiment(
@@ -631,10 +679,11 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
 
 // ── Scenario selector integration ────────────────────────────────────────────
 
-/// Delegate scenario selection to wave-B `select_scenarios` logic.
+/// Delegate scenario selection to wave-B `select_scenarios` logic. Scenarios
+/// are asset-free, so this no longer filters by asset; asset-universe
+/// selection lives at the run layer (`--assets`, threaded in Task C3).
 async fn resolve_scenarios_via_selector(
     ctx: &ApiContext,
-    assets: &[String],
     timeframe_minutes: Option<u32>,
     regimes: &[String],
     target_decisions: Option<u64>,
@@ -659,7 +708,6 @@ async fn resolve_scenarios_via_selector(
 
     let rows = crate::commands::scenario::select_scenarios(
         &all_scenarios,
-        assets,
         timeframe_minutes,
         regimes,
         target_decisions,

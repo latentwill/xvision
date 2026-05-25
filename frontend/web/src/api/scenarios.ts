@@ -70,7 +70,8 @@ export function getScenario(id: string): Promise<Scenario> {
 
 export function createScenario(req: CreateScenarioRequest): Promise<Scenario> {
   const trace = createTrace("scenario", {
-    asset: req.asset.map((a) => a.symbol),
+    asset_class: req.asset_class,
+    quote_currency: req.quote_currency,
     granularity: req.granularity,
     from: req.time_window.start,
     to: req.time_window.end,

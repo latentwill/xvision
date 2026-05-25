@@ -9,7 +9,6 @@ import { Topbar } from "@/components/shell/Topbar";
 import { WizardPreviewChart } from "@/components/chart/WizardPreviewChart";
 
 const DEFAULT_DRAFT: ScenarioFormDraft = {
-  asset: "ETH",
   from: "",
   to: "",
   granularity: "1h",
@@ -47,7 +46,7 @@ export function ScenariosNewRoute() {
           onCancel={() => navigate("/scenarios")}
         />
         <WizardPreviewChart
-          asset={draft.asset}
+          asset="ETH"
           from={draft.from}
           to={draft.to}
           granularity={draft.granularity}

@@ -667,3 +667,73 @@ fn create_without_template_or_from_file_emits_usage_error() {
         "stderr should mention replacement paths, got: {stderr}"
     );
 }
+
+/// `xvn strategy new --prompt <file> --assets BTC,ETH,SOL ...` populates
+/// `manifest.asset_universe` with normalized venue pairs.
+#[test]
+fn strategy_new_assets_populates_universe() {
+    let dir = tempdir().unwrap();
+    let prompt_path = dir.path().join("prompt.md");
+    std::fs::write(
+        &prompt_path,
+        "You are a multi-asset trader. Use OHLCV data to decide.",
+    )
+    .unwrap();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "new",
+            "--name",
+            "multi-asset-test",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-4.1-mini",
+            "--role",
+            "trader",
+            "--assets",
+            "BTC,ETH,SOL",
+            "--timeframe",
+            "1h",
+            "--prompt",
+            prompt_path.to_str().unwrap(),
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The --json output from atomic mode is the create-output envelope
+    // (strategy_id, agent_id, eval_ready, provider, model, warnings).
+    // We need to load the strategy via `strategy show` to check the manifest.
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout must be JSON");
+    let strategy_id = body["strategy_id"].as_str().expect("strategy_id in output");
+
+    let show_out = xvn(&["strategy", "show", strategy_id], dir.path());
+    assert!(
+        show_out.status.success(),
+        "strategy show failed; stderr: {}",
+        String::from_utf8_lossy(&show_out.stderr)
+    );
+
+    let strategy: serde_json::Value =
+        serde_json::from_slice(&show_out.stdout).expect("strategy show must be JSON");
+    let universe = strategy["manifest"]["asset_universe"]
+        .as_array()
+        .expect("asset_universe must be an array");
+    let universe_strs: Vec<&str> = universe
+        .iter()
+        .map(|v| v.as_str().expect("asset_universe entry must be a string"))
+        .collect();
+
+    assert_eq!(
+        universe_strs,
+        ["BTC/USD", "ETH/USD", "SOL/USD"],
+        "asset_universe must be venue-pair normalized: {universe_strs:?}"
+    );
+}
