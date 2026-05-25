@@ -49,10 +49,12 @@ import {
   type ContentBlock,
   type ContextScope,
   type WizardEvent,
+  UNIFIED_STREAM_REPLAY_FROM_START,
   createSession,
   headerLabel,
   listSessions,
   loadSessionHistory,
+  openUnifiedSessionStream,
   placeholder,
   resolveSession,
   scopeFromPath,
@@ -61,6 +63,15 @@ import {
 } from "@/api/chat_rail";
 import { listProviders, settingsKeys } from "@/api/settings";
 import type { ProviderRow } from "@/api/types.gen";
+import {
+  useSessionEvents,
+  useSessionRows,
+} from "@/stores/session-events";
+import { useTraceDock } from "@/stores/trace-dock";
+import type {
+  MessageRow,
+  ToolRow,
+} from "@/stores/message-row-reducer";
 
 const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
@@ -145,6 +156,41 @@ export function ChatRail({
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+
+  // ── Unified event stream (Phase 1.2/1.4) ────────────────────────────────
+  // One stream → one event log → two projections (rail rows + trace dock).
+  // When a session is bound and the rail is active, open the unified SSE
+  // stream and ingest every UnifiedEvent into the shared session-events
+  // store. Rail rows render from that store's `reduceRows` projection; the
+  // trace dock reads the SAME store (via its session binding). Ingestion is
+  // idempotent (dedupe by event_id) so reconnect/replay never duplicates.
+  const ingest = useSessionEvents((s) => s.ingest);
+  const resetSessionEvents = useSessionEvents((s) => s.reset);
+  useEffect(() => {
+    if (variant === "desktop" && !open) return;
+    if (!sessionId) return;
+    const boundSession = sessionId;
+    // Bind the trace dock to this session so its span view projects from the
+    // same unified log (one stream, two projections — Phase 1.2/1.4).
+    useTraceDock.getState().setActiveSession(boundSession);
+    const close = openUnifiedSessionStream(
+      boundSession,
+      UNIFIED_STREAM_REPLAY_FROM_START,
+      {
+        onEvent: (ev) => ingest(boundSession, ev),
+      },
+    );
+    return () => {
+      close();
+      // Only clear the binding if it's still pointing at this session.
+      if (useTraceDock.getState().activeSessionId === boundSession) {
+        useTraceDock.getState().setActiveSession(null);
+      }
+    };
+  }, [sessionId, open, variant, ingest]);
+
+  // Rail-row projection of the unified log for the active session.
+  const unifiedRows = useSessionRows(sessionId);
 
   const abortActiveStream = useCallback(() => {
     abortRef.current?.abort();
@@ -251,6 +297,8 @@ export function ChatRail({
     setError(null);
     try {
       const created = await createSession(scope);
+      // Fresh session → clear any unified log carried under the new id.
+      resetSessionEvents(created.session_id);
       sessionIdRef.current = created.session_id;
       setSessionId(created.session_id);
       setBubbles(historyToBubbles(created.history));
@@ -259,13 +307,27 @@ export function ChatRail({
     } catch (e) {
       setError(formatErr(e));
     }
-  }, [abortActiveStream, key, scope, sessionsQ]);
+  }, [abortActiveStream, key, scope, sessionsQ, resetSessionEvents]);
 
   const recentScopeSessions = useMemo(() => {
     return (sessionsQ.data ?? [])
       .filter((s) => scopeKey(s.scope) === key)
       .slice(0, 8);
   }, [key, sessionsQ.data]);
+
+  // The thread the rail renders. Rows project from the unified session-events
+  // store (`reduceRows` output) when the store has events for this session —
+  // one source of truth shared with the trace dock. Until the backend mirrors
+  // sends through the unified log, the legacy `bubbles` (user turns + server
+  // history + live send echo) remain the baseline; the unified projection is
+  // overlaid so assistant/tool/error rows from the canonical log are rendered.
+  const threadBubbles = useMemo(
+    () =>
+      unifiedRows.length > 0
+        ? mergeUnifiedRows(bubbles, unifiedRows)
+        : bubbles,
+    [bubbles, unifiedRows],
+  );
 
   if (variant === "desktop" && !open) {
     return (
@@ -379,7 +441,7 @@ export function ChatRail({
         }}
       />
 
-      <ChatThread bubbles={bubbles} isStreaming={isStreaming} />
+      <ChatThread bubbles={threadBubbles} isStreaming={isStreaming} />
 
       {error && (
         <div className="px-4 py-2 border-t border-border text-danger text-[12px]">
@@ -538,6 +600,106 @@ export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void 
       // opt in explicitly so we don't spam refetches for every read.
       return;
   }
+}
+
+/**
+ * Project the unified `MessageRow[]` (the canonical reducer output shared
+ * with the trace dock) onto the rail's bubble model, then merge with the
+ * legacy `bubbles` baseline.
+ *
+ * Merge rule: keep the legacy USER turns (the unified log doesn't carry the
+ * operator's own messages on the rail-send path yet), then render the
+ * unified assistant/tool/error/checkpoint/optimizer rows as assistant
+ * bubbles AFTER them. The trailing legacy assistant echo (the optimistic
+ * "" bubble pushed on send) is dropped in favor of the canonical projection
+ * so we don't double-render the agent's reply.
+ */
+function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[] {
+  const userTurns = bubbles.filter((b): b is Extract<Bubble, { role: "user" }> =>
+    b.role === "user",
+  );
+  const projected = unifiedRowsToBubbles(rows);
+  return [...userTurns, ...projected];
+}
+
+/** One assistant bubble per assistant row; tool/error/etc. rows attach to or
+ *  follow the nearest preceding assistant bubble (or open their own). */
+function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
+  const out: Bubble[] = [];
+  let current: AssistantBubble | null = null;
+
+  const ensureBubble = (): AssistantBubble => {
+    if (!current) {
+      current = { role: "assistant", blocks: [], tools: [] };
+      out.push(current);
+    }
+    return current;
+  };
+
+  for (const row of rows) {
+    switch (row.type) {
+      case "assistant": {
+        // Each assistant row is its own bubble (messageIndex-distinct).
+        current = { role: "assistant", blocks: [], tools: [] };
+        if (row.text) current.blocks.push({ kind: "text", text: row.text });
+        for (const block of row.blocks) {
+          current.blocks.push(
+            contentBlockToRenderable(block as ContentBlock),
+          );
+        }
+        out.push(current);
+        break;
+      }
+      case "tool": {
+        ensureBubble().tools.push(toolRowToTool(row));
+        break;
+      }
+      case "error": {
+        const b = ensureBubble();
+        appendAssistantText(
+          b,
+          `\n\n[${row.errorKind} · ${row.code}] ${row.message}`,
+        );
+        break;
+      }
+      case "checkpoint": {
+        const b = ensureBubble();
+        appendAssistantText(b, `\n\n[checkpoint ${row.status}: ${row.checkpointId}]`);
+        break;
+      }
+      case "optimizer": {
+        const b = ensureBubble();
+        const tail = row.completed
+          ? row.mintedAgentId
+            ? ` → minted ${row.mintedAgentId}`
+            : " → completed"
+          : ` · ${row.candidateCount} candidate(s)`;
+        appendAssistantText(b, `\n\n[optimizer ${row.optimizationId}${tail}]`);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+function toolRowToTool(row: ToolRow): Tool {
+  const terminal =
+    row.status === "finished" ||
+    row.status === "failed" ||
+    row.status === "cancelled" ||
+    row.status === "denied";
+  const ok = row.status !== "failed" && row.status !== "denied";
+  const summaryBits = [row.policyOutcome, row.outputHash ? "ok" : null].filter(
+    Boolean,
+  ) as string[];
+  return {
+    call: row.toolName ?? row.spanId,
+    ok,
+    summary: summaryBits.join(" · "),
+    resultSummary: row.errorMessage ?? (row.outputHash ? "ok" : ""),
+    pending: !terminal,
+    result: row.errorMessage ? { error: row.errorMessage } : undefined,
+  };
 }
 
 function applyEvent(

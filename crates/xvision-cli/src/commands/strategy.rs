@@ -12,6 +12,9 @@ use xvision_engine::agent::pipeline::{
 use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
+use xvision_engine::diagnostics::{
+    self, assert_launchable, CapabilityStatus, DiagnosticsError, StrategyDiagnostics,
+};
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{
@@ -178,6 +181,23 @@ enum StrategyAction {
         #[arg(long)]
         scenario: Option<String>,
         /// Emit result as JSON instead of plain text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Capability-completeness diagnostics for a strategy (Phase 4.1).
+    ///
+    /// Loads the strategy + every agent it references and prints typed
+    /// per-capability statuses (Ready / MissingPrompt /
+    /// MissingModelBinding / MissingTool / Unsupported / Optimizable /
+    /// Optional) plus the launch verdict. `--json` emits the full
+    /// `StrategyDiagnostics` serde shape. Exits non-zero with a distinct
+    /// code (`OptValidation` = 14) when the strategy is NOT launchable so
+    /// scripts can branch on readiness without parsing text.
+    Diagnostics {
+        /// Strategy id to diagnose.
+        id: String,
+        /// Emit the full `StrategyDiagnostics` as JSON instead of a text
+        /// summary.
         #[arg(long)]
         json: bool,
     },
@@ -454,6 +474,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             clear_no_filter_warning,
         } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning).await,
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
+        StrategyAction::Diagnostics { id, json } => diagnostics(&id, json).await,
         StrategyAction::Ls { format, json } => ls(format, json).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
@@ -1204,6 +1225,117 @@ fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> 
             "strategy is not eval-ready: {} error(s)",
             report.errors.len()
         )))
+    }
+}
+
+/// `xvn strategy diagnostics <id> [--json]` — capability-completeness
+/// report (Phase 4.1). Exits non-zero (`OptValidation` = 14) when the
+/// strategy is not launchable so scripts can gate on readiness without
+/// parsing text.
+async fn diagnostics(id: &str, json: bool) -> CliResult<()> {
+    let ctx = open_ctx().await?;
+    let diag = diagnostics::capability_diagnostics(&ctx, id)
+        .await
+        .map_err(|e| api_to_cli("strategy diagnostics", e))?;
+
+    if json {
+        crate::io::print_json(&diag)?;
+    } else {
+        print_diagnostics_text(&diag);
+    }
+
+    // Non-zero exit when not launchable. Use the typed launch gate so the
+    // exit reason matches the engine's verdict exactly.
+    match assert_launchable(&diag) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(CliError {
+            exit: XvnExit::OptValidation,
+            source: anyhow::anyhow!("{}", render_diagnostics_error(&e)),
+        }),
+    }
+}
+
+/// One-line human summary of a [`DiagnosticsError`].
+fn render_diagnostics_error(e: &DiagnosticsError) -> String {
+    e.to_string()
+}
+
+/// Stable lowercase capability key for text output (mirrors the serde
+/// wire form). Kept local so the CLI text surface doesn't depend on the
+/// engine exposing a formatter.
+fn cap_key(c: xvision_engine::agents::Capability) -> &'static str {
+    use xvision_engine::agents::Capability::*;
+    match c {
+        Trader => "trader",
+        Filter => "filter",
+        Critic => "critic",
+        Intern => "intern",
+        Router => "router",
+    }
+}
+
+/// Render a `CapabilityStatus` as a short text token for the summary.
+fn status_token(s: &CapabilityStatus) -> String {
+    match s {
+        CapabilityStatus::Ready => "ready".into(),
+        CapabilityStatus::MissingPrompt => "MISSING_PROMPT".into(),
+        CapabilityStatus::MissingModelBinding => "MISSING_MODEL_BINDING".into(),
+        CapabilityStatus::MissingTool { tool } => format!("MISSING_TOOL({tool})"),
+        CapabilityStatus::Unsupported => "UNSUPPORTED".into(),
+        CapabilityStatus::Optimizable => "optimizable".into(),
+        CapabilityStatus::Optional => "optional".into(),
+    }
+}
+
+/// Plain-text diagnostics report for the non-`--json` path.
+fn print_diagnostics_text(diag: &StrategyDiagnostics) {
+    println!("strategy: {}", diag.strategy_id);
+    println!(
+        "launchable: {}",
+        if diag.launchable { "yes" } else { "NO" }
+    );
+    if !diag.required_capabilities.is_empty() {
+        let caps: Vec<&str> = diag.required_capabilities.iter().map(|c| cap_key(*c)).collect();
+        println!("required capabilities: {}", caps.join(", "));
+    }
+    if !diag.optimizable.is_empty() {
+        let caps: Vec<&str> = diag.optimizable.iter().map(|c| cap_key(*c)).collect();
+        println!("optimizable now (dspy signature): {}", caps.join(", "));
+    }
+    println!();
+    for agent in &diag.per_agent {
+        let name = agent.agent_name.as_deref().unwrap_or("<unresolved>");
+        println!("• role '{}' → agent {} ({})", agent.role, agent.agent_id, name);
+        if !agent.agent_resolved {
+            println!("    ! agent reference does not resolve to a workspace agent");
+        }
+        for cd in &agent.capabilities {
+            let marker = if cd.required { "[required]" } else { "[declared]" };
+            let tools = if cd.required_tools.is_empty() {
+                String::new()
+            } else {
+                format!(" tools={}", cd.required_tools.join(","))
+            };
+            println!(
+                "    {} {:<8} {}{}",
+                marker,
+                cap_key(cd.capability),
+                status_token(&cd.status),
+                tools,
+            );
+        }
+    }
+    if !diag.required_unmet.is_empty() {
+        println!();
+        println!("UNMET REQUIRED CAPABILITIES:");
+        for u in &diag.required_unmet {
+            println!(
+                "  - role '{}' capability '{}': {}",
+                u.role,
+                cap_key(u.capability),
+                status_token(&u.status),
+            );
+        }
     }
 }
 

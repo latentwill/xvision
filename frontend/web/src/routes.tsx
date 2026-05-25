@@ -19,6 +19,9 @@ const StrategiesNewRoute = lazy(() => import("./routes/strategies-new").then((m)
 const StrategiesFolderRoute = lazy(() => import("./routes/strategies-folder").then((m) => ({ default: m.StrategiesFolderRoute })));
 const AgentsRoute = lazy(() => import("./routes/agents").then((m) => ({ default: m.AgentsRoute })));
 const AgentsEditRoute = lazy(() => import("./routes/agents-edit").then((m) => ({ default: m.AgentsEditRoute })));
+const OptimizationDetailRoute = lazy(() => import("./routes/optimizations-detail").then((m) => ({ default: m.OptimizationDetailRoute })));
+const AgentDiagnosticsRoute = lazy(() => import("./routes/diagnostics-mobile").then((m) => ({ default: m.AgentDiagnosticsRoute })));
+const StrategyDiagnosticsRoute = lazy(() => import("./routes/diagnostics-mobile").then((m) => ({ default: m.StrategyDiagnosticsRoute })));
 const AuthoringRoute = lazy(() => import("./routes/authoring").then((m) => ({ default: m.AuthoringRoute })));
 const EvalRunsRoute = lazy(() => import("./routes/eval-runs").then((m) => ({ default: m.EvalRunsRoute })));
 const EvalRunDetailRoute = lazy(() => import("./routes/eval-runs-detail").then((m) => ({ default: m.EvalRunDetailRoute })));
@@ -98,11 +101,23 @@ export const router = createBrowserRouter([
       { path: "strategies-folder", element: page(<StrategiesFolderRoute />) },
       { path: "strategies/new", element: page(<StrategiesNewRoute />) },
       { path: "strategies/:id", element: page(<AuthoringRoute />) },
+      {
+        path: "strategies/:id/diagnostics",
+        element: page(<StrategyDiagnosticsRoute />),
+      },
       { path: "agents", element: page(<AgentsRoute />) },
       { path: "agents/memory", element: page(<MemoryPage />) },
       { path: "agents/skills", element: page(<SettingsSkillsRoute />) },
       { path: "agents/new", element: page(<AgentsEditRoute />) },
       { path: "agents/:id", element: page(<AgentsEditRoute />) },
+      {
+        path: "agents/:id/diagnostics",
+        element: page(<AgentDiagnosticsRoute />),
+      },
+      {
+        path: "agents/:id/optimizations/:runId",
+        element: page(<OptimizationDetailRoute />),
+      },
       { path: "scenarios", element: page(<ScenariosRoute />) },
       { path: "scenarios/new", element: page(<ScenariosNewRoute />) },
       { path: "scenarios/:id", element: page(<ScenariosDetailRoute />) },

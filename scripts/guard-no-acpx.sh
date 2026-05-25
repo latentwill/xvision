@@ -13,7 +13,7 @@ PATTERN='acpx|AcpxIntern|XVN_INTERN_ACPX'
 
 # Files/dirs allowed to mention ACPX as historical record only (tombstones,
 # dated research, ADRs, archived notes, and the dated Cline plan/spec docs).
-ALLOW='^docs/cli-non-surfaced.md|^docs/superpowers/notes/|^docs/superpowers/research/|^docs/superpowers/plans/2026-05-24-cline-|^docs/superpowers/specs/2026-05-24-cline-runtime-unification-design.md|^decisions/|^team/intake/archive/|^team/archive/|^scripts/guard-no-acpx.sh'
+ALLOW='^docs/cli-non-surfaced.md|^docs/superpowers/notes/|^docs/superpowers/research/|^docs/superpowers/plans/2026-05-24-cline-|^docs/superpowers/specs/2026-05-24-cline-runtime-unification-design.md|^docs/superpowers/specs/2026-05-24-chat-rail-and-strategy-agents-evaluation.md|^decisions/|^team/intake/archive/|^team/archive/|^scripts/guard-no-acpx.sh|^scripts/board-lint.sh'
 
 hits="$(git grep -nIE "$PATTERN" -- \
   ':!target' ':!node_modules' \
