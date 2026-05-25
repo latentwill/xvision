@@ -12,6 +12,7 @@ pub mod checkpoint;
 pub mod error;
 pub mod eval;
 pub mod focus;
+pub mod optimization;
 pub mod providers;
 pub mod safety;
 pub mod search;

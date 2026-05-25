@@ -18,6 +18,7 @@ pub mod metrics;
 pub mod migrate;
 pub mod model;
 pub mod obs;
+pub mod optimize;
 pub mod provider;
 pub mod report;
 pub mod risk;

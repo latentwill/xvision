@@ -28,6 +28,23 @@ pub enum XvnExit {
     NotFound = 4,
     Upstream = 5,
     Conflict = 7,
+    // `xvn optimize` failure classes (Phase 3.6). Distinct codes so an agent
+    // can branch on the exact reason an optimization run failed without parsing
+    // text. Kept in the 10–15 band, clear of the shared codes above.
+    /// The corpus query resolved to no usable training data.
+    OptMissingData = 10,
+    /// The requested capability has no optimizer signature (the typed
+    /// `missing_capability_optimizer` error from xvision-dspy).
+    OptMissingCapability = 11,
+    /// The model provider could not be reached / is not configured.
+    OptProvider = 12,
+    /// The objective metric failed to evaluate (e.g. unknown metric name).
+    OptMetric = 13,
+    /// Input/signature validation failed (bad capability/optimizer enum, corpus
+    /// path missing, signature parse/validate error).
+    OptValidation = 14,
+    /// The store write failed (migration not applied, DB error).
+    OptPersistence = 15,
 }
 
 impl From<XvnExit> for ExitCode {
@@ -134,6 +151,13 @@ mod tests {
         assert_eq!(XvnExit::NotFound as u8, 4);
         assert_eq!(XvnExit::Upstream as u8, 5);
         assert_eq!(XvnExit::Conflict as u8, 7);
+        // `xvn optimize` failure-class codes (Phase 3.6).
+        assert_eq!(XvnExit::OptMissingData as u8, 10);
+        assert_eq!(XvnExit::OptMissingCapability as u8, 11);
+        assert_eq!(XvnExit::OptProvider as u8, 12);
+        assert_eq!(XvnExit::OptMetric as u8, 13);
+        assert_eq!(XvnExit::OptValidation as u8, 14);
+        assert_eq!(XvnExit::OptPersistence as u8, 15);
     }
 
     #[test]

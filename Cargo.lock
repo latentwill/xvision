@@ -9220,6 +9220,7 @@ dependencies = [
  "xvision-core",
  "xvision-dashboard",
  "xvision-data",
+ "xvision-dspy",
  "xvision-engine",
  "xvision-eval",
  "xvision-execution",
