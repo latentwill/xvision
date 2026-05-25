@@ -13,6 +13,7 @@ pub mod diagnostics;
 pub mod error;
 pub mod eval;
 pub mod focus;
+pub mod guardrails;
 pub mod optimization;
 pub mod providers;
 pub mod safety;
@@ -33,6 +34,11 @@ pub use diagnostics::{
     assert_launchable, capability_diagnostics, diagnose, AgentDiagnostics, CapabilityDiagnostic,
     CapabilityStatus, DiagnosticsError, StrategyDiagnostics, UnmetRequirement,
 };
+
+// Phase 4.2 no-short-circuit execution guardrails: pure detectors that map
+// a missing prerequisite to a distinct code + remediation + typed-error
+// event payload, so a skipped step never reads as a silent success.
+pub use guardrails::{ShortCircuit, ShortCircuitReport, SHORT_CIRCUIT_CODES};
 
 // Phase 2.5 chat-rail checkpoints: content-addressed snapshot + verbatim
 // restore of a session's mutable authoring artifacts.
