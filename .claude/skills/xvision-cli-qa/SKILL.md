@@ -196,6 +196,85 @@ Watch for:
 
 CLI peer: `xvn agent get <agent_id>`
 
+### Capability diagnostics (launch readiness)
+CLI surfaces (no dedicated HTTP endpoint exercised here):
+- `xvn strategy diagnostics <id> [--json]` — whole-strategy launch gate;
+  exits **14** (`OptValidation`) when not launchable, **4** (`NotFound`) for an
+  unknown id. JSON carries `launchable`, `required_capabilities[]`,
+  `required_unmet[]` (each with typed `status.kind`), `optimizable[]`.
+- `xvn agent inspect <id> --diagnostics [--json]` — per-capability state
+  (`has_prompt`, `has_model_binding`, `required_tools`, `runtime_supported`,
+  `optimizable`); exits 0 for a resolved agent.
+
+Watch for:
+- a strategy reported `launchable: true` while a required capability is missing
+  a prompt / model / tool — diagnostics must NOT pass an incomplete strategy
+- exit code drift: not-launchable must be **14**, not 2; unknown id must be **4**
+- typed `status.kind` not matching the unmet reason
+  (`missing_tool` / `missing_prompt` / `missing_model_binding` / `unsupported`)
+- `optimizable[]` listing a non-`trader`/`filter` capability (only those have
+  DSPy signatures today)
+- `agent inspect --diagnostics` failing non-zero just because a capability is
+  incomplete (state-only; it must exit 0 for a resolved agent)
+
+### Offline optimizer (`xvn optimize`)
+- `GET /api/optimizations?agent=&slot=` — list runs; slot filter narrows
+- `GET /api/optimizations/:id` — run detail: candidate table, snapshot, lineage;
+  unknown id ⇒ 404; a FAILED run still returns its partial candidates
+- `POST /api/optimizations/:id/accept` — mint a child agent from a snapshot
+- `POST /api/optimizations/:id/revert` — clear accept flag + lineage edge
+
+CLI peers:
+- `xvn optimize run --agent … --slot … --capability … --corpus … --optimizer … --metric … --rng-seed … [--dry-run] [--json]`
+- `xvn optimize inspect / export-demos / import-demos / accept-as-child-agent / revert-accepted / explain-missing-data`
+
+Watch for:
+- **accept-without-holdout** succeeding — a snapshot whose winner was selected
+  on train-only data (no holdout split) MUST be refused at accept time
+- accept using a snapshot from a **different run** succeeding (must be rejected)
+- accept **mutating the parent** agent — it must clone + leave the parent intact
+- `revert` not clearing both the accept flag AND the lineage edge
+- same `--rng-seed` + inputs producing a different winning candidate
+  (runs must be reproducible-from-inputs)
+- **engine/dashboard pulling DSPy** — `cargo tree -p xvision-engine` /
+  `-p xvision-dashboard` must show no `dspy-rs`/`xvision-dspy`/`rig-core`; the
+  store surfaces snapshots/demos as opaque JSON, accept swaps a plain
+  instruction string only
+- exit-code drift across the failure classes (10 missing-data, 11
+  missing-capability, 12 provider, 13 metric, 14 validation, 15 persistence,
+  4 not-found); `--live` is a stub and must fail with 12, not 0
+- `--dry-run` mutating the store (it must validate only)
+
+### Chat rail (unified stream + safety)
+- `GET /api/chat-rail/sessions/:id/stream?after_seq=<n>` — replay past the
+  cursor → `replay_complete{last_seq}` → live tail (default `after_seq=-1`)
+- `POST /api/chat-rail/sessions/:id/mode` `{ "mode": "research"|"act" }`
+- `GET/PUT /api/chat-rail/tool-policy` (`{ scope?, tool_name, enabled, auto_approve }`)
+- `GET/PUT /api/chat-rail/focus`
+- `GET /api/chat-rail/sessions/:id/checkpoints`,
+  `POST /api/chat-rail/checkpoints/:cid/restore`
+
+Watch for:
+- **write tool executing in research mode** — it must be denied BEFORE execution
+  and emit a `tool_denied` row; a side effect (strategy/scenario mutated) is a
+  hard bug
+- a **spoofed client mode** bypassing enforcement — the server reads the
+  persisted mode column, not anything the client asserts at execution time
+- `set mode` accepting an invalid value (must validate to research/act), or
+  returning anything but 404 for an unknown session id
+- tool-policy three-state drift: Disabled tool offered to the model or running;
+  Ask tool (`enabled=true, auto_approve=false`) auto-running without approval
+- an **unknown tool** not failing safe to write
+- stream not replaying idempotently on reconnect, gaps in `seq`, or duplicate
+  `event_id`s changing row state (reducer must order/dedupe on `(session_id, seq)`)
+- `replay_complete` missing or carrying the wrong `last_seq`
+- **focus path traversal** — `..`, absolute paths, separator-bearing scope
+  components writing outside `$XVN_HOME/scopes/`
+- restore of an unknown checkpoint not returning 404, or a failed restore
+  (missing blob) mutating state instead of emitting `checkpoint_restore_failed`
+- a strategy restore that is NOT byte-identical to the pre-mutation state
+- delete-session not cascading its persisted events
+
 ### Agent-run observability
 - `GET /api/obs/retention`, `PATCH /api/obs/retention`
 - `POST /api/obs/janitor`
@@ -228,6 +307,16 @@ Watch for:
 - `classify --all` silently skips scenarios because `regime_derived = false`
   even when the operator expected a fresh sweep (use `--force`)
 - `eval batch` reports success but one of the underlying runs is in `failed`
+- `strategy diagnostics` reports `launchable: true` for an incomplete strategy,
+  or returns exit 2/0 instead of 14 when not launchable
+- `xvn optimize accept-as-child-agent` succeeds on a train-only snapshot (no
+  holdout) or mutates the parent agent
+- `xvn optimize` exit code does not match the failure class (e.g. unknown
+  metric returns 5 instead of 13)
+- `xvn optimize` or the optimizations route drags `dspy-rs`/`rig-core` into the
+  engine or dashboard build
+- a chat-rail write tool runs in research mode, or a spoofed client mode
+  bypasses the persisted-mode enforcement
 
 ## Evidence to Capture
 
@@ -258,4 +347,5 @@ See `references/xvision-api-quirks.md` for the concrete endpoint quirks, payload
 *Skills owner: any track that adds or changes an `/api/*` route, the
 corresponding `xvn` verb, Filter DSL contract, or a QA-critical operator
 workflow is responsible for updating this file in the same PR. Last
-refresh: 2026-05-24 (Filter DSL trigger-context expansion).*
+refresh: 2026-05-24 (chat-rail safety, `xvn optimize`, capability
+diagnostics QA).*

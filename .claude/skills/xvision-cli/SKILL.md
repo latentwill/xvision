@@ -40,6 +40,9 @@ switch to `xvision-dev`.
 - `dashboard serve` — axum server with the SPA baked in via `rust-embed`. Default bind `0.0.0.0:8788`.
 - `provider` — manage registered LLM providers in `$XVN_HOME/config/default.toml`. `refresh-models` hits `/v1/models`; `models` reads the cached catalog (no network).
 - `agent get <id>` — fetch one agent record from the workspace agent library (shape matches the `agents[]` slot in `EvalRunExport`).
+- `agent inspect <id> --diagnostics` — per-capability readiness for one agent (prompt / model / tools / runtime / optimizable). State-only; exits 0 for a resolved agent.
+- `strategy diagnostics <id>` — whole-strategy launch readiness; exits **14** (`OptValidation`) when not launchable, listing each unmet required capability with a typed reason.
+- `optimize` — offline DSPy prompt/demo optimizer: `run / inspect / export-demos / import-demos / accept-as-child-agent / revert-accepted / explain-missing-data`. Deterministic, no-network by default; distinct exit codes 10–15 per failure class.
 - `obs retention` / `obs janitor` — agent-run retention policy + TTL/max-bytes sweep.
 - `run inspect <run_id>` — materialize `xvn_run.json` + `xvn_report.md` for a finished agent run from the SQLite ledger.
 - `intern` / `trader` / `risk` — preview prompts or run one pipeline stage in isolation.
@@ -171,6 +174,83 @@ Compare surfaces:
 - CLI and JSON keep ids as the addressing primitive, but labels prefer
   `strategy_name` from the strategy manifest when available.
 
+## Offline optimizer (`xvn optimize`)
+
+Tune an agent slot's prompt + demonstrations **offline**, then accept the
+winner as a child agent. Authoring/research only — never on the eval or live
+path. The DSPy stack is offline-only: it never enters the engine or the slim
+runtime image (`xvision-dspy` is excluded from `default-members`).
+
+- Optimizable capabilities today: `trader`, `filter` (they have DSPy
+  signatures). `critic` / `router` / `decision_grader` / `intern` /
+  `chat_authoring` are not — `--capability` on a non-optimizable one fails with
+  exit **11**.
+- Default backend is a deterministic, no-network model; `--rng-seed` makes a
+  run reproducible. `--live` is an opt-in stub in this wave (fails exit 12).
+- Accept is **holdout-disciplined**: a snapshot selected on train-only data
+  (no holdout split) is refused at accept time.
+
+```bash
+# offline tune (deterministic; persists candidates + winning snapshot)
+xvn optimize run --agent <id> --slot trader --capability trader \
+  --corpus ./corpus.json --optimizer mipro --metric delta_sharpe \
+  --rng-seed 42 --json
+xvn optimize run … --dry-run            # validate corpus + capability, no write
+xvn optimize inspect <run-id> --json    # candidate table + snapshots
+xvn optimize accept-as-child-agent <snapshot-id>   # mint child + lineage edge
+xvn optimize revert-accepted <snapshot-id>         # unwind
+xvn optimize explain-missing-data <corpus>         # why exit 10
+```
+
+Exit codes: 10 missing-data · 11 missing-capability · 12 provider · 13 metric ·
+14 validation · 15 persistence · 4 not-found. Full surface in
+[`references/cli.md`](references/cli.md) and `/docs?slug=optimizer`.
+
+## Capability diagnostics (launch readiness)
+
+`xvn strategy diagnostics <id>` is the launch gate — every required capability
+needs a prompt, model binding, required tools, and a supporting runtime. It
+exits **14** when not launchable, listing each unmet capability with a typed
+reason (`missing_tool` / `missing_prompt` / `missing_model_binding` /
+`unsupported`). `xvn agent inspect <id> --diagnostics` is the per-agent,
+strategy-independent view (state-only, exits 0 for a resolved agent).
+
+```bash
+xvn strategy diagnostics <strategy-id> --json   # launchable + required_unmet[]
+xvn agent inspect <agent-id> --diagnostics --json
+```
+
+Use diagnostics before launching an eval the same way you'd use
+`xvn strategy validate` — both are safe shell gates (non-zero on blocker).
+
+## Chat rail (conversational driving surface)
+
+The chat rail is the dashboard's persistent conversational session — distinct
+from the headless `xvn` automation loop. It has a unified, replayable event
+stream and **server-enforced** safety. Drive it via its HTTP endpoints (these
+are stable, unlike the general dashboard CRUD API):
+
+- `GET /api/chat-rail/sessions/:id/stream?after_seq=<n>` — replay past the
+  cursor → `replay_complete{last_seq}` → live tail. Reconnect with the last
+  `seq` you saw; events have stable `event_id` + monotonic `seq`. Order/dedupe
+  on `(session_id, seq)` — do **not** regex the stream.
+- `POST /api/chat-rail/sessions/:id/mode` `{ "mode": "research"|"act" }` —
+  research denies write tools **before** they run (server reads the persisted
+  mode column; the client can't spoof it); act allows them subject to policy.
+- `GET/PUT /api/chat-rail/tool-policy` — three-state `(enabled, auto_approve)`:
+  Auto / Ask / Disabled. Absent tool ⇒ class default (read=Auto, write=Ask);
+  unknown tool fails safe to write.
+- `GET/PUT /api/chat-rail/focus` — per-scope `focus.md` at
+  `$XVN_HOME/scopes/<kind>/<id>/focus.md`, re-injected each turn; path-safe.
+- `GET /api/chat-rail/sessions/:id/checkpoints` +
+  `POST /api/chat-rail/checkpoints/:cid/restore` — list newest-first; restore
+  rewinds a strategy byte-identically and is non-destructive on failure.
+
+Typed-error event kinds (`error_missing_capability`, `error_missing_tool`,
+`error_invalid_schema`, `error_provider_unavailable`, `error_policy_denied`,
+`error_persistence_failed`) never short-circuit silently. Full taxonomy + shapes
+in `/docs?slug=driving-xvn-as-an-agent`.
+
 ## MCP tool peers for new CLI verbs
 
 The CLI workbench wave landed six new MCP tools that mirror the new verbs,
@@ -232,5 +312,5 @@ Engineering-side deployment + crate-level architecture moved to the
 
 *Skills owner: whichever track ships a new `xvn` verb, Filter DSL
 surface, or operator-visible strategy/eval workflow is responsible for
-updating this file in the same PR. Last refresh: 2026-05-24 (Filter DSL
-trigger-context expansion).*
+updating this file in the same PR. Last refresh: 2026-05-24 (chat-rail
+driving surface, `xvn optimize`, capability diagnostics).*
