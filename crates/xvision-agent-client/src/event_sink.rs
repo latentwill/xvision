@@ -148,15 +148,19 @@ async fn handle_notification_line(
         if let Some(sink) = frame_sink {
             if let Some(parsed) = parse_trajectory_frame_notification(&n.params) {
                 // Lossless append; on a fatal store / dead-consumer error
-                // the recording is corrupt. We surface it on the tracing
-                // line — the recording's status is the source of truth and
-                // the persister has already recorded the failure on its
-                // side via the channel-death signal.
+                // the recording is corrupt. The notification reader is
+                // fire-and-forget (it does not own the recording lifecycle),
+                // so it only logs here AND latches the failure on the
+                // persister's shared `failed` flag (set inside `persist`).
+                // The eval-side finalizer reads that flag after the run
+                // (`AgentClient::recording_failed`) and calls
+                // `TrajectoryStore::mark_corrupt` — §2-B footgun d, now wired
+                // end-to-end rather than only logged.
                 if let Err(reason) = sink.persist(parsed).await {
                     tracing::error!(
                         target: "xvision_agent_client::event_sink",
                         recording_id = %sink.persister.recording_id(),
-                        "trajectory frame persist failed: {reason}"
+                        "trajectory frame persist failed (recording will be marked corrupt at finalize): {reason}"
                     );
                 }
             }
@@ -547,10 +551,21 @@ pub fn parse_trajectory_frame_notification(params: &serde_json::Value) -> Option
 /// reader calls [`TrajectoryFramePersister::persist`] for each parsed frame;
 /// on a fatal store error the consumer exits and subsequent `persist` calls
 /// return `Err`, at which point the caller marks the recording corrupt.
+///
+/// The persister also carries a shared `failed` flag (§2-B footgun d): when
+/// `persist` returns `Err` the flag is latched, so the eval-side finalizer
+/// can observe the failure AFTER the run and call
+/// [`xvision_observability::trajectory::store::TrajectoryStore::mark_corrupt`].
+/// The flag is the bridge from the fire-and-forget notification reader (which
+/// only logs) to the synchronous finalizer (which owns the store + recording
+/// id and can mark corrupt). See [`TrajectoryFramePersister::failed`].
 pub struct TrajectoryFramePersister {
     recording_id: RecordingId,
     sender: FrameSender,
     consumer: JoinHandle<()>,
+    /// Latched on the first `persist` failure (store fatal / dead consumer).
+    /// Read by the eval finalizer to decide complete-vs-corrupt.
+    failed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TrajectoryFramePersister {
@@ -581,7 +596,18 @@ impl TrajectoryFramePersister {
             recording_id,
             sender,
             consumer,
+            failed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Whether any `persist` call has failed for this recording (latched).
+    /// §2-B footgun d: the eval finalizer reads this after `end_run` to
+    /// decide whether to `complete_recording` or `mark_corrupt`. The
+    /// notification reader itself only logs the failure (it is
+    /// fire-and-forget and does not own the recording lifecycle), so this
+    /// flag is the bridge back to the finalizer.
+    pub fn failed(&self) -> bool {
+        self.failed.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Persist one parsed frame losslessly. Appends to the store at the
@@ -598,7 +624,7 @@ impl TrajectoryFramePersister {
         parsed: ParsedTrajectoryFrame,
     ) -> Result<(), String> {
         // Append at the verbatim coordinates (lossless ordering).
-        store
+        if let Err(e) = store
             .append_frame(
                 &self.recording_id,
                 &parsed.slot_role,
@@ -607,13 +633,16 @@ impl TrajectoryFramePersister {
                 &parsed.frame,
             )
             .await
-            .map_err(|e| format!("trajectory append failed: {e}"))?;
+        {
+            self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            return Err(format!("trajectory append failed: {e}"));
+        }
         // Push through the channel to apply backpressure + surface a dead
         // consumer (storage fatal) as the corrupt signal.
-        self.sender
-            .send(parsed.frame)
-            .await
-            .map_err(|_| "frame channel consumer died".to_string())?;
+        if self.sender.send(parsed.frame).await.is_err() {
+            self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            return Err("frame channel consumer died".to_string());
+        }
         Ok(())
     }
 
@@ -1083,6 +1112,53 @@ mod tests {
         store.complete_recording(&rid).await.unwrap();
         let frames = store.read_frames(&rid, "trader", 0).await.unwrap();
         assert_eq!(frames.len(), 3, "all three trajectory_frame notifications persisted");
+    }
+
+    #[tokio::test]
+    async fn persist_failure_latches_failed_flag() {
+        // §2-B footgun d: when `persist` fails (here: append to a recording
+        // id with no row → FK violation), the persister latches `failed()`
+        // so the eval finalizer can mark the recording corrupt.
+        use sqlx::sqlite::SqlitePoolOptions;
+        use xvision_observability::{BlobStore, RetentionMode};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let url = format!("sqlite://{}?mode=rwc", tmp.path().join("t.db").display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        // Enforce FK so the append to a missing recording row fails.
+        sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE trajectory_recordings (recording_id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'open', key_fingerprint TEXT NOT NULL UNIQUE, cycle_id TEXT NOT NULL, slot_role TEXT NOT NULL, arm_scope TEXT, simulation_id TEXT, provider TEXT NOT NULL, model TEXT NOT NULL, model_version TEXT, system_prompt_hash TEXT NOT NULL, recovery_reason TEXT, created_at INTEGER NOT NULL, completed_at INTEGER, expires_at INTEGER)",
+        ).execute(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE trajectory_frames (recording_id TEXT NOT NULL REFERENCES trajectory_recordings(recording_id) ON DELETE CASCADE, slot_role TEXT NOT NULL, step_index INTEGER NOT NULL, frame_index INTEGER NOT NULL, frame_kind TEXT NOT NULL, ts_ms INTEGER NOT NULL, payload_hash TEXT NOT NULL, payload_ref TEXT, PRIMARY KEY (recording_id, slot_role, step_index, frame_index))",
+        ).execute(&pool).await.unwrap();
+
+        let store = TrajectoryStore::new(
+            pool,
+            BlobStore::new(tmp.path().join("blobs")),
+            RetentionMode::FullDebug,
+        );
+        // A recording id that was never inserted → FK violation on append.
+        let rid = RecordingId::new("rec_does_not_exist");
+        let persister = TrajectoryFramePersister::spawn(rid.clone(), 16);
+        assert!(!persister.failed(), "no failure latched before any persist");
+
+        let parsed = ParsedTrajectoryFrame {
+            run_id: "r1".into(),
+            slot_role: "trader".into(),
+            step_index: 0,
+            frame_index: 0,
+            frame: TrajectoryFrame::TextDelta { ts_ms: 0, text: "x".into() },
+        };
+        let res = persister.persist(&store, parsed).await;
+        assert!(res.is_err(), "append to missing recording must fail");
+        assert!(persister.failed(), "failure must be latched for the finalizer");
+        persister.shutdown();
     }
 
     #[tokio::test]

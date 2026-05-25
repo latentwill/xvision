@@ -199,6 +199,7 @@ fn replay_input<'a>(
         run_id: run_id.into(),
         cline_client: client,
         trajectory_mode: TrajectoryMode::Replay { recording_id, store },
+        record_slot_role: None,
     }
 }
 

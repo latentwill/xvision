@@ -1856,7 +1856,13 @@ async fn spawn_cline_ctx(
     ctx: &ApiContext,
     entry: ProviderEntry,
     tools: Arc<ToolRegistry>,
-) -> ApiResult<crate::agent::dispatch_capability::ClineDispatchCtx> {
+    recording_request: Option<RecordingRequest>,
+) -> ApiResult<(
+    crate::agent::dispatch_capability::ClineDispatchCtx,
+    Option<crate::agent::cline_recording::RunRecording>,
+)> {
+    use crate::agent::cline_recording as rec;
+
     let bin = std::env::var("XVN_AGENTD_BIN").map_err(|_| {
         ApiError::Validation(
             "agent_runtime = cline but XVN_AGENTD_BIN is unset. Set it to the built \
@@ -1866,6 +1872,34 @@ async fn spawn_cline_ctx(
         )
     })?;
     let api_key = resolve_provider_api_key(&entry)?;
+
+    // §2-B: when recording is requested (env gate on) AND we have a primary
+    // slot role to key it by, mint the recording BEFORE spawning the client
+    // so the event sink is bound to the store + recording id. The record
+    // path and the replay path build the same TrajectoryKey
+    // (`cline_recording::build_key`), so a recorded run replays from the
+    // persisted store with no test seeding.
+    let recording = if let Some(req) = recording_request {
+        let blob_root = ctx.xvn_home.join("agent_runs").join("blobs");
+        let store = rec::open_store(ctx.db.clone(), blob_root)
+            .await
+            .map_err(|e| ApiError::Internal(format!("open trajectory store: {e}")))?;
+        let store = Arc::new(store);
+        let key = rec::build_key(&req.run_id, &req.slot_role, &entry.name, &req.model);
+        let recording_id = rec::begin(&store, &key)
+            .await
+            .map_err(|e| ApiError::Internal(format!("begin trajectory recording: {e}")))?;
+        tracing::info!(
+            target: "xvision_engine::cline_recording",
+            recording_id = %recording_id,
+            slot_role = %req.slot_role,
+            run_id = %req.run_id,
+            "trajectory recording minted (record mode)"
+        );
+        Some((store, recording_id, req.slot_role))
+    } else {
+        None
+    };
 
     // Per-run socket paths under the xvn home so concurrent runs don't
     // collide. The sidecar process is reaped on client drop.
@@ -1883,6 +1917,12 @@ async fn spawn_cline_ctx(
         .clone()
         .unwrap_or_else(|| Arc::new(xvision_observability::RunEventBus::new(Vec::new())));
 
+    // Bind the recording sink at spawn time (§2-B). `None` keeps the live
+    // path byte-identical to the pre-§2-B behaviour.
+    let sink_recording = recording
+        .as_ref()
+        .map(|(store, rid, _)| (store.clone(), rid.clone()));
+
     let client = AgentClient::spawn_with_event_sink(
         std::path::Path::new(&bin),
         &main_sock,
@@ -1890,9 +1930,7 @@ async fn spawn_cline_ctx(
         &ev_sock,
         dispatch,
         bus,
-        // §2-A: recording disabled on the live eval path. §2-B mints the
-        // TrajectoryStore + RecordingId and passes Some(...) here.
-        None,
+        sink_recording,
     )
     .await
     .map_err(|e| {
@@ -1901,11 +1939,87 @@ async fn spawn_cline_ctx(
         ))
     })?;
 
-    Ok(crate::agent::dispatch_capability::ClineDispatchCtx {
-        client: Arc::new(client),
-        provider_entry: entry,
-        api_key,
-    })
+    // Couple the dispatcher's `StartRunParams.slot_role` to the recording's
+    // key slot_role (footgun c): the dispatcher stamps `recording_slot_role`
+    // on frames, and `read_frames` filters on it.
+    let recording_slot_role = recording.as_ref().map(|(_, _, role)| role.clone());
+
+    let run_recording = recording.map(|(store, recording_id, slot_role)| {
+        crate::agent::cline_recording::RunRecording {
+            store,
+            recording_id,
+            slot_role,
+        }
+    });
+
+    Ok((
+        crate::agent::dispatch_capability::ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: entry,
+            api_key,
+            recording_slot_role,
+        },
+        run_recording,
+    ))
+}
+
+/// Inputs for minting a per-run trajectory recording at `spawn_cline_ctx`
+/// time (§2-B). Built only when recording is enabled and a primary recorded
+/// slot role is available.
+struct RecordingRequest {
+    /// The eval run id — derives the recording's `cycle_id` + simulation id.
+    run_id: String,
+    /// The primary recorded slot's role. COUPLED to both the
+    /// `TrajectoryKey.slot_role` and the `StartRunParams.slot_role` the
+    /// dispatcher stamps (footgun c).
+    slot_role: String,
+    /// The model id, for the recording key + row.
+    model: String,
+}
+
+/// Pick the `(slot_role, model)` of the primary recorded slot for §2-B
+/// per-run recording. Prefers the trader-role slot (the canonical
+/// decision producer), then the legacy `trader_slot`, then the first
+/// attached slot with a non-empty model. Returns `None` when no slot has a
+/// usable model (a misconfigured strategy that won't reach a Cline run
+/// anyway). The role returned is the EXACT `ResolvedAgentSlot.role` the
+/// dispatcher matches on so `record_slot_role` couples to it (footgun c).
+fn primary_recorded_slot(
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> Option<(String, String)> {
+    // 1. Attached agent slot with role == "trader".
+    if let Some(trader) = agent_slots
+        .iter()
+        .find(|resolved| resolved.role.trim().eq_ignore_ascii_case("trader"))
+    {
+        let model = trader.slot.effective_model();
+        if !model.is_empty() {
+            return Some((trader.role.clone(), model));
+        }
+    }
+    // 2. Legacy `trader_slot` on the strategy — role is conventionally
+    //    "trader".
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        let model = slot.effective_model();
+        if !model.is_empty() {
+            return Some(("trader".to_string(), model));
+        }
+    }
+    // 3. First attached slot with a non-empty model.
+    for resolved in agent_slots {
+        let model = resolved.slot.effective_model();
+        if !model.is_empty() {
+            return Some((resolved.role.clone(), model));
+        }
+    }
+    None
+}
+
+/// Read the spawned Cline client's latched frame-persist-failure flag
+/// (§2-B footgun d). `false` when not recording / no client.
+fn recording_persist_failed(client: &Option<Arc<AgentClient>>) -> bool {
+    client.as_ref().map(|c| c.recording_failed()).unwrap_or(false)
 }
 
 fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
@@ -2115,7 +2229,10 @@ async fn run_inner(
     // an unset XVN_AGENTD_BIN surfaces as a typed error here — never a
     // silent fallback (provider-matrix + failure contracts).
     let agent_runtime = resolve_agent_runtime(ctx).await;
-    let cline_ctx = if matches!(agent_runtime, AgentRuntime::Cline) {
+    // `run_recording` is `Some` only when recording is enabled (the env
+    // gate) AND a Cline client was spawned with a recording sink. The eval
+    // finalizer below closes it out (complete / corrupt) after the run.
+    let (cline_ctx, run_recording) = if matches!(agent_runtime, AgentRuntime::Cline) {
         let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
         let cfg_path = runtime_config_path(ctx);
         let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
@@ -2128,10 +2245,31 @@ async fn run_inner(
                     u.hint
                 ))
             })?;
-        Some(spawn_cline_ctx(ctx, entry, tools.clone()).await?)
+        // §2-B: build the recording request when the env gate is on and we
+        // can identify a primary recorded slot (the trader). The recording
+        // is keyed by this slot's role, which the dispatcher then stamps on
+        // every recorded frame (footgun c coupling). Recording OFF ⇒ `None`
+        // ⇒ the spawn binds no sink and the live path is unchanged.
+        let recording_request = if crate::agent::cline_recording::record_enabled() {
+            primary_recorded_slot(&strategy, &agent_slots).map(|(slot_role, model)| {
+                RecordingRequest {
+                    run_id: run.id.clone(),
+                    slot_role,
+                    model,
+                }
+            })
+        } else {
+            None
+        };
+        let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request).await?;
+        (Some(cctx), rec)
     } else {
-        None
+        (None, None)
     };
+    // The recorder needs the spawned client's persist-failure flag at
+    // finalize time; clone the Arc so the finalizer can read it after the
+    // client has been threaded into the executor.
+    let recording_client = cline_ctx.as_ref().map(|c| c.client.clone());
 
     // 3. Pick the executor for this run mode. For backtest mode, when the
     //    scenario came from the DB we try to source bars through the
@@ -2231,6 +2369,11 @@ async fn run_inner(
         // lose a finalize.
         let err_msg = e.to_string();
         route_mark_failed(ctx, &store, &run.id, &err_msg).await;
+        // §2-B (footgun d): the run errored while a recording was open —
+        // mark it corrupt so a partial trajectory is never replayed.
+        if let Some(rec) = run_recording.as_ref() {
+            rec.finalize(false, recording_persist_failed(&recording_client)).await;
+        }
         // Index the failed run so it shows up in ⌘K with its current status
         // — operators frequently want to find a recently-failed run by id
         // prefix without leaving the palette.
@@ -2242,6 +2385,14 @@ async fn run_inner(
                 .await;
         }
         return Err(ApiError::Internal(format!("executor: {err_msg}")));
+    }
+
+    // §2-B (footgun d): the run completed — mark the recording complete,
+    // OR corrupt if the frame persist path latched a failure mid-run (store
+    // fatal / dead consumer). `recording_persist_failed` reads the client's
+    // latched flag set by the event-sink persister.
+    if let Some(rec) = run_recording.as_ref() {
+        rec.finalize(true, recording_persist_failed(&recording_client)).await;
     }
 
     if let Some(em) = obs_emitter.as_ref() {
@@ -2867,6 +3018,12 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
 
     // Stage 1 (Cline runtime unification, Task 6): same resolution as
     // `run_inner`. When `Cline` is selected, spawn the sidecar + ctx.
+    // §2-B note: this async/background entry point does NOT mint a
+    // recording — it passes `None` so the spawn binds no sink and the path
+    // is unchanged. Eval-side recording is wired through the synchronous
+    // `run_inner` path whose finalizer can close the recording out
+    // (complete/corrupt). Extending recording to this path needs a finalize
+    // hook inside the spawned task (future work).
     let agent_runtime = resolve_agent_runtime(ctx).await;
     let cline_ctx = if matches!(agent_runtime, AgentRuntime::Cline) {
         let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
@@ -2881,7 +3038,8 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                     u.hint
                 ))
             })?;
-        Some(spawn_cline_ctx(ctx, entry, tools.clone()).await?)
+        let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None).await?;
+        Some(cctx)
     } else {
         None
     };

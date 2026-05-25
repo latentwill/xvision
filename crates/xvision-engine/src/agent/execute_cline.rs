@@ -252,6 +252,22 @@ pub struct ClineSlotInput<'a> {
     /// Defaults to [`TrajectoryMode::Record`] so existing call sites that
     /// don't opt into replay keep the live path.
     pub trajectory_mode: TrajectoryMode,
+    /// §2-B: when `Some`, this run is recording a trajectory — the sidecar
+    /// is asked to emit `event.trajectory_frame` notifications
+    /// (`StartRunParams.record = true`) stamped with THIS `slot_role`.
+    ///
+    /// The value MUST equal the `slot_role` of the [`TrajectoryKey`] the
+    /// recording was minted against (footgun c): frames are persisted at
+    /// `(recording_id, slot_role, step_index, frame_index)` and
+    /// `read_frames(rid, slot_role, step)` filters on `slot_role`, so a
+    /// mismatch makes the recorded frames silently unreadable on replay.
+    /// The caller derives both from the same source (the agent slot's role).
+    ///
+    /// `None` ⇒ no recording: `record = false`, `slot_role = None` —
+    /// byte-identical to the pre-§2-B live/backtest path.
+    ///
+    /// [`TrajectoryKey`]: xvision_observability::trajectory::key::TrajectoryKey
+    pub record_slot_role: Option<String>,
 }
 
 impl ClineSlotInput<'_> {
@@ -314,12 +330,32 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         allowed_tools: input.allowed_tools_plus_submit_decision(),
         budget_limits: input.budget_limits(),
         decision_schema: Some(input.response_schema.schema.clone()),
-        // §2-A threads the field through the protocol; the eval-side
-        // recording mint (TrajectoryStore + RecordingId + record=true) is
-        // §2-B. Until then the live path requests no recording.
-        record: false,
-        slot_role: None,
+        // §2-B: recording is enabled when the caller minted a recording for
+        // this run and passed its `slot_role`. The sidecar then emits
+        // `event.trajectory_frame` notifications stamped with this role, and
+        // the event sink persists them into the TrajectoryStore the client
+        // was spawned with. `record_slot_role` is COUPLED to the recording's
+        // `TrajectoryKey.slot_role` (footgun c) — see the field docs. When
+        // `None` (live/backtest default) this is byte-identical to the
+        // pre-§2-B path: `record = false`, `slot_role = None`.
+        record: input.record_slot_role.is_some(),
+        slot_role: input.record_slot_role.clone(),
     };
+
+    // Footgun c coupling guard: when recording, the role we stamp on frames
+    // MUST equal the slot's own role (which is also what the recording's
+    // TrajectoryKey was built from, and what `read_frames` filters on). A
+    // mismatch would silently hide every recorded frame on replay.
+    debug_assert!(
+        input
+            .record_slot_role
+            .as_deref()
+            .map(|r| r == role)
+            .unwrap_or(true),
+        "record_slot_role ({:?}) must equal the slot role ({role}) so recorded \
+         frames are readable on replay (footgun c)",
+        input.record_slot_role,
+    );
 
     input
         .cline_client
@@ -640,6 +676,7 @@ mod tests {
             run_id: "cycle-1::trader".into(),
             cline_client: client,
             trajectory_mode: TrajectoryMode::default(),
+            record_slot_role: None,
         }
     }
 

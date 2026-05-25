@@ -40,6 +40,11 @@ pub struct AgentClient {
     callback_handle: Option<tokio::task::JoinHandle<()>>,
     callback_socket_path: Option<std::path::PathBuf>,
     event_sink: Option<EventSinkHandle>,
+    /// Retained when spawned with a recording sink (§2-B). The eval-side
+    /// finalizer reads [`TrajectoryFramePersister::failed`] after the run to
+    /// decide complete-vs-corrupt, and [`TrajectoryFramePersister::recording_id`]
+    /// to address the recording. `None` for non-recording clients.
+    recording_persister: Option<Arc<TrajectoryFramePersister>>,
 }
 
 impl AgentClient {
@@ -54,6 +59,7 @@ impl AgentClient {
             callback_handle: None,
             callback_socket_path: None,
             event_sink: None,
+            recording_persister: None,
         })
     }
 
@@ -185,6 +191,7 @@ impl AgentClient {
             callback_handle: Some(callback_handle),
             callback_socket_path: Some(callback_socket_path.to_path_buf()),
             event_sink: None,
+            recording_persister: None,
         })
     }
 
@@ -220,10 +227,15 @@ impl AgentClient {
         // Build the trajectory frame sink up front (if recording). The
         // persister spawns its lossless drain consumer; both sink clones
         // (placeholder + fingerprinted listeners below) share the same
-        // persister via `Arc`, so frames land in one ordered sequence.
+        // persister via `Arc`, so frames land in one ordered sequence. We
+        // also retain the persister Arc on the client (§2-B) so the eval
+        // finalizer can read `failed()` after the run to decide
+        // complete-vs-corrupt.
+        let mut recording_persister: Option<Arc<TrajectoryFramePersister>> = None;
         let frame_sink = recording.map(|(store, recording_id)| {
             let persister =
                 Arc::new(TrajectoryFramePersister::spawn(recording_id, DEFAULT_FRAME_CHANNEL_CAPACITY));
+            recording_persister = Some(persister.clone());
             TrajectoryFrameSink::new(store, persister)
         });
 
@@ -318,7 +330,25 @@ impl AgentClient {
             callback_handle: Some(callback_handle),
             callback_socket_path: Some(callback_socket_path.to_path_buf()),
             event_sink: Some(event_sink),
+            recording_persister,
         })
+    }
+
+    /// The trajectory recording id this client is recording into, if it was
+    /// spawned with a recording sink (§2-B). `None` for non-recording clients.
+    pub fn recording_id(&self) -> Option<&RecordingId> {
+        self.recording_persister.as_ref().map(|p| p.recording_id())
+    }
+
+    /// Whether trajectory frame persistence failed at any point during the
+    /// run (store fatal / dead consumer). The eval finalizer reads this
+    /// after `end_run` to decide whether to mark the recording corrupt
+    /// (§2-B footgun d). `false` for non-recording clients.
+    pub fn recording_failed(&self) -> bool {
+        self.recording_persister
+            .as_ref()
+            .map(|p| p.failed())
+            .unwrap_or(false)
     }
 
     pub async fn invoke_tool_via_sidecar(

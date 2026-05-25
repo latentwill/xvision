@@ -48,6 +48,7 @@
 const net = require("net");
 const readline = require("readline");
 const fs = require("fs");
+const path = require("path");
 
 function argVal(flag) {
   const i = process.argv.indexOf(flag);
@@ -58,6 +59,46 @@ const socketPath = argVal("--socket");
 if (!socketPath) {
   process.stderr.write("mock_agentd: missing --socket\n");
   process.exit(2);
+}
+
+// §2-B: the Rust client passes --event-socket when it spawns us with a
+// recording sink (spawn_with_event_sink). In record mode we connect to it
+// as a client and emit `event.trajectory_frame` notifications — the EXACT
+// envelopes the real sidecar's emit.ts produces — so the Rust event sink
+// persists them into the TrajectoryStore. This keeps the eval-side
+// recording test hermetic (no real LLM / network) while still exercising
+// the full record→persist path through the live spawn_with_event_sink
+// wiring. The frames come from the shared golden fixture so the wire shape
+// cannot drift from the Rust parser.
+const eventSocketPath = argVal("--event-socket");
+let eventConn = null;
+function getEventConn(cb) {
+  if (!eventSocketPath) return cb(null);
+  if (eventConn && !eventConn.destroyed) return cb(eventConn);
+  const s = net.createConnection(eventSocketPath, () => {
+    eventConn = s;
+    cb(s);
+  });
+  s.on("error", () => cb(null));
+}
+function emitNotification(method, params) {
+  getEventConn((s) => {
+    if (!s) return;
+    s.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+  });
+}
+
+// Golden trajectory envelopes — the representative recording the mock
+// replays on the event socket in record mode. Loaded from the shared
+// fixture so emit shape stays in lockstep with the Rust parser + vitest.
+let goldenEnvelopes = [];
+try {
+  const fixture = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "trajectory_golden_envelopes.json"), "utf8"),
+  );
+  goldenEnvelopes = fixture.envelopes ?? [];
+} catch (e) {
+  // Fixture missing → record mode emits nothing (test will catch the gap).
 }
 
 let cfg = {};
@@ -76,6 +117,9 @@ const replayInjectError = cfg.replayInjectError ?? null;
 const seenRunIds = new Set();
 // run_id -> { frames: [...] } loaded via session.replay_load.
 const loadedReplays = new Map();
+// run_id -> { record: bool, slot_role: string } captured at start_run, used
+// to emit trajectory frames on step when recording (§2-B).
+const recordingRuns = new Map();
 
 // Extract the recorded submit_decision payload from a frame list — the
 // last ToolCallDelta whose tool_name is "submit_decision".
@@ -144,6 +188,13 @@ const server = net.createServer((conn) => {
           break;
         }
         seenRunIds.add(runId);
+        // §2-B: capture record + slot_role so `step` can emit frames.
+        if (req.params?.record === true) {
+          recordingRuns.set(runId, {
+            record: true,
+            slot_role: typeof req.params?.slot_role === "string" ? req.params.slot_role : "default",
+          });
+        }
         resp = ok(id, { run_id: runId, started_at_ms: 1 });
         break;
       }
@@ -201,6 +252,24 @@ const server = net.createServer((conn) => {
             "mock_agentd: live step during replay (no frames loaded for run " + runId + ")\n"
           );
           process.exit(9);
+        }
+
+        // §2-B record mode: emit the golden trajectory frames on the event
+        // socket, stamped with THIS run's run_id + slot_role, so the Rust
+        // event sink persists them into the recording keyed by the matching
+        // slot_role (footgun c). Frames are emitted before the step result
+        // so the persist append completes deterministically.
+        const recState = recordingRuns.get(runId);
+        if (recState && recState.record) {
+          for (const env of goldenEnvelopes) {
+            emitNotification("event.trajectory_frame", {
+              run_id: runId,
+              slot_role: recState.slot_role,
+              step_index: env.step_index,
+              frame_index: env.frame_index,
+              frame: env.frame,
+            });
+          }
         }
 
         const usage = {
