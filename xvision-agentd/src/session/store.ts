@@ -75,6 +75,13 @@ export interface Session {
    * step. Undefined when `config.record` is not true.
    */
   recorder?: FrameRecorder
+  /**
+   * Set to true once a terminal `event.run_finished` has been emitted for this
+   * run (e.g. from the error catch path in `session.step`). Guards against
+   * double-emission: `session.end_run` checks this flag and skips the emit
+   * when the run already has a terminal event on the wire.
+   */
+  runFinishedEmitted?: boolean
 }
 
 export interface SessionStore {
@@ -103,6 +110,19 @@ export interface SessionStore {
   setReplayFrames(run_id: string, frames: TrajectoryFrame[]): void
   /** Read the replay frames loaded for this run, if any. */
   getReplayFrames(run_id: string): TrajectoryFrame[] | undefined
+  /**
+   * Latch the `runFinishedEmitted` flag for this run. Called from
+   * `session.step`'s error catch path after emitting `event.run_finished`
+   * so that the subsequent `session.end_run` call does not double-emit the
+   * terminal event. Safe to call on a run that has already been ended
+   * (it no-ops when the session is not found).
+   */
+  markRunFinishedEmitted(run_id: string): void
+  /**
+   * Return true if a terminal `event.run_finished` has already been emitted
+   * for this run (i.e. `markRunFinishedEmitted` was called).
+   */
+  isRunFinishedEmitted(run_id: string): boolean
   /**
    * Current monotonic clock for this store. Budget enforcement reads
    * this so the same clock that stamped `created_at_ms` also computes
@@ -181,6 +201,13 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
     },
     getReplayFrames(run_id) {
       return sessions.get(run_id)?.replayFrames
+    },
+    markRunFinishedEmitted(run_id) {
+      const s = sessions.get(run_id)
+      if (s) s.runFinishedEmitted = true
+    },
+    isRunFinishedEmitted(run_id) {
+      return sessions.get(run_id)?.runFinishedEmitted === true
     },
     now() {
       return now()

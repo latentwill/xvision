@@ -75,6 +75,13 @@ interface StartRunResult {
 
 interface EndRunParams {
   run_id?: unknown
+  /**
+   * Terminal status for the run. Defaults to `"completed"` when omitted.
+   * Pass `"cancelled"` when the run was budget/wall-aborted; `"failed"` for
+   * unrecoverable errors. Must be one of the strings `parse_run_status` on
+   * the Rust side recognises: `"completed"`, `"failed"`, `"cancelled"`.
+   */
+  status?: unknown
 }
 
 interface EndRunResult {
@@ -111,11 +118,27 @@ export function handleSessionEndRun(raw: unknown): EndRunResult {
   const p = (raw ?? {}) as EndRunParams
   if (typeof p.run_id !== "string" || p.run_id.length === 0)
     throw new TypeError("params.run_id must be a non-empty string")
+
+  // Validate the optional status field.
+  const VALID_TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const
+  type TerminalStatus = typeof VALID_TERMINAL_STATUSES[number]
+  let terminalStatus: TerminalStatus = "completed"
+  if (p.status !== undefined) {
+    if (!VALID_TERMINAL_STATUSES.includes(p.status as TerminalStatus))
+      throw new TypeError(
+        `params.status must be one of: ${VALID_TERMINAL_STATUSES.join(", ")} (got ${JSON.stringify(p.status)})`,
+      )
+    terminalStatus = p.status as TerminalStatus
+  }
+
+  // Guard: if the catch path in session.step already emitted a terminal
+  // run_finished for this run, skip the emit here to avoid double-emission.
+  const alreadyEmitted = store.isRunFinishedEmitted(p.run_id)
   const ended = store.end(p.run_id)
-  if (ended) {
+  if (ended && !alreadyEmitted) {
     emitRunFinished({
       run_id: p.run_id,
-      status: "completed",
+      status: terminalStatus,
       finished_at_ms: Date.now(),
     })
   }
@@ -415,10 +438,24 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
       ...(decisionJson ? { decision_json: decisionJson } : {}),
     }
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    // Emit the error detail first so the Rust side has context.
     emitError({
       run_id: runId,
-      message: err instanceof Error ? err.message : String(err),
+      message: errMsg,
       severity: "error",
+    })
+    // Always close the observability stream with a terminal run_finished so
+    // the recorder's run row is never left open. We emit `failed` here because
+    // an uncaught SDK exception is an unrecoverable error (distinct from a
+    // budget abort which the Rust caller signals via end_run{status:cancelled}).
+    // Latch the guard before emitting so end_run will not double-emit.
+    store.markRunFinishedEmitted(runId)
+    emitRunFinished({
+      run_id: runId,
+      status: "failed",
+      finished_at_ms: Date.now(),
+      error: errMsg,
     })
     throw err
   } finally {
