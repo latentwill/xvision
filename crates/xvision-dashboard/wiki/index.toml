@@ -42,6 +42,13 @@ last_reviewed = "2026-05-24"
 path = "agents.md"
 
 [[page]]
+slug = "optimizer"
+title = "Optimizer"
+section = "Concepts"
+last_reviewed = "2026-05-24"
+path = "optimizer.md"
+
+[[page]]
 slug = "providers"
 title = "Providers & Brokers"
 section = "Concepts"
