@@ -266,6 +266,7 @@ async fn sqlite_recorder_persists_memory_write_with_cycle_id() {
         protocol_version: None,
         skills_json: None,
         mcp_servers_json: None,
+        trajectory_mode: None,
     }))
     .await;
 

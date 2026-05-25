@@ -51,6 +51,17 @@ describe("ChatComposer", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("does not submit a new message from Enter while busy", async () => {
+    const onCancel = vi.fn();
+    const onSubmit = vi.fn();
+    renderComposer({ busy: true, onCancel, onSubmit, value: "hello" });
+
+    await userEvent.type(screen.getByPlaceholderText("Message"), "{Enter}");
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("disables controls when disabled", () => {
     const onOpenActions = vi.fn();
     renderComposer({ disabled: true, onOpenActions, value: "hello" });

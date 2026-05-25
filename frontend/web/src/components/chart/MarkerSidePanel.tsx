@@ -38,7 +38,11 @@ export function MarkerSidePanel({ payload, active, onClose }: Props) {
     <aside className="absolute right-0 top-0 h-full w-80 border-l border-border bg-surface p-4 text-[13px] overflow-auto z-20">
       <div className="flex justify-between items-start mb-3">
         <strong className="text-text">Decision #{idx}</strong>
-        <button onClick={onClose} className="text-text-3 hover:text-text leading-none text-lg">
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-text-3 hover:text-text leading-none text-lg"
+        >
           ×
         </button>
       </div>

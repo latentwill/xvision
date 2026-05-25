@@ -31,6 +31,7 @@ async fn pool_with_migrations() -> SqlitePool {
         // V2E trace-surface: evidence_cycle_ids_json + produced_by_check columns.
         include_str!("../migrations/026_trace_surface_foundation.sql"),
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
+        include_str!("../migrations/038_eval_runs_live_config.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }

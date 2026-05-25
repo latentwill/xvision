@@ -339,6 +339,40 @@ describe("MintLineagePanel", () => {
     fireEvent.click(screen.getByTestId("mint-button"));
     await waitFor(() => screen.getByTestId("mint-decision"));
     expect(screen.getByText(/Provenance attested/i)).toBeTruthy();
+    expect(mintOptimization).toHaveBeenCalledWith("run1", {
+      childAgentId: "child1",
+      evalRunId: "ev1",
+      evalMetric: "sharpe",
+      metricsPresent: [
+        "forward_return_agreement",
+        "sharpe",
+        "max_drawdown",
+        "profit_factor",
+        "calibration",
+        "action_validity",
+        "selectivity",
+        "net_of_cost",
+      ],
+    });
+  });
+
+  it("surfaces non-API mint failures", async () => {
+    vi.mocked(mintOptimization).mockRejectedValue(new Error("network down"));
+    render(
+      withQC(
+        <MintLineagePanel
+          runId="run1"
+          capability="trader"
+          childAgentId="child1"
+        />,
+      ),
+    );
+    fireEvent.change(screen.getByTestId("mint-eval-run-id"), {
+      target: { value: "ev1" },
+    });
+    fireEvent.click(screen.getByTestId("mint-button"));
+    await waitFor(() => screen.getByTestId("mint-generic-error"));
+    expect(screen.getByText(/network down/i)).toBeTruthy();
   });
 
   it("does not render a dialog/modal (no-popup rule)", () => {

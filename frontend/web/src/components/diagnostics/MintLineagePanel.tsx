@@ -31,8 +31,25 @@ import {
 // dspy-free mirrors — used only to pre-fill the metrics field so the
 // operator can see what coverage the gate expects.
 const REQUIRED_METRICS: Record<string, string[]> = {
-  trader: ["sharpe", "max_drawdown", "win_rate", "total_return"],
-  filter: ["precision", "recall"],
+  trader: [
+    "forward_return_agreement",
+    "sharpe",
+    "max_drawdown",
+    "profit_factor",
+    "calibration",
+    "action_validity",
+    "selectivity",
+    "net_of_cost",
+  ],
+  filter: [
+    "precision",
+    "recall",
+    "f1",
+    "auroc",
+    "wake_rate",
+    "token_savings",
+    "false_suppression",
+  ],
 };
 
 function refusalRemediation(err: ApiError, childAgentId: string): string {
@@ -84,6 +101,10 @@ export function MintLineagePanel({
 
   const refusal =
     mintMut.error instanceof ApiError ? mintMut.error : null;
+  const genericError =
+    mintMut.error && !(mintMut.error instanceof ApiError)
+      ? String((mintMut.error as Error).message ?? mintMut.error)
+      : null;
 
   return (
     <Card className={className} data-testid="mint-lineage-panel">
@@ -157,6 +178,19 @@ export function MintLineagePanel({
           <div className="text-[13px] text-text-2">
             {refusalRemediation(refusal, childAgentId)}
           </div>
+        </div>
+      ) : null}
+
+      {genericError ? (
+        <div
+          className="mx-5 mb-4 rounded border border-danger/30 bg-danger/5 dark:bg-danger/10 px-4 py-3"
+          role="alert"
+          data-testid="mint-generic-error"
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <Pill tone="danger">Mint check failed</Pill>
+          </div>
+          <div className="text-[13px] text-text-2">{genericError}</div>
         </div>
       ) : null}
 
