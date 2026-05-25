@@ -695,11 +695,19 @@ pub struct ScenarioChartPayload {
     pub bars: Vec<ChartBar>,
     pub indicators: Indicators,
     pub cache_status: CacheStatus,
+    /// The asset the standalone preview resolved to (short ticker, e.g.
+    /// `"BTC"`). Scenarios are asset-free; this echoes the operator-chosen
+    /// `asset` query param, or the `BTC` default when none was supplied.
+    pub preview_asset: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ScenarioChartQuery {
     pub granularity: Option<String>,
+    /// Optional preview asset (e.g. `BTC`, `ETH/USD`). Scenarios have no
+    /// strategy context, so the operator picks which market backs the
+    /// standalone chart preview. Absent ⇒ `BTC/USD`.
+    pub asset: Option<String>,
 }
 
 /// Build a `ScenarioChartPayload` for the given scenario id.
@@ -710,13 +718,14 @@ pub struct ScenarioChartQuery {
 /// Alpaca and back-fills — which will fail in tests without credentials,
 /// so `NotCached` is returned directly when no cached row exists).
 pub async fn build_scenario_payload(ctx: &ApiContext, id: &str) -> ApiResult<ScenarioChartPayload> {
-    build_scenario_payload_with_granularity(ctx, id, None).await
+    build_scenario_payload_with_granularity(ctx, id, None, None).await
 }
 
 pub async fn build_scenario_payload_with_granularity(
     ctx: &ApiContext,
     id: &str,
     granularity: Option<&str>,
+    asset: Option<&str>,
 ) -> ApiResult<ScenarioChartPayload> {
     use crate::api::scenario as api_scenario;
 
@@ -727,12 +736,19 @@ pub async fn build_scenario_payload_with_granularity(
             .map_err(ApiError::Validation)?,
         _ => scenario.granularity,
     };
-    // Scenarios are asset-free; a standalone scenario preview has no
-    // strategy to source the asset from, so the backdrop defaults to the
-    // canonical BTC/USD market for v1 crypto scenarios. The bar load needs
+    // Scenarios are asset-free; a standalone scenario preview has no strategy
+    // to source the asset from. The operator picks a preview asset via the
+    // `asset` query param; absent that, the backdrop defaults to the canonical
+    // BTC/USD market for v1 crypto scenarios. An unrecognised asset is a
+    // validation error rather than a silent BTC fallback. The bar load needs
     // an asset-specific cache key (the scenario's stored cache_key is
     // asset-free), so we always derive it here.
-    let preview_asset = xvision_core::trading::AssetSymbol::Btc;
+    let preview_asset = match asset {
+        Some(raw) if !raw.trim().is_empty() => raw
+            .parse::<xvision_core::trading::AssetSymbol>()
+            .map_err(ApiError::Validation)?,
+        _ => xvision_core::trading::AssetSymbol::Btc,
+    };
     let asset_pair = preview_asset.as_alpaca_pair();
     let data_source_tag = "alpaca-historical-v1";
     let cache_key = crate::eval::bars::compute_cache_key(
@@ -802,6 +818,7 @@ pub async fn build_scenario_payload_with_granularity(
         bars,
         indicators,
         cache_status,
+        preview_asset: preview_asset.as_short().to_string(),
     })
 }
 

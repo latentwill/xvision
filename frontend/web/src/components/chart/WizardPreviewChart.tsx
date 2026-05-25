@@ -164,6 +164,7 @@ export function WizardPreviewChart({
     bars: query.data.bars,
     indicators: emptyIndicators(),
     cache_status: query.data.cache_status,
+    preview_asset: debounced.asset,
   }), [
     debounced.asset,
     debounced.from,

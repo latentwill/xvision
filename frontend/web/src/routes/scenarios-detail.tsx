@@ -430,15 +430,21 @@ function DefinitionTab({ s }: { s: Scenario }) {
     setChartGranularity(scenarioGranularity);
   }, [s.id, scenarioGranularity]);
 
+  // Scenarios are asset-free; the operator chooses which market backs the
+  // standalone preview. Defaults to BTC/USD (matching the backend default).
+  const [chartAsset, setChartAsset] = useState("BTC/USD");
+
   const marketLabel = `${s.asset_class} / ${s.quote_currency}`;
 
   const windowLabel = `${fmtDate(s.time_window.start)} → ${fmtDate(s.time_window.end)}`;
 
   const chart = useQuery({
-    queryKey: scenarioChartKeys.scenario(s.id, chartGranularity),
-    queryFn: () => getScenarioChart(s.id, chartGranularity),
+    queryKey: scenarioChartKeys.scenario(s.id, chartGranularity, chartAsset),
+    queryFn: () => getScenarioChart(s.id, chartGranularity, chartAsset),
   });
-  const barsFetch = useBarsFetchJob(buildBarsFetchSpec(s, chartGranularity));
+  const barsFetch = useBarsFetchJob(
+    buildBarsFetchSpec(s, chartGranularity, chartAsset),
+  );
 
   return (
     <div>
@@ -452,21 +458,40 @@ function DefinitionTab({ s }: { s: Scenario }) {
         {chart.data && (
           <div className="mb-5">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <label className="text-text-3 text-[12px]" htmlFor="scenario-chart-granularity">
-                Indicator timeframe
-              </label>
-              <select
-                id="scenario-chart-granularity"
-                value={chartGranularity}
-                onChange={(event) => setChartGranularity(event.target.value)}
-                className="bg-surface border border-border rounded px-2 py-1 text-[12px] text-text"
-              >
-                {CHART_GRANULARITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-2">
+                <label className="text-text-3 text-[12px]" htmlFor="scenario-chart-asset">
+                  Preview asset
+                </label>
+                <select
+                  id="scenario-chart-asset"
+                  value={chartAsset}
+                  onChange={(event) => setChartAsset(event.target.value)}
+                  className="bg-surface border border-border rounded px-2 py-1 text-[12px] text-text"
+                >
+                  {CHART_PREVIEW_ASSET_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-text-3 text-[12px]" htmlFor="scenario-chart-granularity">
+                  Indicator timeframe
+                </label>
+                <select
+                  id="scenario-chart-granularity"
+                  value={chartGranularity}
+                  onChange={(event) => setChartGranularity(event.target.value)}
+                  className="bg-surface border border-border rounded px-2 py-1 text-[12px] text-text"
+                >
+                  {CHART_GRANULARITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <ScenarioChart
               payload={chart.data}
@@ -850,18 +875,40 @@ const CHART_GRANULARITY_OPTIONS = [
   { value: "1w", label: "1 week" },
 ];
 
-function buildBarsFetchSpec(s: Scenario, granularity?: string) {
-  const asset = "BTC/USD";
+// Standalone scenario previews are asset-free, so the operator picks which
+// market backs the chart. Values are Alpaca pairs (matching the bars-fetch
+// CLI `--asset` form); labels are the short ticker. Mirrors the backend
+// `AssetSymbol` whitelist, minus the stablecoins (no meaningful price chart).
+const CHART_PREVIEW_ASSET_OPTIONS = [
+  { value: "BTC/USD", label: "BTC" },
+  { value: "ETH/USD", label: "ETH" },
+  { value: "SOL/USD", label: "SOL" },
+  { value: "AVAX/USD", label: "AVAX" },
+  { value: "LINK/USD", label: "LINK" },
+  { value: "DOGE/USD", label: "DOGE" },
+  { value: "LTC/USD", label: "LTC" },
+  { value: "BCH/USD", label: "BCH" },
+  { value: "DOT/USD", label: "DOT" },
+  { value: "UNI/USD", label: "UNI" },
+  { value: "AAVE/USD", label: "AAVE" },
+  { value: "MATIC/USD", label: "MATIC" },
+  { value: "SHIB/USD", label: "SHIB" },
+];
+
+function buildBarsFetchSpec(s: Scenario, granularity?: string, asset?: string) {
+  // Scenarios are asset-free; the operator picks which market backs the
+  // standalone preview. Default to BTC/USD when none is selected.
+  const selectedAsset = asset ?? "BTC/USD";
   const selectedGranularity = granularity ?? scenarioGranularityToCli(s.granularity);
   const scenarioGranularity = scenarioGranularityToCli(s.granularity);
   const invalidateQueryKeys: Array<readonly unknown[]> = [
-    scenarioChartKeys.scenario(s.id, selectedGranularity),
+    scenarioChartKeys.scenario(s.id, selectedGranularity, selectedAsset),
   ];
   if (selectedGranularity === scenarioGranularity) {
     invalidateQueryKeys.push(["bars-cache", s.bar_cache_policy.cache_key] as const);
   }
   return {
-    asset,
+    asset: selectedAsset,
     granularity: selectedGranularity,
     from: fmtDate(s.time_window.start),
     to: fmtDate(s.time_window.end),

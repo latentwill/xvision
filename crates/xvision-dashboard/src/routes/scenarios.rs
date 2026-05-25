@@ -145,6 +145,7 @@ pub async fn chart(
         &state.api_context(),
         &id,
         q.granularity.as_deref(),
+        q.asset.as_deref(),
     )
     .await?;
     Ok(Json(payload))
