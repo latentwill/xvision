@@ -22,6 +22,7 @@ export XVN_REMOTE_URL=https://xvn.tail2bb69.ts.net
 | Validate an inline filter JSON file | Local validation first, then dashboard patch | `scripts/xvn_filter_lab.py validate <file>` |
 | Create strategy/scenario records remotely | Prefer local `xvn strategy` / `xvn scenario`; dashboard API only when intentional | `scripts/xvn_author_strategy.py`, `scripts/xvn_scenario_builder.py` |
 | Review memory without writing it | Dashboard memory API | `scripts/xvn_memory_report.py` |
+| Capture a live SSE / streamed-event endpoint to JSONL for evidence | Dashboard SSE | `scripts/capture-sse.py` |
 
 ## Safety
 
@@ -34,6 +35,10 @@ export XVN_REMOTE_URL=https://xvn.tail2bb69.ts.net
   attached with `PATCH /api/strategy/:id` and a `filter` field.
 - `generate_strategy_template_files.py` is a local content-generation tool, not
   a live-node operator helper.
+- `scripts/capture-sse.py` is read-only: it opens a stream and records events.
+  It redacts secret-looking keys (`api_key`, `token`, `authorization`, …) and
+  inline `sk-`/`Bearer` values before writing JSONL, so captures are safe to
+  commit into an evidence ledger. Set `XVN_BEARER_TOKEN` to authenticate.
 
 ## Examples
 
@@ -43,4 +48,6 @@ scripts/xvn-remote.py events <job_id>
 scripts/xvn_api.py GET /api/eval/runs
 scripts/xvn_eval_harness.py export-summary <run_id>
 scripts/xvn_filter_lab.py attach <strategy_id> filter.json --dry-run
+scripts/capture-sse.py get /api/agent-runs/<run_id>/stream \
+  --out evidence.jsonl --expect run_started,run_finished --idle-timeout 30
 ```
