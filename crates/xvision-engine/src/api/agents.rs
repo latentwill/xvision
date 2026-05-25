@@ -46,6 +46,24 @@ pub struct ListAgentsRequest {
     pub scope: Option<String>,
 }
 
+/// Reject slots whose `system_prompt` is empty or whitespace-only.
+///
+/// An agent saved with an empty prompt is a silent eval landmine: shape
+/// validation passes, but the launch gate later refuses with
+/// `missing_prompt`. Catching it at the create/update boundary makes the
+/// failure visible while the operator is still on the editor surface,
+/// regardless of which caller (wizard, MCP, CLI, clone) routed the
+/// request.
+fn validate_slot_prompts(slots: &[AgentSlot]) -> ApiResult<()> {
+    if let Some(slot) = slots.iter().find(|s| s.system_prompt.trim().is_empty()) {
+        return Err(ApiError::Validation(format!(
+            "slot '{}' needs a non-empty system_prompt",
+            slot.name
+        )));
+    }
+    Ok(())
+}
+
 fn resolve_scope(s: Option<&str>) -> ScopeFilter {
     match s {
         None | Some("") => ScopeFilter::Workspace,
@@ -229,6 +247,7 @@ async fn create_inner(ctx: &ApiContext, req: CreateAgentRequest) -> ApiResult<Ag
     if req.slots.is_empty() {
         return Err(ApiError::Validation("agent needs at least one slot".into()));
     }
+    validate_slot_prompts(&req.slots)?;
     if store
         .name_exists(&req.name, None)
         .await
@@ -318,6 +337,10 @@ async fn update_inner(ctx: &ApiContext, agent_id: &str, req: UpdateAgentRequest)
                 name
             )));
         }
+    }
+
+    if let Some(ref slots) = req.slots {
+        validate_slot_prompts(slots)?;
     }
 
     let updated = store

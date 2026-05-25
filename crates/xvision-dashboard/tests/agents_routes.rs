@@ -75,29 +75,32 @@ async fn duplicate_name_returns_409() {
 }
 
 #[tokio::test]
-async fn validate_returns_diagnostics_for_empty_prompt() {
+async fn create_rejects_empty_prompt() {
     let (server, _tmp) = test_server().await;
 
     let mut body = sample_create_body("validate-1");
-    body["slots"][0]["system_prompt"] = json!(""); // trigger warning
+    body["slots"][0]["system_prompt"] = json!("");
 
     let create_res = server.post("/api/agents").json(&body).await;
-    create_res.assert_status_ok();
-    let id = create_res.json::<Value>()["agent_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let validate_res = server.post(&format!("/api/agents/{}/validate", id)).await;
-    validate_res.assert_status_ok();
-    let diags = validate_res.json::<Value>();
-    let arr = diags["diagnostics"].as_array().unwrap();
-    let codes: Vec<&str> = arr.iter().map(|d| d["code"].as_str().unwrap()).collect();
+    assert_eq!(create_res.status_code(), 400);
+    let err: Value = create_res.json();
+    assert_eq!(err["code"], "validation");
     assert!(
-        codes.contains(&"slot_prompt_empty"),
-        "expected slot_prompt_empty in {:?}",
-        codes
+        err["message"].as_str().unwrap().contains("system_prompt"),
+        "expected system_prompt in message, got: {}",
+        err["message"]
     );
+}
+
+#[tokio::test]
+async fn create_rejects_whitespace_only_prompt() {
+    let (server, _tmp) = test_server().await;
+
+    let mut body = sample_create_body("validate-2");
+    body["slots"][0]["system_prompt"] = json!("   \n\t  ");
+
+    let create_res = server.post("/api/agents").json(&body).await;
+    assert_eq!(create_res.status_code(), 400);
 }
 
 #[tokio::test]

@@ -144,7 +144,7 @@ pub fn validate_agent(agent: &Agent) -> Vec<ValidationDiagnostic> {
         if slot.system_prompt.trim().is_empty() {
             out.push(ValidationDiagnostic {
                 code: "slot_prompt_empty".into(),
-                severity: Severity::Warning,
+                severity: Severity::Error,
                 message: format!("Slot '{}' has an empty system prompt.", slot.name),
                 field: Some(format!("{}.system_prompt", field_prefix)),
             });
@@ -409,14 +409,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_prompt_warns_not_errors() {
+    fn empty_prompt_errors() {
         let a = good_agent(); // system_prompt is empty by default
         let diags = validate_agent(&a);
-        let prompt_warn = diags
+        let prompt_err = diags
             .iter()
             .find(|d| d.code == "slot_prompt_empty")
-            .expect("warn present");
-        assert_eq!(prompt_warn.severity, Severity::Warning);
+            .expect("diagnostic present");
+        assert_eq!(prompt_err.severity, Severity::Error);
     }
 
     #[test]
