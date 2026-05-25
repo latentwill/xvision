@@ -146,6 +146,63 @@ export async function revertOptimization(
   );
 }
 
+// ── Marketplace mint gate (Phase 4.3/4.4) ─────────────────────────────────
+
+/// The mint-allowed verdict the engine gate produced. Mirrors
+/// `xvision_engine::mint::MintDecision`. Returned only on a SUCCESSFUL mint
+/// check — a refusal surfaces as an `ApiError` (validation) whose `code` is
+/// one of the `mint_*` machine codes below.
+export type MintDecision = {
+  child_agent_id: string;
+  capability: string;
+  eval_run_id: string;
+  /// `true` when an overfit warning was present but waived.
+  overfit_waived: boolean;
+  /// The holdout snapshot id that backed the mint, if a holdout was present.
+  holdout_snapshot_id: string | null;
+};
+
+export type MintResponse = {
+  decision: MintDecision;
+};
+
+/// Machine codes the mint gate emits as `ApiError.code` on a refusal. These
+/// mirror `MintRefusal::machine_code`; the UI maps them to operator copy.
+export const MINT_REFUSAL_CODES = {
+  missingLineage: "mint_missing_lineage",
+  missingEvalProof: "mint_missing_eval_proof",
+  unwaivedOverfit: "mint_unwaived_overfit",
+  incompleteMetrics: "mint_incomplete_metrics",
+} as const;
+
+/// Request a marketplace mint of a child agent produced by this run. The
+/// engine gate REFUSES (typed) without (a) lineage, (b) eval proof,
+/// (c) no-unwaived-overfit, (d) the capability's required-metric coverage.
+/// A refusal throws `ApiError` carrying the `mint_*` code; success returns
+/// the attested decision.
+export async function mintOptimization(
+  runId: string,
+  body: {
+    childAgentId: string;
+    evalRunId: string;
+    evalMetric: string;
+    metricsPresent?: string[];
+  },
+): Promise<MintResponse> {
+  return apiFetch<MintResponse>(
+    `/api/optimizations/${encodeURIComponent(runId)}/mint`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        child_agent_id: body.childAgentId,
+        eval_run_id: body.evalRunId,
+        eval_metric: body.evalMetric,
+        metrics_present: body.metricsPresent ?? [],
+      }),
+    },
+  );
+}
+
 export const optimizationKeys = {
   all: ["optimizations"] as const,
   list: (agentId: string, slot?: string) =>

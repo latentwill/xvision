@@ -142,6 +142,7 @@ use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail,
     checkpoints as checkpoints_route, cli,
+    diagnostics as diagnostics_route,
     docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, focus as focus_route,
@@ -169,11 +170,23 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/agents/:id", get(agents::get))
         .route("/api/agents/:id/strategies", get(agents::deployed_in))
         .route("/api/agents/:id/runs", get(agents::recent_runs))
+        // Phase 4.5: per-agent capability diagnostics (dspy-free; reads the
+        // engine diagnostics helpers against the agent's slots).
+        .route(
+            "/api/agents/:id/diagnostics",
+            get(diagnostics_route::agent),
+        )
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/strategies", get(strategies::list))
         .route("/api/templates", get(strategies::list_templates))
         .route("/api/strategy/:id", get(strategies::get))
+        // Phase 4.5: strategy capability-readiness diagnostics. Surfaces WHY
+        // a strategy can't launch (typed per-agent blockers) BEFORE launch.
+        .route(
+            "/api/strategy/:id/diagnostics",
+            get(diagnostics_route::strategy),
+        )
         .route("/api/strategies/:id/chart", get(strategies::chart))
         .route(
             "/api/strategies-folder/list",
