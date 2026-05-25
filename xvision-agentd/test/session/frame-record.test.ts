@@ -30,6 +30,8 @@ import * as eventClient from "../../src/transport/event-client.js"
 import type { TrajectoryFrame } from "../../src/session/frame-types.js"
 import { NOTIFY } from "../../src/session/emit.js"
 
+type EmitSpy = { mock: { calls: unknown[][] } }
+
 const ECHO_DESC = {
   name: "echo",
   version: "1.0.0",
@@ -56,16 +58,16 @@ function makeParams(run_id: string, allowed_tools: string[] = ["echo"]) {
 }
 
 /** Collect trajectory frames emitted during a test via the notification spy. */
-function collectFrames(spy: ReturnType<typeof vi.spyOn>): TrajectoryFrame[] {
+function collectFrames(spy: EmitSpy): TrajectoryFrame[] {
   return spy.mock.calls
-    .filter(([method]: [string, unknown]) => method === NOTIFY.TrajectoryFrame)
-    .map(([, payload]: [string, unknown]) => payload as TrajectoryFrame)
+    .filter((call) => call[0] === NOTIFY.TrajectoryFrame)
+    .map((call) => call[1] as TrajectoryFrame)
 }
 
 describe("trajectory frame recording", () => {
   // emitNotification is the low-level sink for all notifications including
   // trajectory frames. We spy on it to capture frames without needing a socket.
-  let emitSpy: ReturnType<typeof vi.spyOn>
+  let emitSpy: EmitSpy
 
   beforeEach(() => {
     installMockProvider()
@@ -74,7 +76,7 @@ describe("trajectory frame recording", () => {
     handleToolRegistrySet({ tools: [ECHO_DESC] })
     __setStoreForTesting(createStore({ now: () => Date.now() }))
     vi.restoreAllMocks()
-    emitSpy = vi.spyOn(eventClient, "emitNotification").mockResolvedValue(undefined)
+    emitSpy = vi.spyOn(eventClient, "emitNotification").mockResolvedValue(undefined) as unknown as EmitSpy
   })
 
   // -----------------------------------------------------------------------

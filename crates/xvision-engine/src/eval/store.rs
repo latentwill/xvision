@@ -866,6 +866,31 @@ impl RunStore {
         Ok(())
     }
 
+    /// Upsert a pooled-equity sample, keyed on the `(run_id, timestamp)` PK.
+    /// Used by the multi-asset live loop: two assets can produce bars at the
+    /// same bar timestamp, and the pooled NAV is a single series per
+    /// timestamp, so the latest write at a timestamp wins instead of
+    /// colliding on the PK. A single-asset run never repeats a timestamp, so
+    /// this is equivalent to the plain [`Self::record_equity`] INSERT.
+    pub async fn record_equity_upsert(
+        &self,
+        run_id: &str,
+        timestamp: DateTime<Utc>,
+        equity_usd: f64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO eval_equity_samples (run_id, timestamp, equity_usd) VALUES (?, ?, ?) \
+             ON CONFLICT(run_id, timestamp) DO UPDATE SET equity_usd = excluded.equity_usd",
+        )
+        .bind(run_id)
+        .bind(timestamp.to_rfc3339())
+        .bind(equity_usd)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("upsert eval_equity_samples run_id={run_id}"))?;
+        Ok(())
+    }
+
     /// Read all supervisor_notes for a run, ordered by `created_at`.
     /// Tuple shape: `(role, severity, content)`. Intended for tests; the
     /// engine doesn't read these back at runtime today.

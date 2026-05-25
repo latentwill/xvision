@@ -36,7 +36,7 @@ describe("xvision-mock provider", () => {
       name: "echo",
       description: "echoes",
       inputSchema: { type: "object", properties: { msg: { type: "string" } }, required: ["msg"] },
-      execute: async (input) => {
+      execute: async (input: unknown) => {
         calls.push({ input })
         return { echoed: (input as { msg: string }).msg }
       },

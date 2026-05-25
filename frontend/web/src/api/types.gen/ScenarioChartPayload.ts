@@ -4,4 +4,10 @@ import type { ChartBar } from "./ChartBar";
 import type { Indicators } from "./Indicators";
 import type { Scenario } from "./Scenario";
 
-export type ScenarioChartPayload = { scenario: Scenario, bars: Array<ChartBar>, indicators: Indicators, cache_status: CacheStatus, };
+export type ScenarioChartPayload = { scenario: Scenario, bars: Array<ChartBar>, indicators: Indicators, cache_status: CacheStatus, 
+/**
+ * The asset the standalone preview resolved to (short ticker, e.g.
+ * `"BTC"`). Scenarios are asset-free; this echoes the operator-chosen
+ * `asset` query param, or the `BTC` default when none was supplied.
+ */
+preview_asset: string, };

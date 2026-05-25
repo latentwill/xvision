@@ -19,7 +19,7 @@
 //!
 //! | # | Rule | Source |
 //! |---|---|---|
-//! | 1 | `assets.len() == 1` (v1 single-asset) | Plan A3 |
+//! | 1 | `!assets.is_empty()` (single-asset wall lifted in §4 L2) | Plan A3 / multi-asset-alpaca-unlock |
 //! | 2 | each asset is on the Alpaca crypto whitelist | Plan A3 + F1 |
 //! | 3 | `stop_policy` has at least one limit set | Plan A3 |
 //! | 4 | `venue_label != VenueLabel::Live` (v1 rejects real money) | Plan A3 |
@@ -92,13 +92,25 @@ impl StopPolicy {
 /// Launch envelope for a Live run. Persisted as
 /// `eval_runs.live_config_json` (Phase B migration).
 ///
-/// `strategy_id` references the strategy artifact that drives the run.
-/// `assets` is `Vec` for forward-compat with multi-asset Live launches
-/// (see `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md`);
-/// v1 hard-walls it to `len() == 1`.
+/// **Current live scope: Alpaca paper trading only.** Live mode sends
+/// orders to `https://paper-api.alpaca.markets` — real market data,
+/// paper (simulated) money. Real-money venues (`VenueLabel::Live`) are
+/// rejected at validation until the per-strategy verdict + kill-switch
+/// hardening lands.
 ///
-/// `broker_creds_ref` resolves to a configured broker-credentials row;
-/// the engine never stores the secret material itself in `LiveConfig`.
+/// `strategy_id` references the strategy artifact that drives the run.
+/// `assets` is a non-empty list of whitelisted assets; each is fanned out
+/// into its own `LiveStream` and merged in the executor (§4 L2 multi-asset
+/// live fanout, see
+/// `docs/superpowers/plans/2026-05-25-cline-live-followups.md` and the
+/// invariants in
+/// `docs/superpowers/notes/2026-05-25-live-multi-asset-invariants.md`). The
+/// earlier single-asset wall (`len() == 1`) has been lifted.
+///
+/// `broker_creds_ref` selects WHICH stored credential set to load
+/// (e.g. `"alpaca"` → the Alpaca credentials row). It is a lookup key,
+/// not a venue/environment selector — venue selection is a separate
+/// future plan. The engine never stores secret material in `LiveConfig`.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -113,6 +125,11 @@ pub struct LiveConfig {
     /// type (mirrors the existing override on `Scenario`).
     #[cfg_attr(feature = "ts-export", ts(type = "{ initial: number, currency: string }"))]
     pub capital: Capital,
+    /// Selects WHICH stored credential set to use (e.g. `"alpaca"` → the
+    /// Alpaca credentials row under Settings → Brokers). This is a lookup
+    /// key, **not** a venue/environment selector — venue and environment
+    /// selection is a separate future plan. Current live scope accepts only
+    /// `"alpaca"` (Alpaca paper trading).
     pub broker_creds_ref: String,
     pub stop_policy: StopPolicy,
 
@@ -159,8 +176,12 @@ impl LiveConfig {
             return Err(E::BrokerCredsEmpty);
         }
 
-        // Single-asset wall (v1). Lifted by the multi-asset-alpaca plan.
-        if self.assets.len() != 1 {
+        // Asset-count floor. The single-asset wall (`len() != 1`) was lifted
+        // by the cline-live follow-up (§4 L2 multi-asset live fanout): a
+        // Live run now accepts `>= 1` whitelisted assets, each fanned out
+        // into its own `LiveStream` and merged in the executor. An empty
+        // asset set still has nothing to trade, so it stays an error.
+        if self.assets.is_empty() {
             return Err(E::AssetCount {
                 actual: self.assets.len(),
             });
@@ -309,7 +330,9 @@ impl std::fmt::Display for LiveConfigValidationError {
             Self::DisplayNameEmpty => f.write_str("display_name must be non-empty"),
             Self::StrategyIdEmpty => f.write_str("strategy_id must be non-empty"),
             Self::BrokerCredsEmpty => f.write_str("broker_creds_ref must be non-empty"),
-            Self::AssetCount { actual } => write!(f, "v1 Live runs require exactly 1 asset (got {actual})"),
+            Self::AssetCount { actual } => {
+                write!(f, "Live runs require at least 1 asset (got {actual})")
+            }
             Self::AssetNotWhitelisted { symbol, .. } => {
                 write!(f, "asset '{symbol}' is not on the Alpaca crypto whitelist")
             }
@@ -324,7 +347,10 @@ impl std::fmt::Display for LiveConfigValidationError {
                 "stop_policy.time_limit_secs {secs} exceeds the {max}-second hard cap"
             ),
             Self::VenueLabelLiveRejected => f.write_str(
-                "venue_label = Live is reserved for a future milestone (real-money gates not yet wired)",
+                "real-money live (venue_label = Live) is not yet supported; \
+                 current live mode is Alpaca paper trading only \
+                 (https://paper-api.alpaca.markets). \
+                 Set venue_label = Paper (or omit it) to use the current live scope.",
             ),
             Self::CapitalNotPositive { initial } => {
                 write!(f, "capital.initial must be > 0 (got {initial})")
@@ -353,6 +379,14 @@ mod tests {
             class: AssetClass::Crypto,
             symbol: "BTC/USD".into(),
             venue_symbol: "BTC/USD".into(),
+        }
+    }
+
+    fn whitelisted_eth_asset() -> AssetRef {
+        AssetRef {
+            class: AssetClass::Crypto,
+            symbol: "ETH/USD".into(),
+            venue_symbol: "ETH/USD".into(),
         }
     }
 
@@ -414,17 +448,45 @@ mod tests {
     }
 
     #[test]
-    fn asset_count_must_be_exactly_one() {
+    fn empty_asset_set_is_rejected() {
         let mut cfg = valid_config();
         cfg.assets = vec![];
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, LiveConfigValidationError::AssetCount { actual: 0 }));
-
-        let mut cfg = valid_config();
-        cfg.assets = vec![whitelisted_btc_asset(), whitelisted_btc_asset()];
-        let err = cfg.validate().unwrap_err();
-        assert!(matches!(err, LiveConfigValidationError::AssetCount { actual: 2 }));
         assert_eq!(err.field_path(), "/assets");
+    }
+
+    #[test]
+    fn multi_asset_validates_after_single_asset_wall_lift() {
+        // §4 L2: the single-asset wall is lifted. Two whitelisted assets
+        // now validate (each is fanned out into its own LiveStream).
+        let mut cfg = valid_config();
+        cfg.assets = vec![whitelisted_btc_asset(), whitelisted_eth_asset()];
+        assert!(
+            cfg.validate().is_ok(),
+            "multi-asset live config must validate after the wall lift"
+        );
+    }
+
+    #[test]
+    fn multi_asset_still_rejects_non_whitelisted_member() {
+        // The per-asset whitelist check still applies to every member.
+        let mut cfg = valid_config();
+        cfg.assets = vec![
+            whitelisted_btc_asset(),
+            AssetRef {
+                class: AssetClass::Crypto,
+                symbol: "DOGE/USDT".into(),
+                venue_symbol: "DOGE/USDT".into(),
+            },
+        ];
+        let err = cfg.validate().unwrap_err();
+        match err {
+            LiveConfigValidationError::AssetNotWhitelisted { index: 1, symbol } => {
+                assert_eq!(symbol, "DOGE/USDT");
+            }
+            other => panic!("expected AssetNotWhitelisted at index 1; got {other:?}"),
+        }
     }
 
     #[test]

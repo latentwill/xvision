@@ -1765,6 +1765,7 @@ impl WizardLoop {
                     limits: None,
                     skip_preflight: false,
                     provider_override: None,
+                    assets_subset: None,
                     auto_fire_review: false,
                     review_model: None,
                     max_annotations_per_review: Some(8),
@@ -2369,6 +2370,9 @@ fn legacy_fixture_exists(scenario: &Scenario) -> bool {
 }
 
 fn fetch_bars_ui_action(scenario: &Scenario) -> serde_json::Value {
+    // Scenarios are asset-free; the asset for a bars fetch is chosen at the
+    // run layer, not stored on the scenario. Suggest a placeholder symbol the
+    // operator edits before running.
     let asset = "BTC".to_string();
     serde_json::json!({
         "type": "fetch_bars",
@@ -2484,25 +2488,12 @@ fn normalize_create_scenario_input(obj: &mut serde_json::Map<String, serde_json:
         "Generated",
     );
 
-    match obj.get_mut("asset") {
-        Some(serde_json::Value::Array(assets)) if !assets.is_empty() => {
-            for asset in assets {
-                normalize_asset_ref(asset);
-            }
-        }
-        Some(asset @ serde_json::Value::Object(_)) => {
-            normalize_asset_ref(asset);
-            let normalized = asset.clone();
-            *asset = serde_json::Value::Array(vec![normalized]);
-        }
-        _ => {
-            let symbol = string_field(obj, "asset")
-                .or_else(|| string_field(obj, "symbol"))
-                .or_else(|| infer_asset_symbol(&display_name))
-                .unwrap_or_else(|| "BTC".into());
-            obj.insert("asset".into(), serde_json::json!([asset_ref_json(&symbol)]));
-        }
-    }
+    // Scenarios are asset-free. `CreateScenarioRequest` rejects unknown
+    // fields, so strip any `asset` / `symbol` the agent may still emit
+    // (the model doesn't know the schema dropped them) rather than
+    // building an AssetRef the request no longer accepts.
+    obj.remove("asset");
+    obj.remove("symbol");
 
     if !obj.get("time_window").is_some_and(|v| v.is_object()) {
         // Always synthesise a window. The previous `if let Some(window) =
@@ -2599,72 +2590,6 @@ fn normalize_create_scenario_input(obj: &mut serde_json::Map<String, serde_json:
     if matches!(obj.get("replay_mode"), Some(serde_json::Value::String(_))) {
         obj.insert("replay_mode".into(), serde_json::json!({"mode": "Continuous"}));
     }
-}
-
-fn normalize_asset_ref(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::String(symbol) => {
-            *value = asset_ref_json(symbol);
-        }
-        serde_json::Value::Object(obj) => {
-            if missing_string(obj, "symbol") {
-                obj.insert("symbol".into(), serde_json::Value::String("BTC".into()));
-            }
-            if missing_string(obj, "venue_symbol") {
-                let symbol = string_field(obj, "symbol").unwrap_or_else(|| "BTC".into());
-                obj.insert(
-                    "venue_symbol".into(),
-                    serde_json::Value::String(venue_symbol(&symbol)),
-                );
-            }
-            if missing_string(obj, "class") {
-                obj.insert("class".into(), serde_json::Value::String("Crypto".into()));
-            }
-            normalize_enum_string(obj, "class", &[("crypto", "Crypto")]);
-        }
-        _ => {
-            *value = asset_ref_json("BTC");
-        }
-    }
-}
-
-fn asset_ref_json(symbol: &str) -> serde_json::Value {
-    let base = base_symbol(symbol);
-    serde_json::json!({
-        "class": "Crypto",
-        "symbol": base,
-        "venue_symbol": venue_symbol(&base)
-    })
-}
-
-fn venue_symbol(symbol: &str) -> String {
-    let base = base_symbol(symbol);
-    if symbol.contains('/') {
-        symbol.to_ascii_uppercase()
-    } else {
-        format!("{base}/USD")
-    }
-}
-
-fn base_symbol(symbol: &str) -> String {
-    symbol
-        .trim()
-        .split('/')
-        .next()
-        .unwrap_or("BTC")
-        .trim()
-        .to_ascii_uppercase()
-}
-
-fn infer_asset_symbol(display_name: &str) -> Option<String> {
-    let lower = display_name.to_ascii_lowercase();
-    if lower.contains("solana") || lower.split_whitespace().any(|part| part == "sol") {
-        return Some("SOL".into());
-    }
-    if lower.contains("bitcoin") || lower.split_whitespace().any(|part| part == "btc") {
-        return Some("BTC".into());
-    }
-    None
 }
 
 fn default_time_window() -> serde_json::Value {
@@ -2950,7 +2875,6 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "display_name": {"type": "string", "minLength": 1},
                     "description": {"type": "string"},
                     "asset_class": {"type": "string"},
-                    "asset": {"type": "array", "items": {"type": "object"}},
                     "quote_currency": {"type": "string"},
                     "time_window": {"type": "object"},
                     "capital": {"type": "object"},
@@ -2966,7 +2890,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "source": {"type": "string"}
                 },
                 "required": [
-                    "display_name", "description", "asset_class", "asset",
+                    "display_name", "description", "asset_class",
                     "quote_currency", "time_window", "capital", "granularity",
                     "timezone", "calendar", "venue", "data_source",
                     "replay_mode", "tags", "source"
@@ -4001,8 +3925,12 @@ mod tests {
 
         assert_eq!(out["display_name"], "SOL Q1 2026");
         assert_eq!(out["description"], "SOL Q1 2026 scenario generated from chat.");
-        assert_eq!(out["asset"][0]["symbol"], "SOL");
-        assert_eq!(out["asset"][0]["venue_symbol"], "SOL/USD");
+        // Scenarios are asset-free; the normalizer strips any `asset` the
+        // agent emits, and the created scenario has no asset field.
+        assert!(
+            out.get("asset").is_none(),
+            "scenario must not carry an asset; got: {out}"
+        );
         assert_eq!(out["time_window"]["start"], "2026-01-01T00:00:00Z");
         assert_eq!(out["time_window"]["end"], "2026-04-01T00:00:00Z");
     }

@@ -309,6 +309,7 @@ async fn run_one_arm(
         },
         skip_preflight: false,
         provider_override,
+        assets_subset: None,
         auto_fire_review: false,
         review_model: None,
         max_annotations_per_review: Some(8),

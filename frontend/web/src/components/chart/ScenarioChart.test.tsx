@@ -98,6 +98,7 @@ const payload: ScenarioChartPayload = {
     atr_14: indicatorSeries,
   },
   cache_status: { type: "FullyCached", bar_count: 1, fetched_at: "2026-01-01T00:00:00Z" },
+  preview_asset: "BTC",
 };
 
 describe("ScenarioChart", () => {

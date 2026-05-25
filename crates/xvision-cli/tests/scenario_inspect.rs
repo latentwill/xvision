@@ -28,8 +28,6 @@ fn scenario_inspect_card_prints_expected_fields() {
             "create",
             "--name",
             "SOL 4h inspect test",
-            "--asset",
-            "SOL",
             "--from",
             "2025-01-01",
             "--to",
@@ -69,9 +67,10 @@ fn scenario_inspect_card_prints_expected_fields() {
         card.contains("name: SOL 4h inspect test"),
         "card must contain display name; got:\n{card}"
     );
+    // Scenarios are asset-free; the inspect card no longer renders an asset.
     assert!(
-        card.contains("asset: SOL/USD"),
-        "card must contain asset pair; got:\n{card}"
+        !card.contains("asset:"),
+        "card must not contain an asset field (scenarios are asset-free); got:\n{card}"
     );
     assert!(
         card.contains("timeframe: 4h"),
@@ -112,8 +111,6 @@ fn scenario_inspect_card_clone_shows_source() {
             "create",
             "--name",
             "SOL parent for inspect",
-            "--asset",
-            "SOL",
             "--from",
             "2025-01-01",
             "--to",
@@ -169,8 +166,6 @@ fn scenario_inspect_without_card_flag_is_usage_error() {
             "create",
             "--name",
             "SOL no-card test",
-            "--asset",
-            "SOL",
             "--from",
             "2025-01-01",
             "--to",

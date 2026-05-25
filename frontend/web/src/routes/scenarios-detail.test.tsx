@@ -78,7 +78,6 @@ const scenario = {
   tags: [],
   notes: null,
   asset_class: "Crypto",
-  asset: [{ class: "Crypto", symbol: "BTC", venue_symbol: "BTC/USD" }],
   quote_currency: "Usd",
   time_window: { start: "2025-04-01T00:00:00Z", end: "2025-06-30T00:00:00Z" },
   granularity: "Hour4",
@@ -96,6 +95,7 @@ const scenario = {
       partial_fills: false,
       volume_constraints: null,
     },
+    overrides: [],
   },
   replay_mode: { mode: "Continuous" },
   capital: { initial: 10000, currency: "USD" },
@@ -125,6 +125,7 @@ const chartPayload: ScenarioChartPayload = {
     atr_14: [],
   },
   cache_status: { type: "NotCached", expected_count: 540 },
+  preview_asset: "BTC",
 };
 
 function renderRoute() {
@@ -169,7 +170,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     // the operator can amend display_name/description/notes/tags
     // before submitting. `scenario-clone-form-structural-fields`
     // upgraded the inline form to `<ScenarioForm>` so the operator
-    // can also override asset/window/granularity/venue/warmup_bars;
+    // can also override window/granularity/venue/warmup_bars;
     // submit is labelled "Create →" per the shared component.
     fireEvent.click(await screen.findByRole("button", { name: "Clone to edit" }));
     fireEvent.click(await screen.findByRole("button", { name: /Create/i }));
@@ -241,7 +242,6 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     // parent). display_name diverges from parent ("(clone)" suffix
     // pre-filled) so it's a non-null override.
     expect(mutations.granularity).toBeNull();
-    expect(mutations.asset).toBeNull();
     expect(mutations.time_window).toBeNull();
     expect(mutations.venue).toBeNull();
     expect(mutations.warmup_bars).toBeNull();
@@ -336,7 +336,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
           "bars",
           "fetch",
           "--asset",
-          "BTC",
+          "BTC/USD",
           "--granularity",
           "4h",
           "--from",
@@ -362,7 +362,60 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     fireEvent.change(selector, { target: { value: "1h" } });
 
     await waitFor(() => {
-      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(scenario.id, "1h");
+      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
+        scenario.id,
+        "1h",
+        "BTC/USD",
+      );
+    });
+  });
+
+  it("refetches the scenario chart when the preview asset changes", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+
+    renderRoute();
+
+    // The standalone preview defaults to BTC/USD.
+    await waitFor(() => {
+      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
+        scenario.id,
+        "4h",
+        "BTC/USD",
+      );
+    });
+
+    const assetSelect = await screen.findByLabelText("Preview asset");
+    fireEvent.change(assetSelect, { target: { value: "ETH/USD" } });
+
+    await waitFor(() => {
+      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
+        scenario.id,
+        "4h",
+        "ETH/USD",
+      );
+    });
+  });
+
+  it("fetches bars for the selected preview asset", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+    vi.mocked(cliApi.createCliJob).mockResolvedValue({
+      job_id: "job-1",
+      status: "queued",
+    });
+
+    renderRoute();
+
+    const assetSelect = await screen.findByLabelText("Preview asset");
+    fireEvent.change(assetSelect, { target: { value: "ETH/USD" } });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Fetch bars" }));
+
+    await waitFor(() => {
+      expect(cliApi.createCliJob).toHaveBeenCalledWith({
+        argv: expect.arrayContaining(["--asset", "ETH/USD"]),
+      });
     });
   });
 });

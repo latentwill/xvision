@@ -125,13 +125,16 @@ fact.
 
 ---
 
-### `xvn agent get <agent-id>`
+### `xvn agent …`
 
-Read path into the workspace agent library. Returns the full `Agent` object
-(same JSON shape as the `agents[]` slot in `EvalRunExport`), including all
-slots with resolved `max_tokens`. Format flag: `--format json` (default,
-pretty-printed) or `json-compact` (single-line, suitable for piping). Alias:
-`show`. List is intentionally out of scope in this release.
+Workspace agent library: inspect, create, list, and lint agent records.
+
+| Verb | Effect |
+|---|---|
+| `get <agent-id> [--format json\|json-compact]` | Fetch a single agent by id. Returns the full `Agent` JSON shape (same as `agents[]` in `EvalRunExport`). Alias: `show`. |
+| `create --name <name> --capability <trader\|filter\|critic\|intern\|router> --provider <id> --model <id> --system-prompt <text\|@path> [--temperature <f>] [--max-tokens <n>] [--tags <t>…] [--description <s>] [--format json\|json-compact]` | Create a single-slot agent in the workspace library. `--system-prompt @path` reads the prompt from a file. |
+| `ls [--format table\|json\|json-compact] [--tag <t>…] [--include-archived]` | List agents. Default output is a table with columns AGENT_ID, NAME, CAPABILITIES, MODELS, ARCHIVED, TAGS. Use `--format json` or `json-compact` for machine-readable output. Alias: `list`. |
+| `lint [<agent-id>] [--json]` | Validate one or all agents and report diagnostics. Exits 0 when there are no error-severity findings; exits 2 when any error-severity diagnostic is present (suitable as a CI gate). `--json` emits a JSON array of `{agent_id, diagnostics: [{code, severity, message, field}]}`. |
 
 ---
 

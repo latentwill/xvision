@@ -235,6 +235,9 @@ async fn resolve_scenario_summary(ctx: &ApiContext, run_id: &str) -> Option<Revi
     Some(ReviewScenarioSummary {
         id: scenario.id.clone(),
         name: Some(scenario.display_name.clone()),
+        // Scenarios are asset-free; a run is multi-asset and the per-decision
+        // asset is the source of truth for per-asset review, so a single
+        // run-level asset is no longer meaningful.
         asset: None,
         granularity: Some(scenario.granularity.to_string()),
         start: Some(scenario.time_window.start.to_rfc3339()),

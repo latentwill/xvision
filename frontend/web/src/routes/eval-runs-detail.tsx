@@ -296,6 +296,8 @@ export function EvalRunDetailRoute() {
                 deleting={remove.variables === detail.summary.id && remove.isPending}
               />
 
+              {/* Multi-asset: per-asset decision rollup above the decisions list. */}
+              <AssetRollupPanel decisions={detail.decisions} />
               <DecisionsCard rows={detail.decisions} />
             </div>
 
@@ -864,6 +866,93 @@ function pnlTone(pnl: number | null): "pos" | "neg" | "neu" {
   if (pnl > 0) return "pos";
   if (pnl < 0) return "neg";
   return "neu";
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Per-asset rollup panel — D4 (multi-asset feature)
+// Groups decisions by `asset`, sorted alphabetically for stable display.
+// Shows: asset symbol, total decisions, trades opened (long_open/short_open),
+// and sum of realized PnL for each asset.
+// Rendered inline above the decisions table — no popup/overlay.
+
+type AssetRollup = {
+  asset: string;
+  decisions: number;
+  tradesOpened: number;
+  pnlRealized: number | null;
+};
+
+function buildAssetRollups(decisions: DecisionRowDto[]): AssetRollup[] {
+  const map = new Map<string, AssetRollup>();
+  for (const row of decisions) {
+    const key = row.asset;
+    if (!map.has(key)) {
+      map.set(key, { asset: key, decisions: 0, tradesOpened: 0, pnlRealized: null });
+    }
+    const entry = map.get(key)!;
+    entry.decisions += 1;
+    if (row.action === "long_open" || row.action === "short_open") {
+      entry.tradesOpened += 1;
+    }
+    if (row.pnl_realized != null) {
+      entry.pnlRealized = (entry.pnlRealized ?? 0) + row.pnl_realized;
+    }
+  }
+  // Sort alphabetically for a stable, predictable order.
+  return [...map.values()].sort((a, b) => a.asset.localeCompare(b.asset));
+}
+
+function AssetRollupPanel({ decisions }: { decisions: DecisionRowDto[] }) {
+  // Only render when there's data — empty runs show nothing here.
+  const rollups = useMemo(() => buildAssetRollups(decisions), [decisions]);
+  if (decisions.length === 0) return null;
+
+  // Single-asset runs still get one row — that's intentional and fine.
+  return (
+    <Card className="mb-3 !border-border-soft overflow-x-auto">
+      <div className="px-4 py-2.5 border-b border-border-soft">
+        <span className="text-[11px] font-mono tracking-[0.15em] text-text-3 uppercase">
+          By asset
+        </span>
+      </div>
+      <table className="w-full min-w-[480px]">
+        <thead>
+          <tr className="text-left text-text-3 text-[11px] border-b border-border-soft">
+            <th className="font-normal py-2 px-4">Asset</th>
+            <th className="font-normal py-2 px-3 text-right">Decisions</th>
+            <th className="font-normal py-2 px-3 text-right">Trades opened</th>
+            <th className="font-normal py-2 px-3 text-right">Realized PnL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rollups.map((r) => (
+            <tr
+              key={r.asset}
+              className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
+            >
+              <td className="py-2 px-4 font-mono text-text text-[13px]">{r.asset}</td>
+              <td className="py-2 px-3 text-right font-mono text-text-2 text-[12px]">
+                {r.decisions}
+              </td>
+              <td className="py-2 px-3 text-right font-mono text-text-2 text-[12px]">
+                {r.tradesOpened}
+              </td>
+              <td className={`py-2 px-3 text-right font-mono text-[12px] ${pnlClass(r.pnlRealized)}`}>
+                {r.pnlRealized != null ? fmtPnlUsd(r.pnlRealized) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+function pnlClass(n: number | null | undefined): string {
+  if (n == null) return "text-text-3";
+  if (n > 0) return "text-gold";
+  if (n < 0) return "text-danger";
+  return "text-text-2";
 }
 
 function traceRunId(summary: RunSummary): string {

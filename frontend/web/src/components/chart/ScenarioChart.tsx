@@ -47,10 +47,7 @@ export function ScenarioChart({
   const regime = payload.scenario.tags.find((t) => t.startsWith("regime:"));
   const bg = regime ? REGIME_BG[regime] : undefined;
 
-  const assetSymbol =
-    payload.scenario.asset.length > 0
-      ? payload.scenario.asset[0].symbol
-      : "—";
+  const marketLabel = `${payload.scenario.asset_class} / ${payload.scenario.quote_currency}`;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -150,7 +147,7 @@ export function ScenarioChart({
     <div style={{ background: bg }}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-text-3 text-[12px]">
-          {assetSymbol} · {formatGranularity(payload.scenario.granularity)}
+          {marketLabel} · {formatGranularity(payload.scenario.granularity)}
         </span>
         <CacheStatusBadge
           status={payload.cache_status}

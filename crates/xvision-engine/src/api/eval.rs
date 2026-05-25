@@ -634,6 +634,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
         limits: None,
         skip_preflight: false,
         provider_override: None,
+        assets_subset: None,
         auto_fire_review: source.auto_fire_review,
         review_model: source.review_model.clone(),
         max_annotations_per_review: source.max_annotations_per_review,
@@ -966,6 +967,17 @@ pub struct EvalRunRequest {
     /// Wave B #5: `cli-eval-model-override`.
     #[serde(default)]
     pub provider_override: Option<ProviderOverride>,
+    /// Optional per-run subset of the strategy's `asset_universe`. When set,
+    /// only the listed assets are traded in this run (backtest only — paper
+    /// mode ignores this field today). Every entry must be present in the
+    /// strategy's `asset_universe`; validation is performed inside
+    /// `build_backtest_executor` via `active_assets`.
+    ///
+    /// CLI: `--assets ETH,SOL` (comma-separated). `None` (default) trades
+    /// the full universe as declared in the strategy manifest.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "Array<string> | null"))]
+    pub assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
     /// When true, finalizing a successful run fires the rule-based review
     /// agent and stores chart annotations on `eval_reviews.annotations_json`.
     /// Default false: auto-review is opt-in per run.
@@ -1065,7 +1077,9 @@ fn validate_live_request_shape(req: &EvalRunRequest) -> ApiResult<()> {
     match (&req.mode, req.live_config.as_ref()) {
         (RunMode::Live, Some(cfg)) => cfg
             .validate()
-            .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path()))),
+            // Surface `Display` (human-readable, actionable), not the `{e:?}`
+            // Debug variant — operators (CLI + dashboard) see this string.
+            .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e}", e.field_path()))),
         (RunMode::Live, None) => Err(ApiError::Validation(
             "mode=live requires live_config (strategy_id, assets, capital, broker_creds_ref, stop_policy)"
                 .into(),
@@ -2286,6 +2300,7 @@ async fn run_inner(
                 &scenario,
                 from_db,
                 &strategy,
+                req.assets_subset.as_deref(),
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
@@ -2644,20 +2659,46 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
 // venue-id label is preserved (separate concept from RunMode); see
 // `xvision_risk::config::venue_limits`.
 
+/// Build the backtest executor, fanning out bar-loading over the strategy's
+/// active asset set (multi-asset B7, Task C3).
+///
+/// The active asset set is `active_assets(&strategy.manifest.asset_universe,
+/// assets_subset)`. When `assets_subset` is `Some`, only the listed assets are
+/// loaded and the executor's own `active_assets` call is kept in sync via
+/// `Executor::with_asset_subset`. For the DB-resolved path each active
+/// asset's bars are loaded via `load_bars_for_scenario` and injected as a
+/// per-asset map (`with_asset_bars`).
+///
+/// Single-asset preservation: when exactly one asset is active the DB path
+/// still calls `with_bars(ohlcv)` and the legacy fixture path still calls
+/// `Executor::new()` — byte-identical to the pre-B7 behavior. The
+/// multi-asset map (`with_asset_bars`) is only taken when 2+ assets are
+/// active.
+///
+/// Preflight: for the DB path, missing bars / warmup for ANY active asset is
+/// a hard `ApiError::Validation`, and the message names the offending asset
+/// so the operator knows which `xvn bars fetch` to run. The single-asset
+/// error shape is preserved.
 #[allow(clippy::too_many_arguments)]
 async fn build_backtest_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
     from_db: bool,
     strategy: &crate::strategies::Strategy,
+    assets_subset: Option<&[xvision_core::trading::AssetSymbol]>,
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
     agent_runtime: AgentRuntime,
     cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
 ) -> ApiResult<Box<dyn RunExecutor>> {
-    let active = crate::eval::executor::asset_set::active_assets(&strategy.manifest.asset_universe, None)
-        .map_err(|e| ApiError::Validation(format!("resolve active assets for backtest: {e}")))?;
+    use crate::eval::executor::asset_set::active_assets;
+    // Multi-asset (B7): resolve the active set. `subset` is `None` for full-universe
+    // runs; `Some(slice)` when the CLI `--assets` flag narrows the run (Task C3).
+    // `active_assets` validates that every subset entry is in the universe and
+    // returns the filtered list.
+    let active = active_assets(&strategy.manifest.asset_universe, assets_subset)
+        .map_err(|e| ApiError::Validation(e.to_string()))?;
     let first_asset = *active
         .first()
         .ok_or_else(|| ApiError::Validation("strategy asset_universe resolved empty".into()))?;
@@ -2679,15 +2720,27 @@ async fn build_backtest_executor(
             // operator who set `warmup_bars > 0` expects real
             // pre-window context, not silent emptiness.
             let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, first_asset).await?);
-            let mut bt = (if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
+            let mut bt = if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
                 Executor::with_bars(asset_bars.remove(&first_asset).unwrap())
             } else {
+                // Multi-asset: fan out over the per-asset map.
                 Executor::new().with_asset_bars(asset_bars)
-            })
-            .with_warmup(warmup)
-            .with_event_bus(ctx.event_bus.clone())
-            .with_provider_catalogs(provider_catalogs)
-            .with_cline_runtime(agent_runtime, cline);
+            };
+            bt = bt
+                .with_warmup(warmup)
+                .with_event_bus(ctx.event_bus.clone())
+                .with_provider_catalogs(provider_catalogs)
+                .with_cline_runtime(agent_runtime, cline);
+            // Task C3: thread the asset subset into the executor so its own
+            // `active_assets` call (inside `run`) agrees with the bars we just
+            // loaded. Without this the executor would call
+            // `active_assets(universe, None)` → full universe, then filter to
+            // only assets with bars — functionally equivalent for the DB path,
+            // but the explicit subset makes the two resolutions agree and avoids
+            // any divergence if future executor logic changes.
+            if let Some(subset) = assets_subset {
+                bt = bt.with_asset_subset(subset.to_vec());
+            }
             if let Some(emitter) = obs {
                 bt = bt.with_observability(emitter);
             }
@@ -2716,6 +2769,10 @@ async fn build_backtest_executor(
         .with_event_bus(ctx.event_bus.clone())
         .with_provider_catalogs(provider_catalogs)
         .with_cline_runtime(agent_runtime, cline);
+    // Task C3: thread the subset through for the legacy path too.
+    if let Some(subset) = assets_subset {
+        bt = bt.with_asset_subset(subset.to_vec());
+    }
     if let Some(emitter) = obs {
         bt = bt.with_observability(emitter);
     }
@@ -2740,16 +2797,18 @@ async fn build_live_executor(
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
     if cfg.broker_creds_ref != "alpaca" {
+        return Err(ApiError::Validation(format!(
+            "live_config.broker_creds_ref '{}' is not supported in the current live scope. \
+             Current live mode is Alpaca paper trading only; set broker_creds_ref = \"alpaca\". \
+             Other brokers and real-money venues are out of scope for now.",
+            cfg.broker_creds_ref
+        )));
+    }
+    if cfg.assets.is_empty() {
         return Err(ApiError::Validation(
-            "live_config.broker_creds_ref must be 'alpaca' for v1 Live Alpaca".into(),
+            "live_config.assets must contain at least one asset".into(),
         ));
     }
-    let asset = cfg
-        .assets
-        .first()
-        .ok_or_else(|| ApiError::Validation("live_config.assets must contain one asset".into()))?
-        .venue_symbol
-        .clone();
     let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
     let (key_id, secret, trade_base_url) = if let Some(c) = stored {
         (
@@ -2775,9 +2834,12 @@ async fn build_live_executor(
         (key_id, secret, trade_base_url)
     };
     if !trade_base_url.contains("paper-api.alpaca.markets") {
-        return Err(ApiError::Validation(
-            "Live v1 is paper-only; APCA_API_BASE_URL must point at Alpaca paper trading".into(),
-        ));
+        return Err(ApiError::Validation(format!(
+            "current live mode is Alpaca paper trading only; \
+             APCA_API_BASE_URL must point at https://paper-api.alpaca.markets \
+             (got '{trade_base_url}'). \
+             Real-money and other venues are out of scope for the current live scope."
+        )));
     }
 
     let broker: Arc<dyn BrokerSurface> = match broker_override {
@@ -2792,25 +2854,48 @@ async fn build_live_executor(
         key_id: key_id.clone(),
         secret_key: secret.clone(),
     });
-    let ws = live_client
-        .subscribe_bars(&asset, granularity)
-        .await
-        .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars: {e}")))?;
     let data_base_url = std::env::var("APCA_API_DATA_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "https://data.alpaca.markets".into());
-    let poll = AlpacaLivePoll::new(
-        production_fetcher(data_base_url, key_id, secret),
-        asset.clone(),
-        granularity,
-    );
     let warmup_bars = cfg.warmup_bars.unwrap_or(200);
-    let stream =
-        crate::eval::executor::LiveStream::new_with_warmup(ctx, &asset, granularity, warmup_bars, ws, poll)
+
+    // Multi-asset live fanout (§4 L2): build one `LiveStream` per asset in
+    // the LiveConfig (subscribe + poll + warmup each), then merge them into
+    // a `MultiLiveStream`. A single-asset run yields a 1-element
+    // `MultiLiveStream`, which the executor consumes exactly like the L1
+    // single `LiveStream` — preserving single-asset byte-identity.
+    let mut sub_streams: Vec<(
+        xvision_core::trading::AssetSymbol,
+        crate::eval::executor::LiveStream,
+    )> = Vec::with_capacity(cfg.assets.len());
+    for asset_ref in &cfg.assets {
+        let asset = asset_ref.venue_symbol.clone();
+        let asset_sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&asset)
+            .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
+        let ws = live_client
+            .subscribe_bars(&asset, granularity)
             .await
-            .map_err(|e| ApiError::Validation(format!("build LiveStream: {e}")))?;
-    let mut live = Executor::live(cfg, broker, stream, crate::eval::executor::WallClock::new(), obs)
+            .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
+        let poll = AlpacaLivePoll::new(
+            production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
+            asset.clone(),
+            granularity,
+        );
+        let stream = crate::eval::executor::LiveStream::new_with_warmup(
+            ctx,
+            &asset,
+            granularity,
+            warmup_bars,
+            ws,
+            poll,
+        )
+        .await
+        .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?;
+        sub_streams.push((asset_sym, stream));
+    }
+    let multi = crate::eval::executor::MultiLiveStream::new(sub_streams);
+    let mut live = Executor::live(cfg, broker, multi, crate::eval::executor::WallClock::new(), obs)
         .map_err(|e| ApiError::Validation(format!("build Live executor: {e}")))?
         .with_event_bus(ctx.event_bus.clone())
         .with_provider_catalogs(provider_catalogs);
@@ -2973,6 +3058,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 &scenario,
                 from_db,
                 &strategy,
+                req.assets_subset.as_deref(),
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),

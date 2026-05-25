@@ -323,15 +323,11 @@ pub struct EvalCompareExtReq {
     pub markdown: bool,
 }
 
-/// `scenarios_select` — filter the scenario library by asset / timeframe /
-/// decision count / regime labels and return a ranked subset.
+/// `scenarios_select` — filter the scenario library by timeframe /
+/// decision count / regime labels and return a ranked subset. Scenarios are
+/// asset-free; asset-universe selection now lives at the run layer.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScenariosSelectReq {
-    /// Comma-separated asset symbols (e.g. `["ETH/USD","BTC/USD"]`).
-    /// Empty → all assets.
-    #[serde(default)]
-    pub assets: Vec<String>,
-
     /// Bar granularity filter (e.g. `4h`, `1h`). Maps to
     /// `decision_cadence_minutes`. Omitted → all timeframes.
     #[serde(default)]
@@ -428,6 +424,53 @@ fn resolve_xvn_home() -> PathBuf {
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".xvn")
+}
+
+impl XvisionTools {
+    /// Return the sorted list of MCP tool names advertised by this server.
+    ///
+    /// This is the canonical inventory used by `crates/xvision-mcp/tests/parity.rs`
+    /// to guard against untracked additions or removals. When a tool is added
+    /// or removed from the `#[tool_router]` impl below, this constant must also
+    /// be updated — and so must
+    /// `docs/superpowers/evidence/2026-05-25-agent-cli-press-audit/mcp-parity-matrix.md`.
+    pub fn tool_names() -> Vec<&'static str> {
+        let mut names = vec![
+            "xvn_atr",
+            "xvn_bollinger",
+            "xvn_create_strategy",
+            "xvn_donchian",
+            "xvn_ema",
+            "xvn_eval_batch_run",
+            "xvn_eval_batch_status",
+            "xvn_eval_behavior",
+            "xvn_eval_compare",
+            "xvn_eval_compare_ext",
+            "xvn_eval_compare_report",
+            "xvn_eval_findings",
+            "xvn_eval_get",
+            "xvn_eval_list",
+            "xvn_eval_metrics",
+            "xvn_eval_scenarios",
+            "xvn_fib_retracements",
+            "xvn_get_strategy",
+            "xvn_health",
+            "xvn_list_templates",
+            "xvn_macd",
+            "xvn_rsi",
+            "xvn_scenario_inspect_card",
+            "xvn_scenarios_select",
+            "xvn_set_mechanical_param",
+            "xvn_set_risk_config",
+            "xvn_sma",
+            "xvn_strategy_create_atomic",
+            "xvn_strategy_validate_preflight",
+            "xvn_update_slot",
+            "xvn_validate_draft",
+        ];
+        names.sort_unstable();
+        names
+    }
 }
 
 #[tool_router(server_handler)]
@@ -1063,12 +1106,6 @@ impl XvisionTools {
         let pf = preflight_validate(&strategy, Some(&scenario));
         warnings.extend(pf.warnings);
 
-        let asset_display = strategy
-            .manifest
-            .asset_universe
-            .first()
-            .cloned()
-            .unwrap_or_default();
         let timeframe_display = scenario.granularity.canonical();
 
         let window_secs = (scenario.time_window.end - scenario.time_window.start)
@@ -1086,7 +1123,9 @@ impl XvisionTools {
             strategy_id: req.id.clone(),
             eval_ready: errors.is_empty() && warnings.is_empty(),
             expected_decisions: Some(expected_decisions),
-            asset: Some(asset_display),
+            // Scenarios are asset-free; the asset is chosen at the run layer,
+            // so preflight no longer reports a scenario-derived asset.
+            asset: None,
             timeframe: Some(timeframe_display),
             warmup_bars: Some(scenario.warmup_bars),
             warnings,
@@ -1149,6 +1188,7 @@ impl XvisionTools {
                 limits: None,
                 skip_preflight: false,
                 provider_override: None,
+                assets_subset: None,
                 live_config: None,
                 auto_fire_review: false,
                 review_model: None,
@@ -1270,16 +1310,17 @@ impl XvisionTools {
         json_or_err(&report)
     }
 
-    /// Select a comparable set of scenarios by asset, timeframe, decision
-    /// count, and regime labels. Read-only — nothing is created.
+    /// Select a comparable set of scenarios by timeframe, decision count, and
+    /// regime labels. Read-only — nothing is created. Scenarios are asset-free;
+    /// asset-universe selection now lives at the run layer.
     /// Either `target_decisions` (Mode A, ±10 %) or `same_decisions=true`
     /// + `max_decisions` (Mode B) must be set.
-    /// Returns an array of `{ id, name, asset, timeframe, decision_count }`.
+    /// Returns an array of `{ id, name, timeframe, decision_count }`.
     #[tool(description = "Filter the scenario library and return a ranked subset. \
-        Optional: assets (list), timeframe (e.g. 4h), regimes (list), count (default 4). \
+        Optional: timeframe (e.g. 4h), regimes (list), count (default 4). \
         Decision-count mode: target_decisions (Mode A, ±10%) or same_decisions=true + \
         max_decisions (Mode B, common count). \
-        Returns [{ id, name, asset, timeframe, decision_count }].")]
+        Returns [{ id, name, timeframe, decision_count }].")]
     async fn xvn_scenarios_select(
         &self,
         Parameters(req): Parameters<ScenariosSelectReq>,
@@ -1317,7 +1358,6 @@ impl XvisionTools {
         let count = req.count.unwrap_or(4);
         let rows = select_scenarios_mcp(
             &all,
-            &req.assets,
             timeframe_minutes,
             &req.regimes,
             req.target_decisions,
@@ -1609,7 +1649,6 @@ async fn action_distribution_mcp(ctx: &ApiContext, run_id: &str) -> anyhow::Resu
 struct SelectRow {
     id: String,
     name: String,
-    asset: String,
     timeframe: String,
     decision_count: u64,
 }
@@ -1634,11 +1673,12 @@ fn scenario_regime_labels_mcp(s: &Scenario) -> Vec<String> {
 }
 
 /// Pure selection logic — ported from `xvision-cli::commands::scenario::select_scenarios`.
-/// Takes a pre-fetched scenario list and applies asset / timeframe / regime /
-/// decision-count filters plus the cap. No DB access.
+/// Takes a pre-fetched scenario list and applies timeframe / regime /
+/// decision-count filters plus the cap. No DB access. Scenarios are asset-free;
+/// asset-universe selection now lives at the run layer, so this no longer
+/// filters by asset.
 fn select_scenarios_mcp(
     scenarios: &[Scenario],
-    assets: &[String],
     timeframe_minutes: Option<u32>,
     regimes: &[String],
     target_decisions: Option<u64>,
@@ -1646,13 +1686,10 @@ fn select_scenarios_mcp(
     max_decisions: Option<u64>,
     count: usize,
 ) -> Result<Vec<SelectRow>, String> {
-    // 1. Pre-filter by asset / timeframe / regime.
+    // 1. Pre-filter by timeframe / regime.
     let mut candidates: Vec<&Scenario> = scenarios
         .iter()
         .filter(|s| {
-            if !assets.is_empty() {
-                return false;
-            }
             if let Some(tf_min) = timeframe_minutes {
                 let bar_min = (s.granularity.seconds() / 60) as u32;
                 if bar_min != tf_min {
@@ -1724,22 +1761,10 @@ fn select_scenarios_mcp(
         }
     });
 
-    // 5. Cap at `count`, one-per-asset preference.
-    let mut selected: Vec<&Scenario> = Vec::with_capacity(count);
-    for s in &candidates {
-        if selected.len() >= count {
-            break;
-        }
-        selected.push(s);
-    }
-    for s in &candidates {
-        if selected.len() >= count {
-            break;
-        }
-        if !selected.iter().any(|r| r.id == s.id) {
-            selected.push(s);
-        }
-    }
+    // 5. Cap at `count`. Scenarios are asset-free, so there is no longer a
+    //    one-per-asset preference — selection is purely by decision-count
+    //    closeness (already sorted above).
+    let selected: Vec<&Scenario> = candidates.into_iter().take(count).collect();
 
     // 6. Build output rows.
     let rows = selected
@@ -1747,7 +1772,6 @@ fn select_scenarios_mcp(
         .map(|s| SelectRow {
             id: s.id.clone(),
             name: s.display_name.clone(),
-            asset: "-".to_string(),
             timeframe: s.granularity.to_string(),
             decision_count: scenario_decision_count_mcp(s),
         })
@@ -2630,7 +2654,6 @@ mod tests {
         // The DB is seeded with canonical scenarios on first open.
         let s = tools
             .xvn_scenarios_select(Parameters(ScenariosSelectReq {
-                assets: vec![],
                 timeframe: None,
                 target_decisions: Some(50),
                 same_decisions: false,
@@ -2652,7 +2675,6 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let err = tools
             .xvn_scenarios_select(Parameters(ScenariosSelectReq {
-                assets: vec![],
                 timeframe: None,
                 target_decisions: None,
                 same_decisions: false,
@@ -2673,15 +2695,15 @@ mod tests {
 
     use std::str::FromStr;
     use xvision_engine::eval::scenario::{
-        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
-        FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
+        AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees, FillModel,
+        LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
         ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
     use xvision_engine::Capital;
 
     fn make_test_scenario(
         id: &str,
-        asset_sym: &str,
+        _asset_sym: &str,
         granularity: &str,
         window_secs: i64,
         warmup_bars: u32,
@@ -2756,7 +2778,7 @@ mod tests {
     fn select_scenarios_mcp_mode_a_returns_matching() {
         // 300 1h bars − 200 warmup = 100 decisions. target=100 → ±10% → matches.
         let s = make_test_scenario("sc1", "ETH", "1h", 300 * 3_600, 200);
-        let rows = select_scenarios_mcp(&[s], &[], None, &[], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios_mcp(&[s], None, &[], Some(100), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].decision_count, 100);
     }
@@ -2765,7 +2787,7 @@ mod tests {
     fn select_scenarios_mcp_mode_a_empty_when_no_match() {
         // 50 decisions; target=200 (±10%→180..220) → no match.
         let s = make_test_scenario("sc1", "ETH", "1h", 250 * 3_600, 200);
-        let rows = select_scenarios_mcp(&[s], &[], None, &[], Some(200), false, None, 4).unwrap();
+        let rows = select_scenarios_mcp(&[s], None, &[], Some(200), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -2774,7 +2796,7 @@ mod tests {
         let s1 = make_test_scenario("sc1", "ETH", "1h", 300 * 3_600, 200); // 100 decisions
         let s2 = make_test_scenario("sc2", "BTC", "1h", 300 * 3_600, 200); // 100 decisions
         let s3 = make_test_scenario("sc3", "SOL", "1h", 250 * 3_600, 200); // 50 decisions
-        let rows = select_scenarios_mcp(&[s1, s2, s3], &[], None, &[], None, true, Some(200), 2).unwrap();
+        let rows = select_scenarios_mcp(&[s1, s2, s3], None, &[], None, true, Some(200), 2).unwrap();
         assert_eq!(rows.len(), 2);
         for r in &rows {
             assert_eq!(r.decision_count, 100);

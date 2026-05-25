@@ -81,6 +81,18 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     .await
     .unwrap();
     sqlx::query(include_str!(
+        "../../xvision-engine/migrations/033_agent_slot_capabilities.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
     .execute(&pool)
@@ -240,6 +252,7 @@ async fn experiment_run_creates_experiment_binds_batch_writes_result() {
         tools,
         review_with: None,
         review_dispatch: None,
+        assets_subset: None,
     };
 
     let result = run_experiment(&ctx, req)
@@ -304,6 +317,7 @@ async fn experiment_run_result_json_has_expected_shape() {
         tools,
         review_with: None,
         review_dispatch: None,
+        assets_subset: None,
     };
 
     let result = run_experiment(&ctx, req)
@@ -368,6 +382,7 @@ async fn experiment_run_json_output_shape() {
         tools,
         review_with: None,
         review_dispatch: None,
+        assets_subset: None,
     };
 
     let output = run_experiment(&ctx, req)
@@ -425,6 +440,7 @@ async fn experiment_run_db_row_has_result_json_populated() {
         tools,
         review_with: None,
         review_dispatch: None,
+        assets_subset: None,
     };
 
     let output = run_experiment(&ctx, req)

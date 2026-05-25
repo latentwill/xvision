@@ -211,6 +211,10 @@ pub struct BatchRunRequest {
     /// tests, pass a `MockDispatch`. When `review_with` is `None` this field is
     /// ignored.
     pub review_dispatch: Option<Arc<dyn LlmDispatch>>,
+    /// Optional per-run subset of the strategy's asset universe (Task C3).
+    /// Threaded into each `EvalRunRequest.assets_subset`. `None` trades the
+    /// full universe.
+    pub assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
 }
 
 /// Core logic: launch one run per scenario, await all, return `BatchResult`.
@@ -270,6 +274,7 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            assets_subset: req.assets_subset.clone(),
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),
@@ -506,6 +511,9 @@ async fn review_scenario_summary(ctx: &ApiContext, run_id: &str) -> Option<revie
     Some(review::ReviewScenarioSummary {
         id: scenario.id.clone(),
         name: Some(scenario.display_name.clone()),
+        // Scenarios are asset-free; the run is multi-asset and the per-decision
+        // asset is the source of truth, so a single run-level asset is no longer
+        // meaningful.
         asset: None,
         granularity: Some(scenario.granularity.to_string()),
         start: Some(scenario.time_window.start.to_rfc3339()),
@@ -563,6 +571,17 @@ fn parse_poll_duration(s: &str) -> Result<Duration> {
 /// `batch_id`, per-run entries, and optional review summaries).
 /// Caller is responsible for printing / serializing.
 pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> CliResult<BatchResult> {
+    run_batch_via_env_with_assets(ctx, args, None).await
+}
+
+/// Production batch runner that builds broker/dispatch from env, with an
+/// optional per-run asset subset (Task C3). Called by `run_experiment_cmd`
+/// when `--assets` is provided; also the inner impl of `run_batch_via_env`.
+pub(crate) async fn run_batch_via_env_with_assets(
+    ctx: &ApiContext,
+    args: &BatchRunArgs,
+    assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
+) -> CliResult<BatchResult> {
     let mode = xvision_engine::eval::run::RunMode::parse(&args.mode).ok_or_else(|| CliError {
         exit: XvnExit::Usage,
         source: anyhow::anyhow!(
@@ -617,6 +636,7 @@ pub(crate) async fn run_batch_via_env(ctx: &ApiContext, args: &BatchRunArgs) -> 
             limits: None,
             skip_preflight: false,
             provider_override: None,
+            assets_subset: assets_subset.clone(),
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),

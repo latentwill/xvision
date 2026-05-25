@@ -17,6 +17,7 @@ use chrono::Utc;
 use tempfile::tempdir;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::run::{MetricsSummary, Run, RunMode};
+use xvision_engine::eval::scenario_store;
 use xvision_engine::eval::store::{DecisionRow, RunStore};
 
 // ---- helpers ----------------------------------------------------------------
@@ -483,7 +484,7 @@ fn markdown_render_contains_header_and_per_run_row() {
 
     // Table header row.
     assert!(
-        md.contains("| Run | Scenario | Return % | Sharpe |"),
+        md.contains("| Run | Strategy | Scenario | Return % | Sharpe |"),
         "markdown must contain table header; got:\n{md}"
     );
 
@@ -525,8 +526,16 @@ fn markdown_escapes_pipe_in_scenario_name() {
         )
         .await
         .expect("open ApiContext");
+        let mut scenario = xvision_engine::api::scenario::get(&ctx, "crypto-bull-q1-2025")
+            .await
+            .expect("load canonical scenario");
+        scenario.id = "sol-pipe-scenario".into();
+        scenario.display_name = "SOL|Pipe Scenario".into();
+        scenario_store::insert_scenario(&ctx, &scenario)
+            .await
+            .expect("insert pipe scenario");
         sqlx::query("UPDATE eval_runs SET scenario_id = ? WHERE id = ?")
-            .bind("SOL|Pipe Scenario")
+            .bind(&scenario.id)
             .bind(&id_a)
             .execute(&ctx.db)
             .await
@@ -562,15 +571,23 @@ fn markdown_escapes_pipe_in_scenario_name() {
         .expect("header row not found");
     let header_cols = count_unescaped_pipes(header_line);
 
-    for line in md
-        .lines()
-        .filter(|l| l.starts_with("| ") && !l.starts_with("| Run |") && !l.starts_with("|---|"))
-    {
-        let cols = count_unescaped_pipes(line);
-        assert_eq!(
-            cols, header_cols,
-            "data row has {cols} pipes but header has {header_cols}:\n  {line}"
-        );
+    // Only check rows that belong to the main run table (before any `###` heading).
+    // The per-asset rollup section has its own column shape.
+    let mut in_per_asset_section = false;
+    for line in md.lines() {
+        if line.starts_with("###") {
+            in_per_asset_section = true;
+        }
+        if in_per_asset_section {
+            continue;
+        }
+        if line.starts_with("| ") && !line.starts_with("| Run |") && !line.starts_with("|---|") {
+            let cols = count_unescaped_pipes(line);
+            assert_eq!(
+                cols, header_cols,
+                "data row has {cols} pipes but header has {header_cols}:\n  {line}"
+            );
+        }
     }
 }
 
@@ -630,6 +647,56 @@ fn runs_flag_comma_separated_works_like_positional() {
     assert_eq!(body_pos["runs"].as_array().unwrap().len(), 2);
 }
 
+// ---- test 9: per-asset rollup section in --markdown output ------------------
+
+/// Run A trades BTC only; Run B trades ETH only.
+/// The markdown output must contain a `### Per-asset` section with rows for
+/// both BTC and ETH so an operator can see the per-asset breakdown.
+#[test]
+fn compare_report_has_per_asset_rollup() {
+    let dir = tempdir().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (id_a, id_b) = rt.block_on(async { seed_two_runs(dir.path()).await });
+
+    let out = xvn(
+        &[
+            "eval",
+            "compare",
+            "--markdown",
+            "--runs",
+            &format!("{id_a},{id_b}"),
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let md = String::from_utf8_lossy(&out.stdout);
+
+    // Must have a per-asset section heading.
+    assert!(
+        md.contains("### Per-asset"),
+        "markdown must contain '### Per-asset' section; got:\n{md}"
+    );
+
+    // Run A seeds BTC decisions, Run B seeds ETH decisions — both assets
+    // must appear as rows in the per-asset table.
+    assert!(
+        md.contains("| BTC |"),
+        "per-asset table must contain a BTC row; got:\n{md}"
+    );
+    assert!(
+        md.contains("| ETH |"),
+        "per-asset table must contain an ETH row; got:\n{md}"
+    );
+}
+
 // ---- test 8: default text output (no --json/--markdown) is backward-compat -
 
 #[test]
@@ -649,9 +716,10 @@ fn default_text_output_backward_compat() {
     );
 
     let text = String::from_utf8_lossy(&out.stdout);
-    // Legacy header line must still be present.
+    // Header line remains tab-separated; Strategy ID is included separately
+    // from the display label.
     assert!(
-        text.contains("RUN_ID\tSTRATEGY\tSCENARIO"),
+        text.contains("RUN_ID\tSTRATEGY\tSTRATEGY_ID\tSCENARIO"),
         "default text output must contain tab-separated header; got:\n{text}"
     );
     // Both run ids must appear in the output.

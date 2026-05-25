@@ -38,6 +38,18 @@ use xvision_engine::safety::VenueLabel;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
+/// Output format for list/status commands.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// Human-readable tab-separated columns (default).
+    #[default]
+    Table,
+    /// Pretty-printed JSON.
+    Json,
+    /// Compact single-line JSON.
+    JsonCompact,
+}
+
 /// Map an engine ApiError to our exit-code-bearing CliError. Variants
 /// carry meaning that's worth preserving on the wire, so we don't fall
 /// back to the default Upstream coercion.
@@ -116,15 +128,22 @@ pub struct RunArgs {
     #[arg(long)]
     pub scenario: Option<String>,
     /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
+    /// Current live mode is Alpaca paper trading only — real market data,
+    /// paper (simulated) money via https://paper-api.alpaca.markets. Real-money
+    /// venues are not yet supported.
     #[arg(long, default_value = "backtest")]
     pub mode: String,
     /// Live Alpaca asset, e.g. BTC/USD. Required for --mode live.
     #[arg(long)]
     pub live_asset: Option<String>,
-    /// Initial live paper capital in USD. Required for --mode live.
+    /// Initial live paper capital in USD. Required for --mode live. This is
+    /// paper/simulated capital — no real money is at risk in the current live scope.
     #[arg(long)]
     pub live_capital: Option<f64>,
-    /// Broker credential reference. v1 accepts only "alpaca".
+    /// Broker credential set to use for this live run. Selects WHICH set of
+    /// stored credentials to load (not the venue/environment — venue selection
+    /// is a separate future plan). Current live scope accepts only "alpaca"
+    /// (Alpaca paper trading). Real-money credentials are out of scope for now.
     #[arg(long, default_value = "alpaca")]
     pub live_broker_creds_ref: String,
     /// Stop after N live bars. At least one live stop flag is required.
@@ -189,6 +208,13 @@ pub struct RunArgs {
     /// launch with the same structured `reason` discriminant.
     #[arg(long)]
     pub model: Option<String>,
+
+    /// Optional subset of the strategy's universe to trade this run
+    /// (comma-separated, e.g. `ETH,SOL`). Must be ⊆ the strategy universe.
+    /// Backtest only — ignored for paper runs. `None` (default) trades
+    /// the full universe declared in the strategy manifest.
+    #[arg(long, value_delimiter = ',')]
+    pub assets: Vec<String>,
     /// Fire the deterministic review agent when the run completes and store
     /// chart annotations on the review row.
     #[arg(long)]
@@ -220,7 +246,12 @@ pub struct ListArgs {
     /// Only show runs in this status (queued | running | completed | failed | cancelled).
     #[arg(long)]
     pub status: Option<String>,
-    /// Output as JSON (otherwise tab-separated columns).
+    /// Output format: `table` (default), `json` (pretty), or `json-compact` (single line).
+    /// `--json` is an alias for `--format json-compact`.
+    #[arg(long, value_name = "FORMAT", default_value = "table")]
+    pub format: OutputFormat,
+    /// Output as compact JSON (alias for `--format json-compact`).
+    /// Explicit `--format` takes precedence.
     #[arg(long)]
     pub json: bool,
 }
@@ -302,6 +333,19 @@ pub struct CompareReport {
     pub runs: Vec<CompareRunRow>,
     pub equity_curves: Vec<ComparisonEquityCurve>,
     pub findings: Vec<Finding>,
+    /// Per-asset decision rollup aggregated across all runs.
+    pub per_asset: Vec<AssetRollupRow>,
+}
+
+/// Per-asset decision/trade counts aggregated across all runs in the comparison.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetRollupRow {
+    /// Asset symbol (e.g. "BTC", "ETH").
+    pub asset: String,
+    /// Total decisions mentioning this asset across all runs.
+    pub decisions: u32,
+    /// Total trades opened (long_open + short_open) on this asset across all runs.
+    pub trades: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -586,6 +630,22 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         })?
     };
 
+    // Parse --assets into AssetSymbol values, emitting a usage error on the
+    // first unrecognised symbol so the operator sees a clean message.
+    let assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>> = if args.assets.is_empty() {
+        None
+    } else {
+        let mut parsed = Vec::with_capacity(args.assets.len());
+        for raw in &args.assets {
+            let sym = crate::commands::asset::parse_asset(raw).map_err(|e| CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--assets: {e}"),
+            })?;
+            parsed.push(sym);
+        }
+        Some(parsed)
+    };
+
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
         scenario_id,
@@ -595,6 +655,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         limits,
         skip_preflight: args.skip_preflight,
         provider_override,
+        assets_subset,
         auto_fire_review: args.auto_fire_review,
         review_model,
         max_annotations_per_review: Some(args.max_review_annotations),
@@ -681,10 +742,29 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
     let runs = eval::list(&ctx, req)
         .await
         .map_err(|e| api_to_cli("eval list", e))?;
-    if args.json {
-        crate::io::print_json(&runs)?;
-        return Ok(());
+
+    // Resolve effective format: explicit --format wins; --json is alias for
+    // json-compact (matches the legacy behaviour).
+    let effective_format = if args.format != OutputFormat::Table {
+        args.format
+    } else if args.json {
+        OutputFormat::JsonCompact
+    } else {
+        OutputFormat::Table
+    };
+
+    match effective_format {
+        OutputFormat::Json => {
+            crate::io::print_json(&runs)?;
+            return Ok(());
+        }
+        OutputFormat::JsonCompact => {
+            crate::io::print_json_compact(&runs)?;
+            return Ok(());
+        }
+        OutputFormat::Table => {}
     }
+
     if runs.is_empty() {
         println!("(no runs)");
         return Ok(());
@@ -1119,6 +1199,33 @@ fn md_cell(s: &str) -> String {
     s.replace('|', "\\|")
 }
 
+/// Compute per-asset rollup from all decision rows across all runs.
+///
+/// Groups by asset symbol and sums decision count + trades opened
+/// (long_open + short_open). Returns rows sorted alphabetically by asset.
+fn compute_per_asset_rollup(
+    all_decisions: &[xvision_engine::eval::store::DecisionRow],
+) -> Vec<AssetRollupRow> {
+    use std::collections::BTreeMap;
+    // BTreeMap gives deterministic alphabetical order by asset key.
+    let mut by_asset: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+    for d in all_decisions {
+        let entry = by_asset.entry(d.asset.clone()).or_insert((0, 0));
+        entry.0 += 1; // decisions
+        if matches!(d.action.as_str(), "long_open" | "short_open") {
+            entry.1 += 1; // trades
+        }
+    }
+    by_asset
+        .into_iter()
+        .map(|(asset, (decisions, trades))| AssetRollupRow {
+            asset,
+            decisions,
+            trades,
+        })
+        .collect()
+}
+
 async fn build_compare_report(
     ctx: &ApiContext,
     report: xvision_engine::eval::compare::ComparisonReport,
@@ -1126,6 +1233,7 @@ async fn build_compare_report(
 ) -> CompareReport {
     let store = RunStore::new(ctx.db.clone());
     let mut rows = Vec::with_capacity(report.runs.len());
+    let mut all_decisions: Vec<xvision_engine::eval::store::DecisionRow> = Vec::new();
     for run in &report.runs {
         let scenario_name = api_scenario::get(ctx, &run.scenario_id)
             .await
@@ -1159,14 +1267,17 @@ async fn build_compare_report(
             avg_bars_held: behavior.avg_bars_held,
             primary_failure_mode: behavior.primary_failure_mode,
         });
+        all_decisions.extend(decisions);
     }
 
     sort_compare_rows(&mut rows, sort_key);
+    let per_asset = compute_per_asset_rollup(&all_decisions);
 
     CompareReport {
         runs: rows,
         equity_curves: report.equity_curves,
         findings: report.findings,
+        per_asset,
     }
 }
 
@@ -1190,6 +1301,23 @@ fn render_compare_markdown(report: &CompareReport) -> String {
             row.decisions, row.trades_opened, row.primary_failure_mode
         ));
     }
+
+    // Per-asset rollup section — only rendered when the comparison has
+    // multi-asset decision data. If every decision was on the same asset
+    // the section is still useful (single-row rollup confirms asset coverage).
+    if !report.per_asset.is_empty() {
+        out.push('\n');
+        out.push_str("### Per-asset\n\n");
+        out.push_str("| Asset | Decisions | Trades |\n");
+        out.push_str("|---|---:|---:|\n");
+        for row in &report.per_asset {
+            out.push_str(&format!(
+                "| {} | {} | {} |\n",
+                row.asset, row.decisions, row.trades
+            ));
+        }
+    }
+
     out
 }
 
@@ -1430,6 +1558,81 @@ mod tests {
     struct TestEval {
         #[command(subcommand)]
         op: Op,
+    }
+
+    // ── Task C3: --assets parse + EvalRunRequest threading ──────────────────────
+
+    /// Assert that `xvn eval run --assets ETH,SOL` correctly parses into
+    /// two `AssetSymbol` values and that the resulting `assets_subset` field
+    /// on `EvalRunRequest` carries the expected symbols.
+    ///
+    /// This is a purely hermetic CLI-parse test — no network, no DB, no
+    /// executor. It exercises the wiring added in Task C3: parse_asset() →
+    /// `assets_subset: Some(vec![Eth, Sol])` on the request.
+    #[test]
+    fn eval_run_assets_flag_parses_into_eval_run_request() {
+        use xvision_core::trading::AssetSymbol;
+
+        // Parse `--assets ETH,SOL` via clap.
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--scenario",
+            "scen-01",
+            "--assets",
+            "ETH,SOL",
+            "--mode",
+            "backtest",
+        ])
+        .expect("--assets ETH,SOL must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+
+        assert_eq!(args.assets, vec!["ETH".to_string(), "SOL".to_string()]);
+
+        // Simulate what run_run does: parse assets into AssetSymbol.
+        let parsed_symbols: Vec<AssetSymbol> = args
+            .assets
+            .iter()
+            .map(|raw| crate::commands::asset::parse_asset(raw).expect("ETH and SOL are valid"))
+            .collect();
+        assert_eq!(parsed_symbols, vec![AssetSymbol::Eth, AssetSymbol::Sol]);
+
+        // Confirm the request field is populated correctly.
+        let assets_subset: Option<Vec<AssetSymbol>> = if parsed_symbols.is_empty() {
+            None
+        } else {
+            Some(parsed_symbols)
+        };
+        assert_eq!(
+            assets_subset,
+            Some(vec![AssetSymbol::Eth, AssetSymbol::Sol]),
+            "assets_subset must carry the parsed symbols"
+        );
+    }
+
+    /// Empty `--assets` flag (not provided) must map to `assets_subset: None`.
+    #[test]
+    fn eval_run_no_assets_flag_yields_none_subset() {
+        let parsed =
+            TestEval::try_parse_from(["x", "run", "--strategy", "strat-01", "--scenario", "scen-01"])
+                .expect("minimal eval run must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        assert!(args.assets.is_empty(), "assets should be empty when not provided");
+        let assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>> = if args.assets.is_empty() {
+            None
+        } else {
+            Some(vec![])
+        };
+        assert!(
+            assets_subset.is_none(),
+            "assets_subset must be None when --assets not provided"
+        );
     }
 
     #[test]

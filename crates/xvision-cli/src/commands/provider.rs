@@ -14,11 +14,24 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
+use serde::Serialize;
 
 use xvision_engine::api::settings::providers::{self, AddProviderRequest, EffectiveProvider, ProviderRow};
 use xvision_engine::api::settings::providers_catalog;
 use xvision_engine::api::{Actor, ApiContext};
+
+/// Output format for list subcommands. Used by `provider list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub enum ListFormat {
+    /// Human-readable table columns to stdout (default).
+    Table,
+    /// Pretty-printed JSON array to stdout.
+    Json,
+    /// Compact single-line JSON array to stdout. Suitable for piping.
+    JsonCompact,
+}
 
 #[derive(Args, Debug)]
 pub struct ProviderCmd {
@@ -39,10 +52,16 @@ enum ProviderAction {
         /// the `xvn doctor` report.
         #[arg(long, default_value_t = false)]
         effective: bool,
-        /// Render JSON (stdout). Implies `--effective` for now — there
-        /// is no JSON encoding for the legacy table output.
+        /// Render JSON (stdout). Implies `--effective`. Alias for
+        /// `--format json-compact`. Explicit `--format` wins when both
+        /// are passed.
         #[arg(long, default_value_t = false)]
         json: bool,
+        /// Output format: table (default), json, json-compact.
+        /// When set, takes precedence over `--json`. `--format json`
+        /// or `--format json-compact` both imply `--effective` behavior.
+        #[arg(long, value_enum)]
+        format: Option<ListFormat>,
     },
     /// Show one provider in full.
     Show {
@@ -74,17 +93,29 @@ enum ProviderAction {
         /// above to already be exported in the shell.
         #[arg(long)]
         api_key: Option<String>,
+        /// Validate inputs and print what would be added without writing
+        /// anything to disk. Exits 0.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
     /// Remove a provider by name. Refused if any slot references it.
     Remove {
         #[arg(long)]
         name: String,
+        /// Validate that the provider exists and print what would be
+        /// removed without writing anything. Exits 0.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
     /// Refresh the catalog for one provider (or all if `--name` omitted)
     /// by hitting its `/v1/models` endpoint and writing to disk.
     RefreshModels {
         #[arg(long)]
         name: Option<String>,
+        /// Print what would be refreshed without making any network call
+        /// or writing to disk. Exits 0.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
     /// Show the cached catalog for a provider. Does NOT hit the network —
     /// run `refresh-models` first if you want a fresh fetch.
@@ -98,14 +129,26 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
     let xvn_home = resolve_xvn_home()?;
     let config_path = runtime_config_path(&xvn_home);
 
-    // Read-only `--effective` / `--json` paths skip opening the
-    // ApiContext so stdout stays JSON-clean. `ApiContext::open`
+    // Read-only `--effective` / `--json` / `--format` paths skip opening
+    // the ApiContext so stdout stays JSON-clean. `ApiContext::open`
     // side-effects tracing on stdout (the "V2D: failed to open
     // memory store" WARN) — fixing the tracing-init upstream is the
     // `cli-json-stdout-contract` sibling track's scope.
-    if let ProviderAction::List { effective, json } = &cmd.action {
-        if *effective || *json {
-            return list_effective(&xvn_home, &config_path, *json).await;
+    if let ProviderAction::List {
+        effective,
+        json,
+        format,
+    } = &cmd.action
+    {
+        // Resolve the effective format: explicit --format wins; then --json
+        // (treated as json-compact for back-compat); then table default.
+        let resolved = match format {
+            Some(f) => *f,
+            None if *json => ListFormat::JsonCompact,
+            None => ListFormat::Table,
+        };
+        if *effective || *json || resolved != ListFormat::Table {
+            return list_effective(&xvn_home, &config_path, resolved).await;
         }
     }
 
@@ -120,10 +163,11 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
         ProviderAction::List {
             effective: _,
             json: _,
+            format: _,
         } => {
             // Legacy human table — falls through here (the `--effective`
-            // / `--json` branches were handled above without an
-            // ApiContext open).
+            // / `--json` / `--format` branches were handled above without
+            // an ApiContext open).
             list_legacy(&ctx, &config_path).await
         }
         ProviderAction::Show { name } => show(&ctx, &config_path, &name).await,
@@ -134,9 +178,24 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
             base_url,
             api_key_env,
             api_key,
-        } => add(&ctx, &config_path, name, kind, base_url, api_key_env, api_key).await,
-        ProviderAction::Remove { name } => remove(&ctx, &config_path, &name).await,
-        ProviderAction::RefreshModels { name } => refresh_models(&ctx, &config_path, name.as_deref()).await,
+            dry_run,
+        } => {
+            add(
+                &ctx,
+                &config_path,
+                name,
+                kind,
+                base_url,
+                api_key_env,
+                api_key,
+                dry_run,
+            )
+            .await
+        }
+        ProviderAction::Remove { name, dry_run } => remove(&ctx, &config_path, &name, dry_run).await,
+        ProviderAction::RefreshModels { name, dry_run } => {
+            refresh_models(&ctx, &config_path, name.as_deref(), dry_run).await
+        }
         ProviderAction::Models { name } => models(&ctx, &config_path, &name).await,
     }
 }
@@ -157,14 +216,24 @@ fn resolve_xvn_home() -> Result<PathBuf> {
 /// Canonical "is this provider launchable" view. Path-only — does not
 /// open `ApiContext`, so JSON output is uncontaminated by audit-pool
 /// migration tracing.
-async fn list_effective(xvn_home: &std::path::Path, config_path: &std::path::Path, json: bool) -> Result<()> {
+async fn list_effective(
+    xvn_home: &std::path::Path,
+    config_path: &std::path::Path,
+    format: ListFormat,
+) -> Result<()> {
     let rows = providers::effective_providers_with_paths(xvn_home, config_path)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&rows)?);
-    } else {
-        print_effective_table(&rows);
+    match format {
+        ListFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        }
+        ListFormat::JsonCompact => {
+            println!("{}", serde_json::to_string(&rows)?);
+        }
+        ListFormat::Table => {
+            print_effective_table(&rows);
+        }
     }
     Ok(())
 }
@@ -294,6 +363,17 @@ fn url_parse_minimal(s: &str) -> Result<MinimalUrl> {
     Ok(MinimalUrl { host, port })
 }
 
+/// JSON preview shape for `provider add --dry-run`.
+#[derive(Debug, Serialize)]
+struct DryRunAddPreview<'a> {
+    action: &'static str,
+    name: &'a str,
+    kind: &'a str,
+    base_url: &'a str,
+    api_key_env: &'a str,
+    api_key_provided: bool,
+}
+
 async fn add(
     ctx: &ApiContext,
     config_path: &std::path::Path,
@@ -302,7 +382,22 @@ async fn add(
     base_url: String,
     api_key_env: String,
     api_key: Option<String>,
+    dry_run: bool,
 ) -> Result<()> {
+    if dry_run {
+        // Validate + preview only — nothing written.
+        let preview = DryRunAddPreview {
+            action: "add_provider",
+            name: &name,
+            kind: &kind,
+            base_url: &base_url,
+            api_key_env: &api_key_env,
+            api_key_provided: api_key.is_some(),
+        };
+        println!("{}", serde_json::to_string_pretty(&preview)?);
+        eprintln!("DRY RUN — would add provider `{name}`");
+        return Ok(());
+    }
     providers::add(
         ctx,
         config_path,
@@ -319,14 +414,50 @@ async fn add(
     Ok(())
 }
 
-async fn remove(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> Result<()> {
+async fn remove(ctx: &ApiContext, config_path: &std::path::Path, name: &str, dry_run: bool) -> Result<()> {
+    if dry_run {
+        // Resolve: verify provider exists (read-only lookup via list).
+        let report = providers::list(ctx, config_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let found = report.providers.iter().any(|p| p.name == name);
+        if !found {
+            anyhow::bail!("provider `{name}` not found");
+        }
+        eprintln!("DRY RUN — would remove provider `{name}`");
+        return Ok(());
+    }
     providers::remove(ctx, config_path, name)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
 
-async fn refresh_models(ctx: &ApiContext, config_path: &std::path::Path, name: Option<&str>) -> Result<()> {
+async fn refresh_models(
+    ctx: &ApiContext,
+    config_path: &std::path::Path,
+    name: Option<&str>,
+    dry_run: bool,
+) -> Result<()> {
+    if dry_run {
+        match name {
+            Some(n) => {
+                // Validate provider exists before claiming we'd refresh it.
+                let report = providers::list(ctx, config_path)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let found = report.providers.iter().any(|p| p.name == n);
+                if !found {
+                    anyhow::bail!("provider `{n}` not found");
+                }
+                eprintln!("DRY RUN — would refresh models for `{n}`");
+            }
+            None => {
+                eprintln!("DRY RUN — would refresh models for all providers");
+            }
+        }
+        return Ok(());
+    }
     match name {
         Some(n) => {
             let cat = providers_catalog::refresh(ctx, config_path, n)
@@ -448,6 +579,7 @@ mod tests {
             "https://api.openai.com/v1".into(),
             "OPENAI_API_KEY".into(),
             Some("sk-test".into()),
+            false, // dry_run
         )
         .await
         .unwrap();
@@ -471,7 +603,9 @@ api_key_env = "K"
         );
         std::fs::write(&config, src).unwrap();
         let ctx = test_ctx(&dir).await;
-        remove(&ctx, &config, "ephemeral").await.unwrap();
+        remove(&ctx, &config, "ephemeral", false /* dry_run */)
+            .await
+            .unwrap();
         let cfg = xvision_core::config::load_runtime(&config).unwrap();
         assert!(!cfg.providers.iter().any(|p| p.name == "ephemeral"));
     }

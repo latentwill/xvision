@@ -30,7 +30,6 @@ import {
   useBarsFetchJob,
 } from "@/components/scenario/useBarsFetchJob";
 import type {
-  AssetRef,
   CreateScenarioRequest,
   Scenario,
   ScenarioMutations,
@@ -72,10 +71,6 @@ function jsonEq(a: unknown, b: unknown): boolean {
 function arraysEqual<T>(a: ReadonlyArray<T>, b: ReadonlyArray<T>): boolean {
   if (a.length !== b.length) return false;
   return jsonEq(a, b);
-}
-
-function assetsEqual(a: ReadonlyArray<AssetRef>, b: ReadonlyArray<AssetRef>): boolean {
-  return arraysEqual(a, b);
 }
 
 function timeWindowEquals(a: TimeWindow, b: TimeWindow): boolean {
@@ -221,11 +216,10 @@ function DetailView({
     display_name: `${s.display_name} (clone)`,
     description: s.description,
     asset_class: s.asset_class,
-    asset: s.asset,
     quote_currency: s.quote_currency,
     time_window: s.time_window,
     capital: s.capital,
-    granularity: s.granularity,
+    granularity: scenarioGranularityToCli(s.granularity),
     timezone: s.timezone,
     calendar: s.calendar,
     venue: s.venue,
@@ -253,11 +247,11 @@ function DetailView({
       time_window: timeWindowEquals(req.time_window, s.time_window)
         ? null
         : req.time_window,
-      asset: assetsEqual(req.asset, s.asset) ? null : req.asset,
       // Compare the current UI granularity strings case-insensitively.
       // ScenarioForm intentionally owns the fixed operator-facing palette.
       granularity:
-        req.granularity.trim().toLowerCase() === s.granularity.trim().toLowerCase()
+        req.granularity.trim().toLowerCase() ===
+        scenarioGranularityToCli(s.granularity).toLowerCase()
           ? null
           : req.granularity,
       venue: venueEquals(req.venue, s.venue) ? null : req.venue,
@@ -436,18 +430,21 @@ function DefinitionTab({ s }: { s: Scenario }) {
     setChartGranularity(scenarioGranularity);
   }, [s.id, scenarioGranularity]);
 
-  const assetLabel =
-    s.asset.length > 0
-      ? s.asset.map((a) => a.symbol).join(", ") + " / " + s.quote_currency
-      : "—";
+  // Scenarios are asset-free; the operator chooses which market backs the
+  // standalone preview. Defaults to BTC/USD (matching the backend default).
+  const [chartAsset, setChartAsset] = useState("BTC/USD");
+
+  const marketLabel = `${s.asset_class} / ${s.quote_currency}`;
 
   const windowLabel = `${fmtDate(s.time_window.start)} → ${fmtDate(s.time_window.end)}`;
 
   const chart = useQuery({
-    queryKey: scenarioChartKeys.scenario(s.id, chartGranularity),
-    queryFn: () => getScenarioChart(s.id, chartGranularity),
+    queryKey: scenarioChartKeys.scenario(s.id, chartGranularity, chartAsset),
+    queryFn: () => getScenarioChart(s.id, chartGranularity, chartAsset),
   });
-  const barsFetch = useBarsFetchJob(buildBarsFetchSpec(s, chartGranularity));
+  const barsFetch = useBarsFetchJob(
+    buildBarsFetchSpec(s, chartGranularity, chartAsset),
+  );
 
   return (
     <div>
@@ -461,21 +458,40 @@ function DefinitionTab({ s }: { s: Scenario }) {
         {chart.data && (
           <div className="mb-5">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <label className="text-text-3 text-[12px]" htmlFor="scenario-chart-granularity">
-                Indicator timeframe
-              </label>
-              <select
-                id="scenario-chart-granularity"
-                value={chartGranularity}
-                onChange={(event) => setChartGranularity(event.target.value)}
-                className="bg-surface border border-border rounded px-2 py-1 text-[12px] text-text"
-              >
-                {CHART_GRANULARITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-2">
+                <label className="text-text-3 text-[12px]" htmlFor="scenario-chart-asset">
+                  Preview asset
+                </label>
+                <select
+                  id="scenario-chart-asset"
+                  value={chartAsset}
+                  onChange={(event) => setChartAsset(event.target.value)}
+                  className="bg-surface border border-border rounded px-2 py-1 text-[12px] text-text"
+                >
+                  {CHART_PREVIEW_ASSET_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-text-3 text-[12px]" htmlFor="scenario-chart-granularity">
+                  Indicator timeframe
+                </label>
+                <select
+                  id="scenario-chart-granularity"
+                  value={chartGranularity}
+                  onChange={(event) => setChartGranularity(event.target.value)}
+                  className="bg-surface border border-border rounded px-2 py-1 text-[12px] text-text"
+                >
+                  {CHART_GRANULARITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <ScenarioChart
               payload={chart.data}
@@ -489,8 +505,8 @@ function DefinitionTab({ s }: { s: Scenario }) {
       </div>
 
       <dl className="grid grid-cols-[180px_1fr] gap-y-2.5 text-[13px] px-5 pb-5">
-        <dt className="text-text-3 self-center">Asset</dt>
-        <dd className="font-mono m-0">{assetLabel}</dd>
+        <dt className="text-text-3 self-center">Market</dt>
+        <dd className="font-mono m-0">{marketLabel}</dd>
 
         <dt className="text-text-3 self-center">Window</dt>
         <dd className="font-mono m-0">{windowLabel}</dd>
@@ -814,7 +830,7 @@ function BarCacheTab({ scenario }: { scenario: Scenario }) {
         <dt className="text-text-3">Cache key</dt>
         <dd className="font-mono text-[11px] break-all m-0">{cacheKey}</dd>
 
-        <dt className="text-text-3">Asset</dt>
+        <dt className="text-text-3">Preview asset</dt>
         <dd className="font-mono m-0">{data.asset}</dd>
 
         <dt className="text-text-3">Granularity</dt>
@@ -859,19 +875,40 @@ const CHART_GRANULARITY_OPTIONS = [
   { value: "1w", label: "1 week" },
 ];
 
-function buildBarsFetchSpec(s: Scenario, granularity?: string) {
-  const asset = s.asset[0]?.symbol;
-  if (!asset) return null;
+// Standalone scenario previews are asset-free, so the operator picks which
+// market backs the chart. Values are Alpaca pairs (matching the bars-fetch
+// CLI `--asset` form); labels are the short ticker. Mirrors the backend
+// `AssetSymbol` whitelist, minus the stablecoins (no meaningful price chart).
+const CHART_PREVIEW_ASSET_OPTIONS = [
+  { value: "BTC/USD", label: "BTC" },
+  { value: "ETH/USD", label: "ETH" },
+  { value: "SOL/USD", label: "SOL" },
+  { value: "AVAX/USD", label: "AVAX" },
+  { value: "LINK/USD", label: "LINK" },
+  { value: "DOGE/USD", label: "DOGE" },
+  { value: "LTC/USD", label: "LTC" },
+  { value: "BCH/USD", label: "BCH" },
+  { value: "DOT/USD", label: "DOT" },
+  { value: "UNI/USD", label: "UNI" },
+  { value: "AAVE/USD", label: "AAVE" },
+  { value: "MATIC/USD", label: "MATIC" },
+  { value: "SHIB/USD", label: "SHIB" },
+];
+
+function buildBarsFetchSpec(s: Scenario, granularity?: string, asset?: string) {
+  // Scenarios are asset-free; the operator picks which market backs the
+  // standalone preview. Default to BTC/USD when none is selected.
+  const selectedAsset = asset ?? "BTC/USD";
   const selectedGranularity = granularity ?? scenarioGranularityToCli(s.granularity);
   const scenarioGranularity = scenarioGranularityToCli(s.granularity);
   const invalidateQueryKeys: Array<readonly unknown[]> = [
-    scenarioChartKeys.scenario(s.id, selectedGranularity),
+    scenarioChartKeys.scenario(s.id, selectedGranularity, selectedAsset),
   ];
   if (selectedGranularity === scenarioGranularity) {
     invalidateQueryKeys.push(["bars-cache", s.bar_cache_policy.cache_key] as const);
   }
   return {
-    asset,
+    asset: selectedAsset,
     granularity: selectedGranularity,
     from: fmtDate(s.time_window.start),
     to: fmtDate(s.time_window.end),
