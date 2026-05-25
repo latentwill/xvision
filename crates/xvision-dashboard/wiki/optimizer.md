@@ -1,0 +1,200 @@
+# Optimizer
+
+The optimizer tunes an agent slot's prompt + demonstrations offline, scores
+candidates against a metric on a corpus, and lets you accept the winner as a
+**child agent** with a recorded lineage edge. It is a research/authoring tool —
+it never runs inside an eval or on the live decision path.
+
+It is driven from the CLI (`xvn optimize …`) and surfaced read-only in the
+dashboard. The objective: search over the things a `Strategy`/`Agent` can vary
+(instruction text, demonstrations) as *data*, instead of hand-editing prompts,
+so a DSPy-style optimizer can reach hypotheses a hardcoded harness can't.
+
+---
+
+## Offline-only invariant (load-bearing)
+
+**The DSPy stack never enters the engine or the slim runtime image.** This is a
+hard architectural rule, not a preference:
+
+- `xvision-dspy` is its own crate, **excluded from `default-members`**. Its
+  ~93-package transitive tree (`dspy-rs`, `rig-core`, arrow/parquet, foyer,
+  hf-hub) is therefore kept out of `xvision-engine`, `xvision-cli`, and
+  `xvision-dashboard` builds, and out of the shipped image.
+- The engine's `optimization` store treats snapshots and demos as **opaque
+  JSON blobs**. It never parses a `xvision-dspy` type. The dashboard's
+  optimizations routes read that store and surface candidate `instruction`
+  strings and the opaque `snapshot_json` as-is.
+- Proof, run on the merged branch:
+
+  ```
+  $ cargo tree -p xvision-engine | grep -iE "dspy-rs|xvision-dspy" || echo "engine clean"
+  engine clean
+  $ cargo tree -p xvision-dashboard | grep -i dspy || echo clean
+  clean
+  ```
+
+`accept-as-child-agent` is what bridges the two worlds **without** a dependency:
+it clones the parent agent and swaps the optimized slot's `system_prompt` for
+the selected candidate's plain instruction string. A plain string crosses the
+boundary; no DSPy type does.
+
+> If you are contributing code: anything that would make `xvision-engine` or
+> `xvision-dashboard` pull `dspy-rs`/`rig-core` is a regression. Keep optimizer
+> logic in `xvision-dspy`; persist results as JSON the engine can store blindly.
+
+---
+
+## DummyLM in CI (deterministic, no network)
+
+CI exercises the optimizer with `dspy-rs`'s built-in `DummyLM` — a deterministic
+language-model double. Every optimizer test (compile, run, each failure class,
+the success/inspect round-trip) runs with no network and no provider key, and a
+fixed `--rng-seed` makes the run reproducible: the same seed + inputs yields the
+same winning candidate (`same_seed_yields_same_winner`).
+
+Live provider runs are **opt-in only**: `xvn optimize run --live` is a stub in
+this wave and fails with a provider error (exit `12`). The default backend is
+the deterministic test model, so neither CI nor a casual `xvn optimize run` ever
+spends provider tokens.
+
+```
+# default: deterministic, no network
+xvn optimize run --agent … --slot … --capability trader \
+  --corpus ./corpus.json --optimizer mipro --metric delta_sharpe --rng-seed 42 --json
+```
+
+---
+
+## Optimizers: MIPRO / GEPA / COPRO
+
+`--optimizer` selects the search algorithm. All three search the same space
+(instruction + demonstrations) but differ in strategy:
+
+| Optimizer | Shape | Notes |
+|---|---|---|
+| `mipro` | Multi-prompt instruction + demo proposal/search. | Default workhorse. |
+| `gepa` | Reflective / evolutionary prompt search. | |
+| `copro` | Coordinate-ascent instruction refinement. | Cheapest; refines one instruction line per round. |
+
+`--max-rounds` (default `4`) bounds the search. The optimizer-internal details
+(MIPRO/GEPA proposal mechanics) are hidden in the dashboard until an **Advanced**
+detail toggle is opened — the default surface is the candidate table, the prompt
+diff, and the metric delta.
+
+`--capability` must have a DSPy **signature** to be optimizable. Today that is
+`trader` and `filter`; requesting an unsupported capability (`critic`, `router`,
+`decision_grader`, `intern`, `chat_authoring`) fails with exit `11`
+(`OptMissingCapability`, the typed `missing_capability_optimizer` error).
+
+---
+
+## Snapshots, demos, and lineage
+
+A run persists (migration `045`) five related kinds of row:
+
+- **`optimization_runs`** — one row per `xvn optimize run`: agent/slot/capability,
+  optimizer + version, metric, corpus query, `rng_seed`, `signature_hash`,
+  model provider/name, and `status`.
+- **`optimization_candidates`** — the proposed instructions, each with its
+  `metric_value`, its `split` (`train` / `holdout`), its `demo_set`, and a
+  `selected` flag on the winner. Ordered by candidate index.
+- **`demos`** — content-addressed (deduplicated) demonstration sets. The same
+  demo set referenced by multiple candidates/snapshots is stored once.
+- **`optimization_snapshots`** — the accept-able artifact: the winning
+  instruction + demo set + the reproduction recipe. Carries the accept flag.
+- **`agent_lineage`** — the `parent → child` edge written on
+  `accept-as-child-agent`, tying the minted child agent to the snapshot and the
+  run that produced it.
+
+Every run is **reproducible from its persisted inputs**. The reproduction recipe
+captures the corpus query, RNG seed, model provider/name, optimizer + version,
+signature hash, and metric — enough to re-derive the same result:
+
+```json
+{
+  "corpus_query": "…/corpus.json",
+  "rng_seed": 7,
+  "model_provider": "dummy",
+  "model_name": "dummy",
+  "optimizer": "copro",
+  "optimizer_version": "dspy-rs-0.21.0",
+  "signature_hash": "75e530003c74ddac820af911d37fc4e1fff3e3de5e415fe79fdcb5b763027afe",
+  "metric": "delta_sharpe"
+}
+```
+
+`accept-as-child-agent <snapshot-id>` records the lineage edge and leaves the
+parent unchanged; `revert-accepted <snapshot-id>` clears the accept flag and the
+edge. A `FAILED` run still keeps its partial candidates so the evidence isn't
+lost.
+
+Export/import keep demos portable across workspaces:
+
+```
+xvn optimize export-demos <snapshot-id|demo-set> --output demos.json
+xvn optimize import-demos demos.json
+```
+
+---
+
+## Holdout discipline
+
+Tuning on data you also score on overfits. The optimizer enforces a
+train/holdout split:
+
+- Candidates are scored on a `train` split during search and confirmed on a
+  `holdout` split before a winner is trusted. Each candidate's `split` is
+  recorded.
+- **Accept is refused without a holdout.** A snapshot whose winner was selected
+  on training data only — no holdout confirmation — cannot be accepted as a
+  child agent. You tune on train, confirm on holdout, then accept.
+- The dashboard run-detail renders the train/holdout split alongside the metric
+  delta so the holdout result is visible before you accept.
+
+This is the optimizer-side analogue of the anti-overfit `xvn gate` on eval
+metrics: a measured improvement only counts if it survives data the search never
+saw.
+
+---
+
+## Surfaces
+
+- **CLI** — `xvn optimize run/inspect/export-demos/import-demos/accept-as-child-agent/revert-accepted/explain-missing-data`. Distinct exit codes 10–15 per failure class; see [CLI Reference](/docs?slug=cli-reference).
+- **Dashboard (read-only mutation via accept/revert)** —
+  - `GET /api/optimizations?agent=&slot=` — list runs, slot filter narrows.
+  - `GET /api/optimizations/:id` — run detail: candidate table, snapshot, lineage.
+  - `POST /api/optimizations/:id/accept` — mint a child agent from a snapshot.
+  - `POST /api/optimizations/:id/revert` — unwind an accepted snapshot.
+  - UI: the **Improve this agent** panel on the agent edit page lists a slot's
+    runs and links each to a routed (non-popup) run-detail view with the
+    candidate table, prompt diff, metric delta, and holdout split inline.
+- **Chat rail** — optimization progress surfaces live in the unified event
+  stream as `optimization_candidate_started` / `optimization_candidate_metric`
+  (carrying the `split`) / `optimization_candidate_selected` /
+  `optimization_completed` rows.
+
+---
+
+## Failure classes
+
+`xvn optimize` returns a distinct exit code per failure class so an agent can
+branch without parsing text:
+
+| Code | Class | When |
+|---|---|---|
+| 10 | `OptMissingData` | Corpus query resolved to no usable training data. Use `xvn optimize explain-missing-data`. |
+| 11 | `OptMissingCapability` | Capability has no optimizer signature. |
+| 12 | `OptProvider` | Provider unreachable / unconfigured (includes the `--live` stub). |
+| 13 | `OptMetric` | Objective metric failed to evaluate (e.g. unknown metric). |
+| 14 | `OptValidation` | Bad capability/optimizer enum, missing corpus path, signature parse/validate error. |
+| 15 | `OptPersistence` | Store write failed (migration not applied, DB error). |
+| 4 | `NotFound` | `inspect`/accept against an unknown run/snapshot id. |
+
+---
+
+## Cross-references
+
+- [Agents](/docs?slug=agents) — capabilities, the Improve-this-agent flow, lineage.
+- [CLI Reference](/docs?slug=cli-reference) — full `xvn optimize` flag inventory + exit codes.
+- [Strategies](/docs?slug=strategies) — what a tuned child agent gets swapped into.

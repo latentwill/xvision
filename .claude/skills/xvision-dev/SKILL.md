@@ -64,7 +64,8 @@ image is being prepared.
 | `xvision-mcp` | stdio MCP tool surface (indicators + health) |
 | `xvision-execution` | Venue executors (Alpaca, Orderly) |
 | `xvision-identity` | ERC-8004 IdentityRegistry / ReputationRegistry client (opt-in) |
-| `xvision-observability` | Apache-2.0 observability crate; schema, redactor, blob store, event bus, retention/janitor |
+| `xvision-observability` | Apache-2.0 observability crate; schema, redactor, blob store, event bus, retention/janitor. Owns `UnifiedEvent` (adjacently-tagged `{kind,data}`) — the chat-rail/trace-dock unified taxonomy. |
+| `xvision-dspy` | **Offline-only** DSPy optimizer crate. **Excluded from `default-members`** so its ~93-package tree (`dspy-rs`, `rig-core`, arrow/parquet, foyer, hf-hub) never reaches the engine/dashboard/runtime image. |
 
 Full pipeline + storage layout in [`references/architecture.md`](references/architecture.md).
 
@@ -91,10 +92,16 @@ Process spec: `docs/superpowers/specs/2026-05-16-execution-board-process-overhau
 
 Migration numbers are reserved in `team/MANIFEST.md`'s Migration
 registry. The conductor must register the next number before any
-track edits `crates/xvision-engine/migrations/`. Latest landed: **024**
-(`scenario_regime_labels`). Coordinate via the board, not by grabbing
-the next free integer — the 021/022/023/024 renumber dance happened
-twice in the last two weeks because parallel tracks collided.
+track edits `crates/xvision-engine/migrations/`. The chat-rail/DSPy/
+strategy-agents wave landed **041–045** on its branch: 041 chat-session
+rail-state columns, 042 session event log, 043 tool policies, 044
+`chat_checkpoints` (named to avoid colliding with the migration-018
+agent-run replay `checkpoints` table), 045 optimization store
+(`optimization_runs` / `candidates` / `demos` / `snapshots` /
+`agent_lineage`). Each is wired into `ApiContext::open` via a guarded,
+idempotent `migrate_*` helper. Coordinate the next number via the board,
+not by grabbing the next free integer — the 021/022/023/024 renumber
+dance happened twice in two weeks because parallel tracks collided.
 
 Every migration ships its `_down.sql` counterpart. Schema changes go
 through the engine's migration system, not raw `psql`.
@@ -201,6 +208,11 @@ Full deploy mechanics + pitfalls in [`references/deploy.md`](references/deploy.m
 - **Strategy inspector canonical route:** new links should use `/strategies/:id`; `/authoring/:id` is a compatibility alias only.
 - **Real filters are artifacts.** A prompt that says "filter" is not enough. Filter QA must attach a strategy filter and inspect filter summaries/events.
 - **Eval decision provenance matters.** Keep direct model decisions distinguishable from `noop_skip`, graph-gated, and early-stop synthesized rows in UI/API work.
+- **The engine and dashboard must stay DSPy-free.** Optimizer logic lives in `xvision-dspy` (excluded from `default-members`). The `optimization` store persists snapshots/demos as **opaque JSON**; `accept-as-child-agent` crosses the boundary as a plain instruction string only. Anything that makes `cargo tree -p xvision-engine` or `-p xvision-dashboard` show `dspy-rs`/`rig-core`/`xvision-dspy` is a regression. The live LLM path is raw `reqwest` (`LlmDispatch`) + the Cline sidecar — there is no workspace `rig-core` to "match"; it only enters transitively through `dspy-rs`.
+- **Chat-rail Research/Act is server-enforced.** Write-tool gating reads the **persisted session mode column** before execution; never trust a client-asserted mode, and never let a write tool run in research mode. Tool policy is three-state `(enabled, auto_approve)` = Disabled/Ask/Auto with read=Auto, write=Ask class defaults; an unknown tool fails safe to write.
+- **Optimizer accept is holdout-disciplined.** A snapshot selected on train-only data (no holdout split) must be refused at accept time; accept clones the parent (never mutates it) and records an `agent_lineage` edge.
+- **Focus writes are path-confined.** `focus.md` lives under `$XVN_HOME/scopes/<kind>/<id>/`; reject absolute/`..`/separator/empty/NUL components before any I/O so a write can't escape `scopes/`.
+- **`UnifiedEvent` is adjacently tagged** (`{ "kind", "data" }`), not internally tagged — several reused detail structs carry their own `kind` field and would collide. Keep the TS mirror and any new payload variant on the same `{kind,data}` shape; never silence a typed `Error*` event.
 - **Conductor stays out of feature code.** If you're acting as conductor, only edit `team/**` and `scripts/board-*`. Otherwise you're a worker — claim a contract first.
 
 ## Deeper references
@@ -213,5 +225,5 @@ Full deploy mechanics + pitfalls in [`references/deploy.md`](references/deploy.m
 
 *Skills owner: any track that changes the build/test/deploy story or
 adds a load-bearing invariant is responsible for updating this file in
-the same PR. Last refresh: 2026-05-23 (QA24 strategy inspector, filter,
-and eval-readiness pass).*
+the same PR. Last refresh: 2026-05-24 (chat-rail safety invariants,
+offline-only `xvision-dspy` crate, migrations 041–045).*

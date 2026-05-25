@@ -38,8 +38,15 @@ path = "strategies.md"
 slug = "agents"
 title = "Agents"
 section = "Concepts"
-last_reviewed = "2026-05-20"
+last_reviewed = "2026-05-24"
 path = "agents.md"
+
+[[page]]
+slug = "optimizer"
+title = "Optimizer"
+section = "Concepts"
+last_reviewed = "2026-05-24"
+path = "optimizer.md"
 
 [[page]]
 slug = "providers"
@@ -80,7 +87,7 @@ path = "cli-reference.md"
 slug = "driving-xvn-as-an-agent"
 title = "Driving xvn as an agent"
 section = "Agent"
-last_reviewed = "2026-05-20"
+last_reviewed = "2026-05-24"
 path = "driving-xvn-as-an-agent.md"
 
 [[page]]
