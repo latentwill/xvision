@@ -151,6 +151,18 @@ const MIGRATION_044_CHECKPOINTS_TABLE: &str =
      )";
 const MIGRATION_044_CHECKPOINTS_INDEX: &str =
     "CREATE INDEX IF NOT EXISTS idx_chat_checkpoints_session ON chat_checkpoints(session_id, created_at)";
+/// Phase 3.5 (DSPy optimization store): the durable, reproducible record of
+/// offline prompt/demonstration optimization runs. Five tables —
+/// `optimization_runs`, `optimization_candidates`, `optimization_demos`,
+/// `optimization_snapshots`, `agent_lineage`. Applied via
+/// `migrate_optimization_store`, which splits the file into individual
+/// statements (one `sqlx::query` cannot batch the CREATE TABLE + CREATE INDEX
+/// set) and guards on the first table's existence so a re-open is a no-op.
+/// Driven straight off the committed migration file so the runtime path and the
+/// committed file never drift. HARD INVARIANT: the engine persists these rows
+/// as opaque JSON + scalar columns and does NOT depend on `xvision-dspy`.
+const MIGRATION_045_OPTIMIZATION_STORE: &str =
+    include_str!("../../migrations/045_optimization_store.sql");
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -324,6 +336,7 @@ impl ApiContext {
         migrate_session_events(&pool).await?;
         migrate_tool_policies(&pool).await?;
         migrate_checkpoints(&pool).await?;
+        migrate_optimization_store(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -1148,6 +1161,47 @@ async fn migrate_checkpoints(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+async fn migrate_optimization_store(pool: &SqlitePool) -> ApiResult<()> {
+    // Phase 3.5: the five optimization-store tables + their indexes. The
+    // migration file is many statements (CREATE TABLE / CREATE INDEX, all with
+    // IF NOT EXISTS), and a single `sqlx::query` cannot batch them, so we split
+    // on `;` and run each non-empty statement on its own. Every statement uses
+    // IF NOT EXISTS, and the leading table-existence guard skips the whole set
+    // on an already-migrated DB, so a re-open is a no-op. The engine persists
+    // these rows as opaque JSON + scalar columns; it does NOT depend on
+    // `xvision-dspy`.
+    if !table_exists(pool, "optimization_runs").await? {
+        for stmt in split_sql_statements(MIGRATION_045_OPTIMIZATION_STORE) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Split a multi-statement migration file into executable statements.
+///
+/// Strips `--` line comments first (an inline comment such as `provider's id`
+/// contains an apostrophe and a trailing `;` in a later comment could otherwise
+/// be mis-split), then splits on `;` and drops empty fragments. Used by
+/// `migrate_optimization_store` because a single `sqlx::query` cannot batch the
+/// CREATE TABLE + CREATE INDEX set in migration 045.
+fn split_sql_statements(sql: &str) -> Vec<String> {
+    let without_comments: String = sql
+        .lines()
+        .map(|line| match line.find("--") {
+            Some(idx) => &line[..idx],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    without_comments
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 pub enum Actor {
     Cli {
@@ -1331,5 +1385,70 @@ mod migration_registry_tests {
 
         // Second pass is a no-op (guarded on table existence) — re-open safe.
         migrate_checkpoints(&pool).await.unwrap();
+    }
+
+    /// Phase 3.5: migration 045 (the optimization store) is applied by the
+    /// hand-maintained `ApiContext::open` registry via
+    /// `migrate_optimization_store`, not `sqlx::migrate!`. Without the wiring the
+    /// five tables never exist at runtime and the `OptimizationStore` fails with
+    /// "no such table". This proves the helper creates every table + index on a
+    /// fresh DB and that re-running is a no-op. The helper splits the
+    /// multi-statement file (one `sqlx::query` cannot batch CREATE TABLE + CREATE
+    /// INDEX) and strips `--` comments before splitting on `;`.
+    #[tokio::test]
+    async fn migrate_optimization_store_creates_tables_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        assert!(!table_exists(&pool, "optimization_runs").await.unwrap());
+
+        migrate_optimization_store(&pool).await.unwrap();
+        for table in [
+            "optimization_runs",
+            "optimization_candidates",
+            "optimization_demos",
+            "optimization_snapshots",
+            "agent_lineage",
+        ] {
+            assert!(
+                table_exists(&pool, table).await.unwrap(),
+                "table {table} missing after migrate_optimization_store"
+            );
+        }
+        // The reproduction-recipe columns must all exist on optimization_runs.
+        for col in [
+            "agent_id",
+            "slot_name",
+            "capability",
+            "optimizer",
+            "metric",
+            "corpus_query",
+            "rng_seed",
+            "model_provider",
+            "model_name",
+            "signature_hash",
+            "optimizer_version",
+            "status",
+            "created_at",
+        ] {
+            assert!(
+                table_has_column(&pool, "optimization_runs", col).await.unwrap(),
+                "column {col} missing on optimization_runs"
+            );
+        }
+
+        // Second pass is a no-op (guarded on table existence) — re-open safe.
+        migrate_optimization_store(&pool).await.unwrap();
+    }
+
+    #[test]
+    fn split_sql_statements_strips_comments_and_splits() {
+        let sql = "-- a header comment\n\
+                   CREATE TABLE t (x TEXT); -- inline trailing comment\n\
+                   CREATE INDEX i ON t(x);\n";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].starts_with("CREATE TABLE t"));
+        assert!(stmts[1].starts_with("CREATE INDEX i"));
+        assert!(!stmts[0].contains("--"));
+        assert!(!stmts[1].contains("--"));
     }
 }
