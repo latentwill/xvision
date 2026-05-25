@@ -50,7 +50,7 @@ function errorRows(rows: ReturnType<typeof reduceRows>): ErrorRow[] {
 describe("reduceRows", () => {
   it("is idempotent: applying the same event_id twice is a no-op", () => {
     const e = ev(
-      { kind: "assistant_token_delta", text: "hi" },
+      { kind: "assistant_token_delta", data: { text: "hi" } },
       { event_id: "ev_dup", seq: 0 },
     );
     const once = reduceRows([], e);
@@ -65,8 +65,8 @@ describe("reduceRows", () => {
 
   it("idempotency holds across a full tool lifecycle replay", () => {
     const events: UnifiedEvent[] = [
-      ev({ kind: "tool_requested", span_id: "sp_x", tool_name: "create_strategy", origin: "Native", tool_version: null, tool_hash: null, side_effect_level: "external_write", risk_level: "strategy_mutation", requires_approval: true, is_run_terminator: false, input_hash: "h", input_payload_ref: null }, { event_id: "t_req", seq: 0, span_id: "sp_x" }),
-      ev({ kind: "tool_finished", span_id: "sp_x", output_hash: "oh", output_payload_ref: null, exit_code: 0 }, { event_id: "t_fin", seq: 1, span_id: "sp_x" }),
+      ev({ kind: "tool_requested", data: { span_id: "sp_x", tool_name: "create_strategy", origin: "Native", tool_version: null, tool_hash: null, side_effect_level: "external_write", risk_level: "strategy_mutation", requires_approval: true, is_run_terminator: false, input_hash: "h", input_payload_ref: null } }, { event_id: "t_req", seq: 0, span_id: "sp_x" }),
+      ev({ kind: "tool_finished", data: { span_id: "sp_x", output_hash: "oh", output_payload_ref: null, exit_code: 0 } }, { event_id: "t_fin", seq: 1, span_id: "sp_x" }),
     ];
     const first = reduceAll([], events);
     const replayed = reduceAll(first, events);
@@ -79,10 +79,10 @@ describe("reduceRows", () => {
 
   it("token deltas accumulate into one assistant row", () => {
     let rows = reduceRows([], ev({ kind: "assistant_message_started" }, { event_id: "a0", seq: 0 }));
-    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", text: "Hel" }, { event_id: "a1", seq: 1 }));
-    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", text: "lo " }, { event_id: "a2", seq: 2 }));
-    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", text: "world" }, { event_id: "a3", seq: 3 }));
-    rows = reduceRows(rows, ev({ kind: "assistant_message_done", draft_id: "draft_9" }, { event_id: "a4", seq: 4 }));
+    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", data: { text: "Hel" } }, { event_id: "a1", seq: 1 }));
+    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", data: { text: "lo " } }, { event_id: "a2", seq: 2 }));
+    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", data: { text: "world" } }, { event_id: "a3", seq: 3 }));
+    rows = reduceRows(rows, ev({ kind: "assistant_message_done", data: { draft_id: "draft_9" } }, { event_id: "a4", seq: 4 }));
 
     const arows = assistantRows(rows);
     expect(arows).toHaveLength(1);
@@ -95,12 +95,12 @@ describe("reduceRows", () => {
 
   it("out-of-order tool_finished updates only the right span; token deltas never rewrite it", () => {
     // tool_requested for sp_A and sp_B
-    let rows = reduceRows([], ev({ kind: "tool_requested", span_id: "sp_A", tool_name: "fetch", origin: "Native", tool_version: null, tool_hash: null, side_effect_level: "read_only", risk_level: "safe_read", requires_approval: false, is_run_terminator: false, input_hash: "h", input_payload_ref: null }, { event_id: "ra", seq: 0, span_id: "sp_A" }));
-    rows = reduceRows(rows, ev({ kind: "tool_requested", span_id: "sp_B", tool_name: "write", origin: "Native", tool_version: null, tool_hash: null, side_effect_level: "external_write", risk_level: "file_write", requires_approval: false, is_run_terminator: false, input_hash: "h", input_payload_ref: null }, { event_id: "rb", seq: 1, span_id: "sp_B" }));
+    let rows = reduceRows([], ev({ kind: "tool_requested", data: { span_id: "sp_A", tool_name: "fetch", origin: "Native", tool_version: null, tool_hash: null, side_effect_level: "read_only", risk_level: "safe_read", requires_approval: false, is_run_terminator: false, input_hash: "h", input_payload_ref: null } }, { event_id: "ra", seq: 0, span_id: "sp_A" }));
+    rows = reduceRows(rows, ev({ kind: "tool_requested", data: { span_id: "sp_B", tool_name: "write", origin: "Native", tool_version: null, tool_hash: null, side_effect_level: "external_write", risk_level: "file_write", requires_approval: false, is_run_terminator: false, input_hash: "h", input_payload_ref: null } }, { event_id: "rb", seq: 1, span_id: "sp_B" }));
 
     // A LATE tool_finished for sp_A arrives, then an unrelated token delta.
-    rows = reduceRows(rows, ev({ kind: "tool_finished", span_id: "sp_A", output_hash: "ohA", output_payload_ref: null, exit_code: 0 }, { event_id: "fa", seq: 2, span_id: "sp_A" }));
-    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", text: "thinking" }, { event_id: "d0", seq: 3 }));
+    rows = reduceRows(rows, ev({ kind: "tool_finished", data: { span_id: "sp_A", output_hash: "ohA", output_payload_ref: null, exit_code: 0 } }, { event_id: "fa", seq: 2, span_id: "sp_A" }));
+    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", data: { text: "thinking" } }, { event_id: "d0", seq: 3 }));
 
     const tA = toolRows(rows).find((t) => t.spanId === "sp_A")!;
     const tB = toolRows(rows).find((t) => t.spanId === "sp_B")!;
@@ -120,9 +120,11 @@ describe("reduceRows", () => {
       ev(
         {
           kind: "error_missing_capability",
-          code: "missing_capability_optimizer",
-          message: "agent has no trader capability",
-          remediation: "add a trader-capability slot before optimizing",
+          data: {
+            code: "missing_capability_optimizer",
+            message: "agent has no trader capability",
+            remediation: "add a trader-capability slot before optimizing",
+          },
         },
         { event_id: "err0", seq: 0, actor: "system" },
       ),
@@ -140,7 +142,7 @@ describe("reduceRows", () => {
     const rows = reduceRows(
       [],
       ev(
-        { kind: "sidecar_error", run_id: "run_1", message: "sidecar crashed", severity: "error" },
+        { kind: "sidecar_error", data: { run_id: "run_1", message: "sidecar crashed", severity: "error" } },
         { event_id: "sc0", seq: 0, actor: "system" },
       ),
     );
@@ -153,10 +155,10 @@ describe("reduceRows", () => {
 
   it("a tool lifecycle collapses onto ONE row keyed by span_id", () => {
     const lifecycle: UnifiedEvent[] = [
-      ev({ kind: "tool_requested", span_id: "sp_1", tool_name: "create_strategy", origin: { Mcp: "xvn" }, tool_version: null, tool_hash: null, side_effect_level: "external_write", risk_level: "strategy_mutation", requires_approval: true, is_run_terminator: false, input_hash: "h", input_payload_ref: null }, { event_id: "l0", seq: 0, span_id: "sp_1" }),
-      ev({ kind: "tool_policy_checked", span_id: "sp_1", tool_name: "create_strategy", outcome: "needs_approval", mode: "act" }, { event_id: "l1", seq: 1, span_id: "sp_1" }),
-      ev({ kind: "tool_started", span_id: "sp_1" }, { event_id: "l2", seq: 2, span_id: "sp_1" }),
-      ev({ kind: "tool_finished", span_id: "sp_1", output_hash: "oh1", output_payload_ref: null, exit_code: 0 }, { event_id: "l3", seq: 3, span_id: "sp_1" }),
+      ev({ kind: "tool_requested", data: { span_id: "sp_1", tool_name: "create_strategy", origin: { Mcp: "xvn" }, tool_version: null, tool_hash: null, side_effect_level: "external_write", risk_level: "strategy_mutation", requires_approval: true, is_run_terminator: false, input_hash: "h", input_payload_ref: null } }, { event_id: "l0", seq: 0, span_id: "sp_1" }),
+      ev({ kind: "tool_policy_checked", data: { span_id: "sp_1", tool_name: "create_strategy", outcome: "needs_approval", mode: "act" } }, { event_id: "l1", seq: 1, span_id: "sp_1" }),
+      ev({ kind: "tool_started", data: { span_id: "sp_1" } }, { event_id: "l2", seq: 2, span_id: "sp_1" }),
+      ev({ kind: "tool_finished", data: { span_id: "sp_1", output_hash: "oh1", output_payload_ref: null, exit_code: 0 } }, { event_id: "l3", seq: 3, span_id: "sp_1" }),
     ];
     const rows = reduceAll([], lifecycle);
 
@@ -175,17 +177,17 @@ describe("reduceRows", () => {
   });
 
   it("out-of-order: a late tool_started does NOT regress a finished status", () => {
-    let rows = reduceRows([], ev({ kind: "tool_finished", span_id: "sp_z", output_hash: "oh", output_payload_ref: null, exit_code: 0 }, { event_id: "z0", seq: 5, span_id: "sp_z" }));
-    rows = reduceRows(rows, ev({ kind: "tool_started", span_id: "sp_z" }, { event_id: "z1", seq: 1, span_id: "sp_z" }));
+    let rows = reduceRows([], ev({ kind: "tool_finished", data: { span_id: "sp_z", output_hash: "oh", output_payload_ref: null, exit_code: 0 } }, { event_id: "z0", seq: 5, span_id: "sp_z" }));
+    rows = reduceRows(rows, ev({ kind: "tool_started", data: { span_id: "sp_z" } }, { event_id: "z1", seq: 1, span_id: "sp_z" }));
     const t = toolRows(rows)[0];
     expect(t.status).toBe("finished");
   });
 
   it("renders rows in seq order regardless of arrival order", () => {
     // Errors arrive out of seq order; output must be seq-sorted.
-    let rows = reduceRows([], ev({ kind: "error_missing_tool", code: "c2", message: "second" }, { event_id: "e2", seq: 2, actor: "system" }));
-    rows = reduceRows(rows, ev({ kind: "error_invalid_schema", code: "c0", message: "first" }, { event_id: "e0", seq: 0, actor: "system" }));
-    rows = reduceRows(rows, ev({ kind: "error_policy_denied", code: "c1", message: "middle" }, { event_id: "e1", seq: 1, actor: "system" }));
+    let rows = reduceRows([], ev({ kind: "error_missing_tool", data: { code: "c2", message: "second" } }, { event_id: "e2", seq: 2, actor: "system" }));
+    rows = reduceRows(rows, ev({ kind: "error_invalid_schema", data: { code: "c0", message: "first" } }, { event_id: "e0", seq: 0, actor: "system" }));
+    rows = reduceRows(rows, ev({ kind: "error_policy_denied", data: { code: "c1", message: "middle" } }, { event_id: "e1", seq: 1, actor: "system" }));
 
     const seqs = rows.map((r) => r.seq);
     expect(seqs).toEqual([0, 1, 2]);
@@ -193,10 +195,10 @@ describe("reduceRows", () => {
 
   it("optimizer events collapse onto one row keyed by optimization_id", () => {
     const opt: UnifiedEvent[] = [
-      ev({ kind: "optimization_candidate_started", optimization_id: "opt_1", candidate_index: 0, optimizer: "mipro" }, { event_id: "o0", seq: 0, actor: "optimizer" }),
-      ev({ kind: "optimization_candidate_metric", optimization_id: "opt_1", candidate_index: 0, metric: "sharpe", value: 1.2, split: "holdout" }, { event_id: "o1", seq: 1, actor: "optimizer" }),
-      ev({ kind: "optimization_candidate_selected", optimization_id: "opt_1", candidate_index: 0, optimizer: "mipro" }, { event_id: "o2", seq: 2, actor: "optimizer" }),
-      ev({ kind: "optimization_completed", optimization_id: "opt_1", selected_candidate_index: 0, minted_agent_id: "agent_42" }, { event_id: "o3", seq: 3, actor: "optimizer" }),
+      ev({ kind: "optimization_candidate_started", data: { optimization_id: "opt_1", candidate_index: 0, optimizer: "mipro" } }, { event_id: "o0", seq: 0, actor: "optimizer" }),
+      ev({ kind: "optimization_candidate_metric", data: { optimization_id: "opt_1", candidate_index: 0, metric: "sharpe", value: 1.2, split: "holdout" } }, { event_id: "o1", seq: 1, actor: "optimizer" }),
+      ev({ kind: "optimization_candidate_selected", data: { optimization_id: "opt_1", candidate_index: 0, optimizer: "mipro" } }, { event_id: "o2", seq: 2, actor: "optimizer" }),
+      ev({ kind: "optimization_completed", data: { optimization_id: "opt_1", selected_candidate_index: 0, minted_agent_id: "agent_42" } }, { event_id: "o3", seq: 3, actor: "optimizer" }),
     ];
     const rows = reduceAll([], opt);
     const optimizers = rows.filter((r) => r.type === "optimizer");
@@ -211,9 +213,9 @@ describe("reduceRows", () => {
   });
 
   it("two interleaved streams keep separate assistant rows", () => {
-    let rows = reduceRows([], ev({ kind: "assistant_token_delta", text: "A" }, { event_id: "s1a", seq: 0, session_id: "sess_A", run_id: null }));
-    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", text: "B" }, { event_id: "s2a", seq: 0, session_id: "sess_B", run_id: null }));
-    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", text: "A2" }, { event_id: "s1b", seq: 1, session_id: "sess_A", run_id: null }));
+    let rows = reduceRows([], ev({ kind: "assistant_token_delta", data: { text: "A" } }, { event_id: "s1a", seq: 0, session_id: "sess_A", run_id: null }));
+    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", data: { text: "B" } }, { event_id: "s2a", seq: 0, session_id: "sess_B", run_id: null }));
+    rows = reduceRows(rows, ev({ kind: "assistant_token_delta", data: { text: "A2" } }, { event_id: "s1b", seq: 1, session_id: "sess_A", run_id: null }));
 
     const arows = assistantRows(rows);
     expect(arows).toHaveLength(2);

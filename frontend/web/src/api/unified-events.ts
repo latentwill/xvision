@@ -5,9 +5,12 @@
 // SOURCE OF TRUTH: crates/xvision-observability/src/unified_event.rs
 //   - `UnifiedEvent`   — the envelope (event_id, session_id, run_id, span_id,
 //     parent_event_id, seq, ts, scope, actor, source, blob_hash, payload).
-//   - `UnifiedPayload` — `#[serde(tag = "kind", rename_all = "snake_case")]`,
-//     so each variant carries a `kind` discriminant whose VALUE matches the
-//     verbatim snake_case strings listed in `payload_event_name()`.
+//   - `UnifiedPayload` — `#[serde(tag = "kind", content = "data",
+//     rename_all = "snake_case")]` (ADJACENT tagging), so each variant is
+//     `{ kind, data }`: `kind` is the discriminant whose VALUE matches the
+//     verbatim snake_case strings in `payload_event_name()`, and `data` holds
+//     the variant's fields. UNIT variants (no fields) serialize as `{ kind }`
+//     with NO `data` key.
 //   - `Actor` / `EventSource` / `EventScope` / `ToolPolicyOutcome` enums.
 //
 // There is NO ts-rs generation for the observability crate — this file is
@@ -344,84 +347,87 @@ export type TypedError = {
   remediation?: string | null;
 };
 
-// ─── UnifiedPayload — discriminated union on `kind` ───────────────────────
+// ─── UnifiedPayload — adjacently-tagged union ({ kind, data }) ─────────────
 //
 // The `kind` literals below MUST match `payload_event_name()` in
 // `crates/xvision-observability/src/unified_event.rs` byte-for-byte.
 //
-// Tuple variants in Rust (`RunStarted(RunStartedEvent)`) serialize as the
-// detail struct's fields flattened alongside `kind` (serde adjacent-internal
-// tagging on a newtype variant), so the TS shape is `{ kind } & DetailStruct`.
-// Struct variants (`AssistantTokenDelta { text }`) carry their fields inline.
+// Rust uses `#[serde(tag = "kind", content = "data")]` (ADJACENT tagging), so
+// every variant that carries fields serializes as `{ kind, data }` with the
+// variant's fields nested under `data`:
+//   - Newtype variants (`RunStarted(RunStartedEvent)`)   → { kind, data: DetailStruct }
+//   - Struct variants  (`AssistantTokenDelta { text }`)  → { kind, data: { text } }
+// UNIT variants (no fields — `AssistantMessageStarted`, `SessionCompleted`)
+// serialize as `{ kind }` with NO `data` key.
 
 export type UnifiedPayload =
   // ── Session lifecycle (rail-originated) ──
-  | { kind: "session_created"; scope_label: string }
-  | { kind: "session_resumed"; from_seq: number }
-  | { kind: "session_interrupted"; reason: string }
+  | { kind: "session_created"; data: { scope_label: string } }
+  | { kind: "session_resumed"; data: { from_seq: number } }
+  | { kind: "session_interrupted"; data: { reason: string } }
   | { kind: "session_completed" }
-  | { kind: "session_failed"; message: string }
+  | { kind: "session_failed"; data: { message: string } }
 
   // ── Run lifecycle (agent-run, reused from RunEvent) ──
-  | ({ kind: "run_started" } & RunStartedEvent)
-  | ({ kind: "run_finished" } & RunFinishedEvent)
-  | ({ kind: "run_interrupted" } & RunInterruptedEvent)
-  | ({ kind: "span_started" } & SpanStartedEvent)
-  | ({ kind: "span_finished" } & SpanFinishedEvent)
-  | ({ kind: "model_call_finished" } & ModelCallFinishedEvent)
+  | { kind: "run_started"; data: RunStartedEvent }
+  | { kind: "run_finished"; data: RunFinishedEvent }
+  | { kind: "run_interrupted"; data: RunInterruptedEvent }
+  | { kind: "span_started"; data: SpanStartedEvent }
+  | { kind: "span_finished"; data: SpanFinishedEvent }
+  | { kind: "model_call_finished"; data: ModelCallFinishedEvent }
 
   // ── Assistant output ──
   | { kind: "assistant_message_started" }
-  | { kind: "assistant_token_delta"; text: string }
-  | { kind: "assistant_content_block"; block: unknown }
-  | { kind: "assistant_message_done"; draft_id: string | null }
+  | { kind: "assistant_token_delta"; data: { text: string } }
+  | { kind: "assistant_content_block"; data: { block: unknown } }
+  | { kind: "assistant_message_done"; data: { draft_id: string | null } }
 
   // ── Tool lifecycle ──
-  | ({ kind: "tool_requested" } & ToolCallStartedEvent)
-  | ({ kind: "tool_policy_checked" } & ToolPolicyChecked)
-  | { kind: "tool_approved"; span_id: string; approver: string }
-  | { kind: "tool_started"; span_id: string }
-  | { kind: "tool_delta"; span_id: string; text: string }
-  | ({ kind: "tool_finished" } & ToolCallFinishedEvent)
-  | ({ kind: "tool_failed" } & ToolCallFailedEvent)
-  | ({ kind: "tool_cancelled" } & ToolCallCancelledEvent)
-  | ({ kind: "tool_denied" } & ToolDenied)
+  | { kind: "tool_requested"; data: ToolCallStartedEvent }
+  | { kind: "tool_policy_checked"; data: ToolPolicyChecked }
+  | { kind: "tool_approved"; data: { span_id: string; approver: string } }
+  | { kind: "tool_started"; data: { span_id: string } }
+  | { kind: "tool_delta"; data: { span_id: string; text: string } }
+  | { kind: "tool_finished"; data: ToolCallFinishedEvent }
+  | { kind: "tool_failed"; data: ToolCallFailedEvent }
+  | { kind: "tool_cancelled"; data: ToolCallCancelledEvent }
+  | { kind: "tool_denied"; data: ToolDenied }
 
   // ── Broker (xvision-specific, reused) ──
-  | ({ kind: "broker_call_started" } & BrokerCallStartedEvent)
-  | ({ kind: "broker_call_finished" } & BrokerCallFinishedEvent)
+  | { kind: "broker_call_started"; data: BrokerCallStartedEvent }
+  | { kind: "broker_call_finished"; data: BrokerCallFinishedEvent }
 
   // ── Checkpoints ──
-  | ({ kind: "checkpoint_created" } & CheckpointWrittenEvent)
-  | ({ kind: "checkpoint_restored" } & CheckpointRestored)
-  | ({ kind: "checkpoint_restore_failed" } & CheckpointRestoreFailed)
+  | { kind: "checkpoint_created"; data: CheckpointWrittenEvent }
+  | { kind: "checkpoint_restored"; data: CheckpointRestored }
+  | { kind: "checkpoint_restore_failed"; data: CheckpointRestoreFailed }
 
   // ── Focus chain ──
-  | ({ kind: "focus_loaded" } & FocusEvent)
-  | ({ kind: "focus_edited" } & FocusEvent)
-  | ({ kind: "focus_injected" } & FocusEvent)
+  | { kind: "focus_loaded"; data: FocusEvent }
+  | { kind: "focus_edited"; data: FocusEvent }
+  | { kind: "focus_injected"; data: FocusEvent }
 
   // ── Optimization (offline; surfaced live in the rail) ──
-  | ({ kind: "optimization_candidate_started" } & OptimizationCandidate)
-  | ({ kind: "optimization_candidate_metric" } & OptimizationCandidateMetric)
-  | ({ kind: "optimization_candidate_selected" } & OptimizationCandidate)
-  | ({ kind: "optimization_completed" } & OptimizationCompleted)
+  | { kind: "optimization_candidate_started"; data: OptimizationCandidate }
+  | { kind: "optimization_candidate_metric"; data: OptimizationCandidateMetric }
+  | { kind: "optimization_candidate_selected"; data: OptimizationCandidate }
+  | { kind: "optimization_completed"; data: OptimizationCompleted }
 
   // ── Provenance / supervision (reused) ──
-  | ({ kind: "memory_recall" } & MemoryRecallEvent)
-  | ({ kind: "artifact_written" } & ArtifactWrittenEvent)
-  | ({ kind: "supervisor_note" } & SupervisorNoteEvent)
-  | ({ kind: "engine_event" } & EngineEvent)
+  | { kind: "memory_recall"; data: MemoryRecallEvent }
+  | { kind: "artifact_written"; data: ArtifactWrittenEvent }
+  | { kind: "supervisor_note"; data: SupervisorNoteEvent }
+  | { kind: "engine_event"; data: EngineEvent }
 
   // ── Errors (typed, never silent) ──
-  | ({ kind: "error_missing_capability" } & TypedError)
-  | ({ kind: "error_missing_tool" } & TypedError)
-  | ({ kind: "error_invalid_schema" } & TypedError)
-  | ({ kind: "error_provider_unavailable" } & TypedError)
-  | ({ kind: "error_policy_denied" } & TypedError)
-  | ({ kind: "error_persistence_failed" } & TypedError)
-  | ({ kind: "sidecar_error" } & SidecarErrorEvent)
-  | ({ kind: "backpressure_dropped" } & BackpressureDroppedEvent);
+  | { kind: "error_missing_capability"; data: TypedError }
+  | { kind: "error_missing_tool"; data: TypedError }
+  | { kind: "error_invalid_schema"; data: TypedError }
+  | { kind: "error_provider_unavailable"; data: TypedError }
+  | { kind: "error_policy_denied"; data: TypedError }
+  | { kind: "error_persistence_failed"; data: TypedError }
+  | { kind: "sidecar_error"; data: SidecarErrorEvent }
+  | { kind: "backpressure_dropped"; data: BackpressureDroppedEvent };
 
 /** The kind discriminant union — every literal above. */
 export type UnifiedPayloadKind = UnifiedPayload["kind"];

@@ -213,76 +213,76 @@ function dispatch(rows: MessageRow[], ev: UnifiedEvent): MessageRow[] {
     case "assistant_message_started":
       return openAssistantRow(rows, ev);
     case "assistant_token_delta":
-      return appendToAssistant(rows, ev, { text: p.text });
+      return appendToAssistant(rows, ev, { text: p.data.text });
     case "assistant_content_block":
-      return appendToAssistant(rows, ev, { block: p.block });
+      return appendToAssistant(rows, ev, { block: p.data.block });
     case "assistant_message_done":
-      return closeAssistant(rows, ev, p.draft_id);
+      return closeAssistant(rows, ev, p.data.draft_id);
 
     // ── Tool lifecycle (all keyed on span_id) ──
     case "tool_requested":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
-        toolName: p.tool_name,
+        toolName: p.data.tool_name,
         status: bumpToolStatus(r.status, "requested"),
       }));
     case "tool_policy_checked":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
-        toolName: r.toolName ?? p.tool_name,
+        toolName: r.toolName ?? p.data.tool_name,
         status: bumpToolStatus(r.status, "policy_checked"),
-        policyOutcome: p.outcome,
-        policyMode: p.mode,
+        policyOutcome: p.data.outcome,
+        policyMode: p.data.mode,
       }));
     case "tool_approved":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
         status: bumpToolStatus(r.status, "approved"),
-        approver: p.approver,
+        approver: p.data.approver,
       }));
     case "tool_started":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
         status: bumpToolStatus(r.status, "started"),
       }));
     case "tool_delta":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
-        output: r.output + p.text,
+        output: r.output + p.data.text,
       }));
     case "tool_finished":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
         status: bumpToolStatus(r.status, "finished"),
-        outputHash: p.output_hash ?? r.outputHash,
-        exitCode: p.exit_code ?? r.exitCode,
+        outputHash: p.data.output_hash ?? r.outputHash,
+        exitCode: p.data.exit_code ?? r.exitCode,
       }));
     case "tool_failed":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
         status: bumpToolStatus(r.status, "failed"),
-        errorMessage: p.error_json ?? r.errorMessage,
+        errorMessage: p.data.error_json ?? r.errorMessage,
       }));
     case "tool_cancelled":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
         status: bumpToolStatus(r.status, "cancelled"),
-        cancelReason: p.reason ?? r.cancelReason,
+        cancelReason: p.data.reason ?? r.cancelReason,
       }));
     case "tool_denied":
-      return upsertTool(rows, ev, p.span_id, (r) => ({
+      return upsertTool(rows, ev, p.data.span_id, (r) => ({
         ...r,
-        toolName: r.toolName ?? p.tool_name,
+        toolName: r.toolName ?? p.data.tool_name,
         status: bumpToolStatus(r.status, "denied"),
-        deniedCode: p.code,
-        errorMessage: p.message,
+        deniedCode: p.data.code,
+        errorMessage: p.data.message,
       }));
 
     // ── Checkpoints ──
     case "checkpoint_created":
       return addCheckpointRow(rows, ev, {
         status: "created",
-        checkpointId: p.checkpoint_id,
+        checkpointId: p.data.checkpoint_id,
         restored: [],
         code: null,
         message: null,
@@ -290,49 +290,50 @@ function dispatch(rows: MessageRow[], ev: UnifiedEvent): MessageRow[] {
     case "checkpoint_restored":
       return addCheckpointRow(rows, ev, {
         status: "restored",
-        checkpointId: p.checkpoint_id,
-        restored: p.restored,
+        checkpointId: p.data.checkpoint_id,
+        restored: p.data.restored,
         code: null,
         message: null,
       });
     case "checkpoint_restore_failed":
       return addCheckpointRow(rows, ev, {
         status: "restore_failed",
-        checkpointId: p.checkpoint_id,
+        checkpointId: p.data.checkpoint_id,
         restored: [],
-        code: p.code,
-        message: p.message,
+        code: p.data.code,
+        message: p.data.message,
       });
 
     // ── Optimizer (keyed on optimization_id) ──
     case "optimization_candidate_started":
-      return upsertOptimizer(rows, ev, p.optimization_id, (r) => ({
+      return upsertOptimizer(rows, ev, p.data.optimization_id, (r) => ({
         ...r,
-        optimizer: r.optimizer ?? p.optimizer,
-        candidateCount: Math.max(r.candidateCount, p.candidate_index + 1),
+        optimizer: r.optimizer ?? p.data.optimizer,
+        candidateCount: Math.max(r.candidateCount, p.data.candidate_index + 1),
       }));
     case "optimization_candidate_metric":
-      return upsertOptimizer(rows, ev, p.optimization_id, (r) => ({
+      return upsertOptimizer(rows, ev, p.data.optimization_id, (r) => ({
         ...r,
-        candidateCount: Math.max(r.candidateCount, p.candidate_index + 1),
+        candidateCount: Math.max(r.candidateCount, p.data.candidate_index + 1),
         metrics: {
           ...r.metrics,
-          [`${p.candidate_index}:${p.metric}:${p.split}`]: p.value,
+          [`${p.data.candidate_index}:${p.data.metric}:${p.data.split}`]:
+            p.data.value,
         },
       }));
     case "optimization_candidate_selected":
-      return upsertOptimizer(rows, ev, p.optimization_id, (r) => ({
+      return upsertOptimizer(rows, ev, p.data.optimization_id, (r) => ({
         ...r,
-        optimizer: r.optimizer ?? p.optimizer,
-        candidateCount: Math.max(r.candidateCount, p.candidate_index + 1),
-        selectedCandidateIndex: p.candidate_index,
+        optimizer: r.optimizer ?? p.data.optimizer,
+        candidateCount: Math.max(r.candidateCount, p.data.candidate_index + 1),
+        selectedCandidateIndex: p.data.candidate_index,
       }));
     case "optimization_completed":
-      return upsertOptimizer(rows, ev, p.optimization_id, (r) => ({
+      return upsertOptimizer(rows, ev, p.data.optimization_id, (r) => ({
         ...r,
         selectedCandidateIndex:
-          p.selected_candidate_index ?? r.selectedCandidateIndex,
-        mintedAgentId: p.minted_agent_id ?? r.mintedAgentId,
+          p.data.selected_candidate_index ?? r.selectedCandidateIndex,
+        mintedAgentId: p.data.minted_agent_id ?? r.mintedAgentId,
         completed: true,
       }));
 
@@ -345,18 +346,18 @@ function dispatch(rows: MessageRow[], ev: UnifiedEvent): MessageRow[] {
     case "error_persistence_failed":
       return addErrorRow(rows, ev, {
         errorKind: ERROR_KIND_BY_PAYLOAD[p.kind],
-        code: p.code,
-        message: p.message,
-        remediation: p.remediation ?? null,
+        code: p.data.code,
+        message: p.data.message,
+        remediation: p.data.remediation ?? null,
         severity: null,
       });
     case "sidecar_error":
       return addErrorRow(rows, ev, {
         errorKind: "sidecar",
         code: "sidecar_error",
-        message: p.message,
+        message: p.data.message,
         remediation: null,
-        severity: p.severity,
+        severity: p.data.severity,
       });
 
     // ── Everything else does not project to a row in this reducer. ──
