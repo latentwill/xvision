@@ -41,11 +41,13 @@ use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
 use xvision_engine::chat_session::{
     action_confirmation_card, classify_tool, decide_tool_policy, ChatSessionStore, ContextScope,
-    InlineAction, ToolPolicyStore, GLOBAL_SCOPE,
+    InlineAction, ToolClass, ToolPolicyStore, GLOBAL_SCOPE,
 };
+use xvision_engine::checkpoint::{CheckpointKind, Checkpointer, SnapshotRequest};
+use xvision_engine::focus;
 use xvision_observability::{
-    Actor as UnifiedActor, ToolDenied, ToolPolicyChecked, ToolPolicyOutcome, TypedError,
-    UnifiedPayload,
+    Actor as UnifiedActor, CheckpointWrittenEvent, FocusEvent, ToolDenied, ToolPolicyChecked,
+    ToolPolicyOutcome, TypedError, UnifiedPayload,
 };
 use xvision_engine::eval::{
     findings::Finding,
@@ -789,11 +791,17 @@ impl WizardLoop {
         }
     }
 
-    fn system_prompt(&self) -> String {
+    /// Assemble the per-turn system prompt and splice in the scope's focus
+    /// document (Phase 2.4). Focus is reloaded from disk on every turn — a
+    /// cheap fs read — so an operator edit between turns takes effect on the
+    /// next turn without restarting the session. On a focus hit, a
+    /// `FocusInjected` event carrying the content hash is queued for the route
+    /// to project onto the unified session log/bus.
+    async fn system_prompt(&mut self) -> String {
         // Plan #11 Phase B Task 3 Step 2: inject scope header so the model
         // knows what the user is asking about (workspace, a specific run,
         // a draft, etc.). Tool calls remain available for deeper info.
-        format!(
+        let base = format!(
             "{base}\n\n## Current context\n{header}\n\n{runtime}\n",
             base = WIZARD_SYSTEM_PROMPT_BASE,
             header = format!(
@@ -802,7 +810,68 @@ impl WizardLoop {
                 self.profile.prompt_section()
             ),
             runtime = self.agent_runtime_prompt_section(),
-        )
+        );
+        match self.load_focus_section().await {
+            Some((section, ev)) => {
+                self.policy_events.push(ev);
+                format!("{base}\n{section}\n")
+            }
+            None => base,
+        }
+    }
+
+    /// Load the scope's focus document (if any) and build its clearly-delimited
+    /// "## Focus" section plus the matching `FocusInjected` policy event.
+    /// Returns `None` when no focus file exists for the scope or the read
+    /// fails (a missing/unreadable focus doc must never abort a turn — it is a
+    /// best-effort context aid, not a safety gate).
+    async fn load_focus_section(&self) -> Option<(String, PolicyEvent)> {
+        let xvn_home = &self.api_context.xvn_home;
+        let doc = match focus::load(xvn_home, &self.scope).await {
+            Ok(Some(doc)) => doc,
+            Ok(None) => return None,
+            Err(e) => {
+                tracing::error!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %self.session_id,
+                    error = %e,
+                    "failed to load focus doc; proceeding without it",
+                );
+                return None;
+            }
+        };
+        let (scope_kind, scope_id) = focus::scope_address(&self.scope);
+        let rel_path = self.focus_rel_path(&doc.path);
+        let section = format!(
+            "## Focus\n\
+             The operator pinned the following focus notes for this context. Treat them as \
+             standing guidance for this conversation.\n\n\
+             <focus>\n{content}\n</focus>",
+            content = doc.content,
+        );
+        let ev = PolicyEvent {
+            actor: UnifiedActor::Hook,
+            span_id: None,
+            payload: UnifiedPayload::FocusInjected(FocusEvent {
+                scope_kind,
+                scope_id,
+                path: rel_path,
+                content_hash: Some(doc.content_hash),
+            }),
+        };
+        Some((section, ev))
+    }
+
+    /// Normalize a focus doc's absolute path to one relative to `$XVN_HOME`
+    /// for the event record (matches the `focus_path` column convention). If
+    /// the path is not under `$XVN_HOME` (shouldn't happen), the absolute path
+    /// is used verbatim.
+    fn focus_rel_path(&self, abs: &str) -> String {
+        let home = &self.api_context.xvn_home;
+        std::path::Path::new(abs)
+            .strip_prefix(home)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| abs.to_string())
     }
 
     fn agent_runtime_prompt_section(&self) -> String {
@@ -822,9 +891,10 @@ impl WizardLoop {
             // out (and emit a ToolPolicyChecked{Denied} for visibility) so the
             // model never even sees a tool the operator has turned off.
             let tools = self.enabled_tool_defs().await;
+            let system_prompt = self.system_prompt().await;
             let req = LlmRequest {
                 model: self.model.clone(),
-                system_prompt: self.system_prompt(),
+                system_prompt,
                 messages,
                 max_tokens: Some(1500),
                 temperature: None,
@@ -888,14 +958,26 @@ impl WizardLoop {
                 // unified safety events when the tool must not run.
                 let result_value = match self.enforce_tool_policy(&name).await {
                     PolicyVerdict::Allow => {
-                        let result = self.run_tool(&name, input).await;
-                        match result {
-                            Ok(v) => v,
-                            Err(e) => {
-                                let msg = e.to_string();
-                                self.last_tool_error = Some((name.clone(), msg.clone()));
-                                serde_json::json!({ "error": msg })
+                        // Phase 2.5 CHECKPOINT HOOK: a WRITE tool that has passed
+                        // policy is about to mutate authoring state. Take a
+                        // PreTool snapshot of the affected artifacts FIRST so the
+                        // operator can rewind the edit. Fail closed: if the
+                        // snapshot can't be written, the mutating tool does NOT
+                        // run and a typed error tool_result is fed back to the
+                        // model instead.
+                        match self.maybe_snapshot_before_tool(&name, &input).await {
+                            Ok(()) => {
+                                let result = self.run_tool(&name, input).await;
+                                match result {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        let msg = e.to_string();
+                                        self.last_tool_error = Some((name.clone(), msg.clone()));
+                                        serde_json::json!({ "error": msg })
+                                    }
+                                }
                             }
+                            Err(denial) => denial,
                         }
                     }
                     PolicyVerdict::Blocked(denial) => denial,
@@ -1248,6 +1330,166 @@ impl WizardLoop {
                 }))
             }
         }
+    }
+
+    /// Phase 2.5 checkpoint hook. Called for a WRITE tool that has cleared the
+    /// policy gate, immediately before it executes. Takes a content-addressed
+    /// [`CheckpointKind::PreTool`] snapshot of the authoring artifacts the tool
+    /// is about to mutate, records the new checkpoint id as the session's
+    /// `checkpoint_head`, and queues a `CheckpointCreated` event for the route
+    /// to project.
+    ///
+    /// Artifact targeting:
+    /// - A strategy-write tool (`create_strategy` / `update_*` / `set_*` /
+    ///   `validate_draft` / filter edits) snapshots the active draft's Strategy
+    ///   JSON plus the session tool policy and focus file.
+    /// - An agent-editing tool (`attach_agent`) additionally snapshots the
+    ///   referenced library agent's slot rows.
+    ///
+    /// Fail-closed: if the snapshot write fails, returns `Err(denial)` carrying
+    /// a typed tool_result so the caller skips the mutating tool and feeds the
+    /// refusal back to the model. A typed `ErrorPersistenceFailed` event is
+    /// queued so the failure is never silent.
+    ///
+    /// Returns `Ok(())` — letting the tool run — when the tool mutates no
+    /// snapshottable authoring artifact (e.g. `run_eval` / `fetch_bars`, which
+    /// launch work rather than edit a draft); there is nothing to rewind.
+    async fn maybe_snapshot_before_tool(
+        &mut self,
+        name: &str,
+        input: &serde_json::Value,
+    ) -> Result<(), serde_json::Value> {
+        // Only WRITE-class tools mutate state. Read tools never need a rewind
+        // point.
+        if classify_tool(name) != ToolClass::Write {
+            return Ok(());
+        }
+
+        let strategy_id = self.snapshot_strategy_id(input);
+        let agent_id = if name == "attach_agent" {
+            input
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+
+        // Nothing concrete to snapshot (e.g. a work-launcher tool with no draft
+        // target). Let the tool run; there is no authoring artifact to protect.
+        if strategy_id.is_none() && agent_id.is_none() {
+            return Ok(());
+        }
+
+        let req = SnapshotRequest {
+            strategy_id: strategy_id.clone(),
+            agent_id,
+            // A strategy-write or agent-edit also captures the session policy +
+            // focus so a rewind restores the full authoring context, not just
+            // the artifact bytes.
+            tool_policy: true,
+            focus: true,
+            label: Some(format!("pre:{name}")),
+        };
+
+        let checkpointer = Checkpointer::new(self.pool.clone(), self.api_context.xvn_home.clone());
+        match checkpointer
+            .snapshot(&self.session_id, CheckpointKind::PreTool, req)
+            .await
+        {
+            Ok(ckpt) => {
+                if let Err(e) =
+                    ChatSessionStore::set_checkpoint_head(&self.pool, &self.session_id, Some(&ckpt.checkpoint_id))
+                        .await
+                {
+                    // The snapshot blobs + row are durable; only the head
+                    // pointer update failed. Fail closed so the operator never
+                    // mutates state whose rewind pointer wasn't recorded.
+                    tracing::error!(
+                        target: "xvision::dashboard::chat_rail",
+                        session_id = %self.session_id,
+                        tool = name,
+                        checkpoint_id = %ckpt.checkpoint_id,
+                        error = %e,
+                        "checkpoint written but set_checkpoint_head failed; blocking mutating tool",
+                    );
+                    return Err(self.checkpoint_failure(name, "checkpoint_head_failed", &e.to_string()));
+                }
+                let span = Ulid::new().to_string();
+                self.policy_events.push(PolicyEvent {
+                    actor: UnifiedActor::Hook,
+                    span_id: Some(span.clone()),
+                    payload: UnifiedPayload::CheckpointCreated(CheckpointWrittenEvent {
+                        checkpoint_id: ckpt.checkpoint_id,
+                        // Chat-rail checkpoints are session-scoped, not run-
+                        // scoped: carry the session id in the reused `run_id`
+                        // slot so the trace dock can correlate.
+                        run_id: self.session_id.clone(),
+                        span_id: span,
+                        sequence: 0,
+                        kind: "tool_step".to_string(),
+                        input_hash: ckpt.content_hash,
+                        output_hash: None,
+                        input_payload_ref: None,
+                        output_payload_ref: None,
+                    }),
+                });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %self.session_id,
+                    tool = name,
+                    error = %e,
+                    "pre-tool checkpoint snapshot failed; blocking mutating tool (fail closed)",
+                );
+                Err(self.checkpoint_failure(name, e.code(), &e.to_string()))
+            }
+        }
+    }
+
+    /// Resolve the strategy id a write tool will mutate: the explicit
+    /// `strategy_id` / `id` in the tool input, falling back to the session's
+    /// most-recent draft id. `None` when neither is available.
+    fn snapshot_strategy_id(&self, input: &serde_json::Value) -> Option<String> {
+        let from_input = input
+            .get("strategy_id")
+            .or_else(|| input.get("id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        from_input.or_else(|| self.last_draft_id.clone())
+    }
+
+    /// Build the typed denial tool_result + queue an `ErrorPersistenceFailed`
+    /// event for a failed pre-tool checkpoint. Shared by both failure paths
+    /// (snapshot write, head-pointer update) so the model and the unified log
+    /// see a consistent, never-silent record.
+    fn checkpoint_failure(&mut self, tool: &str, code: &str, detail: &str) -> serde_json::Value {
+        let message = format!(
+            "Could not take a safety checkpoint before `{tool}`; the edit was blocked so no \
+             un-rewindable change is made. ({detail})"
+        );
+        self.policy_events.push(PolicyEvent {
+            actor: UnifiedActor::Hook,
+            span_id: None,
+            payload: UnifiedPayload::ErrorPersistenceFailed(TypedError {
+                code: code.to_string(),
+                message: message.clone(),
+                remediation: Some(
+                    "Retry once the checkpoint store is writable; check disk space and \
+                     $XVN_HOME permissions."
+                        .to_string(),
+                ),
+            }),
+        });
+        serde_json::json!({
+            "error": message,
+            "checkpoint_failed": true,
+            "code": code,
+        })
     }
 
     async fn run_tool(&self, name: &str, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
@@ -5072,5 +5314,211 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             saw_giving_up,
             "expected loop to continue to final turn: {events:#?}"
         );
+    }
+
+    // ── Phase 2.5 checkpoint + Phase 2.4 focus wiring ──────────────────────
+
+    /// Drain the loop while also collecting every queued PolicyEvent in
+    /// emission order — mirrors what the chat_rail route does between
+    /// `next_event` calls (`take_policy_events`).
+    async fn drain_with_policy_events(
+        wl: &mut WizardLoop,
+    ) -> (Vec<WizardEvent>, Vec<PolicyEvent>) {
+        let mut events = vec![];
+        let mut policy = vec![];
+        while let Some(ev) = wl.next_event().await {
+            policy.extend(wl.take_policy_events());
+            events.push(ev);
+        }
+        policy.extend(wl.take_policy_events());
+        (events, policy)
+    }
+
+    /// Seed a blank strategy on disk for the tempdir-backed XVN_HOME and return
+    /// its id. Lets a write tool run against an EXISTING draft so the pre-tool
+    /// checkpoint has a Strategy artifact to capture.
+    async fn seed_strategy(td: &tempfile::TempDir, name: &str) -> String {
+        let store = xvision_engine::strategies::store::FilesystemStore::new(
+            xvision_engine::strategies::store::strategy_store_dir(td.path()),
+        );
+        let out = authoring::create_blank_strategy(&store, name.into(), None)
+            .await
+            .expect("seed strategy");
+        out.id
+    }
+
+    /// A WRITE tool against an existing draft must take a PreTool checkpoint
+    /// BEFORE it runs: the session's `checkpoint_head` is set and a
+    /// `CheckpointCreated` unified event is queued for the route to project.
+    #[tokio::test]
+    async fn mutating_tool_triggers_pretool_checkpoint() {
+        let (pool, td) = fresh_pool().await;
+        let scope = ContextScope::Workspace;
+        let session_id = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
+        unlock_writes_for_tests(&pool, &session_id).await;
+
+        // Seed a draft so update_manifest has something to mutate (and the
+        // checkpointer has a Strategy artifact to snapshot).
+        let strategy_id = seed_strategy(&td, "Checkpoint Target").await;
+
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_1",
+                "update_manifest",
+                serde_json::json!({ "id": strategy_id, "decision_cadence_minutes": 30 }),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text { text: "Updated the cadence.".into() }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+
+        let mut wl = WizardLoop::new(
+            td.path().to_path_buf(),
+            mock,
+            "claude-sonnet-4-6".into(),
+            pool.clone(),
+            session_id.clone(),
+            scope,
+            "set the cadence to 30 minutes".into(),
+        )
+        .await
+        .unwrap();
+
+        let (events, policy_events) = drain_with_policy_events(&mut wl).await;
+
+        // The tool actually ran (not blocked by the checkpoint hook).
+        let updated = events.iter().any(|e| matches!(
+            e,
+            WizardEvent::ToolResult { tool, result }
+                if tool == "update_manifest" && result.get("error").is_none()
+        ));
+        assert!(updated, "update_manifest should have run: {events:#?}");
+
+        // checkpoint_head is set on the session.
+        let rail = ChatSessionStore::load_rail_state(&pool, &session_id).await.unwrap();
+        let head = rail.checkpoint_head.expect("checkpoint_head must be set after a write tool");
+
+        // A CheckpointCreated event was queued referencing that same id.
+        let created = policy_events.iter().find_map(|pe| match &pe.payload {
+            UnifiedPayload::CheckpointCreated(c) => Some(c.clone()),
+            _ => None,
+        });
+        let created = created.expect("a CheckpointCreated event must be emitted");
+        assert_eq!(created.checkpoint_id, head, "event id must match checkpoint_head");
+        assert_eq!(created.run_id, session_id, "session id carried in run_id slot");
+        assert!(!created.input_hash.is_empty(), "checkpoint content_hash present");
+
+        // The persisted checkpoint really captured the Strategy artifact.
+        let checkpointer = Checkpointer::new(pool.clone(), td.path().to_path_buf());
+        let list = checkpointer.list(&session_id).await.unwrap();
+        assert_eq!(list.len(), 1, "exactly one pre-tool checkpoint");
+        assert_eq!(list[0].kind, CheckpointKind::PreTool);
+        let labels: Vec<&str> = list[0].artifacts.iter().map(|a| a.label()).collect();
+        assert!(labels.contains(&"strategy"), "captured strategy: {labels:?}");
+        assert!(labels.contains(&"tool_policy"), "captured tool policy: {labels:?}");
+        assert!(labels.contains(&"focus"), "captured focus marker: {labels:?}");
+    }
+
+    /// A read-only tool must NOT take a checkpoint — no rewind point is needed
+    /// and no CheckpointCreated event is emitted.
+    #[tokio::test]
+    async fn read_only_tool_takes_no_checkpoint() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use("tu_1", "list_strategies", serde_json::json!({})),
+            LlmResponse {
+                content: vec![ContentBlock::Text { text: "Here they are.".into() }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, pool, _td, sid) =
+            loop_with_session(mock, "what strategies exist", ContextScope::Workspace).await;
+        let (_events, policy_events) = drain_with_policy_events(&mut wl).await;
+
+        let any_ckpt = policy_events
+            .iter()
+            .any(|pe| matches!(pe.payload, UnifiedPayload::CheckpointCreated(_)));
+        assert!(!any_ckpt, "read-only tool must not checkpoint");
+        let rail = ChatSessionStore::load_rail_state(&pool, &sid).await.unwrap();
+        assert!(rail.checkpoint_head.is_none(), "no checkpoint_head for read-only tool");
+    }
+
+    /// The scope's focus document is spliced into the assembled system prompt
+    /// (a clearly-delimited "## Focus" section) and a `FocusInjected` event
+    /// carrying the content hash is emitted on the turn it is injected.
+    #[tokio::test]
+    async fn focus_doc_is_injected_into_system_prompt() {
+        let (pool, td) = fresh_pool().await;
+        let scope = ContextScope::Strategy { draft_id: "btc-momentum".into() };
+        let session_id = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
+
+        // Operator pins focus notes for this scope.
+        let focus_text = "Keep position sizing conservative; never exceed 2% per trade.";
+        let saved = focus::save(td.path(), &scope, focus_text).await.unwrap();
+
+        // RecordingDispatch captures the system prompt the loop assembles.
+        struct Recorder {
+            inner: MockDispatch,
+            last_system: Arc<std::sync::Mutex<Option<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl LlmDispatch for Recorder {
+            async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+                *self.last_system.lock().unwrap() = Some(req.system_prompt.clone());
+                self.inner.complete(req).await
+            }
+        }
+        let last_system = Arc::new(std::sync::Mutex::new(None));
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(Recorder {
+            inner: MockDispatch::echo("Understood."),
+            last_system: last_system.clone(),
+        });
+
+        let mut wl = WizardLoop::new(
+            td.path().to_path_buf(),
+            dispatch,
+            "claude-sonnet-4-6".into(),
+            pool.clone(),
+            session_id.clone(),
+            scope,
+            "what should I watch for".into(),
+        )
+        .await
+        .unwrap();
+
+        let (_events, policy_events) = drain_with_policy_events(&mut wl).await;
+
+        // The focus content is spliced into the system prompt under "## Focus".
+        let system = last_system.lock().unwrap().clone().expect("a system prompt was assembled");
+        assert!(system.contains("## Focus"), "system prompt has a Focus section: {system}");
+        assert!(system.contains(focus_text), "focus content spliced into prompt: {system}");
+
+        // A FocusInjected event with the saved content hash was emitted.
+        let injected = policy_events.iter().find_map(|pe| match &pe.payload {
+            UnifiedPayload::FocusInjected(f) => Some(f.clone()),
+            _ => None,
+        });
+        let injected = injected.expect("a FocusInjected event must be emitted");
+        assert_eq!(injected.scope_kind, "strategy");
+        assert_eq!(injected.scope_id.as_deref(), Some("btc-momentum"));
+        assert_eq!(injected.content_hash.as_deref(), Some(saved.content_hash.as_str()));
+    }
+
+    /// With no focus file for the scope, no Focus section and no FocusInjected
+    /// event appear — the absence path is silent and non-fatal.
+    #[tokio::test]
+    async fn no_focus_doc_means_no_focus_section() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "hi", ContextScope::Workspace).await;
+        let (_events, policy_events) = drain_with_policy_events(&mut wl).await;
+        let any_focus = policy_events
+            .iter()
+            .any(|pe| matches!(pe.payload, UnifiedPayload::FocusInjected(_)));
+        assert!(!any_focus, "no focus file → no FocusInjected event");
     }
 }
