@@ -1,0 +1,13 @@
+DROP INDEX IF EXISTS idx_agent_slot_optimizations_gate_verdict;
+ALTER TABLE agent_slot_optimizations DROP COLUMN gated_at;
+ALTER TABLE agent_slot_optimizations DROP COLUMN gate_reason;
+ALTER TABLE agent_slot_optimizations DROP COLUMN gate_verdict;
+ALTER TABLE agent_slot_optimizations DROP COLUMN delta_holdout;
+ALTER TABLE agent_slot_optimizations DROP COLUMN delta_dev;
+ALTER TABLE agent_slot_optimizations DROP COLUMN gate_epsilon;
+ALTER TABLE agent_slot_optimizations DROP COLUMN child_holdout_score;
+ALTER TABLE agent_slot_optimizations DROP COLUMN parent_holdout_score;
+ALTER TABLE agent_slot_optimizations DROP COLUMN child_dev_score;
+ALTER TABLE agent_slot_optimizations DROP COLUMN parent_dev_score;
+ALTER TABLE agent_slot_optimizations DROP COLUMN holdout_metric;
+ALTER TABLE agent_slot_optimizations DROP COLUMN dev_metric;

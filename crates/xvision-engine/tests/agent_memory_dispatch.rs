@@ -31,7 +31,11 @@ fn pattern_item(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
         run_id: None,
         scenario_id: None,
         cycle_idx: None,
+        source_window_start: None,
+        source_window_end: None,
         training_window_end: None,
+        promotion_state: Some("active".into()),
+        attestation_id: Some("attest-test".into()),
         forgotten_at: None,
     }
 }
@@ -101,18 +105,21 @@ async fn record_writes_observation_into_correct_namespace() {
             "run-1".into(),
             "scenario-1".into(),
             7,
+            chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 1, 0).unwrap(),
         )
         .await
         .unwrap();
     // Observations are not visible via recall; assert via a direct
     // SQL probe so we can prove the write landed.
-    let row: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM memory_items WHERE namespace = ? AND tier = 'observation'")
+    let row: (i64, Option<String>) =
+        sqlx::query_as("SELECT COUNT(*), MAX(source_window_end) FROM memory_items WHERE namespace = ? AND tier = 'observation'")
             .bind("agent:agent-1")
             .fetch_one(store_arc.pool())
             .await
             .unwrap();
     assert_eq!(row.0, 1);
+    assert!(row.1.is_some(), "Observation must persist source_window_end");
 }
 
 /// Dispatch double that captures every `LlmRequest` it observes so we can
@@ -158,6 +165,157 @@ impl LlmDispatch for CapturingDispatch {
         self.seen.lock().unwrap().push(req);
         Ok(self.response.clone())
     }
+}
+
+async fn phase0_leakage_probe_prompt() -> String {
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    let store_arc = Arc::new(store);
+    let scenario_start = chrono::Utc.with_ymd_and_hms(2024, 8, 1, 0, 0, 0).unwrap();
+    let before_window = chrono::Utc.with_ymd_and_hms(2024, 7, 1, 0, 0, 0).unwrap();
+    let inside_window = chrono::Utc.with_ymd_and_hms(2024, 9, 1, 0, 0, 0).unwrap();
+
+    let mut high = pattern_item(
+        "phase0-high",
+        "agent:phase0",
+        "PHASE0_SAFE_HIGH_SCORE",
+        vec![1.0, 0.0],
+    );
+    high.training_window_end = Some(before_window);
+    store_arc.upsert_pattern(&high, "test-embedder").await.unwrap();
+
+    let mut lower = pattern_item(
+        "phase0-lower",
+        "agent:phase0",
+        "PHASE0_SAFE_LOWER_SCORE",
+        vec![0.8, 0.2],
+    );
+    lower.training_window_end = Some(before_window);
+    store_arc.upsert_pattern(&lower, "test-embedder").await.unwrap();
+
+    let mut temporal_leak = pattern_item(
+        "phase0-temporal-leak",
+        "agent:phase0",
+        "PHASE0_TEMPORAL_LEAK",
+        vec![0.99, 0.01],
+    );
+    temporal_leak.training_window_end = Some(inside_window);
+    store_arc
+        .upsert_pattern(&temporal_leak, "test-embedder")
+        .await
+        .unwrap();
+
+    let mut staged = pattern_item(
+        "phase0-staged",
+        "agent:phase0",
+        "PHASE0_STAGED_LEAK",
+        vec![0.98, 0.02],
+    );
+    staged.training_window_end = Some(before_window);
+    staged.promotion_state = Some("staged".into());
+    store_arc.upsert_pattern(&staged, "test-embedder").await.unwrap();
+
+    let mut wrong_ns = pattern_item("phase0-global", "global", "PHASE0_GLOBAL_LEAK", vec![0.97, 0.03]);
+    wrong_ns.training_window_end = Some(before_window);
+    store_arc
+        .upsert_pattern(&wrong_ns, "test-embedder")
+        .await
+        .unwrap();
+
+    let observation = MemoryItem {
+        id: "phase0-observation".into(),
+        namespace: "agent:phase0".into(),
+        tier: Tier::Observation,
+        text: "PHASE0_OBSERVATION_LEAK".into(),
+        embedding: vec![1.0, 0.0],
+        created_at: before_window,
+        run_id: Some("run-phase0".into()),
+        scenario_id: Some("scenario-phase0".into()),
+        cycle_idx: Some(1),
+        source_window_start: Some(before_window),
+        source_window_end: Some(before_window),
+        training_window_end: None,
+        promotion_state: None,
+        attestation_id: None,
+        forgotten_at: None,
+    };
+    store_arc
+        .upsert_observation(&observation, "test-embedder")
+        .await
+        .unwrap();
+
+    let recorder = Arc::new(MemoryRecorder::with_static_embedder(
+        Arc::clone(&store_arc),
+        "test-embedder",
+        vec![1.0, 0.0],
+    ));
+    let slot = LLMSlot {
+        role: "trader".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
+        allowed_tools: Vec::new(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4-6".into()),
+    };
+    let dispatch = Arc::new(CapturingDispatch::new(
+        r#"{"action":"hold","conviction":0.5,"justification":"phase0"}"#,
+    ));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    execute_slot(SlotInput {
+        slot: &slot,
+        system_prompt: "PHASE0_BASE_PROMPT".into(),
+        upstream_inputs: serde_json::json!({}),
+        dispatch: dispatch.clone(),
+        tools,
+        response_schema: None,
+        max_tokens: None,
+        temperature: None,
+        obs: None,
+        memory: Some(recorder),
+        memory_mode: MemoryMode::AgentScoped,
+        agent_id: "phase0".into(),
+        scenario_start: Some(scenario_start),
+        source_window_start: Some(scenario_start),
+        source_window_end: Some(scenario_start),
+        run_id: "run-phase0".into(),
+        scenario_id: "scenario-phase0".into(),
+        cycle_idx: 1,
+        catalog: None,
+        delta_briefing: false,
+        prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
+    })
+    .await
+    .unwrap();
+
+    dispatch.last_system_prompt()
+}
+
+#[tokio::test]
+async fn phase0_leakage_regression_harness_flt_prompt_is_deterministic() {
+    let first = phase0_leakage_probe_prompt().await;
+    let second = phase0_leakage_probe_prompt().await;
+
+    assert_eq!(
+        first, second,
+        "identical leakage probes must render byte-identical prompts"
+    );
+    assert!(first.contains("<prior_observations>"));
+    assert!(first.contains("A prior decision noted:"));
+    assert!(first.contains("Consider whether this situation matches the present cycle."));
+    assert!(first.contains("PHASE0_SAFE_HIGH_SCORE"));
+    assert!(first.contains("PHASE0_SAFE_LOWER_SCORE"));
+    assert!(first.contains("PHASE0_BASE_PROMPT"));
+    assert!(!first.contains("PHASE0_OBSERVATION_LEAK"));
+    assert!(!first.contains("PHASE0_TEMPORAL_LEAK"));
+    assert!(!first.contains("PHASE0_STAGED_LEAK"));
+    assert!(!first.contains("PHASE0_GLOBAL_LEAK"));
+
+    let high_idx = first.find("PHASE0_SAFE_HIGH_SCORE").unwrap();
+    let lower_idx = first.find("PHASE0_SAFE_LOWER_SCORE").unwrap();
+    let base_idx = first.find("PHASE0_BASE_PROMPT").unwrap();
+    assert!(high_idx < lower_idx, "higher-score Pattern must render first");
+    assert!(lower_idx < base_idx, "memory block must precede base prompt");
 }
 
 #[tokio::test]
@@ -214,6 +372,8 @@ async fn execute_slot_prepends_prior_observations_when_agent_scoped() {
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-xyz".into(),
         scenario_start: None,
+        source_window_start: None,
+        source_window_end: None,
         run_id: "run-fixture".into(),
         scenario_id: "scenario-fixture".into(),
         cycle_idx: 0,
@@ -308,6 +468,8 @@ async fn recall_wraps_each_pattern_in_caselaw_framing() {
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-caselaw".into(),
         scenario_start: None,
+        source_window_start: None,
+        source_window_end: None,
         run_id: "r".into(),
         scenario_id: "s".into(),
         cycle_idx: 0,
@@ -383,6 +545,8 @@ async fn recall_excludes_pattern_when_training_window_overlaps_scenario() {
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-leakage".into(),
         scenario_start: Some(scenario_start),
+        source_window_start: Some(scenario_start),
+        source_window_end: Some(scenario_start),
         run_id: "r".into(),
         scenario_id: "s".into(),
         cycle_idx: 0,
@@ -428,6 +592,8 @@ async fn execute_slot_writes_final_decision_into_namespace() {
     };
     let dispatch = Arc::new(CapturingDispatch::new("FINAL_DECISION_FIXTURE_TEXT"));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let source_window_start = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+    let source_window_end = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 15, 0).unwrap();
 
     execute_slot(SlotInput {
         slot: &slot,
@@ -443,6 +609,8 @@ async fn execute_slot_writes_final_decision_into_namespace() {
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-xyz".into(),
         scenario_start: None,
+        source_window_start: Some(source_window_start),
+        source_window_end: Some(source_window_end),
         run_id: "run-fixture".into(),
         scenario_id: "scenario-fixture".into(),
         cycle_idx: 0,
@@ -468,6 +636,91 @@ async fn execute_slot_writes_final_decision_into_namespace() {
     .unwrap();
     assert_eq!(row.0, 1);
     assert!(row.1.contains("FINAL_DECISION_FIXTURE_TEXT"));
+}
+
+#[tokio::test]
+async fn execute_slot_skips_observation_write_without_source_window() {
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    let store_arc = Arc::new(store);
+    let recorder = Arc::new(MemoryRecorder::with_static_embedder(
+        Arc::clone(&store_arc),
+        "test-embedder",
+        vec![0.25, 0.75],
+    ));
+
+    let recorder_obs = Arc::new(NoopRecorder::new());
+    let bus = Arc::new(RunEventBus::new(vec![
+        recorder_obs.clone() as Arc<dyn AgentRunRecorder>
+    ]));
+    let emitter = ObsEmitter::new(bus.clone(), "run-missing-window");
+
+    let slot = LLMSlot {
+        role: "trader".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
+        allowed_tools: Vec::new(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4-6".into()),
+    };
+    let dispatch = Arc::new(CapturingDispatch::new("MISSING_WINDOW_DECISION"));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    execute_slot(SlotInput {
+        slot: &slot,
+        system_prompt: "BASE_SYSTEM_PROMPT".into(),
+        upstream_inputs: serde_json::json!({}),
+        dispatch,
+        tools,
+        response_schema: None,
+        max_tokens: None,
+        temperature: None,
+        obs: Some(emitter),
+        memory: Some(recorder),
+        memory_mode: MemoryMode::AgentScoped,
+        agent_id: "agent-missing-window".into(),
+        scenario_start: None,
+        source_window_start: None,
+        source_window_end: None,
+        run_id: "run-missing-window".into(),
+        scenario_id: "scenario-missing-window".into(),
+        cycle_idx: 9,
+        catalog: None,
+        delta_briefing: false,
+        prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
+    })
+    .await
+    .unwrap();
+
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM memory_items WHERE namespace = ? AND tier = 'observation'")
+            .bind("agent:agent-missing-window")
+            .fetch_one(store_arc.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        row.0, 0,
+        "execute_slot must not synthesize source windows for Observation writes",
+    );
+
+    let events = drain_events(&bus, &recorder_obs).await;
+    assert!(
+        !events.iter().any(|e| matches!(e, RunEvent::MemoryWrite(_))),
+        "missing source windows must not emit a MemoryWrite event",
+    );
+    let missing = events
+        .iter()
+        .find_map(|e| match e {
+            RunEvent::EngineEvent(e) if e.kind == "memory_write_missing_source_window" => Some(e),
+            _ => None,
+        })
+        .expect("missing source windows must emit a typed engine event");
+    assert_eq!(missing.run_id, "run-missing-window");
+    let payload: serde_json::Value = serde_json::from_str(missing.payload_json.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["flywheel_cycle_id"], "run-missing-window:9");
+    assert_eq!(payload["namespace"], "agent:agent-missing-window");
+    assert_eq!(payload["missing_source_window_start"], true);
+    assert_eq!(payload["missing_source_window_end"], true);
 }
 
 /// Build a minimal `Strategy` whose `agents` slot is populated so
@@ -588,6 +841,8 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         // Pattern surfaces to recall — proving the recall path actually
         // ran inside execute_slot.
         scenario_start: None,
+        source_window_start: Some(chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+        source_window_end: Some(chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 15, 0).unwrap()),
         run_id: "pipeline-run-1".into(),
         scenario_id: "pipeline-scenario-1".into(),
         cycle_idx: 0,
@@ -716,6 +971,8 @@ async fn execute_slot_emits_memory_recall_event_with_decision_id() {
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-prov".into(),
         scenario_start: None,
+        source_window_start: Some(chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+        source_window_end: Some(chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 15, 0).unwrap()),
         run_id: "run-prov-fixture".into(),
         scenario_id: "scenario-prov".into(),
         cycle_idx: 7,
@@ -741,6 +998,7 @@ async fn execute_slot_emits_memory_recall_event_with_decision_id() {
         );
 
     assert_eq!(recall.run_id, "run-prov-fixture");
+    assert_eq!(recall.flywheel_cycle_id.as_deref(), Some("run-prov-fixture:7"));
     assert_eq!(
         recall.decision_id, 7,
         "MemoryRecall.decision_id must match SlotInput.cycle_idx — \
@@ -771,4 +1029,18 @@ async fn execute_slot_emits_memory_recall_event_with_decision_id() {
             "recall item must carry a non-empty text_preview",
         );
     }
+
+    let write = events
+        .iter()
+        .find_map(|e| match e {
+            RunEvent::MemoryWrite(m) => Some(m),
+            _ => None,
+        })
+        .expect("execute_slot must publish a MemoryWrite event after recording the final decision");
+    assert_eq!(write.run_id, "run-prov-fixture");
+    assert_eq!(write.flywheel_cycle_id.as_deref(), Some("run-prov-fixture:7"));
+    assert_eq!(write.decision_id, 7);
+    assert_eq!(write.namespace, "agent:agent-prov");
+    assert!(!write.memory_item_id.is_empty());
+    assert!(write.text_preview.contains("hold"));
 }

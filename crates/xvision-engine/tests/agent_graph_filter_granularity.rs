@@ -145,6 +145,8 @@ async fn run_cycle(
         obs: None,
         memory_recorder: None,
         scenario_start: None,
+        source_window_start: None,
+        source_window_end: None,
         run_id: "r".into(),
         scenario_id: "s".into(),
         cycle_idx: 0,

@@ -9,6 +9,7 @@ pub mod cli;
 pub mod docs;
 pub mod eval;
 pub mod eval_runs;
+pub mod flywheel;
 pub mod health;
 pub mod memory;
 pub mod safety;

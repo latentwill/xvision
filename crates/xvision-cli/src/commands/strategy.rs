@@ -2109,6 +2109,8 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             obs: None,
             memory_recorder: None,
             scenario_start: None,
+            source_window_start: None,
+            source_window_end: None,
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,

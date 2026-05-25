@@ -279,6 +279,12 @@ pub enum Command {
     /// over the operator memory store (`$XVN_MEMORY_DB` or
     /// `~/.xvn/memory.db`).
     Memory(commands::memory::MemoryCmd),
+    /// Offline autoresearcher operations over memory Observations.
+    Autoresearch(commands::autoresearch::AutoresearchCmd),
+    /// Flywheel observability over memory + autoresearch activity.
+    Flywheel(commands::flywheel::FlywheelCmd),
+    /// Offline optimizer bridge operations.
+    Optimize(commands::optimize::OptimizeCmd),
     /// Bounded (strategy × model) bakeoff verb. See
     /// `team/contracts/cli-model-bakeoff.md`.
     Model(commands::model::ModelCmd),
@@ -401,6 +407,9 @@ impl Cli {
             Command::Run(cmd) => commands::run::run(cmd).await,
             Command::Experiment(cmd) => commands::experiment::run(cmd).await,
             Command::Memory(cmd) => commands::memory::run(cmd).await,
+            Command::Autoresearch(cmd) => commands::autoresearch::run(cmd).await,
+            Command::Flywheel(cmd) => commands::flywheel::run(cmd).await,
+            Command::Optimize(cmd) => commands::optimize::run(cmd).await,
             Command::Model(cmd) => commands::model::run(cmd).await,
         }
     }

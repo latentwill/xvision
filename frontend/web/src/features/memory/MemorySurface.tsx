@@ -36,8 +36,25 @@ import {
 
 import { ApiError } from "@/api/client";
 import {
+  demoteAutoresearchRun,
+  flywheelKeys,
+  gateOptimization,
+  gateAutoresearchRun,
+  getFlywheelLineage,
+  getFlywheelStatus,
+  getFlywheelVelocity,
+  listAutoresearchRuns,
+  optimizeMemoryDemos,
+  promoteAutoresearchRun,
+  runAutoresearch,
+  type MemoryDemoOptimizeResult,
+} from "@/api/flywheel";
+import {
+  activatePattern,
   agentNamespace,
+  createOperatorAttestation,
   createPattern,
+  demotePattern,
   forgetMemory,
   listMemory,
   memoryKeys,
@@ -47,6 +64,41 @@ import {
 import { Card, CardHeader } from "@/components/primitives/Card";
 
 type SubTab = "patterns" | "observations";
+type GateDraft = {
+  parentDayScore: string;
+  childDayScore: string;
+  parentHoldoutScore: string;
+  childHoldoutScore: string;
+  gateEpsilon: string;
+  gateReason: string;
+};
+
+type OptimizationGateDraft = {
+  parentDevScore: string;
+  childDevScore: string;
+  parentHoldoutScore: string;
+  childHoldoutScore: string;
+  gateEpsilon: string;
+  gateReason: string;
+};
+
+const emptyGateDraft: GateDraft = {
+  parentDayScore: "",
+  childDayScore: "",
+  parentHoldoutScore: "",
+  childHoldoutScore: "",
+  gateEpsilon: "0",
+  gateReason: "",
+};
+
+const emptyOptimizationGateDraft: OptimizationGateDraft = {
+  parentDevScore: "",
+  childDevScore: "",
+  parentHoldoutScore: "",
+  childHoldoutScore: "",
+  gateEpsilon: "0",
+  gateReason: "",
+};
 
 export type MemorySurfaceProps =
   | {
@@ -78,6 +130,8 @@ export function MemorySurface(props: MemorySurfaceProps) {
 
   return (
     <div className="flex flex-col gap-5">
+      <FlywheelPanel {...props} />
+
       <Card>
         <CardHeader title="Memory" />
         <div className="px-5 pb-5">
@@ -117,6 +171,796 @@ export function MemorySurface(props: MemorySurfaceProps) {
           onClose={() => setForgetOpen(false)}
         />
       ) : null}
+    </div>
+  );
+}
+
+// ── flywheel panel ─────────────────────────────────────────────────────────
+
+type FlywheelPanelProps = MemorySurfaceProps & {
+  fullHistory?: boolean;
+};
+
+export function FlywheelPanel(props: FlywheelPanelProps) {
+  const qc = useQueryClient();
+  const namespace =
+    props.mode === "agent" ? agentNamespace(props.agentId) : "global";
+  const lineageLimit = props.fullHistory ? 20 : 1;
+  const runLimit = props.fullHistory ? 25 : 5;
+  const statusQuery = useQuery({
+    queryKey: flywheelKeys.status(
+      props.mode === "agent" ? { agent: props.agentId } : { namespace },
+    ),
+    queryFn: () =>
+      getFlywheelStatus(
+        props.mode === "agent" ? { agent: props.agentId } : { namespace },
+      ),
+  });
+  const velocityQueryArgs =
+    props.mode === "agent"
+      ? { agent: props.agentId, days: 7 }
+      : { namespace, days: 7 };
+  const velocityQuery = useQuery({
+    queryKey: flywheelKeys.velocity(velocityQueryArgs),
+    queryFn: () => getFlywheelVelocity(velocityQueryArgs),
+  });
+  const lineageQueryArgs =
+    props.mode === "agent"
+      ? { agent: props.agentId, limit: lineageLimit }
+      : { namespace, limit: lineageLimit };
+  const lineageQuery = useQuery({
+    queryKey: flywheelKeys.lineage(lineageQueryArgs),
+    queryFn: () => getFlywheelLineage(lineageQueryArgs),
+  });
+  const runsQueryArgs =
+    props.mode === "agent"
+      ? { agent: props.agentId, limit: runLimit }
+      : { namespace, limit: runLimit };
+  const runsQuery = useQuery({
+    queryKey: flywheelKeys.autoresearchList(runsQueryArgs),
+    queryFn: () => listAutoresearchRuns(runsQueryArgs),
+  });
+
+  const [patternText, setPatternText] = useState("");
+  const [embeddingJson, setEmbeddingJson] = useState("[1,0]");
+  const [childName, setChildName] = useState("");
+  const [demoSource, setDemoSource] = useState("frozen-snapshot");
+  const [holdoutSplit, setHoldoutSplit] = useState("70/15/15");
+  const [autoPriors, setAutoPriors] = useState(false);
+  const [optimizeResult, setOptimizeResult] =
+    useState<MemoryDemoOptimizeResult | null>(null);
+  const [gateDrafts, setGateDrafts] = useState<Record<string, GateDraft>>({});
+  const [optimizationGateDrafts, setOptimizationGateDrafts] = useState<
+    Record<string, OptimizationGateDraft>
+  >({});
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: flywheelKeys.all });
+    qc.invalidateQueries({ queryKey: memoryKeys.all });
+  };
+
+  const autoresearchMutation = useMutation({
+    mutationFn: () => {
+      if (!patternText.trim()) {
+        throw new Error("Pattern text is required.");
+      }
+      return runAutoresearch({
+        ...(props.mode === "agent"
+          ? { agent: props.agentId }
+          : { namespace: "global" }),
+        pattern_text: patternText.trim(),
+        embedding: parseEmbeddingJson(embeddingJson),
+        min_observations: 2,
+      });
+    },
+    onSuccess: () => {
+      setPatternText("");
+      setError(null);
+      refresh();
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+
+  const optimizeMutation = useMutation({
+    mutationFn: () => {
+      if (props.mode !== "agent") {
+        throw new Error("Memory-demo optimization requires an agent.");
+      }
+      return optimizeMemoryDemos({
+        target_agent_id: props.agentId,
+        demo_source: demoSource,
+        holdout_split: holdoutSplit,
+        auto_prior_patterns: autoPriors,
+        prior_pattern_limit: 5,
+        apply: true,
+        child_name: childName.trim() || undefined,
+      });
+    },
+    onSuccess: (result) => {
+      setOptimizeResult(result);
+      setChildName("");
+      setError(null);
+      refresh();
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const lifecycleMutation = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: "promote" | "demote" }) =>
+      action === "promote"
+        ? promoteAutoresearchRun(id)
+        : demoteAutoresearchRun(id),
+    onSuccess: () => {
+      setError(null);
+      refresh();
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const gateMutation = useMutation({
+    mutationFn: ({ id, draft }: { id: string; draft: GateDraft }) =>
+      gateAutoresearchRun(id, {
+        parent_day_score: parseScore("parent day score", draft.parentDayScore),
+        child_day_score: parseScore("child day score", draft.childDayScore),
+        parent_holdout_score: parseScore(
+          "parent holdout score",
+          draft.parentHoldoutScore,
+        ),
+        child_holdout_score: parseScore(
+          "child holdout score",
+          draft.childHoldoutScore,
+        ),
+        gate_epsilon: parseScore("gate epsilon", draft.gateEpsilon || "0"),
+        gate_reason: draft.gateReason.trim() || undefined,
+      }),
+    onSuccess: (_run, vars) => {
+      setError(null);
+      setGateDrafts((prev) => ({
+        ...prev,
+        [vars.id]: emptyGateDraft,
+      }));
+      refresh();
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const optimizationGateMutation = useMutation({
+    mutationFn: ({
+      id,
+      draft,
+    }: {
+      id: string;
+      draft: OptimizationGateDraft;
+    }) =>
+      gateOptimization(id, {
+        parent_dev_score: parseScore("parent dev score", draft.parentDevScore),
+        child_dev_score: parseScore("child dev score", draft.childDevScore),
+        parent_holdout_score: parseScore(
+          "parent holdout score",
+          draft.parentHoldoutScore,
+        ),
+        child_holdout_score: parseScore(
+          "child holdout score",
+          draft.childHoldoutScore,
+        ),
+        gate_epsilon: parseScore("gate epsilon", draft.gateEpsilon || "0"),
+        gate_reason: draft.gateReason.trim() || undefined,
+      }),
+    onSuccess: (_gate, vars) => {
+      setError(null);
+      setOptimizationGateDrafts((prev) => ({
+        ...prev,
+        [vars.id]: emptyOptimizationGateDraft,
+      }));
+      refresh();
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+
+  const updateGateDraft = (id: string, patch: Partial<GateDraft>) => {
+    setGateDrafts((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] ?? emptyGateDraft),
+        ...patch,
+      },
+    }));
+  };
+  const updateOptimizationGateDraft = (
+    id: string,
+    patch: Partial<OptimizationGateDraft>,
+  ) => {
+    setOptimizationGateDrafts((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] ?? emptyOptimizationGateDraft),
+        ...patch,
+      },
+    }));
+  };
+
+  const status = statusQuery.data;
+  const runs = runsQuery.data?.items ?? [];
+  const lineageItems = lineageQuery.data?.items ?? [];
+
+  return (
+    <Card>
+      <CardHeader title="Flywheel" />
+      <div className="px-5 pb-5 space-y-4">
+        {statusQuery.isError ? (
+          <div className="text-danger text-[13px]">
+            Couldn't load flywheel status: {errorMessage(statusQuery.error)}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <Metric label="Observations" value={status?.observations} />
+            <Metric label="Active" value={status?.active_patterns} />
+            <Metric label="Staged" value={status?.staged_patterns} />
+            <Metric label="Forgotten" value={status?.forgotten_patterns} />
+            <Metric label="Runs" value={status?.autoresearch_runs} />
+          </div>
+        )}
+
+        {velocityQuery.data ? (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <Metric
+              label="Obs / 7d"
+              value={velocityQuery.data.observations_captured}
+            />
+            <Metric
+              label="Promoted / 7d"
+              value={velocityQuery.data.patterns_promoted}
+            />
+            <Metric
+              label="Demoted / 7d"
+              value={velocityQuery.data.patterns_demoted}
+            />
+            <Metric
+              label="Children / 7d"
+              value={velocityQuery.data.optimized_child_agents}
+            />
+            <Metric
+              label="Lineage Depth"
+              value={Number(velocityQuery.data.average_lineage_depth.toFixed(2))}
+            />
+          </div>
+        ) : null}
+
+        {lineageItems.length > 0 ? (
+          <div className="border border-border rounded-sm px-3 py-2 text-[12px] text-text-2">
+            <div className="text-[10.5px] uppercase tracking-wide text-text-3">
+              {props.fullHistory ? "Optimization History" : "Latest Lineage"}
+            </div>
+            <div className="mt-1 divide-y divide-border">
+              {lineageItems.map((item) => {
+                const gateDraft =
+                  optimizationGateDrafts[item.optimization_id] ??
+                  emptyOptimizationGateDraft;
+                return (
+                  <div
+                    key={item.optimization_id}
+                    className="py-1.5 first:pt-0 last:pb-0"
+                  >
+                    <div className="font-mono truncate">
+                      {item.optimization_id} · target {item.target_agent_id} ·
+                      child {item.child_agent_id ?? "none"}
+                    </div>
+                    <div className="mt-1 text-text-3">
+                      demos {item.train_observation_count}/
+                      {item.dev_observation_count}/
+                      {item.holdout_observation_count} · patterns{" "}
+                      {item.demo_source_pattern_ids.length} · priors{" "}
+                      {item.prior_pattern_ids.length} · {item.status}
+                    </div>
+                    <div className="mt-1 font-mono text-[11px] text-text-3 truncate">
+                      holdout {shortHash(item.holdout_hash)} · train{" "}
+                      {shortHash(item.train_hash)} · dev{" "}
+                      {shortHash(item.dev_hash)}
+                    </div>
+                    {item.gate_verdict ? (
+                      <div className="mt-1 text-[11px] text-text-3">
+                        gate {item.gate_verdict} · dev{" "}
+                        {formatDelta(item.delta_dev)} · holdout{" "}
+                        {formatDelta(item.delta_holdout)}
+                        {item.gate_reason ? ` · ${item.gate_reason}` : ""}
+                      </div>
+                    ) : (
+                      <div className="mt-2 grid gap-2 md:grid-cols-6 md:items-end">
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Parent Dev
+                          </span>
+                          <input
+                            aria-label={`Parent dev score ${item.optimization_id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.parentDevScore}
+                            onChange={(e) =>
+                              updateOptimizationGateDraft(
+                                item.optimization_id,
+                                {
+                                  parentDevScore: e.target.value,
+                                },
+                              )
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Child Dev
+                          </span>
+                          <input
+                            aria-label={`Child dev score ${item.optimization_id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.childDevScore}
+                            onChange={(e) =>
+                              updateOptimizationGateDraft(
+                                item.optimization_id,
+                                {
+                                  childDevScore: e.target.value,
+                                },
+                              )
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Parent Holdout
+                          </span>
+                          <input
+                            aria-label={`Parent optimization holdout score ${item.optimization_id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.parentHoldoutScore}
+                            onChange={(e) =>
+                              updateOptimizationGateDraft(
+                                item.optimization_id,
+                                {
+                                  parentHoldoutScore: e.target.value,
+                                },
+                              )
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Child Holdout
+                          </span>
+                          <input
+                            aria-label={`Child optimization holdout score ${item.optimization_id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.childHoldoutScore}
+                            onChange={(e) =>
+                              updateOptimizationGateDraft(
+                                item.optimization_id,
+                                {
+                                  childHoldoutScore: e.target.value,
+                                },
+                              )
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Epsilon
+                          </span>
+                          <input
+                            aria-label={`Optimization gate epsilon ${item.optimization_id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.gateEpsilon}
+                            onChange={(e) =>
+                              updateOptimizationGateDraft(
+                                item.optimization_id,
+                                {
+                                  gateEpsilon: e.target.value,
+                                },
+                              )
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                          <input
+                            aria-label={`Optimization gate reason ${item.optimization_id}`}
+                            type="text"
+                            value={gateDraft.gateReason}
+                            onChange={(e) =>
+                              updateOptimizationGateDraft(
+                                item.optimization_id,
+                                {
+                                  gateReason: e.target.value,
+                                },
+                              )
+                            }
+                            className="min-w-0 px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              optimizationGateMutation.mutate({
+                                id: item.optimization_id,
+                                draft: gateDraft,
+                              })
+                            }
+                            disabled={optimizationGateMutation.isPending}
+                            className="px-2 py-1 rounded text-[11.5px] border border-border text-text-2 hover:text-text hover:border-border-strong disabled:opacity-40"
+                          >
+                            {optimizationGateMutation.isPending
+                              ? "Recording..."
+                              : `Record Optimization Gate ${item.optimization_id}`}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto] md:items-end">
+          <label className="block">
+            <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1">
+              Candidate Pattern
+            </span>
+            <input
+              type="text"
+              value={patternText}
+              onChange={(e) => setPatternText(e.target.value)}
+              className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text focus:outline-none focus:border-gold/40"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1">
+              Embedding JSON
+            </span>
+            <input
+              type="text"
+              value={embeddingJson}
+              onChange={(e) => setEmbeddingJson(e.target.value)}
+              className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text font-mono focus:outline-none focus:border-gold/40"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => autoresearchMutation.mutate()}
+            disabled={autoresearchMutation.isPending}
+            className="inline-flex justify-center px-3 py-2 rounded text-[12.5px] font-medium border border-border text-text hover:border-border-strong disabled:opacity-50"
+          >
+            {autoresearchMutation.isPending ? "Staging..." : "Stage Pattern"}
+          </button>
+        </div>
+
+        {props.mode === "agent" ? (
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px_120px_auto] md:items-end">
+            <label className="block">
+              <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1">
+                Child Agent Name
+              </span>
+              <input
+                type="text"
+                value={childName}
+                onChange={(e) => setChildName(e.target.value)}
+                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text focus:outline-none focus:border-gold/40"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1">
+                Demo Source
+              </span>
+              <select
+                value={demoSource}
+                onChange={(e) => setDemoSource(e.target.value)}
+                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text focus:outline-none focus:border-gold/40"
+              >
+                <option value="frozen-snapshot">Frozen</option>
+                <option value="fresh-recorder">Fresh</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1">
+                Split
+              </span>
+              <input
+                type="text"
+                value={holdoutSplit}
+                onChange={(e) => setHoldoutSplit(e.target.value)}
+                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text font-mono focus:outline-none focus:border-gold/40"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-[12px] text-text-2">
+              <input
+                type="checkbox"
+                checked={autoPriors}
+                onChange={(e) => setAutoPriors(e.target.checked)}
+                className="h-4 w-4 rounded-sm border-border bg-surface-panel"
+              />
+              Use recalled Pattern priors
+            </label>
+            <button
+              type="button"
+              onClick={() => optimizeMutation.mutate()}
+              disabled={optimizeMutation.isPending}
+              className="inline-flex justify-center px-3 py-2 rounded text-[12.5px] font-medium border border-border text-text hover:border-border-strong disabled:opacity-50"
+            >
+              {optimizeMutation.isPending ? "Minting..." : "Mint Child"}
+            </button>
+          </div>
+        ) : null}
+
+        {optimizeResult ? (
+          <div className="grid gap-2 md:grid-cols-4">
+            <Metric
+              label="Demo Patterns"
+              value={optimizeResult.pattern_demo_source_count ?? 0}
+            />
+            <Metric
+              label="Prior Patterns"
+              value={optimizeResult.pattern_prior_count ?? 0}
+            />
+            <Metric
+              label="Train Demos"
+              value={
+                optimizeResult.train_observation_ids?.length ??
+                optimizeResult.demo_count
+              }
+            />
+            <Metric
+              label="Holdout Demos"
+              value={optimizeResult.holdout_observation_ids?.length ?? 0}
+            />
+          </div>
+        ) : null}
+
+        <div className="border border-border rounded-sm overflow-hidden">
+          <div className="px-3 py-2 border-b border-border text-[11px] uppercase tracking-wide text-text-3">
+            {props.fullHistory ? "Autoresearch History" : "Recent Autoresearch Runs"}
+          </div>
+          {runsQuery.isPending ? (
+            <div className="px-3 py-3 text-[12.5px] text-text-3">
+              Loading runs...
+            </div>
+          ) : runsQuery.isError ? (
+            <div className="px-3 py-3 text-[12.5px] text-danger">
+              Couldn't load runs: {errorMessage(runsQuery.error)}
+            </div>
+          ) : runs.length === 0 ? (
+            <div className="px-3 py-3 text-[12.5px] text-text-3">
+              No autoresearch runs yet.
+            </div>
+          ) : (
+            <div className="divide-y divide-border">
+              {runs.map((run) => {
+                const gateDraft = gateDrafts[run.id] ?? emptyGateDraft;
+                const isStaged = run.promotion_state === "staged";
+                const isDemoted = run.promotion_state === "demoted";
+                const gateVerdict =
+                  run.gate_verdict ??
+                  (run.gate_passed == null
+                    ? null
+                    : run.gate_passed
+                      ? "passed"
+                      : "failed");
+                const gateSummary =
+                  gateVerdict == null
+                    ? null
+                    : [
+                        `Gate ${gateVerdict}`,
+                        run.gate_metric,
+                        run.delta_day != null
+                          ? `day ${run.delta_day.toFixed(3)}`
+                          : null,
+                        run.delta_holdout != null
+                          ? `holdout ${run.delta_holdout.toFixed(3)}`
+                          : null,
+                        run.gate_reason ?? run.finding_text,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ");
+                return (
+                  <div
+                    key={run.id}
+                    className="grid gap-2 px-3 py-2 md:grid-cols-[minmax(0,1fr)_90px_auto] md:items-center"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-[12.5px] text-text">
+                        {run.pattern_text}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-text-3 font-mono truncate">
+                        {run.id} · {run.observation_ids.length} obs
+                      </div>
+                      {gateSummary ? (
+                        <div className="mt-0.5 text-[11px] text-text-3 truncate">
+                          {gateSummary}
+                        </div>
+                      ) : null}
+                    </div>
+                    <span className="text-[11px] uppercase tracking-wide text-text-3">
+                      {run.promotion_state}
+                    </span>
+                    <div className="flex gap-2 md:justify-end">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          lifecycleMutation.mutate({
+                            id: run.id,
+                            action: "promote",
+                          })
+                        }
+                        disabled={
+                          !isStaged ||
+                          gateVerdict !== "passed" ||
+                          lifecycleMutation.isPending
+                        }
+                        className="px-2 py-1 rounded text-[11.5px] border border-border text-text-2 hover:text-text hover:border-border-strong disabled:opacity-40"
+                      >
+                        Promote
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          lifecycleMutation.mutate({
+                            id: run.id,
+                            action: "demote",
+                          })
+                        }
+                        disabled={isDemoted || lifecycleMutation.isPending}
+                        className="px-2 py-1 rounded text-[11.5px] border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40"
+                      >
+                        Demote
+                      </button>
+                    </div>
+                    {isStaged ? (
+                      <div className="grid gap-2 md:col-span-3 md:grid-cols-6 md:items-end">
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Parent Day
+                          </span>
+                          <input
+                            aria-label={`Parent day score ${run.id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.parentDayScore}
+                            onChange={(e) =>
+                              updateGateDraft(run.id, {
+                                parentDayScore: e.target.value,
+                              })
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Child Day
+                          </span>
+                          <input
+                            aria-label={`Child day score ${run.id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.childDayScore}
+                            onChange={(e) =>
+                              updateGateDraft(run.id, {
+                                childDayScore: e.target.value,
+                              })
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Parent Holdout
+                          </span>
+                          <input
+                            aria-label={`Parent holdout score ${run.id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.parentHoldoutScore}
+                            onChange={(e) =>
+                              updateGateDraft(run.id, {
+                                parentHoldoutScore: e.target.value,
+                              })
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Child Holdout
+                          </span>
+                          <input
+                            aria-label={`Child holdout score ${run.id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.childHoldoutScore}
+                            onChange={(e) =>
+                              updateGateDraft(run.id, {
+                                childHoldoutScore: e.target.value,
+                              })
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
+                            Epsilon
+                          </span>
+                          <input
+                            aria-label={`Gate epsilon ${run.id}`}
+                            type="number"
+                            step="any"
+                            value={gateDraft.gateEpsilon}
+                            onChange={(e) =>
+                              updateGateDraft(run.id, {
+                                gateEpsilon: e.target.value,
+                              })
+                            }
+                            className="w-full px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                        </label>
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 md:col-span-1">
+                          <input
+                            aria-label={`Gate reason ${run.id}`}
+                            type="text"
+                            value={gateDraft.gateReason}
+                            onChange={(e) =>
+                              updateGateDraft(run.id, {
+                                gateReason: e.target.value,
+                              })
+                            }
+                            className="min-w-0 px-2 py-1.5 bg-surface-panel border border-border rounded-sm text-[12px] text-text focus:outline-none focus:border-gold/40"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              gateMutation.mutate({
+                                id: run.id,
+                                draft: gateDraft,
+                              })
+                            }
+                            disabled={gateMutation.isPending}
+                            className="px-2 py-1 rounded text-[11.5px] border border-border text-text-2 hover:text-text hover:border-border-strong disabled:opacity-40"
+                          >
+                            {gateMutation.isPending
+                              ? "Recording..."
+                              : `Record Gate ${run.id}`}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {error ? <div className="text-danger text-[12.5px]">{error}</div> : null}
+      </div>
+    </Card>
+  );
+}
+
+function Metric({
+  label,
+  value,
+}: {
+  label: string;
+  value: number | undefined;
+}) {
+  return (
+    <div className="border border-border bg-surface-panel rounded-sm px-3 py-2">
+      <div className="text-[10.5px] uppercase tracking-wide text-text-3">
+        {label}
+      </div>
+      <div className="mt-1 text-[18px] font-medium text-text tabular-nums">
+        {value ?? "—"}
+      </div>
     </div>
   );
 }
@@ -169,6 +1013,9 @@ type PatternsPanelProps = MemorySurfaceProps & {
 
 function PatternsPanel(props: PatternsPanelProps) {
   const [addOpen, setAddOpen] = useState(false);
+  const [lifecycle, setLifecycle] = useState<
+    "all" | "active" | "staged" | "forgotten"
+  >("all");
   // Agent mode lets the operator toggle between the agent-scoped
   // namespace and the shared `global` shelf. Workspace mode pins to
   // `global` — no toggle, since the per-agent page already owns the
@@ -184,9 +1031,18 @@ function PatternsPanel(props: PatternsPanelProps) {
         : "global"
       : "global";
 
+  const listArgs = {
+    tier: "pattern" as const,
+    namespace,
+    ...(lifecycle === "active" || lifecycle === "staged"
+      ? { promotion_state: lifecycle }
+      : {}),
+    ...(lifecycle === "forgotten" ? { forgotten_only: true } : {}),
+  };
+
   const query = useQuery({
-    queryKey: memoryKeys.list({ tier: "pattern", namespace }),
-    queryFn: () => listMemory({ tier: "pattern", namespace }),
+    queryKey: memoryKeys.list(listArgs),
+    queryFn: () => listMemory(listArgs),
   });
 
   const items = query.data?.items ?? [];
@@ -214,6 +1070,23 @@ function PatternsPanel(props: PatternsPanelProps) {
               Namespace <code className="font-mono text-text-2">global</code>
             </span>
           )}
+          <label className="text-[12px] text-text-3">
+            <span className="mr-2">Lifecycle</span>
+            <select
+              value={lifecycle}
+              onChange={(e) =>
+                setLifecycle(
+                  e.target.value as "all" | "active" | "staged" | "forgotten",
+                )
+              }
+              className="bg-surface-panel border border-border rounded-sm text-[12.5px] text-text px-2 py-1 focus:outline-none focus:border-gold/40"
+            >
+              <option value="all">all live</option>
+              <option value="active">active</option>
+              <option value="staged">staged</option>
+              <option value="forgotten">forgotten</option>
+            </select>
+          </label>
         </div>
         <button
           type="button"
@@ -232,7 +1105,8 @@ function PatternsPanel(props: PatternsPanelProps) {
         </div>
       ) : items.length === 0 ? (
         <div className="text-text-3 text-[13px] py-6">
-          No patterns yet for <code className="font-mono">{namespace}</code>.
+          No {lifecycle === "all" ? "" : `${lifecycle} `}patterns yet for{" "}
+          <code className="font-mono">{namespace}</code>.
           Use "+ Add Pattern" to seed one.
         </div>
       ) : (
@@ -260,7 +1134,16 @@ function PatternList({
   items: MemoryItem[];
   highlightPatternId: string | null;
 }) {
+  const qc = useQueryClient();
   const highlightRef = useRef<HTMLLIElement | null>(null);
+  const lifecycleMutation = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: "activate" | "demote" }) =>
+      action === "activate" ? activatePattern(id) : demotePattern(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: memoryKeys.all });
+      qc.invalidateQueries({ queryKey: flywheelKeys.all });
+    },
+  });
 
   // Scroll the deep-linked row into view once it mounts. We don't
   // animate; a soft jump keeps the page reload-shareable without
@@ -285,6 +1168,8 @@ function PatternList({
     <ul className="flex flex-col gap-2">
       {items.map((it) => {
         const highlighted = highlightPatternId === it.id;
+        const isForgotten = Boolean(it.forgotten_at);
+        const state = it.promotion_state ?? "active";
         return (
           <li
             key={it.id}
@@ -301,14 +1186,45 @@ function PatternList({
               <div className="text-[13px] text-text whitespace-pre-wrap">
                 {it.text}
               </div>
-              <div className="text-[11px] text-text-3 font-mono shrink-0">
-                {it.training_window_end
-                  ? `ends ${it.training_window_end.slice(0, 10)}`
-                  : "open"}
+              <div className="flex shrink-0 items-center gap-2">
+                <div className="text-[11px] text-text-3 font-mono">
+                  {it.training_window_end
+                    ? `ends ${it.training_window_end.slice(0, 10)}`
+                    : "open"}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    lifecycleMutation.mutate({
+                      id: it.id,
+                      action: "activate",
+                    })
+                  }
+                  disabled={
+                    state === "active" ||
+                    isForgotten ||
+                    lifecycleMutation.isPending
+                  }
+                  className="px-2 py-1 rounded text-[11px] border border-border text-text-2 hover:text-text hover:border-border-strong disabled:opacity-40"
+                >
+                  Activate
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    lifecycleMutation.mutate({ id: it.id, action: "demote" })
+                  }
+                  disabled={isForgotten || lifecycleMutation.isPending}
+                  className="px-2 py-1 rounded text-[11px] border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40"
+                >
+                  Demote
+                </button>
               </div>
             </div>
             <div className="mt-1 flex items-center gap-2 text-[10.5px] text-text-3 font-mono">
               <span>{it.namespace}</span>
+              <span>·</span>
+              <span>{isForgotten ? "forgotten" : state}</span>
               <span>·</span>
               <span>{it.created_at.slice(0, 10)}</span>
             </div>
@@ -326,15 +1242,34 @@ type AddPatternDialogProps = MemorySurfaceProps & {
   onClose: () => void;
 };
 
+type AddPatternMutationBody = PatternCreateBody & {
+  operator_initials?: string;
+};
+
 function AddPatternDialog(props: AddPatternDialogProps) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [trainingEnd, setTrainingEnd] = useState("");
   const [namespace, setNamespace] = useState(props.defaultNamespace);
+  const [attestNullWindow, setAttestNullWindow] = useState(false);
+  const [operatorInitials, setOperatorInitials] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const m = useMutation({
-    mutationFn: (body: PatternCreateBody) => createPattern(body),
+    mutationFn: async (body: AddPatternMutationBody) => {
+      const { operator_initials, ...pattern } = body;
+      if (!pattern.training_window_end) {
+        const attestation = await createOperatorAttestation({
+          operator_initials: operator_initials ?? "",
+          surface: "dashboard",
+        });
+        return createPattern({
+          ...pattern,
+          attestation_id: attestation.id,
+        });
+      }
+      return createPattern(pattern);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: memoryKeys.all });
       props.onClose();
@@ -355,11 +1290,22 @@ function AddPatternDialog(props: AddPatternDialogProps) {
     const training_window_end = trainingEnd
       ? `${trainingEnd}T23:59:59Z`
       : undefined;
+    if (!training_window_end && !attestNullWindow) {
+      setSubmitError("Confirm null-window attestation before saving.");
+      return;
+    }
+    if (!training_window_end && !operatorInitials.trim()) {
+      setSubmitError("Operator initials are required for null-window Patterns.");
+      return;
+    }
 
     m.mutate({
       text: text.trim(),
       namespace: namespace.trim(),
       training_window_end,
+      operator_initials: training_window_end
+        ? undefined
+        : operatorInitials.trim(),
     });
   }
 
@@ -438,11 +1384,40 @@ function AddPatternDialog(props: AddPatternDialogProps) {
                 (look-ahead protection).
               </p>
               <p className="m-0">
-                Leave blank for operator wisdom recalled in <em>every</em>{" "}
-                scenario.
+                Blank dates require operator attestation and recall in{" "}
+                <em>every</em> scenario.
               </p>
             </div>
           </label>
+
+          {!trainingEnd ? (
+            <div className="space-y-3 rounded-sm border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+              <label className="flex items-start gap-2 text-[11.5px] text-amber-900 dark:text-amber-200 leading-snug">
+                <input
+                  type="checkbox"
+                  checked={attestNullWindow}
+                  onChange={(e) => setAttestNullWindow(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  I attest this Pattern has no training window and may be
+                  recalled in every scenario.
+                </span>
+              </label>
+              <label className="block">
+                <span className="block text-[11px] uppercase tracking-wide text-amber-900 dark:text-amber-200 mb-1">
+                  Operator initials
+                </span>
+                <input
+                  type="text"
+                  value={operatorInitials}
+                  onChange={(e) => setOperatorInitials(e.target.value)}
+                  maxLength={12}
+                  className="w-full px-3 py-2 bg-surface-panel border border-amber-500/40 rounded-sm text-[13px] text-text font-mono focus:outline-none focus:border-gold/40"
+                />
+              </label>
+            </div>
+          ) : null}
 
           <label className="block">
             <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
@@ -675,11 +1650,12 @@ function ForgetDialog(props: ForgetDialogProps) {
               {title}
             </h2>
             <p className="m-0 mt-2 text-text-2 text-[13px]">
-              This will permanently delete{" "}
+              This will soft-delete{" "}
               <span className="font-mono text-text">{props.itemCount}</span>{" "}
               memory item{props.itemCount === 1 ? "" : "s"} from namespace{" "}
               <code className="font-mono text-text">{namespaceCode}</code>.
-              Observations and Patterns alike. This cannot be undone.
+              Observations and Patterns alike. Items can be restored during the
+              configured grace window.
             </p>
           </div>
 
@@ -719,6 +1695,45 @@ function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   if (err instanceof Error) return err.message;
   return "Unknown error";
+}
+
+function shortHash(value: string | null | undefined): string {
+  if (!value) return "none";
+  const prefix = "sha256:";
+  if (value.startsWith(prefix)) {
+    return `${prefix}${value.slice(prefix.length, prefix.length + 12)}`;
+  }
+  return value.length > 18 ? `${value.slice(0, 18)}...` : value;
+}
+
+function formatDelta(value: number | null | undefined): string {
+  return typeof value === "number" ? value.toFixed(3) : "n/a";
+}
+
+function parseScore(label: string, raw: string): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    throw new Error(`${label} must be a finite number.`);
+  }
+  return n;
+}
+
+function parseEmbeddingJson(raw: string): number[] {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error("Embedding JSON must be an array.");
+  }
+  const out = parsed.map((value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      throw new Error("Embedding JSON values must be finite numbers.");
+    }
+    return n;
+  });
+  if (out.length === 0) {
+    throw new Error("Embedding JSON must not be empty.");
+  }
+  return out;
 }
 
 function useDebounced<T>(value: T, ms: number): T {

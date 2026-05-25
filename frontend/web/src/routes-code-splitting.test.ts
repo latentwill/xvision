@@ -8,6 +8,7 @@ const layoutSource = readFileSync(join(process.cwd(), "src/components/shell/Layo
 describe("dashboard code splitting", () => {
   it("loads route modules through dynamic imports instead of the main bundle", () => {
     expect(routesSource).toContain("lazy(");
+    expect(routesSource).toContain('import("./routes/agents-flywheel")');
     expect(routesSource).toContain('import("./routes/eval-runs-detail")');
     expect(routesSource).toContain('import("./routes/scenarios-detail")');
     expect(routesSource).toContain('import("./routes/live")');

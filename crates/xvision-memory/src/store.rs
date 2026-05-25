@@ -86,6 +86,225 @@ async fn ensure_forgotten_at_column(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn ensure_phase1_columns(pool: &SqlitePool) -> anyhow::Result<()> {
+    for (name, ddl) in [
+        (
+            "source_window_start",
+            "ALTER TABLE memory_items ADD COLUMN source_window_start TEXT",
+        ),
+        (
+            "source_window_end",
+            "ALTER TABLE memory_items ADD COLUMN source_window_end TEXT",
+        ),
+        (
+            "promotion_state",
+            "ALTER TABLE memory_items ADD COLUMN promotion_state TEXT",
+        ),
+        (
+            "attestation_id",
+            "ALTER TABLE memory_items ADD COLUMN attestation_id TEXT",
+        ),
+    ] {
+        let exists = sqlx::query("SELECT 1 FROM pragma_table_info('memory_items') WHERE name = ?")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?
+            .is_some();
+        if !exists {
+            sqlx::query(ddl).execute(pool).await?;
+        }
+    }
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_memory_items_source_window_end ON memory_items(source_window_end)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_memory_items_promotion_state ON memory_items(promotion_state)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_memory_items_attestation_id ON memory_items(attestation_id)")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS operator_attestations (\
+         id TEXT PRIMARY KEY,\
+         operator_initials TEXT NOT NULL,\
+         surface TEXT NOT NULL,\
+         warning_text_hash TEXT NOT NULL,\
+         created_at TEXT NOT NULL,\
+         signature TEXT)",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn ensure_autoresearch_runs_table(pool: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS autoresearch_runs (\
+         id TEXT PRIMARY KEY,\
+         namespace TEXT NOT NULL,\
+         observation_ids_json TEXT NOT NULL,\
+         pattern_id TEXT NOT NULL,\
+         pattern_text TEXT NOT NULL,\
+         promotion_state TEXT NOT NULL,\
+         min_observations INTEGER NOT NULL,\
+         created_at TEXT NOT NULL,\
+         status TEXT NOT NULL,\
+         error TEXT,\
+         gate_metric TEXT,\
+         baseline_score REAL,\
+         candidate_score REAL,\
+         gate_threshold REAL,\
+         gate_passed INTEGER,\
+         gated_at TEXT,\
+         finding_text TEXT,\
+         finding_model TEXT,\
+         finding_blind INTEGER,\
+         parent_day_score REAL,\
+         child_day_score REAL,\
+         parent_holdout_score REAL,\
+         child_holdout_score REAL,\
+         gate_epsilon REAL,\
+         delta_day REAL,\
+         delta_holdout REAL,\
+         gate_verdict TEXT,\
+         gate_reason TEXT,\
+         qualitative_finding_json TEXT,\
+         finding_blinded_metrics INTEGER,\
+         judge_model TEXT,\
+         judge_token_cost INTEGER)",
+    )
+    .execute(pool)
+    .await?;
+    for (name, ddl) in [
+        (
+            "gate_metric",
+            "ALTER TABLE autoresearch_runs ADD COLUMN gate_metric TEXT",
+        ),
+        (
+            "baseline_score",
+            "ALTER TABLE autoresearch_runs ADD COLUMN baseline_score REAL",
+        ),
+        (
+            "candidate_score",
+            "ALTER TABLE autoresearch_runs ADD COLUMN candidate_score REAL",
+        ),
+        (
+            "gate_threshold",
+            "ALTER TABLE autoresearch_runs ADD COLUMN gate_threshold REAL",
+        ),
+        (
+            "gate_passed",
+            "ALTER TABLE autoresearch_runs ADD COLUMN gate_passed INTEGER",
+        ),
+        (
+            "gated_at",
+            "ALTER TABLE autoresearch_runs ADD COLUMN gated_at TEXT",
+        ),
+        (
+            "finding_text",
+            "ALTER TABLE autoresearch_runs ADD COLUMN finding_text TEXT",
+        ),
+        (
+            "finding_model",
+            "ALTER TABLE autoresearch_runs ADD COLUMN finding_model TEXT",
+        ),
+        (
+            "finding_blind",
+            "ALTER TABLE autoresearch_runs ADD COLUMN finding_blind INTEGER",
+        ),
+        (
+            "parent_day_score",
+            "ALTER TABLE autoresearch_runs ADD COLUMN parent_day_score REAL",
+        ),
+        (
+            "child_day_score",
+            "ALTER TABLE autoresearch_runs ADD COLUMN child_day_score REAL",
+        ),
+        (
+            "parent_holdout_score",
+            "ALTER TABLE autoresearch_runs ADD COLUMN parent_holdout_score REAL",
+        ),
+        (
+            "child_holdout_score",
+            "ALTER TABLE autoresearch_runs ADD COLUMN child_holdout_score REAL",
+        ),
+        (
+            "gate_epsilon",
+            "ALTER TABLE autoresearch_runs ADD COLUMN gate_epsilon REAL",
+        ),
+        (
+            "delta_day",
+            "ALTER TABLE autoresearch_runs ADD COLUMN delta_day REAL",
+        ),
+        (
+            "delta_holdout",
+            "ALTER TABLE autoresearch_runs ADD COLUMN delta_holdout REAL",
+        ),
+        (
+            "gate_verdict",
+            "ALTER TABLE autoresearch_runs ADD COLUMN gate_verdict TEXT",
+        ),
+        (
+            "gate_reason",
+            "ALTER TABLE autoresearch_runs ADD COLUMN gate_reason TEXT",
+        ),
+        (
+            "qualitative_finding_json",
+            "ALTER TABLE autoresearch_runs ADD COLUMN qualitative_finding_json TEXT",
+        ),
+        (
+            "finding_blinded_metrics",
+            "ALTER TABLE autoresearch_runs ADD COLUMN finding_blinded_metrics INTEGER",
+        ),
+        (
+            "judge_model",
+            "ALTER TABLE autoresearch_runs ADD COLUMN judge_model TEXT",
+        ),
+        (
+            "judge_token_cost",
+            "ALTER TABLE autoresearch_runs ADD COLUMN judge_token_cost INTEGER",
+        ),
+    ] {
+        let exists = sqlx::query("SELECT 1 FROM pragma_table_info('autoresearch_runs') WHERE name = ?")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?
+            .is_some();
+        if !exists {
+            sqlx::query(ddl).execute(pool).await?;
+        }
+    }
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_namespace_created \
+         ON autoresearch_runs(namespace, created_at)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_pattern_id \
+         ON autoresearch_runs(pattern_id)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_gate_passed \
+         ON autoresearch_runs(gate_passed)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_gate_verdict \
+         ON autoresearch_runs(gate_verdict)",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 impl MemoryStore {
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(parent) = path.parent() {
@@ -104,6 +323,12 @@ impl MemoryStore {
         ensure_forgotten_at_column(&pool)
             .await
             .context("memory: ensure forgotten_at column")?;
+        ensure_phase1_columns(&pool)
+            .await
+            .context("memory: ensure phase1 provenance columns")?;
+        ensure_autoresearch_runs_table(&pool)
+            .await
+            .context("memory: ensure autoresearch runs table")?;
         Ok(Self { pool })
     }
 
@@ -117,6 +342,8 @@ impl MemoryStore {
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         ensure_forgotten_at_column(&pool).await?;
+        ensure_phase1_columns(&pool).await?;
+        ensure_autoresearch_runs_table(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -130,7 +357,7 @@ impl MemoryStore {
     ///
     /// Asserts:
     /// - `tier == Observation`
-    /// - `run_id`, `scenario_id`, `cycle_idx` are all `Some(_)`
+    /// - `run_id`, `scenario_id`, `cycle_idx`, and source window are all `Some(_)`
     /// - `training_window_end` is `None`
     pub async fn upsert_observation(&self, item: &MemoryItem, embedder_id: &str) -> anyhow::Result<()> {
         if item.tier != Tier::Observation {
@@ -139,8 +366,14 @@ impl MemoryStore {
         if item.run_id.is_none() || item.scenario_id.is_none() || item.cycle_idx.is_none() {
             anyhow::bail!("Observation requires run_id, scenario_id, cycle_idx");
         }
+        if item.source_window_start.is_none() || item.source_window_end.is_none() {
+            anyhow::bail!("Observation requires source_window_start and source_window_end");
+        }
         if item.training_window_end.is_some() {
             anyhow::bail!("Observation must not carry training_window_end");
+        }
+        if item.promotion_state.is_some() || item.attestation_id.is_some() {
+            anyhow::bail!("Observation must not carry promotion_state or attestation_id");
         }
         self.insert_item(item, embedder_id).await
     }
@@ -159,15 +392,24 @@ impl MemoryStore {
         if item.run_id.is_some() || item.scenario_id.is_some() || item.cycle_idx.is_some() {
             anyhow::bail!("Pattern must not carry run/scenario/cycle provenance");
         }
+        if item.source_window_start.is_some() || item.source_window_end.is_some() {
+            anyhow::bail!("Pattern must not carry source_window_start/source_window_end");
+        }
         self.insert_item(item, embedder_id).await
     }
 
-    /// Autoresearcher Pattern retirement.
+    /// Autoresearcher Pattern retirement. Demotion is a soft-delete so
+    /// the grace-window janitor and `undo_forget` path can still restore
+    /// the Pattern when an operator explicitly reverses the decision.
     pub async fn demote_pattern(&self, id: &str) -> anyhow::Result<u64> {
-        let res = sqlx::query("DELETE FROM memory_items WHERE id = ? AND tier = 'pattern'")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let res = sqlx::query(
+            "UPDATE memory_items SET forgotten_at = ? \
+             WHERE id = ? AND tier = 'pattern' AND forgotten_at IS NULL",
+        )
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(res.rows_affected())
     }
 
@@ -176,11 +418,14 @@ impl MemoryStore {
         let dim = item.embedding.len() as i64;
         let ts = item.created_at.to_rfc3339();
         let twe = item.training_window_end.map(|d| d.to_rfc3339());
+        let sws = item.source_window_start.map(|d| d.to_rfc3339());
+        let swe = item.source_window_end.map(|d| d.to_rfc3339());
         sqlx::query(
             "INSERT OR REPLACE INTO memory_items \
              (id, namespace, tier, text, embedding, embedding_dim, embedder_id, created_at, \
-              run_id, scenario_id, cycle_idx, training_window_end) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              run_id, scenario_id, cycle_idx, source_window_start, source_window_end, \
+              training_window_end, promotion_state, attestation_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&item.id)
         .bind(&item.namespace)
@@ -193,7 +438,11 @@ impl MemoryStore {
         .bind(&item.run_id)
         .bind(&item.scenario_id)
         .bind(item.cycle_idx)
+        .bind(sws)
+        .bind(swe)
         .bind(twe)
+        .bind(&item.promotion_state)
+        .bind(&item.attestation_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -217,6 +466,7 @@ impl MemoryStore {
                      WHERE namespace = ? \
                        AND tier = 'pattern' \
                        AND forgotten_at IS NULL \
+                       AND (promotion_state IS NULL OR promotion_state = 'active') \
                        AND (training_window_end IS NULL OR training_window_end < ?)",
                 )
                 .bind(namespace)
@@ -227,7 +477,8 @@ impl MemoryStore {
             None => {
                 sqlx::query_as(
                     "SELECT id, text, embedding FROM memory_items \
-                     WHERE namespace = ? AND tier = 'pattern' AND forgotten_at IS NULL",
+                     WHERE namespace = ? AND tier = 'pattern' AND forgotten_at IS NULL \
+                       AND (promotion_state IS NULL OR promotion_state = 'active')",
                 )
                 .bind(namespace)
                 .fetch_all(&self.pool)
@@ -242,7 +493,12 @@ impl MemoryStore {
                 MemoryMatch { id, text, score }
             })
             .collect();
-        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        });
         scored.truncate(k);
         Ok(scored)
     }

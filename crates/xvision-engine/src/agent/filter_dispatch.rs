@@ -91,6 +91,8 @@ pub async fn run_llm_filter(input: DispatchInput<'_>) -> Result<FilterDispatchRe
         memory_mode: input.memory_mode,
         agent_id: input.agent_id,
         scenario_start: input.scenario_start,
+        source_window_start: input.source_window_start,
+        source_window_end: input.source_window_end,
         run_id: input.run_id,
         scenario_id: input.scenario_id,
         cycle_idx: input.cycle_idx,

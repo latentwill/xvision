@@ -31,6 +31,7 @@ xvision-engine        = { path = "../xvision-engine" }
 xvision-filters       = { path = "../xvision-filters" }
 xvision-dashboard     = { path = "../xvision-dashboard" }
 xvision-observability = { path = "../xvision-observability" }
+xvision-memory        = { path = "../xvision-memory" }
 ulid              = "1"
 dirs              = "5"
 blake3            = "1.5"

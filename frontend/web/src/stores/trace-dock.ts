@@ -370,6 +370,8 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
       case "checkpoint_written":
       case "supervisor_note":
       case "artifact_written":
+      case "memory_recall":
+      case "memory_write":
       case "span":
       case "summary":
         return;

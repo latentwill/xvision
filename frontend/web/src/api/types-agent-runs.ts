@@ -166,6 +166,51 @@ export type ToolCall = {
   finished_at: string | null;
 };
 
+export type MemoryRecallItem = {
+  id: string;
+  score: number;
+  text_preview: string;
+};
+
+export type MemoryRecallPayload = {
+  run_id: string;
+  flywheel_cycle_id?: string | null;
+  decision_id: number;
+  namespace: string;
+  items: MemoryRecallItem[];
+};
+
+export type MemoryWritePayload = {
+  run_id: string;
+  flywheel_cycle_id?: string | null;
+  decision_id: number;
+  namespace: string;
+  memory_item_id: string;
+  text_preview: string;
+};
+
+export type AgentRunMemoryEvent =
+  | {
+      kind: "memory_recall";
+      created_at: string;
+      payload: MemoryRecallPayload;
+    }
+  | {
+      kind: "memory_write";
+      created_at: string;
+      payload: MemoryWritePayload;
+    }
+  | {
+      kind: string;
+      created_at: string;
+      payload: unknown;
+    };
+
+export type AgentRunMemoryEventsResponse = {
+  run_id: string;
+  events: AgentRunMemoryEvent[];
+};
+
 export type AgentRunSummary = {
   run_id: string;
   objective: string;
@@ -337,6 +382,8 @@ export type StreamCheckpointWrittenData = { run_id: string; path?: string | null
 export type StreamSupervisorNoteData = { run_id: string; message: string };
 export type StreamArtifactWrittenData = { run_id: string; path?: string | null };
 export type StreamBackpressureDroppedData = { dropped: number };
+export type StreamMemoryRecallData = MemoryRecallPayload;
+export type StreamMemoryWriteData = MemoryWritePayload;
 
 /**
  * Stream events surfaced to the dock + components. Mock arms (`summary`,
@@ -367,4 +414,6 @@ export type AgentRunStreamEvent =
   | { event: "supervisor_note"; data: StreamSupervisorNoteData }
   | { event: "artifact_written"; data: StreamArtifactWrittenData }
   | { event: "backpressure_dropped"; data: StreamBackpressureDroppedData }
+  | { event: "memory_recall"; data: StreamMemoryRecallData }
+  | { event: "memory_write"; data: StreamMemoryWriteData }
   | { event: "lagged"; data: StreamLaggedData };

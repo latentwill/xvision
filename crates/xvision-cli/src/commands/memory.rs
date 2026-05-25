@@ -35,9 +35,11 @@ use clap::{Args, Subcommand};
 
 use xvision_engine::api::memory as memory_api;
 use xvision_engine::api::memory::{
-    ListMemoryRequest, MemoryItemDto, PatternCreateRequest, UndoForgetRequest,
+    ListMemoryRequest, MemoryItemDto, OperatorAttestationCreateRequest, PatternCreateRequest,
+    PromoteObservationsRequest, UndoForgetRequest,
 };
 use xvision_engine::api::ApiError;
+use xvision_memory::embedder::Embedder;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
@@ -51,10 +53,18 @@ pub struct MemoryCmd {
 pub enum Op {
     /// List memory items (default tier = pattern).
     Ls(LsArgs),
+    /// List namespaces that currently contain memory rows.
+    Namespaces(NamespacesArgs),
     /// Print full detail for a single item.
     Show(ShowArgs),
     /// Seed an operator-attested Pattern.
     AddPattern(AddPatternArgs),
+    /// Promote Observation rows into a staged or active Pattern.
+    Promote(PromoteArgs),
+    /// Activate an existing staged Pattern by id.
+    Activate(ShowArgs),
+    /// Soft-delete an existing Pattern by id.
+    Demote(ShowArgs),
     /// Delete one item by id.
     Rm(RmArgs),
     /// Bulk-delete every item in a namespace.
@@ -81,11 +91,27 @@ pub struct LsArgs {
     /// Observation provenance filter.
     #[arg(long)]
     pub run: Option<String>,
+    /// Pattern lifecycle filter (`active` or `staged`).
+    #[arg(long)]
+    pub promotion_state: Option<String>,
+    /// Include rows soft-deleted by forget/demote.
+    #[arg(long)]
+    pub include_forgotten: bool,
+    /// Show only rows soft-deleted by forget/demote.
+    #[arg(long)]
+    pub forgotten_only: bool,
     /// Page size. Engine caps at 500.
     #[arg(long, default_value_t = 50)]
     pub limit: i64,
     #[arg(long, default_value_t = 0)]
     pub offset: i64,
+    /// Emit pretty-printed JSON instead of a human-readable table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct NamespacesArgs {
     /// Emit pretty-printed JSON instead of a human-readable table.
     #[arg(long)]
     pub json: bool,
@@ -113,11 +139,43 @@ pub struct AddPatternArgs {
     /// only recalled in scenarios that start AFTER this point.
     #[arg(long)]
     pub training_end: Option<String>,
+    /// Required when omitting `--training-end`. Records explicit
+    /// operator attestation that this Pattern may recall in every
+    /// scenario.
+    #[arg(long)]
+    pub attest_null_window: bool,
+    /// Initials stored on the attestation row when
+    /// `--attest-null-window` is used.
+    #[arg(long)]
+    pub operator_initials: Option<String>,
     /// Skip the no-embedder warning + non-zero exit. Use when seeding
     /// patterns ahead of embedder configuration.
     #[arg(long)]
     pub force: bool,
     /// Emit the created item as JSON instead of a human summary line.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct PromoteArgs {
+    /// Comma-separated Observation ids to distill into the Pattern.
+    #[arg(long, value_delimiter = ',')]
+    pub ids: Vec<String>,
+    /// Candidate Pattern text.
+    #[arg(long)]
+    pub text: String,
+    /// Optional namespace assertion. When omitted, all Observations
+    /// must still resolve to the same namespace.
+    #[arg(long)]
+    pub namespace: Option<String>,
+    /// Make the Pattern recall-active immediately. Default is staged.
+    #[arg(long)]
+    pub active: bool,
+    /// Deterministic embedding vector for offline/tests, e.g.
+    /// `[1.0,0.0]`. When omitted, the CLI uses OPENAI_API_KEY.
+    #[arg(long)]
+    pub embedding_json: Option<String>,
     #[arg(long)]
     pub json: bool,
 }
@@ -162,12 +220,46 @@ pub struct UndoForgetArgs {
 pub async fn run(cmd: MemoryCmd) -> CliResult<()> {
     match cmd.op {
         Op::Ls(args) => run_ls(args).await,
+        Op::Namespaces(args) => run_namespaces(args).await,
         Op::Show(args) => run_show(args).await,
         Op::AddPattern(args) => run_add_pattern(args).await,
+        Op::Promote(args) => run_promote(args).await,
+        Op::Activate(args) => run_activate(args).await,
+        Op::Demote(args) => run_demote(args).await,
         Op::Rm(args) => run_rm(args).await,
         Op::Forget(args) => run_forget(args).await,
         Op::UndoForget(args) => run_undo_forget(args).await,
     }
+}
+
+async fn run_namespaces(args: NamespacesArgs) -> CliResult<()> {
+    let store = memory_api::open_default_store()
+        .await
+        .map_err(|e| api_to_cli("memory namespaces", e))?;
+    let resp = memory_api::list_namespaces(&store)
+        .await
+        .map_err(|e| api_to_cli("memory namespaces", e))?;
+    if args.json {
+        crate::io::print_json(&resp)?;
+    } else {
+        println!(
+            "{:<24}  {:>5}  {:>4}  {:>6}  {:>6}  {:>6}  latest",
+            "namespace", "live", "obs", "active", "staged", "forgot"
+        );
+        for ns in resp.items {
+            println!(
+                "{:<24}  {:>5}  {:>4}  {:>6}  {:>6}  {:>6}  {}",
+                ns.namespace,
+                ns.live_total,
+                ns.observations,
+                ns.active_patterns,
+                ns.staged_patterns,
+                ns.forgotten,
+                ns.latest_created_at.unwrap_or_else(|| "-".to_string())
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn run_ls(args: LsArgs) -> CliResult<()> {
@@ -195,11 +287,11 @@ async fn run_ls(args: LsArgs) -> CliResult<()> {
         agent: args.agent,
         scenario_id: args.scenario,
         run_id: args.run,
+        promotion_state: args.promotion_state,
         limit: Some(args.limit),
         offset: Some(args.offset),
-        // CLI v1 hides forgotten rows; the dashboard's
-        // `--include-forgotten` toggle lives in the route layer.
-        include_forgotten: None,
+        include_forgotten: Some(args.include_forgotten),
+        forgotten_only: Some(args.forgotten_only),
     };
 
     let resp = memory_api::list(&store, req)
@@ -290,10 +382,38 @@ async fn run_add_pattern(args: AddPatternArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("memory add-pattern", e))?;
 
+    let attestation_id = if training_window_end.is_none() {
+        if !args.attest_null_window {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "omitting --training-end requires --attest-null-window and --operator-initials"
+            )));
+        }
+        let initials = args.operator_initials.as_deref().unwrap_or("").trim();
+        if initials.is_empty() {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--operator-initials is required with --attest-null-window"
+            )));
+        }
+        let attestation = memory_api::create_operator_attestation(
+            &store,
+            OperatorAttestationCreateRequest {
+                operator_initials: initials.to_string(),
+                surface: "cli".into(),
+                signature: None,
+            },
+        )
+        .await
+        .map_err(|e| api_to_cli("memory attest", e))?;
+        Some(attestation.id)
+    } else {
+        None
+    };
+
     let req = PatternCreateRequest {
         text: args.text,
         namespace,
         training_window_end,
+        attestation_id,
         run_id: None,
         scenario_id: None,
         cycle_idx: None,
@@ -317,6 +437,104 @@ async fn run_add_pattern(args: AddPatternArgs) -> CliResult<()> {
         write_stdout(&bytes)?;
     } else {
         println!("created pattern {} in {}", item.id, item.namespace);
+    }
+    Ok(())
+}
+
+async fn run_promote(args: PromoteArgs) -> CliResult<()> {
+    if args.ids.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--ids must include at least one Observation id"
+        )));
+    }
+    if args.text.trim().is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--text is required")));
+    }
+
+    let (embedder_id, embedding) = match args.embedding_json.as_deref() {
+        Some(raw) => ("cli:embedding-json".to_string(), parse_embedding_json(raw)?),
+        None => {
+            let api_key = std::env::var("OPENAI_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    CliError::usage(anyhow::anyhow!(
+                        "memory promote requires --embedding-json or OPENAI_API_KEY"
+                    ))
+                })?;
+            let base_url = std::env::var("OPENAI_BASE_URL")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            let embedder = xvision_engine::agent::openai_embedder::OpenAiEmbedder::new(base_url, api_key);
+            let embedding = embedder.embed(&args.text).await.map_err(|e| CliError {
+                exit: XvnExit::Upstream,
+                source: anyhow::anyhow!("memory promote: embed Pattern text: {e}"),
+            })?;
+            (embedder.id().to_string(), embedding)
+        }
+    };
+    if embedding.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "embedding vector must not be empty"
+        )));
+    }
+
+    let store = memory_api::open_default_store()
+        .await
+        .map_err(|e| api_to_cli("memory promote", e))?;
+    let item = memory_api::promote_observations(
+        &store,
+        &embedder_id,
+        embedding,
+        PromoteObservationsRequest {
+            observation_ids: args.ids,
+            text: args.text,
+            namespace: args.namespace,
+            active: args.active,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("memory promote", e))?;
+
+    if args.json {
+        let bytes = serde_json::to_vec_pretty(&item).exit_with(XvnExit::Upstream)?;
+        write_stdout(&bytes)?;
+    } else {
+        let state = item.promotion_state.as_deref().unwrap_or("active");
+        println!("promoted pattern {} in {} ({state})", item.id, item.namespace);
+    }
+    Ok(())
+}
+
+async fn run_activate(args: ShowArgs) -> CliResult<()> {
+    let store = memory_api::open_default_store()
+        .await
+        .map_err(|e| api_to_cli("memory activate", e))?;
+    let item = memory_api::activate_pattern(&store, &args.id)
+        .await
+        .map_err(|e| api_to_cli("memory activate", e))?;
+    if args.json {
+        let bytes = serde_json::to_vec_pretty(&item).exit_with(XvnExit::Upstream)?;
+        write_stdout(&bytes)?;
+    } else {
+        println!("activated pattern {} in {}", item.id, item.namespace);
+    }
+    Ok(())
+}
+
+async fn run_demote(args: ShowArgs) -> CliResult<()> {
+    let store = memory_api::open_default_store()
+        .await
+        .map_err(|e| api_to_cli("memory demote", e))?;
+    let item = memory_api::demote_pattern(&store, &args.id)
+        .await
+        .map_err(|e| api_to_cli("memory demote", e))?;
+    if args.json {
+        let bytes = serde_json::to_vec_pretty(&item).exit_with(XvnExit::Upstream)?;
+        write_stdout(&bytes)?;
+    } else {
+        println!("demoted pattern {} in {}", item.id, item.namespace);
     }
     Ok(())
 }
@@ -498,6 +716,15 @@ fn looks_like_bare_date(s: &str) -> bool {
             4 | 7 => c == '-',
             _ => c.is_ascii_digit(),
         })
+}
+
+fn parse_embedding_json(raw: &str) -> CliResult<Vec<f32>> {
+    let values: Vec<f32> = serde_json::from_str(raw).map_err(|e| {
+        CliError::usage(anyhow::anyhow!(
+            "--embedding-json must be a JSON array of numbers: {e}"
+        ))
+    })?;
+    Ok(values)
 }
 
 /// Map an engine ApiError to our exit-code-bearing CliError. Same

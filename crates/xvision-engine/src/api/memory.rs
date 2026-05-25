@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 
 use xvision_memory::store::MemoryStore;
@@ -61,9 +62,15 @@ pub struct MemoryItemDto {
     pub run_id: Option<String>,
     pub scenario_id: Option<String>,
     pub cycle_idx: Option<i64>,
+    pub source_window_start: Option<String>,
+    pub source_window_end: Option<String>,
     /// RFC3339 date; `None` on Observations and on operator-attested
     /// Patterns where the operator wants global applicability.
     pub training_window_end: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub promotion_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub attestation_id: Option<String>,
     /// RFC3339 timestamp of when the row was soft-deleted via
     /// `forget`. `None` on live rows.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -81,7 +88,11 @@ impl MemoryItemDto {
             run_id: item.run_id,
             scenario_id: item.scenario_id,
             cycle_idx: item.cycle_idx,
+            source_window_start: item.source_window_start.map(|d| d.to_rfc3339()),
+            source_window_end: item.source_window_end.map(|d| d.to_rfc3339()),
             training_window_end: item.training_window_end.map(|d| d.to_rfc3339()),
+            promotion_state: item.promotion_state,
+            attestation_id: item.attestation_id,
             forgotten_at: item.forgotten_at.map(|d| d.to_rfc3339()),
         }
     }
@@ -108,12 +119,22 @@ pub struct ListMemoryRequest {
     /// Observation provenance filters. Both `None` returns all.
     pub scenario_id: Option<String>,
     pub run_id: Option<String>,
+    /// Pattern lifecycle filter, e.g. `"staged"` or `"active"`.
+    /// Demoted Patterns are represented by `forgotten_at`, so callers
+    /// combine this with `include_forgotten=true` when auditing soft
+    /// deletes.
+    #[serde(default)]
+    pub promotion_state: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     /// When `Some(true)`, soft-deleted rows are included. Default is
     /// to skip rows with non-null `forgotten_at`.
     #[serde(default)]
     pub include_forgotten: Option<bool>,
+    /// When `Some(true)`, return only soft-deleted rows. This implies
+    /// `include_forgotten` and powers demoted Pattern drill-downs.
+    #[serde(default)]
+    pub forgotten_only: Option<bool>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -133,6 +154,34 @@ pub struct MemoryListResponse {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryNamespaceDto {
+    pub namespace: String,
+    pub live_total: u64,
+    pub observations: u64,
+    pub active_patterns: u64,
+    pub staged_patterns: u64,
+    pub forgotten: u64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub latest_created_at: Option<String>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryNamespaceListResponse {
+    pub items: Vec<MemoryNamespaceDto>,
+    pub total: u64,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PatternCreateRequest {
@@ -143,6 +192,11 @@ pub struct PatternCreateRequest {
     /// If `None`, the Pattern is operator-attested wisdom and is
     /// recalled in every scenario.
     pub training_window_end: Option<String>,
+    /// Required when `training_window_end` is `None`; points to an
+    /// `operator_attestations` row proving the operator accepted the
+    /// cross-scenario leakage implications of a timeless Pattern.
+    #[serde(default)]
+    pub attestation_id: Option<String>,
     /// Provenance fields MUST be absent — operator-seeded Patterns
     /// never carry run/scenario/cycle attribution. We surface them on
     /// the request so the validation error message is useful when an
@@ -154,6 +208,54 @@ pub struct PatternCreateRequest {
     #[serde(default)]
     pub cycle_idx: Option<i64>,
 }
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromoteObservationsRequest {
+    pub observation_ids: Vec<String>,
+    pub text: String,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub active: bool,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorAttestationCreateRequest {
+    pub operator_initials: String,
+    pub surface: String,
+    #[serde(default)]
+    pub signature: Option<String>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OperatorAttestationDto {
+    pub id: String,
+    pub operator_initials: String,
+    pub surface: String,
+    pub warning_text_hash: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub signature: Option<String>,
+}
+
+pub const NULL_WINDOW_PATTERN_WARNING: &str = "Manual Pattern has no training_window_end and may be recalled in every scenario. Operator accepts the leakage/scope implications.";
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -238,6 +340,16 @@ fn resolve_tier_filter(req: &ListMemoryRequest) -> ApiResult<Option<Tier>> {
     }
 }
 
+fn resolve_promotion_state_filter(req: &ListMemoryRequest) -> ApiResult<Option<String>> {
+    match req.promotion_state.as_deref().map(str::trim) {
+        None | Some("") => Ok(None),
+        Some("active") | Some("staged") => Ok(req.promotion_state.clone()),
+        Some(other) => Err(ApiError::Validation(format!(
+            "promotion_state must be \"active\" or \"staged\", got \"{other}\""
+        ))),
+    }
+}
+
 fn clamp_pagination(limit: Option<i64>, offset: Option<i64>) -> ApiResult<(i64, i64)> {
     let limit_raw = limit.unwrap_or(DEFAULT_LIMIT);
     if limit_raw < 0 {
@@ -283,9 +395,21 @@ fn row_to_item(row: &sqlx::sqlite::SqliteRow) -> ApiResult<MemoryItem> {
     let cycle_idx: Option<i64> = row
         .try_get::<Option<i64>, _>("cycle_idx")
         .map_err(|e| ApiError::Internal(format!("memory: read cycle_idx: {e}")))?;
+    let source_window_start_str: Option<String> = row
+        .try_get::<Option<String>, _>("source_window_start")
+        .map_err(|e| ApiError::Internal(format!("memory: read source_window_start: {e}")))?;
+    let source_window_end_str: Option<String> = row
+        .try_get::<Option<String>, _>("source_window_end")
+        .map_err(|e| ApiError::Internal(format!("memory: read source_window_end: {e}")))?;
     let training_window_end_str: Option<String> = row
         .try_get::<Option<String>, _>("training_window_end")
         .map_err(|e| ApiError::Internal(format!("memory: read training_window_end: {e}")))?;
+    let promotion_state: Option<String> = row
+        .try_get::<Option<String>, _>("promotion_state")
+        .map_err(|e| ApiError::Internal(format!("memory: read promotion_state: {e}")))?;
+    let attestation_id: Option<String> = row
+        .try_get::<Option<String>, _>("attestation_id")
+        .map_err(|e| ApiError::Internal(format!("memory: read attestation_id: {e}")))?;
     let forgotten_at_str: Option<String> = row
         .try_get::<Option<String>, _>("forgotten_at")
         .map_err(|e| ApiError::Internal(format!("memory: read forgotten_at: {e}")))?;
@@ -298,6 +422,22 @@ fn row_to_item(row: &sqlx::sqlite::SqliteRow) -> ApiResult<MemoryItem> {
         Some(s) => Some(
             DateTime::parse_from_rfc3339(&s)
                 .map_err(|e| ApiError::Internal(format!("memory: parse training_window_end: {e}")))?
+                .with_timezone(&Utc),
+        ),
+        None => None,
+    };
+    let source_window_start = match source_window_start_str {
+        Some(s) => Some(
+            DateTime::parse_from_rfc3339(&s)
+                .map_err(|e| ApiError::Internal(format!("memory: parse source_window_start: {e}")))?
+                .with_timezone(&Utc),
+        ),
+        None => None,
+    };
+    let source_window_end = match source_window_end_str {
+        Some(s) => Some(
+            DateTime::parse_from_rfc3339(&s)
+                .map_err(|e| ApiError::Internal(format!("memory: parse source_window_end: {e}")))?
                 .with_timezone(&Utc),
         ),
         None => None,
@@ -323,7 +463,11 @@ fn row_to_item(row: &sqlx::sqlite::SqliteRow) -> ApiResult<MemoryItem> {
         run_id,
         scenario_id,
         cycle_idx,
+        source_window_start,
+        source_window_end,
         training_window_end,
+        promotion_state,
+        attestation_id,
         forgotten_at,
     })
 }
@@ -333,6 +477,7 @@ fn row_to_item(row: &sqlx::sqlite::SqliteRow) -> ApiResult<MemoryItem> {
 pub async fn list(store: &MemoryStore, req: ListMemoryRequest) -> ApiResult<MemoryListResponse> {
     let namespace = resolve_namespace_filter(&req)?;
     let tier = resolve_tier_filter(&req)?;
+    let promotion_state = resolve_promotion_state_filter(&req)?;
     let (limit, offset) = clamp_pagination(req.limit, req.offset)?;
     let pool = store.pool();
 
@@ -354,7 +499,12 @@ pub async fn list(store: &MemoryStore, req: ListMemoryRequest) -> ApiResult<Memo
     if req.run_id.is_some() {
         where_parts.push("run_id = ?");
     }
-    if !req.include_forgotten.unwrap_or(false) {
+    if promotion_state.is_some() {
+        where_parts.push("promotion_state = ?");
+    }
+    if req.forgotten_only.unwrap_or(false) {
+        where_parts.push("forgotten_at IS NOT NULL");
+    } else if !req.include_forgotten.unwrap_or(false) {
         where_parts.push("forgotten_at IS NULL");
     }
     let where_clause = if where_parts.is_empty() {
@@ -377,11 +527,15 @@ pub async fn list(store: &MemoryStore, req: ListMemoryRequest) -> ApiResult<Memo
     if let Some(rid) = &req.run_id {
         count_q = count_q.bind(rid.clone());
     }
+    if let Some(state) = &promotion_state {
+        count_q = count_q.bind(state.clone());
+    }
     let total: i64 = count_q.fetch_one(pool).await?;
 
     let list_sql = format!(
         "SELECT id, namespace, tier, text, created_at, run_id, scenario_id, cycle_idx, \
-         training_window_end, forgotten_at FROM memory_items{where_clause} \
+         source_window_start, source_window_end, training_window_end, promotion_state, \
+         attestation_id, forgotten_at FROM memory_items{where_clause} \
          ORDER BY created_at DESC LIMIT ? OFFSET ?"
     );
     let mut list_q = sqlx::query(&list_sql);
@@ -397,6 +551,9 @@ pub async fn list(store: &MemoryStore, req: ListMemoryRequest) -> ApiResult<Memo
     if let Some(rid) = &req.run_id {
         list_q = list_q.bind(rid.clone());
     }
+    if let Some(state) = &promotion_state {
+        list_q = list_q.bind(state.clone());
+    }
     list_q = list_q.bind(limit).bind(offset);
 
     let rows = list_q.fetch_all(pool).await?;
@@ -411,13 +568,54 @@ pub async fn list(store: &MemoryStore, req: ListMemoryRequest) -> ApiResult<Memo
     })
 }
 
+/// `GET /api/memory/namespaces` — summarize memory occupancy by namespace.
+/// This powers operator namespace discovery so surfaces no longer require
+/// the caller to already know `global` or `agent:<id>`.
+pub async fn list_namespaces(store: &MemoryStore) -> ApiResult<MemoryNamespaceListResponse> {
+    let rows = sqlx::query(
+        "SELECT namespace, \
+           SUM(CASE WHEN forgotten_at IS NULL THEN 1 ELSE 0 END) AS live_total, \
+           SUM(CASE WHEN tier = 'observation' AND forgotten_at IS NULL THEN 1 ELSE 0 END) AS observations, \
+           SUM(CASE WHEN tier = 'pattern' AND forgotten_at IS NULL \
+                     AND (promotion_state IS NULL OR promotion_state = 'active') THEN 1 ELSE 0 END) AS active_patterns, \
+           SUM(CASE WHEN tier = 'pattern' AND forgotten_at IS NULL \
+                     AND promotion_state = 'staged' THEN 1 ELSE 0 END) AS staged_patterns, \
+           SUM(CASE WHEN forgotten_at IS NOT NULL THEN 1 ELSE 0 END) AS forgotten, \
+           MAX(created_at) AS latest_created_at \
+         FROM memory_items \
+         GROUP BY namespace \
+         ORDER BY latest_created_at DESC, namespace ASC",
+    )
+    .fetch_all(store.pool())
+    .await?;
+
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(MemoryNamespaceDto {
+            namespace: row.try_get("namespace")?,
+            live_total: row.try_get::<i64, _>("live_total")?.max(0) as u64,
+            observations: row.try_get::<i64, _>("observations")?.max(0) as u64,
+            active_patterns: row.try_get::<i64, _>("active_patterns")?.max(0) as u64,
+            staged_patterns: row.try_get::<i64, _>("staged_patterns")?.max(0) as u64,
+            forgotten: row.try_get::<i64, _>("forgotten")?.max(0) as u64,
+            latest_created_at: row.try_get("latest_created_at")?,
+        });
+    }
+
+    Ok(MemoryNamespaceListResponse {
+        total: items.len() as u64,
+        items,
+    })
+}
+
 /// `GET /api/memory/<id>` — single-item detail. Returns
 /// `ApiError::NotFound` when the row is missing so the dashboard surfaces
 /// a 404.
 pub async fn get(store: &MemoryStore, id: &str) -> ApiResult<MemoryItemDto> {
     let row = sqlx::query(
         "SELECT id, namespace, tier, text, created_at, run_id, scenario_id, cycle_idx, \
-         training_window_end, forgotten_at FROM memory_items WHERE id = ?",
+         source_window_start, source_window_end, training_window_end, promotion_state, \
+         attestation_id, forgotten_at FROM memory_items WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(store.pool())
@@ -466,6 +664,23 @@ pub async fn create_pattern(
                 .with_timezone(&Utc),
         ),
     };
+    if training_window_end.is_none() && req.attestation_id.as_deref().unwrap_or("").trim().is_empty() {
+        return Err(ApiError::Validation(
+            "training_window_end=NULL requires attestation_id from operator_attestations".into(),
+        ));
+    }
+    if let Some(attestation_id) = req.attestation_id.as_deref() {
+        let exists = sqlx::query("SELECT 1 FROM operator_attestations WHERE id = ?")
+            .bind(attestation_id)
+            .fetch_optional(store.pool())
+            .await?
+            .is_some();
+        if !exists {
+            return Err(ApiError::Validation(format!(
+                "attestation_id '{attestation_id}' does not exist"
+            )));
+        }
+    }
 
     let id = ulid::Ulid::new().to_string();
     let item = MemoryItem {
@@ -478,7 +693,11 @@ pub async fn create_pattern(
         run_id: None,
         scenario_id: None,
         cycle_idx: None,
+        source_window_start: None,
+        source_window_end: None,
         training_window_end,
+        promotion_state: Some("active".into()),
+        attestation_id: req.attestation_id,
         forgotten_at: None,
     };
 
@@ -491,6 +710,216 @@ pub async fn create_pattern(
     // ordering of optional fields, etc.).
     let dto = get(store, &id).await?;
     Ok(dto)
+}
+
+pub async fn promote_observations(
+    store: &MemoryStore,
+    embedder_id: &str,
+    embedding: Vec<f32>,
+    req: PromoteObservationsRequest,
+) -> ApiResult<MemoryItemDto> {
+    if req.observation_ids.is_empty() {
+        return Err(ApiError::Validation("observation_ids is required".into()));
+    }
+    if req.text.trim().is_empty() {
+        return Err(ApiError::Validation("text is required".into()));
+    }
+    if embedding.is_empty() {
+        return Err(ApiError::Validation(
+            "promotion requires a non-empty embedding".into(),
+        ));
+    }
+
+    let mut resolved_namespace: Option<String> = req.namespace.filter(|s| !s.trim().is_empty());
+    let mut latest_source_end: Option<DateTime<Utc>> = None;
+
+    for id in &req.observation_ids {
+        let row = sqlx::query(
+            "SELECT id, namespace, tier, source_window_end, forgotten_at \
+             FROM memory_items WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(store.pool())
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("observation {id}")))?;
+
+        let tier: String = row
+            .try_get("tier")
+            .map_err(|e| ApiError::Internal(format!("memory: read tier: {e}")))?;
+        if tier != Tier::Observation.as_str() {
+            return Err(ApiError::Validation(format!("{id} is not an Observation")));
+        }
+        let forgotten_at: Option<String> = row
+            .try_get("forgotten_at")
+            .map_err(|e| ApiError::Internal(format!("memory: read forgotten_at: {e}")))?;
+        if forgotten_at.is_some() {
+            return Err(ApiError::Validation(format!(
+                "{id} is forgotten and cannot seed a Pattern"
+            )));
+        }
+
+        let namespace: String = row
+            .try_get("namespace")
+            .map_err(|e| ApiError::Internal(format!("memory: read namespace: {e}")))?;
+        match resolved_namespace.as_deref() {
+            None => resolved_namespace = Some(namespace),
+            Some(ns) if ns == namespace => {}
+            Some(ns) => {
+                return Err(ApiError::Validation(format!(
+                    "Observation namespace mismatch: expected {ns}, got {namespace}"
+                )));
+            }
+        }
+
+        let source_end_str: Option<String> = row
+            .try_get("source_window_end")
+            .map_err(|e| ApiError::Internal(format!("memory: read source_window_end: {e}")))?;
+        let source_end = source_end_str
+            .as_deref()
+            .ok_or_else(|| ApiError::Validation(format!("{id} is missing source_window_end")))
+            .and_then(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| ApiError::Internal(format!("memory: parse source_window_end for {id}: {e}")))
+            })?;
+        latest_source_end = Some(match latest_source_end {
+            Some(cur) => cur.max(source_end),
+            None => source_end,
+        });
+    }
+
+    let namespace = resolved_namespace
+        .ok_or_else(|| ApiError::Validation("could not resolve namespace from observations".into()))?;
+    let training_window_end = latest_source_end.ok_or_else(|| {
+        ApiError::Validation("could not resolve source_window_end from observations".into())
+    })?;
+
+    let id = ulid::Ulid::new().to_string();
+    let item = MemoryItem {
+        id: id.clone(),
+        namespace,
+        tier: Tier::Pattern,
+        text: req.text,
+        embedding,
+        created_at: Utc::now(),
+        run_id: None,
+        scenario_id: None,
+        cycle_idx: None,
+        source_window_start: None,
+        source_window_end: None,
+        training_window_end: Some(training_window_end),
+        promotion_state: Some(if req.active { "active" } else { "staged" }.into()),
+        attestation_id: None,
+        forgotten_at: None,
+    };
+    store
+        .upsert_pattern(&item, embedder_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("memory: promote_observations: {e}")))?;
+    get(store, &id).await
+}
+
+/// Activate a staged Pattern so it can enter the recall path. This is
+/// intentionally narrow: Observations cannot be activated, forgotten
+/// Patterns must be restored first, and timeless Patterns require an
+/// operator attestation.
+pub async fn activate_pattern(store: &MemoryStore, id: &str) -> ApiResult<MemoryItemDto> {
+    let current = get(store, id).await?;
+    if current.tier != Tier::Pattern.as_str() {
+        return Err(ApiError::Validation(format!("{id} is not a Pattern")));
+    }
+    if current.forgotten_at.is_some() {
+        return Err(ApiError::Validation(format!(
+            "{id} is forgotten and must be unforgotten before activation"
+        )));
+    }
+    if current.training_window_end.is_none() && current.attestation_id.is_none() {
+        return Err(ApiError::Validation(format!(
+            "{id} has no training_window_end and no operator attestation"
+        )));
+    }
+
+    let res = sqlx::query(
+        "UPDATE memory_items SET promotion_state = 'active' \
+         WHERE id = ? AND tier = 'pattern' AND forgotten_at IS NULL",
+    )
+    .bind(id)
+    .execute(store.pool())
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("pattern {id}")));
+    }
+    sqlx::query("UPDATE autoresearch_runs SET promotion_state = 'active' WHERE pattern_id = ?")
+        .bind(id)
+        .execute(store.pool())
+        .await?;
+    get(store, id).await
+}
+
+/// Demote a Pattern by soft-deleting it from recall. The row remains in
+/// the admin/list surfaces during the grace window.
+pub async fn demote_pattern(store: &MemoryStore, id: &str) -> ApiResult<MemoryItemDto> {
+    let current = get(store, id).await?;
+    if current.tier != Tier::Pattern.as_str() {
+        return Err(ApiError::Validation(format!("{id} is not a Pattern")));
+    }
+    if current.forgotten_at.is_some() {
+        return Ok(current);
+    }
+
+    let affected = store
+        .demote_pattern(id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("memory: demote_pattern: {e}")))?;
+    if affected == 0 {
+        return Err(ApiError::NotFound(format!("pattern {id}")));
+    }
+    sqlx::query("UPDATE autoresearch_runs SET promotion_state = 'demoted' WHERE pattern_id = ?")
+        .bind(id)
+        .execute(store.pool())
+        .await?;
+    get(store, id).await
+}
+
+pub async fn create_operator_attestation(
+    store: &MemoryStore,
+    req: OperatorAttestationCreateRequest,
+) -> ApiResult<OperatorAttestationDto> {
+    let initials = req.operator_initials.trim();
+    if initials.is_empty() {
+        return Err(ApiError::Validation("operator_initials is required".into()));
+    }
+    let surface = req.surface.trim();
+    if surface.is_empty() {
+        return Err(ApiError::Validation("surface is required".into()));
+    }
+    let id = ulid::Ulid::new().to_string();
+    let created_at = Utc::now();
+    let warning_text_hash = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(NULL_WINDOW_PATTERN_WARNING.as_bytes()))
+    );
+    sqlx::query(
+        "INSERT INTO operator_attestations \
+         (id, operator_initials, surface, warning_text_hash, created_at, signature) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(initials)
+    .bind(surface)
+    .bind(&warning_text_hash)
+    .bind(created_at.to_rfc3339())
+    .bind(&req.signature)
+    .execute(store.pool())
+    .await?;
+    Ok(OperatorAttestationDto {
+        id,
+        operator_initials: initials.to_string(),
+        surface: surface.to_string(),
+        warning_text_hash,
+        created_at: created_at.to_rfc3339(),
+        signature: req.signature,
+    })
 }
 
 /// `DELETE /api/memory/<id>` — remove one item. Returns `NotFound`
@@ -566,10 +995,46 @@ pub async fn undo_forget(store: &MemoryStore, req: UndoForgetRequest) -> ApiResu
         None => Utc::now() - chrono::Duration::days(xvision_memory::store::forget_grace_days() as i64),
     };
 
+    let candidate_rows = sqlx::query(
+        "SELECT id, promotion_state FROM memory_items \
+         WHERE namespace = ? \
+           AND tier = 'pattern' \
+           AND forgotten_at IS NOT NULL \
+           AND forgotten_at >= ?",
+    )
+    .bind(&namespace)
+    .bind(since.to_rfc3339())
+    .fetch_all(store.pool())
+    .await?;
+    let pattern_states: Vec<(String, String)> = candidate_rows
+        .into_iter()
+        .map(|row| {
+            let id: String = row
+                .try_get("id")
+                .map_err(|e| ApiError::Internal(format!("memory: read restored pattern id: {e}")))?;
+            let state: Option<String> = row
+                .try_get("promotion_state")
+                .map_err(|e| ApiError::Internal(format!("memory: read restored pattern state: {e}")))?;
+            Ok((id, state.unwrap_or_else(|| "active".into())))
+        })
+        .collect::<ApiResult<_>>()?;
+
     let restored = store
         .undo_forget(&namespace, since)
         .await
         .map_err(|e| ApiError::Internal(format!("memory: undo_forget: {e}")))?;
+    if restored > 0 && !pattern_states.is_empty() {
+        for (pattern_id, state) in pattern_states {
+            sqlx::query(
+                "UPDATE autoresearch_runs SET promotion_state = ? \
+                 WHERE pattern_id = ? AND promotion_state = 'demoted'",
+            )
+            .bind(state)
+            .bind(pattern_id)
+            .execute(store.pool())
+            .await?;
+        }
+    }
     Ok(UndoForgetResponse {
         restored,
         since: since.to_rfc3339(),
@@ -627,10 +1092,21 @@ mod tests {
     use super::*;
 
     async fn seed_pattern(store: &MemoryStore, namespace: &str, text: &str) -> String {
+        let attestation = create_operator_attestation(
+            store,
+            OperatorAttestationCreateRequest {
+                operator_initials: "QA".into(),
+                surface: "test".into(),
+                signature: None,
+            },
+        )
+        .await
+        .expect("attestation");
         let req = PatternCreateRequest {
             text: text.into(),
             namespace: namespace.into(),
             training_window_end: None,
+            attestation_id: Some(attestation.id),
             run_id: None,
             scenario_id: None,
             cycle_idx: None,
@@ -660,7 +1136,11 @@ mod tests {
             run_id: Some(run_id.into()),
             scenario_id: Some(scenario_id.into()),
             cycle_idx: Some(cycle_idx),
+            source_window_start: Some(Utc::now()),
+            source_window_end: Some(Utc::now()),
             training_window_end: None,
+            promotion_state: None,
+            attestation_id: None,
             forgotten_at: None,
         };
         store
@@ -690,12 +1170,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_namespaces_summarizes_live_and_forgotten_rows() {
+        let store = MemoryStore::open_in_memory().await.expect("open");
+        seed_observation(&store, "agent:A", "obs", "run-1", "scenario-1", 1).await;
+        seed_pattern(&store, "agent:A", "active pattern").await;
+        let staged = PromoteObservationsRequest {
+            observation_ids: vec![seed_observation(&store, "agent:B", "obs", "run-2", "scenario-2", 1).await],
+            text: "staged pattern".into(),
+            namespace: Some("agent:B".into()),
+            active: false,
+        };
+        let staged = promote_observations(&store, "test-embedder", vec![1.0], staged)
+            .await
+            .expect("staged");
+        demote_pattern(&store, &staged.id).await.expect("demote");
+
+        let out = list_namespaces(&store).await.expect("namespaces");
+        assert_eq!(out.total, 2);
+        let by_ns = out
+            .items
+            .iter()
+            .map(|item| (item.namespace.as_str(), item))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(by_ns["agent:A"].observations, 1);
+        assert_eq!(by_ns["agent:A"].active_patterns, 1);
+        assert_eq!(by_ns["agent:A"].live_total, 2);
+        assert_eq!(by_ns["agent:B"].observations, 1);
+        assert_eq!(by_ns["agent:B"].staged_patterns, 0);
+        assert_eq!(by_ns["agent:B"].forgotten, 1);
+    }
+
+    #[tokio::test]
     async fn create_pattern_rejects_provenance_fields() {
         let store = MemoryStore::open_in_memory().await.expect("open");
         let bad = PatternCreateRequest {
             text: "x".into(),
             namespace: "global".into(),
             training_window_end: None,
+            attestation_id: None,
             run_id: Some("run-1".into()),
             scenario_id: None,
             cycle_idx: None,
@@ -719,6 +1231,19 @@ mod tests {
             text: "  ".into(),
             namespace: "global".into(),
             training_window_end: None,
+            attestation_id: Some(
+                create_operator_attestation(
+                    &store,
+                    OperatorAttestationCreateRequest {
+                        operator_initials: "QA".into(),
+                        surface: "test".into(),
+                        signature: None,
+                    },
+                )
+                .await
+                .unwrap()
+                .id,
+            ),
             run_id: None,
             scenario_id: None,
             cycle_idx: None,
@@ -732,6 +1257,7 @@ mod tests {
             text: "ok".into(),
             namespace: "".into(),
             training_window_end: None,
+            attestation_id: None,
             run_id: None,
             scenario_id: None,
             cycle_idx: None,
@@ -740,6 +1266,138 @@ mod tests {
             .await
             .expect_err("must reject empty namespace");
         assert!(matches!(err, ApiError::Validation(_)));
+    }
+
+    #[tokio::test]
+    async fn create_pattern_rejects_null_training_window_without_attestation() {
+        let store = MemoryStore::open_in_memory().await.expect("open");
+        let req = PatternCreateRequest {
+            text: "operator timeless pattern".into(),
+            namespace: "global".into(),
+            training_window_end: None,
+            attestation_id: None,
+            run_id: None,
+            scenario_id: None,
+            cycle_idx: None,
+        };
+        let err = create_pattern(&store, "test-embedder", vec![], req)
+            .await
+            .expect_err("must reject missing attestation");
+        match err {
+            ApiError::Validation(msg) => assert!(msg.contains("attestation_id")),
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_pattern_accepts_null_training_window_with_attestation() {
+        let store = MemoryStore::open_in_memory().await.expect("open");
+        let attestation = create_operator_attestation(
+            &store,
+            OperatorAttestationCreateRequest {
+                operator_initials: "QA".into(),
+                surface: "test".into(),
+                signature: Some("sig-test".into()),
+            },
+        )
+        .await
+        .expect("create attestation");
+        let req = PatternCreateRequest {
+            text: "operator timeless pattern".into(),
+            namespace: "global".into(),
+            training_window_end: None,
+            attestation_id: Some(attestation.id.clone()),
+            run_id: None,
+            scenario_id: None,
+            cycle_idx: None,
+        };
+        let dto = create_pattern(&store, "test-embedder", vec![], req)
+            .await
+            .expect("create_pattern");
+        assert_eq!(dto.training_window_end, None);
+        assert_eq!(dto.attestation_id.as_deref(), Some(attestation.id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn promote_observations_sets_training_window_end_to_latest_source_end() {
+        let store = MemoryStore::open_in_memory().await.expect("open");
+        let o1 = seed_observation(&store, "agent:A", "obs one", "run-1", "scn-1", 0).await;
+        let o2 = seed_observation(&store, "agent:A", "obs two", "run-1", "scn-1", 1).await;
+        sqlx::query("UPDATE memory_items SET source_window_end = ? WHERE id = ?")
+            .bind("2024-02-01T00:00:00Z")
+            .bind(&o1)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE memory_items SET source_window_end = ? WHERE id = ?")
+            .bind("2024-02-03T04:05:06Z")
+            .bind(&o2)
+            .execute(store.pool())
+            .await
+            .unwrap();
+
+        let dto = promote_observations(
+            &store,
+            "test-embedder",
+            vec![1.0, 0.0],
+            PromoteObservationsRequest {
+                observation_ids: vec![o1, o2],
+                text: "When this cohort appears, reduce size.".into(),
+                namespace: None,
+                active: false,
+            },
+        )
+        .await
+        .expect("promote");
+
+        assert_eq!(dto.tier, "pattern");
+        assert_eq!(dto.namespace, "agent:A");
+        assert_eq!(dto.promotion_state.as_deref(), Some("staged"));
+        assert_eq!(
+            dto.training_window_end.as_deref(),
+            Some("2024-02-03T04:05:06+00:00")
+        );
+        assert!(dto.run_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn promote_observations_rejects_mixed_namespaces_and_empty_embedding() {
+        let store = MemoryStore::open_in_memory().await.expect("open");
+        let o1 = seed_observation(&store, "agent:A", "obs one", "run-1", "scn-1", 0).await;
+        let o2 = seed_observation(&store, "agent:B", "obs two", "run-1", "scn-1", 1).await;
+
+        let err = promote_observations(
+            &store,
+            "test-embedder",
+            vec![],
+            PromoteObservationsRequest {
+                observation_ids: vec![o1.clone()],
+                text: "x".into(),
+                namespace: None,
+                active: true,
+            },
+        )
+        .await
+        .expect_err("empty embedding rejected");
+        assert!(matches!(err, ApiError::Validation(_)));
+
+        let err = promote_observations(
+            &store,
+            "test-embedder",
+            vec![1.0],
+            PromoteObservationsRequest {
+                observation_ids: vec![o1, o2],
+                text: "x".into(),
+                namespace: None,
+                active: true,
+            },
+        )
+        .await
+        .expect_err("mixed namespaces rejected");
+        match err {
+            ApiError::Validation(msg) => assert!(msg.contains("namespace mismatch")),
+            other => panic!("expected Validation, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -814,6 +1472,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_filters_by_promotion_state_and_forgotten_visibility() {
+        let store = MemoryStore::open_in_memory().await.expect("open");
+        let o1 = seed_observation(&store, "agent:A", "obs one", "run-1", "scn-1", 0).await;
+        let o2 = seed_observation(&store, "agent:A", "obs two", "run-1", "scn-1", 1).await;
+        let staged = promote_observations(
+            &store,
+            "test-embedder",
+            vec![1.0],
+            PromoteObservationsRequest {
+                observation_ids: vec![o1, o2],
+                text: "staged pattern".into(),
+                namespace: None,
+                active: false,
+            },
+        )
+        .await
+        .expect("promote observations");
+        let active = seed_pattern(&store, "agent:A", "active pattern").await;
+        let forgotten = seed_pattern(&store, "agent:A", "forgotten pattern").await;
+        demote_pattern(&store, &forgotten).await.expect("demote");
+
+        let staged_only = list(
+            &store,
+            ListMemoryRequest {
+                tier: Some("pattern".into()),
+                namespace: Some("agent:A".into()),
+                promotion_state: Some("staged".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("list staged");
+        assert_eq!(staged_only.total, 1);
+        assert_eq!(staged_only.items[0].id, staged.id);
+
+        let active_only = list(
+            &store,
+            ListMemoryRequest {
+                tier: Some("pattern".into()),
+                namespace: Some("agent:A".into()),
+                promotion_state: Some("active".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("list active");
+        assert_eq!(active_only.total, 1);
+        assert_eq!(active_only.items[0].id, active);
+
+        let with_forgotten = list(
+            &store,
+            ListMemoryRequest {
+                tier: Some("pattern".into()),
+                namespace: Some("agent:A".into()),
+                include_forgotten: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("list forgotten");
+        assert_eq!(with_forgotten.total, 3);
+        assert!(with_forgotten
+            .items
+            .iter()
+            .any(|it| it.id == forgotten && it.forgotten_at.is_some()));
+    }
+
+    #[tokio::test]
     async fn list_filters_by_agent_shortcut() {
         let store = MemoryStore::open_in_memory().await.expect("open");
         let _ = seed_pattern(&store, "agent:A", "from A").await;
@@ -865,6 +1591,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_rejects_unknown_promotion_state() {
+        let store = MemoryStore::open_in_memory().await.expect("open");
+        let err = list(
+            &store,
+            ListMemoryRequest {
+                promotion_state: Some("demoted".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("must reject");
+        assert!(matches!(err, ApiError::Validation(_)));
+    }
+
+    #[tokio::test]
     async fn list_filters_by_scenario_and_run() {
         let store = MemoryStore::open_in_memory().await.expect("open");
         let _ = seed_observation(&store, "agent:A", "o1", "run-1", "scn-1", 0).await;
@@ -899,6 +1640,46 @@ mod tests {
         let store = MemoryStore::open_in_memory().await.expect("open");
         let err = forget(&store, "  ").await.expect_err("must reject");
         assert!(matches!(err, ApiError::Validation(_)));
+    }
+
+    #[tokio::test]
+    async fn undo_forget_reconciles_demoted_autoresearch_run_state() {
+        let store = MemoryStore::open_in_memory().await.expect("open");
+        let pattern = seed_pattern(&store, "agent:A", "demote then restore").await;
+        sqlx::query(
+            "INSERT INTO autoresearch_runs \
+             (id, namespace, observation_ids_json, pattern_id, pattern_text, promotion_state, \
+              min_observations, created_at, status, error) \
+             VALUES ('run-ar', 'agent:A', '[]', ?, 'demote then restore', 'demoted', \
+                     2, '2026-05-25T00:00:00Z', 'completed', NULL)",
+        )
+        .bind(&pattern)
+        .execute(store.pool())
+        .await
+        .expect("insert autoresearch run");
+
+        demote_pattern(&store, &pattern).await.expect("demote");
+        let demoted = get(&store, &pattern).await.expect("get demoted");
+        assert!(demoted.forgotten_at.is_some());
+
+        let restored = undo_forget(
+            &store,
+            UndoForgetRequest {
+                namespace: Some("agent:A".into()),
+                agent: None,
+                since: Some("1970-01-01T00:00:00Z".into()),
+            },
+        )
+        .await
+        .expect("undo forget");
+        assert_eq!(restored.restored, 1);
+
+        let run_state: String =
+            sqlx::query_scalar("SELECT promotion_state FROM autoresearch_runs WHERE id = 'run-ar'")
+                .fetch_one(store.pool())
+                .await
+                .expect("read run state");
+        assert_eq!(run_state, "active");
     }
 
     #[tokio::test]

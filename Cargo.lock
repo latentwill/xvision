@@ -8018,6 +8018,7 @@ dependencies = [
  "xvision-filters",
  "xvision-harness",
  "xvision-intern",
+ "xvision-memory",
  "xvision-observability",
  "xvision-risk",
  "xvision-trader",
@@ -8263,6 +8264,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "sqlx",
  "tempfile",
  "tokio",
  "tracing",
@@ -8270,6 +8272,7 @@ dependencies = [
  "ulid",
  "xvision-data",
  "xvision-engine",
+ "xvision-memory",
 ]
 
 [[package]]

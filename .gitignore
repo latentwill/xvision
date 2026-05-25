@@ -80,6 +80,10 @@ target/
 /docs/*.yml
 /docs/*.txt
 /docs/superpowers/
+!/docs/superpowers/
+!/docs/superpowers/evidence/
+!/docs/superpowers/evidence/2026-05-24-cortex-flywheels/
+!/docs/superpowers/evidence/2026-05-24-cortex-flywheels/**
 /docs/scratch/
 /docs/mockups/
 /docs/prototypes/

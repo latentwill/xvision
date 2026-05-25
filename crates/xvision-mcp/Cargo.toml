@@ -22,6 +22,7 @@ path = "src/bin/xvision-mcp.rs"
 [dependencies]
 xvision-data   = { path = "../xvision-data" }
 xvision-engine = { path = "../xvision-engine" }
+xvision-memory = { path = "../xvision-memory" }
 
 # rmcp 1.6: official Rust MCP SDK. Default features = base64 + macros + server.
 # transport-io enables `rmcp::transport::stdio()` for MCP-over-stdin/stdout.
@@ -35,7 +36,8 @@ serde_json         = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow             = { workspace = true }
+chrono             = { workspace = true }
 
 [dev-dependencies]
+sqlx     = { workspace = true }
 tempfile = "3"
-chrono   = { workspace = true }

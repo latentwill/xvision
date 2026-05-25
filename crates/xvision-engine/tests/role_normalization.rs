@@ -114,6 +114,10 @@ async fn pipeline_output_assigned_for_role_variants() {
 
             scenario_start: None,
 
+            source_window_start: None,
+
+            source_window_end: None,
+
             run_id: String::new(),
 
             scenario_id: String::new(),

@@ -22,11 +22,13 @@ use std::collections::HashMap;
 
 use xvision_data as xvn;
 use xvision_engine::agents::AgentSlot;
+use xvision_engine::api::autoresearch as api_autoresearch;
 use xvision_engine::api::eval::{
     self as api_eval, BatchDetail, CompareRunsRequest, CreateBatchRequest, EvalRunRequest, ListRunsRequest,
 };
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, Actor, ApiContext};
+use xvision_engine::api::{flywheel as api_flywheel, memory as api_memory, optimize as api_optimize};
 use xvision_engine::authoring;
 use xvision_engine::eval::behavior::derive_behavior_summary;
 use xvision_engine::eval::run::{RunMode, RunStatus};
@@ -37,6 +39,7 @@ use xvision_engine::strategies::{
     risk::RiskConfig,
     store::{FilesystemStore, StrategyStore},
 };
+use xvision_memory::store::MemoryStore;
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -213,6 +216,145 @@ pub struct EvalRunIdReq {
 pub struct EvalCompareReq {
     /// Two or more run ids (ULIDs) to fold into a single ComparisonReport.
     pub run_ids: Vec<String>,
+}
+
+// --- memory / flywheel request shapes --------------------------------------
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct MemoryListMcpReq {
+    /// Optional tier filter: `observation` or `pattern`.
+    #[serde(default)]
+    pub tier: Option<String>,
+    /// Exact namespace, e.g. `global` or `agent:<id>`.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Convenience shorthand for `namespace = agent:<id>`.
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub scenario_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    /// Pattern lifecycle filter, e.g. `active` or `staged`.
+    #[serde(default)]
+    pub promotion_state: Option<String>,
+    #[serde(default)]
+    pub include_forgotten: Option<bool>,
+    #[serde(default)]
+    pub forgotten_only: Option<bool>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryGetMcpReq {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryRecallMcpReq {
+    /// Exact namespace, e.g. `global` or `agent:<id>`.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Convenience shorthand for `namespace = agent:<id>`.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// Query embedding supplied by the caller. MCP recall is read-only and
+    /// does not call a provider-side embedder.
+    pub query_embedding: Vec<f32>,
+    /// Number of Pattern hits to return. Defaults to 5.
+    #[serde(default)]
+    pub k: Option<usize>,
+    /// RFC3339 scenario start for the temporal leakage filter.
+    #[serde(default)]
+    pub scenario_start: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct FlywheelStatusMcpReq {
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct FlywheelVelocityMcpReq {
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub days: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct FlywheelLineageMcpReq {
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct OptimizeMemoryDemosMcpReq {
+    pub target_agent_id: String,
+    #[serde(default)]
+    pub slot: Option<String>,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub memory_agent: Option<String>,
+    #[serde(default)]
+    pub scenario_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub demo_source: Option<String>,
+    #[serde(default)]
+    pub holdout_split: Option<String>,
+    #[serde(default)]
+    pub cohort_query: Option<String>,
+    #[serde(default)]
+    pub manual_observation_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub prior_pattern_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub auto_prior_patterns: bool,
+    #[serde(default)]
+    pub prior_pattern_limit: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub max_demo_chars: Option<usize>,
+    #[serde(default)]
+    pub apply: bool,
+    #[serde(default)]
+    pub child_name: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AutoresearchListMcpReq {
+    /// Exact namespace, e.g. `global` or `agent:<id>`.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Convenience shorthand for `namespace = agent:<id>`.
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AutoresearchRunIdMcpReq {
+    /// Autoresearch run id.
+    pub id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -850,6 +992,274 @@ impl XvisionTools {
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
         json_or_err(&findings)
+    }
+
+    // --- memory + flywheel read surfaces ----------------------------------
+    //
+    // These wrappers give MCP clients the same read-side memory/flywheel
+    // visibility as the CLI and dashboard without exposing raw cortex/memory
+    // writes. Mutation tools remain behind the dashboard/CLI/API policy layer.
+
+    /// List memory items from the operator memory store. Defaults match the
+    /// CLI/API surface: live rows only unless include_forgotten or
+    /// forgotten_only is set.
+    #[tool(
+        description = "List memory items from the xvision memory store. Optional filters: tier, namespace/agent, run_id, scenario_id, promotion_state, include_forgotten, forgotten_only, limit, offset."
+    )]
+    async fn xvn_memory_list(
+        &self,
+        Parameters(req): Parameters<MemoryListMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let store = self.memory_store().await?;
+        let resp = api_memory::list(
+            &store,
+            api_memory::ListMemoryRequest {
+                tier: req.tier,
+                namespace: req.namespace,
+                agent: req.agent,
+                scenario_id: req.scenario_id,
+                run_id: req.run_id,
+                promotion_state: req.promotion_state,
+                limit: req.limit,
+                offset: req.offset,
+                include_forgotten: req.include_forgotten,
+                forgotten_only: req.forgotten_only,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        json_or_err(&resp)
+    }
+
+    /// List namespaces with memory row counts so MCP clients can discover
+    /// valid memory scopes before recall, flywheel, or optimizer calls.
+    #[tool(description = "List memory namespaces with live, tier, lifecycle, and forgotten row counts.")]
+    async fn xvn_memory_namespaces(&self) -> Result<String, rmcp::ErrorData> {
+        let store = self.memory_store().await?;
+        let resp = api_memory::list_namespaces(&store)
+            .await
+            .map_err(api_err_to_mcp)?;
+        json_or_err(&resp)
+    }
+
+    /// Fetch one memory item by id. The embedding vector is intentionally
+    /// omitted from the response; this is the operator DTO used by API/CLI.
+    #[tool(
+        description = "Get one memory item by id. Returns the operator DTO without the raw embedding vector."
+    )]
+    async fn xvn_memory_get(
+        &self,
+        Parameters(req): Parameters<MemoryGetMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let store = self.memory_store().await?;
+        let item = api_memory::get(&store, &req.id).await.map_err(api_err_to_mcp)?;
+        json_or_err(&item)
+    }
+
+    /// Recall active Patterns for a namespace using a caller-supplied embedding.
+    /// This is read-only and enforces the same structural + temporal filters as
+    /// runtime recall: no Observations, no staged/forgotten Patterns, and no
+    /// Patterns whose training window overlaps scenario_start.
+    #[tool(
+        description = "Recall active Pattern hits by namespace using a caller-supplied query_embedding. Enforces Pattern-only, active-only, forgotten-hidden, and scenario_start temporal filters."
+    )]
+    async fn xvn_memory_recall(
+        &self,
+        Parameters(req): Parameters<MemoryRecallMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let namespace = resolve_mcp_namespace(req.namespace, req.agent)?;
+        let scenario_start = match req.scenario_start {
+            Some(s) => Some(parse_rfc3339_mcp(&s)?),
+            None => None,
+        };
+        if req.query_embedding.is_empty() {
+            return Err(rmcp::ErrorData::invalid_params(
+                "query_embedding must not be empty".to_string(),
+                None,
+            ));
+        }
+        let store = self.memory_store().await?;
+        let matches = store
+            .query(
+                &namespace,
+                &req.query_embedding,
+                req.k.unwrap_or(5),
+                scenario_start,
+            )
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(format!("memory recall: {e}"), None))?;
+        json_or_err(&serde_json::json!({
+            "namespace": namespace,
+            "count": matches.len(),
+            "items": matches,
+        }))
+    }
+
+    /// Summarize memory flywheel state for one namespace.
+    #[tool(description = "Summarize memory flywheel state for one namespace or agent.")]
+    async fn xvn_flywheel_status(
+        &self,
+        Parameters(req): Parameters<FlywheelStatusMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let store = self.memory_store().await?;
+        let resp = api_flywheel::status(
+            &store,
+            api_flywheel::FlywheelStatusRequest {
+                namespace: req.namespace,
+                agent: req.agent,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        json_or_err(&resp)
+    }
+
+    /// Return recent flywheel velocity counters for one namespace.
+    #[tool(description = "Return recent memory flywheel velocity counters for one namespace or agent.")]
+    async fn xvn_flywheel_velocity(
+        &self,
+        Parameters(req): Parameters<FlywheelVelocityMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let store = self.memory_store().await?;
+        let resp = api_flywheel::velocity(
+            &ctx,
+            &store,
+            api_flywheel::FlywheelVelocityRequest {
+                namespace: req.namespace,
+                agent: req.agent,
+                days: req.days,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        json_or_err(&resp)
+    }
+
+    /// Return memory-demo optimizer lineage rows for one namespace.
+    #[tool(
+        description = "Return memory-demo optimizer lineage rows, including train/dev/holdout hashes, for one namespace or agent."
+    )]
+    async fn xvn_flywheel_lineage(
+        &self,
+        Parameters(req): Parameters<FlywheelLineageMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let resp = api_flywheel::lineage(
+            &ctx,
+            api_flywheel::FlywheelLineageRequest {
+                namespace: req.namespace,
+                agent: req.agent,
+                limit: req.limit,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        json_or_err(&resp)
+    }
+
+    /// Compile memory Observations into a deterministic demo prompt prefix.
+    /// `apply=false` is a dry-run; `apply=true` explicitly mints a child
+    /// Agent and writes optimizer lineage rows.
+    #[tool(
+        description = "Compile memory Observations into train/dev/holdout demos for an agent slot. Dry-run by default; set apply=true to mint a child agent and persist lineage."
+    )]
+    async fn xvn_optimize_memory_demos(
+        &self,
+        Parameters(req): Parameters<OptimizeMemoryDemosMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let store = self.memory_store().await?;
+        let resp = api_optimize::compile_memory_demos(
+            &ctx,
+            &store,
+            api_optimize::MemoryDemoOptimizeRequest {
+                target_agent_id: req.target_agent_id,
+                slot: req.slot,
+                namespace: req.namespace,
+                memory_agent: req.memory_agent,
+                scenario_id: req.scenario_id,
+                run_id: req.run_id,
+                demo_source: req.demo_source,
+                holdout_split: req.holdout_split,
+                cohort_query: req.cohort_query,
+                manual_observation_ids: req.manual_observation_ids,
+                prior_pattern_ids: req.prior_pattern_ids,
+                auto_prior_patterns: req.auto_prior_patterns,
+                prior_pattern_limit: req.prior_pattern_limit,
+                limit: req.limit,
+                max_demo_chars: req.max_demo_chars,
+                apply: req.apply,
+                child_name: req.child_name,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        json_or_err(&resp)
+    }
+
+    /// List offline autoresearch runs. Read-only companion to the CLI and
+    /// dashboard run-history surfaces.
+    #[tool(description = "List offline autoresearch run ledger rows by namespace or agent.")]
+    async fn xvn_autoresearch_list(
+        &self,
+        Parameters(req): Parameters<AutoresearchListMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let store = self.memory_store().await?;
+        let resp = api_autoresearch::list_runs(
+            &store,
+            api_autoresearch::AutoresearchRunListRequest {
+                namespace: req.namespace,
+                agent: req.agent,
+                limit: req.limit,
+                offset: req.offset,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        json_or_err(&resp)
+    }
+
+    /// Inspect one autoresearch run, including contributing Observation ids,
+    /// Pattern id, numeric gate fields, and blind Finding provenance.
+    #[tool(description = "Inspect one autoresearch run ledger row by id.")]
+    async fn xvn_autoresearch_inspect(
+        &self,
+        Parameters(req): Parameters<AutoresearchRunIdMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let store = self.memory_store().await?;
+        let run = api_autoresearch::inspect_run(&store, &req.id)
+            .await
+            .map_err(api_err_to_mcp)?;
+        json_or_err(&run)
+    }
+
+    /// Return just the qualitative Finding and gate provenance for one
+    /// autoresearch run. This keeps chat-rail callers from having to parse the
+    /// full run object when they only need the judge context.
+    #[tool(description = "Return qualitative Finding and numeric gate provenance for one autoresearch run.")]
+    async fn xvn_autoresearch_findings(
+        &self,
+        Parameters(req): Parameters<AutoresearchRunIdMcpReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let store = self.memory_store().await?;
+        let run = api_autoresearch::inspect_run(&store, &req.id)
+            .await
+            .map_err(api_err_to_mcp)?;
+        json_or_err(&serde_json::json!({
+            "id": run.id,
+            "pattern_id": run.pattern_id,
+            "gate_metric": run.gate_metric,
+            "gate_verdict": run.gate_verdict,
+            "gate_reason": run.gate_reason,
+            "finding_text": run.finding_text,
+            "finding_model": run.finding_model,
+            "finding_blind": run.finding_blind,
+            "qualitative_finding_json": run.qualitative_finding_json,
+            "finding_blinded_metrics": run.finding_blinded_metrics,
+            "judge_model": run.judge_model,
+            "judge_token_cost": run.judge_token_cost,
+        }))
     }
 
     // ── F-13: MCP surface parity for new CLI verbs (workbench wave A+B + wave-C) ──
@@ -1534,6 +1944,55 @@ impl XvisionTools {
         .await
         .map_err(|e| rmcp::ErrorData::internal_error(format!("open api context: {e}"), None))
     }
+
+    async fn memory_store(&self) -> Result<MemoryStore, rmcp::ErrorData> {
+        let path = match (&self.xvn_home, std::env::var("XVN_MEMORY_DB")) {
+            (Some(home), _) => home.join("memory.db"),
+            (None, Ok(p)) if !p.is_empty() => PathBuf::from(p),
+            _ => resolve_xvn_home().join("memory.db"),
+        };
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    rmcp::ErrorData::internal_error(
+                        format!("create memory db directory {}: {e}", parent.display()),
+                        None,
+                    )
+                })?;
+            }
+        }
+        MemoryStore::open(&path).await.map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("open memory store {}: {e}", path.display()), None)
+        })
+    }
+}
+
+fn resolve_mcp_namespace(
+    namespace: Option<String>,
+    agent: Option<String>,
+) -> Result<String, rmcp::ErrorData> {
+    match (namespace.as_deref(), agent.as_deref()) {
+        (Some(_), Some(_)) => Err(rmcp::ErrorData::invalid_params(
+            "set either namespace or agent, not both".to_string(),
+            None,
+        )),
+        (Some(ns), None) if !ns.trim().is_empty() => Ok(ns.to_string()),
+        (None, Some(agent)) if !agent.trim().is_empty() => Ok(api_memory::agent_namespace(agent)),
+        (Some(_), None) | (None, Some(_)) => Err(rmcp::ErrorData::invalid_params(
+            "namespace is required".to_string(),
+            None,
+        )),
+        (None, None) => Err(rmcp::ErrorData::invalid_params(
+            "one of namespace or agent is required".to_string(),
+            None,
+        )),
+    }
+}
+
+fn parse_rfc3339_mcp(s: &str) -> Result<chrono::DateTime<chrono::Utc>, rmcp::ErrorData> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .map_err(|e| rmcp::ErrorData::invalid_params(format!("invalid RFC3339 timestamp {s:?}: {e}"), None))
 }
 
 fn parse_status_for_mcp(s: &str) -> Result<RunStatus, rmcp::ErrorData> {
@@ -1790,6 +2249,462 @@ mod tests {
 
     fn id_of(s: &str) -> String {
         parsed(s)["id"].as_str().unwrap().to_string()
+    }
+
+    fn mcp_pattern(
+        id: &str,
+        namespace: &str,
+        text: &str,
+        embedding: Vec<f32>,
+    ) -> xvision_memory::types::MemoryItem {
+        let now = chrono::Utc::now();
+        xvision_memory::types::MemoryItem {
+            id: id.into(),
+            namespace: namespace.into(),
+            tier: xvision_memory::types::Tier::Pattern,
+            text: text.into(),
+            embedding,
+            created_at: now,
+            run_id: None,
+            scenario_id: None,
+            cycle_idx: None,
+            source_window_start: None,
+            source_window_end: None,
+            training_window_end: Some(now - chrono::Duration::days(2)),
+            promotion_state: Some("active".into()),
+            attestation_id: None,
+            forgotten_at: None,
+        }
+    }
+
+    fn mcp_observation(
+        id: &str,
+        namespace: &str,
+        text: &str,
+        embedding: Vec<f32>,
+    ) -> xvision_memory::types::MemoryItem {
+        let now = chrono::Utc::now();
+        xvision_memory::types::MemoryItem {
+            id: id.into(),
+            namespace: namespace.into(),
+            tier: xvision_memory::types::Tier::Observation,
+            text: text.into(),
+            embedding,
+            created_at: now,
+            run_id: Some("mcp-run".into()),
+            scenario_id: Some("mcp-scenario".into()),
+            cycle_idx: Some(1),
+            source_window_start: Some(now - chrono::Duration::minutes(1)),
+            source_window_end: Some(now),
+            training_window_end: None,
+            promotion_state: None,
+            attestation_id: None,
+            forgotten_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_memory_read_tools_enforce_recall_filters() {
+        let (tools, _td) = tools_with_tmp();
+        let store = tools.memory_store().await.unwrap();
+        let namespace = api_memory::agent_namespace("mcp-agent");
+        store
+            .upsert_pattern(
+                &mcp_pattern("mcp-pat-active", &namespace, "MCP_ACTIVE_PATTERN", vec![1.0, 0.0]),
+                "test",
+            )
+            .await
+            .unwrap();
+        let mut staged = mcp_pattern(
+            "mcp-pat-staged",
+            &namespace,
+            "MCP_STAGED_PATTERN",
+            vec![0.99, 0.01],
+        );
+        staged.promotion_state = Some("staged".into());
+        store.upsert_pattern(&staged, "test").await.unwrap();
+        store
+            .upsert_observation(
+                &mcp_observation("mcp-obs", &namespace, "MCP_OBSERVATION", vec![1.0, 0.0]),
+                "test",
+            )
+            .await
+            .unwrap();
+
+        let listed = tools
+            .xvn_memory_list(Parameters(MemoryListMcpReq {
+                agent: Some("mcp-agent".into()),
+                tier: Some("pattern".into()),
+                include_forgotten: Some(false),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let listed = parsed(&listed);
+        assert_eq!(listed["total"], 2);
+
+        let got = tools
+            .xvn_memory_get(Parameters(MemoryGetMcpReq {
+                id: "mcp-pat-active".into(),
+            }))
+            .await
+            .unwrap();
+        let got = parsed(&got);
+        assert_eq!(got["id"], "mcp-pat-active");
+        assert_eq!(got["tier"], "pattern");
+
+        let recall = tools
+            .xvn_memory_recall(Parameters(MemoryRecallMcpReq {
+                namespace: None,
+                agent: Some("mcp-agent".into()),
+                query_embedding: vec![1.0, 0.0],
+                k: Some(10),
+                scenario_start: Some(chrono::Utc::now().to_rfc3339()),
+            }))
+            .await
+            .unwrap();
+        let recall = parsed(&recall);
+        assert_eq!(recall["namespace"], namespace);
+        let items = recall["items"].as_array().unwrap();
+        assert_eq!(
+            items.len(),
+            1,
+            "recall should hide staged Pattern and Observation: {recall}"
+        );
+        assert_eq!(items[0]["id"], "mcp-pat-active");
+        assert_ne!(items[0]["text"], "MCP_OBSERVATION");
+
+        let namespaces = tools.xvn_memory_namespaces().await.unwrap();
+        let namespaces = parsed(&namespaces);
+        assert_eq!(namespaces["total"], 1);
+        assert_eq!(namespaces["items"][0]["namespace"], namespace);
+        assert_eq!(namespaces["items"][0]["observations"], 1);
+        assert_eq!(namespaces["items"][0]["active_patterns"], 1);
+        assert_eq!(namespaces["items"][0]["staged_patterns"], 1);
+    }
+
+    #[tokio::test]
+    async fn mcp_flywheel_status_and_velocity_read_memory_counts() {
+        let (tools, _td) = tools_with_tmp();
+        let store = tools.memory_store().await.unwrap();
+        let namespace = api_memory::agent_namespace("mcp-flywheel");
+        store
+            .upsert_observation(
+                &mcp_observation("mcp-fw-obs", &namespace, "MCP_FW_OBS", vec![1.0]),
+                "test",
+            )
+            .await
+            .unwrap();
+        store
+            .upsert_pattern(
+                &mcp_pattern("mcp-fw-pattern", &namespace, "MCP_FW_PATTERN", vec![1.0]),
+                "test",
+            )
+            .await
+            .unwrap();
+
+        let status = tools
+            .xvn_flywheel_status(Parameters(FlywheelStatusMcpReq {
+                namespace: None,
+                agent: Some("mcp-flywheel".into()),
+            }))
+            .await
+            .unwrap();
+        let status = parsed(&status);
+        assert_eq!(status["namespace"], namespace);
+        assert_eq!(status["observations"], 1);
+        assert_eq!(status["active_patterns"], 1);
+
+        let velocity = tools
+            .xvn_flywheel_velocity(Parameters(FlywheelVelocityMcpReq {
+                namespace: None,
+                agent: Some("mcp-flywheel".into()),
+                days: Some(7),
+            }))
+            .await
+            .unwrap();
+        let velocity = parsed(&velocity);
+        assert_eq!(velocity["namespace"], namespace);
+        assert_eq!(velocity["observations_captured"], 1);
+        assert_eq!(velocity["patterns_promoted"], 1);
+    }
+
+    #[tokio::test]
+    async fn mcp_flywheel_lineage_returns_optimizer_hash_proof() {
+        let (tools, _td) = tools_with_tmp();
+        let ctx = tools.api_context().await.unwrap();
+        let store = tools.memory_store().await.unwrap();
+        let namespace = api_memory::agent_namespace("mcp-flywheel");
+        let agent = api_agents::create(
+            &ctx,
+            api_agents::CreateAgentRequest {
+                name: "mcp flywheel parent".into(),
+                description: "parent for MCP flywheel lineage test".into(),
+                tags: vec!["mcp".into()],
+                slots: vec![AgentSlot {
+                    name: "main".into(),
+                    provider: "mock".into(),
+                    model: "mock".into(),
+                    system_prompt: "base prompt".into(),
+                    skill_ids: Vec::new(),
+                    max_tokens: None,
+                    temperature: None,
+                    prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
+                    memory_mode: Default::default(),
+                    noop_skip: None,
+                    capabilities: xvision_engine::agents::default_capabilities(),
+                    delta_briefing: None,
+                }],
+                scope_strategy_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        for idx in 1..=4 {
+            store
+                .upsert_observation(
+                    &mcp_observation(
+                        &format!("mcp-fw-demo-obs-{idx}"),
+                        &namespace,
+                        &format!("MCP_FW_DEMO_OBS_{idx}"),
+                        vec![idx as f32],
+                    ),
+                    "test",
+                )
+                .await
+                .unwrap();
+        }
+        let run = api_autoresearch::run_memory_distillation(
+            &store,
+            "test",
+            vec![1.0],
+            api_autoresearch::AutoresearchRunRequest {
+                namespace: Some(namespace.clone()),
+                agent: None,
+                scenario_id: None,
+                run_id: None,
+                pattern_text: "demo-source pattern".into(),
+                active: true,
+                limit: Some(4),
+                min_observations: Some(2),
+            },
+        )
+        .await
+        .unwrap();
+        let prior = mcp_pattern("mcp-prior-pattern", &namespace, "prior pattern", vec![1.0]);
+        store.upsert_pattern(&prior, "test").await.unwrap();
+        let auto_prior = mcp_pattern(
+            "mcp-auto-prior-pattern",
+            &namespace,
+            "auto prior pattern",
+            vec![1.0],
+        );
+        store.upsert_pattern(&auto_prior, "test").await.unwrap();
+        let mut conn = ctx.db.acquire().await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO events (id, run_id, span_id, kind, payload_json, created_at) \
+             VALUES ('mcp-auto-prior-event', 'mcp-auto-prior-run', NULL, 'memory_recall', ?, \
+                     '2024-01-06T00:00:00Z')",
+        )
+        .bind(
+            serde_json::json!({
+                "run_id": "mcp-auto-prior-run",
+                "flywheel_cycle_id": "mcp-auto-prior-run:1",
+                "decision_id": 1,
+                "namespace": &namespace,
+                "items": [{
+                    "id": &auto_prior.id,
+                    "score": 0.9,
+                    "text_preview": "auto prior pattern"
+                }]
+            })
+            .to_string(),
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let dry_run = tools
+            .xvn_optimize_memory_demos(Parameters(OptimizeMemoryDemosMcpReq {
+                target_agent_id: agent.agent_id.clone(),
+                slot: Some("main".into()),
+                namespace: Some(namespace.clone()),
+                memory_agent: None,
+                scenario_id: None,
+                run_id: None,
+                demo_source: Some("frozen-snapshot".into()),
+                holdout_split: Some("70/15/15".into()),
+                cohort_query: None,
+                manual_observation_ids: None,
+                prior_pattern_ids: Some(vec![prior.id.clone()]),
+                auto_prior_patterns: true,
+                prior_pattern_limit: Some(1),
+                limit: Some(4),
+                max_demo_chars: Some(1_000),
+                apply: false,
+                child_name: Some("mcp flywheel child".into()),
+            }))
+            .await
+            .unwrap();
+        let dry_run = parsed(&dry_run);
+        assert_eq!(dry_run["status"], "planned");
+        assert!(dry_run["optimization_id"].is_null());
+        assert!(dry_run["child_agent_id"].is_null());
+        assert!(dry_run["train_hash"].as_str().unwrap().starts_with("sha256:"));
+        assert!(dry_run["dev_hash"].as_str().unwrap().starts_with("sha256:"));
+        assert!(dry_run["holdout_hash"].as_str().unwrap().starts_with("sha256:"));
+
+        let minted = tools
+            .xvn_optimize_memory_demos(Parameters(OptimizeMemoryDemosMcpReq {
+                target_agent_id: agent.agent_id.clone(),
+                slot: Some("main".into()),
+                namespace: Some(namespace.clone()),
+                memory_agent: None,
+                scenario_id: None,
+                run_id: None,
+                demo_source: Some("frozen-snapshot".into()),
+                holdout_split: Some("70/15/15".into()),
+                cohort_query: None,
+                manual_observation_ids: None,
+                prior_pattern_ids: Some(vec![prior.id.clone()]),
+                auto_prior_patterns: true,
+                prior_pattern_limit: Some(1),
+                limit: Some(4),
+                max_demo_chars: Some(1_000),
+                apply: true,
+                child_name: Some("mcp flywheel child".into()),
+            }))
+            .await
+            .unwrap();
+        let minted = parsed(&minted);
+        assert_eq!(minted["status"], "minted");
+        assert!(minted["optimization_id"].as_str().is_some());
+        assert!(minted["child_agent_id"].as_str().is_some());
+
+        let lineage = tools
+            .xvn_flywheel_lineage(Parameters(FlywheelLineageMcpReq {
+                namespace: None,
+                agent: Some("mcp-flywheel".into()),
+                limit: Some(5),
+            }))
+            .await
+            .unwrap();
+        let lineage = parsed(&lineage);
+        assert_eq!(lineage["namespace"], "agent:mcp-flywheel");
+        assert_eq!(lineage["total"], 1);
+        let item = &lineage["items"][0];
+        assert_eq!(item["optimization_id"], minted["optimization_id"]);
+        assert_eq!(item["train_hash"], minted["train_hash"]);
+        assert_eq!(item["dev_hash"], minted["dev_hash"]);
+        assert_eq!(item["holdout_hash"], minted["holdout_hash"]);
+        assert_eq!(
+            item["demo_source_pattern_ids"],
+            serde_json::json!([run.pattern_id])
+        );
+        assert_eq!(
+            item["prior_pattern_ids"],
+            serde_json::json!(["mcp-auto-prior-pattern", prior.id])
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_autoresearch_read_tools_return_run_and_findings() {
+        let (tools, _td) = tools_with_tmp();
+        let store = tools.memory_store().await.unwrap();
+        let namespace = api_memory::agent_namespace("mcp-auto");
+        store
+            .upsert_observation(
+                &mcp_observation("mcp-auto-obs-1", &namespace, "MCP_AUTO_OBS_1", vec![1.0]),
+                "test",
+            )
+            .await
+            .unwrap();
+        store
+            .upsert_observation(
+                &mcp_observation("mcp-auto-obs-2", &namespace, "MCP_AUTO_OBS_2", vec![1.0]),
+                "test",
+            )
+            .await
+            .unwrap();
+        let run = api_autoresearch::run_memory_distillation(
+            &store,
+            "test",
+            vec![1.0],
+            api_autoresearch::AutoresearchRunRequest {
+                namespace: None,
+                agent: Some("mcp-auto".into()),
+                scenario_id: None,
+                run_id: None,
+                pattern_text: "MCP autoresearch Pattern".into(),
+                active: false,
+                limit: Some(10),
+                min_observations: Some(2),
+            },
+        )
+        .await
+        .unwrap();
+        api_autoresearch::gate_run(
+            &store,
+            &run.id,
+            api_autoresearch::AutoresearchGateRequest {
+                metric: Some("sharpe".into()),
+                parent_day_score: Some(1.0),
+                child_day_score: Some(1.2),
+                parent_holdout_score: Some(0.9),
+                child_holdout_score: Some(1.1),
+                gate_epsilon: Some(0.1),
+                finding_text: Some("Blind Finding: coherent MCP test pattern.".into()),
+                finding_blinded_metrics: Some(true),
+                judge_model: Some("test-judge".into()),
+                judge_token_cost: Some(42),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let listed = tools
+            .xvn_autoresearch_list(Parameters(AutoresearchListMcpReq {
+                namespace: None,
+                agent: Some("mcp-auto".into()),
+                limit: Some(10),
+                offset: None,
+            }))
+            .await
+            .unwrap();
+        let listed = parsed(&listed);
+        assert_eq!(listed["total"], 1);
+        assert_eq!(listed["items"][0]["id"], run.id);
+
+        let inspected = tools
+            .xvn_autoresearch_inspect(Parameters(AutoresearchRunIdMcpReq { id: run.id.clone() }))
+            .await
+            .unwrap();
+        let inspected = parsed(&inspected);
+        assert_eq!(inspected["id"], run.id);
+        assert_eq!(inspected["gate_verdict"], "passed");
+        assert_eq!(inspected["judge_model"], "test-judge");
+
+        let findings = tools
+            .xvn_autoresearch_findings(Parameters(AutoresearchRunIdMcpReq { id: run.id.clone() }))
+            .await
+            .unwrap();
+        let findings = parsed(&findings);
+        assert_eq!(findings["id"], run.id);
+        assert_eq!(findings["gate_verdict"], "passed");
+        assert_eq!(findings["judge_token_cost"], 42);
+        assert!(
+            findings["finding_text"]
+                .as_str()
+                .is_some_and(|s| s.contains("Blind Finding")),
+            "finding text missing: {findings}"
+        );
     }
 
     #[tokio::test]

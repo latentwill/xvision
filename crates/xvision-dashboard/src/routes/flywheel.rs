@@ -1,0 +1,249 @@
+//! Flywheel API surface.
+//!
+//! Thin dashboard wrappers around the engine's offline memory flywheel
+//! APIs. Mutating handlers are registered in `server::mutating_router`;
+//! read-only status/inspect handlers are registered in
+//! `server::readonly_router`.
+
+use axum::{
+    extract::{Path, Query, State},
+    Json,
+};
+use serde::{Deserialize, Serialize};
+
+use xvision_engine::api::{
+    autoresearch::{
+        self, AutoresearchGateRequest, AutoresearchRunDto, AutoresearchRunListRequest,
+        AutoresearchRunListResponse, AutoresearchRunRequest,
+    },
+    flywheel::{
+        self, FlywheelLineageDto, FlywheelLineageRequest, FlywheelStatusDto, FlywheelStatusRequest,
+        FlywheelVelocityDto, FlywheelVelocityRequest,
+    },
+    optimize::{
+        self, MemoryDemoOptimizeDto, MemoryDemoOptimizeRequest, OptimizationGateDto, OptimizationGateRequest,
+    },
+};
+
+use crate::error::DashboardError;
+use crate::routes::memory as memory_route;
+use crate::state::AppState;
+
+#[derive(Deserialize, Default)]
+pub struct FlywheelStatusQuery {
+    pub namespace: Option<String>,
+    pub agent: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct FlywheelVelocityQuery {
+    pub namespace: Option<String>,
+    pub agent: Option<String>,
+    pub days: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct FlywheelLineageQuery {
+    pub namespace: Option<String>,
+    pub agent: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct AutoresearchRunListQuery {
+    pub namespace: Option<String>,
+    pub agent: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+impl From<AutoresearchRunListQuery> for AutoresearchRunListRequest {
+    fn from(q: AutoresearchRunListQuery) -> Self {
+        Self {
+            namespace: q.namespace,
+            agent: q.agent,
+            limit: q.limit,
+            offset: q.offset,
+        }
+    }
+}
+
+impl From<FlywheelStatusQuery> for FlywheelStatusRequest {
+    fn from(q: FlywheelStatusQuery) -> Self {
+        Self {
+            namespace: q.namespace,
+            agent: q.agent,
+        }
+    }
+}
+
+impl From<FlywheelVelocityQuery> for FlywheelVelocityRequest {
+    fn from(q: FlywheelVelocityQuery) -> Self {
+        Self {
+            namespace: q.namespace,
+            agent: q.agent,
+            days: q.days,
+        }
+    }
+}
+
+impl From<FlywheelLineageQuery> for FlywheelLineageRequest {
+    fn from(q: FlywheelLineageQuery) -> Self {
+        Self {
+            namespace: q.namespace,
+            agent: q.agent,
+            limit: q.limit,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutoresearchRunHttpRequest {
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub scenario_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    pub pattern_text: String,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub min_observations: Option<usize>,
+    /// Embedding vector for the candidate Pattern. Dashboard-side live
+    /// embedding is intentionally not hidden in this route; callers must
+    /// supply the vector until the provider-backed embedder UX lands.
+    pub embedding: Vec<f32>,
+    #[serde(default = "default_dashboard_embedder_id")]
+    pub embedder_id: String,
+}
+
+fn default_dashboard_embedder_id() -> String {
+    "dashboard:provided".to_string()
+}
+
+impl From<AutoresearchRunHttpRequest> for AutoresearchRunRequest {
+    fn from(req: AutoresearchRunHttpRequest) -> Self {
+        Self {
+            namespace: req.namespace,
+            agent: req.agent,
+            scenario_id: req.scenario_id,
+            run_id: req.run_id,
+            pattern_text: req.pattern_text,
+            active: req.active,
+            limit: req.limit,
+            min_observations: req.min_observations,
+        }
+    }
+}
+
+pub async fn status(
+    State(_state): State<AppState>,
+    Query(q): Query<FlywheelStatusQuery>,
+) -> Result<Json<FlywheelStatusDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let resp = flywheel::status(&store, q.into()).await?;
+    Ok(Json(resp))
+}
+
+pub async fn velocity(
+    State(state): State<AppState>,
+    Query(q): Query<FlywheelVelocityQuery>,
+) -> Result<Json<FlywheelVelocityDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let ctx = state.api_context();
+    let resp = flywheel::velocity(&ctx, &store, q.into()).await?;
+    Ok(Json(resp))
+}
+
+pub async fn lineage(
+    State(state): State<AppState>,
+    Query(q): Query<FlywheelLineageQuery>,
+) -> Result<Json<FlywheelLineageDto>, DashboardError> {
+    let ctx = state.api_context();
+    let resp = flywheel::lineage(&ctx, q.into()).await?;
+    Ok(Json(resp))
+}
+
+pub async fn autoresearch_run(
+    State(_state): State<AppState>,
+    Json(body): Json<AutoresearchRunHttpRequest>,
+) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let embedder_id = body.embedder_id.clone();
+    let embedding = body.embedding.clone();
+    let req = body.into();
+    let resp = autoresearch::run_memory_distillation(&store, &embedder_id, embedding, req).await?;
+    Ok(Json(resp))
+}
+
+pub async fn autoresearch_get(
+    Path(id): Path<String>,
+    State(_state): State<AppState>,
+) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let resp = autoresearch::inspect_run(&store, &id).await?;
+    Ok(Json(resp))
+}
+
+pub async fn autoresearch_list(
+    Query(q): Query<AutoresearchRunListQuery>,
+    State(_state): State<AppState>,
+) -> Result<Json<AutoresearchRunListResponse>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let resp = autoresearch::list_runs(&store, q.into()).await?;
+    Ok(Json(resp))
+}
+
+pub async fn autoresearch_promote(
+    Path(id): Path<String>,
+    State(_state): State<AppState>,
+) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let resp = autoresearch::promote_run(&store, &id).await?;
+    Ok(Json(resp))
+}
+
+pub async fn autoresearch_gate(
+    Path(id): Path<String>,
+    State(_state): State<AppState>,
+    Json(body): Json<AutoresearchGateRequest>,
+) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let resp = autoresearch::gate_run(&store, &id, body).await?;
+    Ok(Json(resp))
+}
+
+pub async fn autoresearch_demote(
+    Path(id): Path<String>,
+    State(_state): State<AppState>,
+) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let resp = autoresearch::demote_run(&store, &id).await?;
+    Ok(Json(resp))
+}
+
+pub async fn optimize_memory_demos(
+    State(state): State<AppState>,
+    Json(body): Json<MemoryDemoOptimizeRequest>,
+) -> Result<Json<MemoryDemoOptimizeDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let ctx = state.api_context();
+    let resp = optimize::compile_memory_demos(&ctx, &store, body).await?;
+    Ok(Json(resp))
+}
+
+pub async fn optimize_memory_demos_gate(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<OptimizationGateRequest>,
+) -> Result<Json<OptimizationGateDto>, DashboardError> {
+    let ctx = state.api_context();
+    let resp = optimize::gate_memory_demo_optimization(&ctx, &id, body).await?;
+    Ok(Json(resp))
+}

@@ -19,6 +19,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::tempdir;
 
 /// Run `xvn` with the given args, scoped to a temp XVN_HOME +
@@ -54,6 +55,29 @@ fn paths() -> (tempfile::TempDir, std::path::PathBuf) {
     (dir, mem)
 }
 
+async fn seed_observation(memory_db: &Path, id: &str, namespace: &str, source_end: &str) {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("sqlite://{}", memory_db.display()))
+        .await
+        .expect("open memory db");
+    sqlx::query(
+        "INSERT INTO memory_items \
+         (id, namespace, tier, text, embedding, embedding_dim, embedder_id, created_at, \
+          run_id, scenario_id, cycle_idx, source_window_start, source_window_end, training_window_end) \
+         VALUES (?, ?, 'observation', ?, ?, 0, 'test-embedder', '2024-01-01T00:00:00Z', \
+                 'run-1', 'scenario-1', 0, '2024-01-01T00:00:00Z', ?, NULL)",
+    )
+    .bind(id)
+    .bind(namespace)
+    .bind(format!("observation {id}"))
+    .bind(Vec::<u8>::new())
+    .bind(source_end)
+    .execute(&pool)
+    .await
+    .expect("seed observation");
+}
+
 #[test]
 fn ls_empty_store_json_returns_empty_array() {
     let (dir, mem) = paths();
@@ -86,6 +110,8 @@ fn add_pattern_then_ls_shows_it() {
             "buy when fear is high",
             "--namespace",
             "global",
+            "--training-end",
+            "2024-01-01",
             "--json",
         ],
         dir.path(),
@@ -104,6 +130,214 @@ fn add_pattern_then_ls_shows_it() {
     let arr = items.as_array().expect("array");
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["id"], id);
+}
+
+#[test]
+fn namespaces_json_summarizes_memory_scopes() {
+    let (dir, mem) = paths();
+    assert_ok(&xvn(
+        &[
+            "memory",
+            "add-pattern",
+            "global pattern",
+            "--namespace",
+            "global",
+            "--training-end",
+            "2024-01-01",
+            "--json",
+        ],
+        dir.path(),
+        &mem,
+    ));
+    assert_ok(&xvn(
+        &[
+            "memory",
+            "add-pattern",
+            "agent pattern",
+            "--agent",
+            "A",
+            "--training-end",
+            "2024-01-01",
+            "--json",
+        ],
+        dir.path(),
+        &mem,
+    ));
+
+    let out = xvn(&["memory", "namespaces", "--json"], dir.path(), &mem);
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse namespaces");
+    assert_eq!(body["total"], 2);
+    let namespaces = body["items"].as_array().expect("items");
+    assert!(namespaces.iter().any(|item| {
+        item["namespace"] == "global" && item["active_patterns"] == 1 && item["live_total"] == 1
+    }));
+    assert!(namespaces.iter().any(|item| {
+        item["namespace"] == "agent:A" && item["active_patterns"] == 1 && item["live_total"] == 1
+    }));
+}
+
+#[test]
+fn add_pattern_without_training_end_requires_attestation() {
+    let (dir, mem) = paths();
+    let out = xvn(
+        &[
+            "memory",
+            "add-pattern",
+            "timeless without attestation",
+            "--namespace",
+            "global",
+            "--json",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert!(
+        !out.status.success(),
+        "expected null-window pattern without attestation to fail"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--attest-null-window") && stderr.contains("--operator-initials"),
+        "expected attestation guidance in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn add_pattern_with_null_window_attestation_records_attestation_id() {
+    let (dir, mem) = paths();
+    let out = xvn(
+        &[
+            "memory",
+            "add-pattern",
+            "operator timeless pattern",
+            "--namespace",
+            "global",
+            "--attest-null-window",
+            "--operator-initials",
+            "QA",
+            "--json",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&out);
+    let created: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse json");
+    assert_eq!(created["tier"], "pattern");
+    assert!(created["training_window_end"].is_null());
+    assert!(
+        created["attestation_id"].as_str().is_some(),
+        "expected attestation_id in created pattern: {created:?}"
+    );
+}
+
+#[tokio::test]
+async fn promote_observations_creates_staged_pattern_with_latest_training_end() {
+    let (dir, mem) = paths();
+    assert_ok(&xvn(&["memory", "ls", "--json"], dir.path(), &mem));
+    seed_observation(&mem, "obs-promote-1", "agent:promote", "2024-01-02T00:00:00Z").await;
+    seed_observation(&mem, "obs-promote-2", "agent:promote", "2024-01-05T12:00:00Z").await;
+
+    let out = xvn(
+        &[
+            "memory",
+            "promote",
+            "--ids",
+            "obs-promote-1,obs-promote-2",
+            "--text",
+            "When the cohort appears, reduce risk.",
+            "--embedding-json",
+            "[1.0,0.0]",
+            "--json",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&out);
+    let created: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse json");
+    assert_eq!(created["tier"], "pattern");
+    assert_eq!(created["namespace"], "agent:promote");
+    assert_eq!(created["promotion_state"], "staged");
+    let pattern_id = created["id"].as_str().expect("pattern id");
+    assert!(
+        created["training_window_end"]
+            .as_str()
+            .map(|s| s.starts_with("2024-01-05T12:00:00"))
+            .unwrap_or(false),
+        "expected latest source_window_end, got {created:?}"
+    );
+
+    let staged_ls = xvn(
+        &[
+            "memory",
+            "ls",
+            "--namespace",
+            "agent:promote",
+            "--promotion-state",
+            "staged",
+            "--json",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&staged_ls);
+    let staged_items: serde_json::Value = serde_json::from_slice(&staged_ls.stdout).expect("json");
+    assert_eq!(staged_items.as_array().unwrap().len(), 1);
+
+    let activated = xvn(&["memory", "activate", pattern_id, "--json"], dir.path(), &mem);
+    assert_ok(&activated);
+    let activated_body: serde_json::Value = serde_json::from_slice(&activated.stdout).expect("json");
+    assert_eq!(activated_body["promotion_state"], "active");
+
+    let demoted = xvn(&["memory", "demote", pattern_id, "--json"], dir.path(), &mem);
+    assert_ok(&demoted);
+    let demoted_body: serde_json::Value = serde_json::from_slice(&demoted.stdout).expect("json");
+    assert!(demoted_body["forgotten_at"].as_str().is_some());
+
+    let forgotten_ls = xvn(
+        &[
+            "memory",
+            "ls",
+            "--namespace",
+            "agent:promote",
+            "--forgotten-only",
+            "--json",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert_ok(&forgotten_ls);
+    let forgotten_items: serde_json::Value = serde_json::from_slice(&forgotten_ls.stdout).expect("json");
+    assert_eq!(forgotten_items.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn promote_observations_rejects_mixed_namespaces() {
+    let (dir, mem) = paths();
+    assert_ok(&xvn(&["memory", "ls", "--json"], dir.path(), &mem));
+    seed_observation(&mem, "obs-mixed-1", "agent:A", "2024-01-02T00:00:00Z").await;
+    seed_observation(&mem, "obs-mixed-2", "agent:B", "2024-01-03T00:00:00Z").await;
+
+    let out = xvn(
+        &[
+            "memory",
+            "promote",
+            "--ids",
+            "obs-mixed-1,obs-mixed-2",
+            "--text",
+            "mixed namespaces should fail",
+            "--embedding-json",
+            "[1.0]",
+        ],
+        dir.path(),
+        &mem,
+    );
+    assert!(!out.status.success(), "mixed namespace promotion must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("namespace mismatch"),
+        "expected namespace mismatch error, got: {stderr}"
+    );
 }
 
 #[test]
@@ -156,6 +390,8 @@ fn rm_deletes_target_item() {
             "delete me",
             "--namespace",
             "global",
+            "--training-end",
+            "2024-01-01",
             "--json",
         ],
         dir.path(),
@@ -186,7 +422,16 @@ fn forget_by_agent_removes_only_that_namespace() {
     // Seed two patterns in agent:A and one in global.
     for (text, ns) in [("a-one", "agent:A"), ("a-two", "agent:A"), ("g-one", "global")] {
         let out = xvn(
-            &["memory", "add-pattern", text, "--namespace", ns, "--json"],
+            &[
+                "memory",
+                "add-pattern",
+                text,
+                "--namespace",
+                ns,
+                "--training-end",
+                "2024-01-01",
+                "--json",
+            ],
             dir.path(),
             &mem,
         );
@@ -302,6 +547,8 @@ fn add_pattern_force_bypasses_no_embedder_gate() {
             "force seed",
             "--namespace",
             "global",
+            "--training-end",
+            "2024-01-01",
             "--force",
             "--json",
         ])
@@ -332,6 +579,8 @@ fn undo_forget_restores_soft_deleted_items() {
             "first pattern",
             "--namespace",
             "agent:undo-test",
+            "--training-end",
+            "2024-01-01",
         ],
         dir.path(),
         &mem,
@@ -344,6 +593,8 @@ fn undo_forget_restores_soft_deleted_items() {
             "second pattern",
             "--namespace",
             "agent:undo-test",
+            "--training-end",
+            "2024-01-01",
         ],
         dir.path(),
         &mem,

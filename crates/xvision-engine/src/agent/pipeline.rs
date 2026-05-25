@@ -114,6 +114,8 @@ pub struct PipelineInputs<'a> {
     /// scenario. `None` is the safe default (live/paper mode or
     /// non-eval call sites — no temporal filter applied).
     pub scenario_start: Option<chrono::DateTime<chrono::Utc>>,
+    pub source_window_start: Option<chrono::DateTime<chrono::Utc>>,
+    pub source_window_end: Option<chrono::DateTime<chrono::Utc>>,
     /// V2D Phase 1.5 — current run id, forwarded into Observation
     /// provenance on memory write. Empty string when no run is
     /// associated.
@@ -222,6 +224,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             scenario_start: None,
+            source_window_start: None,
+            source_window_end: None,
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
@@ -256,6 +260,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             scenario_start: None,
+            source_window_start: None,
+            source_window_end: None,
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
@@ -290,6 +296,8 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             scenario_start: None,
+            source_window_start: None,
+            source_window_end: None,
             run_id: String::new(),
             scenario_id: String::new(),
             cycle_idx: 0,
@@ -583,6 +591,8 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 memory_mode: resolved.memory_mode,
                 agent_id: resolved.agent_id.clone(),
                 scenario_start: input.scenario_start,
+                source_window_start: input.source_window_start,
+                source_window_end: input.source_window_end,
                 run_id: input.run_id.clone(),
                 scenario_id: input.scenario_id.clone(),
                 cycle_idx: input.cycle_idx,
@@ -732,6 +742,8 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         memory_mode: resolved.memory_mode,
                         agent_id: resolved.agent_id.clone(),
                         scenario_start: input.scenario_start,
+                        source_window_start: input.source_window_start,
+                        source_window_end: input.source_window_end,
                         run_id: input.run_id.clone(),
                         scenario_id: input.scenario_id.clone(),
                         cycle_idx: input.cycle_idx,

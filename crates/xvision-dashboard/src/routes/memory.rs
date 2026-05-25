@@ -6,8 +6,11 @@
 //! axum-shaped wrapper:
 //!
 //! - `GET    /api/memory`                  → `engine::api::memory::list`
+//! - `GET    /api/memory/namespaces`       → `engine::api::memory::list_namespaces`
 //! - `GET    /api/memory/:id`              → `engine::api::memory::get`
 //! - `POST   /api/memory/patterns`         → `engine::api::memory::create_pattern`
+//! - `POST   /api/memory/:id/activate`     → `engine::api::memory::activate_pattern`
+//! - `POST   /api/memory/:id/demote`       → `engine::api::memory::demote_pattern`
 //! - `DELETE /api/memory/:id`              → `engine::api::memory::delete_one`
 //! - `DELETE /api/memory`                  → `engine::api::memory::forget`
 //! - `POST   /api/memory/undo-forget`      → `engine::api::memory::undo_forget`
@@ -43,8 +46,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
 use xvision_engine::api::memory::{
-    self, ForgetResponse, ListMemoryRequest, MemoryItemDto, MemoryListResponse, PatternCreateRequest,
-    UndoForgetRequest, UndoForgetResponse,
+    self, ForgetResponse, ListMemoryRequest, MemoryItemDto, MemoryListResponse, MemoryNamespaceListResponse,
+    OperatorAttestationCreateRequest, OperatorAttestationDto, PatternCreateRequest, UndoForgetRequest,
+    UndoForgetResponse,
 };
 use xvision_memory::store::MemoryStore;
 
@@ -58,7 +62,7 @@ use crate::state::AppState;
 /// `allowed_paths`. `OnceCell` keeps the resolution lazy + thread-safe.
 static MEMORY_STORE: OnceCell<Arc<MemoryStore>> = OnceCell::const_new();
 
-async fn resolve_store() -> Result<Arc<MemoryStore>, DashboardError> {
+pub(crate) async fn resolve_store() -> Result<Arc<MemoryStore>, DashboardError> {
     let store = MEMORY_STORE.get_or_try_init(memory::open_default_store).await?;
     Ok(store.clone())
 }
@@ -70,11 +74,13 @@ pub struct ListQuery {
     pub agent: Option<String>,
     pub scenario_id: Option<String>,
     pub run_id: Option<String>,
+    pub promotion_state: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     /// When `Some(true)` the response includes soft-deleted rows. Default
     /// hides them.
     pub include_forgotten: Option<bool>,
+    pub forgotten_only: Option<bool>,
 }
 
 impl From<ListQuery> for ListMemoryRequest {
@@ -85,9 +91,11 @@ impl From<ListQuery> for ListMemoryRequest {
             agent: q.agent,
             scenario_id: q.scenario_id,
             run_id: q.run_id,
+            promotion_state: q.promotion_state,
             limit: q.limit,
             offset: q.offset,
             include_forgotten: q.include_forgotten,
+            forgotten_only: q.forgotten_only,
         }
     }
 }
@@ -109,6 +117,14 @@ pub async fn list(
 ) -> Result<Json<MemoryListResponse>, DashboardError> {
     let store = resolve_store().await?;
     let resp = memory::list(&store, q.into()).await?;
+    Ok(Json(resp))
+}
+
+pub async fn namespaces(
+    State(_state): State<AppState>,
+) -> Result<Json<MemoryNamespaceListResponse>, DashboardError> {
+    let store = resolve_store().await?;
+    let resp = memory::list_namespaces(&store).await?;
     Ok(Json(resp))
 }
 
@@ -136,6 +152,33 @@ pub async fn create_pattern(
     let embedder_id = "operator-seed";
     let item = memory::create_pattern(&store, embedder_id, Vec::new(), body).await?;
     Ok((StatusCode::CREATED, Json(item)))
+}
+
+pub async fn create_attestation(
+    State(_state): State<AppState>,
+    Json(body): Json<OperatorAttestationCreateRequest>,
+) -> Result<(StatusCode, Json<OperatorAttestationDto>), DashboardError> {
+    let store = resolve_store().await?;
+    let item = memory::create_operator_attestation(&store, body).await?;
+    Ok((StatusCode::CREATED, Json(item)))
+}
+
+pub async fn activate_pattern(
+    Path(id): Path<String>,
+    State(_state): State<AppState>,
+) -> Result<Json<MemoryItemDto>, DashboardError> {
+    let store = resolve_store().await?;
+    let item = memory::activate_pattern(&store, &id).await?;
+    Ok(Json(item))
+}
+
+pub async fn demote_pattern(
+    Path(id): Path<String>,
+    State(_state): State<AppState>,
+) -> Result<Json<MemoryItemDto>, DashboardError> {
+    let store = resolve_store().await?;
+    let item = memory::demote_pattern(&store, &id).await?;
+    Ok(Json(item))
 }
 
 pub async fn delete_one(
