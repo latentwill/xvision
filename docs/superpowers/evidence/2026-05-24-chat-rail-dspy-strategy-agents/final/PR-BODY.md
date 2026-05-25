@@ -82,8 +82,7 @@ skills updated; `check_agent_docs.sh` repointed off its stale pre-split path.
 tests — all confirmed on baseline by the respective tracks.
 
 ## Base-branch note
-This branch is based on the unpushed/in-review `feat/cline-runtime-unification`.
-Do not merge to `main` before that lands; rebase if the Cline review changes its
-commits.
+Forked from `feat/cline-runtime-unification`, which has since **merged to `main`**
+(PR #600). This branch is brought up to current `origin/main` before review.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
