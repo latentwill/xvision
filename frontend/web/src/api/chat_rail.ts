@@ -165,6 +165,7 @@ export type AgentProfile = "workspace" | "strategy_setup";
 
 export type ResolveSessionResp = {
   session_id: string;
+  mode?: ChatSessionMode;
   history: ChatMessage[];
 };
 
@@ -178,6 +179,7 @@ export type SetSessionModeResp = {
 export type ChatSessionSummary = {
   id: string;
   scope: ContextScope;
+  mode?: ChatSessionMode;
   started_at: string;
   last_activity_at: string;
 };

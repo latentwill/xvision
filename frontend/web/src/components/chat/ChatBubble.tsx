@@ -19,8 +19,8 @@ export function ChatBubble({
 }) {
   if (bubble.role === "user") {
     return (
-      <div className="self-end max-w-[92%]">
-        <div className="bg-blue-500/10 dark:bg-blue-400/10 border border-blue-500/30 dark:border-blue-400/30 rounded-md px-2.5 py-1.5 text-[13px] whitespace-pre-wrap leading-snug">
+      <div className="min-w-0 max-w-[92%] self-end">
+        <div className="break-words bg-blue-500/10 dark:bg-blue-400/10 border border-blue-500/30 dark:border-blue-400/30 rounded-md px-2.5 py-1.5 text-[13px] whitespace-pre-wrap leading-snug">
           {bubble.text}
         </div>
       </div>
@@ -39,8 +39,8 @@ export function ChatBubble({
     );
 
   return (
-    <div className="self-start max-w-[92%]">
-      <div className="bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
+    <div className="min-w-0 max-w-[92%] self-start">
+      <div className="break-words bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
         {hasRenderableBlocks ? (
           <>
             <ContentBlocksView blocks={bubble.blocks} />
@@ -260,6 +260,19 @@ function toolLogLine(
         typeof agentResult === "object" &&
         agentResult !== null &&
         "agent_id" in agentResult;
+      if (!t.pending && !id && args["name"] == null) {
+        return {
+          ok: true,
+          content: (
+            <>
+              create_strategy completed
+              {t.resultSummary ? (
+                <span className="text-text-2">: {t.resultSummary}</span>
+              ) : null}
+            </>
+          ),
+        };
+      }
       return {
         ok: true,
         content: t.pending ? (

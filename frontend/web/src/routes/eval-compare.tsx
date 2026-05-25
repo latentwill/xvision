@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
-import { compareRuns, evalKeys } from "@/api/eval";
+import { compareRuns, evalKeys, listRunsPaged } from "@/api/eval";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
 import { listStrategies, strategyKeys, type StrategyListItem } from "@/api/strategies";
 import { ChartFrame } from "@/components/chart/v2/primitives/ChartFrame";
@@ -41,6 +41,7 @@ const CURVE_PALETTE = [
 
 export function EvalCompareRoute() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const ids = useMemo(() => parseIds(params.get("ids")), [params]);
   const theme = useChart2Theme();
 
@@ -67,7 +68,15 @@ export function EvalCompareRoute() {
           title="Compare"
           sub={ids.length === 1 ? "1 id given" : "0 ids given"}
         />
-        <NeedTwoOrMore given={ids.length} />
+        <NeedTwoOrMore
+          given={ids.length}
+          initialIds={ids}
+          strategies={strategies.data ?? []}
+          scenarios={scenarios.data ?? []}
+          onCompare={(nextIds) => {
+            navigate(`/eval-runs/compare?ids=${nextIds.map(encodeURIComponent).join(",")}`);
+          }}
+        />
       </>
     );
   }
@@ -120,7 +129,7 @@ export function EvalCompareRoute() {
           ({report.findings.length})
         </span>
       </h2>
-      <Card>
+      <Card className="overflow-x-auto xvn-scroll">
         {report.findings.length === 0 ? (
           <EmptyFindings />
         ) : (
@@ -219,7 +228,7 @@ function MetricsTable({
   const sortedRows = useMemo(() => sortedRuns(runs, sortKey), [runs, sortKey]);
 
   return (
-    <Card>
+    <Card className="overflow-x-auto xvn-scroll">
       <div className="flex items-center justify-between px-5 py-2.5 border-b border-border-soft">
         <div className="text-text-3 text-[12px]">
           {runs.length} {runs.length === 1 ? "run" : "runs"}
@@ -240,7 +249,7 @@ function MetricsTable({
           </select>
         </label>
       </div>
-      <table className="w-full">
+      <table className="w-full min-w-[960px]">
         <thead>
           <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
             <th className="font-normal py-2.5 px-5">Run</th>
@@ -359,7 +368,7 @@ function FindingsTable({
   const idToIndex = new Map(runs.map((r, i) => [r.id, i] as const));
   const runById = new Map(runs.map((r) => [r.id, r] as const));
   return (
-    <table className="w-full">
+    <table className="w-full min-w-[720px]">
       <thead>
         <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
           <th className="font-normal py-2.5 px-5">Run</th>
@@ -441,23 +450,150 @@ function EmptyFindings() {
   );
 }
 
-function NeedTwoOrMore({ given }: { given: number }) {
+function NeedTwoOrMore({
+  given,
+  initialIds,
+  strategies,
+  scenarios,
+  onCompare,
+}: {
+  given: number;
+  initialIds: string[];
+  strategies: StrategyListItem[];
+  scenarios: { id: string; display_name?: string | null }[];
+  onCompare: (ids: string[]) => void;
+}) {
+  const runsQ = useQuery({
+    queryKey: evalKeys.runs({ limit: 25, offset: 0 }),
+    queryFn: () => listRunsPaged({ limit: 25, offset: 0 }),
+  });
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(initialIds),
+  );
+  const ready = selected.size >= 2;
+  const runs = runsQ.data?.items ?? [];
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   return (
-    <Card className="px-6 py-12 text-center">
-      <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
-        compare needs two or more runs
+    <Card className="overflow-hidden">
+      <div className="px-6 py-6 border-b border-border-soft">
+        <div className="font-sans font-semibold text-[22px] text-text-3 mb-2">
+          Compare needs two or more runs
+        </div>
+        <p className="m-0 text-text-2 text-[13px]">
+          {given === 0
+            ? "Pick runs below, or open this route with ?ids=<run-a>,<run-b>."
+            : "One id was provided. Pick another run below to build the comparison."}
+        </p>
       </div>
-      <p className="m-0 mb-5 text-text-2 text-[13px]">
-        {given === 0
-          ? "No run ids in the URL — this view expects ?ids=<a>,<b>."
-          : "One id was provided — pick another to compare it against."}
-      </p>
-      <Link
-        to="/eval-runs"
-        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
-      >
-        ← Back to runs
-      </Link>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-b border-border-soft bg-surface-2/20">
+        <div className="text-[12px] text-text-2">
+          {selected.size} selected
+        </div>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/eval-runs"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium border border-border text-text-2 hover:border-text-3 hover:text-text"
+          >
+            Back to runs
+          </Link>
+          <button
+            type="button"
+            disabled={!ready}
+            onClick={() => onCompare([...selected])}
+            className={`inline-flex items-center gap-2 rounded px-3 py-1.5 text-[12px] font-medium border transition-colors ${
+              ready
+                ? "border-gold text-gold hover:bg-gold/10"
+                : "border-border text-text-3 opacity-60 cursor-not-allowed"
+            }`}
+          >
+            Compare {ready ? `(${selected.size})` : ""}
+          </button>
+        </div>
+      </div>
+
+      {runsQ.isPending ? (
+        <div className="px-6 py-10 text-center text-[13px] text-text-3">
+          Loading recent runs...
+        </div>
+      ) : runsQ.isError ? (
+        <div className="px-6 py-10 text-center text-[13px] text-danger">
+          Couldn't load recent runs.
+        </div>
+      ) : runs.length === 0 ? (
+        <div className="px-6 py-10 text-center text-[13px] text-text-3">
+          No eval runs yet. Start an eval first, then return to compare.
+        </div>
+      ) : (
+        <div className="overflow-x-auto xvn-scroll">
+          <table className="w-full min-w-[760px]">
+            <thead>
+              <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
+                <th className="font-normal py-2.5 px-5 w-10" />
+                <th className="font-normal py-2.5 px-3">Run</th>
+                <th className="font-normal py-2.5 px-3">Scenario</th>
+                <th className="font-normal py-2.5 px-3">Status</th>
+                <th className="font-normal py-2.5 px-3 text-right">Return</th>
+                <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => {
+                const checked = selected.has(run.id);
+                return (
+                  <tr
+                    key={run.id}
+                    className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover"
+                  >
+                    <td className="py-2.5 pl-5 pr-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select run ${run.id}`}
+                        checked={checked}
+                        onChange={() => toggle(run.id)}
+                        className="accent-gold"
+                      />
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="text-[13px] text-text">
+                        {displayStrategyName(run.agent_id, strategies)}
+                      </div>
+                      <div className="mt-0.5 font-mono text-[11px] text-text-3 break-all">
+                        {run.id}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3 text-[12px] text-text-2">
+                      {displayScenarioName(run.scenario_id, scenarios)}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <Pill
+                        tone={STATUS_TONE[run.status] ?? "default"}
+                        animated={isInflightRunStatus(run.status)}
+                      >
+                        {run.status}
+                      </Pill>
+                    </td>
+                    <MetricCell
+                      value={fmtPct(run.total_return_pct)}
+                      sign={signOf(run.total_return_pct)}
+                    />
+                    <MetricCell value={fmtNumber(run.sharpe, 3)} />
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Card>
   );
 }

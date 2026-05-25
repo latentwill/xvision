@@ -78,7 +78,7 @@ import type {
 const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
-const RAIL_MODE_LS_PREFIX = "xvn.chat_rail.mode.";
+const RAIL_HISTORY_COLLAPSED_LS = "xvn.chat_rail.history_collapsed";
 
 export type ChatRailProps = {
   variant?: "desktop" | "panel";
@@ -111,6 +111,9 @@ export function ChatRail({
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ChatSessionMode>("research");
   const [modePending, setModePending] = useState(false);
+  const [historyCollapsed, setHistoryCollapsed] = useState<boolean>(() => {
+    return safeStorageGet(RAIL_HISTORY_COLLAPSED_LS) === "1";
+  });
   const [providerName, setProviderName] = useState<string | null>(
     () => safeStorageGet(RAIL_PROVIDER_LS),
   );
@@ -218,7 +221,7 @@ export function ChatRail({
         if (cancelled) return;
         sessionIdRef.current = resolved.session_id;
         setSessionId(resolved.session_id);
-        setMode(storedMode(resolved.session_id));
+        setMode(resolved.mode ?? "research");
         setBubbles(historyToBubbles(resolved.history));
       } catch (e) {
         if (cancelled) return;
@@ -307,8 +310,7 @@ export function ChatRail({
       resetSessionEvents(created.session_id);
       sessionIdRef.current = created.session_id;
       setSessionId(created.session_id);
-      setMode("research");
-      safeStorageSet(`${RAIL_MODE_LS_PREFIX}${created.session_id}`, "research");
+      setMode(created.mode ?? "research");
       setBubbles(historyToBubbles(created.history));
       lastScopeKeyRef.current = key;
       void sessionsQ.refetch();
@@ -391,47 +393,65 @@ export function ChatRail({
       )}
       {showHeader && recentScopeSessions.length > 0 && (
         <div className="px-4 py-2 border-b border-border-soft bg-surface-2/20">
-          <div className="text-[11px] text-text-3 mb-1">Conversation history</div>
-          <div className="space-y-1">
-            {recentScopeSessions.map((s) => {
-              const isActive = s.id === sessionId;
-              // First-turn snippets only available for the active
-              // session (we have its bubbles); for other rows the
-              // hook falls back to cache/localStorage or the date.
-              const activeFirstUser = isActive ? firstUserText(bubbles) : undefined;
-              const activeFirstAssistant = isActive
-                ? firstAssistantText(bubbles)
-                : undefined;
-              return (
-                <ChatHistoryItem
-                  key={s.id}
-                  sessionId={s.id}
-                  lastActivityAt={s.last_activity_at}
-                  isActive={isActive}
-                  firstUser={activeFirstUser}
-                  firstAssistant={activeFirstAssistant}
-                  providerName={providerName}
-                  modelId={modelId}
-                  providersConfigured={
-                    (providers.data?.providers ?? []).length > 0
-                  }
-                  ready={isActive && !isStreaming && !!activeFirstAssistant}
-                  onClick={async () => {
-                    abortActiveStream();
-                    try {
-                      sessionIdRef.current = s.id;
-                      setSessionId(s.id);
-                      setMode(storedMode(s.id));
-                      const h = await loadSessionHistory(s.id);
-                      setBubbles(historyToBubbles(h));
-                    } catch (e) {
-                      setError(formatErr(e));
+          <button
+            type="button"
+            className="mb-1 flex w-full items-center justify-between text-left text-[11px] text-text-3 hover:text-text"
+            aria-expanded={!historyCollapsed}
+            onClick={() => {
+              const next = !historyCollapsed;
+              setHistoryCollapsed(next);
+              safeStorageSet(RAIL_HISTORY_COLLAPSED_LS, next ? "1" : "0");
+            }}
+          >
+            <span>Conversation history</span>
+            <Icon
+              name="chevR"
+              size={12}
+              className={historyCollapsed ? "" : "rotate-90"}
+            />
+          </button>
+          {!historyCollapsed && (
+            <div className="space-y-1">
+              {recentScopeSessions.map((s) => {
+                const isActive = s.id === sessionId;
+                // First-turn snippets only available for the active
+                // session (we have its bubbles); for other rows the
+                // hook falls back to cache/localStorage or the date.
+                const activeFirstUser = isActive ? firstUserText(bubbles) : undefined;
+                const activeFirstAssistant = isActive
+                  ? firstAssistantText(bubbles)
+                  : undefined;
+                return (
+                  <ChatHistoryItem
+                    key={s.id}
+                    sessionId={s.id}
+                    lastActivityAt={s.last_activity_at}
+                    isActive={isActive}
+                    firstUser={activeFirstUser}
+                    firstAssistant={activeFirstAssistant}
+                    providerName={providerName}
+                    modelId={modelId}
+                    providersConfigured={
+                      (providers.data?.providers ?? []).length > 0
                     }
-                  }}
-                />
-              );
-            })}
-          </div>
+                    ready={isActive && !isStreaming && !!activeFirstAssistant}
+                    onClick={async () => {
+                      abortActiveStream();
+                      try {
+                        sessionIdRef.current = s.id;
+                        setSessionId(s.id);
+                        setMode(s.mode ?? "research");
+                        const h = await loadSessionHistory(s.id);
+                        setBubbles(historyToBubbles(h));
+                      } catch (e) {
+                        setError(formatErr(e));
+                      }
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -450,7 +470,9 @@ export function ChatRail({
           try {
             const out = await setSessionMode(sessionId, next);
             setMode(out.mode);
-            safeStorageSet(`${RAIL_MODE_LS_PREFIX}${sessionId}`, out.mode);
+            if (out.mode === "act" && hasBlockedToolCall(threadBubbles)) {
+              void send("Continue in Act mode.");
+            }
           } catch (e) {
             setError(formatErr(e));
           } finally {
@@ -562,12 +584,6 @@ function RailModelBar({
       </div>
     </div>
   );
-}
-
-function storedMode(sessionId: string): ChatSessionMode {
-  return safeStorageGet(`${RAIL_MODE_LS_PREFIX}${sessionId}`) === "act"
-    ? "act"
-    : "research";
 }
 
 // ---------------------------------------------------------------------------
@@ -682,11 +698,34 @@ export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void 
  * so we don't double-render the agent's reply.
  */
 function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[] {
-  const userTurns = bubbles.filter((b): b is Extract<Bubble, { role: "user" }> =>
-    b.role === "user",
-  );
   const projected = unifiedRowsToBubbles(rows);
-  return [...userTurns, ...projected];
+  if (projected.length === 0) return bubbles;
+
+  // The unified log is authoritative for assistant/tool rows, but the POST
+  // send path still stores user turns only in legacy `bubbles`. Preserve the
+  // user's chronological positions and replace each legacy assistant bubble
+  // with the next canonical projection instead of moving all user turns above
+  // the entire agent narrative.
+  const out: Bubble[] = [];
+  let projectedIdx = 0;
+  for (const b of bubbles) {
+    if (b.role === "user") {
+      out.push(b);
+      continue;
+    }
+    const replacement = projected[projectedIdx];
+    if (replacement) {
+      out.push(replacement);
+      projectedIdx += 1;
+    } else {
+      out.push(b);
+    }
+  }
+  while (projectedIdx < projected.length) {
+    out.push(projected[projectedIdx]);
+    projectedIdx += 1;
+  }
+  return out;
 }
 
 /** One assistant bubble per assistant row; tool/error/etc. rows attach to or
@@ -755,18 +794,60 @@ function toolRowToTool(row: ToolRow): Tool {
     row.status === "failed" ||
     row.status === "cancelled" ||
     row.status === "denied";
-  const ok = row.status !== "failed" && row.status !== "denied";
+  const blocked =
+    row.status === "denied" ||
+    row.policyOutcome === "denied" ||
+    row.policyOutcome === "needs_approval";
+  const ok = row.status !== "failed" && !blocked;
+  const blockedSummary =
+    row.policyOutcome === "needs_approval"
+      ? "needs approval"
+      : row.policyOutcome === "denied"
+        ? "denied"
+        : null;
   const summaryBits = [row.policyOutcome, row.outputHash ? "ok" : null].filter(
     Boolean,
   ) as string[];
+  const errorMessage =
+    row.errorMessage ??
+    (blockedSummary ? `Tool ${blockedSummary}.` : null);
   return {
     call: row.toolName ?? row.spanId,
     ok,
     summary: summaryBits.join(" · "),
-    resultSummary: row.errorMessage ?? (row.outputHash ? "ok" : ""),
+    resultSummary: errorMessage ?? (row.outputHash ? "ok" : ""),
     pending: !terminal,
-    result: row.errorMessage ? { error: row.errorMessage } : undefined,
+    result: errorMessage ? { error: errorMessage } : undefined,
   };
+}
+
+function hasBlockedToolCall(bubbles: Bubble[]): boolean {
+  for (let i = bubbles.length - 1; i >= Math.max(0, bubbles.length - 6); i--) {
+    const b = bubbles[i];
+    if (!b || b.role !== "assistant") continue;
+    if (
+      b.tools.some((t) => {
+        if (t.ok) return false;
+        const detail = [
+          t.summary,
+          t.resultSummary,
+          typeof (t.result as { error?: unknown } | undefined)?.error === "string"
+            ? String((t.result as { error?: string }).error)
+            : "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return (
+          detail.includes("research mode") ||
+          detail.includes("needs approval") ||
+          detail.includes("denied")
+        );
+      })
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function applyEvent(
