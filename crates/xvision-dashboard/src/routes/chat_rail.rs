@@ -36,7 +36,8 @@ use xvision_engine::chat_session::{
     ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope, SessionEventLog, ToolPolicy,
     ToolPolicyRow, ToolPolicyStore, GLOBAL_SCOPE,
 };
-use xvision_observability::UnifiedEvent;
+use xvision_engine::focus;
+use xvision_observability::{Actor as UnifiedActor, FocusEvent, UnifiedEvent, UnifiedPayload};
 
 use crate::chat_unified::WizardEventProjector;
 use crate::error::DashboardError;
@@ -287,6 +288,65 @@ pub async fn chat(
         // direct seq seeding.
         let mut projector =
             WizardEventProjector::new_seeded(&projector_session_id, &projector_scope, next_seq.max(0) as u64);
+
+        // Phase 2.4 FOCUS LOAD: resolve the scope's pinned focus file at the
+        // start of the turn. On a hit, record the resolved (XVN_HOME-relative)
+        // path on the session so a resume re-loads the same file, then emit a
+        // FocusLoaded event onto the unified log/bus so the operator sees the
+        // focus is in play. A miss or read error is non-fatal — the turn
+        // proceeds without focus (the WizardLoop re-loads + injects per turn).
+        match focus::load(&xvn_home, &projector_scope).await {
+            Ok(Some(doc)) => {
+                let rel_path = std::path::Path::new(&doc.path)
+                    .strip_prefix(&xvn_home)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| doc.path.clone());
+                if let Err(e) =
+                    ChatSessionStore::set_focus_path(&projector_pool, &projector_session_id, Some(&rel_path)).await
+                {
+                    tracing::error!(
+                        target: "xvision::dashboard::chat_rail",
+                        session_id = %projector_session_id,
+                        error = %e,
+                        "failed to persist focus_path on session start",
+                    );
+                }
+                let (scope_kind, scope_id) = focus::scope_address(&projector_scope);
+                let unified = projector.project_payload(
+                    Ulid::new().to_string(),
+                    UnifiedActor::Hook,
+                    None,
+                    UnifiedPayload::FocusLoaded(FocusEvent {
+                        scope_kind,
+                        scope_id,
+                        path: rel_path,
+                        content_hash: Some(doc.content_hash),
+                    }),
+                    Utc::now(),
+                );
+                if let Err(e) = SessionEventLog::append(&projector_pool, &unified).await {
+                    tracing::error!(
+                        target: "xvision::dashboard::chat_rail",
+                        session_id = %projector_session_id,
+                        seq = unified.seq,
+                        kind = unified.event_name(),
+                        error = %e,
+                        "failed to append FocusLoaded event",
+                    );
+                } else {
+                    session_bus.publish(&unified).await;
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %projector_session_id,
+                    error = %e,
+                    "failed to load focus doc on session start; proceeding without it",
+                );
+            }
+        }
 
         let mut wl = match WizardLoop::new_with_profile(
             xvn_home,
