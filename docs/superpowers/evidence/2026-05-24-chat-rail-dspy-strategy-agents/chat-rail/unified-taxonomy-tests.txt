@@ -27,3 +27,17 @@ test chat_unified::tests::tool_call_and_result_share_a_span_id ... ok
 
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 141 filtered out; finished in 0.00s
 
+
+# Phase 1.1 fix — adjacent tagging (kind-field collision regression)
+# 2026-05-25T00:36:29Z
+$ cargo test -p xvision-observability --lib unified_event
+running 6 tests
+test unified_event::tests::every_payload_has_a_distinct_event_name ... ok
+test unified_event::tests::payload_kind_tag_matches_event_name ... ok
+test unified_event::tests::projector_assigns_monotonic_seq_and_run_id ... ok
+test unified_event::tests::envelope_round_trips_through_json ... ok
+test unified_event::tests::typed_errors_round_trip_with_remediation ... ok
+test unified_event::tests::checkpoint_variant_round_trips_despite_inner_kind_field ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.00s
+

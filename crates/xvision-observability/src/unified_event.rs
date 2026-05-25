@@ -136,8 +136,16 @@ pub struct UnifiedEvent {
 /// `RunEvent` detail structs (strong typing, zero drift); net-new kinds for
 /// the rail, focus chain, tool policy, optimization, and typed errors get
 /// their own small structs.
+///
+/// Adjacently tagged (`{ "kind": "...", "data": { … } }`) — **not** internally
+/// tagged. Several reused detail structs (`CheckpointWrittenEvent`,
+/// `ArtifactWrittenEvent`, `EngineEvent`) carry their own `kind` field, which
+/// collides with an internal `tag = "kind"` (serde rejects it as a duplicate
+/// field). Nesting the payload under `data` keeps the envelope discriminant
+/// free of the inner structs' fields. The TS mirror models this as
+/// `{ kind, data }`; unit variants omit `data`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum UnifiedPayload {
     // ── Session lifecycle (rail-originated) ─────────────────────────────
     SessionCreated { scope_label: String },
@@ -583,6 +591,34 @@ mod tests {
         assert!(matches!(e1.payload, UnifiedPayload::ToolRequested(_)));
         assert!(e2.is_terminal());
         assert!(e0.is_lifecycle_critical());
+    }
+
+    #[test]
+    fn checkpoint_variant_round_trips_despite_inner_kind_field() {
+        // CheckpointWrittenEvent has its OWN `kind` field (model_step|tool_step)
+        // which collides with the envelope's serde(tag="kind"). This test proves
+        // whether the inner kind survives a round-trip.
+        let ckpt = crate::events::CheckpointWrittenEvent {
+            checkpoint_id: "ck1".into(),
+            run_id: "run1".into(),
+            span_id: "sp1".into(),
+            sequence: 3,
+            kind: "model_step".into(),
+            input_hash: "ih".into(),
+            output_hash: None,
+            input_payload_ref: None,
+            output_payload_ref: None,
+        };
+        let ev = sample_envelope(UnifiedPayload::CheckpointCreated(ckpt));
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: UnifiedEvent = serde_json::from_str(&json).unwrap();
+        match back.payload {
+            UnifiedPayload::CheckpointCreated(c) => {
+                assert_eq!(c.kind, "model_step", "inner kind corrupted; json was: {json}");
+                assert_eq!(c.checkpoint_id, "ck1");
+            }
+            other => panic!("wrong payload kind after round-trip: {other:?}; json={json}"),
+        }
     }
 
     #[test]
