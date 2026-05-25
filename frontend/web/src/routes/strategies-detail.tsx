@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, ApiError } from "@/api/client";
 import { InlineEditField } from "@/features/strategies/InlineEditField";
+import { StrategyReadinessPanel } from "@/components/diagnostics/StrategyReadinessPanel";
 import { CHART2_STRATEGY_ROTATION } from "@/theme/themes";
 
 /**
@@ -377,6 +378,15 @@ function StrategyDetailView({ id }: { id: string }) {
           />
         </dd>
       </dl>
+
+      <section
+        aria-label="Agent readiness"
+        className="mt-6"
+        data-testid="strategy-readiness-section"
+      >
+        <h2 className="text-[15px] font-medium mb-3">Agent readiness</h2>
+        <StrategyReadinessPanel strategyId={m.id} />
+      </section>
     </main>
   );
 }

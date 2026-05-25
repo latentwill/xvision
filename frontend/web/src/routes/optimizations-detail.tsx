@@ -18,6 +18,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
+import { PromptDiff } from "@/components/diagnostics/PromptDiff";
+import { MintLineagePanel } from "@/components/diagnostics/MintLineagePanel";
 import { ApiError } from "@/api/client";
 import { agentKeys, getAgent } from "@/api/agents";
 import {
@@ -260,31 +262,27 @@ export function OptimizationDetailRoute() {
         </Card>
       ) : null}
 
-      {/* Before / after prompt diff. */}
-      <Card className="mb-6">
-        <div className="px-5 pt-4 pb-2 flex items-center justify-between">
-          <h2 className="m-0 text-[15px] font-medium">Prompt change</h2>
-          <span className="text-[12px] text-text-3">
-            before → after (selected candidate)
-          </span>
-        </div>
-        <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div data-testid="prompt-before">
-            <div className="text-[12px] text-text-3 mb-1">
-              Current ({run.slot_name})
-            </div>
-            <pre className="whitespace-pre-wrap break-words text-[12px] leading-relaxed bg-surface-elev border border-border rounded p-3 text-text-2 max-h-72 overflow-auto">
-              {beforePrompt || "—"}
-            </pre>
-          </div>
-          <div data-testid="prompt-after">
-            <div className="text-[12px] text-text-3 mb-1">Optimized</div>
-            <pre className="whitespace-pre-wrap break-words text-[12px] leading-relaxed bg-success/5 dark:bg-success/10 border border-success/30 rounded p-3 text-text max-h-72 overflow-auto">
-              {afterPrompt || "—"}
-            </pre>
-          </div>
-        </div>
-      </Card>
+      {/* Before / after prompt diff (shared PromptDiff component). */}
+      <PromptDiff
+        className="mb-6"
+        before={beforePrompt}
+        after={afterPrompt}
+        beforeLabel={`Current (${run.slot_name})`}
+        afterLabel="Optimized"
+        caption="before → after (selected candidate)"
+      />
+
+      {/* Mint / lineage panel — surfaces the marketplace-mint refusals and
+          the accepted child's lineage. The accept→swap reversible flow lives
+          in the actions card below. */}
+      {acceptedSnapshot && lineageChild ? (
+        <MintLineagePanel
+          runId={rid}
+          capability={run.capability}
+          childAgentId={lineageChild.child_agent_id}
+          className="mb-6"
+        />
+      ) : null}
 
       {/* Candidate table. */}
       <Card className="mb-6">
