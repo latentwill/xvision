@@ -244,7 +244,14 @@ async fn accept_mints_child_agent_records_lineage_and_leaves_parent_unchanged() 
 
     let resp = server
         .post(&format!("/api/optimizations/{run_id}/accept"))
-        .json(&serde_json::json!({ "snapshot_id": snapshot_id }))
+        // Phase 4.4 holdout gate (added after these mechanics tests): accept is
+        // refused without a holdout result unless a documented override is given.
+        // This suite covers the clone/lineage/revert mechanics; the holdout
+        // enforcement itself is covered by tests/mint_holdout.rs.
+        .json(&serde_json::json!({
+            "snapshot_id": snapshot_id,
+            "override_reason": "mechanics test: holdout enforcement covered in mint_holdout suite"
+        }))
         .await;
     resp.assert_status_ok();
     let body: Value = resp.json();
@@ -293,7 +300,14 @@ async fn accept_then_revert_clears_flag_and_lineage() {
 
     let resp = server
         .post(&format!("/api/optimizations/{run_id}/accept"))
-        .json(&serde_json::json!({ "snapshot_id": snapshot_id }))
+        // Phase 4.4 holdout gate (added after these mechanics tests): accept is
+        // refused without a holdout result unless a documented override is given.
+        // This suite covers the clone/lineage/revert mechanics; the holdout
+        // enforcement itself is covered by tests/mint_holdout.rs.
+        .json(&serde_json::json!({
+            "snapshot_id": snapshot_id,
+            "override_reason": "mechanics test: holdout enforcement covered in mint_holdout suite"
+        }))
         .await;
     resp.assert_status_ok();
     let child_id = resp.json::<Value>()["child_agent"]["agent_id"]
