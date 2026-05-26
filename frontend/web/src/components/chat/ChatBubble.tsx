@@ -7,6 +7,25 @@ import { ContentBlockView } from "@/components/chat/ContentBlockView";
 
 import type { Bubble, CheckpointBubble, RenderableBlock, Tool } from "./types";
 
+/**
+ * Temporary flag — when `false`, the rail SKIPS RENDERING checkpoint
+ * bubbles. The projection layer (`unifiedRowsToBubbles` in
+ * `ChatRail.tsx`) still emits the rows so chat-rollback can compute
+ * which user turns fall inside a rewound window; only the visual
+ * surface is muted.
+ *
+ * Why this is here, not at the merge layer: a `mergeUnifiedRows`-
+ * level suppression would also hide the rows from the rollback
+ * computation and from `mergeUnifiedRows`-based test fixtures. The
+ * QA complaint is purely visual ("Checkpoints appear suddenly all
+ * at once at end of 4th turn") — fix it at the render boundary.
+ *
+ * Re-enable once the server-side emission is interleaved with the
+ * turn (currently flushes as a batch at turn close, which produces
+ * the "all at once" complaint).
+ */
+const SHOW_CHECKPOINTS_IN_RAIL = false;
+
 export function ChatBubble({
   bubble,
   isLast,
@@ -27,6 +46,16 @@ export function ChatBubble({
   }
 
   if (bubble.role === "checkpoint") {
+    // QA "Checkpoints appear suddenly all at once at end of 4th
+    // turn" — the underlying server-side emission currently queues
+    // checkpoints and flushes them as a batch at turn close, so
+    // they all materialize together rather than inline at the
+    // point of the rewind. Hide them in the rail until that
+    // batching is fixed server-side. The merge layer keeps emitting
+    // checkpoint rows so the chat-rollback logic can still compute
+    // which user turns fall inside a rewound window — it just no
+    // longer surfaces a bubble in the rail.
+    if (!SHOW_CHECKPOINTS_IN_RAIL) return null;
     return <CheckpointRow bubble={bubble} />;
   }
 

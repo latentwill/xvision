@@ -954,22 +954,6 @@ export function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[
   return out;
 }
 
-/**
- * Temporary flag — when `false`, the rail SKIPS rendering checkpoint
- * rows entirely. QA flagged "Checkpoints appear suddenly all at once
- * at end of 4th turn" and asked for them hidden until the underlying
- * server-side emit-batching is fixed: checkpoints are currently
- * queued during a turn and flushed in a batch at turn close, so they
- * all materialize together in the rail rather than inline at the
- * point of the rewind. That batching fix lives server-side; this
- * flag is the operator-facing stopgap. Re-enable once
- * checkpoint emission is interleaved with the turn (separate
- * ticket). DO NOT delete this flag without also updating the server
- * emission path — leaving checkpoints rendered with the current
- * batching produces the QA "all at once" complaint.
- */
-const SHOW_CHECKPOINTS_IN_RAIL = false;
-
 /** One assistant bubble per assistant row; tool/error/etc. rows attach to or
  *  follow the nearest preceding assistant bubble (or open their own).
  *  Checkpoint rows emit a standalone checkpoint bubble so they render as a
@@ -1027,13 +1011,12 @@ function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
         break;
       }
       case "checkpoint": {
-        // Suppressed for now — see SHOW_CHECKPOINTS_IN_RAIL doc.
-        if (!SHOW_CHECKPOINTS_IN_RAIL) {
-          // Don't even break the assistant bubble flow when skipping;
-          // a hidden checkpoint should be invisible at this layer.
-          break;
-        }
-        // Standalone checkpoint bubble — clickable rewind, ordered inline.
+        // The render layer (`ChatBubble`) currently SUPPRESSES the
+        // checkpoint bubble per QA — see SHOW_CHECKPOINTS_IN_RAIL in
+        // ChatBubble.tsx — but the projection still emits the row
+        // so the chat-rollback logic (`isRolledBackUser`, used by
+        // `mergeUnifiedRows` above) can compute its "user turns
+        // inside a rewound window" range correctly.
         out.push({
           role: "checkpoint",
           checkpointId: row.checkpointId,
