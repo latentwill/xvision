@@ -222,6 +222,92 @@ describe("ChatRail", () => {
     });
   });
 
+  it("hides legacy user turns inside a checkpoint rollback window", () => {
+    const rows: MessageRow[] = [
+      {
+        type: "assistant",
+        id: "assistant:old-session:0",
+        seq: 10,
+        streamId: "old-session",
+        appliedEventIds: new Set(["old"]),
+        actor: "agent",
+        text: "before checkpoint",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+      {
+        type: "checkpoint",
+        id: "checkpoint:old-session:cp1:created",
+        seq: 15,
+        streamId: "old-session",
+        appliedEventIds: new Set(["cp-created"]),
+        actor: "system",
+        status: "created",
+        checkpointId: "cp1",
+        restored: [],
+        code: null,
+        message: null,
+      },
+      {
+        type: "assistant",
+        id: "assistant:old-session:1",
+        seq: 30,
+        streamId: "old-session",
+        appliedEventIds: new Set(["rolled"]),
+        actor: "agent",
+        text: "rolled back answer",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 1,
+      },
+      {
+        type: "checkpoint",
+        id: "checkpoint:old-session:cp1:restored",
+        seq: 40,
+        streamId: "old-session",
+        appliedEventIds: new Set(["cp-restored"]),
+        actor: "system",
+        status: "restored",
+        checkpointId: "cp1",
+        restored: [],
+        code: null,
+        message: null,
+      },
+    ];
+
+    const merged = mergeUnifiedRows(
+      [
+        { role: "user", text: "before checkpoint question", assistantAnchor: 0 },
+        { role: "user", text: "rolled back user turn", assistantAnchor: 1 },
+        { role: "user", text: "after restore question", assistantAnchor: 2 },
+      ],
+      rows,
+    );
+
+    expect(merged.map((b) => (b.role === "user" ? b.text : b.role))).toEqual([
+      "before checkpoint question",
+      "assistant",
+      "checkpoint",
+      "checkpoint",
+      "after restore question",
+    ]);
+    expect(
+      merged.some((b) => b.role === "user" && b.text === "rolled back user turn"),
+    ).toBe(false);
+    expect(
+      merged.some(
+        (b) =>
+          b.role === "assistant" &&
+          b.blocks.some(
+            (block) => block.kind === "text" && block.text === "rolled back answer",
+          ),
+      ),
+    ).toBe(false);
+  });
+
   it("creates a new chat without deleting the previous conversation", async () => {
     renderRail();
 

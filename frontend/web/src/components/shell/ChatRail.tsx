@@ -713,11 +713,18 @@ export function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[
   const projected = unifiedRowsToBubbles(rows);
   if (projected.length === 0) return bubbles;
 
+  const rolledBackAnchorRanges = checkpointRollbackAnchorRanges(rows);
+  const isRolledBackUser = (anchor: number) =>
+    rolledBackAnchorRanges.some(({ from, to }) => anchor >= from && anchor < to);
+
   type AnchoredUser = { user: Bubble; anchor: number };
   const users: AnchoredUser[] = [];
   for (const b of bubbles) {
     if (b.role === "user") {
-      users.push({ user: b, anchor: b.assistantAnchor ?? users.length });
+      const anchor = b.assistantAnchor ?? users.length;
+      if (!isRolledBackUser(anchor)) {
+        users.push({ user: b, anchor });
+      }
     }
   }
   users.sort((a, b) => a.anchor - b.anchor);
@@ -780,21 +787,7 @@ export function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[
  *  hidden — those messages were rolled back on the server. Checkpoint rows
  *  themselves are preserved so the operator can still see the rewind marker. */
 function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
-  // Pass 1 — locate rolled-back ranges. We compose multiple restores naturally
-  // because each restored event contributes its own (from, to) interval.
-  const createdSeqByCheckpoint = new Map<string, number>();
-  const rolledBackRanges: Array<{ from: number; to: number }> = [];
-  for (const row of rows) {
-    if (row.type !== "checkpoint") continue;
-    if (row.status === "created") {
-      createdSeqByCheckpoint.set(row.checkpointId, row.seq);
-    } else if (row.status === "restored") {
-      const c = createdSeqByCheckpoint.get(row.checkpointId);
-      if (c != null && row.seq > c) {
-        rolledBackRanges.push({ from: c, to: row.seq });
-      }
-    }
-  }
+  const rolledBackRanges = checkpointRollbackSeqRanges(rows);
   const isRolledBack = (seq: number) =>
     rolledBackRanges.some(({ from, to }) => seq > from && seq < to);
 
@@ -865,6 +858,52 @@ function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
     }
   }
   return out;
+}
+
+function checkpointRollbackSeqRanges(rows: MessageRow[]): Array<{ from: number; to: number }> {
+  // Locate rolled-back event ranges. We compose multiple restores naturally
+  // because each restored event contributes its own (from, to) interval.
+  const createdSeqByCheckpoint = new Map<string, number>();
+  const rolledBackRanges: Array<{ from: number; to: number }> = [];
+  for (const row of [...rows].sort((a, b) => a.seq - b.seq)) {
+    if (row.type !== "checkpoint") continue;
+    if (row.status === "created") {
+      createdSeqByCheckpoint.set(row.checkpointId, row.seq);
+    } else if (row.status === "restored") {
+      const createdSeq = createdSeqByCheckpoint.get(row.checkpointId);
+      if (createdSeq != null && row.seq > createdSeq) {
+        rolledBackRanges.push({ from: createdSeq, to: row.seq });
+      }
+    }
+  }
+  return rolledBackRanges;
+}
+
+function checkpointRollbackAnchorRanges(rows: MessageRow[]): Array<{ from: number; to: number }> {
+  // Legacy user bubbles do not carry unified `seq`; they only know how many
+  // assistant rows existed when the user turn was sent. Convert checkpoint
+  // rollback seq windows into the same assistant-count coordinate system so
+  // user turns sent after the checkpoint are hidden with the rolled-back
+  // assistant/tool rows.
+  const createdAnchorByCheckpoint = new Map<string, number>();
+  const ranges: Array<{ from: number; to: number }> = [];
+  let assistantCount = 0;
+  for (const row of [...rows].sort((a, b) => a.seq - b.seq)) {
+    if (row.type === "assistant") {
+      assistantCount += 1;
+      continue;
+    }
+    if (row.type !== "checkpoint") continue;
+    if (row.status === "created") {
+      createdAnchorByCheckpoint.set(row.checkpointId, assistantCount);
+    } else if (row.status === "restored") {
+      const createdAnchor = createdAnchorByCheckpoint.get(row.checkpointId);
+      if (createdAnchor != null && assistantCount > createdAnchor) {
+        ranges.push({ from: createdAnchor, to: assistantCount });
+      }
+    }
+  }
+  return ranges;
 }
 
 function toolRowToTool(row: ToolRow): Tool {
