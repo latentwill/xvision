@@ -100,13 +100,16 @@ export function ScenarioForm({
   const [calendar, setCalendar] = useState<CalendarRef>(
     initial?.calendar ?? DEFAULT_CALENDAR,
   );
-  const [granularity, setGranularity] = useState<ScenarioGranularity>(() => {
+  // Granularity is fixed at 1h — the user-facing selector was removed per QA
+  // feedback. The backend still requires the field, so we persist + send the
+  // default (or whatever `initial` carries for an edit) without exposing a UI
+  // control.
+  const granularity: ScenarioGranularity = (() => {
     const initialGranularity = initial?.granularity?.trim().toLowerCase();
     return initialGranularity && GRANULARITY_OPTIONS.includes(initialGranularity)
       ? initialGranularity
       : '1h';
-  });
-  const granularityOptions = GRANULARITY_OPTIONS;
+  })();
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -126,7 +129,6 @@ export function ScenarioForm({
     initial?.warmup_bars ?? DEFAULT_WARMUP_BARS,
   );
   const [nameError, setNameError] = useState<string | null>(null);
-  const [granularityError, setGranularityError] = useState<string | null>(null);
   const [timeError, setTimeError] = useState<string | null>(null);
   const [warmupError, setWarmupError] = useState<string | null>(null);
 
@@ -149,11 +151,6 @@ export function ScenarioForm({
     setNameError(null);
 
     const granularityValue = granularity.trim().toLowerCase();
-    if (!GRANULARITY_OPTIONS.includes(granularityValue)) {
-      setGranularityError('Choose a supported Alpaca granularity.');
-      return;
-    }
-    setGranularityError(null);
 
     if (!isValidWindow(from, to)) {
       setTimeError('End date must be after start date.');
@@ -300,26 +297,6 @@ export function ScenarioForm({
             </Field>
           ) : null}
         </Row>
-        <Field label="Granularity">
-          <select
-            className="input"
-            value={granularity}
-            onChange={(e) => {
-              setGranularity(e.target.value);
-              if (granularityError) setGranularityError(null);
-            }}
-            required
-          >
-            {granularityOptions.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-          {granularityError ? (
-            <div className="mt-1 text-[12px] text-rose-300">{granularityError}</div>
-          ) : null}
-        </Field>
         <div className="block text-[12px] text-text-3">
           <label className="block">
             <div className="mb-1">Context bars</div>

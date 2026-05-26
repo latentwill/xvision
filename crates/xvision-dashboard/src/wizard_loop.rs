@@ -18,6 +18,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
 use serde::{de::Deserializer, de::Error as DeError, Deserialize, Serialize};
@@ -72,6 +73,19 @@ struct WizardCreateStrategyInput {
     #[serde(default)]
     creator: Option<String>,
 }
+
+/// Hard deadline on a single authoring-tool execution. Tools should be
+/// instantaneous (DB reads / filesystem reads / config writes). A tool
+/// that runs longer than this is presumed wedged on something
+/// non-recoverable (network call hanging, deadlocked DB writer, etc.)
+/// and we surface a typed error so the chat rail's spinner clears and
+/// the LLM gets a definitive failure to react to. Without this, a
+/// stuck tool leaves the chat rail with a forever-pending tool card
+/// (the recurring QA hang on `list_strategies` / `list_scenarios` /
+/// `list_strategy_ideas`). 30s is comfortably above any normal
+/// authoring verb's runtime; if a legitimate tool needs longer it
+/// should stream progress, not block.
+const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Cap on tool-use → tool-result iterations per `next_event` call. Prevents
 /// a misbehaving model from looping forever; v1 wizards never need more
@@ -380,6 +394,12 @@ struct CreateStrategyAgentReq {
     model: Option<String>,
     #[serde(default)]
     system_prompt: Option<String>,
+    /// Operator-facing summary of what this agent does. The chat-rail bot is
+    /// expected to supply this whenever it creates an agent so the agents
+    /// list isn't littered with auto-generated placeholder text. Falls back
+    /// to a generated one-liner when empty.
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -980,11 +1000,34 @@ impl WizardLoop {
                         // model instead.
                         match self.maybe_snapshot_before_tool(&name, &input).await {
                             Ok(()) => {
-                                let result = self.run_tool(&name, input).await;
+                                // Wrap the tool body in a hard timeout
+                                // (TOOL_EXECUTION_TIMEOUT) so a wedged
+                                // tool can't leave the chat rail's tool
+                                // card pending forever — see the
+                                // constant's doc for the rationale.
+                                let result = tokio::time::timeout(
+                                    TOOL_EXECUTION_TIMEOUT,
+                                    self.run_tool(&name, input),
+                                )
+                                .await;
                                 match result {
-                                    Ok(v) => v,
-                                    Err(e) => {
+                                    Ok(Ok(v)) => v,
+                                    Ok(Err(e)) => {
                                         let msg = e.to_string();
+                                        self.last_tool_error = Some((name.clone(), msg.clone()));
+                                        serde_json::json!({ "error": msg })
+                                    }
+                                    Err(_elapsed) => {
+                                        let msg = format!(
+                                            "tool '{name}' timed out after {}s",
+                                            TOOL_EXECUTION_TIMEOUT.as_secs()
+                                        );
+                                        tracing::warn!(
+                                            target: "xvision::dashboard::wizard_loop",
+                                            tool = %name,
+                                            timeout_secs = TOOL_EXECUTION_TIMEOUT.as_secs(),
+                                            "wizard tool execution timed out — surfacing typed error to the model"
+                                        );
                                         self.last_tool_error = Some((name.clone(), msg.clone()));
                                         serde_json::json!({ "error": msg })
                                     }
@@ -2089,6 +2132,7 @@ impl WizardLoop {
                 provider: None,
                 model: None,
                 system_prompt: None,
+                description: None,
             })
             .await?;
         Ok(Some(out))
@@ -2152,14 +2196,21 @@ impl WizardLoop {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
         let skill_ids = tools_for_strategy_role(&strategy, &role);
+        let description = req
+            .description
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                format!(
+                    "Auto-created for strategy {} as role `{role}`.",
+                    strategy.manifest.id
+                )
+            });
         let agent = api_agents::create(
             &self.api_context,
             api_agents::CreateAgentRequest {
                 name,
-                description: format!(
-                    "Auto-created for strategy {} as role `{role}`.",
-                    strategy.manifest.id
-                ),
+                description,
                 tags: vec!["strategy-agent".into(), role.clone()],
                 slots: vec![AgentSlot {
                     name: "main".into(),
@@ -2232,6 +2283,31 @@ impl WizardLoop {
         Ok(out)
     }
 
+    /// Resolve the (provider, model) the wizard should bind to a newly
+    /// created strategy agent.
+    ///
+    /// Resolution order:
+    /// 1. The tool call's explicit `provider`/`model` arguments.
+    /// 2. The rail's selected `(agent_provider, agent_model)` — the
+    ///    operator's choice in the ModelPicker.
+    ///
+    /// Pre-2026-05-26 there was a third fallback that inherited
+    /// `self.model` (the chat dispatch model) when `agent_model` was
+    /// unset. That silent inheritance was the second half of the
+    /// recurring "Gemini complaint despite Google selected" QA bug:
+    /// the chat rail's auto-pick race could promote OpenRouter's
+    /// deepseek-v4-pro as the chat dispatch, and every agent created
+    /// by the wizard would then inherit deepseek too, even though the
+    /// operator had explicitly picked a Gemini variant in Settings →
+    /// Providers. The LLM would then attempt to use Gemini, the
+    /// OpenRouter route would reject it, and the assistant would
+    /// synthesize the long "no Gemini models are currently enabled
+    /// on your OpenRouter provider" explanation that confused QA.
+    ///
+    /// Removing the fallback turns the failure into a typed error
+    /// the chat agent can act on — "pick a provider/model in the
+    /// chat model picker" — instead of producing a working-but-
+    /// wrong run on the chat model.
     fn resolve_agent_runtime(
         &self,
         provider: Option<String>,
@@ -2244,10 +2320,9 @@ impl WizardLoop {
             .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing provider; pick a provider/model in the chat model picker or pass provider explicitly"))?;
         let model = model
             .or_else(|| self.agent_model.clone())
-            .or_else(|| Some(self.model.clone()))
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing model; pick a provider/model in the chat model picker or pass model explicitly"))?;
+            .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing model; pick a provider/model in the chat model picker or pass model explicitly (the chat dispatch model is intentionally NOT inherited — see resolve_agent_runtime docstring)"))?;
         Ok((provider, model))
     }
 }
@@ -3042,7 +3117,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "create_strategy_agent".into(),
-            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used.".into(),
+            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used. ALWAYS supply a one-line `description` summarizing what the agent does (e.g. \"4H ETH range-fader using RSI + EMA20\"), so the operator-facing Agents list isn't littered with auto-generated placeholders.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -3050,6 +3125,10 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "id": {"type": "string", "description": "Alias for strategy_id"},
                     "role": {"type": "string", "default": "trader"},
                     "name": {"type": "string"},
+                    "description": {
+                        "type": "string",
+                        "description": "One-line, operator-facing summary of what this agent does. REQUIRED in practice — without it the agent shows a placeholder description in the UI."
+                    },
                     "provider": {"type": "string"},
                     "model": {"type": "string"},
                     "system_prompt": {"type": "string"}

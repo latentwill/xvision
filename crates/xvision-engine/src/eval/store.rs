@@ -719,32 +719,77 @@ impl RunStore {
         Ok(())
     }
 
+    /// Ensure a baseline `agent_runs` row exists for an eval run, so
+    /// downstream FK-bearing inserts (`supervisor_notes`, observability
+    /// spans, etc.) have a valid parent. Idempotent via `INSERT OR
+    /// IGNORE` — the bus recorder's `RunStarted` UPSERT backfills
+    /// metadata (objective / sidecar fingerprint / strategy_id) later
+    /// when the obs emitter is wired.
+    ///
+    /// Uses the single-id pattern (`agent_runs.id = eval_runs.id`)
+    /// because the frontend's trace lookup falls back to
+    /// `agent_run_id ?? eval_run.id` (see
+    /// `frontend/web/src/routes/eval-runs-detail.tsx`). Breaking that
+    /// fallback would silently 404 every View Trace click.
+    ///
+    /// Why this exists separately from `RunStarted`:
+    ///
+    /// * `emit_run_started` runs through the async event bus, so the
+    ///   row isn't guaranteed committed by the time the next eval
+    ///   step (preflight / provider_override supervisor note) writes
+    ///   — that's the race that produced the `FOREIGN KEY constraint
+    ///   failed` log spam and the "agent run … not found" View Trace
+    ///   bug.
+    /// * The CLI and most tests run without an obs bus at all, so
+    ///   without this synchronous seed there is no parent row to
+    ///   write notes against.
+    pub async fn ensure_agent_run_baseline(
+        &self,
+        run_id: &str,
+        retention_mode: &str,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT OR IGNORE INTO agent_runs \
+             (id, objective, eval_run_id, status, started_at, retention_mode) \
+             VALUES (?, 'eval run', ?, 'running', ?, ?)",
+        )
+        .bind(run_id)
+        .bind(run_id)
+        .bind(&now)
+        .bind(retention_mode)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("ensure agent_runs baseline for run {run_id}"))?;
+        Ok(())
+    }
+
     /// Append a `supervisor_notes` row scoped to this eval run.
     ///
     /// Used by the apply-time guardrail (`eval::guardrails`) to record
-    /// `pyramid blocked` / `one-step flip blocked` rewrites. The table
-    /// FK's `run_id` to `agent_runs(id)` upstream; in the eval-only test
-    /// harness FK enforcement is off so callers pass the eval `run_id`
-    /// here. Production wires agent_runs and eval_runs through the same
-    /// id when the run is launched via the agent-run observability bus.
+    /// `pyramid blocked` / `one-step flip blocked` rewrites and by the
+    /// eval kickoff to persist preflight / provider_override receipts.
     ///
-    /// `role` is one of `planner | reviewer | guard | system` (text in
-    /// the schema; this helper does not validate). `severity` is one of
-    /// `info | warn | error`. Both are strings to keep the helper
-    /// schema-faithful without forcing a v1 enum that the
-    /// `agent-run-observability` track owns.
+    /// `role` is one of `planner | reviewer | guard | system | preflight
+    /// | provider_override` (text in the schema; this helper does not
+    /// validate). `severity` is one of `info | warn | error`.
     ///
-    /// ### Failure mode
+    /// ### Invariant — parent must exist
     ///
-    /// This helper is best-effort: an insert failure (e.g. the
-    /// `supervisor_notes` table doesn't exist on a pool that hasn't
-    /// applied migration 018) is logged and swallowed. The guardrail
-    /// is a safety net at the apply seam — a note write failure must
-    /// NOT abort the eval run, because that would inverse the
-    /// guardrail's purpose (block a bad trade) into a new failure
-    /// mode (kill the run on a missing-table). Production pools
-    /// always have migration 018; older eval-only test harnesses may
-    /// not.
+    /// `supervisor_notes.run_id` FKs to `agent_runs(id)`. Callers MUST
+    /// have ensured the parent row exists (via
+    /// [`Self::ensure_agent_run_baseline`] or
+    /// `ObsEmitter::emit_run_started`) before invoking this helper.
+    ///
+    /// Until 2026-05-26 this helper attempted to back-create the
+    /// parent itself with a "best-effort" `INSERT OR IGNORE` and
+    /// swallowed FK failures with a WARN log. That swallow masked an
+    /// ordering bug across multiple QA cycles (the supervisor notes
+    /// from `record_provider_override_note` and
+    /// `write_preflight_supervisor_notes` were called BEFORE
+    /// `emit_run_started`, so the parent row didn't yet exist).
+    /// Removing the back-creation forces the bug to surface loudly at
+    /// the kickoff site instead of hiding behind log spam.
     pub async fn record_supervisor_note(
         &self,
         run_id: &str,
@@ -754,24 +799,7 @@ impl RunStore {
     ) -> Result<()> {
         let id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
-        let parent_res = sqlx::query(
-            "INSERT OR IGNORE INTO agent_runs \
-             (id, objective, eval_run_id, status, started_at, retention_mode) \
-             VALUES (?, 'eval guardrail supervisor note', ?, 'running', ?, 'hash_only')",
-        )
-        .bind(run_id)
-        .bind(run_id)
-        .bind(&now)
-        .execute(&self.pool)
-        .await;
-        if let Err(e) = parent_res {
-            tracing::warn!(
-                run_id = %run_id,
-                error = %e,
-                "agent_runs parent insert for supervisor_notes failed (best-effort; eval run continues)",
-            );
-        }
-        let res = sqlx::query(
+        sqlx::query(
             "INSERT INTO supervisor_notes (id, run_id, role, content, severity, created_at) \
              VALUES (?, ?, ?, ?, ?, ?)",
         )
@@ -782,16 +810,14 @@ impl RunStore {
         .bind(severity)
         .bind(now)
         .execute(&self.pool)
-        .await;
-        if let Err(e) = res {
-            tracing::warn!(
-                run_id = %run_id,
-                role = %role,
-                severity = %severity,
-                error = %e,
-                "supervisor_notes insert failed (best-effort; eval run continues)",
-            );
-        }
+        .await
+        .with_context(|| {
+            format!(
+                "insert supervisor_notes (run_id={run_id}, role={role}, severity={severity}); \
+                 if this is a FOREIGN KEY error the eval kickoff did not call \
+                 ensure_agent_run_baseline before recording notes"
+            )
+        })?;
         Ok(())
     }
 

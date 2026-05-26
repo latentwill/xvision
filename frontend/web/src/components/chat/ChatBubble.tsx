@@ -7,6 +7,25 @@ import { ContentBlockView } from "@/components/chat/ContentBlockView";
 
 import type { Bubble, CheckpointBubble, RenderableBlock, Tool } from "./types";
 
+/**
+ * Temporary flag — when `false`, the rail SKIPS RENDERING checkpoint
+ * bubbles. The projection layer (`unifiedRowsToBubbles` in
+ * `ChatRail.tsx`) still emits the rows so chat-rollback can compute
+ * which user turns fall inside a rewound window; only the visual
+ * surface is muted.
+ *
+ * Why this is here, not at the merge layer: a `mergeUnifiedRows`-
+ * level suppression would also hide the rows from the rollback
+ * computation and from `mergeUnifiedRows`-based test fixtures. The
+ * QA complaint is purely visual ("Checkpoints appear suddenly all
+ * at once at end of 4th turn") — fix it at the render boundary.
+ *
+ * Re-enable once the server-side emission is interleaved with the
+ * turn (currently flushes as a batch at turn close, which produces
+ * the "all at once" complaint).
+ */
+const SHOW_CHECKPOINTS_IN_RAIL = false;
+
 export function ChatBubble({
   bubble,
   isLast,
@@ -27,6 +46,16 @@ export function ChatBubble({
   }
 
   if (bubble.role === "checkpoint") {
+    // QA "Checkpoints appear suddenly all at once at end of 4th
+    // turn" — the underlying server-side emission currently queues
+    // checkpoints and flushes them as a batch at turn close, so
+    // they all materialize together rather than inline at the
+    // point of the rewind. Hide them in the rail until that
+    // batching is fixed server-side. The merge layer keeps emitting
+    // checkpoint rows so the chat-rollback logic can still compute
+    // which user turns fall inside a rewound window — it just no
+    // longer surfaces a bubble in the rail.
+    if (!SHOW_CHECKPOINTS_IN_RAIL) return null;
     return <CheckpointRow bubble={bubble} />;
   }
 
@@ -64,11 +93,18 @@ function ToolButton({ tool }: { tool: Tool }) {
   const pending = tool.pending;
   const label = friendlyToolLabel(tool);
   const status = friendlyToolStatus(tool);
+  // QA flagged the tool cards as having a "hard white border" — the
+  // border tone was set at /40 opacity against the rail surface,
+  // which read as a bright outline. Softened to /15 (and the
+  // neutral pending state to fully transparent) so the cards sit on
+  // the rail without competing with the surrounding text. The shape
+  // / colour intent is unchanged; only the contrast on the outline
+  // is dialled back.
   const tone = !ok
-    ? "border-danger/40 bg-danger/10 text-danger"
+    ? "border-danger/15 bg-danger/10 text-danger"
     : pending
-      ? "border-border-soft bg-surface-2/60 text-text-2"
-      : "border-success/40 bg-success/10 text-success";
+      ? "border-transparent bg-surface-2/60 text-text-2"
+      : "border-success/15 bg-success/10 text-success";
   return (
     <div
       className={`inline-flex items-center gap-1.5 self-start max-w-full px-2 py-1 rounded-md border text-[12px] ${tone}`}
@@ -148,9 +184,16 @@ function MarkdownView({ text }: { text: string }) {
             {children}
           </code>
         ),
+        // The rail is a ~380px panel; horizontal scroll inside a
+        // sidebar reads as broken. Wrap long lines instead. QA also
+        // flagged single-line code overflowing without wrapping —
+        // `whitespace-pre-wrap` keeps intentional newlines but allows
+        // soft-breaks within long unbroken tokens (URLs, JSON one-
+        // liners). `break-words` is the last-resort for tokens with
+        // no break opportunities at all.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         pre: ({ children }: any) => (
-          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 overflow-x-auto">
+          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 whitespace-pre-wrap break-words">
             {children}
           </pre>
         ),
@@ -254,12 +297,28 @@ function CheckpointRow({ bubble }: { bubble: CheckpointBubble }) {
     }
   }, [bubble.checkpointId, restoring]);
 
+  // The `restored` status renders as a full-width banner — operator must see
+  // that subsequent in-flight messages have been rolled back. `created` and
+  // `restore_failed` stay compact inline affordances.
+  if (bubble.status === "restored") {
+    return (
+      <div className="w-full self-stretch">
+        <div className="flex items-center gap-2 px-3 py-2 my-1 rounded-md border border-gold/40 bg-gold-bg text-gold text-[12px]">
+          <span aria-hidden>↻</span>
+          <span className="font-medium">Rolled back to checkpoint</span>
+          <code className="font-mono text-[11px] opacity-80 truncate max-w-[180px]">
+            {bubble.checkpointId}
+          </code>
+          <span className="ml-auto text-[11px] opacity-70">
+            Messages above this point are hidden.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   const label =
-    bubble.status === "restored"
-      ? "Restored"
-      : bubble.status === "restore_failed"
-        ? "Restore failed"
-        : "Checkpoint";
+    bubble.status === "restore_failed" ? "Restore failed" : "Checkpoint";
   const tone =
     bubble.status === "restore_failed"
       ? "border-danger/40 bg-danger/10 text-danger"

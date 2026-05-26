@@ -2549,6 +2549,28 @@ async fn run_inner(
         }
         return Err(e);
     }
+    // Seed the `agent_runs` baseline row synchronously so any
+    // supervisor_notes / observability spans written below have a valid
+    // FK target. The bus-driven `emit_run_started` (a few lines down)
+    // is async and races the very next writes — that race is what
+    // produced the QA "agent run not found" View Trace error across
+    // multiple QA cycles. The bus recorder's RunStarted handler is now
+    // an UPSERT, so it backfills metadata onto this baseline rather
+    // than UNIQUE-conflicting. Single-id pattern (`agent_runs.id ==
+    // eval_runs.id`) preserves the frontend's
+    // `traceRunId = agent_run_id ?? eval_run.id` fallback contract.
+    if let Err(e) = store
+        .ensure_agent_run_baseline(&run.id, obs_config.retention.mode.as_db_str())
+        .await
+    {
+        if let Some(rec) = run_recording.as_ref() {
+            rec.finalize(false, recording_persist_failed(&recording_client))
+                .await;
+        }
+        return Err(ApiError::Internal(format!(
+            "ensure agent_runs baseline: {e}"
+        )));
+    }
     // Persist the per-launch override receipt as soon as the run row
     // exists. We write it here (not only in the outer `run` wrapper) so
     // `run_with_deps` callers — including the test surface that injects
@@ -3344,6 +3366,16 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         .create(&run)
         .await
         .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+
+    // Seed the `agent_runs` baseline row synchronously — see the
+    // corresponding comment in `run_inner` for the full rationale.
+    // Failure here is fatal because every subsequent FK-bearing write
+    // (supervisor_notes, observability spans, View Trace export) would
+    // otherwise silently break.
+    store
+        .ensure_agent_run_baseline(&run.id, obs_config.retention.mode.as_db_str())
+        .await
+        .map_err(|e| ApiError::Internal(format!("ensure agent_runs baseline: {e}")))?;
 
     // Persist preflight results as supervisor_notes immediately after the run
     // row exists. Uses `info` severity for reachable providers and `warn` for

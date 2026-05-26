@@ -61,6 +61,20 @@ describe("buildProviderModel — Cline gateway provider registration", () => {
     expect(typeof model?.stream).toBe("function")
   })
 
+  it("rescues unknown provider ids with a base_url through the generic carrier", () => {
+    expect(
+      resolveGatewayProviderId("some-unknown-svc", "https://proxy.example/v1", KNOWN_PROVIDERS),
+    ).toBe("litellm")
+
+    const model = buildProviderModel({
+      providerId: "some-unknown-svc",
+      modelId: "custom-model",
+      apiKey: "sk-test",
+      baseUrl: "https://proxy.example/v1",
+    })
+    expect(typeof model?.stream).toBe("function")
+  })
+
   it("passes built-in provider ids through unchanged", () => {
     const model = buildProviderModel({
       providerId: "anthropic",
@@ -77,5 +91,14 @@ describe("buildProviderModel — Cline gateway provider registration", () => {
         modelId: "m",
       }),
     ).toThrow(/requires a base_url/i)
+  })
+
+  it("throws a clear error when an unknown provider_id has no base_url", () => {
+    expect(() =>
+      buildProviderModel({
+        providerId: "some-unknown-svc",
+        modelId: "m",
+      }),
+    ).toThrow(/not registered.*base_url/i)
   })
 })

@@ -2,10 +2,6 @@
  * provider-model.ts — build a wrappable AgentModel for real providers via
  * the @cline/llms DefaultGateway.
  *
- * This is the "registration plumbing" deferred from Stage 1. It fills the gap
- * in build-agent.ts where the real-provider path previously let Cline's Agent
- * construct an internal AgentModel that `wrapAgentModel` could not intercept.
- *
  * Gateway flow:
  *   1. createGateway() — fresh gateway with all built-in provider registrations.
  *   2. configureProvider({ providerId, apiKey, baseUrl }) — supply credentials
@@ -22,8 +18,8 @@
  *   to a concrete registered gateway provider before creating the AgentModel.
  *
  * A fresh gateway is created per Agent construction — there is no shared state.
- * This is intentional: each run has its own credentials/baseUrl and must not
- * share gateway config with concurrent runs.
+ * Each run has its own credentials/baseUrl and must not share gateway config
+ * with concurrent runs.
  */
 
 import type { AgentModel } from "./model-wrapper.js"

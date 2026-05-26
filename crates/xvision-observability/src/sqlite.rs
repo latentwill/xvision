@@ -121,13 +121,39 @@ impl AgentRunRecorder for SqliteRecorder {
                 // it explicitly. The sibling migration-039 columns
                 // (replay_hit_ratio / dropped_events / recovery_reason) stay
                 // at their column defaults (NULL / 0 / NULL) until then.
+                //
+                // 2026-05-26: UPSERT (was plain INSERT). Eval kickoff now
+                // synchronously seeds an `agent_runs` baseline row via
+                // `RunStore::ensure_agent_run_baseline` immediately after
+                // `eval_runs` is created, so downstream supervisor_notes /
+                // preflight notes have a valid FK target without racing the
+                // async bus. When the bus later delivers `RunStarted`, the
+                // recorder must backfill the full metadata (objective,
+                // strategy_id, sidecar fingerprint, retention) onto that
+                // baseline rather than UNIQUE-conflicting. `status` is
+                // deliberately preserved from the existing row — by the time
+                // this UPSERT runs the run may already have been finalized
+                // (Failed/Cancelled) and we must not regress it back to
+                // 'running'.
                 sqlx::query(
                     "INSERT INTO agent_runs (\
                         id, objective, strategy_id, eval_run_id, source_cli_job_id, \
                         status, started_at, retention_mode, \
                         sidecar_version, cline_sdk_version, protocol_version, \
                         skills_json, mcp_servers_json) \
-                     VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT(id) DO UPDATE SET \
+                        objective         = excluded.objective, \
+                        strategy_id       = COALESCE(excluded.strategy_id, agent_runs.strategy_id), \
+                        eval_run_id       = COALESCE(excluded.eval_run_id, agent_runs.eval_run_id), \
+                        source_cli_job_id = COALESCE(excluded.source_cli_job_id, agent_runs.source_cli_job_id), \
+                        started_at        = excluded.started_at, \
+                        retention_mode    = excluded.retention_mode, \
+                        sidecar_version   = COALESCE(excluded.sidecar_version, agent_runs.sidecar_version), \
+                        cline_sdk_version = COALESCE(excluded.cline_sdk_version, agent_runs.cline_sdk_version), \
+                        protocol_version  = COALESCE(excluded.protocol_version, agent_runs.protocol_version), \
+                        skills_json       = COALESCE(excluded.skills_json, agent_runs.skills_json), \
+                        mcp_servers_json  = COALESCE(excluded.mcp_servers_json, agent_runs.mcp_servers_json)",
                 )
                 .bind(&e.run_id)
                 .bind(&e.objective)

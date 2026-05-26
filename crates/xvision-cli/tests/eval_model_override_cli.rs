@@ -140,8 +140,20 @@ async fn seed_completed_run_with_override(
         )
         .await
         .expect("finalize run");
-    // Mirror the production write path: a `supervisor_notes` row with
-    // role=`provider_override` carrying the JSON `{provider, model}`.
+    // Mirror the production write path: seed the `agent_runs` baseline
+    // FIRST (eval kickoff does this now via
+    // `RunStore::ensure_agent_run_baseline`), then write the
+    // `supervisor_notes` row with role=`provider_override` carrying the
+    // JSON `{provider, model}`. Pre-2026-05-26 this test could skip the
+    // baseline because `record_supervisor_note` used to back-create an
+    // agent_runs stub itself with a best-effort INSERT OR IGNORE; that
+    // self-creation has been removed because it masked an FK-ordering
+    // bug across multiple QA cycles (parent row absent → silent WARN
+    // → View Trace returns NotFound). Callers now own parent ordering.
+    store
+        .ensure_agent_run_baseline(&run_id, "hash_only")
+        .await
+        .expect("ensure agent_runs baseline");
     let payload = serde_json::json!({
         "provider": override_provider,
         "model": override_model,

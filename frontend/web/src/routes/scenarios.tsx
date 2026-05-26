@@ -141,7 +141,10 @@ export function ScenariosRoute() {
       if (q.length === 0) return true;
       if (row.display_name.toLowerCase().includes(q)) return true;
       if (marketOf(row).toLowerCase().includes(q)) return true;
-      if (row.granularity.toLowerCase().includes(q)) return true;
+      // Granularity no longer surfaced on operator scenario rows
+      // (scenarios are 1h-fixed today — filtering by it would be
+      // meaningless to the operator). If granularity becomes
+      // configurable per-scenario again, restore this branch.
       return false;
     },
     sortFn: (rows, key) => {
@@ -182,11 +185,17 @@ export function ScenariosRoute() {
     navigate(`/scenarios/${id}`);
   }
 
+  // Granularity column removed per QA: scenarios are 1h-fixed
+  // today and the value was a permanent "1h" across every row.
+  // Showing it suggested it was configurable; it isn't. The new
+  // `Created` column surfaces the existing `scenarios.created_at`
+  // column (migration 011) so operators can sort/scan recency at a
+  // glance — also a QA item from the same session.
   const desktopColumns = [
     { key: "name", label: "Name" },
     { key: "market", label: "Market" },
     { key: "window", label: "Window" },
-    { key: "granularity", label: "Granularity" },
+    { key: "created", label: "Created" },
     { key: "source", label: "Source" },
     { key: "tags", label: "Tags" },
     { key: "actions", label: "" },
@@ -250,7 +259,9 @@ export function ScenariosRoute() {
             badge={row.source}
             badgeColor={badgeColorFor(row.source)}
             subtitle={marketOf(row)}
-            meta={`${row.granularity} · ${fmtWindow(row.time_window.start, row.time_window.end)}`}
+            // Granularity dropped from the mobile row meta line per
+            // QA — it was redundant ("1h" on every row).
+            meta={fmtWindow(row.time_window.start, row.time_window.end)}
           />
         )}
       />
@@ -317,8 +328,12 @@ function DesktopRow({
       <td className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2">
         {fmtWindow(row.time_window.start, row.time_window.end)}
       </td>
-      <td className="px-3 py-3 font-mono text-[12px] text-text-2">
-        {row.granularity}
+      {/* Granularity <td> removed — see column-list comment above. */}
+      <td
+        className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2"
+        title={row.created_at}
+      >
+        {fmtCreated(row.created_at)}
       </td>
       <td className="px-3 py-3">
         <SourcePill source={row.source} />
@@ -384,6 +399,21 @@ function fmtWindow(start: string, end: string): string {
     });
   }
   return `${fmtDate(start)} – ${fmtDate(end)}`;
+}
+
+/// Format `scenarios.created_at` (ISO 8601 from the API) as a short
+/// month-day-year so the new Created column fits next to the time
+/// window column without wrapping. Hover shows the full ISO via the
+/// `title` attribute on the cell.
+function fmtCreated(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function errorDetail(err: unknown): string {

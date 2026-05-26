@@ -35,13 +35,22 @@ export function ChatThread({
           authoring loop.
         </div>
       ) : (
+        // `flex-shrink-0` per row so a sibling bubble can never paint
+        // over another when the column gets dense. The QA "user
+        // messages pop over top of the agent last chat box" report
+        // was caused by `mergeUnifiedRows` mis-ordering bubbles in
+        // certain cases (fixed separately), but layout that lets
+        // siblings overlap at all is a hazard worth removing too —
+        // here the row wrapper enforces vertical stacking
+        // regardless of merge correctness.
         bubbles.map((b, i) => (
-          <ChatBubble
-            key={i}
-            bubble={b}
-            isLast={i === bubbles.length - 1}
-            isStreaming={isStreaming}
-          />
+          <div key={i} className="flex-shrink-0">
+            <ChatBubble
+              bubble={b}
+              isLast={i === bubbles.length - 1}
+              isStreaming={isStreaming}
+            />
+          </div>
         ))
       )}
     </div>

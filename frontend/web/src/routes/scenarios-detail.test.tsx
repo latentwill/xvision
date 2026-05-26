@@ -191,8 +191,11 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     });
   });
 
-  it("emits the changed granularity in clone mutations when the operator overrides it", async () => {
-    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+  it("emits null granularity on clone now that the operator-facing control is hidden", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue({
+      ...scenario,
+      granularity: "5m",
+    });
     vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
     vi.mocked(scenarioApi.cloneScenario).mockResolvedValue({
       ...scenario,
@@ -206,10 +209,10 @@ describe("ScenariosDetailRoute bars cache actions", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Clone to edit" }));
 
-    // The form is pre-filled from the parent. The granularity widget is
-    // a <select>; change it to a different supported option.
-    const granularitySelect = await screen.findByLabelText(/Granularity/i);
-    fireEvent.change(granularitySelect, { target: { value: "5m" } });
+    // The granularity selector was removed from ScenarioForm per QA. The form
+    // inherits the parent's granularity silently, so the clone mutation is
+    // always "unchanged from parent" → null on the wire.
+    expect(screen.queryByLabelText(/Granularity/i)).not.toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /Create/i }));
 
@@ -217,7 +220,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
       expect(scenarioApi.cloneScenario).toHaveBeenCalledWith(
         scenario.id,
         expect.objectContaining({
-          granularity: "5m",
+          granularity: null,
         }),
       );
     });

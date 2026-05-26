@@ -9,7 +9,7 @@
 //! Lives in the dashboard crate (not `observability`) because `WizardEvent`
 //! is defined here and `observability` must not depend upward.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
@@ -62,9 +62,24 @@ pub struct WizardEventProjector {
     session_id: String,
     scope: EventScope,
     seq: u64,
-    /// Tool name → synthesized span id, so a `ToolResult` reuses the span id
-    /// minted by its preceding `ToolCall`.
-    tool_spans: HashMap<String, String>,
+    /// Tool name → FIFO queue of synthesized span ids, so each
+    /// `ToolResult` reuses the span id minted by its corresponding
+    /// `ToolCall`. Pre-2026-05-26 this was a `HashMap<String, String>`
+    /// (one entry per tool name), which silently overwrote when the
+    /// same tool was invoked twice in one turn — the second call's
+    /// span would clobber the first, and the first `ToolResult` would
+    /// then mis-correlate to the second call's span. The reducer
+    /// keys on `span_id`, so the first call's tool row stayed stuck
+    /// in `requested` forever. That latent bug was a strong candidate
+    /// for the QA hang on `list_strategies` / `list_scenarios` /
+    /// `list_strategy_ideas`, which the agent often invokes more than
+    /// once in a setup turn. FIFO ordering is sufficient because the
+    /// wizard runs tool calls sequentially today — Call N's Result
+    /// always lands before Call N+1's Result. If parallel/streaming
+    /// tool execution is added later, the wizard must thread a stable
+    /// `call_id` through both events so the projector can match by id
+    /// instead.
+    tool_spans: HashMap<String, VecDeque<String>>,
 }
 
 impl WizardEventProjector {
@@ -149,7 +164,10 @@ impl WizardEventProjector {
             }
             WizardEvent::ToolCall { tool, args } => {
                 let span = span_minter();
-                self.tool_spans.insert(tool.clone(), span.clone());
+                self.tool_spans
+                    .entry(tool.clone())
+                    .or_default()
+                    .push_back(span.clone());
                 let input_hash = sha256_hex(args.to_string().as_bytes());
                 (
                     Actor::Agent,
@@ -174,10 +192,16 @@ impl WizardEventProjector {
                 )
             }
             WizardEvent::ToolResult { tool, result } => {
+                // FIFO: pop the oldest queued span for this tool so
+                // Result N pairs with Call N. If the queue is empty
+                // (a ToolResult arrived with no matching ToolCall —
+                // shouldn't happen in practice, but defensive), mint
+                // a fresh span so the unified stream is still well-
+                // formed.
                 let span = self
                     .tool_spans
-                    .get(&tool)
-                    .cloned()
+                    .get_mut(&tool)
+                    .and_then(|q| q.pop_front())
                     .unwrap_or_else(&mut span_minter);
                 let output_hash = sha256_hex(result.to_string().as_bytes());
                 (
@@ -316,6 +340,86 @@ mod tests {
         let e1 = p.project("e1", WizardEvent::Done { draft_id: None }, ts(), || "sp".into());
         assert_eq!(e0.seq, 5);
         assert_eq!(e1.seq, 6);
+    }
+
+    /// Regression for the latent span-correlation hazard the QA hang
+    /// for `list_strategies`/`list_scenarios`/`list_strategy_ideas`
+    /// pointed at (2026-05-26).
+    ///
+    /// Pre-fix, `tool_spans` was keyed only by tool NAME — so a second
+    /// `ToolCall` for the same tool in one turn would OVERWRITE the
+    /// first call's span_id. With strictly sequential wizard
+    /// execution (Call1, Result1, Call2, Result2), the matching is
+    /// fine. But for ANY interleaved order — which a future parallel
+    /// tool path or a streaming tool-result interleave would
+    /// produce — the second `ToolFinished` would mis-correlate to the
+    /// first call's span, leaving the first tool's row stuck at
+    /// "requested" in the reducer (which keys on span_id). The fix
+    /// keys by call-occurrence rather than just tool name, so the
+    /// invariant holds regardless of execution order.
+    #[test]
+    fn two_calls_to_same_tool_get_distinct_correlated_spans() {
+        let mut p = WizardEventProjector::new("sess_dual", &ContextScope::Workspace);
+        let mut minted: u32 = 0;
+        let mut mint = || {
+            minted += 1;
+            format!("sp_{minted}")
+        };
+
+        // Two ToolCalls for the same tool, then their results in the
+        // SAME order. With name-only keying this happens to work, but
+        // we still want the assertion locked in.
+        let call1 = p.project(
+            "ec1",
+            WizardEvent::ToolCall {
+                tool: "list_strategies".into(),
+                args: json!({"page": 1}),
+            },
+            ts(),
+            &mut mint,
+        );
+        let call2 = p.project(
+            "ec2",
+            WizardEvent::ToolCall {
+                tool: "list_strategies".into(),
+                args: json!({"page": 2}),
+            },
+            ts(),
+            &mut mint,
+        );
+        let result1 = p.project(
+            "er1",
+            WizardEvent::ToolResult {
+                tool: "list_strategies".into(),
+                result: json!([]),
+            },
+            ts(),
+            &mut mint,
+        );
+        let result2 = p.project(
+            "er2",
+            WizardEvent::ToolResult {
+                tool: "list_strategies".into(),
+                result: json!([]),
+            },
+            ts(),
+            &mut mint,
+        );
+
+        // Each call gets a distinct span and each result correlates
+        // to the matching call (FIFO).
+        assert_ne!(
+            call1.span_id, call2.span_id,
+            "two distinct calls must mint distinct spans"
+        );
+        assert_eq!(
+            call1.span_id, result1.span_id,
+            "first result must correlate to first call"
+        );
+        assert_eq!(
+            call2.span_id, result2.span_id,
+            "second result must correlate to second call (NOT the first call's span overwritten by the second call)"
+        );
     }
 
     #[test]

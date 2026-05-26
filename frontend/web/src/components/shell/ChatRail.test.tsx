@@ -34,6 +34,7 @@ vi.mock("@/api/chat_rail", async () => {
     loadSessionHistory: vi.fn(),
     resolveSession: vi.fn(),
     streamChat: vi.fn(),
+    setSessionMode: vi.fn(),
   };
 });
 
@@ -97,6 +98,7 @@ beforeEach(() => {
     session_id: "new-session",
     history: [],
   });
+  vi.mocked(chatApi.deleteSession).mockResolvedValue(undefined);
   vi.mocked(chatApi.loadSessionHistory).mockResolvedValue([]);
 });
 
@@ -220,6 +222,92 @@ describe("ChatRail", () => {
       kind: "text",
       text: "",
     });
+  });
+
+  it("hides legacy user turns inside a checkpoint rollback window", () => {
+    const rows: MessageRow[] = [
+      {
+        type: "assistant",
+        id: "assistant:old-session:0",
+        seq: 10,
+        streamId: "old-session",
+        appliedEventIds: new Set(["old"]),
+        actor: "agent",
+        text: "before checkpoint",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+      {
+        type: "checkpoint",
+        id: "checkpoint:old-session:cp1:created",
+        seq: 15,
+        streamId: "old-session",
+        appliedEventIds: new Set(["cp-created"]),
+        actor: "system",
+        status: "created",
+        checkpointId: "cp1",
+        restored: [],
+        code: null,
+        message: null,
+      },
+      {
+        type: "assistant",
+        id: "assistant:old-session:1",
+        seq: 30,
+        streamId: "old-session",
+        appliedEventIds: new Set(["rolled"]),
+        actor: "agent",
+        text: "rolled back answer",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 1,
+      },
+      {
+        type: "checkpoint",
+        id: "checkpoint:old-session:cp1:restored",
+        seq: 40,
+        streamId: "old-session",
+        appliedEventIds: new Set(["cp-restored"]),
+        actor: "system",
+        status: "restored",
+        checkpointId: "cp1",
+        restored: [],
+        code: null,
+        message: null,
+      },
+    ];
+
+    const merged = mergeUnifiedRows(
+      [
+        { role: "user", text: "before checkpoint question", assistantAnchor: 0 },
+        { role: "user", text: "rolled back user turn", assistantAnchor: 1 },
+        { role: "user", text: "after restore question", assistantAnchor: 2 },
+      ],
+      rows,
+    );
+
+    expect(merged.map((b) => (b.role === "user" ? b.text : b.role))).toEqual([
+      "before checkpoint question",
+      "assistant",
+      "checkpoint",
+      "checkpoint",
+      "after restore question",
+    ]);
+    expect(
+      merged.some((b) => b.role === "user" && b.text === "rolled back user turn"),
+    ).toBe(false);
+    expect(
+      merged.some(
+        (b) =>
+          b.role === "assistant" &&
+          b.blocks.some(
+            (block) => block.kind === "text" && block.text === "rolled back answer",
+          ),
+      ),
+    ).toBe(false);
   });
 
   it("creates a new chat without deleting the previous conversation", async () => {
@@ -455,6 +543,214 @@ describe("ChatRail", () => {
     });
 
     expect(screen.queryByText(/late token/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * Regression — `chat_session_missing` self-heal (2026-05-26 QA).
+   *
+   * After a workspace reset / factory reset / fresh deploy, the rail
+   * still holds the prior session id in component state. Pre-fix, the
+   * next send POSTed against the dead id, got a generic 404, and
+   * surfaced "chat session not found" to the operator with no recovery
+   * path. The backend now emits a typed `chat_session_missing` code on
+   * 404; the rail catches it, resolves a fresh session for the current
+   * scope, and retries the message once. The test asserts both halves:
+   * resolveSession is called for recovery AND the retry hits the new
+   * session id.
+   */
+  it("self-heals when the backend reports chat_session_missing on send", async () => {
+    const { ApiError } = await import("@/api/client");
+    let resolveCallCount = 0;
+    vi.mocked(chatApi.resolveSession).mockImplementation(async () => {
+      resolveCallCount += 1;
+      return {
+        session_id:
+          resolveCallCount === 1 ? "stale-session" : "fresh-session-after-reset",
+        history: [],
+      };
+    });
+    const seenSessions: string[] = [];
+    vi.mocked(chatApi.streamChat).mockImplementation(async function* (req) {
+      seenSessions.push(req.session_id);
+      if (req.session_id === "stale-session") {
+        throw new ApiError(
+          404,
+          "chat_session_missing",
+          "chat session 'stale-session' no longer exists",
+        );
+      }
+      yield { type: "token", text: "ok after recovery" };
+    });
+
+    renderRail();
+    const composer = await screen.findByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
+    fireEvent.change(composer, { target: { value: "first message after reset" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(seenSessions).toEqual(["stale-session", "fresh-session-after-reset"]);
+    });
+    expect(resolveCallCount).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("ok after recovery")).toBeInTheDocument();
+  });
+
+  /**
+   * Regression — Act-mode override of pending composer text
+   * (2026-05-26 QA item #2). Pre-fix, switching to Act with text
+   * already typed in the composer would send the hardcoded
+   * "Continue in Act mode." over the top of the operator's intent
+   * whenever any blocked tool call was visible in the thread.
+   */
+  it("submits the pending composer text when switching to Act mode", async () => {
+    vi.mocked(chatApi.setSessionMode).mockResolvedValue({
+      session_id: "old-session",
+      mode: "act",
+    });
+    const seenMessages: string[] = [];
+    vi.mocked(chatApi.streamChat).mockImplementation(async function* (req) {
+      seenMessages.push(req.message);
+      yield { type: "token", text: "act ack" };
+    });
+
+    renderRail();
+    const composer = await screen.findByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
+    fireEvent.change(composer, {
+      target: { value: "do the thing now" },
+    });
+    // Switch the rail into Act mode (button is labeled "Act" in the
+    // RailModelBar mode toggle). When the operator has unsent
+    // composer text, that text is what should be sent — never the
+    // hardcoded continuation prompt.
+    fireEvent.click(await screen.findByRole("button", { name: /^Act$/i }));
+
+    await waitFor(() => {
+      expect(seenMessages).toContain("do the thing now");
+    });
+    expect(seenMessages).not.toContain("Continue in Act mode.");
+  });
+
+  /**
+   * Regression — provider/model auto-pick tiebreak (2026-05-26 QA
+   * item #9). Pre-fix, the rail auto-picked `candidates[0]` from the
+   * providers list, which made the catalog order load-bearing and
+   * silently picked OpenRouter+deepseek-v4-pro over a workspace
+   * default the operator had explicitly set elsewhere. The chat
+   * dispatch then ran on the wrong model, the wizard's
+   * `resolve_agent_runtime` (silently) inherited that wrong model
+   * for every spawned strategy agent, and the assistant
+   * synthesized the long "no Gemini models on OpenRouter"
+   * explanation that confused multiple QA cycles.
+   *
+   * After the fix, the workspace default (`is_default: true` +
+   * matching `default_model`) wins over catalog order. The first
+   * candidate fallback is reserved for the case where no provider
+   * is marked default at all.
+   */
+  it("prefers the workspace-default provider over catalog order when auto-picking", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "openrouter",
+          kind: "openai-compat",
+          base_url: "https://openrouter.ai/api/v1",
+          api_key_env: "OPENROUTER_API_KEY",
+          api_key_set: true,
+          synthetic: false,
+          is_default: false,
+          enabled_models: ["deepseek/deepseek-v4-pro"],
+        },
+        {
+          name: "google",
+          kind: "openai-compat",
+          base_url: "https://generativelanguage.googleapis.com/v1beta",
+          api_key_env: "GOOGLE_API_KEY",
+          api_key_set: true,
+          synthetic: false,
+          is_default: true,
+          enabled_models: ["gemini-2.5-flash"],
+        },
+      ],
+      default_model: "gemini-2.5-flash",
+    });
+    const seenDispatches: Array<{ provider?: string; model?: string }> = [];
+    vi.mocked(chatApi.streamChat).mockImplementation(async function* (req) {
+      seenDispatches.push({ provider: req.provider, model: req.model });
+      yield { type: "token", text: "hi" };
+    });
+
+    renderRail();
+    const composer = await screen.findByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
+    fireEvent.change(composer, { target: { value: "ping" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(seenDispatches.length).toBeGreaterThan(0);
+    });
+    // The workspace-default provider (google) wins even though
+    // openrouter appears first in the catalog array.
+    expect(seenDispatches[0]).toEqual({
+      provider: "google",
+      model: "gemini-2.5-flash",
+    });
+  });
+
+  /**
+   * Regression — mergeUnifiedRows must NOT use `users.length` as the
+   * unanchored-user fallback (wrong unit — user count vs assistant
+   * count). The new fallback is `projectedAssistantCount`, which
+   * pushes unanchored bubbles past the entire projection so they
+   * never visually overlap an already-rendered assistant row.
+   */
+  it("places unanchored user bubbles after every projected assistant row", () => {
+    const rows: MessageRow[] = [
+      {
+        type: "assistant",
+        id: "a1",
+        seq: 1,
+        streamId: "s",
+        appliedEventIds: new Set(["e1"]),
+        actor: "agent",
+        text: "first",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+      {
+        type: "assistant",
+        id: "a2",
+        seq: 2,
+        streamId: "s",
+        appliedEventIds: new Set(["e2"]),
+        actor: "agent",
+        text: "second",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+    ];
+    const merged = mergeUnifiedRows(
+      // Legacy bubble without `assistantAnchor` set (mimics a
+      // hand-built fixture or a pre-anchor snapshot reloaded from
+      // disk). Pre-fix, this user would have anchor=0 (users.length
+      // at that point) and end up sorted to the FRONT — visually
+      // before the projected assistants, which the rail's column
+      // layout would render on top of the first assistant bubble.
+      [{ role: "user", text: "unanchored question" }],
+      rows,
+    );
+    expect(merged.map((b) => b.role)).toEqual([
+      "assistant",
+      "assistant",
+      "user",
+    ]);
   });
 
   it("renders historical tool results with error:null as successful", async () => {

@@ -246,6 +246,14 @@ function StrategiesListView() {
 
   const subtitle = subtitleFor(q, total, list.totalRows, list.rows.length);
 
+  // Created column — strategies are filesystem artifacts, not DB
+  // rows, so there's no `created_at` column to plumb. Instead, we
+  // parse the millisecond timestamp embedded in the leading 10
+  // chars of the strategy's ULID `agent_id`. That's exactly the
+  // moment the strategy was minted; far more reliable than reading
+  // file mtime (mtime changes on every edit). `ulidToCreatedAt`
+  // falls back to `null` on malformed legacy ids so the column
+  // gracefully shows `—` rather than crashing the row.
   const desktopColumns = [
     { key: "name", label: "Name" },
     { key: "template", label: "Template" },
@@ -253,6 +261,7 @@ function StrategiesListView() {
     { key: "tags", label: "Tags" },
     { key: "cadence", label: "Time frame" },
     { key: "model", label: "Model" },
+    { key: "created", label: "Created" },
     { key: "actions", label: "" },
   ];
 
@@ -415,6 +424,12 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
       <td className="max-w-[180px] px-3 py-3 break-all font-mono text-[12px] text-text-2">
         {row.model ?? <span className="font-medium text-text-3">—</span>}
       </td>
+      <td
+        className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2"
+        title={ulidToCreatedAt(row.agent_id)?.toISOString() ?? row.agent_id}
+      >
+        {fmtCreatedFromUlid(row.agent_id)}
+      </td>
       <td className="px-5 py-3 text-right text-text-3">
         <Link
           to={`/strategies/${encodeURIComponent(row.agent_id)}`}
@@ -426,6 +441,40 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
       </td>
     </tr>
   );
+}
+
+/// Decode a ULID into its embedded millisecond Unix timestamp.
+/// Returns `null` for ids that don't parse as Crockford base32 — the
+/// strategies library is filesystem-backed and the row's `agent_id`
+/// could theoretically be a non-ULID name from a hand-imported
+/// fixture; we don't want a single bad id to crash the whole list.
+function ulidToCreatedAt(id: string | null | undefined): Date | null {
+  if (!id || id.length < 10) return null;
+  // Crockford's base32: 0-9 then A-Z minus I, L, O, U.
+  // (case-insensitive; we uppercase before lookup.)
+  const table = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  let ms = 0;
+  for (let i = 0; i < 10; i += 1) {
+    const ch = id[i].toUpperCase();
+    const v = table.indexOf(ch);
+    if (v === -1) return null;
+    ms = ms * 32 + v;
+  }
+  // Sanity: ULID timestamps are within (1970, 10889] in ms. Reject
+  // anything outside the plausible range so a future change to id
+  // format can't render absurd dates.
+  if (ms < 0 || ms > 281_474_976_710_655) return null;
+  return new Date(ms);
+}
+
+function fmtCreatedFromUlid(id: string | null | undefined): JSX.Element | string {
+  const d = ulidToCreatedAt(id);
+  if (!d) return <span className="font-medium text-text-3">—</span>;
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function rowMeta(row: StrategyListItem): string | undefined {

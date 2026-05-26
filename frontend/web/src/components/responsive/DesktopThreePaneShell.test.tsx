@@ -55,9 +55,16 @@ describe("DesktopThreePaneShell", () => {
     expect(await screen.findByTestId("strip-dock-slot")).toBeInTheDocument();
 
     const shell = container.firstElementChild;
-    expect(shell).toHaveClass("grid", "grid-cols-[220px_1fr_auto]", "min-h-screen");
+    expect(shell).toHaveClass("grid", "grid-cols-[220px_minmax(0,1fr)_auto]", "min-h-screen");
     expect(shell?.children[0]).toBe(sidebar);
     expect(shell?.children[1]).toBe(main);
     expect(shell?.children[2]).toBe(chatRail);
+
+    // Regression guard for the text-overlap QA: the middle column must keep
+    // its width hard-capped (max-w-[960px]) AND its track must be allowed to
+    // shrink (minmax(0,1fr)). Together these stop unbreakable inner content
+    // from pushing the main column past the chat rail. Centered via
+    // justify-self so it doesn't drift left when the cap kicks in.
+    expect(main).toHaveClass("min-w-0", "max-w-[960px]", "justify-self-center");
   });
 });

@@ -112,7 +112,7 @@ export function FlameGraph({
           const costPrecise = cost != null ? ` (${formatCostUsdPrecise(cost)})` : "";
           const pulseClass = r.span.status === "in_progress" ? "animate-pulse" : "";
           const errorClass = r.span.status === "error" ? "outline outline-1 outline-red-400" : "";
-          const selectedClass = selected ? "ring-2 ring-white/80" : "";
+          const selectedClass = selected ? "ring-2 ring-gold" : "";
           return (
             <button
               key={r.span.span_id}

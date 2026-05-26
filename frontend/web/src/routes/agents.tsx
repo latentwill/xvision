@@ -142,12 +142,18 @@ export function AgentsRoute() {
     navigate(`/agents/${encodeURIComponent(id)}`);
   }
 
+  // QA asked for a `Created` column on agents alongside the
+  // existing `Updated`. `agents.created_at` already exists
+  // (migration 005) and is on the Agent type; just plumb it
+  // through. Placed BEFORE `Updated` so the natural reading order
+  // is "created → last touched".
   const desktopColumns = [
     { key: "name", label: "Name" },
     { key: "status", label: "Status" },
     { key: "capabilities", label: "Capabilities" },
     { key: "slots", label: "Slots" },
     { key: "skills", label: "Skills" },
+    { key: "created", label: "Created" },
     { key: "updated", label: "Updated" },
   ];
 
@@ -300,6 +306,12 @@ function DesktopRow({
       </td>
       <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
         {skillsCount}
+      </td>
+      <td
+        className="px-5 py-3 text-text-3 text-[12px]"
+        title={row.created_at}
+      >
+        {formatRelative(row.created_at)}
       </td>
       <td className="px-5 py-3 text-text-3 text-[12px]">
         {formatRelative(row.updated_at)}
