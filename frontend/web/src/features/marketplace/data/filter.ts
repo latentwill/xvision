@@ -35,6 +35,7 @@ export function applyFilter(
     if (f.styles.length && !f.styles.includes(r.style)) return false;
     if (f.trust.verifiedOnly && r.verification !== "verified") return false;
     if (f.trust.acceptsAgents && !r.acceptsX402) return false;
+    // auditedOnly: no ListingRow field yet — applied in Phase 1.
     if (totalBuyers(r) < f.minBuyers) return false;
     const price = r.priceUsdc ?? 0;
     if (price < f.priceUsdc.from || price > f.priceUsdc.to) return false;

@@ -5,14 +5,18 @@ import { defaultFilterState } from "@/features/marketplace/data/filter";
 import type { FilterState, SortKey } from "@/features/marketplace/data/types";
 
 const SORTS: SortKey[] = ["return30d", "sharpe", "buyers", "mostCloned", "newest"];
+const SEGMENTS = ["trending", "new", "mine"] as const;
 const list = (v: string | null) => (v ? v.split(",").filter(Boolean) : []);
 
 function parse(sp: URLSearchParams): FilterState {
   const base = defaultFilterState();
   const sort = sp.get("sort");
+  const seg = sp.get("segment");
+  const priceRaw = sp.get("price");
+  const priceMatch = priceRaw?.match(/^(\d+)-(\d+)$/);
   return {
     ...base,
-    segment: (sp.get("segment") as FilterState["segment"]) ?? base.segment,
+    segment: seg && (SEGMENTS as readonly string[]).includes(seg) ? (seg as FilterState["segment"]) : base.segment,
     search: sp.get("q") ?? "",
     sort: sort && (SORTS as string[]).includes(sort) ? (sort as SortKey) : base.sort,
     assets: list(sp.get("assets")),
@@ -23,6 +27,9 @@ function parse(sp: URLSearchParams): FilterState {
       acceptsAgents: sp.get("agents") === "1",
       auditedOnly: sp.get("audited") === "1",
     },
+    priceUsdc: priceMatch
+      ? { from: Number(priceMatch[1]), to: Number(priceMatch[2]) }
+      : base.priceUsdc,
     minBuyers: Number(sp.get("minBuyers") ?? 0) || 0,
     slice: sp.get("slice") ?? undefined,
   };
@@ -40,6 +47,7 @@ function serialize(f: FilterState): Record<string, string> {
   if (f.trust.acceptsAgents) out.agents = "1";
   if (f.trust.auditedOnly) out.audited = "1";
   if (f.minBuyers) out.minBuyers = String(f.minBuyers);
+  if (f.priceUsdc.from !== 0 || f.priceUsdc.to !== 500) out.price = `${f.priceUsdc.from}-${f.priceUsdc.to}`;
   if (f.slice) out.slice = f.slice;
   return out;
 }

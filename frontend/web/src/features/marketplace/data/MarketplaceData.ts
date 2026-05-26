@@ -1,5 +1,5 @@
 // src/features/marketplace/data/MarketplaceData.ts
-import { applyFilter } from "./filter";
+import { applyFilter, defaultFilterState } from "./filter";
 import { ALL_LISTINGS, LISTING_DETAILS } from "./fixtures/listings";
 import { CREATORS } from "./fixtures/creators";
 import { SLICES } from "./fixtures/slices";
@@ -60,7 +60,7 @@ export class FixtureMarketplaceData implements MarketplaceData {
   async getLeaderboard(sliceId: SliceId) {
     const slice = SLICES.find((s) => s.id === sliceId);
     if (!slice) throw new Error(`slice not found: ${sliceId}`);
-    const { rows } = applyFilter(ALL_LISTINGS, { ...baseFilter(), ...slice.filter } as FilterState);
+    const { rows } = applyFilter(ALL_LISTINGS, { ...defaultFilterState(), ...slice.filter } as FilterState);
     return { slice, rows };
   }
   async getReceipt(txHash: string): Promise<Receipt> {
@@ -96,10 +96,3 @@ export class FixtureMarketplaceData implements MarketplaceData {
   }
 }
 
-function baseFilter(): FilterState {
-  return {
-    segment: "trending", search: "", sort: "return30d", assets: [], models: [], styles: [],
-    trust: { verifiedOnly: false, acceptsAgents: false, auditedOnly: false },
-    priceUsdc: { from: 0, to: 500 }, minBuyers: 0,
-  };
-}

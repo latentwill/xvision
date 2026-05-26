@@ -1,6 +1,13 @@
 // src/features/marketplace/components/TxChip.tsx
 const TESTNETS = ["mantle-sepolia", "sepolia", "testnet"];
 
+function explorerTxUrl(hash: string, network?: string): string {
+  if (!network) return `https://sepolia.mantlescan.xyz/tx/${hash}`;
+  if (network.includes("sepolia") || network.includes("testnet")) return `https://sepolia.mantlescan.xyz/tx/${hash}`;
+  if (network.includes("mantle")) return `https://mantlescan.xyz/tx/${hash}`;
+  return "#";
+}
+
 export function TxChip({ hash, label, network }: { hash: string; label?: string; network?: string }) {
   const isTestnet = !!network && TESTNETS.some((t) => network.includes(t));
   return (
@@ -10,7 +17,7 @@ export function TxChip({ hash, label, network }: { hash: string; label?: string;
         <span className="px-1 rounded-sm border border-warn/40 text-warn text-[9px] uppercase">Testnet</span>
       ) : null}
       <a
-        href={`https://sepolia.mantlescan.xyz/tx/${hash}`}
+        href={explorerTxUrl(hash, network)}
         target="_blank"
         rel="noreferrer"
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border border-border-strong hover:text-text"
