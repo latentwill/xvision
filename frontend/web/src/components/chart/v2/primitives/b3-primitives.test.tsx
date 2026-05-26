@@ -336,12 +336,20 @@ const klineMocksForReady = vi.hoisted(() => {
     setPeriod: vi.fn(),
     setDataLoader: vi.fn(),
   };
-  return { chart, init: vi.fn(() => chart), dispose: vi.fn() };
+  return {
+    chart,
+    init: vi.fn(() => chart),
+    dispose: vi.fn(),
+    registerOverlay: vi.fn(),
+  };
 });
 
 vi.mock("klinecharts", () => ({
   init: klineMocksForReady.init,
   dispose: klineMocksForReady.dispose,
+  // registerOverlay runs at module scope when KlineCandlePane is imported;
+  // it's a real named export of klinecharts, so the mock must provide a no-op.
+  registerOverlay: klineMocksForReady.registerOverlay,
 }));
 
 import { KlineCandlePane } from "./KlineCandlePane";

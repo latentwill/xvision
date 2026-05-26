@@ -66,7 +66,7 @@ function colorFor(theme: Chart2ThemeDefinition, key: OverlayLineKey): string {
 export function overlayLineDescriptors(
   indicators: IndicatorMap,
   theme: Chart2ThemeDefinition,
-  active: Partial<Record<string, boolean>>,
+  active: Partial<Record<OverlayLineKey, boolean>>,
 ): OverlayLineDescriptor[] {
   const descriptors: OverlayLineDescriptor[] = [];
 

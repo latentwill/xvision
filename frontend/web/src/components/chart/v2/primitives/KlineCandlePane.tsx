@@ -21,45 +21,46 @@ import {
 import { columnarToKLineData } from "../adapters/columnar-to-klinedata";
 import { themeToKlinechartsStyles } from "../adapters/theme-to-klinecharts";
 import { v2MarkersToKlineOverlay } from "../adapters/markers";
-import { overlayLineDescriptors } from "../adapters/overlay-lines";
+import {
+  overlayLineDescriptors,
+  type OverlayLineKey,
+} from "../adapters/overlay-lines";
 import { useChart2Theme } from "../hooks/useChart2Theme";
 import { CHART_V2_ZOOM_EVENT } from "./ChartFrame";
 
 // ── xvnLine custom overlay ──────────────────────────────────────────────────
 // A single line overlay template used to render every precomputed candle-pane
-// indicator (SMA / EMA / Bollinger / Donchian). Registered once at module
-// scope (KlineCharts keeps a global template registry). Color + dash come from
-// the per-overlay extendData carried on each created overlay instance.
-let xvnLineRegistered = false;
-
-function registerXvnLineOverlay(): void {
-  if (xvnLineRegistered) return;
-  xvnLineRegistered = true;
-  registerOverlay({
-    name: "xvnLine",
-    totalStep: 1,
-    needDefaultPointFigure: false,
-    needDefaultXAxisFigure: false,
-    needDefaultYAxisFigure: false,
-    createPointFigures: ({ coordinates, overlay }) => {
-      if (coordinates.length < 2) return [];
-      const ext = (overlay.extendData ?? {}) as {
-        color?: string;
-        dashed?: boolean;
-      };
-      return {
-        type: "line",
-        attrs: { coordinates },
-        styles: {
-          color: ext.color ?? "#888888",
-          size: 1,
-          style: ext.dashed ? "dashed" : "solid",
-        },
-        ignoreEvent: true,
-      };
-    },
-  });
-}
+// indicator (SMA / EMA / Bollinger / Donchian). Registered exactly once at
+// module scope — KlineCharts keeps a global template registry, so importing
+// this module installs the template before any chart is created. Color + dash
+// come from the per-overlay extendData carried on each created overlay instance.
+//
+// No try/catch here on purpose: a `registerOverlay` failure is a genuine bug
+// (bad template shape, library API drift) and must surface, not be swallowed.
+registerOverlay({
+  name: "xvnLine",
+  totalStep: 1,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ coordinates, overlay }) => {
+    if (coordinates.length < 2) return [];
+    const ext = (overlay.extendData ?? {}) as {
+      color?: string;
+      dashed?: boolean;
+    };
+    return {
+      type: "line",
+      attrs: { coordinates },
+      styles: {
+        color: ext.color ?? "#888888",
+        size: 1,
+        style: ext.dashed ? "dashed" : "solid",
+      },
+      ignoreEvent: true,
+    };
+  },
+});
 
 export interface KlineCandlePaneProps {
   candles: CandleColumns;
@@ -76,7 +77,7 @@ export interface KlineCandlePaneProps {
    * (e.g. `sma20`, `ema50`). A line renders when its entry is `true` or
    * absent; `false` hides it. Defaults to all-present-lines-active.
    */
-  overlayActive?: Partial<Record<string, boolean>>;
+  overlayActive?: Partial<Record<OverlayLineKey, boolean>>;
   height?: number;
   /**
    * Called once with the live `Chart` instance after `init()` succeeds,
@@ -110,12 +111,8 @@ export function KlineCandlePane({
     const el = divRef.current;
     if (!el) return;
 
-    // Register the shared xvnLine overlay template (idempotent / module-scope).
-    try {
-      registerXvnLineOverlay();
-    } catch (err) {
-      console.warn("[KlineCandlePane] registerOverlay(xvnLine) threw:", err);
-    }
+    // The shared xvnLine overlay template is registered once at module scope
+    // (see top of file) — nothing to do here.
 
     let chart: Chart | null = null;
     try {

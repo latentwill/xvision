@@ -10,7 +10,11 @@ const klineMocks = vi.hoisted(() => {
     period: null as unknown,
     loadedBars: [] as unknown[][],
     overlays: [] as Array<Record<string, unknown>>,
-    registeredOverlays: [] as Array<Record<string, unknown>>,
+    // Every template ever registered for the lifetime of this module. Unlike
+    // `state`-reset arrays this is NEVER cleared in beforeEach, because the
+    // module-scope `registerOverlay("xvnLine")` in KlineCandlePane fires once
+    // at import — before any test's beforeEach runs.
+    registeredTemplates: [] as Array<Record<string, unknown>>,
   };
 
   const chart = {
@@ -44,7 +48,7 @@ const klineMocks = vi.hoisted(() => {
     dispose: vi.fn(),
     init: vi.fn(() => chart),
     registerOverlay: vi.fn((template: Record<string, unknown>) => {
-      state.registeredOverlays.push(template);
+      state.registeredTemplates.push(template);
     }),
     state,
   };
@@ -71,7 +75,10 @@ describe("KlineCandlePane", () => {
     klineMocks.state.period = null;
     klineMocks.state.loadedBars = [];
     klineMocks.state.overlays = [];
-    klineMocks.state.registeredOverlays = [];
+    // Intentionally NOT clearing state.registeredTemplates: the xvnLine
+    // template is registered once at module-import time, which is before this
+    // beforeEach ever runs. Clearing it would erase the only evidence the
+    // module-scope registration happened.
     vi.clearAllMocks();
 
     class ResizeObserverStub {
@@ -122,26 +129,28 @@ describe("KlineCandlePane", () => {
     ]);
   });
 
-  it("registers the xvnLine overlay template once at module scope", async () => {
+  it("registers the xvnLine overlay template exactly once at module scope", async () => {
     render(<KlineCandlePane candles={candles} />);
 
     await waitFor(() => {
       expect(klineMocks.state.loadedBars).toHaveLength(1);
     });
 
-    // registerOverlay is module-scoped + guarded — across the whole suite it
-    // must have been called exactly once with the xvnLine template.
-    const xvnTemplates = klineMocks.registerOverlay.mock.calls.filter(
-      ([t]) => (t as { name?: string }).name === "xvnLine",
+    // The xvnLine template is registered exactly once when KlineCandlePane is
+    // imported (module scope). registeredTemplates captures that import-time
+    // call and is never reset, so the count must be precisely one — zero
+    // registrations (the original flag-before-call regression) must fail here.
+    const xvnTemplates = klineMocks.state.registeredTemplates.filter(
+      (t) => (t as { name?: string }).name === "xvnLine",
     );
-    expect(xvnTemplates.length).toBeLessThanOrEqual(1);
-    const template = (klineMocks.registerOverlay.mock.calls.find(
-      ([t]) => (t as { name?: string }).name === "xvnLine",
-    )?.[0] ?? null) as { name?: string; createPointFigures?: unknown } | null;
-    if (template) {
-      expect(template.name).toBe("xvnLine");
-      expect(typeof template.createPointFigures).toBe("function");
-    }
+    expect(xvnTemplates).toHaveLength(1);
+
+    const template = xvnTemplates[0] as {
+      name?: string;
+      createPointFigures?: unknown;
+    };
+    expect(template.name).toBe("xvnLine");
+    expect(typeof template.createPointFigures).toBe("function");
   });
 
   it("creates an xvnLine overlay for each active line series", async () => {
