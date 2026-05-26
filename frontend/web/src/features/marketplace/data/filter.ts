@@ -1,0 +1,46 @@
+import type { FilterState, ListingRow, SortKey } from "./types";
+
+export function defaultFilterState(): FilterState {
+  return {
+    segment: "trending",
+    search: "",
+    sort: "return30d",
+    assets: [],
+    models: [],
+    styles: [],
+    trust: { verifiedOnly: false, acceptsAgents: false, auditedOnly: false },
+    priceUsdc: { from: 0, to: 500 },
+    minBuyers: 0,
+  };
+}
+
+const totalBuyers = (r: ListingRow) => r.buyers.humans + r.buyers.agents;
+
+const SORTERS: Record<SortKey, (a: ListingRow, b: ListingRow) => number> = {
+  return30d: (a, b) => b.return30dPct - a.return30dPct,
+  sharpe: (a, b) => b.sharpe - a.sharpe,
+  buyers: (a, b) => totalBuyers(b) - totalBuyers(a),
+  mostCloned: (a, b) => b.clones - a.clones,
+  newest: (a, b) => b.id.localeCompare(a.id), // fixture proxy; real impl uses publishedAt
+};
+
+export function applyFilter(
+  rows: ListingRow[],
+  f: FilterState,
+): { rows: ListingRow[]; total: number; matched: number } {
+  const q = f.search.trim().toLowerCase();
+  const matched = rows.filter((r) => {
+    if (f.assets.length && !f.assets.some((a) => r.assets.includes(a))) return false;
+    if (f.models.length && !f.models.includes(r.model)) return false;
+    if (f.styles.length && !f.styles.includes(r.style)) return false;
+    if (f.trust.verifiedOnly && r.verification !== "verified") return false;
+    if (f.trust.acceptsAgents && !r.acceptsX402) return false;
+    if (totalBuyers(r) < f.minBuyers) return false;
+    const price = r.priceUsdc ?? 0;
+    if (price < f.priceUsdc.from || price > f.priceUsdc.to) return false;
+    if (q && !`${r.id} ${r.creator.handle ?? ""}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const sorted = [...matched].sort(SORTERS[f.sort]);
+  return { rows: sorted, total: rows.length, matched: matched.length };
+}
