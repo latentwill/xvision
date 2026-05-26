@@ -154,9 +154,13 @@ pub async fn set_mode(
             msg: format!("invalid mode '{}': expected 'research' or 'act'", req.mode),
         });
     }
+    // Same self-heal contract as POST /chat: a missing session id
+    // surfaces as `ChatSessionMissing` so the rail can recognize the
+    // stale-id case and re-resolve+retry instead of presenting the
+    // operator with a generic 404.
     ChatSessionStore::set_mode(&state.pool, &id, &req.mode)
         .await
-        .map_err(|_| DashboardError::NotFound(format!("session '{id}'")))?;
+        .map_err(|_| DashboardError::ChatSessionMissing(id.clone()))?;
     Ok(Json(SetModeResp {
         session_id: id,
         mode: req.mode,
@@ -266,9 +270,19 @@ pub async fn chat(
     // Read the session's persisted scope so the system prompt is always
     // in sync with whatever the most recent /scope POST set, even if the
     // client forgot to refresh after a context switch.
+    //
+    // A missing session id is reported as `ChatSessionMissing` (HTTP 404
+    // with `code: "chat_session_missing"`) rather than the generic
+    // `NotFound` so the rail's send() catch can recognize the
+    // stale-id-after-DB-reset case structurally and self-heal by
+    // re-resolving the scope's session + retrying once. The previous
+    // shape (generic 404 + message "session 'X'") forced the rail to
+    // either parse error strings or surface a hard "chat session not
+    // found" error to the operator — both bad. See
+    // frontend/web/src/components/shell/ChatRail.tsx::send.
     let scope = ChatSessionStore::load_scope(&state.pool, &body.session_id)
         .await
-        .map_err(|_| DashboardError::NotFound(format!("session '{}'", body.session_id)))?;
+        .map_err(|_| DashboardError::ChatSessionMissing(body.session_id.clone()))?;
 
     let (tx, rx) = mpsc::channel::<WizardEvent>(16);
 

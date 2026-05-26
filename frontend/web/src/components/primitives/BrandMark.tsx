@@ -60,6 +60,20 @@ export function BrandMark({
         <path d="M4 1 H1 V13 H4" />
         <path d="M44 1 H47 V13 H44" />
       </g>
+      {/*
+        Letter spacing applied per-tspan via `dx`, NOT via SVG
+        `letter-spacing` on the parent text. `letter-spacing` adds
+        advance AFTER each glyph in the run it's set on — so the prior
+        `<tspan letterSpacing="0.14em">XV</tspan><tspan>N</tspan>`
+        attempt left trailing advance after V (between V and N), but
+        no advance after N. With `text-anchor="middle"` anchoring on
+        the total advance, that asymmetric trailing space biased the
+        wordmark left of the bracket midpoint — which is what the QA
+        report meant by "still appears to have text off center".
+        `dx` adds advance BETWEEN the previous glyph and the next, so
+        the total bounding box is symmetric around the geometric
+        center of the three glyphs.
+      */}
       <text
         x={24}
         y={7}
@@ -67,11 +81,12 @@ export function BrandMark({
         fontFamily="'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
         fontSize={13}
         fontWeight={700}
-        letterSpacing="0.14em"
         dominantBaseline="central"
         textAnchor="middle"
       >
-        XVN
+        <tspan>X</tspan>
+        <tspan dx="0.14em">V</tspan>
+        <tspan dx="0.14em">N</tspan>
       </text>
     </svg>
   );

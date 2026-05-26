@@ -18,6 +18,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
 use serde::{de::Deserializer, de::Error as DeError, Deserialize, Serialize};
@@ -72,6 +73,19 @@ struct WizardCreateStrategyInput {
     #[serde(default)]
     creator: Option<String>,
 }
+
+/// Hard deadline on a single authoring-tool execution. Tools should be
+/// instantaneous (DB reads / filesystem reads / config writes). A tool
+/// that runs longer than this is presumed wedged on something
+/// non-recoverable (network call hanging, deadlocked DB writer, etc.)
+/// and we surface a typed error so the chat rail's spinner clears and
+/// the LLM gets a definitive failure to react to. Without this, a
+/// stuck tool leaves the chat rail with a forever-pending tool card
+/// (the recurring QA hang on `list_strategies` / `list_scenarios` /
+/// `list_strategy_ideas`). 30s is comfortably above any normal
+/// authoring verb's runtime; if a legitimate tool needs longer it
+/// should stream progress, not block.
+const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Cap on tool-use → tool-result iterations per `next_event` call. Prevents
 /// a misbehaving model from looping forever; v1 wizards never need more
@@ -986,11 +1000,34 @@ impl WizardLoop {
                         // model instead.
                         match self.maybe_snapshot_before_tool(&name, &input).await {
                             Ok(()) => {
-                                let result = self.run_tool(&name, input).await;
+                                // Wrap the tool body in a hard timeout
+                                // (TOOL_EXECUTION_TIMEOUT) so a wedged
+                                // tool can't leave the chat rail's tool
+                                // card pending forever — see the
+                                // constant's doc for the rationale.
+                                let result = tokio::time::timeout(
+                                    TOOL_EXECUTION_TIMEOUT,
+                                    self.run_tool(&name, input),
+                                )
+                                .await;
                                 match result {
-                                    Ok(v) => v,
-                                    Err(e) => {
+                                    Ok(Ok(v)) => v,
+                                    Ok(Err(e)) => {
                                         let msg = e.to_string();
+                                        self.last_tool_error = Some((name.clone(), msg.clone()));
+                                        serde_json::json!({ "error": msg })
+                                    }
+                                    Err(_elapsed) => {
+                                        let msg = format!(
+                                            "tool '{name}' timed out after {}s",
+                                            TOOL_EXECUTION_TIMEOUT.as_secs()
+                                        );
+                                        tracing::warn!(
+                                            target: "xvision::dashboard::wizard_loop",
+                                            tool = %name,
+                                            timeout_secs = TOOL_EXECUTION_TIMEOUT.as_secs(),
+                                            "wizard tool execution timed out — surfacing typed error to the model"
+                                        );
                                         self.last_tool_error = Some((name.clone(), msg.clone()));
                                         serde_json::json!({ "error": msg })
                                     }
@@ -2246,6 +2283,31 @@ impl WizardLoop {
         Ok(out)
     }
 
+    /// Resolve the (provider, model) the wizard should bind to a newly
+    /// created strategy agent.
+    ///
+    /// Resolution order:
+    /// 1. The tool call's explicit `provider`/`model` arguments.
+    /// 2. The rail's selected `(agent_provider, agent_model)` — the
+    ///    operator's choice in the ModelPicker.
+    ///
+    /// Pre-2026-05-26 there was a third fallback that inherited
+    /// `self.model` (the chat dispatch model) when `agent_model` was
+    /// unset. That silent inheritance was the second half of the
+    /// recurring "Gemini complaint despite Google selected" QA bug:
+    /// the chat rail's auto-pick race could promote OpenRouter's
+    /// deepseek-v4-pro as the chat dispatch, and every agent created
+    /// by the wizard would then inherit deepseek too, even though the
+    /// operator had explicitly picked a Gemini variant in Settings →
+    /// Providers. The LLM would then attempt to use Gemini, the
+    /// OpenRouter route would reject it, and the assistant would
+    /// synthesize the long "no Gemini models are currently enabled
+    /// on your OpenRouter provider" explanation that confused QA.
+    ///
+    /// Removing the fallback turns the failure into a typed error
+    /// the chat agent can act on — "pick a provider/model in the
+    /// chat model picker" — instead of producing a working-but-
+    /// wrong run on the chat model.
     fn resolve_agent_runtime(
         &self,
         provider: Option<String>,
@@ -2258,10 +2320,9 @@ impl WizardLoop {
             .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing provider; pick a provider/model in the chat model picker or pass provider explicitly"))?;
         let model = model
             .or_else(|| self.agent_model.clone())
-            .or_else(|| Some(self.model.clone()))
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing model; pick a provider/model in the chat model picker or pass model explicitly"))?;
+            .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing model; pick a provider/model in the chat model picker or pass model explicitly (the chat dispatch model is intentionally NOT inherited — see resolve_agent_runtime docstring)"))?;
         Ok((provider, model))
     }
 }

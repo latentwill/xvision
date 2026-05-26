@@ -10,6 +10,18 @@ use xvision_engine::api::ApiError;
 pub enum DashboardError {
     #[error("not found: {0}")]
     NotFound(String),
+    /// Specialization of NotFound for the chat-rail path: the client's
+    /// `session_id` no longer exists in the store. Emitted by
+    /// `POST /api/chat-rail/chat` (and any other chat-rail mutation
+    /// that loads scope first) so the frontend can deterministically
+    /// recognize the "rail held a stale id across DB reset / workspace
+    /// delete / fresh deploy" case and self-heal by re-resolving the
+    /// scope's session and retrying once — rather than parsing the
+    /// generic `not_found` message string with a regex. See
+    /// `frontend/web/src/components/shell/ChatRail.tsx::send` for the
+    /// matching recovery path.
+    #[error("chat session missing: {0}")]
+    ChatSessionMissing(String),
     #[error("validation: {field}: {msg}")]
     Validation { field: String, msg: String },
     #[error("conflict: {0}")]
@@ -56,6 +68,15 @@ impl IntoResponse for DashboardError {
             DashboardError::NotFound(m) => (
                 StatusCode::NOT_FOUND,
                 Json(json!({ "code": "not_found", "message": m.clone() })),
+            )
+                .into_response(),
+            DashboardError::ChatSessionMissing(session_id) => (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "code": "chat_session_missing",
+                    "message": format!("chat session '{session_id}' no longer exists"),
+                    "session_id": session_id.clone(),
+                })),
             )
                 .into_response(),
             DashboardError::Conflict(m) => (

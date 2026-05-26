@@ -358,13 +358,17 @@ function DetailView({
           </div>
           {/*
             ScenarioForm here reuses the wizard's widgets (asset picker,
-            date range, granularity selector, venue fees/slippage/latency,
-            warmup-bars input) so the operator can override any structural
-            field inline. `submitCloneFromForm` diffs the submitted
-            CreateScenarioRequest against the parent scenario and emits a
-            `ScenarioMutations` payload with `null` for unchanged fields,
-            preserving the engine's "inherit parent" semantics on the
-            clone handler.
+            date range, venue fees/slippage/latency, warmup-bars input)
+            so the operator can override any structural field inline.
+            The granularity selector was removed from operator-facing
+            scenario authoring per QA (scenarios are 1h-fixed today);
+            the chart preview below carries its own "Indicator
+            timeframe" picker, which is a chart rendering control, not
+            scenario metadata. `submitCloneFromForm` diffs the
+            submitted CreateScenarioRequest against the parent
+            scenario and emits a `ScenarioMutations` payload with
+            `null` for unchanged fields, preserving the engine's
+            "inherit parent" semantics on the clone handler.
           */}
           <ScenarioForm
             initial={formInitial}
@@ -531,8 +535,15 @@ function DefinitionTab({ s }: { s: Scenario }) {
         <dt className="text-text-3 self-center">Window</dt>
         <dd className="font-mono m-0">{windowLabel}</dd>
 
-        <dt className="text-text-3 self-center">Granularity</dt>
-        <dd className="font-mono m-0">{s.granularity}</dd>
+        {/*
+          Granularity removed from the operator-facing scenario
+          metadata panel per QA: scenarios are 1h-fixed today, so
+          showing it as a metadata row read as a configurable
+          attribute when it isn't. The chart preview's
+          "Indicator timeframe" picker above is a chart rendering
+          control and stays. If granularity ever becomes
+          per-scenario configurable again, re-introduce this row.
+        */}
 
         <dt className="text-text-3 self-center">Venue</dt>
         <dd className="font-mono m-0">{String(s.venue.venue)}</dd>
@@ -853,7 +864,14 @@ function BarCacheTab({ scenario }: { scenario: Scenario }) {
         <dt className="text-text-3">Preview asset</dt>
         <dd className="font-mono m-0">{data.asset}</dd>
 
-        <dt className="text-text-3">Granularity</dt>
+        {/*
+          Renamed "Granularity" → "Bar timeframe" here so this read-
+          out is unambiguously about the cached bar data (the chart
+          rendering surface), not about scenario configuration. See
+          the matching note in the main scenario metadata <dl>
+          above.
+        */}
+        <dt className="text-text-3">Bar timeframe</dt>
         <dd className="font-mono m-0">{data.granularity}</dd>
 
         <dt className="text-text-3">Window</dt>

@@ -64,11 +64,18 @@ function ToolButton({ tool }: { tool: Tool }) {
   const pending = tool.pending;
   const label = friendlyToolLabel(tool);
   const status = friendlyToolStatus(tool);
+  // QA flagged the tool cards as having a "hard white border" — the
+  // border tone was set at /40 opacity against the rail surface,
+  // which read as a bright outline. Softened to /15 (and the
+  // neutral pending state to fully transparent) so the cards sit on
+  // the rail without competing with the surrounding text. The shape
+  // / colour intent is unchanged; only the contrast on the outline
+  // is dialled back.
   const tone = !ok
-    ? "border-danger/40 bg-danger/10 text-danger"
+    ? "border-danger/15 bg-danger/10 text-danger"
     : pending
-      ? "border-border-soft bg-surface-2/60 text-text-2"
-      : "border-success/40 bg-success/10 text-success";
+      ? "border-transparent bg-surface-2/60 text-text-2"
+      : "border-success/15 bg-success/10 text-success";
   return (
     <div
       className={`inline-flex items-center gap-1.5 self-start max-w-full px-2 py-1 rounded-md border text-[12px] ${tone}`}
@@ -148,9 +155,16 @@ function MarkdownView({ text }: { text: string }) {
             {children}
           </code>
         ),
+        // The rail is a ~380px panel; horizontal scroll inside a
+        // sidebar reads as broken. Wrap long lines instead. QA also
+        // flagged single-line code overflowing without wrapping —
+        // `whitespace-pre-wrap` keeps intentional newlines but allows
+        // soft-breaks within long unbroken tokens (URLs, JSON one-
+        // liners). `break-words` is the last-resort for tokens with
+        // no break opportunities at all.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         pre: ({ children }: any) => (
-          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 overflow-x-auto">
+          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 whitespace-pre-wrap break-words">
             {children}
           </pre>
         ),

@@ -123,6 +123,13 @@ export function ChatRail({
   const abortRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lastScopeKeyRef = useRef<string | null>(null);
+  // Single-flight gate for "session missing → resolve fresh session"
+  // recovery. When two parallel send() calls both hit
+  // `chat_session_missing` (rapid double-send during a workspace
+  // reset, e.g.), the second one awaits the first's resolution
+  // instead of triggering a duplicate resolveSession that would mint
+  // two sessions and silently lose one's reply.
+  const recoveringSessionRef = useRef<Promise<string | null> | null>(null);
 
   const providers = useQuery({
     queryKey: settingsKeys.providers(),
@@ -135,16 +142,68 @@ export function ChatRail({
     enabled: variant === "panel" || open,
     refetchInterval: 5000,
   });
-  // Auto-pick the first enabled (provider, model) once the catalog loads
-  // so users who configured a provider can chat without diving into the
-  // picker. If the operator hasn't enabled any models yet, the picker
-  // shows a "visit Settings" hint.
+  // Auto-pick the (provider, model) for the chat dispatch when the
+  // catalog loads. The tiebreaker order is deliberate — pre-2026-05-26
+  // the rail just took `candidates[0]`, which made the provider that
+  // happened to be first in the catalog (in practice: OpenRouter with
+  // deepseek-v4-pro) the silent default even when the operator had set
+  // a different provider as the workspace default. That selection
+  // would then cascade into every wizard-created agent through the
+  // backend `resolve_agent_runtime` fallback (now removed), and the
+  // assistant would synthesize a confusing "no Gemini models on
+  // OpenRouter" response when the agent ran against the wrong route.
+  //
+  // Priority:
+  //   1. The currently-selected (providerName, modelId) IF it still
+  //      exists in the catalog and is enabled — that's the operator's
+  //      most recent explicit choice (persisted via localStorage via
+  //      `useState` initializer above, so this also covers reloads).
+  //   2. If the selected provider exists but its model is no longer
+  //      enabled, switch to that provider's first enabled model
+  //      rather than swapping providers — the operator picked the
+  //      provider deliberately.
+  //   3. The workspace default provider (`is_default: true`) using
+  //      `default_model` from ProvidersReport when present.
+  //   4. First candidate with at least one enabled model (legacy
+  //      behavior, kept only as a last resort).
   useEffect(() => {
-    if (providerName && modelId) return;
-    const rows = providers.data?.providers ?? [];
+    const data = providers.data;
+    if (!data) return;
+    const rows = data.providers ?? [];
     const candidates = rows.filter(
       (p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0,
     );
+
+    // (1) current selection still valid → no-op.
+    if (providerName && modelId) {
+      const cur = candidates.find((c) => c.name === providerName);
+      if (cur && cur.enabled_models.includes(modelId)) return;
+      // (2) provider valid, model no longer enabled → swap model only.
+      if (cur && cur.enabled_models.length > 0) {
+        const m = cur.enabled_models[0];
+        setModelId(m);
+        safeStorageSet(RAIL_MODEL_LS, m);
+        return;
+      }
+      // Selection is fully stale (provider gone or disabled). Fall
+      // through to default-then-first-candidate resolution.
+    }
+
+    // (3) workspace default.
+    const def = candidates.find((c) => c.is_default);
+    const defaultModelOnDef =
+      def && data.default_model && def.enabled_models.includes(data.default_model)
+        ? data.default_model
+        : def?.enabled_models[0];
+    if (def && defaultModelOnDef) {
+      setProviderName(def.name);
+      setModelId(defaultModelOnDef);
+      safeStorageSet(RAIL_PROVIDER_LS, def.name);
+      safeStorageSet(RAIL_MODEL_LS, defaultModelOnDef);
+      return;
+    }
+
+    // (4) first candidate fallback.
     const pick = candidates[0];
     if (!pick) return;
     const m = pick.enabled_models[0];
@@ -263,13 +322,16 @@ export function ChatRail({
       ]);
       setIsStreaming(true);
       const ctrl = new AbortController();
-      const streamSessionId = sessionId;
-      const streamScopeKey = key;
       abortRef.current = ctrl;
-      try {
+      // Inner dispatcher: actually run streamChat against a given session
+      // id. Pulled out so the `chat_session_missing` recovery branch can
+      // re-invoke it with the freshly-resolved id without duplicating the
+      // SSE plumbing.
+      const dispatch = async (boundSessionId: string): Promise<void> => {
+        const streamScopeKey = key;
         for await (const ev of streamChat(
           {
-            session_id: sessionId,
+            session_id: boundSessionId,
             message: userText,
             provider: providerName ?? undefined,
             model: modelId.trim() || undefined,
@@ -279,7 +341,7 @@ export function ChatRail({
         )) {
           if (
             ctrl.signal.aborted ||
-            sessionIdRef.current !== streamSessionId ||
+            sessionIdRef.current !== boundSessionId ||
             lastScopeKeyRef.current !== streamScopeKey
           ) {
             continue;
@@ -287,9 +349,71 @@ export function ChatRail({
           applyEvent(setBubbles, ev);
           invalidateForToolResult(qc, ev);
         }
+      };
+      try {
+        await dispatch(sessionId);
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
-        setError(formatErr(e));
+        // Self-heal: the backend reports a structurally-typed
+        // `chat_session_missing` (HTTP 404 + code) when the
+        // session_id the rail holds no longer exists — workspace
+        // reset, factory reset, or a fresh deploy with the same
+        // operator session in the browser. Resolve a fresh session
+        // for the current scope and retry the message once.
+        // Single-flight (recoveringSessionRef) gates concurrent
+        // sends so we don't mint two replacement sessions; the
+        // second caller awaits the first's resolution and reuses
+        // its result.
+        if (e instanceof ApiError && e.code === "chat_session_missing") {
+          let recovered: string | null = null;
+          try {
+            const inflight =
+              recoveringSessionRef.current ??
+              (async () => {
+                const resolved = await resolveSession(scope);
+                sessionIdRef.current = resolved.session_id;
+                setSessionId(resolved.session_id);
+                setMode(resolved.mode ?? "research");
+                resetSessionEvents(resolved.session_id);
+                // Deliberately NOT calling
+                // `setBubbles(historyToBubbles(resolved.history))`
+                // here — a freshly-minted session has empty history,
+                // and overwriting our optimistic user bubble (and
+                // any earlier bubbles from the prior session that
+                // the operator might still want as visual context)
+                // would flicker the rail to empty before the retry
+                // streams in. We keep the in-memory bubbles as-is;
+                // the next non-recovery `resolveSession` (scope
+                // change / startFresh) is where the history reset
+                // properly belongs.
+                return resolved.session_id;
+              })();
+            recoveringSessionRef.current = inflight;
+            recovered = await inflight;
+          } finally {
+            recoveringSessionRef.current = null;
+          }
+          if (!recovered) {
+            setError(formatErr(e));
+          } else if (!ctrl.signal.aborted) {
+            // Retry against the fresh session. The optimistic user
+            // bubble we appended at send-start is still in the
+            // array (we did NOT wipe it above), so no re-append is
+            // needed. If this retry also fails — including a second
+            // chat_session_missing — we surface the error rather
+            // than looping; the operator can manually start a fresh
+            // chat from the header.
+            try {
+              await dispatch(recovered);
+            } catch (retryErr) {
+              if ((retryErr as Error).name !== "AbortError") {
+                setError(formatErr(retryErr));
+              }
+            }
+          }
+        } else {
+          setError(formatErr(e));
+        }
       } finally {
         if (abortRef.current === ctrl) {
           setIsStreaming(false);
@@ -297,7 +421,17 @@ export function ChatRail({
         }
       }
     },
-    [sessionId, isStreaming, providerName, modelId, key, qc, unifiedRows],
+    [
+      sessionId,
+      isStreaming,
+      providerName,
+      modelId,
+      key,
+      qc,
+      unifiedRows,
+      scope,
+      resetSessionEvents,
+    ],
   );
 
   const stopStreaming = useCallback(() => {
@@ -475,8 +609,20 @@ export function ChatRail({
           try {
             const out = await setSessionMode(sessionId, next);
             setMode(out.mode);
-            if (out.mode === "act" && hasBlockedToolCall(threadBubbles)) {
-              void send("Continue in Act mode.");
+            // When switching to Act, prefer whatever the operator already
+            // typed into the composer — sending the hardcoded
+            // "Continue in Act mode." over the top of pending text
+            // overrides the user's intent and surfaced as a recurring QA
+            // complaint. The continuation prompt only fires as a fallback
+            // when the composer is empty AND there is a blocked tool call
+            // waiting on Act-mode authorization.
+            if (out.mode === "act") {
+              const pending = input.trim();
+              if (pending) {
+                void send(pending);
+              } else if (hasBlockedToolCall(threadBubbles)) {
+                void send("Continue in Act mode.");
+              }
             }
           } catch (e) {
             setError(formatErr(e));
@@ -511,16 +657,27 @@ export function ChatRail({
         }}
       />
 
-      <ChatComposer
-        value={input}
-        placeholder={placeholder(scope)}
-        onChange={setInput}
-        onSubmit={() => void send(input)}
-        disabled={!sessionId}
-        busy={isStreaming}
-        onCancel={stopStreaming}
-        onOpenActions={onOpenActions}
-      />
+      {/*
+        `flex-shrink-0` so the composer never gets squeezed off-screen
+        when the thread runs long on shorter viewports — the rail
+        column is `h-screen` / `h-full min-h-0` and `ChatThread` is
+        `flex-1`, so a non-shrinking composer is the only way to
+        guarantee the input lives at the bottom of the dialog. QA
+        flagged "the chat … do not appear at bottom of dialog in chat
+        rail" — the composer's wrapper had no shrink guard.
+      */}
+      <div className="flex-shrink-0">
+        <ChatComposer
+          value={input}
+          placeholder={placeholder(scope)}
+          onChange={setInput}
+          onSubmit={() => void send(input)}
+          disabled={!sessionId}
+          busy={isStreaming}
+          onCancel={stopStreaming}
+          onOpenActions={onOpenActions}
+        />
+      </div>
     </aside>
   );
 }
@@ -713,25 +870,46 @@ export function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[
   const projected = unifiedRowsToBubbles(rows);
   if (projected.length === 0) return bubbles;
 
+  // Checkpoint rollback hides any user-turn bubble whose
+  // `assistantAnchor` falls inside a rolled-back range (the
+  // chat-rollback fix landed on the remote branch in parallel —
+  // commit b4f98653). Kept verbatim alongside the new merge-anchor
+  // changes.
   const rolledBackAnchorRanges = checkpointRollbackAnchorRanges(rows);
   const isRolledBackUser = (anchor: number) =>
     rolledBackAnchorRanges.some(({ from, to }) => anchor >= from && anchor < to);
 
+  const projectedAssistantCount = projected.filter(
+    (p) => p.role === "assistant",
+  ).length;
+
+  // `assistantAnchor` is the count of CLOSED assistant rows at the
+  // moment the user pressed send — captured in `send()` so we can
+  // re-insert the user bubble at its true chronological position even
+  // when one legacy assistant slot fans out into multiple unified
+  // assistant rows (multi-step agent turns).
+  //
+  // The fallback is for OLD bubbles persisted before `assistantAnchor`
+  // existed in the snapshot, or for hand-built test fixtures. The
+  // previous fallback (`users.length` — the user-count) was in the
+  // wrong UNIT: downstream we compare against `projAssistantCount`, so
+  // a fallback in user-count would interleave such a bubble into the
+  // middle of the projection and produce the user-message-over-the-
+  // top-of-the-agent-bubble overlap the QA report flagged. Anchoring
+  // to `projectedAssistantCount` instead sorts unanchored users to
+  // the end (after every projected assistant), preserving insertion
+  // order via the stable sort below.
   type AnchoredUser = { user: Bubble; anchor: number };
   const users: AnchoredUser[] = [];
   for (const b of bubbles) {
     if (b.role === "user") {
-      const anchor = b.assistantAnchor ?? users.length;
+      const anchor = b.assistantAnchor ?? projectedAssistantCount;
       if (!isRolledBackUser(anchor)) {
         users.push({ user: b, anchor });
       }
     }
   }
   users.sort((a, b) => a.anchor - b.anchor);
-
-  const projectedAssistantCount = projected.filter(
-    (p) => p.role === "assistant",
-  ).length;
 
   // The optimistic trailing assistant placeholder is the empty bubble pushed
   // by `send()` so typing dots have a home before the first token arrives.
@@ -775,6 +953,22 @@ export function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[
   if (trailingOptimistic) out.push(trailingOptimistic);
   return out;
 }
+
+/**
+ * Temporary flag — when `false`, the rail SKIPS rendering checkpoint
+ * rows entirely. QA flagged "Checkpoints appear suddenly all at once
+ * at end of 4th turn" and asked for them hidden until the underlying
+ * server-side emit-batching is fixed: checkpoints are currently
+ * queued during a turn and flushed in a batch at turn close, so they
+ * all materialize together in the rail rather than inline at the
+ * point of the rewind. That batching fix lives server-side; this
+ * flag is the operator-facing stopgap. Re-enable once
+ * checkpoint emission is interleaved with the turn (separate
+ * ticket). DO NOT delete this flag without also updating the server
+ * emission path — leaving checkpoints rendered with the current
+ * batching produces the QA "all at once" complaint.
+ */
+const SHOW_CHECKPOINTS_IN_RAIL = false;
 
 /** One assistant bubble per assistant row; tool/error/etc. rows attach to or
  *  follow the nearest preceding assistant bubble (or open their own).
@@ -833,6 +1027,12 @@ function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
         break;
       }
       case "checkpoint": {
+        // Suppressed for now — see SHOW_CHECKPOINTS_IN_RAIL doc.
+        if (!SHOW_CHECKPOINTS_IN_RAIL) {
+          // Don't even break the assistant bubble flow when skipping;
+          // a hidden checkpoint should be invisible at this layer.
+          break;
+        }
         // Standalone checkpoint bubble — clickable rewind, ordered inline.
         out.push({
           role: "checkpoint",
