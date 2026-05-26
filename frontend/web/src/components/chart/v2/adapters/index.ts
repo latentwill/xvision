@@ -11,6 +11,8 @@ export {
   columnarToUplotHistogram,
 } from "./columnar-to-uplot";
 
+export { scenarioChartPayloadToV2 } from "./scenario-chart-payload";
+
 export { markersToDockEntries } from "./markers";
 export type { MarkerDockEntry } from "./markers";
 
