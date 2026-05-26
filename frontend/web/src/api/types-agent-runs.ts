@@ -29,6 +29,7 @@ export type RetentionMode = "hash_only" | "redacted" | "full_debug";
 export type SpanKind =
   | "agent.run"
   | "agent.plan"
+  | "agent.decision"
   | "model.call"
   | "tool.call"
   | "tool.validate_input"
