@@ -64,6 +64,7 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
                     system_prompt: PROMPT.into(),
                     skill_ids: vec![],
                     max_tokens: Some(2048),
+                    max_wall_ms: None,
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,

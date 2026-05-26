@@ -111,6 +111,7 @@ fn trader_slot(noop_skip: bool) -> ResolvedAgentSlot {
         },
         system_prompt: String::new(),
         max_tokens: None,
+        max_wall_ms: None,
         temperature: None,
         inputs_policy: InputsPolicy::Raw,
         bar_history_limit: None,

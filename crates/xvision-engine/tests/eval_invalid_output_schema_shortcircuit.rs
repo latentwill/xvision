@@ -124,6 +124,7 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         },
         system_prompt: "Decide.".into(),
         max_tokens: None,
+        max_wall_ms: None,
         temperature: None,
         inputs_policy: InputsPolicy::Raw,
         bar_history_limit: None,

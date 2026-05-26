@@ -219,6 +219,19 @@ pub struct AgentSlot {
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
     pub max_tokens: Option<u32>,
+    /// QA30 follow-on: optional operator override for the per-step
+    /// wall-clock budget (Cline runtime). `None` means "no enforcement"
+    /// — the runtime defaults to `u32::MAX` so a wedged sidecar step
+    /// would still hang the cycle, but a still-responding slow model
+    /// is not killed. `Some(n)` is honoured verbatim; the unit is
+    /// milliseconds.
+    ///
+    /// Stored in SQLite as a non-null integer with `0` as the sentinel
+    /// for `None` (migration 047), matching the `max_tokens` shape so
+    /// the store-layer 0-as-unset projection can be reused.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub max_wall_ms: Option<u32>,
     /// Optional operator override for the sampling temperature
     /// forwarded to the provider. `None` lets the provider's default
     /// apply (Anthropic ~1.0, OpenAI 1.0). `Some(t)` is passed through
@@ -401,6 +414,20 @@ impl AgentSlot {
         }
     }
 
+    /// QA30 follow-on: resolve `max_wall_ms` to the dispatcher-side
+    /// `Option<u32>` in the same shape as `resolve_max_tokens`.
+    ///
+    /// - `None` (or the SQLite storage sentinel `Some(0)`) → `None`,
+    ///   meaning "no enforcement" — the Cline runtime then falls back
+    ///   to `DEFAULT_MAX_WALL_MS = u32::MAX`.
+    /// - `Some(n > 0)` passes through verbatim. The unit is milliseconds.
+    pub fn resolve_max_wall_ms(&self) -> Option<u32> {
+        match self.max_wall_ms {
+            Some(n) if n > 0 => Some(n),
+            _ => None,
+        }
+    }
+
     /// Resolve `delta_briefing` to a concrete bool. `None` (the default)
     /// and `Some(false)` both disable the delta-briefing path; `Some(true)`
     /// enables it. Mirrors the `Option<bool>` storage shape used by
@@ -433,6 +460,7 @@ impl Agent {
                 system_prompt: String::new(),
                 skill_ids: Vec::new(),
                 max_tokens: None,
+                max_wall_ms: None,
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::default(),

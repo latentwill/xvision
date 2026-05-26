@@ -42,6 +42,12 @@ import { SlotForm } from "./SlotForm";
 // engine resolves the cap from the model library; existing agents with a
 // persisted value still load and execute, but the engine ignores it.
 // Do not bring a `max_tokens` input back in any downstream refactor.
+//
+// `max_wall_ms` (QA30 follow-on) is the per-slot wall-clock budget for
+// the Cline runtime, measured in milliseconds. `null` means "no
+// enforcement" (the operator's preferred default) so the engine runs
+// the step to natural completion. SlotForm renders an optional input;
+// the field round-trips as `number | null` per the AgentSlot wire shape.
 const BLANK_SLOT: AgentSlot = {
   name: "main",
   provider: "",
@@ -49,6 +55,7 @@ const BLANK_SLOT: AgentSlot = {
   system_prompt: "",
   skill_ids: [],
   max_tokens: null,
+  max_wall_ms: null,
 };
 
 const BLANK_AGENT_DRAFT = {
@@ -196,7 +203,7 @@ export function AgentForm({
         ...d,
         slots: [
           ...d.slots.slice(0, idx + 1),
-          { ...src, name: `${src.name}_copy`, max_tokens: null },
+          { ...src, name: `${src.name}_copy`, max_tokens: null, max_wall_ms: null },
           ...d.slots.slice(idx + 1),
         ],
       };

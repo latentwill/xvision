@@ -255,6 +255,7 @@ fn trader_agent_slot() -> ResolvedAgentSlot {
              \"conviction\":0..1, \"justification\":\"string\"}."
             .into(),
         max_tokens: None,
+        max_wall_ms: None,
         temperature: None,
         inputs_policy: InputsPolicy::Raw,
         bar_history_limit: None,

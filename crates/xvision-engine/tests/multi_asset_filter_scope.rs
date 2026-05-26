@@ -281,6 +281,7 @@ fn resolved_slots() -> Vec<xvision_engine::agent::pipeline::ResolvedAgentSlot> {
                 String::new()
             },
             max_tokens: None,
+            max_wall_ms: None,
             temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             bar_history_limit: None,

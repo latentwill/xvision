@@ -123,6 +123,7 @@ fn seed(home: &std::path::Path) -> (String, String) {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: Some(1024),
+                    max_wall_ms: None,
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,

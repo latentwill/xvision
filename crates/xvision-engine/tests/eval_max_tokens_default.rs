@@ -33,6 +33,7 @@ fn slot_with(provider: &str, model: &str, max_tokens: Option<u32>) -> AgentSlot 
         system_prompt: "You are a deterministic eval-baseline trader.".into(),
         skill_ids: Vec::new(),
         max_tokens,
+        max_wall_ms: None,
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,

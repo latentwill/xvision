@@ -29,6 +29,7 @@ fn slot_with(max_tokens: Option<u32>, temperature: Option<f64>) -> AgentSlot {
         system_prompt: "You are a deterministic eval-baseline trader.".into(),
         skill_ids: Vec::new(),
         max_tokens,
+        max_wall_ms: None,
         temperature,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,

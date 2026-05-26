@@ -416,7 +416,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -433,6 +433,16 @@ impl AgentStore {
             // metadata at dispatch time (q15 §1).
             let stored: i64 = row.try_get("max_tokens")?;
             let max_tokens = if stored <= 0 { None } else { Some(stored as u32) };
+            // QA30 follow-on (migration 047): `max_wall_ms` shares the
+            // `0 ⇒ unset` sentinel convention with `max_tokens`. `try_get`
+            // tolerates rows from pre-047 test pools by falling back to
+            // `0` (unset) so the read path stays robust.
+            let stored_wall: i64 = row.try_get("max_wall_ms").unwrap_or(0);
+            let max_wall_ms = if stored_wall <= 0 {
+                None
+            } else {
+                Some(stored_wall as u32)
+            };
             // `inputs_policy` was added in migration 020 with default
             // `'raw'`; unknown / unparseable values also fall back to
             // `Raw` via `parse_or_raw` so the read path never panics
@@ -473,6 +483,7 @@ impl AgentStore {
                 system_prompt: row.try_get("system_prompt")?,
                 skill_ids,
                 max_tokens,
+                max_wall_ms,
                 temperature: None,
                 prompt_version: row.try_get("prompt_version").unwrap_or_default(),
                 inputs_policy,
@@ -518,8 +529,8 @@ async fn insert_slot(
     let capabilities_json = serde_json::to_string(&slot.capabilities).context("serialize capabilities")?;
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
     .bind(idx)
@@ -531,6 +542,10 @@ async fn insert_slot(
     // `None` persists as the sentinel `0`; `Some(0)` is also treated as
     // unset to keep round-trips stable.
     .bind(slot.max_tokens.unwrap_or(0) as i64)
+    // QA30 follow-on (migration 047): `None` and `Some(0)` both
+    // persist as the `0` sentinel so the load path's `0 ⇒ unset`
+    // projection round-trips.
+    .bind(slot.max_wall_ms.unwrap_or(0) as i64)
     .bind(prompt_version)
     // F-6: persisted as one of `raw` | `causal` | `oracle`. The DB
     // column has DEFAULT 'raw' (migration 020), but we always bind
@@ -642,6 +657,7 @@ mod tests {
             system_prompt,
             skill_ids: vec![],
             max_tokens: Some(4096),
+            max_wall_ms: None,
             temperature: None,
             prompt_version: String::new(),
             inputs_policy: InputsPolicy::Raw,
@@ -792,6 +808,7 @@ mod tests {
                 tags: vec![],
                 slots: vec![AgentSlot {
                     max_tokens: None,
+                    max_wall_ms: None,
                     ..sample_slot()
                 }],
                 scope_strategy_id: None,
@@ -1051,6 +1068,7 @@ mod tests {
                 tags: vec![],
                 slots: vec![AgentSlot {
                     max_tokens: Some(6000),
+                    max_wall_ms: None,
                     ..sample_slot()
                 }],
                 scope_strategy_id: None,

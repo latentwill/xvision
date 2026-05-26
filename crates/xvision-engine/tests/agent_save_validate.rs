@@ -103,6 +103,7 @@ fn slot_with_prompt(system_prompt: impl Into<String>) -> AgentSlot {
         system_prompt: system_prompt.into(),
         skill_ids: vec![],
         max_tokens: Some(4096),
+        max_wall_ms: None,
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
@@ -199,6 +200,7 @@ async fn reject_short_prompt() {
             slots: vec![AgentSlot {
                 system_prompt: "Trade carefully.".into(), // far below 200 chars
                 max_tokens: None,
+                max_wall_ms: None,
                 ..slot_with_prompt("")
             }],
             scope_strategy_id: None,
@@ -231,6 +233,7 @@ async fn reject_default_placeholder_prompt() {
             slots: vec![AgentSlot {
                 system_prompt: placeholder,
                 max_tokens: None,
+                max_wall_ms: None,
                 ..slot_with_prompt("")
             }],
             scope_strategy_id: None,

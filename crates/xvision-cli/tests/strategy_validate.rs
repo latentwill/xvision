@@ -75,6 +75,7 @@ fn seed_strategy_with_trader(
                     system_prompt,
                     skill_ids: vec![],
                     max_tokens: Some(1024),
+                    max_wall_ms: None,
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
