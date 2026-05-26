@@ -39,6 +39,8 @@ function makePayload(
   const time = [1700000000, 1700003600, 1700007200];
   const indicators: IndicatorMap = {
     sma20: { time, value: [100, 101, 102] },
+    sma30: { time, value: [99, 100, 101] },
+    ema200: { time, value: [95, 96, 97] },
     bollUpper: { time, value: [110, 111, 112] },
     bollMiddle: { time, value: [100, 100, 100] },
     bollLower: { time, value: [90, 89, 88] },
@@ -100,8 +102,18 @@ describe("ScenarioChartV2", () => {
       time: [1700000000, 1700003600, 1700007200],
       value: [100, 101, 102],
     });
-    // overlayActive must carry the toggle subset keys.
+    expect(overlays.sma30).toEqual({
+      time: [1700000000, 1700003600, 1700007200],
+      value: [99, 100, 101],
+    });
+    expect(overlays.ema200).toEqual({
+      time: [1700000000, 1700003600, 1700007200],
+      value: [95, 96, 97],
+    });
+    // overlayActive must carry the full v1 moving-average toggle set.
     expect(overlayActive).toHaveProperty("sma20");
+    expect(overlayActive).toHaveProperty("sma30");
+    expect(overlayActive).toHaveProperty("ema200");
     expect(overlayActive).toHaveProperty("bollUpper");
     expect(overlayActive).toHaveProperty("donchianUpper");
   });

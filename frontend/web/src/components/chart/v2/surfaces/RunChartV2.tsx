@@ -32,10 +32,17 @@ export function RunChartV2({ payload, showMarkerDock = true }: Props) {
 
   const overlays = {
     sma20: layers.sma20 ? payload.indicators.sma20 : undefined,
+    sma30: layers.sma30 ? payload.indicators.sma30 : undefined,
     sma50: layers.sma50 ? payload.indicators.sma50 : undefined,
+    sma60: layers.sma60 ? payload.indicators.sma60 : undefined,
+    sma90: layers.sma90 ? payload.indicators.sma90 : undefined,
     sma200: layers.sma200 ? payload.indicators.sma200 : undefined,
     ema20: layers.ema20 ? payload.indicators.ema20 : undefined,
+    ema30: layers.ema30 ? payload.indicators.ema30 : undefined,
     ema50: layers.ema50 ? payload.indicators.ema50 : undefined,
+    ema60: layers.ema60 ? payload.indicators.ema60 : undefined,
+    ema90: layers.ema90 ? payload.indicators.ema90 : undefined,
+    ema200: layers.ema200 ? payload.indicators.ema200 : undefined,
     bollUpper: layers.bollinger ? payload.indicators.bollUpper : undefined,
     bollMiddle: layers.bollinger ? payload.indicators.bollMiddle : undefined,
     bollLower: layers.bollinger ? payload.indicators.bollLower : undefined,
@@ -52,14 +59,22 @@ export function RunChartV2({ payload, showMarkerDock = true }: Props) {
 
   const legendItems = [
     layers.sma20 && { label: "SMA 20", color: theme.overlay.sma20 },
+    layers.sma30 && { label: "SMA 30", color: theme.overlay.sma30 },
     layers.sma50 && { label: "SMA 50", color: theme.overlay.sma50 },
+    layers.sma60 && { label: "SMA 60", color: theme.overlay.sma60 },
+    layers.sma90 && { label: "SMA 90", color: theme.overlay.sma90 },
     layers.sma200 && { label: "SMA 200", color: theme.overlay.sma200 },
     layers.ema20 && { label: "EMA 20", color: theme.overlay.ema20, dashed: true },
+    layers.ema30 && { label: "EMA 30", color: theme.overlay.ema30, dashed: true },
     layers.ema50 && { label: "EMA 50", color: theme.overlay.ema50, dashed: true },
+    layers.ema60 && { label: "EMA 60", color: theme.overlay.ema60, dashed: true },
+    layers.ema90 && { label: "EMA 90", color: theme.overlay.ema90, dashed: true },
+    layers.ema200 && { label: "EMA 200", color: theme.overlay.ema200, dashed: true },
   ].filter(Boolean) as { label: string; color: string; dashed?: boolean }[];
 
-  const dataTableRows = payload.candles.time.slice(-200).map((t, i) => {
-    const idx = payload.candles.time.length - 200 + i;
+  const tableStart = Math.max(0, payload.candles.time.length - 200);
+  const dataTableRows = payload.candles.time.slice(tableStart).map((t, i) => {
+    const idx = tableStart + i;
     return {
       time: new Date(t * 1000).toISOString().slice(0, 19).replace("T", " "),
       open: payload.candles.open[idx],
@@ -83,10 +98,17 @@ export function RunChartV2({ payload, showMarkerDock = true }: Props) {
                 title: "Overlays",
                 items: [
                   { key: "sma20", label: "SMA 20", on: layers.sma20 },
+                  { key: "sma30", label: "SMA 30", on: layers.sma30 },
                   { key: "sma50", label: "SMA 50", on: layers.sma50 },
+                  { key: "sma60", label: "SMA 60", on: layers.sma60 },
+                  { key: "sma90", label: "SMA 90", on: layers.sma90 },
                   { key: "sma200", label: "SMA 200", on: layers.sma200 },
                   { key: "ema20", label: "EMA 20", on: layers.ema20 },
+                  { key: "ema30", label: "EMA 30", on: layers.ema30 },
                   { key: "ema50", label: "EMA 50", on: layers.ema50 },
+                  { key: "ema60", label: "EMA 60", on: layers.ema60 },
+                  { key: "ema90", label: "EMA 90", on: layers.ema90 },
+                  { key: "ema200", label: "EMA 200", on: layers.ema200 },
                   { key: "bollinger", label: "Bollinger", on: layers.bollinger },
                   { key: "donchian", label: "Donchian", on: layers.donchian },
                 ],

@@ -37,21 +37,20 @@ export function ScenarioChartV2({ payload }: Props) {
   // read defensively (`?? {}`) because fixtures/old payloads predating Task 5
   // may omit the field entirely.
   //
-  // Parity note: v2 surfaces the SMA20/50/200 + EMA20/50 + Bollinger + Donchian
-  // toggle subset only. The extra v1 lines (sma30/60/90, ema30/60/90/200) are a
-  // deliberate, documented gap — the v2 layer system (useChart2Layers) has
-  // fewer keys than v1's overlay menu. The underlying series may still exist in
-  // payload.indicators, but they are not surfaced as toggles this wave.
   const ind = payload.indicators ?? {};
   const overlays = {
-    sma20: ind.sma20, sma50: ind.sma50, sma200: ind.sma200,
-    ema20: ind.ema20, ema50: ind.ema50,
+    sma20: ind.sma20, sma30: ind.sma30, sma50: ind.sma50,
+    sma60: ind.sma60, sma90: ind.sma90, sma200: ind.sma200,
+    ema20: ind.ema20, ema30: ind.ema30, ema50: ind.ema50,
+    ema60: ind.ema60, ema90: ind.ema90, ema200: ind.ema200,
     bollUpper: ind.bollUpper, bollMiddle: ind.bollMiddle, bollLower: ind.bollLower,
     donchianUpper: ind.donchianUpper, donchianLower: ind.donchianLower,
   };
   const overlayActive = {
-    sma20: layers.sma20, sma50: layers.sma50, sma200: layers.sma200,
-    ema20: layers.ema20, ema50: layers.ema50,
+    sma20: layers.sma20, sma30: layers.sma30, sma50: layers.sma50,
+    sma60: layers.sma60, sma90: layers.sma90, sma200: layers.sma200,
+    ema20: layers.ema20, ema30: layers.ema30, ema50: layers.ema50,
+    ema60: layers.ema60, ema90: layers.ema90, ema200: layers.ema200,
     bollUpper: layers.bollinger, bollMiddle: layers.bollinger, bollLower: layers.bollinger,
     donchianUpper: layers.donchian, donchianLower: layers.donchian,
   };
@@ -81,10 +80,17 @@ export function ScenarioChartV2({ payload }: Props) {
                 title: "Overlays",
                 items: [
                   { key: "sma20", label: "SMA 20", on: layers.sma20 },
+                  { key: "sma30", label: "SMA 30", on: layers.sma30 },
                   { key: "sma50", label: "SMA 50", on: layers.sma50 },
+                  { key: "sma60", label: "SMA 60", on: layers.sma60 },
+                  { key: "sma90", label: "SMA 90", on: layers.sma90 },
                   { key: "sma200", label: "SMA 200", on: layers.sma200 },
                   { key: "ema20", label: "EMA 20", on: layers.ema20 },
+                  { key: "ema30", label: "EMA 30", on: layers.ema30 },
                   { key: "ema50", label: "EMA 50", on: layers.ema50 },
+                  { key: "ema60", label: "EMA 60", on: layers.ema60 },
+                  { key: "ema90", label: "EMA 90", on: layers.ema90 },
+                  { key: "ema200", label: "EMA 200", on: layers.ema200 },
                   { key: "bollinger", label: "Bollinger Bands", on: layers.bollinger },
                   { key: "donchian", label: "Donchian Channel", on: layers.donchian },
                 ],
