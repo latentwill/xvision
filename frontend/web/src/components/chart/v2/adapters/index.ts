@@ -13,6 +13,8 @@ export {
 
 export { scenarioChartPayloadToV2 } from "./scenario-chart-payload";
 
+export { scenarioPreviewToWizardV2 } from "./scenario-preview-payload";
+
 export { markersToDockEntries } from "./markers";
 export type { MarkerDockEntry } from "./markers";
 
