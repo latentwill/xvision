@@ -10,6 +10,10 @@ const klineMocks = vi.hoisted(() => {
     symbol: null as unknown,
     period: null as unknown,
     loadedBars: [] as unknown[][],
+    // The currently-loaded bar list, replaced on each setDataLoader "init" load.
+    // getDataList() returns this, so its length changes across rerenders just
+    // like the real store — letting the frozen-restore math be exercised.
+    dataList: [] as unknown[],
     overlays: [] as Array<Record<string, unknown>>,
     // Every overlay id minted by createOverlay, in creation order, paired with
     // the create payload, so tests can assert which ids get removed on rerun.
@@ -42,6 +46,13 @@ const klineMocks = vi.hoisted(() => {
         loader.getBars({
           callback: (bars: unknown[], _more: boolean) => {
             state.loadedBars.push(bars);
+            // Mirror the real store: a fresh `setDataLoader` "init" load replaces
+            // the active data list with the just-loaded bars, so getDataList()
+            // reflects the latest loaded length. Capture the PRE-load length
+            // first so the data effect's frozen-restore math (numNew = newLen -
+            // prevLen) sees the old length when it reads getDataList() at the
+            // top of the effect, before this callback runs.
+            state.dataList = bars;
           },
         });
       }
@@ -66,11 +77,14 @@ const klineMocks = vi.hoisted(() => {
       return true;
     }),
     setBarSpace: vi.fn(),
-    getBarSpace: vi.fn(() => ({ bar: 8, halfGap: 1, gap: 2 })),
+    getBarSpace: vi.fn(() => ({ bar: 8, halfBar: 4, gapBar: 1, halfGapBar: 0.5 })),
     scrollToRealTime: vi.fn(),
     scrollToTimestamp: vi.fn(),
     getVisibleRange: vi.fn(() => ({ from: 0, to: 2, realFrom: 0, realTo: 2 })),
     getDom: vi.fn(() => ({ clientWidth: 800 }) as unknown as HTMLElement),
+    getDataList: vi.fn(() => state.dataList),
+    getOffsetRightDistance: vi.fn(() => 0),
+    setOffsetRightDistance: vi.fn(),
   };
 
   return {
@@ -104,6 +118,7 @@ describe("KlineCandlePane", () => {
     klineMocks.state.symbol = null;
     klineMocks.state.period = null;
     klineMocks.state.loadedBars = [];
+    klineMocks.state.dataList = [];
     klineMocks.state.overlays = [];
     klineMocks.state.createdOverlayIds = [];
     klineMocks.state.removedOverlayIds = [];
@@ -542,5 +557,131 @@ describe("KlineCandlePane", () => {
     expect(
       klineMocks.state.overlays.filter((o) => o.name === "xvnMarker"),
     ).not.toHaveLength(3);
+  });
+
+  // ── follow / freeze / resume viewport contract ─────────────────────────────
+
+  it("does NOT touch scroll when follow is undefined (static consumers)", async () => {
+    // Static consumers (RunChartV2/ScenarioChartV2/WizardPreviewChartV2) pass no
+    // follow prop. The data effect re-runs on overlay/marker/layer-toggle changes
+    // too — unconditionally scrolling would snap away a user's pan/zoom. With
+    // follow undefined the pane must leave scroll completely alone.
+    const { rerender } = render(<KlineCandlePane candles={candles} />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    // A rerender (e.g. overlay toggle) re-runs the data effect.
+    rerender(
+      <KlineCandlePane
+        candles={candles}
+        overlays={{ sma20: { time: [1_700_000_000], value: [100] } }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(2);
+    });
+
+    expect(klineMocks.chart.scrollToRealTime).not.toHaveBeenCalled();
+    expect(klineMocks.chart.setOffsetRightDistance).not.toHaveBeenCalled();
+  });
+
+  it("pins to realtime after each data load when follow is true", async () => {
+    const { rerender } = render(
+      <KlineCandlePane candles={candles} follow />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(klineMocks.chart.scrollToRealTime).toHaveBeenCalled();
+    });
+
+    const callsAfterFirst = klineMocks.chart.scrollToRealTime.mock.calls.length;
+
+    // A new tick with more candles, still following.
+    const nextCandles: CandleColumns = {
+      time: [1_700_000_000, 1_700_000_060, 1_700_000_120],
+      open: [100, 101, 102],
+      high: [102, 103, 104],
+      low: [99, 100, 101],
+      close: [101, 102, 103],
+      volume: [10, 12, 14],
+    };
+    rerender(<KlineCandlePane candles={nextCandles} follow />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(
+        klineMocks.chart.scrollToRealTime.mock.calls.length,
+      ).toBeGreaterThan(callsAfterFirst);
+    });
+
+    // Frozen-restore must NOT fire while following.
+    expect(klineMocks.chart.setOffsetRightDistance).not.toHaveBeenCalled();
+  });
+
+  it("freezes the window (no realtime snap, compensated offset) when follow is false", async () => {
+    const { rerender } = render(
+      <KlineCandlePane candles={candles} follow={false} />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    klineMocks.chart.scrollToRealTime.mockClear();
+    klineMocks.chart.setOffsetRightDistance.mockClear();
+
+    // A new tick appends one more bar (2 → 3). getDataList() returns the prior
+    // (length-2) list at the top of the effect; after the load it is length 3.
+    const nextCandles: CandleColumns = {
+      time: [1_700_000_000, 1_700_000_060, 1_700_000_120],
+      open: [100, 101, 102],
+      high: [102, 103, 104],
+      low: [99, 100, 101],
+      close: [101, 102, 103],
+      volume: [10, 12, 14],
+    };
+    rerender(<KlineCandlePane candles={nextCandles} follow={false} />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(klineMocks.chart.setOffsetRightDistance).toHaveBeenCalled();
+    });
+
+    // Frozen must never yank the view to realtime.
+    expect(klineMocks.chart.scrollToRealTime).not.toHaveBeenCalled();
+
+    // setDataLoader's "init" reset moves the last bar to a default right offset;
+    // the restore pushes the freshly-appended bars off the right edge so the
+    // prior window stays put. offsetBefore (0) + numNew (1) * barWidth (8) = 8.
+    expect(klineMocks.chart.setOffsetRightDistance).toHaveBeenCalledWith(8);
+  });
+
+  it("snaps to realtime immediately when follow flips false → true (resume)", async () => {
+    const { rerender } = render(
+      <KlineCandlePane candles={candles} follow={false} />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    klineMocks.chart.scrollToRealTime.mockClear();
+
+    // Clicking "Resume live" flips follow to true WITHOUT new candle data.
+    rerender(<KlineCandlePane candles={candles} follow />);
+
+    await waitFor(() => {
+      expect(klineMocks.chart.scrollToRealTime).toHaveBeenCalled();
+    });
   });
 });

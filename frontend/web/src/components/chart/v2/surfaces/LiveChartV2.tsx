@@ -16,18 +16,16 @@ import type { LiveChartV2Payload } from "../types";
 type Props = {
   payload: LiveChartV2Payload;
   /**
-   * Advisory. When false, the operator has frozen the live view. The
-   * candle/equity panes still re-render from the latest `payload` (the
-   * container re-adapts on each stream tick); `follow` is currently
-   * visual-only — there is no clean way to thread it into
-   * KlineCandlePane's auto-scroll this wave without inventing a fragile
-   * follow API, so we accept it and leave the auto-scroll behavior to the
-   * pane. See Task 9.
+   * Live follow/freeze toggle, threaded into the candle pane's scroll behavior.
+   * When true (following), the candle pane pins the latest bar to the right edge
+   * after each data load and snaps to realtime on resume; when false (frozen),
+   * new streaming bars no longer yank the view to realtime — the prior window
+   * stays put. Passed straight through to `<KlineCandlePane follow={...} />`.
    */
   follow?: boolean;
 };
 
-export function LiveChartV2({ payload }: Props) {
+export function LiveChartV2({ payload, follow }: Props) {
   const [range, setRange] = useState<RangePreset>("1d");
   const syncKey = useChart2Sync("live");
 
@@ -55,6 +53,7 @@ export function LiveChartV2({ payload }: Props) {
           <KlineCandlePane
             candles={payload.candles}
             markers={payload.markers}
+            follow={follow}
             height={300}
           />
           <UplotEquityPane points={payload.equity} height={100} />
