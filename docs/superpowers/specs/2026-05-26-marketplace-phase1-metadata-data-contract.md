@@ -69,8 +69,10 @@ these; they are the trust root.
 surface §3.1, this is the on-chain anchor for each variant:
 `listingId, seller, agentNftId, contentHash, contentURI, tier (0=open/1=sealed),
 priceUSDC, protocolFeeBps, transferableLicense, createdAt, revoked`.
-- `contentHash` (blake3) — commits the **variant's full content** (Tier 2 bundle);
-  swapping content under a live listing is detectable. 
+- `contentHash` (blake3 digest stored as `bytes32`) — commits the **variant's
+  full content** (Tier 2 bundle); swapping content under a live listing is
+  detectable. This intentionally supersedes the older contract-surface
+  `keccak256` comment; Phase 5 must align the contract docs + bindings.
 - `contentURI` — `ipfs://<cid>` → the **listing metadata** (Tier 1b).
 - `createdAt` → surfaces as `publishedAt` (resolves the F1 `newest`-sort gap; **no
   new field needed** — map it through).
@@ -82,7 +84,7 @@ priceUSDC, protocolFeeBps, transferableLicense, createdAt, revoked`.
 - **`perfHash`** — blake3 of the performance summary block in Tier 1b, committed
   at publish time so creators can't retro-edit numbers. **(A9 evidence.)**
 - ValidationRegistry / ReputationRegistry receipts — per-cycle PnL hashes,
-  attestations (the verification evidence, see §5 A9).
+  attestations (the verification evidence, see §4 A9).
 
 ### 2.2 Tier 1a — lineage manifest (IPFS-pinned, behind `agentURI`)
 
@@ -104,7 +106,7 @@ The plugin's `LineageManifest`, adopted as-is with explicit fields:
 
 The **marketing-copy tier** — everything a buyer needs to decide, per direction
 §6.2 Tier 1. One doc per variant/listing. Every field below backs a seam field
-(see §6 mapping):
+(see §5 mapping):
 ```json
 {
   "schema": "xvn.listing.v1",
@@ -118,17 +120,16 @@ The **marketing-copy tier** — everything a buyer needs to decide, per directio
     "return_30d_pct": 47.2, "sharpe": 1.31, "win_rate_pct": 62,
     "max_drawdown_pct": -8.4, "avg_duration_days": 1.8,
     "equity_curve_cid": "ipfs://…",                                     // CSV/JSON, base $1000, backtest+live segments
-    "live_paper_days": 34, "closed_cycles_positive": 7                  // A9 verification evidence
+    "backtest_result_cid": "ipfs://…",
+    "live_paper_days": 34,
+    "positive_closed_cycle_hash": "0x…"                                 // must match on-chain Validation/Reputation receipt
   },
-  "verification": { "status": "verified", "evidence": {                 // A9 — derived, see §5
-    "backtested": true, "live_paper_days": 34, "positive_closed_cycle_hash": "0x…" } },
   "required_ingredients": [                                             // drives the ingredient check
     { "name": "Claude Haiku 4.5", "kind": "model" },
     { "name": "Birdeye MCP", "kind": "mcp" },
     { "name": "SOL Strategist skill", "kind": "skill" } ],
   "license": { "tier": "sealed", "price_usdc": 49, "transferable": false, "perpetual": true },
   "x402": true,                                                         // accepts agent-paid auto-purchase
-  "audited": false,                                                     // derived from an audit attestation if present
   "what_you_get": ["Full prompts","Agent topology + ordering", …],
   "what_you_dont": ["Creator data sources","Future updates without re-purchase", …],
   "rating_receipts": ["ipfs://…"]                                       // attestation rationale pointers
@@ -136,9 +137,10 @@ The **marketing-copy tier** — everything a buyer needs to decide, per directio
 ```
 **Note:** `verification.status`, `audited`, buyer counts, and lineage-tree edges
 are **not authored** here — they are **derived** from on-chain events/receipts by
-the subgraph (§4). Tier 1b carries only the creator-authored + perf-committed
-fields. This keeps the trust boundary clean: numbers a creator could fake are
-either hash-committed (perf) or chain-derived (buyers, verification).
+the subgraph (§4). Tier 1b carries only creator-authored fields plus
+perf-committed evidence pointers. This keeps the trust boundary clean: numbers a
+creator could fake are either hash-committed (perf) or chain-derived (buyers,
+verification, audit).
 
 ### 2.4 Tier 2 — sealed bundle (Tier-B listings only, paywalled)
 
@@ -161,14 +163,17 @@ history. Stays in the self-hosted XVN. Never bundled.
 ## 3. Events & subgraph — the read path
 
 The viewer never reads contracts directly for lists; it reads a **subgraph**.
-Event schemas (contract surface §3/§6.3, **amended here**):
+The events below must fully hydrate the read model for the fields they own; the
+subgraph may call contracts for repair/backfill, but required list fields do not
+depend on contract calls during normal indexing. Event schemas (contract surface
+§3/§6.3, **amended here**):
 
 | Event | Fields | Feeds |
 |---|---|---|
-| `ListingCreated` | `listingId, seller, agentNftId, contentHash, tier, priceUSDC, transferableLicense, createdAt` | listing rows, `publishedAt` |
+| `ListingCreated` | `listingId, seller, agentNftId, contentHash, contentURI, tier, priceUSDC, protocolFeeBps, transferableLicense, createdAt` | listing rows, `publishedAt`, metadata indexing |
 | `ListingUpdated` | `listingId, contentHash, contentURI` | re-pin / re-index |
 | `ListingRevoked` | `listingId, seller` | hide listing |
-| `Sold` **(amended)** | `listingId, agentNftId, buyer, priceUSDC, sellerProceeds, protocolProceeds, licenseTokenId, ` **`payerKind (0=human/1=agent)`** | buyer counts split (E6), recent buyers, receipts |
+| `Sold` **(amended)** | `listingId, agentNftId, buyer, priceUSDC, sellerProceeds, protocolProceeds, licenseTokenId, ` **`payerKind (0=human/1=agent)`**`, purchasePath (0=direct/1=x402)` | buyer counts split (E6), recent buyers, receipts |
 | `AttestationPosted` | `listingId\|agentNftId, attester, verdict, evalResultHash, schema, postedAt` | verification, reputation feed, `audited` |
 | `LicenseToken Transfer` | `from, to, id, value` | ownership, clone-gate (A10) |
 | `ReputationPosted` / `ValidationPosted` | `agentNftId, cycle_id, pnl_hash, …` | A9 verification evidence, trade history |
@@ -195,10 +200,10 @@ terminology lock):
 - **A9 — verification badge (green):** `verified` iff **backtested + ≥30 days
   live-paper data + ≥1 closed cycle with positive PnL hash-committed on-chain**
   (Reputation/ValidationRegistry). The subgraph *derives* `verification.status`
-  from these on-chain facts; Tier 1b carries the committed `perfHash` +
-  `live_paper_days` + `positive_closed_cycle_hash` as the evidence. Below the
-  bar → `unverified` (gray). Audit attestation is a *separate* `audited` flag,
-  not required for green.
+  from these on-chain facts; Tier 1b carries the perf-committed evidence fields
+  (`live_paper_days`, `positive_closed_cycle_hash`, etc.) while Tier 0 carries
+  `perfHash`. Below the bar → `unverified` (gray). Audit attestation is a
+  *separate* `audited` flag, not required for green.
 
 ### Recommended (confirm in review)
 - **A10 — Tier-B clone semantics:** the on-chain clone edge (`parent_lineage_id`)
@@ -216,7 +221,8 @@ terminology lock):
 - **`transferableLicense`:** already in `Listing`; surface in Tier 1b `license`
   + on the `Receipt` (register item).
 - **`audited`:** derived boolean — true iff an `AttestationPosted` with an audit
-  schema exists. Field present now; the audit attester lands later.
+  schema exists. Present in the canonical read projection; the seam field lands
+  with the real-data rewire, and the audit attester lands later.
 - **A6 — viewer domain:** **placeholder `<viewer-domain>`** throughout; the
   shareable-URL / `external_url` host is provisioned before Phase 4 (operator
   decision, tracked in the register). Schema is domain-independent (agentURI/
@@ -238,6 +244,7 @@ swaps `FixtureMarketplaceData` for real impls that satisfy exactly this:
 | `ListingRow.buyers{humans,agents}` | subgraph aggregate of `Sale.payerKind` (E6) |
 | `ListingRow.{priceUsdc,tier,transferableLicense}` | `Listing` |
 | `ListingRow.verification` | derived (A9) |
+| `ListingRow.audited` *(new)* | derived from `AttestationPosted` audit schema |
 | `ListingRow.acceptsX402` | Tier 1b `x402` |
 | `ListingRow.clones` | subgraph count of child `Lineage.parentLineageId` |
 | `ListingRow.publishedAt` *(new)* | `Listing.createdAt` |
@@ -260,13 +267,19 @@ swaps `FixtureMarketplaceData` for real impls that satisfy exactly this:
 
 Apply when the contracts/crate/subgraph get built (Phase 3/5):
 1. **Subgraph entity rename** `Strategy → Lineage` (S4 / terminology lock).
-2. **`Sold` event** gains `payerKind` (E6).
-3. **Surface `Listing.createdAt`** as `publishedAt` in the subgraph + seam.
-4. **`perfHash` commitment** at publish time (A9) — the marketplace `publishListing`
+2. **`ListingCreated` event** gains `contentURI`, `protocolFeeBps`,
+   `transferableLicense`, and `createdAt` so the subgraph can hydrate the
+   listing read model without a required contract call.
+3. **`Sold` event** gains `payerKind` (E6) and keeps `purchasePath`.
+4. **Hash algorithm alignment** — `Listing.contentHash` uses blake3 bytes32 to
+   match Tier 1/2 commitments; amend the older `keccak256` contract-surface
+   comment and generated bindings before implementation.
+5. **Surface `Listing.createdAt`** as `publishedAt` in the subgraph + seam.
+6. **`perfHash` commitment** at publish time (A9) — the marketplace `publishListing`
    path hashes the Tier-1b `performance` block and stores/anchors it.
-5. **Clone-edge write gate** (A10) — `parent_lineage_id` writable only with a held
+7. **Clone-edge write gate** (A10) — `parent_lineage_id` writable only with a held
    `LicenseToken` for Tier-B parents.
-6. **Amend `smart-contract-surface-design.md`** §6.3 (subgraph) + §3.2 (`Sold`)
+8. **Amend `smart-contract-surface-design.md`** §6.3 (subgraph) + §3.2 (`Sold`)
    to match §3/§4 here. (Tracked; do during Phase 5 prep alongside the §2
    staleness fixes already applied.)
 
