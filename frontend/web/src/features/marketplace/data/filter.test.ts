@@ -1,0 +1,50 @@
+import { describe, expect, it } from "vitest";
+import { applyFilter, defaultFilterState } from "./filter";
+import type { ListingRow } from "./types";
+
+function row(p: Partial<ListingRow>): ListingRow {
+  return {
+    id: "x", lineageId: "x", version: "v1.0",
+    creator: { address: "0xabc" }, model: "Claude", style: "Day",
+    assets: ["BTC"], return30dPct: 10, sharpe: 1, buyers: { humans: 5, agents: 0 },
+    priceUsdc: 49, tier: "sealed", transferableLicense: false, verification: "unverified",
+    acceptsX402: false, clones: 0, genArtSeed: "x", ...p,
+  };
+}
+
+describe("applyFilter", () => {
+  const rows = [
+    row({ id: "a", assets: ["BTC"], return30dPct: 50, verification: "verified", buyers: { humans: 100, agents: 4 } }),
+    row({ id: "b", assets: ["SOL"], return30dPct: 90, verification: "unverified", buyers: { humans: 10, agents: 0 } }),
+    row({ id: "c", assets: ["BTC", "ETH"], return30dPct: 20, verification: "verified", buyers: { humans: 300, agents: 1 } }),
+  ];
+
+  it("filters by asset", () => {
+    const out = applyFilter(rows, { ...defaultFilterState(), assets: ["SOL"] });
+    expect(out.rows.map((r) => r.id)).toEqual(["b"]);
+    expect(out.matched).toBe(1);
+    expect(out.total).toBe(3);
+  });
+
+  it("filters verified-only", () => {
+    const out = applyFilter(rows, { ...defaultFilterState(), trust: { verifiedOnly: true, acceptsAgents: false, auditedOnly: false } });
+    expect(out.rows.map((r) => r.id).sort()).toEqual(["a", "c"]);
+  });
+
+  it("sorts by 30d return desc by default", () => {
+    const out = applyFilter(rows, defaultFilterState());
+    expect(out.rows.map((r) => r.id)).toEqual(["b", "a", "c"]);
+  });
+
+  it("sorts by buyers (humans+agents) desc", () => {
+    const out = applyFilter(rows, { ...defaultFilterState(), sort: "buyers" });
+    expect(out.rows[0].id).toBe("c");
+  });
+
+  it("matches search over id and creator handle", () => {
+    const withHandle = [row({ id: "btc-momentum", creator: { address: "0x1", handle: "@ed" } })];
+    expect(applyFilter(withHandle, { ...defaultFilterState(), search: "mom" }).rows).toHaveLength(1);
+    expect(applyFilter(withHandle, { ...defaultFilterState(), search: "@ed" }).rows).toHaveLength(1);
+    expect(applyFilter(withHandle, { ...defaultFilterState(), search: "zzz" }).rows).toHaveLength(0);
+  });
+});

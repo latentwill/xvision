@@ -55,6 +55,13 @@ const ChartsOverview = lazy(() => import("./routes/charts/ChartsOverview").then(
 const ChartsCompare = lazy(() => import("./routes/charts/ChartsCompare").then((m) => ({ default: m.ChartsCompare })));
 const ChartsAnnotated = lazy(() => import("./routes/charts/ChartsAnnotated").then((m) => ({ default: m.ChartsAnnotated })));
 const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => ({ default: m.ChartsHero })));
+const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
+const MarketplaceBrowseStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceBrowseStub })));
+const MarketplaceLeaderboardStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceLeaderboardStub })));
+const MarketplaceLineageStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceLineageStub })));
+const MarketplaceCreatorStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceCreatorStub })));
+const MarketplaceSellStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceSellStub })));
+const MarketplaceReceiptStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceReceiptStub })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -170,6 +177,19 @@ export const router = createBrowserRouter([
           { path: "compare", element: page(<ChartsCompare />) },
           { path: "annotated", element: page(<ChartsAnnotated />) },
           { path: "hero", element: page(<ChartsHero />) },
+        ],
+      },
+      {
+        path: "marketplace",
+        element: page(<MarketplaceLayout />),
+        children: [
+          { index: true, element: page(<MarketplaceBrowseStub />) },
+          { path: "leaderboard", element: page(<MarketplaceLeaderboardStub />) },
+          { path: "leaderboard/:sliceId", element: page(<MarketplaceLeaderboardStub />) },
+          { path: "lineage/:name", element: page(<MarketplaceLineageStub />) },
+          { path: "creator/:handleOrAddr", element: page(<MarketplaceCreatorStub />) },
+          { path: "sell", element: page(<MarketplaceSellStub />) },
+          { path: "receipts/:tx", element: page(<MarketplaceReceiptStub />) },
         ],
       },
       { path: "docs", element: page(<DocsRoute />) },
