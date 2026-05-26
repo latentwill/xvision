@@ -8,5 +8,5 @@ export const SLICES: Slice[] = [
   { id: "agents", label: "Most agent-bought", hint: "sort by agent purchases", count: 88, filter: { sort: "buyers", trust: { verifiedOnly: false, acceptsAgents: true, auditedOnly: false } } },
   { id: "newest", label: "Newest 24h", hint: "recently minted", count: 23, filter: { sort: "newest" } },
   { id: "cloned", label: "Most cloned", hint: "sort by clones", count: 64, filter: { sort: "mostCloned" } },
-  { id: "free", label: "Free-tier breakouts", hint: "Top by 30d return", count: 17, filter: { sort: "return30d" } },
+  { id: "free", label: "Free-tier breakouts", hint: "Free-tier · top 30d return", count: 17, filter: { tier: ["open"], sort: "return30d" } },
 ];

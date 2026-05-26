@@ -8,6 +8,7 @@ export function defaultFilterState(): FilterState {
     assets: [],
     models: [],
     styles: [],
+    tier: [],
     trust: { verifiedOnly: false, acceptsAgents: false, auditedOnly: false },
     priceUsdc: { from: 0, to: 500 },
     minBuyers: 0,
@@ -33,6 +34,7 @@ export function applyFilter(
     if (f.assets.length && !f.assets.some((a) => r.assets.includes(a))) return false;
     if (f.models.length && !f.models.includes(r.model)) return false;
     if (f.styles.length && !f.styles.includes(r.style)) return false;
+    if (f.tier.length && !f.tier.includes(r.tier)) return false;
     if (f.trust.verifiedOnly && r.verification !== "verified") return false;
     if (f.trust.acceptsAgents && !r.acceptsX402) return false;
     // auditedOnly: no ListingRow field yet — applied in Phase 1.

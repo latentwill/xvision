@@ -443,4 +443,51 @@ describe("FilterDrawerContent", () => {
     act(() => screen.getByRole("button", { name: /apply/i }).click());
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("renders Tier section with Open and Sealed buttons", () => {
+    render(
+      <FilterDrawerContent
+        filter={defaultFilterState()}
+        setFilter={vi.fn()}
+        matchCount={100}
+        onClose={() => {}}
+      />,
+      { wrapper: Wrapper }
+    );
+    expect(screen.getByText("Tier")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /open \(free\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sealed \(paid\)/i })).toBeInTheDocument();
+  });
+
+  it("calls setFilter with tier when a tier button is clicked", () => {
+    const setFilter = vi.fn();
+    render(
+      <FilterDrawerContent
+        filter={defaultFilterState()}
+        setFilter={setFilter}
+        matchCount={100}
+        onClose={() => {}}
+      />,
+      { wrapper: Wrapper }
+    );
+    act(() => screen.getByRole("button", { name: /open \(free\)/i }).click());
+    const call = setFilter.mock.calls[0][0];
+    expect(call.tier).toContain("open");
+  });
+
+  it("removes a tier from filter.tier when the active tier button is clicked again", () => {
+    const setFilter = vi.fn();
+    render(
+      <FilterDrawerContent
+        filter={{ ...defaultFilterState(), tier: ["open"] }}
+        setFilter={setFilter}
+        matchCount={50}
+        onClose={() => {}}
+      />,
+      { wrapper: Wrapper }
+    );
+    act(() => screen.getByRole("button", { name: /open \(free\)/i }).click());
+    const call = setFilter.mock.calls[0][0];
+    expect(call.tier).not.toContain("open");
+  });
 });

@@ -2,7 +2,8 @@
 import type { CreatorProfile } from "../types";
 import { NAMED_LISTINGS } from "./listings";
 
-const ed = { address: "0xa83e7c2efabb91d4eea7c2efbb91d4eef12d4", handle: "@ed", ens: "ed.xvn" };
+export const ED_CREATOR = { address: "0xa83e7c2efabb91d4eea7c2efbb91d4eef12d4", handle: "@ed", ens: "ed.xvn" };
+const ed = ED_CREATOR;
 
 export const CREATORS: Record<string, CreatorProfile> = {
   "@ed": {
@@ -41,3 +42,7 @@ export const CREATORS: Record<string, CreatorProfile> = {
     ],
   },
 };
+
+// Alias lookups by address and ENS so getCreator(<address>) and getCreator(<ens>) resolve correctly.
+CREATORS[ed.address] = CREATORS["@ed"];
+CREATORS[ed.ens] = CREATORS["@ed"];

@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { FixtureMarketplaceData } from "./MarketplaceData";
 import { defaultFilterState } from "./filter";
+import { ED_CREATOR } from "./fixtures/creators";
 
 const mp = new FixtureMarketplaceData();
 
@@ -47,6 +48,21 @@ describe("FixtureMarketplaceData", () => {
     const v = await mp.getViewer();
     const { rows } = await mp.listListings({ ...defaultFilterState(), segment: "mine" });
     expect(rows.map((r) => r.id).sort()).toEqual([...v.createdListingIds].sort());
+  });
+  it("getLeaderboard('free') rows are all tier === 'open'", async () => {
+    const { rows } = await mp.getLeaderboard("free");
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.tier === "open")).toBe(true);
+  });
+  it("getCreator by address resolves to same profile as by handle", async () => {
+    const byHandle = await mp.getCreator("@ed");
+    const byAddress = await mp.getCreator(ED_CREATOR.address);
+    expect(byAddress).toBe(byHandle);
+  });
+  it("getCreator by ENS resolves to same profile as by handle", async () => {
+    const byHandle = await mp.getCreator("@ed");
+    const byEns = await mp.getCreator(ED_CREATOR.ens);
+    expect(byEns).toBe(byHandle);
   });
   it("subscribePurchases emits and unsubscribes", () => {
     vi.useFakeTimers();

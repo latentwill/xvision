@@ -2,7 +2,7 @@
 // Content rendered inside the F0 FilterDrawer shell.
 // Sections: Sort · Assets · Models · Style · Trust · Price · Min buyers.
 // TODO(Phase 1): auditedOnly filter has no ListingRow field yet — toggle renders but is a no-op.
-import type { FilterState, SortKey } from "@/features/marketplace/data/types";
+import type { FilterState, SortKey, Tier } from "@/features/marketplace/data/types";
 import { defaultFilterState } from "@/features/marketplace/data/filter";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -286,6 +286,7 @@ export function FilterDrawerContent({
       assets: def.assets,
       models: def.models,
       styles: def.styles,
+      tier: def.tier,
       trust: def.trust,
       minBuyers: def.minBuyers,
       priceUsdc: def.priceUsdc,
@@ -314,17 +315,26 @@ export function FilterDrawerContent({
     setFilter({ styles: next });
   }
 
+  function toggleTier(t: Tier) {
+    const next = filter.tier.includes(t)
+      ? filter.tier.filter((x) => x !== t)
+      : [...filter.tier, t];
+    setFilter({ tier: next });
+  }
+
   return (
     <>
       {/* Header meta line */}
       <div className="px-[18px] pb-2 pt-1 font-mono text-[10.5px] text-text-3">
         {filter.assets.length + filter.models.length + filter.styles.length +
+          filter.tier.length +
           (filter.trust.verifiedOnly ? 1 : 0) +
           (filter.trust.acceptsAgents ? 1 : 0) +
           (filter.trust.auditedOnly ? 1 : 0) > 0 ? (
           <>
             <span className="text-gold">
               {filter.assets.length + filter.models.length + filter.styles.length +
+                filter.tier.length +
                 (filter.trust.verifiedOnly ? 1 : 0) +
                 (filter.trust.acceptsAgents ? 1 : 0) +
                 (filter.trust.auditedOnly ? 1 : 0)}{" "}
@@ -444,6 +454,33 @@ export function FilterDrawerContent({
                 ].join(" ")}
               >
                 {s}
+              </button>
+            );
+          })}
+        </div>
+      </DrawerSection>
+
+      {/* Tier */}
+      <DrawerSection
+        title="Tier"
+        sub={filter.tier.length > 0 ? `${filter.tier.length} selected` : undefined}
+      >
+        <div className="flex gap-1.5 flex-wrap">
+          {(["open", "sealed"] as Tier[]).map((t) => {
+            const active = filter.tier.includes(t);
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => toggleTier(t)}
+                className={[
+                  "px-2 py-1 rounded-[3px] border font-mono text-[10.5px] cursor-pointer capitalize",
+                  active
+                    ? "border-gold/30 bg-gold/10 text-gold"
+                    : "border-border-strong bg-transparent text-text-2 hover:border-border",
+                ].join(" ")}
+              >
+                {t === "open" ? "Open (free)" : "Sealed (paid)"}
               </button>
             );
           })}

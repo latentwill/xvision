@@ -2,10 +2,11 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { defaultFilterState } from "@/features/marketplace/data/filter";
-import type { FilterState, SortKey } from "@/features/marketplace/data/types";
+import type { FilterState, SortKey, Tier } from "@/features/marketplace/data/types";
 
 const SORTS: SortKey[] = ["return30d", "sharpe", "buyers", "mostCloned", "newest"];
 const SEGMENTS = ["trending", "new", "mine"] as const;
+const TIERS: Tier[] = ["open", "sealed"];
 const list = (v: string | null) => (v ? v.split(",").filter(Boolean) : []);
 
 function parse(sp: URLSearchParams): FilterState {
@@ -22,6 +23,7 @@ function parse(sp: URLSearchParams): FilterState {
     assets: list(sp.get("assets")),
     models: list(sp.get("models")),
     styles: list(sp.get("styles")),
+    tier: list(sp.get("tier")).filter((v): v is Tier => (TIERS as string[]).includes(v)),
     trust: {
       verifiedOnly: sp.get("verified") === "1",
       acceptsAgents: sp.get("agents") === "1",
@@ -43,6 +45,7 @@ function serialize(f: FilterState): Record<string, string> {
   if (f.assets.length) out.assets = f.assets.join(",");
   if (f.models.length) out.models = f.models.join(",");
   if (f.styles.length) out.styles = f.styles.join(",");
+  if (f.tier.length) out.tier = f.tier.join(",");
   if (f.trust.verifiedOnly) out.verified = "1";
   if (f.trust.acceptsAgents) out.agents = "1";
   if (f.trust.auditedOnly) out.audited = "1";
