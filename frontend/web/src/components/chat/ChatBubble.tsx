@@ -254,12 +254,28 @@ function CheckpointRow({ bubble }: { bubble: CheckpointBubble }) {
     }
   }, [bubble.checkpointId, restoring]);
 
+  // The `restored` status renders as a full-width banner — operator must see
+  // that subsequent in-flight messages have been rolled back. `created` and
+  // `restore_failed` stay compact inline affordances.
+  if (bubble.status === "restored") {
+    return (
+      <div className="w-full self-stretch">
+        <div className="flex items-center gap-2 px-3 py-2 my-1 rounded-md border border-gold/40 bg-gold-bg text-gold text-[12px]">
+          <span aria-hidden>↻</span>
+          <span className="font-medium">Rolled back to checkpoint</span>
+          <code className="font-mono text-[11px] opacity-80 truncate max-w-[180px]">
+            {bubble.checkpointId}
+          </code>
+          <span className="ml-auto text-[11px] opacity-70">
+            Messages above this point are hidden.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   const label =
-    bubble.status === "restored"
-      ? "Restored"
-      : bubble.status === "restore_failed"
-        ? "Restore failed"
-        : "Checkpoint";
+    bubble.status === "restore_failed" ? "Restore failed" : "Checkpoint";
   const tone =
     bubble.status === "restore_failed"
       ? "border-danger/40 bg-danger/10 text-danger"

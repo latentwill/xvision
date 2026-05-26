@@ -26,7 +26,7 @@ function withDateRange(
 }
 
 describe("ScenarioForm", () => {
-  it("submits hour scenarios from the granularity control", () => {
+  it("submits with the hard-coded 1h granularity default when none supplied", () => {
     const onSubmit = vi.fn();
     const onDraftChange = vi.fn();
 
@@ -39,25 +39,22 @@ describe("ScenarioForm", () => {
     );
 
     fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "ETH 4H range" },
-    });
-    fireEvent.change(screen.getByLabelText("Granularity"), {
-      target: { value: "4h" },
+      target: { value: "ETH default" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create →" }));
 
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
-        display_name: "ETH 4H range",
-        granularity: "4h",
+        display_name: "ETH default",
+        granularity: "1h",
       } satisfies Partial<CreateScenarioRequest>),
     );
     expect(onDraftChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ granularity: "4h" }),
+      expect.objectContaining({ granularity: "1h" }),
     );
   });
 
-  it("submits minute scenarios from the granularity control", () => {
+  it("passes a supported `initial.granularity` through to submit", () => {
     const onSubmit = vi.fn();
     const onDraftChange = vi.fn();
 
@@ -65,15 +62,12 @@ describe("ScenarioForm", () => {
       <ScenarioForm
         onSubmit={onSubmit}
         onDraftChange={onDraftChange}
-        initial={withDateRange()}
+        initial={{ ...withDateRange(), granularity: "15m" } as Partial<CreateScenarioRequest>}
       />,
     );
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH 15m range" },
-    });
-    fireEvent.change(screen.getByLabelText("Granularity"), {
-      target: { value: "15m" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create →" }));
 
@@ -107,69 +101,27 @@ describe("ScenarioForm", () => {
     "2mo",
     "garbage",
     "",
-  ])("coerces unsupported initial granularity %s to the 1h default", (bad) => {
-    render(
-      <ScenarioForm
-        onSubmit={vi.fn()}
-        initial={{ granularity: bad } as Partial<CreateScenarioRequest>}
-      />,
-    );
-    const select = screen.getByLabelText("Granularity") as HTMLSelectElement;
-    expect(select.value).toBe("1h");
-  });
+  ])(
+    "coerces unsupported initial granularity %s to the 1h default on submit",
+    (bad) => {
+      const onSubmit = vi.fn();
+      render(
+        <ScenarioForm
+          onSubmit={onSubmit}
+          initial={{ ...withDateRange(), granularity: bad } as Partial<CreateScenarioRequest>}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "x" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ granularity: "1h" }),
+      );
+    },
+  );
 
-  it("renders granularity as a native select with all supported options", () => {
+  it("does not render a user-facing granularity control", () => {
     render(<ScenarioForm onSubmit={vi.fn()} />);
-
-    const select = screen.getByLabelText("Granularity") as HTMLSelectElement;
-    expect(select.tagName).toBe("SELECT");
-
-    const optionValues = Array.from(select.options).map((o) => o.value);
-    expect(optionValues).toEqual([
-      "1m",
-      "5m",
-      "15m",
-      "30m",
-      "1h",
-      "4h",
-      "6h",
-      "12h",
-      "1d",
-      "1w",
-      "1mo",
-      "3mo",
-      "6mo",
-      "12mo",
-    ]);
-  });
-
-  it("flows granularity selection through draft and submit", () => {
-    const onSubmit = vi.fn();
-    const onDraftChange = vi.fn();
-
-    render(
-      <ScenarioForm
-        onSubmit={onSubmit}
-        onDraftChange={onDraftChange}
-        initial={withDateRange("2024-01-01", "2024-01-10")}
-      />,
-    );
-
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "ETH 1d" },
-    });
-    fireEvent.change(screen.getByLabelText("Granularity"), {
-      target: { value: "1d" },
-    });
-
-    expect(onDraftChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ granularity: "1d" }),
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
-    expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({ granularity: "1d" }),
-    );
+    expect(screen.queryByLabelText("Granularity")).not.toBeInTheDocument();
   });
 
   it("requires the end date to be after the start date", () => {

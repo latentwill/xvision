@@ -380,6 +380,12 @@ struct CreateStrategyAgentReq {
     model: Option<String>,
     #[serde(default)]
     system_prompt: Option<String>,
+    /// Operator-facing summary of what this agent does. The chat-rail bot is
+    /// expected to supply this whenever it creates an agent so the agents
+    /// list isn't littered with auto-generated placeholder text. Falls back
+    /// to a generated one-liner when empty.
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2089,6 +2095,7 @@ impl WizardLoop {
                 provider: None,
                 model: None,
                 system_prompt: None,
+                description: None,
             })
             .await?;
         Ok(Some(out))
@@ -2152,14 +2159,21 @@ impl WizardLoop {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
         let skill_ids = tools_for_strategy_role(&strategy, &role);
+        let description = req
+            .description
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                format!(
+                    "Auto-created for strategy {} as role `{role}`.",
+                    strategy.manifest.id
+                )
+            });
         let agent = api_agents::create(
             &self.api_context,
             api_agents::CreateAgentRequest {
                 name,
-                description: format!(
-                    "Auto-created for strategy {} as role `{role}`.",
-                    strategy.manifest.id
-                ),
+                description,
                 tags: vec!["strategy-agent".into(), role.clone()],
                 slots: vec![AgentSlot {
                     name: "main".into(),
@@ -3042,7 +3056,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "create_strategy_agent".into(),
-            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used.".into(),
+            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used. ALWAYS supply a one-line `description` summarizing what the agent does (e.g. \"4H ETH range-fader using RSI + EMA20\"), so the operator-facing Agents list isn't littered with auto-generated placeholders.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -3050,6 +3064,10 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "id": {"type": "string", "description": "Alias for strategy_id"},
                     "role": {"type": "string", "default": "trader"},
                     "name": {"type": "string"},
+                    "description": {
+                        "type": "string",
+                        "description": "One-line, operator-facing summary of what this agent does. REQUIRED in practice — without it the agent shows a placeholder description in the UI."
+                    },
                     "provider": {"type": "string"},
                     "model": {"type": "string"},
                     "system_prompt": {"type": "string"}

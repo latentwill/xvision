@@ -772,8 +772,32 @@ export function mergeUnifiedRows(bubbles: Bubble[], rows: MessageRow[]): Bubble[
 /** One assistant bubble per assistant row; tool/error/etc. rows attach to or
  *  follow the nearest preceding assistant bubble (or open their own).
  *  Checkpoint rows emit a standalone checkpoint bubble so they render as a
- *  clickable rewind affordance, ordered inline by `seq`. */
+ *  clickable rewind affordance, ordered inline by `seq`.
+ *
+ *  Rollback semantics: when a `checkpoint_restored` row exists for some
+ *  checkpoint id, every non-checkpoint row whose `seq` falls strictly between
+ *  the original `checkpoint_created` row's seq and the restored row's seq is
+ *  hidden — those messages were rolled back on the server. Checkpoint rows
+ *  themselves are preserved so the operator can still see the rewind marker. */
 function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
+  // Pass 1 — locate rolled-back ranges. We compose multiple restores naturally
+  // because each restored event contributes its own (from, to) interval.
+  const createdSeqByCheckpoint = new Map<string, number>();
+  const rolledBackRanges: Array<{ from: number; to: number }> = [];
+  for (const row of rows) {
+    if (row.type !== "checkpoint") continue;
+    if (row.status === "created") {
+      createdSeqByCheckpoint.set(row.checkpointId, row.seq);
+    } else if (row.status === "restored") {
+      const c = createdSeqByCheckpoint.get(row.checkpointId);
+      if (c != null && row.seq > c) {
+        rolledBackRanges.push({ from: c, to: row.seq });
+      }
+    }
+  }
+  const isRolledBack = (seq: number) =>
+    rolledBackRanges.some(({ from, to }) => seq > from && seq < to);
+
   const out: Bubble[] = [];
   let current: AssistantBubble | null = null;
 
@@ -786,6 +810,10 @@ function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
   };
 
   for (const row of rows) {
+    // Suppress rolled-back content; keep checkpoint markers so the rewind is
+    // visible inline. (Each checkpoint row is the boundary of its own range —
+    // never strictly inside one — so `isRolledBack` never matches them.)
+    if (row.type !== "checkpoint" && isRolledBack(row.seq)) continue;
     switch (row.type) {
       case "assistant": {
         // Each assistant row is its own bubble (messageIndex-distinct).

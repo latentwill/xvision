@@ -412,7 +412,7 @@ function TabBar({
           onClick={() => onChange(t)}
           className={`pb-2 -mb-px border-b-2 text-[13px] font-medium transition-colors ${
             value === t
-              ? "border-text text-text"
+              ? "border-gold text-text"
               : "border-transparent text-text-3 hover:text-text-2"
           }`}
         >

@@ -55,7 +55,7 @@ describe("DesktopThreePaneShell", () => {
     expect(await screen.findByTestId("strip-dock-slot")).toBeInTheDocument();
 
     const shell = container.firstElementChild;
-    expect(shell).toHaveClass("grid", "grid-cols-[220px_1fr_auto]", "min-h-screen");
+    expect(shell).toHaveClass("grid", "grid-cols-[220px_minmax(0,1fr)_auto]", "min-h-screen");
     expect(shell?.children[0]).toBe(sidebar);
     expect(shell?.children[1]).toBe(main);
     expect(shell?.children[2]).toBe(chatRail);
