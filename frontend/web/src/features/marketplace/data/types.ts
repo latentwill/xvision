@@ -231,6 +231,7 @@ export interface FilterState {
   assets: string[];
   models: string[];
   styles: string[];
+  tier: Tier[];
   trust: { verifiedOnly: boolean; acceptsAgents: boolean; auditedOnly: boolean };
   priceUsdc: { from: number; to: number };
   minBuyers: number;

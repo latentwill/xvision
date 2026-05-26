@@ -20,6 +20,7 @@ function countActiveFilters(filter: FilterState): number {
     filter.assets.length +
     filter.models.length +
     filter.styles.length +
+    filter.tier.length +
     (filter.trust.verifiedOnly ? 1 : 0) +
     (filter.trust.acceptsAgents ? 1 : 0) +
     (filter.trust.auditedOnly ? 1 : 0) +

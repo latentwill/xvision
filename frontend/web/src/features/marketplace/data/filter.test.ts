@@ -47,4 +47,21 @@ describe("applyFilter", () => {
     expect(applyFilter(withHandle, { ...defaultFilterState(), search: "@ed" }).rows).toHaveLength(1);
     expect(applyFilter(withHandle, { ...defaultFilterState(), search: "zzz" }).rows).toHaveLength(0);
   });
+
+  it("filters by tier: open returns only open-tier rows", () => {
+    const mixed = [
+      row({ id: "a", tier: "open" }),
+      row({ id: "b", tier: "sealed" }),
+      row({ id: "c", tier: "open" }),
+    ];
+    const out = applyFilter(mixed, { ...defaultFilterState(), tier: ["open"] });
+    expect(out.rows.map((r) => r.id).sort()).toEqual(["a", "c"]);
+    expect(out.matched).toBe(2);
+  });
+
+  it("tier filter: empty array = no tier filter (all pass through)", () => {
+    const mixed = [row({ id: "a", tier: "open" }), row({ id: "b", tier: "sealed" })];
+    const out = applyFilter(mixed, { ...defaultFilterState(), tier: [] });
+    expect(out.matched).toBe(2);
+  });
 });

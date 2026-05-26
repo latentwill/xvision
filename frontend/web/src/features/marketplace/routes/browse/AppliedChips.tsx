@@ -14,6 +14,7 @@ function hasActiveFilters(f: FilterState): boolean {
     f.assets.length > 0 ||
     f.models.length > 0 ||
     f.styles.length > 0 ||
+    f.tier.length > 0 ||
     f.trust.verifiedOnly ||
     f.trust.acceptsAgents ||
     f.trust.auditedOnly ||
@@ -44,6 +45,12 @@ export function AppliedChips({ filter, setFilter, matchCount }: AppliedChipsProp
     chips.push({
       label: `Style: ${style}`,
       onRemove: () => setFilter({ styles: filter.styles.filter((s) => s !== style) }),
+    });
+  }
+  for (const t of filter.tier) {
+    chips.push({
+      label: `Tier: ${t}`,
+      onRemove: () => setFilter({ tier: filter.tier.filter((x) => x !== t) }),
     });
   }
   if (filter.trust.verifiedOnly) {
@@ -83,6 +90,7 @@ export function AppliedChips({ filter, setFilter, matchCount }: AppliedChipsProp
       assets: def.assets,
       models: def.models,
       styles: def.styles,
+      tier: def.tier,
       trust: def.trust,
       minBuyers: def.minBuyers,
       priceUsdc: def.priceUsdc,

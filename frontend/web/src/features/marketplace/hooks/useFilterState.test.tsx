@@ -13,7 +13,9 @@ function Probe() {
       <span data-testid="price-from">{filter.priceUsdc.from}</span>
       <span data-testid="price-to">{filter.priceUsdc.to}</span>
       <span data-testid="segment">{filter.segment}</span>
+      <span data-testid="tier">{filter.tier.join(",")}</span>
       <button onClick={() => setFilter({ assets: ["SOL"], sort: "sharpe" })}>set</button>
+      <button onClick={() => setFilter({ tier: ["open"] })}>set-tier</button>
     </div>
   );
 }
@@ -54,5 +56,30 @@ describe("useFilterState", () => {
       </MemoryRouter>,
     );
     expect(screen.getByTestId("segment").textContent).toBe("trending");
+  });
+  it("parses ?tier=open from URL into filter.tier", () => {
+    render(
+      <MemoryRouter initialEntries={["/marketplace?tier=open"]}>
+        <Probe />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("tier").textContent).toBe("open");
+  });
+  it("serializes tier back to the URL when set", () => {
+    render(
+      <MemoryRouter initialEntries={["/marketplace"]}>
+        <Probe />
+      </MemoryRouter>,
+    );
+    act(() => screen.getByText("set-tier").click());
+    expect(screen.getByTestId("tier").textContent).toBe("open");
+  });
+  it("strips invalid tier values from the URL", () => {
+    render(
+      <MemoryRouter initialEntries={["/marketplace?tier=open,nope,sealed"]}>
+        <Probe />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("tier").textContent).toBe("open,sealed");
   });
 });
