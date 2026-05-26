@@ -56,7 +56,7 @@ const ChartsCompare = lazy(() => import("./routes/charts/ChartsCompare").then((m
 const ChartsAnnotated = lazy(() => import("./routes/charts/ChartsAnnotated").then((m) => ({ default: m.ChartsAnnotated })));
 const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => ({ default: m.ChartsHero })));
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
-const MarketplaceBrowseStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceBrowseStub })));
+const MarketplaceBrowseStub = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const MarketplaceLeaderboardStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceLeaderboardStub })));
 const MarketplaceLineageStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceLineageStub })));
 const MarketplaceCreatorStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceCreatorStub })));
