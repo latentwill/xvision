@@ -55,6 +55,8 @@ pub enum RuleVerdict {
 /// Ordered sequence of risk rules applied deterministically.
 pub struct RiskLayer {
     rules: Vec<Box<dyn RiskRule>>,
+    builtin_rule_start: usize,
+    builtin_rule_len: usize,
     // Config and whitelist kept for inspection / future hot-reload.
     #[allow(dead_code)]
     config: RiskConfig,
@@ -154,6 +156,8 @@ impl RiskLayer {
         }));
 
         Self {
+            builtin_rule_start: 0,
+            builtin_rule_len: rules.len(),
             rules,
             config,
             whitelist,
@@ -168,6 +172,7 @@ impl RiskLayer {
     /// unchanged; the prepended rule runs first.
     pub fn prepend_rule(&mut self, rule: Box<dyn RiskRule>) {
         self.rules.insert(0, rule);
+        self.builtin_rule_start += 1;
     }
 
     /// Append a rule at the end of the rule chain.
@@ -236,6 +241,18 @@ impl RiskLayer {
             }
         }
 
+        if first_modify_reason.is_some() {
+            if let Some(reason) = self.revalidate_builtin_rules(
+                &mut current,
+                portfolio,
+                asset,
+                conviction,
+                &mut first_modify_reason,
+            ) {
+                return RiskDecision::Vetoed { original, reason };
+            }
+        }
+
         match first_modify_reason {
             Some(reason) => RiskDecision::Modified {
                 original,
@@ -244,6 +261,37 @@ impl RiskLayer {
             },
             None => RiskDecision::Approved { decision: current },
         }
+    }
+
+    fn revalidate_builtin_rules(
+        &self,
+        current: &mut TraderDecision,
+        portfolio: &PortfolioState,
+        asset: xvision_core::AssetSymbol,
+        conviction: f32,
+        first_modify_reason: &mut Option<VetoReason>,
+    ) -> Option<VetoReason> {
+        let builtin_end = self.builtin_rule_start + self.builtin_rule_len;
+        for rule in &self.rules[self.builtin_rule_start..builtin_end] {
+            let ctx = RiskEvalContext {
+                decision: current,
+                portfolio,
+                asset,
+                conviction,
+            };
+            match rule.evaluate(&ctx) {
+                RuleVerdict::Pass => {}
+                RuleVerdict::Modify(mut modified, reason) => {
+                    if first_modify_reason.is_none() {
+                        *first_modify_reason = Some(reason);
+                    }
+                    modified.asset = asset;
+                    *current = modified;
+                }
+                RuleVerdict::Veto(reason) => return Some(reason),
+            }
+        }
+        None
     }
 }
 
@@ -592,5 +640,41 @@ mod integration {
             }
             other => panic!("expected Modified, got {other:?}"),
         }
+    }
+
+    struct OversizeAfterBuiltinRule;
+
+    impl RiskRule for OversizeAfterBuiltinRule {
+        fn name(&self) -> &'static str {
+            "OversizeAfterBuiltinRule"
+        }
+
+        fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
+            let mut modified = ctx.decision.clone();
+            modified.size_bps = 2500;
+            RuleVerdict::Modify(modified, VetoReason::Custom("oversize_after_builtin".into()))
+        }
+    }
+
+    #[test]
+    fn appended_modify_is_revalidated_by_builtin_risk_gates() {
+        use tests_common::{default_risk_layer, flat_portfolio, make_decision};
+
+        let mut layer = default_risk_layer();
+        layer.append_rule(Box::new(OversizeAfterBuiltinRule));
+
+        let decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
+        let result = layer.evaluate(decision, &flat_portfolio());
+
+        assert!(
+            matches!(
+                result,
+                RiskDecision::Vetoed {
+                    reason: VetoReason::PositionTooLarge,
+                    ..
+                }
+            ),
+            "expected appended oversize modify to be vetoed, got {result:?}"
+        );
     }
 }

@@ -44,7 +44,7 @@ class RemoteCliTests(unittest.TestCase):
             [
                 ("GET", "https://host/api/cli/jobs/job%2Fa%20b"),
                 ("GET", "https://host/api/cli/jobs/job%2Fa%20b/output"),
-                ("POST", "https://host/api/cli/jobs/job%2Fa%20b/cancel"),
+                ("DELETE", "https://host/api/cli/jobs/job%2Fa%20b"),
             ],
         )
 

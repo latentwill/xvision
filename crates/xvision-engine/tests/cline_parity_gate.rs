@@ -38,6 +38,7 @@ use xvision_agent_client::AgentClient;
 use xvision_core::config::{ProviderEntry, ProviderKind};
 use xvision_engine::agent::execute_cline::{execute_slot_cline, ClineSlotInput, TrajectoryMode};
 use xvision_engine::agent::llm::{ContentBlock, LlmResponse, ResponseSchema, StopReason};
+use xvision_engine::eval::executor::trader_output::validate_trader_output_text;
 use xvision_engine::strategies::slot::LLMSlot;
 
 const NUMERIC_EPSILON: f64 = 1e-9;
@@ -134,10 +135,10 @@ fn assert_decisions_parity(reference: &serde_json::Value, candidate: &serde_json
 /// actions + numeric fields. Each is run through both runtimes.
 fn fixed_cycles() -> Vec<&'static str> {
     vec![
-        r#"{"action":"long_open","conviction":0.8,"justification":"trend up","stop_pct":2.5,"target_rr":1.5}"#,
-        r#"{"action":"short_open","conviction":0.62,"justification":"vol expansion","stop_pct":1.0,"target_rr":2.0}"#,
+        r#"{"action":"long_open","conviction":0.8,"justification":"trend up"}"#,
+        r#"{"action":"short_open","conviction":0.62,"justification":"vol expansion"}"#,
         r#"{"action":"hold","conviction":0.5,"justification":"range-bound"}"#,
-        r#"{"action":"long_close","conviction":0.9,"justification":"target hit","stop_pct":0.0,"target_rr":0.5}"#,
+        r#"{"action":"flat","conviction":0.9,"justification":"target hit"}"#,
     ]
 }
 
@@ -149,6 +150,8 @@ async fn cline_record_matches_llm_dispatch_over_fixed_cycles() {
     for (i, decision_json) in fixed_cycles().into_iter().enumerate() {
         // (a) LlmDispatch reference decision.
         let reference_resp = llm_dispatch_response(decision_json);
+        validate_trader_output_text(&reference_resp.text(), "parity-reference", i as u32)
+            .expect("reference must satisfy trader_output schema");
         let reference: serde_json::Value =
             serde_json::from_str(&reference_resp.text()).expect("reference parses");
 
@@ -174,6 +177,8 @@ async fn cline_record_matches_llm_dispatch_over_fixed_cycles() {
         .expect("cline-record must produce an LlmResponse");
         let candidate: serde_json::Value =
             serde_json::from_str(&candidate_resp.text()).expect("candidate parses");
+        validate_trader_output_text(&candidate_resp.text(), "parity-candidate", i as u32)
+            .expect("candidate must satisfy trader_output schema");
 
         // Parity within the documented tolerance.
         assert_decisions_parity(&reference, &candidate, &format!("cycle[{i}]"));
@@ -204,4 +209,20 @@ fn parity_helper_tolerates_epsilon_numeric_drift() {
     let b = json!({"conviction": 0.81});
     let result = std::panic::catch_unwind(|| assert_decisions_parity(&a, &b, "epsilon-bad"));
     assert!(result.is_err(), "supra-epsilon numeric drift must fail the gate");
+}
+
+#[test]
+fn parity_gate_rejects_schema_invalid_equal_payloads() {
+    let invalid = r#"{"action":"long_open","conviction":0.8,"justification":"trend up","stop_pct":2.5}"#;
+    let reference_resp = llm_dispatch_response(invalid);
+    let candidate_resp = llm_dispatch_response(invalid);
+
+    assert!(
+        validate_trader_output_text(&reference_resp.text(), "invalid-reference", 0).is_err(),
+        "reference with extra fields must fail trader_output schema"
+    );
+    assert!(
+        validate_trader_output_text(&candidate_resp.text(), "invalid-candidate", 0).is_err(),
+        "candidate with extra fields must fail trader_output schema"
+    );
 }

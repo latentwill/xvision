@@ -428,6 +428,16 @@ impl TraderOutput {
     }
 }
 
+/// Validate text against the same strict `trader_output` contract used by
+/// eval executors, without exposing the internal parsed representation.
+pub fn validate_trader_output_text(
+    raw: &str,
+    run_id: &str,
+    decision_index: u32,
+) -> Result<(), TraderOutputError> {
+    TraderOutput::parse_with_response_inner(raw, run_id, decision_index, None).map(|_| ())
+}
+
 /// Extract every name inside `` `<name>` `` immediately following `prefix`
 /// in `s`, pushing each unique result into `out`. Helper for
 /// [`TraderOutputError::problem_fields`]. The serde message format is
