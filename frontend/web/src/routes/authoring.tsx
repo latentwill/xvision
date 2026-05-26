@@ -1053,7 +1053,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
                 assetUniverse.map((a) => (
                   <span
                     key={a}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-success/15 border border-success/40 text-success rounded-full text-[12px] font-mono"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-gold/10 border border-gold/30 text-gold rounded-full text-[12px] font-mono"
                   >
                     {a}
                     <button
@@ -1061,7 +1061,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
                       aria-label={`Remove ${a}`}
                       onClick={() => removeAsset(a)}
                       disabled={patch.isPending}
-                      className="ml-0.5 text-success/70 hover:text-danger disabled:opacity-40 leading-none"
+                      className="ml-0.5 text-gold/70 hover:text-danger disabled:opacity-40 leading-none"
                     >
                       ×
                     </button>
@@ -1081,7 +1081,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
                     type="button"
                     onClick={() => addAsset(t)}
                     disabled={patch.isPending}
-                    className="inline-flex items-center px-2 py-0.5 rounded-full border border-success/40 text-[11px] font-mono text-success/80 hover:bg-success/10 hover:text-success disabled:opacity-40 transition-colors"
+                    className="inline-flex items-center px-2 py-0.5 rounded-full border border-border-soft text-[11px] font-mono text-text-2 hover:border-gold/30 hover:bg-gold/10 hover:text-gold disabled:opacity-40 transition-colors"
                   >
                     + {t}
                   </button>

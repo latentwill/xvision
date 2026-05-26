@@ -128,7 +128,7 @@ function ColorPickerRow({
                 borderRadius: 4,
                 background: hex,
                 border: isActive
-                  ? "2px solid white"
+                  ? "2px solid var(--border-soft)"
                   : "2px solid transparent",
                 outline: isActive ? "2px solid " + hex : "none",
                 cursor: "pointer",

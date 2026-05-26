@@ -219,6 +219,33 @@ function dispatch(rows: MessageRow[], ev: UnifiedEvent): MessageRow[] {
     case "assistant_message_done":
       return closeAssistant(rows, ev, p.data.draft_id);
 
+    // Session/run terminal events should not leave lifecycle rows spinning
+    // forever when the sidecar drops the matching tool terminal event.
+    case "session_completed":
+    case "session_interrupted":
+      return terminalizeOpenTools(rows, ev, "cancelled", terminalReason(p));
+    case "session_failed":
+      return terminalizeOpenTools(rows, ev, "failed", p.data.message);
+    case "run_finished":
+      return terminalizeOpenTools(
+        rows,
+        ev,
+        p.data.status === "failed" || p.data.status === "agent_failure"
+          ? "failed"
+          : "cancelled",
+        p.data.error,
+      );
+    case "run_interrupted":
+      return terminalizeOpenTools(rows, ev, "cancelled", p.data.reason);
+    case "span_finished":
+      return terminalizeToolSpan(
+        rows,
+        ev,
+        p.data.span_id,
+        p.data.status === "error" ? "failed" : "cancelled",
+        p.data.error_json,
+      );
+
     // ── Tool lifecycle (all keyed on span_id) ──
     case "tool_requested":
       return upsertTool(rows, ev, p.data.span_id, (r) => ({
@@ -384,14 +411,8 @@ function assertHandledOrPassthrough(
   switch (p.kind) {
     case "session_created":
     case "session_resumed":
-    case "session_interrupted":
-    case "session_completed":
-    case "session_failed":
     case "run_started":
-    case "run_finished":
-    case "run_interrupted":
     case "span_started":
-    case "span_finished":
     case "model_call_finished":
     case "broker_call_started":
     case "broker_call_finished":
@@ -462,7 +483,7 @@ function openAssistantRow(rows: MessageRow[], ev: UnifiedEvent): MessageRow[] {
   if (open) {
     return rows.map((r) =>
       r === open
-        ? withEvent({ ...open }, ev.event_id)
+        ? withEvent({ ...open, seq: Math.min(open.seq, ev.seq) }, ev.event_id)
         : r,
     );
   }
@@ -482,6 +503,7 @@ function appendToAssistant(
       if (r !== open) return r;
       const updated: AssistantRow = {
         ...open,
+        seq: Math.min(open.seq, ev.seq),
         text: delta.text !== undefined ? open.text + delta.text : open.text,
         blocks:
           delta.block !== undefined
@@ -510,7 +532,10 @@ function closeAssistant(
   if (open) {
     return rows.map((r) =>
       r === open
-        ? withEvent({ ...open, done: true, draftId }, ev.event_id)
+        ? withEvent(
+            { ...open, seq: Math.min(open.seq, ev.seq), done: true, draftId },
+            ev.event_id,
+          )
         : r,
     );
   }
@@ -592,8 +617,86 @@ function upsertTool(
     return [...rows, created];
   }
   return rows.map((r, i) =>
-    i === idx ? withEvent(update(r as ToolRow), ev.event_id) : r,
+    i === idx
+      ? withEvent(
+          { ...update(r as ToolRow), seq: Math.min(r.seq, ev.seq) },
+          ev.event_id,
+        )
+      : r,
   );
+}
+
+function isToolTerminal(status: ToolRowStatus): boolean {
+  return (
+    status === "finished" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "denied"
+  );
+}
+
+function terminalReason(p: UnifiedPayload): string | null {
+  switch (p.kind) {
+    case "session_interrupted":
+      return p.data.reason;
+    default:
+      return null;
+  }
+}
+
+function terminalizeOpenTools(
+  rows: MessageRow[],
+  ev: UnifiedEvent,
+  status: Extract<ToolRowStatus, "failed" | "cancelled">,
+  reason: string | null,
+): MessageRow[] {
+  const streamId = streamIdOf(ev);
+  let changed = false;
+  const next = rows.map((r) => {
+    if (
+      r.type !== "tool" ||
+      r.streamId !== streamId ||
+      isToolTerminal(r.status)
+    ) {
+      return r;
+    }
+    changed = true;
+    return withEvent(
+      {
+        ...r,
+        status: bumpToolStatus(r.status, status),
+        errorMessage: status === "failed" ? reason ?? r.errorMessage : r.errorMessage,
+        cancelReason: status === "cancelled" ? reason ?? r.cancelReason : r.cancelReason,
+      },
+      ev.event_id,
+    );
+  });
+  return changed ? next : rows;
+}
+
+function terminalizeToolSpan(
+  rows: MessageRow[],
+  ev: UnifiedEvent,
+  spanId: string,
+  status: Extract<ToolRowStatus, "failed" | "cancelled">,
+  reason: string | null,
+): MessageRow[] {
+  const idx = rows.findIndex(
+    (r) => r.type === "tool" && r.spanId === spanId,
+  );
+  if (idx === -1) return rows;
+  return rows.map((r, i) => {
+    if (i !== idx || r.type !== "tool" || isToolTerminal(r.status)) return r;
+    return withEvent(
+      {
+        ...r,
+        status: bumpToolStatus(r.status, status),
+        errorMessage: status === "failed" ? reason ?? r.errorMessage : r.errorMessage,
+        cancelReason: status === "cancelled" ? reason ?? r.cancelReason : r.cancelReason,
+      },
+      ev.event_id,
+    );
+  });
 }
 
 // ─── Checkpoint / optimizer / error helpers ──────────────────────────────

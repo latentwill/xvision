@@ -24,7 +24,8 @@ use crate::types::{Condition, ConditionTree, Filter, IndicatorName, IndicatorRef
 /// are checked in spec-table order so the most semantically-meaningful
 /// failure surfaces first.
 pub fn validate(filter: &Filter) -> Result<(), ValidationError> {
-    // Rule 9 — asset scope (v1 ceiling: 1).
+    // Rule 9 — asset scope must name at least one symbol. Multi-asset filters
+    // are valid; the executor evaluates this same predicate per active asset.
     validate_asset_scope(filter)?;
 
     // Rule 8 — max wakeups per day.
@@ -79,13 +80,10 @@ fn validate_fire_metadata(filter: &Filter) -> Result<(), ValidationError> {
 }
 
 fn validate_asset_scope(filter: &Filter) -> Result<(), ValidationError> {
-    if filter.asset_scope.len() != 1 {
+    if filter.asset_scope.is_empty() {
         return Err(ValidationError::AssetScope {
             path: "/asset_scope".to_string(),
-            detail: format!(
-                "v1 requires exactly 1 symbol in asset_scope, got {}",
-                filter.asset_scope.len()
-            ),
+            detail: "asset_scope must include at least one symbol".to_string(),
         });
     }
     Ok(())

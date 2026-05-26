@@ -3,7 +3,7 @@ import type { HTMLAttributes, ReactNode } from "react";
 type Tone = "default" | "gold" | "solid" | "danger" | "warn" | "info";
 
 const TONE_CLASSES: Record<Tone, string> = {
-  default: "border-border text-text-2",
+  default: "border-border-soft text-text-2",
   gold: "border-gold/40 text-gold",
   solid: "bg-gold border-gold text-bg font-medium",
   danger: "border-danger/40 text-danger",
