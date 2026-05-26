@@ -98,6 +98,7 @@ beforeEach(() => {
     session_id: "new-session",
     history: [],
   });
+  vi.mocked(chatApi.deleteSession).mockResolvedValue(undefined);
   vi.mocked(chatApi.loadSessionHistory).mockResolvedValue([]);
 });
 
