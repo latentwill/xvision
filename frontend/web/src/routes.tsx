@@ -57,7 +57,8 @@ const ChartsAnnotated = lazy(() => import("./routes/charts/ChartsAnnotated").the
 const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => ({ default: m.ChartsHero })));
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
 const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
-const MarketplaceLeaderboardStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceLeaderboardStub })));
+const LeaderboardIndex = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardIndex").then((m) => ({ default: m.LeaderboardIndex })));
+const LeaderboardSlice = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardSlice").then((m) => ({ default: m.LeaderboardSlice })));
 const LineageRoute = lazy(() => import("./features/marketplace/routes/LineageRoute").then((m) => ({ default: m.LineageRoute })));
 const CreatorRoute = lazy(() => import("./features/marketplace/routes/CreatorRoute").then((m) => ({ default: m.CreatorRoute })));
 const SellRoute = lazy(() => import("./features/marketplace/routes/SellRoute").then((m) => ({ default: m.SellRoute })));
@@ -184,8 +185,8 @@ export const router = createBrowserRouter([
         element: page(<MarketplaceLayout />),
         children: [
           { index: true, element: page(<BrowseRoute />) },
-          { path: "leaderboard", element: page(<MarketplaceLeaderboardStub />) },
-          { path: "leaderboard/:sliceId", element: page(<MarketplaceLeaderboardStub />) },
+          { path: "leaderboard", element: page(<LeaderboardIndex />) },
+          { path: "leaderboard/:sliceId", element: page(<LeaderboardSlice />) },
           { path: "lineage/:name", element: page(<LineageRoute />) },
           { path: "creator/:handleOrAddr", element: page(<CreatorRoute />) },
           { path: "sell", element: page(<SellRoute />) },
