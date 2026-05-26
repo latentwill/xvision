@@ -122,6 +122,40 @@ registerOverlay({
   },
 });
 
+// ── xvnPositionBand custom overlay ───────────────────────────────────────────
+// A shaded full-pane-height rectangle marking a held long/short position from
+// `start` to `end`. The two anchor points carry an arbitrary value (0); only
+// the x-coordinates and the pane `bounding.height` matter, so the band fills
+// the whole candle pane vertically regardless of price. Registered once at
+// module scope and tinted from per-instance extendData (a low-opacity band
+// fill). No try/catch on purpose (see xvnLine note above).
+registerOverlay({
+  name: "xvnPositionBand",
+  totalStep: 1,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ coordinates, bounding, overlay }) => {
+    const ext = (overlay.extendData ?? {}) as { color: string };
+    if (!coordinates || coordinates.length < 2) return [];
+    const x0 = coordinates[0].x;
+    const x1 = coordinates[1].x;
+    return [
+      {
+        type: "rect",
+        attrs: {
+          x: Math.min(x0, x1),
+          y: 0,
+          width: Math.abs(x1 - x0),
+          height: bounding.height,
+        },
+        styles: { style: "fill", color: ext.color },
+        ignoreEvent: true,
+      },
+    ] as never;
+  },
+});
+
 export interface KlineCandlePaneProps {
   candles: CandleColumns;
   /**
@@ -282,11 +316,25 @@ export function KlineCandlePane({
         });
       }
 
-      // TODO (Task 3): render position bands.
-      const _positionExtData = positions;
-
-      // Suppress unused-variable lint for not-yet-wired stubs.
-      void _positionExtData;
+      // Render held long/short position spans as full-height xvnPositionBand
+      // overlays, one per span. The band is tinted with the theme's
+      // low-opacity position fill so it shades the pane without overwhelming
+      // the candles underneath.
+      for (const p of positions ?? []) {
+        chart.createOverlay({
+          name: "xvnPositionBand",
+          points: [
+            { timestamp: p.start * 1000, value: 0 },
+            { timestamp: p.end * 1000, value: 0 },
+          ],
+          extendData: {
+            color:
+              p.side === "long"
+                ? theme.position.longBand
+                : theme.position.shortBand,
+          },
+        });
+      }
     } catch (err) {
       console.warn("[KlineCandlePane] applyNewData threw:", err);
     }

@@ -280,6 +280,92 @@ describe("KlineCandlePane", () => {
     expect((markerOverlays[0].extendData as { kind: string }).kind).toBe("buy");
   });
 
+  it("creates an xvnPositionBand overlay for each position span", async () => {
+    render(
+      <KlineCandlePane
+        candles={candles}
+        positions={[{ side: "long", start: 1, end: 2 }]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    await waitFor(() => {
+      expect(
+        klineMocks.state.overlays.filter((o) => o.name === "xvnPositionBand")
+          .length,
+      ).toBeGreaterThanOrEqual(1);
+    });
+
+    const bandOverlays = klineMocks.state.overlays.filter(
+      (o) => o.name === "xvnPositionBand",
+    );
+    expect(bandOverlays).toHaveLength(1);
+    expect(bandOverlays[0].points).toEqual([
+      { timestamp: 1000, value: 0 },
+      { timestamp: 2000, value: 0 },
+    ]);
+  });
+
+  it("uses a distinct band color for short vs long spans", async () => {
+    render(
+      <KlineCandlePane
+        candles={candles}
+        positions={[
+          { side: "long", start: 1, end: 2 },
+          { side: "short", start: 3, end: 4 },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    await waitFor(() => {
+      expect(
+        klineMocks.state.overlays.filter((o) => o.name === "xvnPositionBand")
+          .length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+
+    const bandOverlays = klineMocks.state.overlays.filter(
+      (o) => o.name === "xvnPositionBand",
+    );
+    expect(bandOverlays).toHaveLength(2);
+
+    const longBand = bandOverlays.find(
+      (o) => (o.points as Array<{ timestamp: number }>)[0].timestamp === 1000,
+    )!;
+    const shortBand = bandOverlays.find(
+      (o) => (o.points as Array<{ timestamp: number }>)[0].timestamp === 3000,
+    )!;
+    const longColor = (longBand.extendData as { color: string }).color;
+    const shortColor = (shortBand.extendData as { color: string }).color;
+    expect(longColor).toBeTruthy();
+    expect(shortColor).toBeTruthy();
+    expect(longColor).not.toBe(shortColor);
+  });
+
+  it("registers the xvnPositionBand overlay template exactly once at module scope", async () => {
+    render(<KlineCandlePane candles={candles} />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    const bandTemplates = klineMocks.state.registeredTemplates.filter(
+      (t) => (t as { name?: string }).name === "xvnPositionBand",
+    );
+    expect(bandTemplates).toHaveLength(1);
+    expect(
+      typeof (bandTemplates[0] as { createPointFigures?: unknown })
+        .createPointFigures,
+    ).toBe("function");
+  });
+
   it("skips line series toggled off via overlayActive", async () => {
     render(
       <KlineCandlePane
