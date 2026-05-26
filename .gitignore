@@ -92,6 +92,14 @@ target/
 /docs/.DS_Store
 !/docs/design/
 !/docs/design/**
+# Keep macOS cruft out of the tracked docs/design tree (the negation above re-includes it otherwise)
+/docs/design/**/.DS_Store
+
+# NotebookLM research exports — local scratch, not tracked
+/docs/NLM/
+
+# Local temp scratch dir
+.tmp/
 
 # Git worktrees for parallel team operation (see team/README.md)
 .worktrees/
