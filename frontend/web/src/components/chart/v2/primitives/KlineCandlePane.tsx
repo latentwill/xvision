@@ -4,9 +4,10 @@
  * Wraps klinecharts v10-beta2. The library's `init()` function returns
  * `Nullable<Chart>` so every call to the chart instance is guarded.
  *
- * M0 wire-up: overlay/marker data is stored in extData for later wiring.
- * TODO M1: register overlays as KlineCharts indicators and markers via
- *          chart.createIndicator / chart.createOverlay.
+ * Candle-pane annotations (indicator lines, trade markers, position bands)
+ * render as custom klinecharts overlays — registered once at module scope
+ * (xvnLine / xvnMarker / xvnPositionBand) and created per data change, with
+ * prior overlays removed on each update so live streams don't accumulate them.
  */
 import React, { useEffect, useRef } from "react";
 import { init, dispose, registerOverlay } from "klinecharts";
