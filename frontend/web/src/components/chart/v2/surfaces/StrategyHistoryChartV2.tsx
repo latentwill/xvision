@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 
 import type { StrategyChartPayload } from "@/api/types.gen/StrategyChartPayload";
-import { ChartFrame } from "../primitives/ChartFrame";
+import { ChartFrame, type RangePreset } from "../primitives/ChartFrame";
+import { rangeWindowSeconds } from "../primitives/range-window";
 import {
   MultiStrategyEquityPane,
   type MultiStrategyEquitySeries,
@@ -17,8 +18,6 @@ const SCENARIO_PALETTE = [
   "#fb923c",
   "#10b981",
 ];
-
-type RangePreset = "1d" | "1w" | "1m" | "3m" | "All";
 
 export function StrategyHistoryChartV2({
   payload,
@@ -119,15 +118,11 @@ function applyRange(
 ): ReturnType<typeof buildStrategyHistoryChart> {
   if (range === "All" || chart.time.length === 0) return chart;
 
-  const seconds = {
-    "1d": 86_400,
-    "1w": 7 * 86_400,
-    "1m": 30 * 86_400,
-    "3m": 90 * 86_400,
-  } satisfies Record<Exclude<RangePreset, "All">, number>;
+  const windowSec = rangeWindowSeconds(range);
+  if (windowSec === null) return chart;
 
   const maxTime = chart.time[chart.time.length - 1];
-  const cutoff = maxTime - seconds[range];
+  const cutoff = maxTime - windowSec;
   const indexes = chart.time
     .map((time, index) => ({ time, index }))
     .filter(({ time }) => time >= cutoff);

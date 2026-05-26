@@ -1101,6 +1101,9 @@ impl Executor {
                         None,
                         decision_idx as i64,
                         Some(&asset),
+                        Some(bar.timestamp),
+                        Some(bar.close),
+                        Some(book.position(asset_sym)),
                     )
                     .await;
                     let payload = serde_json::json!({
@@ -1896,12 +1899,37 @@ impl Executor {
                 // F43 (`trace-dock-emitters`): close the per-decision span
                 // + emit the `decision_completed` engine event so the
                 // trace dock can compute decision-scoped duration.
+                //
+                // QA30: enrich the payload so the SpanInspector renders a
+                // useful summary when an operator clicks an `agent.decision`
+                // span — previously the trace dock showed an "empty"
+                // decision span with no action / price / position context.
+                // The shape mirrors `eval_decisions` row fields plus the
+                // pre-fill position so a reader can see what the agent saw
+                // entering the cycle.
                 if let Some(obs) = self.obs_emitter.as_ref() {
                     obs.emit_span_finished_ok(&decision_span_id).await;
+                    let post_fill_position = book.position(asset_sym);
                     let payload = serde_json::json!({
                         "decision_index": decision_idx,
                         "asset": asset,
+                        "bar_ts": bar.timestamp.to_rfc3339(),
+                        "mark_price": bar.close,
+                        "action": parsed.action,
                         "applied_action": applied_action,
+                        "conviction": parsed.conviction,
+                        "justification": parsed.justification,
+                        "filled": fill_happened,
+                        "fill_price": fill.fill_price,
+                        "fill_size": fill.fill_size,
+                        "fee": fill.fee,
+                        "realized_pnl": if fill.realized_pnl != 0.0 {
+                            Some(fill.realized_pnl)
+                        } else {
+                            None
+                        },
+                        "position_pre": pre_fill_position,
+                        "position_post": post_fill_position,
                     });
                     obs.emit_engine_event(
                         "decision_completed",

@@ -362,6 +362,21 @@ export function SpanInspector({
             body={<BrokerCallDetailRows detail={span.broker_call} />}
           />
         ) : null}
+        {span.kind === "agent.decision" ? (
+          // QA30: decision spans previously rendered empty. The engine
+          // now stamps the entry-state snapshot (asset, bar_ts,
+          // mark_price, position_pre) into `attributes_json` at span
+          // open so the inspector has something to show even when the
+          // close-time payload (action, fill, position_post) hasn't
+          // been folded onto the row yet — that flows through the
+          // separate `decision_completed` engine event.
+          <PullQuote
+            label="DECISION"
+            accent={color.hex}
+            glyph="◆"
+            body={<DecisionSpanDetailRows attrs={span.attributes} />}
+          />
+        ) : null}
         {span.prompt ? (
           <PullQuote label="PROMPT" body={span.prompt} accent={color.hex} glyph="›" />
         ) : span.kind === "model.call" && (span.prompt_payload_ref || span.hash) ? (
@@ -781,6 +796,61 @@ function BrokerCallDetailRows({ detail }: { detail: BrokerCallDetail }) {
           <dd className="text-text-2 break-all">{detail.error_message}</dd>
         </>
       ) : null}
+    </dl>
+  );
+}
+
+/**
+ * QA30 — render the `agent.decision` span's pre-decision snapshot off
+ * its `attributes_json` bag: asset, bar timestamp, mark price, and the
+ * position the trader was holding when the cycle opened. The
+ * post-decision payload (action, fill, position_post, realized_pnl)
+ * lives in the matching `decision_completed` engine event and is shown
+ * by the trace dock's event timeline; this component is the inspector
+ * surface for what the span itself carries.
+ */
+function DecisionSpanDetailRows({
+  attrs,
+}: {
+  attrs: Record<string, unknown>;
+}) {
+  const fmt = (n: unknown, digits = 4): string => {
+    if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+    return n.toFixed(digits);
+  };
+  const asset = typeof attrs.asset === "string" ? attrs.asset : null;
+  const barTs = typeof attrs.bar_ts === "string" ? attrs.bar_ts : null;
+  const markPrice = attrs.mark_price;
+  const positionPre = attrs.position_pre;
+  const decisionIndex =
+    typeof attrs.decision_index === "number" ? attrs.decision_index : null;
+  return (
+    <dl
+      data-testid="span-inspector-decision"
+      className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[11px] font-mono"
+    >
+      {decisionIndex != null ? (
+        <>
+          <dt className="text-text-3">cycle</dt>
+          <dd className="text-text">#{decisionIndex}</dd>
+        </>
+      ) : null}
+      {asset ? (
+        <>
+          <dt className="text-text-3">asset</dt>
+          <dd className="text-text">{asset}</dd>
+        </>
+      ) : null}
+      {barTs ? (
+        <>
+          <dt className="text-text-3">bar</dt>
+          <dd className="text-text-2 break-all">{barTs}</dd>
+        </>
+      ) : null}
+      <dt className="text-text-3">mark px</dt>
+      <dd className="text-text">{fmt(markPrice, 4)}</dd>
+      <dt className="text-text-3">position pre</dt>
+      <dd className="text-text">{fmt(positionPre, 6)}</dd>
     </dl>
   );
 }

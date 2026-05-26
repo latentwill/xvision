@@ -8,6 +8,7 @@ import type { SpanKind } from "@/api/types-agent-runs";
 
 export type SpanCategory =
   | "agent"
+  | "decision"
   | "model"
   | "tool"
   | "broker"
@@ -21,6 +22,12 @@ type CategoryStyle = {
 
 export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
   agent:      { hex: "#a39a85", label: "AGENT" },
+  // QA30: `agent.decision` spans previously fell into the supervisor
+  // catch-all and rendered as "SUPER" green, which confused operators
+  // — the user expected the three primary span kinds (decision, tool,
+  // model) to be visually first-class. Give decision its own swatch +
+  // 5-char DECDE label so the trace dock reads as the producer wired it.
+  decision:   { hex: "#fbbf24", label: "DECDE" },
   model:      { hex: "#7dd3fc", label: "MODEL" },
   tool:       { hex: "#6ee7b7", label: "TOOL"  },
   // qa-trace-broker-spans: distinct rose tint for broker.call rows so
@@ -33,6 +40,11 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
 
 export function categoryOf(kind: SpanKind): SpanCategory {
   if (kind === "agent.run" || kind === "agent.plan") return "agent";
+  // QA30: agent.decision is its own first-class category, not a
+  // supervisor sub-kind. Decision spans carry the buy/sell/hold action
+  // + positions + price/asset on close and need to read as the
+  // producer-stamped action they are.
+  if (kind === "agent.decision") return "decision";
   if (kind === "model.call") return "model";
   // F-4 validate brackets are tool-adjacent — keep them in the tool
   // column so a flame-graph reader sees one continuous tool band per

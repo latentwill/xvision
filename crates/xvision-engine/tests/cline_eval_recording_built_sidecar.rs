@@ -208,6 +208,7 @@ fn replay_input<'a>(
         response_schema: ResponseSchema::trader_output(),
         allowed_tools: Vec::new(),
         max_tokens: Some(4096),
+        max_wall_ms: None,
         run_id: run_id.into(),
         cline_client: client,
         trajectory_mode: TrajectoryMode::Replay { recording_id, store },

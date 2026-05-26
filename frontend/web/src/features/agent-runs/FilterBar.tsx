@@ -11,7 +11,10 @@ import type { StatusFilter } from "./use-span-filter";
 // see `span-colors.ts::categoryOf`) remain in the trace and are still
 // queryable via the search input (`title:approval.request`,
 // `kind:supervisor` in the URL/localStorage state).
-const KIND_ORDER: SpanCategory[] = ["agent", "model", "tool", "broker", "artifact"];
+// QA30: `decision` chip added between agent and model — operators
+// want the three primary span kinds (decision / tool / model) first-class
+// on the filter row.
+const KIND_ORDER: SpanCategory[] = ["agent", "decision", "model", "tool", "broker", "artifact"];
 
 const STATUS_DEF: Array<{ k: StatusFilter; glyph: string; tint: string; bg: string; bd: string }> = [
   { k: "green", glyph: "✓", tint: "var(--gold)",   bg: "var(--gold-bg)",         bd: "var(--gold-soft)" },

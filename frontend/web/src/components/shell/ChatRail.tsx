@@ -78,7 +78,13 @@ import type {
 const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
+const RAIL_MODE_LS = "xvn.chat_rail.mode";
 const RAIL_HISTORY_COLLAPSED_LS = "xvn.chat_rail.history_collapsed";
+
+function readPersistedMode(): ChatSessionMode {
+  const v = safeStorageGet(RAIL_MODE_LS);
+  return v === "act" ? "act" : "research";
+}
 
 export type ChatRailProps = {
   variant?: "desktop" | "panel";
@@ -109,7 +115,7 @@ export function ChatRail({
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<ChatSessionMode>("research");
+  const [mode, setMode] = useState<ChatSessionMode>(() => readPersistedMode());
   const [modePending, setModePending] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState<boolean>(() => {
     return safeStorageGet(RAIL_HISTORY_COLLAPSED_LS) === "1";
@@ -219,6 +225,12 @@ export function ChatRail({
     if (variant !== "desktop") return;
     safeStorageSet(RAIL_OPEN_LS, open ? "1" : "0");
   }, [open, variant]);
+
+  // Persist mode so a new chat inherits the user's last choice (Think/Act)
+  // instead of always defaulting back to "research".
+  useEffect(() => {
+    safeStorageSet(RAIL_MODE_LS, mode);
+  }, [mode]);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -449,9 +461,22 @@ export function ChatRail({
       resetSessionEvents(created.session_id);
       sessionIdRef.current = created.session_id;
       setSessionId(created.session_id);
-      setMode(created.mode ?? "research");
+      const serverMode = created.mode ?? "research";
+      const persistedMode = readPersistedMode();
+      setMode(serverMode);
       setBubbles(historyToBubbles(created.history));
       lastScopeKeyRef.current = key;
+      // Inherit the operator's last-used mode on the fresh session so
+      // creating a new chat from Act mode doesn't silently drop back to
+      // research/think.
+      if (persistedMode !== serverMode) {
+        try {
+          const out = await setSessionMode(created.session_id, persistedMode);
+          setMode(out.mode);
+        } catch {
+          // Best-effort: fall back to whatever the server returned.
+        }
+      }
       void sessionsQ.refetch();
     } catch (e) {
       setError(formatErr(e));
@@ -972,8 +997,25 @@ function unifiedRowsToBubbles(rows: MessageRow[]): Bubble[] {
   const out: Bubble[] = [];
   let current: AssistantBubble | null = null;
 
+  // QA30: when a non-assistant row (tool / error / optimizer) arrives
+  // and `current` is null — e.g. immediately after a checkpoint reset,
+  // or before the first assistant row of a turn has been projected —
+  // prefer attaching to the LAST assistant bubble already in `out`
+  // rather than minting a fresh empty bubble for it. The previous
+  // behaviour would orphan tool rows into a standalone empty assistant
+  // bubble that rendered above (or below) the real response, surfacing
+  // as "tool call stayed open / appears twice / appears above the
+  // agent message" in QA reports.
   const ensureBubble = (): AssistantBubble => {
     if (!current) {
+      for (let i = out.length - 1; i >= 0; i -= 1) {
+        const cand = out[i];
+        if (cand.role === "assistant") {
+          current = cand;
+          return current;
+        }
+        if (cand.role === "checkpoint") break;
+      }
       current = { role: "assistant", blocks: [], tools: [] };
       out.push(current);
     }

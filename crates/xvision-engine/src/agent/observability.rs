@@ -507,12 +507,23 @@ impl ObsEmitter {
     /// `span_id`. Carries `decision_index` in the typed attributes
     /// bag so the trace dock can group child spans without inferring
     /// the index from the bar timeline.
+    ///
+    /// QA30: the span attributes now also include the entry-state
+    /// snapshot the trader is about to operate on (`bar_ts`,
+    /// `mark_price`, `position_pre`), so a SpanInspector reader can
+    /// see "what was on the table" when this decision opened. The
+    /// post-decision payload (action / fill / position_post) lives in
+    /// the `decision_completed` engine event because the action isn't
+    /// known until after the model + risk + executor run.
     pub async fn emit_decision_span_started(
         &self,
         span_id: &str,
         parent_span_id: Option<String>,
         decision_index: i64,
         asset: Option<&str>,
+        bar_ts: Option<chrono::DateTime<chrono::Utc>>,
+        mark_price: Option<f64>,
+        position_pre: Option<f64>,
     ) {
         let attrs = SpanAttributes {
             run_id: Some(self.run_id.clone()),
@@ -522,6 +533,22 @@ impl ObsEmitter {
         let mut base = serde_json::Map::new();
         if let Some(a) = asset {
             base.insert("asset".to_string(), serde_json::Value::String(a.to_string()));
+        }
+        if let Some(ts) = bar_ts {
+            base.insert(
+                "bar_ts".to_string(),
+                serde_json::Value::String(ts.to_rfc3339()),
+            );
+        }
+        if let Some(p) = mark_price {
+            if let Some(n) = serde_json::Number::from_f64(p) {
+                base.insert("mark_price".to_string(), serde_json::Value::Number(n));
+            }
+        }
+        if let Some(p) = position_pre {
+            if let Some(n) = serde_json::Number::from_f64(p) {
+                base.insert("position_pre".to_string(), serde_json::Value::Number(n));
+            }
         }
         let merged = if base.is_empty() {
             attrs.to_attributes_json()

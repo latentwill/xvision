@@ -168,6 +168,7 @@ async fn cline_record_matches_llm_dispatch_over_fixed_cycles() {
             response_schema: ResponseSchema::trader_output(),
             allowed_tools: vec!["indicators.rsi".into()],
             max_tokens: Some(4096),
+            max_wall_ms: None,
             run_id: format!("parity-{i}::trader"),
             cline_client: client.clone(),
             trajectory_mode: TrajectoryMode::Record,

@@ -179,6 +179,38 @@ Next-wave roadmap source: `docs/superpowers/plans/2026-05-13-v2-v4-action-plan.m
 The conductor decomposes one wave at a time; do not freelance contracts from
 that list without going through intake.
 
+## Frontend layout rule: no right-side boxes when the chat rail is visible
+
+The dashboard SPA's desktop shell is a three-pane grid: left sidebar, center
+column, right chat rail (`DesktopThreePaneShell`,
+`grid-cols-[220px_minmax(0,1fr)_auto]`). Detail pages must NOT add a
+fourth column / right sidebar / floating side card. The chat rail
+already occupies the right edge; a `col-span-4` sidebar on top of it
+shrinks the center column where the chart, decisions, and primary
+content live.
+
+Practical rule:
+
+- The default detail-page layout is a single full-width column
+  (`space-y-5`, no `grid-cols-12`).
+- Auxiliary boxes (META / run config strips, review panels, action
+  rows, persona pickers) go INLINE — above or below the center
+  content, full-width, ideally as a horizontal row of chips rather
+  than a stacked card.
+- Side panels are allowed on routes that don't carry the chat rail
+  (e.g. the chart-lab playground, settings, or pre-rail standalone
+  views). Anywhere `<Layout>` is rendered, treat the right column as
+  reserved.
+- If you need to surface contextual help/reviews that don't merit a
+  full strip, route them through a dock or accordion (consistent with
+  the no-popups rule below).
+
+Adopted 2026-05-26 (QA30). The first migration sweep moved the
+eval-runs-detail page off `grid-cols-12 lg:col-span-8 / lg:col-span-4`
+to a single-column layout. Future PRs that introduce a sidebar must
+either route around the chat rail entirely or convert to an inline
+strip.
+
 ## Frontend UI rule: no popups
 
 The dashboard SPA does not use popups, modals, sheets, popovers, or any

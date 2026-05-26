@@ -66,6 +66,20 @@ function fmtElapsedSec(totalSec: number): string {
 }
 
 /**
+ * Format a `RunSummary.total_return_pct` value (percent, e.g. `1.42`) into
+ * the capsule's compact PnL string. `null` / unavailable values render as
+ * "—" so the row still has a slot for them.
+ *
+ * Leading sign is preserved (`+`, `-`) so the capsule can colour-tone by
+ * sign — see `EvalCapsule#pnlTone`.
+ */
+function formatPnlPct(pct: number | null): string {
+  if (pct == null || !Number.isFinite(pct)) return "—";
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
+}
+
+/**
  * How long a freshly-failed sibling should stay in the capsule after its
  * `completed_at` timestamp. Past this window the row drops out — the
  * operator has either acknowledged it or navigated away. Keeps the
@@ -246,6 +260,12 @@ export function StripDockSlot() {
   const focusedAgentId = summary.agent_id ?? summary.strategy_id ?? "agent";
   const focusedScenarioId = focusedEvalQ.data?.summary.scenario_id ?? "scenario";
   const focusedTone = deriveFocusedTone(summary, mode);
+  // QA30: surface the focused eval's PnL (% return) so the capsule
+  // shows "is this making money" at a glance. Pulled off the linked
+  // eval-run summary because the agent-run summary doesn't carry it.
+  const focusedPnl = formatPnlPct(
+    focusedEvalQ.data?.summary.total_return_pct ?? null,
+  );
   const focused: EvalCapsuleFocused = {
     id: summary.run_id,
     short: shortTag(
@@ -258,6 +278,7 @@ export function StripDockSlot() {
     spans: summary.span_count,
     elapsed: isLive ? fmtElapsedSec(liveDurationSec) : fmtPostHoc(frozenDurationMs),
     cost: formatCostUsd(summary.total_cost_usd),
+    pnl: focusedPnl,
     currentSpan: liveChip,
   };
 
@@ -296,9 +317,17 @@ export function StripDockSlot() {
           r.scenario_id,
         ),
         status: deriveSiblingTone(r.status),
+        // QA30: sibling rows previously hardcoded "—" for spans + cost.
+        // Span counts live on the AgentRunSummary (one-per-eval lookup);
+        // making that hop is a follow-on task because `RunSummary` (the
+        // wire shape the eval-runs list returns) doesn't carry
+        // `agent_run_id`. As a partial improvement, surface the LLM
+        // inference cost already on `RunSummary` so the operator sees a
+        // running cost figure for each concurrent eval at a glance.
         spans: "—",
         elapsed: fmtElapsedSec(sibElapsedSec),
-        cost: "—",
+        cost: formatCostUsd(r.inference_cost_quote_total ?? null),
+        pnl: formatPnlPct(r.total_return_pct ?? null),
       };
     });
 

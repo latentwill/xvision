@@ -6,6 +6,14 @@ import type { RangePreset } from "./ChartFrame";
  */
 export function rangeWindowSeconds(preset: RangePreset): number | null {
   switch (preset) {
+    case "1h":
+      return 3_600;
+    case "4h":
+      return 4 * 3_600;
+    case "6h":
+      return 6 * 3_600;
+    case "12h":
+      return 12 * 3_600;
     case "1d":
       return 86_400;
     case "1w":

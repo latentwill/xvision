@@ -18,6 +18,7 @@ import {
   UplotHistogramPane,
   UplotLinePane,
   UplotOscillatorPane,
+  type RangePreset,
 } from "@/components/chart/v2/primitives";
 import { useChart2Theme } from "@/components/chart/v2/hooks/useChart2Theme";
 import { getChart2Fixture } from "@/components/chart/v2/hooks/useChart2Fixture";
@@ -38,7 +39,7 @@ export function ChartLabPrimitives() {
   const theme = useChart2Theme();
   const run = getChart2Fixture("run");
   const compare = getChart2Fixture("compare");
-  const [range, setRange] = useState<"1d" | "1w" | "1m" | "3m" | "All">("All");
+  const [range, setRange] = useState<RangePreset>("All");
 
   return (
     <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">

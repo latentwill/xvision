@@ -91,6 +91,7 @@ fn slot_input<'a>(
         response_schema: ResponseSchema::trader_output(),
         allowed_tools: vec!["indicators.rsi".into()],
         max_tokens: Some(4096),
+        max_wall_ms: None,
         run_id: run_id.into(),
         cline_client: client,
         trajectory_mode: xvision_engine::agent::execute_cline::TrajectoryMode::Record,

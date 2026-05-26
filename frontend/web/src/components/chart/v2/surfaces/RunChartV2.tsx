@@ -6,7 +6,6 @@ import {
   KlineCandlePane,
   LayerPanel,
   Legend,
-  MarkerDock,
   PaneStack,
   UplotDrawdownPane,
   UplotEquityPane,
@@ -21,10 +20,16 @@ import type { RunChartV2Payload } from "../types";
 
 type Props = {
   payload: RunChartV2Payload;
+  /**
+   * Deprecated (2026-05-26 / QA30): the marker dock was a right-side
+   * annotation rail that shrank the chart and duplicated information already
+   * shown on the chart itself. Kept as a no-op prop for compat with existing
+   * call sites so a follow-up sweep can remove the references.
+   */
   showMarkerDock?: boolean;
 };
 
-export function RunChartV2({ payload, showMarkerDock = true }: Props) {
+export function RunChartV2({ payload }: Props) {
   const [range, setRange] = useState<RangePreset>("All");
   const { layers, toggle } = useChart2Layers("run");
   const syncKey = useChart2Sync("run");
@@ -86,7 +91,7 @@ export function RunChartV2({ payload, showMarkerDock = true }: Props) {
   });
 
   return (
-    <div className="grid grid-cols-[1fr_240px] gap-3">
+    <div className="w-full">
       <ChartFrame
         title={`Run · ${payload.asset} · ${payload.granularity}`}
         range={range}
@@ -195,7 +200,6 @@ export function RunChartV2({ payload, showMarkerDock = true }: Props) {
           <div className="ml-auto"><CacheStatusBadge state="fresh" /></div>
         </div>
       </ChartFrame>
-      {showMarkerDock ? <MarkerDock markers={markers} /> : null}
     </div>
   );
 }

@@ -19,6 +19,43 @@
 import type { JSX } from "react";
 
 const REPEATED_BROKER_ERROR_PREFIX = "[repeated_broker_error]";
+const BUDGET_EXCEEDED_PREFIX = "[budget_exceeded]";
+
+/**
+ * QA30 — recognise the `[budget_exceeded]` tag produced by the
+ * `recovery::classify` matcher for the Cline sidecar's
+ * `budget_wall_ms_exceeded` / `budget_input_tokens_exceeded` /
+ * `budget_output_tokens_exceeded` step aborts. Surfaces a friendly
+ * "Stopped — wall-time budget exceeded" banner above the raw text so
+ * the operator doesn't see the run as an outright failure when the
+ * harness simply pulled the plug on a still-responding model.
+ */
+export function parseBudgetExceeded(error: string): {
+  kind: "wall_ms" | "input_tokens" | "output_tokens" | null;
+} | null {
+  if (!error.startsWith(BUDGET_EXCEEDED_PREFIX)) return null;
+  if (error.includes("budget_wall_ms_exceeded")) return { kind: "wall_ms" };
+  if (error.includes("budget_input_tokens_exceeded"))
+    return { kind: "input_tokens" };
+  if (error.includes("budget_output_tokens_exceeded"))
+    return { kind: "output_tokens" };
+  return { kind: null };
+}
+
+export function budgetExceededHeadline(
+  kind: "wall_ms" | "input_tokens" | "output_tokens" | null,
+): string {
+  switch (kind) {
+    case "wall_ms":
+      return "Strategy stopped — wall-time budget exceeded";
+    case "input_tokens":
+      return "Strategy stopped — input-token budget exceeded";
+    case "output_tokens":
+      return "Strategy stopped — output-token budget exceeded";
+    default:
+      return "Strategy stopped — runtime budget exceeded";
+  }
+}
 
 /**
  * Parse the executor's structured `repeated_broker_error` body. The
@@ -87,6 +124,32 @@ export function RunSummaryError({ error }: RunSummaryErrorProps): JSX.Element | 
   if (!error) return null;
 
   const repeated = parseRepeatedBrokerError(error);
+  const budget = parseBudgetExceeded(error);
+
+  // QA30: budget-exceeded is a CLEAN stop, not a failure. Render it on
+  // a warn-tinted card rather than the danger-tinted one used for true
+  // failures, and lead with the friendly headline.
+  if (budget) {
+    return (
+      <div
+        className="mt-4 p-3 border border-warn/40 bg-warn/[0.06] rounded-sm"
+        data-testid="run-summary-budget-exceeded"
+      >
+        <div className="mb-2 text-[12px] text-warn">
+          <span className="font-mono uppercase tracking-wide text-[10px] mr-2">
+            stopped
+          </span>
+          {budgetExceededHeadline(budget.kind)}
+        </div>
+        <div className="text-[11px] text-text-3 uppercase tracking-wide mb-1">
+          detail
+        </div>
+        <code className="font-mono text-[12px] text-text-2 whitespace-pre-wrap break-words">
+          {error}
+        </code>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-4 p-3 border border-danger/40 bg-danger/[0.06] rounded-sm">

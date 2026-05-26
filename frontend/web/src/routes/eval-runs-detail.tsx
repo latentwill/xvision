@@ -123,24 +123,36 @@ export function EvalRunDetailRoute() {
   useLiveRunStream(id, q.data, qc);
   const isPhone = useIsPhone();
 
+  // QA30: the trace-dock keys on AGENT-RUN id (it fetches via
+  // `getAgentRun(activeRunId)` and projects everything from that
+  // summary's `financial_eval_id`). Setting `activeRun` to the
+  // eval-run URL param was the source of the multi-eval bug — when
+  // the user navigated to a sibling eval, the route changed, this
+  // effect fired with the new eval-run id, the agent-run query
+  // returned 404, the capsule fell back to its previous render, and
+  // the user perceived the capsule as "not switching". Use the
+  // linked agent-run id (via `traceRunId(summary)`) instead. Wait
+  // until `q.data` is loaded so we have the mapping before flipping
+  // the dock state.
+  const traceRun = q.data ? traceRunId(q.data.summary) : "";
   useEffect(() => {
-    if (!id) return;
+    if (!traceRun) return;
     const status = q.data?.summary.status;
     useTraceDock
       .getState()
-      .setActiveRun(id, status && isInflightRunStatus(status) ? "live" : "post-hoc");
-  }, [id, q.data?.summary.status]);
+      .setActiveRun(traceRun, status && isInflightRunStatus(status) ? "live" : "post-hoc");
+  }, [traceRun, q.data?.summary.status]);
 
   // Drop the active run from the trace-dock store on unmount so the floating
   // capsule doesn't bleed onto other routes after navigation.
   useEffect(() => {
     return () => {
       const dock = useTraceDock.getState();
-      if (dock.activeRunId === id) {
+      if (dock.activeRunId === traceRun) {
         dock.setActiveRun(null, "post-hoc");
       }
     };
-  }, [id]);
+  }, [traceRun]);
 
   if (q.isPending) {
     if (isPhone) return <MobileEvalRunDetailLoading id={id} />;
@@ -273,51 +285,57 @@ export function EvalRunDetailRoute() {
             </div>
           </div>
 
-          <div className="grid grid-cols-12 gap-5">
-            <div className="col-span-12 lg:col-span-8 space-y-5">
-              <SummaryCard
-                summary={detail.summary}
-                equityCurve={detail.equity_curve}
-                totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
-                chartPending={chart.isPending}
-                chartError={chart.isError ? String(chart.error) : null}
-                chartNode={chart.data ? <RunChartV2 payload={runChartPayloadToV2(chart.data)} /> : null}
-                onCancel={() => cancel.mutate(detail.summary.id)}
-                cancelling={cancel.variables === detail.summary.id && cancel.isPending}
-                onRetry={() => retry.mutate(detail.summary.id)}
-                retrying={retry.variables === detail.summary.id && retry.isPending}
-                retryError={
-                  retry.isError && retry.error
-                    ? retry.error instanceof Error
-                      ? retry.error.message
-                      : String(retry.error)
-                    : null
-                }
-                onDelete={() => remove.mutate(detail.summary.id)}
-                deleting={remove.variables === detail.summary.id && remove.isPending}
-              />
+          {/*
+            QA30: layout rule — no right-side boxes. The chat rail already
+            eats the right edge of the desktop shell, so a `col-span-4`
+            sidebar shrinks the center column where the chart + decisions
+            live. MetaCard and ReviewPanel are now stacked above the center
+            content as full-width strips. See CLAUDE.md "Frontend layout
+            rule: no right-side boxes when the chat rail is visible".
+          */}
+          <div className="space-y-5">
+            <MetaCard
+              summary={detail.summary}
+              totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
+            />
 
-              {/* Multi-asset: per-asset decision rollup above the decisions list. */}
-              <AssetRollupPanel decisions={detail.decisions} />
-              <DecisionsCard rows={detail.decisions} />
-            </div>
+            <SummaryCard
+              summary={detail.summary}
+              equityCurve={detail.equity_curve}
+              totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
+              chartPending={chart.isPending}
+              chartError={chart.isError ? String(chart.error) : null}
+              chartNode={chart.data ? <RunChartV2 payload={runChartPayloadToV2(chart.data)} /> : null}
+              onCancel={() => cancel.mutate(detail.summary.id)}
+              cancelling={cancel.variables === detail.summary.id && cancel.isPending}
+              onRetry={() => retry.mutate(detail.summary.id)}
+              retrying={retry.variables === detail.summary.id && retry.isPending}
+              retryError={
+                retry.isError && retry.error
+                  ? retry.error instanceof Error
+                    ? retry.error.message
+                    : String(retry.error)
+                  : null
+              }
+              onDelete={() => remove.mutate(detail.summary.id)}
+              deleting={remove.variables === detail.summary.id && remove.isPending}
+            />
 
-            <div className="col-span-12 lg:col-span-4 space-y-5">
-              <MetaCard
-                summary={detail.summary}
-                totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
-              />
+            {/* Multi-asset: per-asset decision rollup above the decisions list. */}
+            <AssetRollupPanel decisions={detail.decisions} />
+            <DecisionsCard rows={detail.decisions} />
 
-              {/*
-                `key={detail.summary.id}` resets ReviewPanel local state when the
-                route is reused for a different run id.
-              */}
-              <ReviewPanel
-                key={detail.summary.id}
-                runId={detail.summary.id}
-                runIsCompleted={detail.summary.status === "completed"}
-              />
-            </div>
+            {/*
+              `key={detail.summary.id}` resets ReviewPanel local state when
+              the route is reused for a different run id. Inlined below the
+              decisions list (was a right-side sidebar that shrank the
+              chart on desktops with the chat rail open).
+            */}
+            <ReviewPanel
+              key={detail.summary.id}
+              runId={detail.summary.id}
+              runIsCompleted={detail.summary.status === "completed"}
+            />
           </div>
         </div>
       </div>
@@ -729,10 +747,15 @@ function MetaCard({
         </h2>
         <span className="text-[11px] font-mono text-text-3">run config</span>
       </div>
-      <div className="p-4 text-[11px] font-mono space-y-1.5">
+      {/*
+        QA30: META was a tall vertical stack rendered in a 4/12 right
+        sidebar. Inlined above the center column as a horizontal row of
+        chips so it doesn't shrink the chart or eat vertical space.
+      */}
+      <div className="p-4 text-[11px] font-mono flex flex-wrap gap-x-6 gap-y-2">
         {rows.map(([k, v]) => (
-          <div key={k} className="flex items-baseline gap-3">
-            <span className="w-[80px] shrink-0 text-[10px] uppercase tracking-[0.14em] text-text-3">
+          <div key={k} className="flex items-baseline gap-2">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-text-3">
               {k}
             </span>
             <span className="text-text tabular-nums break-all">{v}</span>
