@@ -28,6 +28,11 @@ export function Sidebar({ className = "" }: { className?: string }) {
     <aside
       className={[
         "bg-surface-sidebar border-r border-border-soft flex flex-col w-[220px] pt-6 pb-4",
+        // Pin to the viewport so the theme toggle + account row stay anchored
+        // to the bottom of the screen instead of scrolling away with a tall
+        // main column (the shell grid is min-h-screen, which would otherwise
+        // stretch this aside to full page height).
+        "sticky top-0 h-screen",
         className,
       ].join(" ")}
     >
@@ -35,7 +40,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
         <BrandMark height={24} />
       </div>
 
-      <nav className="flex-1 flex flex-col">
+      <nav className="flex-1 flex flex-col min-h-0 overflow-y-auto">
         {PRIMARY.map((it) => (
           <div key={it.to}>
             <NavLink
