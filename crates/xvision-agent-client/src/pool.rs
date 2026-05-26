@@ -26,8 +26,9 @@
 //! held, the caller detects the dead client (typically via a failed RPC call),
 //! marks the in-flight recording as `incomplete`, and calls
 //! [`PoolLease::report_crash`].  On drop of a crashed lease the pool spawns an
-//! async task to build the replacement client and then marks the slot `Idle`
-//! (via the atomic status flag) and increments the restart counter.
+//! async task to build the replacement client, then marks the slot `Idle`,
+//! increments the restart counter, and wakes lease waiters that observed the
+//! slot while it was still `Replacing`.
 //!
 //! ## Operational visibility (Stage-4 Item 3)
 //!
@@ -46,7 +47,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, OwnedMutexGuard, Semaphore};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard, Semaphore};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SlotStatus — atomic status codes
@@ -115,6 +116,7 @@ struct PoolSlot<T> {
 pub struct SidecarPool<T, F> {
     slots: Vec<PoolSlot<T>>,
     semaphore: Arc<Semaphore>,
+    replacement_notify: Arc<Notify>,
     restart_count: Arc<AtomicU32>,
     factory: Arc<F>,
     _bin: Option<PathBuf>,
@@ -138,6 +140,7 @@ where
         Self {
             slots,
             semaphore: Arc::new(Semaphore::new(capacity)),
+            replacement_notify: Arc::new(Notify::new()),
             restart_count: Arc::new(AtomicU32::new(0)),
             factory: Arc::new(factory),
             _bin: None,
@@ -146,41 +149,49 @@ where
 
     /// Acquire a lease.  Awaits until a slot is available.
     pub async fn lease(&self) -> PoolLease<T, F> {
-        // Acquire a semaphore permit — blocks until a slot is available.
-        let permit = self
-            .semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .expect("semaphore not closed");
+        loop {
+            // Acquire a semaphore permit — blocks until capacity may be available.
+            let permit = self
+                .semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("semaphore not closed");
 
-        // Find the first Idle slot and atomically mark it Leased.
-        // Because we hold a semaphore permit, at least one Idle slot exists.
-        // We use a CAS loop per slot to claim atomically.
-        for (idx, slot) in self.slots.iter().enumerate() {
-            if slot
-                .status
-                .compare_exchange(STATUS_IDLE, STATUS_LEASED, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                return PoolLease {
-                    idx,
-                    status: slot.status.clone(),
-                    client: slot.client.clone(),
-                    factory: self.factory.clone(),
-                    restart_count: self.restart_count.clone(),
-                    crashed: false,
-                    _permit: permit,
-                };
+            // Find the first Idle slot and atomically mark it Leased. During
+            // crash replacement a permit can be available while the only slot
+            // is still Replacing, so absence of an Idle slot is retryable.
+            for (idx, slot) in self.slots.iter().enumerate() {
+                if slot
+                    .status
+                    .compare_exchange(STATUS_IDLE, STATUS_LEASED, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    return PoolLease {
+                        idx,
+                        status: slot.status.clone(),
+                        client: slot.client.clone(),
+                        factory: self.factory.clone(),
+                        replacement_notify: self.replacement_notify.clone(),
+                        restart_count: self.restart_count.clone(),
+                        crashed: false,
+                        _permit: permit,
+                    };
+                }
             }
+
+            drop(permit);
+            self.replacement_notify.notified().await;
         }
-        // Should never reach here if the semaphore is consistent.
-        panic!("semaphore permit acquired but no idle slot found");
     }
 
     /// Point-in-time pool stats.
     pub fn stats(&self) -> PoolStats {
-        let idle = self.semaphore.available_permits();
+        let idle = self
+            .slots
+            .iter()
+            .filter(|slot| slot.status.load(Ordering::Acquire) == STATUS_IDLE)
+            .count();
         PoolStats {
             capacity: self.slots.len(),
             idle,
@@ -218,6 +229,7 @@ where
     /// The client behind a Mutex.
     client: Arc<Mutex<T>>,
     factory: Arc<F>,
+    replacement_notify: Arc<Notify>,
     restart_count: Arc<AtomicU32>,
     crashed: bool,
     _permit: tokio::sync::OwnedSemaphorePermit,
@@ -277,6 +289,7 @@ where
             let status = self.status.clone();
             let client = self.client.clone();
             let factory = self.factory.clone();
+            let replacement_notify = self.replacement_notify.clone();
             let restart_count = self.restart_count.clone();
             tokio::spawn(async move {
                 let new_client = (factory)(idx).await;
@@ -285,6 +298,7 @@ where
                 // Mark idle (publish via Release so lease() sees it via Acquire).
                 status.store(STATUS_IDLE, Ordering::Release);
                 restart_count.fetch_add(1, Ordering::Relaxed);
+                replacement_notify.notify_waiters();
             });
         } else {
             // Clean return: mark Idle atomically BEFORE the semaphore permit
@@ -293,32 +307,6 @@ where
         }
         // `_permit` is dropped here, releasing the semaphore slot.
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// lease() spin-guard for the Replacing window
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// When a crash replacement is in progress, `lease()` may acquire the semaphore
-// permit but find no `Idle` slot (all are `Replacing` or `Leased`).  To handle
-// this we need `lease()` to yield and retry.
-//
-// Implementation: after the semaphore acquire, scan for an Idle slot.  If none
-// found, release the permit back to the semaphore and try again after yielding.
-// This is safe and bounded because the replacement task always eventually marks
-// the slot Idle.
-
-impl<T, F> SidecarPool<T, F>
-where
-    T: Send + 'static,
-    F: Fn(usize) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>> + Send + Sync + 'static,
-{
-    // (The method is on the main impl block above; we add the spin here as
-    //  a note.  The actual implementation is in the `lease` method above which
-    //  panics on no-idle.  In production usage the crash window is so short
-    //  this path is never hit; in tests we sleep before re-leasing.  We leave
-    //  the panic in place as a correctness signal — if it fires in a test,
-    //  the test needs more yield time.)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -372,10 +360,6 @@ mod tests {
 
         fn is_dead(&self) -> bool {
             self.dead.load(Ordering::Relaxed)
-        }
-
-        fn run_count(&self) -> usize {
-            self.runs.load(Ordering::Relaxed)
         }
     }
 
@@ -533,6 +517,53 @@ mod tests {
             let guard = lease2.borrow_client().await;
             assert!(!guard.is_dead(), "replacement slot must not be dead");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn immediate_lease_waits_while_crashed_slot_is_replacing() {
+        let allow_replacement = Arc::new(Notify::new());
+        let replacement_started = Arc::new(Notify::new());
+        let allow_replacement_c = allow_replacement.clone();
+        let replacement_started_c = replacement_started.clone();
+
+        let pool = Arc::new(SidecarPool::from_clients(
+            1,
+            vec![MockSlot::new()],
+            Box::new(move |_idx| {
+                let allow_replacement = allow_replacement_c.clone();
+                let replacement_started = replacement_started_c.clone();
+                Box::pin(async move {
+                    replacement_started.notify_waiters();
+                    allow_replacement.notified().await;
+                    MockSlot::new()
+                }) as std::pin::Pin<Box<dyn std::future::Future<Output = MockSlot> + Send>>
+            }) as MockFactory,
+        ));
+
+        {
+            let mut lease = pool.lease().await;
+            lease.report_crash();
+        }
+
+        replacement_started.notified().await;
+        assert_eq!(pool.slot_statuses(), vec![SlotStatus::Replacing]);
+        assert_eq!(pool.stats().idle, 0, "replacing slots are not idle");
+
+        let waiter_pool = pool.clone();
+        let waiter = tokio::spawn(async move { waiter_pool.lease().await });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(
+            !waiter.is_finished(),
+            "lease waiter must wait for replacement instead of panicking or leasing a Replacing slot"
+        );
+
+        allow_replacement.notify_waiters();
+        let lease = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("lease waiter should finish after replacement")
+            .expect("lease waiter should not panic");
+        assert_eq!(lease.slot_index(), 0);
+        assert_eq!(pool.restart_count(), 1);
     }
 
     /// Other pool members are unaffected when one slot crashes.

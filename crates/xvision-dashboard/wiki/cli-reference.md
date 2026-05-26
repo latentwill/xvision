@@ -177,6 +177,21 @@ concern.
 
 ---
 
+### `xvn trajectory …`
+
+Trajectory store operations for Cline record/replay runs. These commands inspect
+and maintain the migrated trajectory SQLite tables plus the frame blob store.
+
+| Verb | Effect |
+|---|---|
+| `inspect <recording-id> [--db <path>] [--blob-root <path>]` | Print schema version, status, key fingerprint, cycle/slot metadata, timestamps, and frame counts by `(slot_role, step_index)`. |
+| `validate <recording-id> [--db <path>] [--blob-root <path>] [--quiet]` | Validate that a recording is complete and has no missing or out-of-order frames. Exits non-zero for corrupt, incomplete, or gapped recordings. |
+| `purge --expired [--db <path>] [--blob-root <path>] [--dry-run]` | Delete recordings whose `expires_at` is in the past, including frames and orphaned blobs. |
+| `purge --before <rfc3339> [--db <path>] [--blob-root <path>] [--dry-run]` | Delete recordings expiring before the supplied timestamp. |
+| `reindex [--db <path>] [--blob-root <path>]` | Recompute `key_fingerprint` for all recordings after a schema-compatible trajectory-key change. |
+
+---
+
 ### `xvn optimize …`
 
 Offline DSPy prompt/demonstration optimizer (Phase 3.6). Runs an optimization

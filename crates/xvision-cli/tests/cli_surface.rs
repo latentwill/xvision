@@ -159,6 +159,23 @@ fn build_inventory() -> Value {
     json!({ "commands": entries })
 }
 
+fn canonicalize_json(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, canonicalize_json(value)))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(canonicalize_json).collect()),
+        other => other,
+    }
+}
+
 fn snapshot_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/cli_surface_snapshot.json")
 }
@@ -167,7 +184,7 @@ fn snapshot_path() -> PathBuf {
 
 #[test]
 fn cli_surface_matches_snapshot() {
-    let inventory = build_inventory();
+    let inventory = canonicalize_json(build_inventory());
     let pretty = serde_json::to_string_pretty(&inventory).expect("serialize inventory");
 
     let snap_path = snapshot_path();
@@ -186,16 +203,23 @@ fn cli_surface_matches_snapshot() {
         )
     });
 
-    // Normalise trailing newline differences before comparing.
-    let existing_trimmed = existing.trim_end();
-    let current_trimmed = pretty.trim_end();
+    let existing_inventory: Value = serde_json::from_str(&existing).unwrap_or_else(|e| {
+        panic!(
+            "Could not parse snapshot at {} as JSON: {e}\nRegenerate it with: \
+             UPDATE_CLI_SURFACE=1 cargo test -p xvision-cli --test cli_surface",
+            snap_path.display()
+        )
+    });
+    let existing_inventory = canonicalize_json(existing_inventory);
+    let existing_pretty =
+        serde_json::to_string_pretty(&existing_inventory).expect("serialize existing snapshot");
 
     assert!(
-        existing_trimmed == current_trimmed,
+        existing_inventory == inventory,
         "CLI surface changed. If intentional, regenerate with \
          `UPDATE_CLI_SURFACE=1 cargo test -p xvision-cli --test cli_surface` \
          and review the diff.\n\nFirst differing lines:\n{}",
-        first_diff(existing_trimmed, current_trimmed)
+        first_diff(existing_pretty.trim_end(), pretty.trim_end())
     );
 }
 
