@@ -362,6 +362,7 @@ impl ApiContext {
         migrate_agents_scope_strategy_id(&pool).await?;
         migrate_review_annotations_and_autofire(&pool).await?;
         migrate_eval_runs_live_config(&pool).await?;
+        migrate_eval_runs_dependent_fks_038(&pool).await?;
         migrate_agent_slot_optimizations(&pool).await?;
         migrate_pattern_optimizations(&pool).await?;
         migrate_run_trajectory_mode(&pool).await?;
@@ -1140,6 +1141,254 @@ async fn migrate_eval_runs_live_config(pool: &SqlitePool) -> ApiResult<()> {
         .await?;
     sqlx::query(MIGRATION_012_RUNS_FK).execute(pool).await?;
     Ok(())
+}
+
+/// Re-target child-table FKs that migration 038 silently bent toward the
+/// renamed `eval_runs_old_live_migration` shell, and drop the shell itself.
+///
+/// Migration 038 rebuilt `eval_runs` to make `scenario_id` nullable. It did
+/// `ALTER TABLE eval_runs RENAME TO eval_runs_old_live_migration`, created a
+/// fresh `eval_runs`, copied rows, then dropped the renamed shell. SQLite's
+/// modern `ALTER TABLE` (default `legacy_alter_table=OFF`) silently rewrites
+/// FK references in dependent tables on rename — so `agent_runs`,
+/// `eval_reviews`, and `eval_attestations` each have an FK that got
+/// re-pointed at `eval_runs_old_live_migration` and never pointed back.
+///
+/// Symptom: `POST /api/eval/runs` returns 500 with
+/// `ensure agent_runs baseline: FOREIGN KEY constraint failed`. The agent_run
+/// baseline insert resolves its FK against the renamed shell (which is either
+/// empty or already dropped), not the live `eval_runs` row created moments
+/// earlier in the same handler.
+///
+/// Rebuild each affected child table with the FK targeting `eval_runs`, then
+/// drop the shell. Idempotent: each per-table rebuild short-circuits when the
+/// FK already targets `eval_runs`.
+async fn migrate_eval_runs_dependent_fks_038(pool: &SqlitePool) -> ApiResult<()> {
+    rebuild_agent_runs_fk(pool).await?;
+    rebuild_eval_attestations_fk(pool).await?;
+    rebuild_eval_reviews_fk(pool).await?;
+    // Drop the renamed shell on DBs where migration 038's DROP step didn't
+    // run. After every dependent table has been re-pointed at `eval_runs`,
+    // there should be no remaining references to it.
+    sqlx::query("DROP TABLE IF EXISTS eval_runs_old_live_migration")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn fk_targets_old_eval_runs(pool: &SqlitePool, table: &str, column: &str) -> ApiResult<bool> {
+    if !table_exists(pool, table).await? {
+        return Ok(false);
+    }
+    let sql = format!(
+        r#"SELECT "table" FROM pragma_foreign_key_list('{table}') WHERE "from" = ?"#
+    );
+    let target: Option<(String,)> = sqlx::query_as(&sql)
+        .bind(column)
+        .fetch_optional(pool)
+        .await?;
+    Ok(target
+        .map(|(t,)| t == "eval_runs_old_live_migration")
+        .unwrap_or(false))
+}
+
+async fn run_fk_rebuild<F, Fut>(pool: &SqlitePool, label: &str, body: F) -> ApiResult<()>
+where
+    F: FnOnce(SqlitePool) -> Fut,
+    Fut: std::future::Future<Output = ApiResult<()>>,
+{
+    // PRAGMA foreign_keys cannot be toggled inside a transaction. The caller
+    // wraps its statements in a transaction internally.
+    sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await?;
+    let result = body(pool.clone()).await;
+    let reenable = sqlx::query("PRAGMA foreign_keys = ON").execute(pool).await;
+    match (result, reenable) {
+        (Ok(()), Ok(_)) => Ok(()),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(ApiError::Internal(format!(
+            "{label}: re-enable foreign_keys: {e}"
+        ))),
+    }
+}
+
+async fn rebuild_agent_runs_fk(pool: &SqlitePool) -> ApiResult<()> {
+    if !fk_targets_old_eval_runs(pool, "agent_runs", "eval_run_id").await? {
+        return Ok(());
+    }
+    run_fk_rebuild(pool, "rebuild_agent_runs_fk", |pool| async move {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "CREATE TABLE agent_runs_new (
+                id                   TEXT PRIMARY KEY,
+                objective            TEXT NOT NULL,
+                strategy_id          TEXT,
+                eval_run_id          TEXT,
+                source_cli_job_id    TEXT,
+                status               TEXT NOT NULL,
+                started_at           TEXT NOT NULL,
+                finished_at          TEXT,
+                retention_mode       TEXT NOT NULL,
+                sidecar_version      TEXT,
+                cline_sdk_version    TEXT,
+                protocol_version     TEXT,
+                skills_json          TEXT,
+                mcp_servers_json     TEXT,
+                otel_trace_id        TEXT,
+                final_artifact_id    TEXT,
+                error                TEXT,
+                trajectory_mode      TEXT NOT NULL DEFAULT 'live',
+                replay_hit_ratio     REAL,
+                dropped_events       INTEGER NOT NULL DEFAULT 0,
+                recovery_reason      TEXT,
+                FOREIGN KEY (eval_run_id)       REFERENCES eval_runs(id),
+                FOREIGN KEY (source_cli_job_id) REFERENCES cli_jobs(job_id)
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Null out eval_run_ids that don't resolve in the live `eval_runs`
+        // (only possible if 038's DROP ran and rows existed only in the shell).
+        sqlx::query(
+            "INSERT INTO agent_runs_new
+                (id, objective, strategy_id, eval_run_id, source_cli_job_id,
+                 status, started_at, finished_at, retention_mode,
+                 sidecar_version, cline_sdk_version, protocol_version,
+                 skills_json, mcp_servers_json, otel_trace_id,
+                 final_artifact_id, error, trajectory_mode, replay_hit_ratio,
+                 dropped_events, recovery_reason)
+             SELECT
+                id, objective, strategy_id,
+                CASE
+                    WHEN eval_run_id IS NULL THEN NULL
+                    WHEN EXISTS (SELECT 1 FROM eval_runs WHERE id = agent_runs.eval_run_id)
+                        THEN eval_run_id
+                    ELSE NULL
+                END,
+                source_cli_job_id,
+                status, started_at, finished_at, retention_mode,
+                sidecar_version, cline_sdk_version, protocol_version,
+                skills_json, mcp_servers_json, otel_trace_id,
+                final_artifact_id, error, trajectory_mode, replay_hit_ratio,
+                dropped_events, recovery_reason
+             FROM agent_runs",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DROP TABLE agent_runs").execute(&mut *tx).await?;
+        sqlx::query("ALTER TABLE agent_runs_new RENAME TO agent_runs")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS agent_runs_eval_idx ON agent_runs(eval_run_id)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS agent_runs_started_idx ON agent_runs(started_at)")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    })
+    .await
+}
+
+async fn rebuild_eval_attestations_fk(pool: &SqlitePool) -> ApiResult<()> {
+    if !fk_targets_old_eval_runs(pool, "eval_attestations", "run_id").await? {
+        return Ok(());
+    }
+    run_fk_rebuild(pool, "rebuild_eval_attestations_fk", |pool| async move {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "CREATE TABLE eval_attestations_new (
+                id                       TEXT PRIMARY KEY,
+                run_id                   TEXT NOT NULL,
+                agent_id                 TEXT NOT NULL,
+                scenario_id              TEXT NOT NULL,
+                signed_metrics_json      TEXT NOT NULL,
+                signature_hex            TEXT NOT NULL,
+                signing_pubkey_hex       TEXT NOT NULL,
+                signed_at                TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES eval_runs(id)
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO eval_attestations_new
+                (id, run_id, agent_id, scenario_id, signed_metrics_json,
+                 signature_hex, signing_pubkey_hex, signed_at)
+             SELECT id, run_id, agent_id, scenario_id, signed_metrics_json,
+                    signature_hex, signing_pubkey_hex, signed_at
+             FROM eval_attestations
+             WHERE EXISTS (SELECT 1 FROM eval_runs WHERE id = eval_attestations.run_id)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DROP TABLE eval_attestations").execute(&mut *tx).await?;
+        sqlx::query("ALTER TABLE eval_attestations_new RENAME TO eval_attestations")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    })
+    .await
+}
+
+async fn rebuild_eval_reviews_fk(pool: &SqlitePool) -> ApiResult<()> {
+    if !fk_targets_old_eval_runs(pool, "eval_reviews", "eval_run_id").await? {
+        return Ok(());
+    }
+    run_fk_rebuild(pool, "rebuild_eval_reviews_fk", |pool| async move {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "CREATE TABLE eval_reviews_new (
+                id                  TEXT PRIMARY KEY,
+                eval_run_id         TEXT NOT NULL,
+                agent_profile_id    TEXT NOT NULL,
+                status              TEXT NOT NULL,
+                verdict             TEXT,
+                confidence          REAL    CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+                score               INTEGER CHECK (score      IS NULL OR (score      >= 0   AND score      <= 100)),
+                summary             TEXT,
+                raw_output_json     TEXT,
+                error               TEXT,
+                created_at          TEXT NOT NULL,
+                updated_at          TEXT NOT NULL,
+                annotations_json    TEXT NOT NULL DEFAULT '[]',
+                FOREIGN KEY (eval_run_id)      REFERENCES eval_runs(id),
+                FOREIGN KEY (agent_profile_id) REFERENCES agent_profiles(id)
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO eval_reviews_new
+                (id, eval_run_id, agent_profile_id, status, verdict, confidence, score,
+                 summary, raw_output_json, error, created_at, updated_at, annotations_json)
+             SELECT id, eval_run_id, agent_profile_id, status, verdict, confidence, score,
+                    summary, raw_output_json, error, created_at, updated_at, annotations_json
+             FROM eval_reviews
+             WHERE EXISTS (SELECT 1 FROM eval_runs WHERE id = eval_reviews.eval_run_id)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DROP TABLE eval_reviews").execute(&mut *tx).await?;
+        sqlx::query("ALTER TABLE eval_reviews_new RENAME TO eval_reviews")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_reviews_run     ON eval_reviews(eval_run_id)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_reviews_status  ON eval_reviews(status)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_reviews_profile ON eval_reviews(agent_profile_id)")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    })
+    .await
 }
 
 /// Apply migration 039: durable lineage rows for offline slot optimizers.

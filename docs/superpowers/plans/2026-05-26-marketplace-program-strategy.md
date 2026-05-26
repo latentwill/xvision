@@ -369,9 +369,9 @@ its dependent phase.
 | A5 | Wallet-connect UX (Privy / WalletConnect / MetaMask) | Phase 6 | Open |
 | A6 | Public-viewer domain + whether to stand up SSR viewer | Phase 6 (Phase 4 for shareable URLs) | Open |
 | A7 | Sealed-bundle decryption relay host | Phase 5/6 (Tier B) | Open |
-| A8 | Handle resolution (`@handle` via ENS / on-chain registry / `agentURI` display name / address fallback) | Phase F preflight / Phase 1 | Open |
-| A9 | Verification badge threshold (green vs gray) | Phase F preflight / Phase 1 | Open; suggested = backtest + ≥30d live-paper + ≥1 positive closed cycle hash |
-| A10 | Clone semantics for Tier B sealed listings (license check timing, parent-edge write authority) | Phase 1 / Phase 5 | Direction says purchase first; contract check still needs locking |
+| A8 | Handle resolution (`@handle` via ENS / on-chain registry / `agentURI` display name / address fallback) | Phase F preflight / Phase 1 | ✅ LOCKED: address canonical; handle/ENS optional display |
+| A9 | Verification badge threshold (green vs gray) | Phase F preflight / Phase 1 | ✅ LOCKED: backtest + ≥30d live-paper + ≥1 positive closed-cycle PnL hash |
+| A10 | Clone semantics for Tier B sealed listings (license check timing, parent-edge write authority) | Phase 1 / Phase 5 | Phase-1 read model recommended; Phase-5 contract check remains |
 | A11 | Notification UX inside self-hosted XVN (toast, sidebar feed, share composer dock) | Phase 6 | Open; no modal-equivalent |
 | A12 | Public landing `/` for cold visitors | Phase 6 / public viewer | Open; explicitly deferred from Phase F |
 | B1 | Orderly trading-only key scope (no withdraw) | non-custodial rail (V4) | Probe early — cheap |
@@ -385,7 +385,7 @@ its dependent phase.
 | D3 | Testnet→mainnet migration scope | Phase 8 / V4 | Open |
 | D4 | Alpaca live at V4 cutover | Phase 8 / V4 | Open |
 | E1–E5 | Sealed-bundle delivery fingerprint, license revocation, off-chain refund, attribution-ledger UX, settlement-wallet ops | Phase 5/6 / V4 | Open (edge flows) |
-| E6 | Human-vs-agent buyer count source | Phase 1 / Phase 5 | Must be explicit in marketplace event/subgraph; `LicenseToken` transfer alone is insufficient |
+| E6 | Human-vs-agent buyer count source | Phase 1 / Phase 5 | ✅ SCHEMA LOCKED: `Sold.payerKind`; Phase-5 contract event remains |
 | — | **Gen-art algorithm** (input space, palette, family rules, lineage-coherence) | Phase 4 | **Open — unscoped (H3)** |
 
 ### 7.1 Deferred items register (every deferral lands here → owning phase)
@@ -399,13 +399,13 @@ its dependent phase.
 |---|---|---|
 | `tier` filter on `FilterState` + Tier-A "free" slice | ✅ DONE (F-route follow-up) | F0 review M2 / F4 OQ |
 | Creator profile resolves by address + ENS (not just `@handle`) | ✅ DONE (F-route follow-up) | F3 OQ |
-| `publishedAt`/`mintedAt` on `ListingRow` (so `newest` sort isn't an id proxy) | Phase 1 (schema field) → frontend rewire | F1 OQ |
-| `transferableLicense` surfaced on receipt/license UI (absent on `Receipt.license` today) | Phase 1 (enrich Tier-1/receipt metadata) | F6 OQ |
-| Human-vs-agent payer-class source in marketplace event/subgraph | Phase 1 (schema) + Phase 5 (contract event) | E6 |
-| Handle resolution (ENS / on-chain registry / `agentURI`) | Phase 1 decision | A8 |
-| Verification badge thresholds (green vs gray criteria) | Phase 1 decision | A9 |
-| Tier-B clone license-check semantics (gate timing) | Phase 1 (read model) + Phase 5 (contract) | A10 |
-| `auditedOnly` filter has no `ListingRow` field (no-op today) | Phase 1 (schema field) | F0 review M4 |
+| `publishedAt`/`mintedAt` on `ListingRow` (so `newest` sort isn't an id proxy) | ✅ SCHEMA LOCKED (Phase 1) → frontend rewire | F1 OQ |
+| `transferableLicense` surfaced on receipt/license UI (absent on `Receipt.license` today) | ✅ SCHEMA LOCKED (Phase 1) → receipt UI rewire | F6 OQ |
+| Human-vs-agent payer-class source in marketplace event/subgraph | ✅ SCHEMA LOCKED (Phase 1) → Phase 5 contract event | E6 |
+| Handle resolution (ENS / on-chain registry / `agentURI`) | ✅ LOCKED (Phase 1): address canonical; handle/ENS optional display | A8 |
+| Verification badge thresholds (green vs gray criteria) | ✅ LOCKED (Phase 1): backtest + ≥30d live-paper + ≥1 positive closed-cycle hash | A9 |
+| Tier-B clone license-check semantics (gate timing) | Phase-1 read model recommended → Phase 5 contract check | A10 |
+| `auditedOnly` filter has no `ListingRow` field (no-op today) | ✅ SCHEMA LOCKED (Phase 1) → frontend field rewire | F0 review M4 |
 | Equity curve real backtest+live two-layer data | Phase 4 (real chart data) | F2 OQ-1 (placeholder today) |
 | Production gen-art (replace `GenArtPlaceholder`) | Phase 4 | H3 |
 | Save view (persist a filter slice) | Phase 6 (needs storage) | F1 deferred affordance |
