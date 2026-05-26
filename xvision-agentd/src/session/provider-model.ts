@@ -14,14 +14,12 @@
  *      stream() method can be wrapped by model-wrapper.ts.
  *
  * Provider ID mapping:
- *   The xvision engine uses Cline's own provider IDs (from the LLM settings
- *   UI), which are passed through unchanged. The gateway's built-in provider
- *   registrations use those same IDs (confirmed: "anthropic", "openai-native",
- *   "openai-compatible", "deepseek", etc.) — so no translation layer is needed.
- *   If a provider_id is not known to the gateway (e.g. a custom openai-compat
- *   endpoint), the caller should pass `base_url` to route it through the
- *   "openai-compatible" family. This function throws clearly when the gateway
- *   cannot construct a model, so the caller can surface a meaningful error.
+ *   @cline/llms@0.0.41 does not register "openai-compatible" as a gateway
+ *   provider id. It is a provider family / factory target; concrete registered
+ *   ids include "openrouter", "deepseek", "groq", "litellm", etc. The xvision
+ *   eval path historically sent "openai-compatible" / "openai-compat" for the
+ *   whole OpenAI-compatible family, so this module normalizes those legacy ids
+ *   to a concrete registered gateway provider before creating the AgentModel.
  *
  * A fresh gateway is created per Agent construction — there is no shared state.
  * This is intentional: each run has its own credentials/baseUrl and must not
@@ -36,7 +34,10 @@ import type { AgentModel } from "./model-wrapper.js"
 //
 // Note: we import via @cline/sdk (the only declared dependency) and access the
 // Llms namespace. The @cline/llms types flow through correctly.
-import { Llms } from "@cline/sdk"
+import { Llms, OPENAI_COMPATIBLE_PROVIDERS } from "@cline/sdk"
+
+const OPENAI_COMPAT_ALIASES = new Set(["openai-compatible", "openai-compat"])
+const GENERIC_OPENAI_COMPAT_PROVIDER = "litellm"
 
 export interface BuildProviderModelOptions {
   /** Provider ID as sent by the xvision engine (e.g. "anthropic", "openai-native"). */
@@ -47,6 +48,62 @@ export interface BuildProviderModelOptions {
   apiKey?: string
   /** Custom base URL — used for openai-compatible and self-hosted endpoints. */
   baseUrl?: string
+}
+
+function normalizeBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "").toLowerCase()
+}
+
+function providerIdForOpenAiCompatibleBaseUrl(
+  baseUrl: string | undefined,
+  knownProviders: readonly string[],
+): string {
+  if (!baseUrl || baseUrl.trim().length === 0) {
+    throw new Error(
+      `provider_id "openai-compatible" requires a base_url because ` +
+        `"openai-compatible" is a provider family, not a registered @cline/llms gateway id.`,
+    )
+  }
+
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+  const compatProviders = OPENAI_COMPATIBLE_PROVIDERS as Record<
+    string,
+    { baseUrl?: string }
+  >
+  for (const [candidate, config] of Object.entries(compatProviders)) {
+    if (!knownProviders.includes(candidate) || !config.baseUrl) continue
+    if (normalizeBaseUrl(config.baseUrl) === normalizedBaseUrl) return candidate
+  }
+
+  if (knownProviders.includes(GENERIC_OPENAI_COMPAT_PROVIDER)) {
+    return GENERIC_OPENAI_COMPAT_PROVIDER
+  }
+
+  throw new Error(
+    `Cannot route OpenAI-compatible base_url "${baseUrl}": @cline/llms did not ` +
+      `register the generic "${GENERIC_OPENAI_COMPAT_PROVIDER}" provider.`,
+  )
+}
+
+export function resolveGatewayProviderId(
+  providerId: string,
+  baseUrl: string | undefined,
+  knownProviders: readonly string[],
+): string {
+  const normalizedProviderId = Llms.normalizeProviderId(providerId)
+  if (knownProviders.includes(normalizedProviderId)) return normalizedProviderId
+
+  if (OPENAI_COMPAT_ALIASES.has(normalizedProviderId)) {
+    return providerIdForOpenAiCompatibleBaseUrl(baseUrl, knownProviders)
+  }
+
+  // Backward-compatible rescue path for any older caller that sends an
+  // operator-chosen OpenAI-compatible provider name alongside a base_url.
+  if (baseUrl && baseUrl.trim().length > 0) {
+    return providerIdForOpenAiCompatibleBaseUrl(baseUrl, knownProviders)
+  }
+
+  return normalizedProviderId
 }
 
 /**
@@ -62,11 +119,11 @@ export interface BuildProviderModelOptions {
  */
 export function buildProviderModel(opts: BuildProviderModelOptions): AgentModel {
   const { modelId, apiKey, baseUrl } = opts
-  const providerId =
-    opts.providerId === "openai-compat" ? "openai-compatible" : opts.providerId
 
   // Create a fresh gateway. Built-in providers are auto-registered.
   const gateway = Llms.createGateway()
+  const knownProviders = gateway.listProviders().map((p: { id: string }) => p.id)
+  const providerId = resolveGatewayProviderId(opts.providerId, baseUrl, knownProviders)
 
   // Configure credentials and optional base URL for this provider.
   // configureProvider is idempotent per provider ID — safe to call once.
@@ -82,7 +139,6 @@ export function buildProviderModel(opts: BuildProviderModelOptions): AgentModel 
   // Verify the provider exists in the gateway's registry before attempting
   // createAgentModel, so we can give a clear error rather than letting the
   // gateway throw an opaque internal error.
-  const knownProviders = gateway.listProviders().map((p: { id: string }) => p.id)
   if (!knownProviders.includes(providerId)) {
     throw new Error(
       `provider_id "${providerId}" is not registered in the @cline/llms gateway. ` +

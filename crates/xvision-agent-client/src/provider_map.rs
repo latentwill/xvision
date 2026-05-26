@@ -12,13 +12,12 @@
 //! Mapping:
 //! - [`ProviderKind::Anthropic`] → `"anthropic"` (also a Cline built-in id, so it
 //!   works through Cline's internal construction even before the gateway lands).
-//! - [`ProviderKind::OpenaiCompat`] → `"openai-compatible"` with `base_url`
-//!   passed through; the sidecar configures `createOpenAICompatibleProvider`
-//!   with that base URL. Routing a known OpenAI-compatible service to its
-//!   specific Cline built-in id (`openrouter`, `deepseek`, `groq`, `together`,
-//!   `fireworks`, `mistral`, `xai`, …) to unlock provider-native features is a
-//!   documented refinement (see `docs/superpowers/specs/2026-05-24-cline-provider-matrix.md`);
-//!   the generic compat path already covers the whole family via `base_url`.
+//! - [`ProviderKind::OpenaiCompat`] → a concrete Cline OpenAI-compatible
+//!   provider id inferred from `base_url` (`openrouter`, `deepseek`, `groq`,
+//!   etc.), falling back to Cline's generic `litellm` carrier for arbitrary
+//!   OpenAI-compatible endpoints. `@cline/llms@0.0.41` does not register
+//!   `"openai-compatible"` as a gateway provider id; it is an internal provider
+//!   factory family.
 //! - [`ProviderKind::LocalCandle`] → unsupported; aborts with a typed error
 //!   (the in-process mock provider stays on `LlmDispatch`).
 
@@ -26,10 +25,9 @@ use xvision_core::config::{ProviderEntry, ProviderKind};
 
 /// Cline gateway provider id for Anthropic (a Cline built-in id).
 pub const CLINE_PROVIDER_ANTHROPIC: &str = "anthropic";
-/// Cline gateway provider id under which the sidecar registers
-/// `createOpenAICompatibleProvider`. Mirrors Cline's `"openai-compatible"`
-/// provider *category*; `base_url` is the per-service discriminant.
-pub const CLINE_PROVIDER_OPENAI_COMPAT: &str = "openai-compatible";
+/// Generic Cline OpenAI-compatible provider used when `base_url` does not
+/// match a more specific built-in provider.
+pub const CLINE_PROVIDER_LITELLM: &str = "litellm";
 
 /// A resolved Cline gateway selection for one slot invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +49,33 @@ pub enum ProviderMapError {
     Unsupported { name: String, kind: ProviderKind },
 }
 
+fn cline_openai_compat_provider_id(base_url: &str) -> &'static str {
+    let lower = base_url.trim_end_matches('/').to_ascii_lowercase();
+    if lower.contains("openrouter.ai") {
+        "openrouter"
+    } else if lower.contains("api.openai.com") {
+        "openai-native"
+    } else if lower.contains("api.deepseek.com") {
+        "deepseek"
+    } else if lower.contains("api.groq.com") {
+        "groq"
+    } else if lower.contains("api.x.ai") {
+        "xai"
+    } else if lower.contains("api.together.xyz") {
+        "together"
+    } else if lower.contains("api.fireworks.ai") {
+        "fireworks"
+    } else if lower.contains("api.mistral.ai") {
+        "mistral"
+    } else if lower.contains("localhost:11434") || lower.contains("127.0.0.1:11434") {
+        "ollama"
+    } else if lower.contains("localhost:1234") || lower.contains("127.0.0.1:1234") {
+        "lmstudio"
+    } else {
+        CLINE_PROVIDER_LITELLM
+    }
+}
+
 /// Map an xvision provider + model onto a Cline gateway selection.
 ///
 /// Returns [`ProviderMapError::Unsupported`] (a hard abort, never a silent
@@ -61,7 +86,7 @@ pub fn map_provider(entry: &ProviderEntry, model_id: &str) -> Result<ClineProvid
     let (provider_id, base_url) = match entry.kind {
         ProviderKind::Anthropic => (CLINE_PROVIDER_ANTHROPIC.to_string(), None),
         ProviderKind::OpenaiCompat => (
-            CLINE_PROVIDER_OPENAI_COMPAT.to_string(),
+            cline_openai_compat_provider_id(&entry.base_url).to_string(),
             Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
         ),
         ProviderKind::LocalCandle => {
@@ -102,19 +127,31 @@ mod tests {
     }
 
     #[test]
-    fn openai_compat_passes_base_url_through() {
+    fn openai_compat_openrouter_maps_to_cline_openrouter() {
         let m = map_provider(
             &entry(ProviderKind::OpenaiCompat, "https://openrouter.ai/api/v1"),
             "x",
         )
         .unwrap();
-        assert_eq!(m.provider_id, CLINE_PROVIDER_OPENAI_COMPAT);
+        assert_eq!(m.provider_id, "openrouter");
         assert_eq!(m.base_url.as_deref(), Some("https://openrouter.ai/api/v1"));
     }
 
     #[test]
-    fn openai_compat_empty_base_url_becomes_none() {
+    fn openai_compat_unknown_base_url_uses_generic_litellm_carrier() {
+        let m = map_provider(
+            &entry(ProviderKind::OpenaiCompat, "https://proxy.example/v1"),
+            "x",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, CLINE_PROVIDER_LITELLM);
+        assert_eq!(m.base_url.as_deref(), Some("https://proxy.example/v1"));
+    }
+
+    #[test]
+    fn openai_compat_empty_base_url_uses_generic_litellm_without_base_override() {
         let m = map_provider(&entry(ProviderKind::OpenaiCompat, ""), "x").unwrap();
+        assert_eq!(m.provider_id, CLINE_PROVIDER_LITELLM);
         assert_eq!(m.base_url, None);
     }
 
