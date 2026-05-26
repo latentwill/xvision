@@ -596,6 +596,12 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 dispatch: input.dispatch.clone(),
                 tools: input.tools.clone(),
                 max_tokens: resolved.max_tokens,
+                // QA30: per-slot wall budget is not yet persisted on
+                // `AgentSlot`. Pass `None` so the Cline runtime
+                // defaults to its "no enforcement" sentinel. Adding a
+                // `max_wall_ms` column to `agent_slots` + a UI control
+                // is a follow-on QA30 item.
+                max_wall_ms: None,
                 temperature: resolved.temperature,
                 obs: input.obs.clone(),
                 memory: input.memory_recorder.clone(),
@@ -749,6 +755,10 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         dispatch: input.dispatch.clone(),
                         tools: input.tools.clone(),
                         max_tokens: resolved.max_tokens,
+                        // QA30: see sibling DispatchInput call site;
+                        // wall budget is currently no-default until the
+                        // per-agent UI ships.
+                        max_wall_ms: None,
                         temperature: resolved.temperature,
                         obs: input.obs.clone(),
                         memory: input.memory_recorder.clone(),

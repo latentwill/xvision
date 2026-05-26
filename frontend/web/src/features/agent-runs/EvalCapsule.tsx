@@ -32,6 +32,13 @@ export type EvalCapsuleRow = {
   elapsed: string;
   /** Pre-formatted cost string (e.g. `"$0.18"`). Use `"—"` when unknown. */
   cost: string;
+  /**
+   * QA30: pre-formatted PnL string (e.g. `"+1.42%"`, `"-0.18%"`, or `"$+12.50"`
+   * depending on the producer). Use `"—"` when unknown — common for evals that
+   * haven't produced an equity sample yet. Optional so existing call sites
+   * that haven't been updated render as before (no PnL slot shown).
+   */
+  pnl?: string;
 };
 
 export type EvalCapsuleFocused = EvalCapsuleRow & {
@@ -68,6 +75,19 @@ const STATUS: Record<EvalCapsuleStatus, StatusToken> = {
   error:  { tint: "var(--danger)", label: "ERROR",     pulse: true  },
   queued: { tint: "var(--text-3)", label: "QUEUED",    pulse: false },
 };
+
+/**
+ * Pick a CSS color for a PnL string. Sign-first lookup so we don't have to
+ * parse the producer's formatting (the caller may render as `+1.42%`, `-$12`,
+ * `0.00%`, or `—`). Falls back to the neutral text colour when no sign is
+ * present.
+ */
+function pnlTone(pnl: string): string {
+  const t = pnl.trim();
+  if (t.startsWith("+")) return "var(--gold)";
+  if (t.startsWith("-")) return "var(--danger)";
+  return "var(--text)";
+}
 
 function EvalLine({
   run,
@@ -142,6 +162,18 @@ function EvalLine({
         <span className="tabular-nums">{run.elapsed}</span>
         <span className="text-text-4 mx-2">·</span>
         <span className="tabular-nums">{run.cost}</span>
+        {run.pnl ? (
+          <>
+            <span className="text-text-4 mx-2">·</span>
+            <span className="text-text-3">pnl </span>
+            <span
+              className="tabular-nums"
+              style={{ color: pnlTone(run.pnl) }}
+            >
+              {run.pnl}
+            </span>
+          </>
+        ) : null}
       </span>
 
       {focused && currentSpan && (

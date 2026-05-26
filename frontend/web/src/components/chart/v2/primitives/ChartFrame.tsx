@@ -1,8 +1,27 @@
 import { ReactNode, useState } from "react";
 
-export type RangePreset = "1d" | "1w" | "1m" | "3m" | "All";
+export type RangePreset =
+  | "1h"
+  | "4h"
+  | "6h"
+  | "12h"
+  | "1d"
+  | "1w"
+  | "1m"
+  | "3m"
+  | "All";
 
-const RANGE_PRESETS: RangePreset[] = ["1d", "1w", "1m", "3m", "All"];
+const RANGE_PRESETS: RangePreset[] = [
+  "1h",
+  "4h",
+  "6h",
+  "12h",
+  "1d",
+  "1w",
+  "1m",
+  "3m",
+  "All",
+];
 
 export const CHART_V2_ZOOM_EVENT = "xvn:chart-v2:zoom";
 export const CHART_V2_RANGE_EVENT = "xvn:chart-v2:range";

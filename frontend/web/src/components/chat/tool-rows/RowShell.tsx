@@ -67,7 +67,12 @@ export function RowShell({
       aria-label={`Tool ${row.toolName ?? row.spanId}`}
       data-tool-name={row.toolName ?? undefined}
       data-tool-status={row.status}
-      className="rounded-md border border-border-soft bg-surface-card overflow-hidden"
+      // QA30: was `bg-surface-card` (#FFFFFF on light theme) which read
+      // as a hard-white block punched into the chat bubble. Step down
+      // to `bg-surface-elev` so the tool row reads as a recessed panel
+      // nested inside the bubble. Dark theme is unchanged in practice
+      // (#0A0A0A → #0E0E0E, both very dark).
+      className="rounded-md border border-border-soft bg-surface-elev overflow-hidden"
     >
       <header className="px-3 py-2 border-b border-border-soft flex items-start justify-between gap-3">
         <div className="min-w-0">

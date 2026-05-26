@@ -96,6 +96,17 @@ pub enum FailureClass {
         input_hash: String,
     },
 
+    /// QA30: Cline per-step wall / token budget was exceeded
+    /// (`budget_wall_ms_exceeded`, `budget_input_tokens_exceeded`,
+    /// `budget_output_tokens_exceeded`). This is a clean stop, not a
+    /// failure — the agent was still alive, the harness pulled the
+    /// plug. The `kind` field carries the sidecar-side reason code
+    /// (the `budget_*_exceeded` string) so a future policy can branch
+    /// on which dimension tripped.
+    BudgetExceeded {
+        kind: String,
+    },
+
     Unclassified,
 }
 
@@ -127,6 +138,7 @@ impl FailureClass {
             Self::BrokerRejected => "broker_rejected",
             Self::RepeatedBrokerError => "repeated_broker_error",
             Self::RepeatedToolFailure { .. } => "repeated_tool_failure",
+            Self::BudgetExceeded { .. } => "budget_exceeded",
             Self::Unclassified => "unclassified",
         }
     }
@@ -172,7 +184,10 @@ impl FailureClass {
             // vantage point: provider HTTP/decode/rate-limit are
             // already retried inside the dispatcher; broker errors are
             // owned by `agent-error-feedback-self-healing`; unclassified
-            // means we have no signal worth acting on.
+            // means we have no signal worth acting on. Budget-exceeded
+            // is intentionally a clean stop, not a recoverable error —
+            // bumping the budget is an operator action, not a runtime
+            // retry decision.
             Self::ProviderHttpError
             | Self::ProviderDecode
             | Self::ProviderRateLimited
@@ -182,6 +197,7 @@ impl FailureClass {
             | Self::BrokerInsufficientFunds
             | Self::BrokerTimeout
             | Self::BrokerRejected
+            | Self::BudgetExceeded { .. }
             | Self::Unclassified => RecoveryFamily::Unrecoverable,
         }
     }
@@ -301,6 +317,28 @@ fn classify_from_string(s: &str) -> FailureClass {
     // re-classified.
     if s.contains("repeated_broker_error") {
         return FailureClass::RepeatedBrokerError;
+    }
+    // QA30: Cline per-step budget aborts. Surface them as a clean
+    // `[budget_exceeded]` typed class instead of falling through to
+    // the generic `timeout` arm (which would mask the real cause as
+    // a transient network blip) or `unclassified` (which is what the
+    // user saw at the start of this round). Match BEFORE the broker
+    // and timeout patterns so the embedded `_ms_` / `_tokens_` keys
+    // route here.
+    if s.contains("budget_wall_ms_exceeded") {
+        return FailureClass::BudgetExceeded {
+            kind: "wall_ms".to_string(),
+        };
+    }
+    if s.contains("budget_input_tokens_exceeded") {
+        return FailureClass::BudgetExceeded {
+            kind: "input_tokens".to_string(),
+        };
+    }
+    if s.contains("budget_output_tokens_exceeded") {
+        return FailureClass::BudgetExceeded {
+            kind: "output_tokens".to_string(),
+        };
     }
     // Context-overflow (F-5 phase-2c). Check before the broker / generic
     // provider patterns so an embedded provider-name phrase doesn't
@@ -1127,6 +1165,12 @@ mod tests {
                     input_hash: "y".into(),
                 },
                 "repeated_tool_failure",
+            ),
+            (
+                FailureClass::BudgetExceeded {
+                    kind: "wall_ms".into(),
+                },
+                "budget_exceeded",
             ),
             (FailureClass::Unclassified, "unclassified"),
         ];

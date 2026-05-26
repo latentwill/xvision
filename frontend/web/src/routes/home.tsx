@@ -83,39 +83,13 @@ export function HomeRoute() {
         sub="paper · workspace status at a glance"
       />
 
-      <div className="grid grid-cols-12 gap-5">
-        <div className="col-span-12 lg:col-span-8 space-y-5">
-          <AttentionCard
-            items={attention}
-            loading={
-              runs.isPending ||
-              providers.isPending ||
-              brokers.isPending
-            }
-          />
-
-          <RecentRunsCard
-            runs={recent}
-            loading={runs.isPending}
-            error={runs.error}
-            strategies={strategies.data ?? []}
-            scenarios={scenarios.data ?? []}
-          />
-
-          <ControlChartCard
-            hasRuns={recent.length > 0}
-            loadingRuns={runs.isPending}
-            loadingChart={latestChart.isPending}
-            chartError={latestChart.error}
-            chart={latestChart.data}
-            latestRun={latestChartableRun ?? latestRun}
-            chartableRun={latestChartableRun}
-            strategies={strategies.data ?? []}
-            scenarios={scenarios.data ?? []}
-          />
-        </div>
-
-        <div className="col-span-12 lg:col-span-4 space-y-5">
+      {/*
+        QA30 layout rule: no right-side sidebar when the chat rail is
+        visible. Counts were a 4/12 right column; now inlined as a
+        horizontal CountCard row above the rest of the content.
+      */}
+      <div className="space-y-5">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
           <CountCard
             label="Strategies"
             value={strategies.isPending ? "…" : String(strategyCount)}
@@ -156,6 +130,35 @@ export function HomeRoute() {
             }
           />
         </div>
+
+        <AttentionCard
+          items={attention}
+          loading={
+            runs.isPending ||
+            providers.isPending ||
+            brokers.isPending
+          }
+        />
+
+        <RecentRunsCard
+          runs={recent}
+          loading={runs.isPending}
+          error={runs.error}
+          strategies={strategies.data ?? []}
+          scenarios={scenarios.data ?? []}
+        />
+
+        <ControlChartCard
+          hasRuns={recent.length > 0}
+          loadingRuns={runs.isPending}
+          loadingChart={latestChart.isPending}
+          chartError={latestChart.error}
+          chart={latestChart.data}
+          latestRun={latestChartableRun ?? latestRun}
+          chartableRun={latestChartableRun}
+          strategies={strategies.data ?? []}
+          scenarios={scenarios.data ?? []}
+        />
       </div>
     </>
   );

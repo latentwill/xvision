@@ -235,6 +235,11 @@ pub struct DispatchInput<'a> {
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
     pub max_tokens: Option<u32>,
+    /// QA30: optional per-step wall-clock budget for the Cline runtime.
+    /// `None` means no enforcement. Plumbed through to
+    /// `ClineSlotInput.max_wall_ms`. The dispatch input field is opt-in
+    /// at every layer above — pipeline default is `None`.
+    pub max_wall_ms: Option<u32>,
     pub temperature: Option<f64>,
     pub obs: Option<ObsEmitter>,
     pub memory: Option<Arc<MemoryRecorder>>,
@@ -467,6 +472,7 @@ async fn execute_slot_for_runtime(
             response_schema,
             allowed_tools: input.slot.allowed_tools.clone(),
             max_tokens: input.max_tokens,
+            max_wall_ms: input.max_wall_ms,
             run_id,
             cline_client: ctx.client.clone(),
             // Eval/live dispatch always records; replay is driven from the

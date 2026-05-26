@@ -431,7 +431,7 @@ export function EvalRunsRoute() {
             subtitle={displayScenarioName(row.scenario_id, scenarios)}
             meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}${row.auto_fire_review ? " · auto review" : ""}`}
             rightTop={fmtPct(row.total_return_pct)}
-            rightSub={fmtDuration(row.started_at, row.completed_at, nowMs)}
+            rightSub={fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
             rightTone={signedTone(row.total_return_pct)}
           />
         )}
@@ -629,7 +629,7 @@ function DesktopRow({
       </td>
       <td className="px-3 py-3 text-right font-mono">{fmtTokens(row)}</td>
       <td className="px-3 py-3 text-right font-mono">
-        {fmtDuration(row.started_at, row.completed_at, nowMs)}
+        {fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
       </td>
       <td className="px-5 py-3 text-[12px] text-text-3">
         {fmtTime(row.started_at)}
@@ -1333,12 +1333,23 @@ function fmtDuration(
   startedAt: string,
   completedAt: string | null | undefined,
   nowMs: number,
+  status?: string,
 ): string {
   const start = Date.parse(startedAt);
   if (Number.isNaN(start)) return "—";
-  const end = completedAt ? Date.parse(completedAt) : nowMs;
-  if (Number.isNaN(end)) return "—";
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  // Only tick against `now` while this row is still in-flight. Once the
+  // status is terminal (failed/aborted/completed/etc) the timer freezes
+  // even if other rows in the page are still running. If the terminal
+  // row lacks a `completed_at`, fall back to "—" rather than tracking
+  // wall time forever.
+  const inflight = status === undefined ? true : isInflightRunStatus(status);
+  const endRaw = completedAt
+    ? Date.parse(completedAt)
+    : inflight
+      ? nowMs
+      : NaN;
+  if (Number.isNaN(endRaw)) return "—";
+  const totalSeconds = Math.max(0, Math.floor((endRaw - start) / 1000));
   if (totalSeconds < 60) return `${totalSeconds}s`;
   const totalMinutes = Math.floor(totalSeconds / 60);
   if (totalMinutes < 60) return `${totalMinutes}m`;

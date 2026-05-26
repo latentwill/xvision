@@ -105,12 +105,27 @@ impl std::fmt::Debug for TrajectoryMode {
 pub const SUBMIT_DECISION_TOOL: &str = "submit_decision";
 
 /// Default per-run budgets when the slot does not pin an explicit
-/// `max_tokens`. The wall-clock cap bounds a wedged sidecar step so a
-/// crashed/looping run surfaces as a typed budget abort rather than
-/// hanging the cycle (item 2 — failure boundary).
+/// `max_tokens` / `max_wall_ms`. Token budgets remain ON by default
+/// (a hard ceiling on model output is a real cost control, not a
+/// timeout); the wall-clock budget is OFF by default per QA30
+/// (2026-05-26) operator feedback.
+///
+/// QA30 history: an earlier round set `DEFAULT_MAX_WALL_MS = 120_000`
+/// (2 minutes). That clipped slow-but-healthy completions — Gemini
+/// Flash 3.1-lite under load, Sonnet with extended thinking — and
+/// surfaced them as `budget_wall_ms_exceeded` failures even though
+/// the model was still producing tokens. The operator's call:
+/// "Max wall setting for timeout should be maybe in agent settings,
+///  same with max tokens. But I don't like having it on by default.
+///  Especially for testing."
+///
+/// So: the default is now `u32::MAX` (~49 days), effectively no wall
+/// budget. Strategies that want a wall cap pin `max_wall_ms` per-slot
+/// (currently a Rust-only knob via `ClineSlotInput.max_wall_ms`; the
+/// per-agent UI surface is a follow-on QA30 item).
 const DEFAULT_MAX_INPUT_TOKENS: u32 = 200_000;
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8_192;
-const DEFAULT_MAX_WALL_MS: u32 = 120_000;
+const DEFAULT_MAX_WALL_MS: u32 = u32::MAX;
 
 /// Typed Cline-runtime failure classes (item 2). Wrapped in
 /// `anyhow::Error` at the call boundary so existing `anyhow::Result`
@@ -247,6 +262,13 @@ pub struct ClineSlotInput<'a> {
     /// Operator's per-request output-token budget. `None` falls back to
     /// [`DEFAULT_MAX_OUTPUT_TOKENS`].
     pub max_tokens: Option<u32>,
+    /// Operator's per-step wall-clock budget in milliseconds. `None`
+    /// (the default) means no wall budget — the sidecar runs the step
+    /// to natural completion or until the model itself returns. Set
+    /// per-slot when the operator wants a hard ceiling on cycle time.
+    /// QA30 (2026-05-26): added so the per-agent UI can surface this
+    /// without falling back to a hardcoded 2-minute default.
+    pub max_wall_ms: Option<u32>,
     /// The idempotency key for the Cline run (item 2). Built by the caller
     /// from `cycle_id` + slot role so a retried cycle re-uses the same id
     /// and the sidecar dedups it. MUST be unique per logical slot
@@ -296,7 +318,7 @@ impl ClineSlotInput<'_> {
         BudgetLimits {
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
             max_output_tokens: self.max_tokens.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS),
-            max_wall_ms: DEFAULT_MAX_WALL_MS,
+            max_wall_ms: self.max_wall_ms.unwrap_or(DEFAULT_MAX_WALL_MS),
         }
     }
 
@@ -666,6 +688,7 @@ mod tests {
             response_schema: ResponseSchema::trader_output(),
             allowed_tools: extra_tools,
             max_tokens,
+            max_wall_ms: None,
             run_id: "cycle-1::trader".into(),
             cline_client: client,
             trajectory_mode: TrajectoryMode::default(),
