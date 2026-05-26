@@ -3,6 +3,11 @@
 > **Status:** Deferred — design accepted, implementation gated on Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper. v1 of Xvision is Alpaca-eval only with no on-chain function. Pick this spec back up once the engine + eval prove the multistrategy ranking claim end-to-end. · 2026-05-08
 > **Depends on:** [`decisions/0008-erc8004-deployment.md`](../../../decisions/0008-erc8004-deployment.md) (status of that ADR likely needs re-scoping under the same deferral), [`docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md`](./2026-05-08-strategy-creation-engine-design.md), and `architecture.md` §6.1.
 > **Related:** [`docs/erc-8004-agent-uses.md`](../../erc-8004-agent-uses.md).
+>
+> **Amended 2026-05-26** by [`docs/superpowers/plans/2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md). Three substantive amendments:
+> 1. **`agentNftId` is the lineage NFT**, not a per-variant NFT — resolves the A4 conflict flagged in the blockchain nav doc. See §3.1 clarification below.
+> 2. **Platform manifest URLs in §3.5 are placeholders** pending the public-viewer domain pick (direction doc §6.1). The architecture assumes a thin read-only viewer at a TBD domain, not a central app/API.
+> 3. **Custody model framed explicitly as non-custodial.** Buyers pay sellers directly on chain; platform extracts a small fee at settlement. XVN dashboard + engine + CLI are free and self-hosted. Already true of the contract surface — no contract changes — but worth stating because earlier framing conflated "marketplace contract" with "centralized platform."
 
 ---
 
@@ -88,8 +93,8 @@ This spec covers the on-chain contract surface for Xvision: the marketplace, com
 struct Listing {
     uint256 listingId;             // monotonically increasing
     address seller;
-    uint256 agentNftId;            // ERC-8004 IdentityRegistry token (the strategy)
-    bytes32 contentHash;           // keccak256 of canonical bundle JSON
+    uint256 agentNftId;            // ERC-8004 IdentityRegistry token (the LINEAGE — see §3.1.1)
+    bytes32 contentHash;           // keccak256 of canonical bundle JSON (the variant)
     string  contentURI;            // ipfs://… (Tier A) or https://api.xvn… (Tier B)
     uint8   tier;                  // 0 = Open, 1 = Sealed
     uint96  priceUSDC;             // 6-decimal USDC, 2^96 enough headroom
@@ -118,6 +123,18 @@ event ListingRevoked(uint256 indexed listingId, address indexed seller);
 ```
 
 `createListing` requires `IdentityRegistry.ownerOf(agentNftId) == msg.sender`. `protocolFeeBps` is snapshotted from `Marketplace`'s current admin-set value at create-time so a future fee bump cannot retroactively rug existing listings.
+
+#### 3.1.1 Lineage NFT vs variant content hash — terminology lock (amended 2026-05-26)
+
+Resolves the A4 conflict between this spec and [`marketplace-plugin-design.md`](./2026-05-09-marketplace-plugin-design.md).
+
+- **`agentNftId` is the LINEAGE NFT.** One ERC-8004 Identity NFT per *lineage* — i.e. per evolving strategy line, not per immutable variant. Forks of an existing lineage produce a new lineage NFT with a `parent_lineage_id` recorded in its manifest.
+- **`contentHash` is the VARIANT.** Each variant within a lineage is identified by its bundle's content hash. Variants are addressable inside the lineage manifest's mutation log; they do NOT each consume an NFT mint.
+- **Listings are variant-scoped, owned by lineage-scoped NFTs.** A creator can have multiple active listings under the same `agentNftId` (one per variant they want to monetize). The listing's `contentHash` says which variant the buyer is licensing; the `agentNftId` says which lineage it belongs to and who owns the lineage identity.
+- **Clone-to-edit creates a NEW lineage NFT** with `parent_lineage_id` pointing to the source. This is the on-chain forking primitive that powers the creator-recognition surface described in the direction doc §3.4.
+- **Generative art binds to the lineage NFT.** `tokenURI` renders deterministic SVG from `agent_id + manifestHash` so the art evolves visibly as the lineage's HEAD variant moves, while staying recognizably part of the same lineage family.
+
+Implementation impact: none on the contract surface — `agentNftId` is already a `uint256`, lineage manifests already carry `parent_lineage_id` per the plugin spec §4. This subsection is a terminology lock so downstream code (subgraph schemas, Rust bindings, dashboard wiring) consistently treats one NFT = one lineage.
 
 ### 3.2 `Marketplace`
 
@@ -236,6 +253,15 @@ Platform manifest JSON (pinned to IPFS, CID stored in agent NFT metadata):
   "discovery_canonical_chain":       { "chainId": 5000, "name": "Mantle" }
 }
 ```
+
+**URL placeholders (amended 2026-05-26).** `xvision.dev`, `api.xvn.dev`, `app.xvn.dev` are illustrative — XVN itself is self-hosted and has no central app or API. Per [direction doc §6.1](../plans/2026-05-26-marketplace-design-direction.md), the architecture is a thin read-only **public viewer** at a TBD domain (`xvn.market` / `xvision.dev` / TBD) that reads chain + IPFS only. Concretely:
+
+- `marketplace_dapp` → the public viewer URL (TBD; one of the Phase 1 design-sprint decisions).
+- `listings_browse` → either the same viewer's browse route or the subgraph endpoint directly. No bespoke listings API.
+- `x402_buy_endpoint` → still required, but its host is open: viewer-side, operator-hosted relay, or community-run facilitator. Tracked as direction-doc open question A7 in the [blockchain nav doc §4.A](../plans/2026-05-26-blockchain-plan-navigation.md).
+- `schema` URL → pin the schema JSON to IPFS for v1 and reference the CID; resolve to HTTPS via the viewer once the domain is provisioned.
+
+The manifest is regenerated and re-pinned when the domain pick is finalized; the on-chain `agentURI` then points at the new CID via a one-shot update.
 
 After this tx, any 8004-aware indexer treats xvn as a discoverable agent. Cost: one ERC-721 mint, ~80k gas.
 
@@ -743,7 +769,8 @@ Listings can opt into `transferableLicense = true`, but v1 ships no resale UI or
 
 - **EAS on Mantle:** is the canonical Ethereum Attestation Service deployed on Mantle? If yes, prefer EAS over the bespoke `EvalAttestationRegistry` for compatibility with existing EAS tooling. Default v1 plan is bespoke.
 - **Multisig signer set:** the 2-of-3 — who are the three? Founder, ops, community-trustee — but the community-trustee identity is TBD before mainnet deploy.
-- **Platform manifest schema URL:** `https://xvision.dev/schemas/platform-agent.v1.json` — domain not yet provisioned. Pin to IPFS for v1 if domain ownership isn't ready.
+- **Platform manifest schema URL + domain pick:** `https://xvision.dev/schemas/platform-agent.v1.json` — domain not yet provisioned. Pin to IPFS for v1 if domain ownership isn't ready. **Consolidated with direction-doc question A6** (public viewer domain pick); the same domain decision answers both. See [direction doc §6.1](../plans/2026-05-26-marketplace-design-direction.md) and [blockchain nav §4.A](../plans/2026-05-26-blockchain-plan-navigation.md).
+- **x402 resource server host.** Where does the server that issues 402 responses and verifies `LicenseToken.balanceOf` live, given no central XVN API exists? Three candidates: the public viewer itself; a small operator-hosted relay alongside the viewer; community-run facilitators. Tracked as direction-doc A7.
 - **Fee recipient address at v1 launch:** placeholder until treasury multisig is deployed. Document as TBD-before-mainnet.
 - **Subgraph hosting:** The Graph hosted-service vs decentralized network vs a self-hosted Goldsky / Alchemy indexer. Decision deferred to deployment; affects indexer URL in platform manifest.
 - **EIP-3009 support on USDC.e (Mantle):** verify the bridged USDC on Mantle supports `transferWithAuthorization`. If not, fall back to Permit2 or two-tx approve+buy and document the choice. Action item before contract finalization.
@@ -763,6 +790,16 @@ Listings can opt into `transferableLicense = true`, but v1 ships no resale UI or
 - **Sale currency:** USDC.e on Mantle only. Other assets require schema migration.
 - **Tier B decentralization (TEE + threshold encryption):** documented as future paths, not v1.
 - **Audit:** required before mainnet; not required for hackathon Sepolia deploy.
+
+### 12.1 Amendments (2026-05-26)
+
+From [`docs/superpowers/plans/2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md):
+
+- **Lineage NFT terminology lock** (§3.1.1 above). `agentNftId` = one NFT per lineage; `contentHash` = the variant. Listings are variant-scoped under lineage-scoped NFTs. Resolves A4 conflict with [marketplace-plugin-design](./2026-05-09-marketplace-plugin-design.md) decision #2 by adopting the plugin spec's position canonically.
+- **Custody framing explicit.** Non-custodial: buyers pay sellers directly on chain via `Marketplace.buy` / `buyWithAuthorization`; the 5% protocol fee is the platform's only revenue. XVN dashboard + engine + CLI are free and self-hosted. No contract changes required — the existing surface already implements this — but the spec language is updated to make it unambiguous.
+- **Pricing model locked: fixed USDC, perpetual license.** The existing `Listing.priceUSDC` field already supports this and only this in v1. Streamable / subscription pricing remains a v2+ path (§10.2). No contract changes.
+- **Clone-to-edit on-chain primitive** (per §3.1.1). Cloning a lineage mints a new lineage NFT with `parent_lineage_id` set. Cloning a Tier B (sealed) listing's lineage requires the cloner to hold a `LicenseToken` for at least one variant in that lineage — enforced at mint time. Lock the precise check during Phase 5 contract implementation.
+- **Platform manifest URLs flagged as placeholders** (§3.5 amendment) pending the public viewer domain pick (consolidated with §11 open question above).
 
 ---
 

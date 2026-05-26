@@ -4,6 +4,11 @@
 > **Author:** xvision hackathon team
 > **Companion specs:** [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) (the producer of artifacts this plugin consumes) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 registry surface on Mantle — also deferred)
 > **Hackathon deadline (superseded):** 2026-06-15 — see Status line above.
+>
+> **Amended 2026-05-26** by [`docs/superpowers/plans/2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md). Three points:
+> 1. **Persona A vs Persona B surface split.** The "Marketplace dashboard tab" described in §7 is the **Persona A operator surface** — it lives inside the self-hosted XVN dashboard for the operator who minted the lineages and runs the chain ops. The **Persona B public marketplace** (browse, identity pages, leaderboards, creator profiles, buy/clone-to-edit) is a separate surface and is owned by the direction doc, not this spec. Don't mix them.
+> 2. **Decision #2 (one NFT per lineage) is now canonical** across this spec and the [smart contract surface](./2026-05-08-smart-contract-surface-design.md). The surface spec has been amended (§3.1.1) to adopt this position, resolving the A4 conflict that the blockchain nav doc flagged.
+> 3. **Operator action panel in §7** (Mint missing NFTs / Anchor lineage / Anchor all final / Run attesters now) belongs in Settings → Chain ops, NOT on the public marketplace. The public marketplace surface stays buyer/seller-focused per the direction doc. The PDF design `XVN · Blockchain surfaces.pdf` (referenced from the direction doc context) is essentially this Persona A surface; the direction doc replaces it for Persona B.
 
 ---
 
@@ -213,6 +218,8 @@ V2 opens this surface to external participants (anyone with an ERC-8004 Identity
 ---
 
 ## 7. Marketplace dashboard tab
+
+> **Scope clarification (amended 2026-05-26).** This section describes the **Persona A operator surface** — the dashboard tab inside the self-hosted XVN install for the operator who minted the lineages. It is *not* the public buyer/seller marketplace, which is owned by [`2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md) and lives in a separate thin read-only public viewer. The four panels below are operator-facing: anchor status, attester verdicts, anchor history, operator actions (mint / anchor / run attesters). The public Persona B surface has different columns, different defaults, and no operator-action panel — see direction doc §4.
 
 A sixth tab in the autoresearch dashboard (only present when the plugin is enabled). Four panels:
 
