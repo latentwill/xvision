@@ -1,9 +1,15 @@
 # Non-Custodial Agent Wallets — Design
 
-> **Status:** Draft · 2026-05-09
+> **Status:** Draft; non-custodial Orderly trading rail deferred to V4 by
+> [`2026-05-26-marketplace-program-strategy.md`](../plans/2026-05-26-marketplace-program-strategy.md). · originally drafted 2026-05-09
 > **Terminology:** Updated 2026-05-10 — `strategy_id` renamed to `agent_id` per Option B (see [`docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md`](../plans/2026-05-10-terminology-rename-option-b.md)). The id is a local ULID pre-mint, resolves to the NFT token id post-SLF3.
 > **Depends on:** [`docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`](./2026-05-08-smart-contract-surface-design.md) (the marketplace contract surface this spec assumes), `architecture.md` §6.1 (Orderly executor), `crates/xvision-risk/` (the engine being extended).
 > **Related:** [`crates/xvision-execution/src/orderly.rs`](../../../crates/xvision-execution/src/orderly.rs), [`docs/erc-8004-agent-uses.md`](../../erc-8004-agent-uses.md).
+>
+> **Amended 2026-05-26:** The marketplace contract admin model this spec
+> inherited has changed. V2 testnet uses operator EOA admin and no
+> timelock/multisig; timelock + multisig are V4/mainnet-prep work. UI
+> confirmations use inline/dock/route surfaces, not modals/popups.
 
 ---
 
@@ -24,7 +30,8 @@ This spec defines how xvision gives strategy variants the authority to trade *wi
 
 - Custody of user trading funds. **xvision never holds user trading capital.** Any design that drifts toward this is rejected by construction.
 - The Marketplace / LicenseToken / EvalAttestationRegistry contract internals — those are specified in [`2026-05-08-smart-contract-surface-design.md`](./2026-05-08-smart-contract-surface-design.md). This spec assumes that contract surface and only describes how the trading rail interacts with it.
-- Multi-user scaling for the hackathon. v1 supports one operator-as-user; multi-tenant onboarding is a Plan 5 concern.
+- Multi-user scaling in the first trading-rail slice. The initial rail supports
+  one operator-as-user; multi-tenant onboarding is later work.
 - Withdrawal-time performance fees. Recorded as a future option in §10.
 - Per-trade x402 micropayments. Recorded as a future option in §10.
 
@@ -77,7 +84,7 @@ Both gates are checked once during the implementation plan's first probe. Result
 └────────────────────────────────────────────────────────────────────────────────┘
                               ↓ 5%
 ┌────────────────────────────────────────────────────────────────────────────────┐
-│  XVISION SETTLEMENT WALLET  (operator-owned EOA / multi-sig)                    │
+│  XVISION SETTLEMENT WALLET  (operator-owned EOA for V2; multisig by V4)          │
 │   accumulates 5% drips; operator sweeps periodically                            │
 │   compromise loss = unswept fees only, NEVER user trading capital               │
 └────────────────────────────────────────────────────────────────────────────────┘
@@ -105,7 +112,8 @@ xvision is not in this loop. The user could do all of this without xvision ever 
 
 After Orderly onboarding, the user authorizes xvision to trade on their behalf by:
 
-1. xvision generates an Ed25519 keypair locally (in the operator's environment for v1; in the user's browser for multi-tenant v2).
+1. xvision generates an Ed25519 keypair locally (in the operator's environment
+   for the first slice; in the user's browser for later multi-tenant work).
 2. xvision presents the public key to the user and asks them to sign an Orderly `add_orderly_key` request from their EVM wallet, scoping the key to:
    - account_id: the user's Orderly account
    - permissions: `trading` only (no `withdraw`, no `transfer`)
@@ -158,7 +166,7 @@ hard_cap_daily_loss_usdc        = 250       # per-strategy daily kill switch
 
 # --- new scoped permissions ---
 allowed_chains                  = ["mantle"]                    # chain allowlist
-allowed_protocols               = ["orderly_perp_v3"]           # protocol allowlist (just Orderly in v1)
+allowed_protocols               = ["orderly_perp_v3"]           # protocol allowlist (just Orderly in first slice)
 allowed_assets                  = ["PERP_BTC_USDC"]             # token/symbol allowlist
 max_slippage_bps                = 50         # reject orders whose simulated fill exceeds this
 max_orders_per_minute           = 10         # frequency cap (anti-runaway)
@@ -188,7 +196,7 @@ quota_factor(s, t) =
         1.0
     )
 
-constants (v1, tune from observation):
+constants (initial; tune from observation):
     cold_start_floor   = 0.25
     sharpe_normalizer  = 1.5
     drawdown_floor     = 0.20   (20% drawdown → quota_factor → 0)
@@ -231,7 +239,7 @@ Orderly perps are cross-margin by default — Strategy A's blow-up can liquidate
 
 Either way, the cross-margin risk is documented explicitly and the operator chooses the mode per-strategy or accepts the global ceiling.
 
-**UI: strategy-budget spreadsheet (promoted to v1).**
+**UI: strategy-budget spreadsheet (first-slice requirement).**
 
 The hybrid model (multiple knobs per strategy across many strategies) is unusable without a UI that surfaces all strategies in a single editable table. The dashboard MUST include a **"Strategy Budgets" spreadsheet view** as a first-class screen, not a sub-tab:
 
@@ -246,7 +254,11 @@ btc-breakout-v2     $2,000    100 bps   30          24/7          cross     0.00
                     $18,000                                                              [+ add strategy]
 ```
 
-Every cell except `Quota` and `Status` is inline-editable. Edits write to `policy_changes` (§3.9) and apply on save with a confirm modal showing old → new for each touched field. The `Quota` column is engine-computed (read-only). The `Status` column shows `active` / `halted_auto` / `halted_manual` with click-through to the audit log of what triggered the halt.
+Every cell except `Quota` and `Status` is inline-editable. Edits write to
+`policy_changes` (§3.9) and apply on save with an inline confirmation dock/row
+showing old → new for each touched field. The `Quota` column is engine-computed
+(read-only). The `Status` column shows `active` / `halted_auto` /
+`halted_manual` with click-through to the audit log of what triggered the halt.
 
 Sortable columns. Filter by status. Aggregate row at the bottom showing total committed notional vs. user's Orderly account collateral (if total > X% of collateral, surface a warning). Bulk-edit via shift-click + apply.
 
@@ -301,7 +313,7 @@ This ledger is the source of truth for *attribution* (who traded what), and is r
 The ledger is **reporting-only** — no settlement contract reads from it. Its purpose is:
 
 1. Risk Engine reads it to compute quota_factor (§3.4).
-2. Marketplace creator-payout reporting reads it to show "your strategy generated $X attributable PnL this period" (informational; v1 license sales are not performance-fee-based).
+2. Marketplace creator-payout reporting reads it to show "your strategy generated $X attributable PnL this period" (informational; first-slice license sales are not performance-fee-based).
 3. ERC-8004 reputation writes derive their feedback values from it (per the existing reputation-registry plan in SLF4).
 
 ### 3.6 Marketplace fee router (no changes)
@@ -312,14 +324,18 @@ Specified entirely in [`2026-05-08-smart-contract-surface-design.md`](./2026-05-
 
 ### 3.7 Settlement wallet
 
-A single Mantle EOA (or 2-of-3 multi-sig for hardening) owned by the operator. Receives the 5% commission drips emitted by the Marketplace contract on every license sale.
+A single Mantle EOA in V2 testnet, moving to the V4/mainnet treasury/multisig
+model before real-money launch. Receives the 5% commission drips emitted by the
+Marketplace contract on every license sale.
 
 The wallet:
 
 - Holds USDC.e accumulated from commissions.
 - Is swept manually by the operator on whatever cadence they prefer.
 - Has no programmatic outflows xvision controls.
-- Is recorded on the Marketplace contract as `protocolFeeRecipient`. Changing it is a privileged op behind the existing 7-day timelock + 2-of-3 multi-sig pattern from the smart-contract-surface spec.
+- Is recorded on the Marketplace contract as `protocolFeeRecipient`. In V2
+  testnet, changing it is an operator-EOA privileged op. In V4/mainnet, this
+  moves behind the timelock + multisig admin model.
 
 If the wallet is compromised, the loss is bounded to unswept fees. User trading capital is unreachable from this wallet — they are not connected.
 
@@ -417,7 +433,10 @@ If a decision's notional exceeds `require_manual_approval_above` (per-strategy, 
 3. Operator approves or rejects within a TTL (default 60s). On TTL expiry, the decision is rejected.
 4. Approval/rejection is journaled to the audit log.
 
-This handles the research playbook's "human approval for first-time contracts, large trades, bridging, withdrawals, or changes to policy" — though in v1 the only relevant trigger is large trades (no bridging, no contract diversity, withdrawals are user-controlled).
+This handles the research playbook's "human approval for first-time contracts,
+large trades, bridging, withdrawals, or changes to policy" — though in the first
+slice the only relevant trigger is large trades (no bridging, no contract
+diversity, withdrawals are user-controlled).
 
 **Risk-policy edits are journaled.** Any change to a strategy's risk config (hard caps, allowed assets, etc.) writes a row to a `policy_changes` table with old → new values, who made the change, and a comment. Edits do not auto-apply to in-flight positions.
 
@@ -532,7 +551,10 @@ Reconciliation is observability, not enforcement. The Orderly account state is c
 **Cryptographic surface area xvision controls:**
 
 1. The Ed25519 trading key per user — encrypted at rest with AES-256-GCM, key derived from `CREDENTIAL_SECRET` env var. Decrypted only in process memory, only inside the OrderDispatcher. Never logged. Never sent over the wire (used to sign locally, signature is sent).
-2. The Mantle EOA / multi-sig that owns the Marketplace contract upgrade rights — held in 1Password / hardware wallet by the operator, used only for upgrades behind the existing 7-day timelock.
+2. The Mantle admin key for the Marketplace contract — V2 testnet uses an
+   operator EOA; V4/mainnet moves this authority behind timelock + multisig.
+   Held in 1Password / hardware wallet by the operator until governance
+   hardening.
 3. The settlement wallet private key — held by the operator, used only to sweep accumulated fees.
 
 **Cryptographic surface area xvision does NOT control:**
@@ -546,15 +568,15 @@ Reconciliation is observability, not enforcement. The Orderly account state is c
 
 | Compromise | Worst-case impact | Mitigation |
 |---|---|---|
-| xvision server (Ed25519 key extracted from disk OR memory dump during signing window) | Attacker can place trades up to user's risk-engine limits. Cannot withdraw. | Per-strategy hard caps; daily-loss circuit breaker; frequency caps; anomaly alerts; user can revoke key on Orderly side instantly (`delete_orderly_key` from their EVM wallet); operator can `xvn kill --user <id>` and `xvn emergency-close --user <id>`. v2 mitigation: MPC self-hosted signer (§10) eliminates the in-memory window entirely. |
+| xvision server (Ed25519 key extracted from disk OR memory dump during signing window) | Attacker can place trades up to user's risk-engine limits. Cannot withdraw. | Per-strategy hard caps; daily-loss circuit breaker; frequency caps; anomaly alerts; user can revoke key on Orderly side instantly (`delete_orderly_key` from their EVM wallet); operator can `xvn kill --user <id>` and `xvn emergency-close --user <id>`. Future mitigation: MPC self-hosted signer (§10) eliminates the in-memory window entirely. |
 | Settlement wallet | Loss of unswept commission fees only. | Periodic sweeping; multi-sig optional. |
-| Marketplace contract (worst case: malicious upgrade redirects fees) | Loss of in-flight USDC during a `buy()` call + redirected future fees until reverted. **Cannot reach user trading capital** — the trading rail does not read from or trust the marketplace contract. | UUPS proxy + 7-day timelock + 2-of-3 multi-sig per existing spec; the timelock window is the operator's response budget. |
+| Marketplace contract (worst case: malicious upgrade redirects fees) | Loss of in-flight USDC during a `buy()` call + redirected future fees until reverted. **Cannot reach user trading capital** — the trading rail does not read from or trust the marketplace contract. | V2 testnet: UUPS proxy with operator EOA admin and limited funds. V4/mainnet: timelock + multisig per the updated smart-contract surface. |
 | User EVM wallet | User's full Orderly account drained — but this is the user's responsibility, not xvision's. | N/A (user-owned). |
 | Phishing during key registration (user signs malicious `add_orderly_key` thinking it's xvision's) | Attacker controls trading key from day zero. | §3.2 mandates pubkey display, scope display, hardware-wallet recommendation, independent verification path via Orderly's web UI. |
 
 **The deliberate property:** no compromise of *any* xvision-controlled key or contract can result in loss of user trading capital. This is the design constraint the spec exists to satisfy.
 
-**Acknowledged residual risk: in-memory key during signing.** Even with AES-256-GCM at rest, the Ed25519 trading key sits in process memory while the dispatcher signs each order. A memory-extraction attack (e.g. via a kernel exploit on the host) could exfiltrate the key. This is the same single-point-of-compromise pattern swarmclaw has, and is the strongest argument for migrating to MPC signing in v2 (recorded in §10). For v1, the mitigation is that the *blast radius* is bounded by the trading-only scope (no withdrawal possible regardless of key compromise) and by the kill-switch + emergency-close path (§3.9).
+**Acknowledged residual risk: in-memory key during signing.** Even with AES-256-GCM at rest, the Ed25519 trading key sits in process memory while the dispatcher signs each order. A memory-extraction attack (e.g. via a kernel exploit on the host) could exfiltrate the key. This is the same single-point-of-compromise pattern swarmclaw has, and is the strongest argument for migrating to MPC signing in future work (recorded in §10). For the first slice, the mitigation is that the *blast radius* is bounded by the trading-only scope (no withdrawal possible regardless of key compromise) and by the kill-switch + emergency-close path (§3.9).
 
 ---
 
@@ -568,8 +590,10 @@ Reconciliation is observability, not enforcement. The Orderly account state is c
 - **Reservation TTL leaks (crashed dispatcher leaves a strategy's quota partially reserved).** TTL of 30s self-resolves; a stuck reservation eventually expires and is reaped. If reservations consistently leak (suggesting a bug), surfaces as "reservation expiry rate exceeds threshold" alert.
 - **Race on simultaneous decisions.** Reservation pattern (§3.4) makes cap checks strictly serializable per-strategy. Independent strategies do not block each other.
 - **Attribution ledger out of sync with Orderly state.** Reconciliation job (§4.3) detects and surfaces. PnL reporting becomes stale until resolved; trading is unaffected (orders still execute, just attribution is delayed).
-- **Marketplace contract compromised mid-sale.** Atomic transaction either completes or reverts; no partial-state risk. Pause via existing multi-sig if needed.
-- **Settlement wallet compromised.** Operator loses unswept fees. Issue a contract upgrade to point `protocolFeeRecipient` at a new address (7-day timelock applies).
+- **Marketplace contract compromised mid-sale.** Atomic transaction either completes or reverts; no partial-state risk. V2 pause uses operator EOA; V4/mainnet pause follows the timelock/multisig governance model.
+- **Settlement wallet compromised.** Operator loses unswept fees. V2 can point
+  `protocolFeeRecipient` at a new EOA via admin action; V4/mainnet follows the
+  timelock/multisig admin path.
 
 ---
 
@@ -631,14 +655,14 @@ Steps 0–6 ship in single-user mode (operator is the only "user"). Step 7 unloc
 
 ## 10. Open questions / deferred
 
-- **Multi-tenant onboarding UX.** v1 assumes operator-as-user. Browser-side Ed25519 keypair generation + Orderly registration flow is needed for multi-tenant. Defer to Plan 2d (dashboard) or later.
-- **Performance fee on withdrawal.** Recorded as a future fee model: when a user withdraws from their Orderly account through xvision's withdrawal helper, an off-chain calculator computes realized PnL since deposit, and the user is offered the choice to pay an X% performance fee to creators of the strategies that contributed to that PnL. Strictly opt-in (user can always withdraw directly via Orderly's UI). Adds a helper contract and a UI flow; not required for hackathon. **Operator's note:** this is a "fun" idea — keep on the table for v2.
-- **Per-trade x402 micropayments.** Recorded as a future fee model alongside license purchases. Adds pre-authorization UX and per-fire fee accounting. Out of v1 scope.
-- **Trading-key auto-rotation.** Currently 90-day expiry with manual rotation. Auto-rotation requires the user to be online to sign the new registration; not a hackathon priority.
-- **Stake bonds / costly signaling for strategies.** Not surfaced in the brainstorm but adjacent: strategies could be required to lock a USDC bond (slashed on poor performance) to be eligible for high-quota allocation. Could be added as an optional layer in the quota function. v2.
+- **Multi-tenant onboarding UX.** First slice assumes operator-as-user. Browser-side Ed25519 keypair generation + Orderly registration flow is needed for multi-tenant. Defer to dashboard/user-onboarding planning.
+- **Performance fee on withdrawal.** Recorded as a future fee model: when a user withdraws from their Orderly account through xvision's withdrawal helper, an off-chain calculator computes realized PnL since deposit, and the user is offered the choice to pay an X% performance fee to creators of the strategies that contributed to that PnL. Strictly opt-in (user can always withdraw directly via Orderly's UI). Adds a helper contract and a UI flow; not required for the first slice. **Operator's note:** this is a "fun" idea — keep on the table for later.
+- **Per-trade x402 micropayments.** Recorded as a future fee model alongside license purchases. Adds pre-authorization UX and per-fire fee accounting. Out of first-slice scope.
+- **Trading-key auto-rotation.** Currently 90-day expiry with manual rotation. Auto-rotation requires the user to be online to sign the new registration; not a first-slice priority.
+- **Stake bonds / costly signaling for strategies.** Not surfaced in the brainstorm but adjacent: strategies could be required to lock a USDC bond (slashed on poor performance) to be eligible for high-quota allocation. Could be added as an optional layer in the quota function later.
 - **Reconciliation alerting.** §4.3 defines the reconciliation job; alerting thresholds (when does a "drift" become "page the operator"?) are TBD with operational experience.
-- **MPC migration for trading-key signing.** v1 stores the Ed25519 trading key encrypted at rest with AES-256-GCM, decrypted in process memory at signing time. The 2026 agent-wallet research consensus (Fystack, Kite Passport, etc.) is that the in-memory window is the strongest remaining attack surface for this class of system. v2 should evaluate self-hosted MPC signers (e.g. Fystack-style) that keep no full key in any single process. Migration should be transparent to dispatchers — the OrderDispatcher abstraction already isolates signing behind a trait.
-- **Smart-account migration for trading scope.** Even with MPC signing, the authority model is "off-chain key with API-level scope." A v2+ migration could use a Safe / ERC-4337 smart account on Mantle with on-chain session-key permissions — same trading-only scope but enforced at the contract level rather than at Orderly's API. Requires Orderly to accept smart-account signatures (currently does not without a relayer); not a near-term path.
+- **MPC migration for trading-key signing.** The first slice stores the Ed25519 trading key encrypted at rest with AES-256-GCM, decrypted in process memory at signing time. The 2026 agent-wallet research consensus (Fystack, Kite Passport, etc.) is that the in-memory window is the strongest remaining attack surface for this class of system. Later work should evaluate self-hosted MPC signers (e.g. Fystack-style) that keep no full key in any single process. Migration should be transparent to dispatchers — the OrderDispatcher abstraction already isolates signing behind a trait.
+- **Smart-account migration for trading scope.** Even with MPC signing, the authority model is "off-chain key with API-level scope." A future migration could use a Safe / ERC-4337 smart account on Mantle with on-chain session-key permissions — same trading-only scope but enforced at the contract level rather than at Orderly's API. Requires Orderly to accept smart-account signatures (currently does not without a relayer); not a near-term path.
 - **Browser-issued ephemeral session keys.** When the multi-tenant dashboard ships, consider issuing short-lived (hours-scoped) trading keys per active dashboard session, in addition to (or instead of) the 90-day per-user key. Limits exposure window further. Adds rotation complexity.
 - **Comparison with OKX Agentic Wallet + Kite Passport.** OKX recently shipped an "agentic wallet" model with Kite Passport-style scoped permissions. Worth a deeper evaluation: do they offer primitives we should adopt (e.g. a permission grammar more expressive than Orderly's binary trading/withdraw scope)? Are there integration points that would let xvision ride on their custody primitives instead of building our own trading-key issuance flow? Time-box: 1 day of research before v2 planning.
 - **Comparison with Fystack self-hosted MPC.** Fystack's blog post on "Who controls the key when your AI agent signs" makes the case for MPC over single-server custody. Worth piloting their open-source signer (or equivalent: Sodot, Lit Protocol) as the v2 trading-key backend. Time-box: 2 days of integration spike.

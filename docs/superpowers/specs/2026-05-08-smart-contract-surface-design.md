@@ -1,13 +1,25 @@
 # Smart Contract Surface — Design
 
-> **Status:** Deferred — design accepted, implementation gated on Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper. v1 of Xvision is Alpaca-eval only with no on-chain function. Pick this spec back up once the engine + eval prove the multistrategy ranking claim end-to-end. · 2026-05-08
+> **Status:** Accepted contract surface, pending implementation in the marketplace
+> program. Superseded scheduling/admin notes below reflect the 2026-05-26
+> marketplace strategy: **V2 is Mantle Sepolia testnet only, admin = operator
+> EOA, no timelock/multisig until V4 prep.** · originally drafted 2026-05-08
 > **Depends on:** [`decisions/0008-erc8004-deployment.md`](../../../decisions/0008-erc8004-deployment.md) (status of that ADR likely needs re-scoping under the same deferral), [`docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md`](./2026-05-08-strategy-creation-engine-design.md), and `architecture.md` §6.1.
 > **Related:** [`docs/erc-8004-agent-uses.md`](../../erc-8004-agent-uses.md).
 >
-> **Amended 2026-05-26** by [`docs/superpowers/plans/2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md). Three substantive amendments:
+> **Amended 2026-05-26** by [`docs/superpowers/plans/2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md)
+> and [`docs/superpowers/plans/2026-05-26-marketplace-program-strategy.md`](../plans/2026-05-26-marketplace-program-strategy.md). Substantive amendments:
 > 1. **`agentNftId` is the lineage NFT**, not a per-variant NFT — resolves the A4 conflict flagged in the blockchain nav doc. See §3.1 clarification below.
 > 2. **Platform manifest URLs in §3.5 are placeholders** pending the public-viewer domain pick (direction doc §6.1). The architecture assumes a thin read-only viewer at a TBD domain, not a central app/API.
 > 3. **Custody model framed explicitly as non-custodial.** Buyers pay sellers directly on chain; platform extracts a small fee at settlement. XVN dashboard + engine + CLI are free and self-hosted. Already true of the contract surface — no contract changes — but worth stating because earlier framing conflated "marketplace contract" with "centralized platform."
+> 4. **Admin model changed for V2.** Testnet deployments use an operator EOA
+>    as proxy admin and fee recipient. Timelock + multisig are V4/mainnet-prep
+>    work, not V2.
+> 5. **Generative art is not specified here.** Any old references to
+>    deterministic `tokenURI` art are placeholders until the Phase-4 gen-art
+>    spec locks the byte-stable algorithm and encoding.
+> 6. **License token type remains ERC-1155.** Later UX docs that say ERC-721
+>    for licenses are stale shorthand.
 
 ---
 
@@ -15,7 +27,8 @@
 
 This spec covers the on-chain contract surface for Xvision: the marketplace, commerce, licensing, and discoverability layer that sits on top of the three ERC-8004 registries already designed in ADR 0008.
 
-**In scope (v1, single canonical chain — Mantle, chain 5000):**
+**In scope (V2 testnet, single canonical chain for this wave — Mantle Sepolia,
+chain 5003):**
 
 - Listing CRUD on-chain.
 - Sale flow with platform commission split.
@@ -23,7 +36,8 @@ This spec covers the on-chain contract surface for Xvision: the marketplace, com
 - Eval-attestation registry.
 - Platform self-registration as an ERC-8004 agent.
 - x402 checkout for agent-led full-license purchases.
-- Upgradeability via UUPS proxies behind a 7-day timelock + 2-of-3 multisig.
+- Upgradeability via UUPS proxies with **operator EOA admin for V2 testnet**.
+  7-day timelock + 2-of-3 multisig are V4/mainnet-prep work.
 - CREATE2 deterministic deploys to enable identical addresses on future mirror chains.
 
 **Explicitly out of scope (recorded as future paths in §10):**
@@ -42,10 +56,10 @@ This spec covers the on-chain contract surface for Xvision: the marketplace, com
 ## 2. Architecture overview
 
 ```
-                                 Mantle (canonical, chain 5000)
+                              Mantle Sepolia (V2 testnet, chain 5003)
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Existing (ADR 0008 + Strategy Engine spec §13)                     │
-│   IdentityRegistry  ──► (ERC-721 strategy NFTs, +platform agent #0) │
+│   IdentityRegistry  ──► (ERC-721 lineage NFTs, +platform agent #0)  │
 │   ReputationRegistry  (per-run feedback)                            │
 │   ValidationRegistry  (per-trade proofs)                            │
 └─────────────────────────────────────────────────────────────────────┘
@@ -78,7 +92,9 @@ This spec covers the on-chain contract surface for Xvision: the marketplace, com
 - **One concern per contract.** Listing data is not on the sale contract; sale is not on the token contract. Each is small, replaceable, and audit-scoped.
 - **USDC.e on Mantle is the only sale currency in v1.** Native MNT, ETH, and other stables are deferred. One asset → one math path → one slippage story.
 - **Soulbound license tokens by default.** A license is bound to the buyer's wallet. Sellers can opt a listing into "transferable license" at listing time. Soulbound is the safe default for IP — it stops trivial license farming.
-- **Upgradeability via UUPS proxy + 7-day timelock + 2-of-3 multisig** on each new contract. The three ERC-8004 registries (per ADR 0008) stay non-proxied as already specced.
+- **Upgradeability via UUPS proxy + operator EOA admin for V2 testnet.**
+  The three ERC-8004 registries (per ADR 0008) stay non-proxied as already
+  specced. 7-day timelock + 2-of-3 multisig are V4/mainnet-prep work.
 - **Deterministic CREATE2 deploys** via a single `XvnDeployer` factory. Same bytecode, same salts → same address on any EVM chain we mirror to later. No multi-chain code in v1.
 - **Platform discoverability:** xvn-the-platform is registered as an ERC-8004 agent in `IdentityRegistry`, with `Marketplace` as its endpoint. Existing 8004 indexers (0xbits, dmihal, AgentCity) light up xvn for free.
 - **Read path matters as much as write path.** Every contract emits events with stable, indexer-friendly schemas (named topic-zero, indexed seller / buyer / listingId / agentNftId). Subgraph-readable on day 1.
@@ -95,7 +111,7 @@ struct Listing {
     address seller;
     uint256 agentNftId;            // ERC-8004 IdentityRegistry token (the LINEAGE — see §3.1.1)
     bytes32 contentHash;           // keccak256 of canonical bundle JSON (the variant)
-    string  contentURI;            // ipfs://… (Tier A) or https://api.xvn… (Tier B)
+    string  contentURI;            // ipfs://… public metadata or sealed bundle pointer
     uint8   tier;                  // 0 = Open, 1 = Sealed
     uint96  priceUSDC;             // 6-decimal USDC, 2^96 enough headroom
     uint16  protocolFeeBps;        // snapshot at create time (resists rug)
@@ -132,7 +148,11 @@ Resolves the A4 conflict between this spec and [`marketplace-plugin-design.md`](
 - **`contentHash` is the VARIANT.** Each variant within a lineage is identified by its bundle's content hash. Variants are addressable inside the lineage manifest's mutation log; they do NOT each consume an NFT mint.
 - **Listings are variant-scoped, owned by lineage-scoped NFTs.** A creator can have multiple active listings under the same `agentNftId` (one per variant they want to monetize). The listing's `contentHash` says which variant the buyer is licensing; the `agentNftId` says which lineage it belongs to and who owns the lineage identity.
 - **Clone-to-edit creates a NEW lineage NFT** with `parent_lineage_id` pointing to the source. This is the on-chain forking primitive that powers the creator-recognition surface described in the direction doc §3.4.
-- **Generative art binds to the lineage NFT.** `tokenURI` renders deterministic SVG from `agent_id + manifestHash` so the art evolves visibly as the lineage's HEAD variant moves, while staying recognizably part of the same lineage family.
+- **Generative art binds to the lineage NFT, but is not scoped in this spec.**
+  Phase 4 of the marketplace program locks the byte-stable generator, input
+  space, palette rules, lineage-coherence rule, and `tokenURI` encoding. Until
+  then, any UI uses a placeholder and contracts must only reserve the metadata
+  fields needed by the Phase-1 metadata spec.
 
 Implementation impact: none on the contract surface — `agentNftId` is already a `uint256`, lineage manifests already carry `parent_lineage_id` per the plugin spec §4. This subsection is a terminology lock so downstream code (subgraph schemas, Rust bindings, dashboard wiring) consistently treats one NFT = one lineage.
 
@@ -154,8 +174,8 @@ function buyWithAuthorization(
 
 function setProtocolFeeBps(uint16 newBps) external onlyAdmin; // capped at MAX_PROTOCOL_FEE_BPS
 function setFeeRecipient(address newRecipient) external onlyAdmin;
-function pause() external onlyAdmin;     // multisig-direct (no timelock)
-function unpause() external onlyAdmin;   // timelocked
+function pause() external onlyAdmin;     // V2: operator EOA; V4: emergency admin path
+function unpause() external onlyAdmin;   // V2: operator EOA; V4: governed admin path
 
 event Sold(
     uint256 indexed listingId,
@@ -164,7 +184,9 @@ event Sold(
     uint96  priceUSDC,
     uint96  sellerProceeds,
     uint96  protocolProceeds,
-    uint256 licenseTokenId
+    uint256 licenseTokenId,
+    uint8   payerKind,       // 0 = human, 1 = agent; exact derivation locked in Phase 1/5
+    uint8   purchasePath     // 0 = direct, 1 = x402
 );
 event ProtocolFeeBpsChanged(uint16 oldBps, uint16 newBps);
 event FeeRecipientChanged(address oldRecipient, address newRecipient);
@@ -220,7 +242,7 @@ Two write paths use the same function:
 - **Publish-time attestation** by the seller: signed eval result for the canonical scenario (per Strategy Engine spec §13).
 - **Third-party attestation** by independent validators: someone re-runs the eval, signs the result, posts it. Cheap on-chain anti-fraud surface.
 
-Open question (§11): use [EAS](https://attest.org) directly on Mantle (if EAS is deployed there) instead of a bespoke contract. Default v1 is bespoke — same surface, less external dependency for the hackathon.
+Open question (§11): use [EAS](https://attest.org) directly on Mantle (if EAS is deployed there) instead of a bespoke contract. Default V2 testnet plan is bespoke — same surface, less external dependency.
 
 ### 3.5 `PlatformAgent` registration (no new contract)
 
@@ -249,8 +271,8 @@ Platform manifest JSON (pinned to IPFS, CID stored in agent NFT metadata):
     "marketplace_dapp":              "https://app.xvn.dev"
   },
   "supported_protocols": ["erc-8004", "erc-1155", "x402", "eip-3009"],
-  "owner_multisig":                  "0x…2of3multisig",
-  "discovery_canonical_chain":       { "chainId": 5000, "name": "Mantle" }
+  "owner":                           "0x…operatorEOA",
+  "discovery_canonical_chain":       { "chainId": 5003, "name": "Mantle Sepolia" }
 }
 ```
 
@@ -278,7 +300,7 @@ After this tx, any 8004-aware indexer treats xvn as a discoverable agent. Cost: 
 
 ```
 ┌─────────┐         ┌──────────────┐       ┌──────────────┐      ┌──────────────────┐
-│ Agent   │         │ xvn API      │       │ Facilitator  │      │ Mantle (chain)   │
+│ Agent   │         │ Relay /      │       │ Facilitator  │      │ Mantle (chain)   │
 │ (Claude)│         │ (resource    │       │ (e.g.        │      │  Marketplace +   │
 │         │         │  server)     │       │  Coinbase)   │      │  LicenseToken    │
 └────┬────┘         └──────┬───────┘       └──────┬───────┘      └────────┬─────────┘
@@ -337,7 +359,13 @@ xvn implements the **x402 PaymentRequirements / PaymentPayload** schema verbatim
 
 ### 4.4 Verification model on the resource server
 
-The xvn API verifies licenses with a **single chain read**: `LicenseToken.balanceOf(agentWallet, listingId) >= 1`. No off-chain state, no replay-attack window. License tokens are soulbound by default, so the wallet that holds the token IS the licensee. For Tier B (sealed), the API additionally checks device fingerprint + signature freshness — same as Strategy Engine spec §5.
+There is no central xvn API for browse. A sealed-bundle relay or facilitator
+(host TBD in Phase 5/6) verifies licenses with a **single chain read**:
+`LicenseToken.balanceOf(agentWallet, listingId) >= 1`. No off-chain state, no
+replay-attack window. License tokens are soulbound by default, so the wallet
+that holds the token IS the licensee. For Tier B (sealed), device-fingerprint
+and signature-freshness checks are still open edge-flow design items, tracked
+in the marketplace strategy §7 as E1.
 
 ### 4.5 Refunds, failures, and partial states
 
@@ -358,10 +386,13 @@ buyer pays priceUSDC
   ─► fee recipient   priceUSDC * protocolFeeBps / 10000
 ```
 
-- **Default `protocolFeeBps = 500` (5%).** Tunable post-deploy via timelocked admin.
-- **Hard ceiling `MAX_PROTOCOL_FEE_BPS = 1000` (10%) in contract code.** Even the admin multisig cannot push fees above this — it requires a contract upgrade.
+- **Default `protocolFeeBps = 500` (5%).** Tunable post-deploy via V2 operator
+  EOA admin; V4/mainnet moves this to timelock + multisig.
+- **Hard ceiling `MAX_PROTOCOL_FEE_BPS = 1000` (10%) in contract code.** Even
+  the admin cannot push fees above this — it requires a contract upgrade.
 - **Snapshotted per-listing at `createListing` time.** A fee bump applies only to *new* listings, never retroactively. Sellers know the deal at the moment they list.
-- **One fee recipient address.** Settable by admin. v1 points it at the xvn-treasury multisig.
+- **One fee recipient address.** Settable by admin. V2 testnet points it at the
+  operator EOA; treasury multisig is V4/mainnet prep.
 - **USDC.e on Mantle only.** Other-asset support requires a schema migration, on purpose — `priceUSDC` is typed `uint96`.
 
 ### 5.2 Failure and edge-case math
@@ -401,18 +432,18 @@ Already specified in §3.5. The mint is the GEO play: AI search engines and craw
 Shipped in `crates/xvision-marketplace/subgraph/`:
 
 ```graphql
-type Strategy @entity {
+type Lineage @entity {
   id: ID!                           # agentNftId
   owner: Bytes!
   manifestCid: String!
-  reputation: [Feedback!]! @derivedFrom(field: "strategy")
-  validations: [Validation!]! @derivedFrom(field: "strategy")
-  listings: [Listing!]! @derivedFrom(field: "strategy")
+  reputation: [Feedback!]! @derivedFrom(field: "lineage")
+  validations: [Validation!]! @derivedFrom(field: "lineage")
+  listings: [Listing!]! @derivedFrom(field: "lineage")
 }
 
 type Listing @entity {
   id: ID!                           # listingId
-  strategy: Strategy!               # agentNftId
+  lineage: Lineage!                 # agentNftId
   seller: Bytes!
   contentHash: Bytes!
   tier: Int!
@@ -430,6 +461,8 @@ type Sale @entity {
   priceUSDC: BigInt!
   sellerProceeds: BigInt!
   protocolProceeds: BigInt!
+  payerKind: Int!                   # 0 = human, 1 = agent
+  purchasePath: Int!                # 0 = direct, 1 = x402
   blockTimestamp: BigInt!
 }
 
@@ -481,17 +514,22 @@ UUPS (EIP-1822) over Transparent because:
 - Upgrade authority lives in the implementation contract, which means once the implementation is set to a non-upgradeable version, the proxy is permanently frozen — that's the **admin-burn primitive**.
 - Battle-tested via OpenZeppelin's audited `UUPSUpgradeable`.
 
-Each new contract (`ListingRegistry`, `Marketplace`, `LicenseToken`, `EvalAttestationRegistry`) deploys as `Proxy → Implementation v1`. The three existing 8004 registries (per ADR 0008) stay non-proxied as already specced.
+Each new contract (`ListingRegistry`, `Marketplace`, `LicenseToken`,
+`EvalAttestationRegistry`) deploys as `Proxy → Implementation v1`. The three
+existing 8004 registries (per ADR 0008) stay non-proxied as already specced.
+In V2 testnet, the proxy admin is the operator EOA for iteration speed.
 
-### 7.2 Admin chain: 2-of-3 multisig → 7-day Timelock → Proxy
+### 7.2 V2 testnet admin chain: operator EOA → Proxy
 
 ```
-multisig (2-of-3 Safe)  ──schedule──►  Timelock (7d delay)  ──execute──►  Proxy.upgradeTo(newImpl)
+operator EOA ──execute──► Proxy.upgradeTo(newImpl)
 ```
 
-- **Multisig:** 2-of-3 (founder + ops + community-trustee). Cold-stored.
-- **Timelock:** OpenZeppelin's `TimelockController`, 7-day delay on all admin ops. Anyone can watch the queued tx. The timelock owns the proxy admin role.
-- **Emergency `pause()`** on `Marketplace` only is exempted from the timelock — multisig can pause sales immediately if a sale-flow exploit is discovered. Pause cannot mint, burn, transfer, or change fees. Unpause is timelocked.
+- **Admin:** operator EOA only for V2 testnet.
+- **Timelock/multisig:** deliberately not deployed in V2. They land in Phase 8 /
+  V4 prep before any mainnet launch.
+- **Emergency `pause()`** on `Marketplace` is still present, but in V2 it is an
+  operator-EOA action. Pause cannot mint, burn, transfer, or change fees.
 
 ### 7.3 Per-contract admin powers
 
@@ -505,22 +543,27 @@ multisig (2-of-3 Safe)  ──schedule──►  Timelock (7d delay)  ──exec
 ### 7.4 Progressive decentralization ladder
 
 ```
-v1 launch
-  ├── All four new contracts: UUPS proxy + 7d timelock + 2-of-3 multisig
+V2 testnet launch
+  ├── All four new contracts: UUPS proxy + operator EOA admin
   └── Existing IdentityRegistry/ReputationRegistry/ValidationRegistry: already non-upgradeable
 
-3 months post-launch (M+3) — burn LicenseToken admin
+V4/mainnet prep — install timelock + 2-of-3 multisig
+  ├── Pick signer set (founder + ops + community-trustee TBD).
+  ├── Transfer proxy admin authority away from the operator EOA.
+  └── Queue/execute upgrades through a 7-day TimelockController.
+
+3 months post-mainnet launch (M+3) — burn LicenseToken admin
   ├── Gate: zero security incidents on LicenseToken; no needed protocol changes.
   ├── Action: multisig executes upgradeToAndCall(NonUpgradeableLicenseToken).
   └── Result: LicenseToken implementation is permanently frozen. The minter set
       becomes the only mutable surface — and minter additions still go through
       the timelock, watchable by anyone.
 
-6 months post-launch (M+6) — burn ListingRegistry admin
+6 months post-mainnet launch (M+6) — burn ListingRegistry admin
   ├── Gate: schema has been stable for 6 months; no upgrade in the last 90 days.
   └── Action: same as above. Listing schema becomes permanent.
 
-12 months post-launch (M+12) — Marketplace governance handoff
+12 months post-mainnet launch (M+12) — Marketplace governance handoff
   ├── Gate: protocol-fee economics validated; treasury policy ratified.
   ├── Action: transfer Timelock admin from 2-of-3 multisig to a token-governed
   │           DAO contract OR to a 5-of-9 community-trustee multisig.
@@ -541,8 +584,12 @@ All new state variables in v2+ go into the gap, never above existing variables. 
 
 ### 7.6 Upgrade testing
 
-- **Fork tests** (Foundry `vm.createFork(mantle)`) replay the upgrade against mainnet state in CI before any timelock schedule. Tests must show: balances preserved, listing IDs preserved, license token holdings preserved, all events still emittable.
-- **Audit cadence:** every implementation that goes through the timelock requires an external audit before `schedule()` is called. The 7-day window covers the audit publication window — auditors and users see the diff before it lands.
+- **Fork tests** (Foundry `vm.createFork(mantle)`) replay upgrades against
+  mainnet state before V4/mainnet changes. During V2, use Mantle Sepolia/anvil
+  equivalents.
+- **Audit cadence:** external audit is required before mainnet/V4. V2 testnet
+  may deploy without audit; every mainnet implementation upgrade that goes
+  through the timelock requires an external audit before `schedule()` is called.
 
 ---
 
@@ -571,8 +618,8 @@ contracts/
 │   └── libraries/
 │       └── Splits.sol                      # math for protocol-fee split
 ├── script/
-│   ├── DeployTestnet.s.sol                 # Mantle Sepolia (chain 5003)
-│   ├── DeployMainnet.s.sol                 # Mantle (chain 5000)
+│   ├── DeployTestnet.s.sol                 # Mantle Sepolia (chain 5003), EOA admin
+│   ├── DeployMainnet.s.sol                 # Mantle (chain 5000), V4 gated
 │   ├── RegisterPlatformAgent.s.sol         # one-shot 8004 mint
 │   └── UpgradeTimelock.s.sol               # queue/execute helpers
 └── test/
@@ -617,7 +664,7 @@ Mantle Sepolia (chain 5003) — testnet first
                              → emits AgentRegistered for the xvn platform
 10. config/mantle-sepolia.toml updated with all eight addresses.
 
-Mantle mainnet (chain 5000) — gated on Phase 9 eval clearing per ADR 0008
+Mantle mainnet (chain 5000) — V4 gated after V2 exit, audit, and governance prep
 
 Same sequence, same XvnDeployer address (nonce-0 EOA reused), same CREATE2 salts.
 Mainnet addresses for the four new contracts are predictable from the salts before
@@ -642,9 +689,11 @@ marketplace              = "0x…"
 license_token            = "0x…"
 eval_attestation         = "0x…"
 platform_agent_token_id  = 0          # the IdentityRegistry NFT minted in step 9
-fee_recipient            = "0x…"     # multisig
-admin_multisig           = "0x…"
-timelock                 = "0x…"
+fee_recipient            = "0x…"     # V2: operator EOA; V4: treasury/multisig
+admin                    = "0x…"     # V2: operator EOA; V4: timelock/multisig path
+# V4/mainnet only:
+# admin_multisig         = "0x…"
+# timelock               = "0x…"
 
 [marketplace.usdc]
 address                  = "0x09Bc…" # USDC.e on Mantle
@@ -713,8 +762,11 @@ Run against a Mantle fork (`vm.createFork(MANTLE_RPC)`) before any production up
 
 ### 9.5 Audit cadence
 
-- v1 mainnet deploy is gated on one external audit (Trail of Bits / OpenZeppelin / equivalent). Hackathon submission may launch on Sepolia without an audit; mainnet does not.
-- Every subsequent implementation upgrade also requires an audit before the timelock `schedule()` is called.
+- V2 testnet may launch on Sepolia without an external audit.
+- V4/mainnet deploy is gated on one external audit (Trail of Bits /
+  OpenZeppelin / equivalent), timelock + multisig setup, and the V2 exit gate.
+- Every subsequent mainnet implementation upgrade also requires an audit before
+  the timelock `schedule()` is called.
 
 ---
 
@@ -771,7 +823,8 @@ Listings can opt into `transferableLicense = true`, but v1 ships no resale UI or
 - **Multisig signer set:** the 2-of-3 — who are the three? Founder, ops, community-trustee — but the community-trustee identity is TBD before mainnet deploy.
 - **Platform manifest schema URL + domain pick:** `https://xvision.dev/schemas/platform-agent.v1.json` — domain not yet provisioned. Pin to IPFS for v1 if domain ownership isn't ready. **Consolidated with direction-doc question A6** (public viewer domain pick); the same domain decision answers both. See [direction doc §6.1](../plans/2026-05-26-marketplace-design-direction.md) and [blockchain nav §4.A](../plans/2026-05-26-blockchain-plan-navigation.md).
 - **x402 resource server host.** Where does the server that issues 402 responses and verifies `LicenseToken.balanceOf` live, given no central XVN API exists? Three candidates: the public viewer itself; a small operator-hosted relay alongside the viewer; community-run facilitators. Tracked as direction-doc A7.
-- **Fee recipient address at v1 launch:** placeholder until treasury multisig is deployed. Document as TBD-before-mainnet.
+- **Fee recipient address:** V2 testnet uses the operator EOA. V4/mainnet
+  treasury/multisig address is TBD-before-mainnet.
 - **Subgraph hosting:** The Graph hosted-service vs decentralized network vs a self-hosted Goldsky / Alchemy indexer. Decision deferred to deployment; affects indexer URL in platform manifest.
 - **EIP-3009 support on USDC.e (Mantle):** verify the bridged USDC on Mantle supports `transferWithAuthorization`. If not, fall back to Permit2 or two-tx approve+buy and document the choice. Action item before contract finalization.
 
@@ -783,13 +836,15 @@ Listings can opt into `transferableLicense = true`, but v1 ships no resale UI or
 - **Approach:** layered (Approach B) — five new contracts, one concern per contract, each behind UUPS proxy.
 - **Commission:** seller-side split, 5% default, 10% hard ceiling, snapshotted per-listing. Buyer-side fees and royalty splits deferred.
 - **x402:** used as the buy-rail for full licenses via EIP-3009 `buyWithAuthorization`. Pay-per-fire and broader x402 fabric deferred.
-- **Decentralization:** UUPS + 7d timelock + 2-of-3 multisig at v1 (Option 3 chosen explicitly for hackathon). Progressive admin-burn ladder at M+3 / M+6 / M+12 documented as the path to immutability.
+- **Decentralization:** V2 testnet uses UUPS + operator EOA admin. 7d timelock
+  + 2-of-3 multisig move to V4/mainnet prep, followed by the progressive
+  admin-burn ladder at M+3 / M+6 / M+12.
 - **Multi-chain GEO:** Mantle-only contracts; CREATE2 deterministic deploys make future mirroring on Base / Arbitrum / Polygon a deploy exercise rather than a redesign.
 - **Discoverability:** xvn registers itself as ERC-8004 agent #0 in `IdentityRegistry`; reuses existing 8004 indexers (0xbits, dmihal, AgentCity) for free GEO pickup.
 - **License token:** ERC-1155, soulbound by default, transferable opt-in per listing. Authorized-minter pattern enables future skill marketplace, subscription, and pay-per-fire without redeploy.
 - **Sale currency:** USDC.e on Mantle only. Other assets require schema migration.
 - **Tier B decentralization (TEE + threshold encryption):** documented as future paths, not v1.
-- **Audit:** required before mainnet; not required for hackathon Sepolia deploy.
+- **Audit:** required before mainnet; not required for V2 Sepolia deploy.
 
 ### 12.1 Amendments (2026-05-26)
 
@@ -800,6 +855,12 @@ From [`docs/superpowers/plans/2026-05-26-marketplace-design-direction.md`](../pl
 - **Pricing model locked: fixed USDC, perpetual license.** The existing `Listing.priceUSDC` field already supports this and only this in v1. Streamable / subscription pricing remains a v2+ path (§10.2). No contract changes.
 - **Clone-to-edit on-chain primitive** (per §3.1.1). Cloning a lineage mints a new lineage NFT with `parent_lineage_id` set. Cloning a Tier B (sealed) listing's lineage requires the cloner to hold a `LicenseToken` for at least one variant in that lineage — enforced at mint time. Lock the precise check during Phase 5 contract implementation.
 - **Platform manifest URLs flagged as placeholders** (§3.5 amendment) pending the public viewer domain pick (consolidated with §11 open question above).
+- **Gen-art demoted to Phase 4.** The contract surface reserves metadata
+  fields but does not specify the generator. `tokenURI` encoding is locked by
+  the marketplace metadata + gen-art specs before deployment.
+- **Human-vs-agent buyer counts require event/indexer support.** `Sold` carries
+  `payerKind` and `purchasePath` so the public UI can render the buyer split
+  without inference from `LicenseToken` transfers alone.
 
 ---
 

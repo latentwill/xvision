@@ -1,58 +1,74 @@
 # Marketplace Plugin — Design
 
-> **Status:** Deferred — design accepted, implementation gated on the Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper, AND on the Smart Contract Surface spec being picked back up. v1 of Xvision is Alpaca-eval only with no on-chain function; no marketplace plugin plan is written until then. The "5 weeks to hackathon" budget noted below predates the v1-test deferral and is now superseded — re-plan timing when the chain layer comes off the bench. · originally drafted 2026-05-09; deferral added 2026-05-10
-> **Author:** xvision hackathon team
-> **Companion specs:** [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) (the producer of artifacts this plugin consumes) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 registry surface on Mantle — also deferred)
-> **Hackathon deadline (superseded):** 2026-06-15 — see Status line above.
+> **Status:** Accepted plugin surface, pending implementation in the marketplace
+> program. Scheduling is superseded by
+> [`2026-05-26-marketplace-program-strategy.md`](../plans/2026-05-26-marketplace-program-strategy.md):
+> V2 is Mantle Sepolia testnet only; mainnet is V4. · originally drafted
+> 2026-05-09
+> **Author:** xvision team
+> **Companion specs:** [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) (the producer of artifacts this plugin consumes) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 + marketplace contract surface on Mantle Sepolia for V2)
+> **Hackathon deadline:** superseded; historical schedule retained only as old context where explicitly marked.
 >
 > **Amended 2026-05-26** by [`docs/superpowers/plans/2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md). Three points:
 > 1. **Persona A vs Persona B surface split.** The "Marketplace dashboard tab" described in §7 is the **Persona A operator surface** — it lives inside the self-hosted XVN dashboard for the operator who minted the lineages and runs the chain ops. The **Persona B public marketplace** (browse, identity pages, leaderboards, creator profiles, buy/clone-to-edit) is a separate surface and is owned by the direction doc, not this spec. Don't mix them.
 > 2. **Decision #2 (one NFT per lineage) is now canonical** across this spec and the [smart contract surface](./2026-05-08-smart-contract-surface-design.md). The surface spec has been amended (§3.1.1) to adopt this position, resolving the A4 conflict that the blockchain nav doc flagged.
 > 3. **Operator action panel in §7** (Mint missing NFTs / Anchor lineage / Anchor all final / Run attesters now) belongs in Settings → Chain ops, NOT on the public marketplace. The public marketplace surface stays buyer/seller-focused per the direction doc. The PDF design `XVN · Blockchain surfaces.pdf` (referenced from the direction doc context) is essentially this Persona A surface; the direction doc replaces it for Persona B.
+> 4. **Testnet-only through V2.** Mentions of Mantle mainnet submission,
+>    6/11 cutover, and hackathon milestones are stale.
+> 5. **IPFS storage is no longer an open provider pick.** V2 ships Pinata-only
+>    behind an `IpfsStore` trait; `iroh` install-mesh is V3.
+> 6. **No popups.** Operator confirmations use an inline/dock/route surface, not
+>    a modal.
 
 ---
 
 ## 1. Purpose, scope, and persona
 
-The Marketplace Plugin is the **opt-in Persona B layer** on top of the autoresearcher. It consumes `CycleSeal` artifacts from the autoresearch core and exposes them as ERC-8004 receipts on Mantle. Marketplace is part of the default xvn build; Persona A always sees a Marketplace section in Settings but never has to engage. Persona B (the marketplace participant — including hackathon judges) opts in by **connecting a wallet** in Settings → Marketplace; nothing reaches Mantle until that step.
+The Marketplace Plugin is the **Persona A operator / chain-ops layer** on top of
+the autoresearcher. It consumes `CycleSeal` artifacts from the autoresearch core
+and exposes them as ERC-8004 receipts on Mantle Sepolia for V2. Marketplace is
+part of the default xvn build; Persona A always sees chain ops in Settings but
+never has to publish. Persona B buyer/seller marketplace UX is owned by the
+direction doc and Phase-F frontend spec, not this plugin spec.
 
 The cargo feature gate `marketplace` exists for build-flexibility (size-conscious / audit / minimal builds) but is enabled by default. The user-facing opt-in is the wallet-connect step in Settings, not a recompile. Mirroring the framing from [ADR 0010](../../decisions/0010-hackathon-pivot-strategy-loom.md): the feature gate handles build choice, the wallet-connect handles user choice.
 
 The plugin's job is narrow: **publish what's already provable.** It does not generate new lineage data, does not gate the autoresearch loop, does not modify the core's behavior. It reads sealed artifacts, mints NFTs, posts Merkle roots, and indexes external attestations. Anything else is out of scope.
 
-### 1.1 In scope (v1, by 2026-06-15)
+### 1.1 In scope (first plugin slice, V2 testnet)
 
 - Cargo feature gate `marketplace` for build-flexibility (default builds include it; minimal/audit builds can opt out via `--no-default-features`)
-- Per-lineage ERC-8004 Identity NFT minting (one NFT per *lineage*, not per variant; ~5–10 mints over the hackathon)
-- Counterfactual-chain Merkle receipts posted to Reputation Registry (one per anchored lineage; ~5–10 over the hackathon)
+- Per-lineage ERC-8004 Identity NFT minting (one NFT per *lineage*, not per variant)
+- Counterfactual-chain Merkle receipts posted to Reputation Registry (one per anchored lineage)
 - SessionCommitment hash anchored to Reputation Registry at session start (1 tx)
 - 1–2 in-house attester agents (each with its own ERC-8004 identity) consuming the local CycleSeal feed and posting ValidationReceipts
 - Marketplace dashboard tab (NFT links, attestation viewer, anchor history, operator action panel)
 - CLI: `xvn marketplace mint-lineage`, `xvn marketplace anchor`, `xvn marketplace list`, `xvn marketplace attesters status`
 
-### 1.2 Out of scope (v1; deferred to v2)
+### 1.2 Out of scope (first plugin slice; later V2/V3/V4 work)
 
 - Public attestation feed endpoint (open to external participants)
 - External attester onboarding flow
 - Trust-tier UI (gold/silver/bronze)
-- Per-cycle real-time anchoring (v1 anchors at lineage end or on-demand)
+- Per-cycle real-time anchoring (first slice anchors at lineage end or on-demand)
 - Per-canary on-chain receipts (canary runs locally; not anchored)
 - Per-trade validation receipts on closed Orderly trades (already covered by [smart contract surface spec](./2026-05-08-smart-contract-surface-design.md) — orthogonal)
 - Marketplace fees, slashing, dispute resolution
 - TEE / zkML attestation
 - Strategy delegation flow ("one-click delegate"); covered by [strategy-engine 2d dashboard plan](../plans/2026-05-08-strategy-engine-2d-dashboard-wizard.md)
 
-### 1.3 Total chain footprint (v1)
+### 1.3 Total chain footprint (historical estimate; rescope during Phase 5)
 
 | Source | Count |
 |---|---|
 | SessionCommitment anchor | 1 |
-| Lineage NFT mints | ~5–10 |
-| Lineage Merkle receipts | ~5–10 |
-| In-house attester ValidationReceipts | ~10–20 (2 attesters × ~5–10 lineages) |
-| **Total** | **~20–40 transactions over the hackathon** |
+| Lineage NFT mints | depends on published fixture/demo set |
+| Lineage Merkle receipts | depends on published fixture/demo set |
+| In-house attester ValidationReceipts | depends on attester scope |
+| **Total** | rescope during Phase 5 planning |
 
-Mantle is cheap; this is a small budget. Pre-fund the operator wallet to 5× estimate before kickoff.
+Mantle Sepolia is cheap; pre-fund the operator wallet to 5× the Phase-5
+estimate before testnet runs.
 
 ---
 
@@ -62,10 +78,10 @@ Mantle is cheap; this is a small budget. Pre-fund the operator wallet to 5× est
 |---|---|
 | 1 | **Marketplace is part of default xvn build, opt-in at wallet-connect.** Cargo feature `marketplace` in `xvision-engine` is on by default; available to opt out for minimal builds (`--no-default-features`). User-facing opt-in is the Settings → Marketplace wallet-connect step. |
 | 2 | **One NFT per lineage**, not per variant. Variants are referenced inside the lineage manifest by content hash. |
-| 3 | **Lineage-end Merkle anchoring** (or on-demand mid-hackathon) is the default. No per-cycle anchoring in v1. |
-| 4 | **In-house attesters seeded for the demo.** xvision operates 1–2 ERC-8004 attester agents. Public/external participation is v2. |
+| 3 | **Lineage-end Merkle anchoring** (or on-demand snapshots) is the default. No per-cycle anchoring in the first slice. |
+| 4 | **In-house attesters seeded for V2.** xvision operates 1–2 ERC-8004 attester agents. Public/external participation is later work. |
 | 5 | **Subscribes to CycleSeal events** from autoresearch core; never modifies them. Strict one-way data flow. |
-| 6 | **Mantle mainnet for the submission**, Sepolia for development. Cutover scripted in Wk 5. |
+| 6 | **Mantle Sepolia only through V2.** Mainnet is V4 after the V2 exit gate, audit, and governance prep. |
 | 7 | **Operator key separation.** Operator's autoresearch signing key (per autoresearch spec §7) is distinct from the on-chain wallet that holds NFTs. The autoresearch key signs seals; the wallet posts transactions. |
 
 ---
@@ -88,7 +104,7 @@ xvision-engine/
         │   ├── regime_verifier.rs    # checks finding's regime claim against trace
         │   └── diversity_check.rs    # confirms variant adds genuine diversity
         ├── ingest.rs            # subscribes to autoresearch::progress SSE events
-        ├── dashboard.rs         # marketplace tab; SSE event handlers for NFT/receipt/attestation
+        ├── dashboard.rs         # Settings → Chain ops handlers for NFT/receipt/attestation
         └── cli.rs               # `xvn marketplace ...` subcommands
 ```
 
@@ -96,9 +112,18 @@ xvision-engine/
 
 ### 3.2 The AnchorDriver port
 
-Anchoring is abstracted behind a trait so the plugin can be tested without hitting Mantle and so future drivers (e.g., Solana, IPFS-only, signed-but-no-chain) can be slotted in without touching call sites.
+Anchoring is abstracted behind a trait so the plugin can be tested without
+hitting Mantle and so future drivers (e.g., Solana, IPFS-only,
+signed-but-no-chain) can be slotted in without touching call sites. Storage is
+separate: manifests/rationales are written through an `IpfsStore` abstraction.
+V2 ships a `PinataDriver`; `iroh` install-mesh is V3.
 
 ```rust
+trait IpfsStore: Send + Sync {
+    fn put_json<T: Serialize>(&self, value: &T) -> Result<Cid>;
+    fn put_bytes(&self, bytes: &[u8], content_type: &str) -> Result<Cid>;
+}
+
 trait AnchorDriver: Send + Sync {
     fn anchor_session_commitment(&self, c: &SessionCommitment) -> Result<TxHash>;
     fn mint_lineage_nft(&self, lineage_id: Ulid, manifest_cid: Cid, parent_lineage_id: Option<Ulid>) -> Result<TokenId>;
@@ -107,7 +132,8 @@ trait AnchorDriver: Send + Sync {
 }
 ```
 
-V1 ships one implementation: `Erc8004MantleDriver`. A `MockDriver` exists for tests and for `cargo test --features marketplace` runs.
+V2 ships one anchor implementation: `Erc8004MantleDriver`, plus a `MockDriver`
+for tests and `cargo test --features marketplace` runs.
 
 ### 3.3 Subscription to autoresearch core
 
@@ -140,7 +166,10 @@ struct LineageManifest {
 }
 ```
 
-The manifest is uploaded to IPFS (or operator-controlled storage with a content hash); the resulting CID becomes the NFT's `agentURI`. Subsequent variants in the lineage are NOT minted; they are referenced by content hash inside the lineage's append-only mutation log (which itself is anchored later via the Merkle receipt).
+The manifest is uploaded through `IpfsStore`; the resulting CID becomes the
+NFT's `agentURI`. Subsequent variants in the lineage are NOT minted; they are
+referenced by content hash inside the lineage's append-only mutation log (which
+itself is anchored later via the Merkle receipt).
 
 This means the on-chain artifact for "lineage" is one NFT + one mutation-log Merkle receipt at the end. Variants are addressable via the manifest but don't each consume a tx.
 
@@ -171,7 +200,7 @@ enum ReceiptKind { Snapshot, LineageEnd }
 
 V1 supports two anchoring trigger modes:
 - **`xvn marketplace anchor <lineage_id>`** — operator-triggered; posts a Snapshot receipt for the current state of the lineage.
-- **`xvn marketplace anchor --all-final`** — at hackathon end, posts a LineageEnd receipt for every active lineage.
+- **`xvn marketplace anchor --all-final`** — posts a LineageEnd receipt for every selected/final lineage.
 
 Anyone reading the on-chain receipt can fetch the manifest from IPFS, fetch the artifact bundle, recompute the Merkle root, and verify. The chain is the timestamp; the artifacts are the proof.
 
@@ -179,7 +208,8 @@ Anyone reading the on-chain receipt can fetch the manifest from IPFS, fetch the 
 
 ## 6. In-house attester agents
 
-Two attester agents demonstrate the open attestation surface for the demo. Each has its own ERC-8004 Identity NFT (minted manually at hackathon kickoff), separate from the operator's main identity.
+Two attester agents demonstrate the open attestation surface for V2. Each has
+its own ERC-8004 Identity NFT, separate from the operator's main identity.
 
 ### 6.1 Regime-verifier agent (`attesters/regime_verifier.rs`)
 
@@ -211,7 +241,7 @@ Stored on-chain via the Validation Registry. Indexed off-chain by the marketplac
 - Demonstrates that **multiple independent signals** can score the same lineage — the marketplace shape is alive.
 - Each attester has narrow, well-defined logic, so its verdicts are interpretable and don't read as rubber-stamping.
 - Disagreement between attesters is itself rendered (a lineage can be `regime-endorsed` but `diversity-questioned`), proving the system isn't a rubber-stamp ring.
-- Cost: ~10–20 tx total over the hackathon. Compute is two LLM calls per committed bundle.
+- Cost depends on the selected V2 demo set. Compute is two LLM calls per committed bundle.
 
 V2 opens this surface to external participants (anyone with an ERC-8004 Identity can post an AttestationReceipt against any `bundle_hash`). V1 fakes it with internal seeding so the surface exists.
 
@@ -226,9 +256,12 @@ A sixth tab in the autoresearch dashboard (only present when the plugin is enabl
 1. **Lineage list with NFT links.** One row per lineage. Columns: lineage_id, NFT token_id, parent lineage, birth time, current Sharpe, anchor status (anchored / pending / never).
 2. **Per-lineage attestation viewer.** Click a lineage → shows in-house attester verdicts (regime + diversity), with rationale text expandable. Disagreements highlighted.
 3. **Anchor history.** Timeline of every Merkle receipt posted, with tx links to Mantle explorer.
-4. **Operator action panel.** Buttons: `Mint missing NFTs`, `Anchor lineage <id>`, `Anchor all final`, `Run attesters now`. Each button is gated behind a confirmation modal showing tx cost estimate.
+4. **Operator action panel.** Buttons: `Mint missing NFTs`, `Anchor lineage <id>`, `Anchor all final`, `Run attesters now`. Each action expands an inline confirmation row / dock showing tx cost estimate; no modal or popup.
 
-The marketplace tab listens for plugin SSE events: `nft_minted`, `merkle_anchored`, `attestation_posted`, `attester_disagreement`. These are emitted by the plugin's own SSE channel, separate from autoresearch core's channel.
+The Settings → Chain ops surface listens for plugin SSE events: `nft_minted`,
+`merkle_anchored`, `attestation_posted`, `attester_disagreement`. These are
+emitted by the plugin's own SSE channel, separate from autoresearch core's
+channel.
 
 ---
 
@@ -241,11 +274,11 @@ xvn marketplace mint-lineage <lineage_id>
 
 xvn marketplace anchor <lineage_id> [--snapshot|--final]
     Posts the lineage's counterfactual-chain Merkle root to Reputation Registry.
-    --snapshot: receipt_kind = Snapshot (mid-hackathon).
-    --final:    receipt_kind = LineageEnd (hackathon end / lineage retirement).
+    --snapshot: receipt_kind = Snapshot (mid-run / operator checkpoint).
+    --final:    receipt_kind = LineageEnd (lineage retirement / final checkpoint).
 
 xvn marketplace anchor --all-final
-    Convenience: posts LineageEnd receipts for every active lineage. Used at hackathon end.
+    Convenience: posts LineageEnd receipts for every selected/final lineage.
 
 xvn marketplace list [--include-ghost]
     Lists all lineages with their on-chain status: NFT minted, last anchor, attestation count.
@@ -259,29 +292,21 @@ xvn marketplace attesters run
 
 ---
 
-## 9. Sequencing (within the autoresearch Wk 5 window)
+## 9. Sequencing (superseded)
 
-The marketplace plugin's full work fits in one week (Wk 5: 6/06 → 6/13). Autoresearch core finishes in Wks 1–4 and runs in `--no-default-features` mode through that period. Wk 5 is the integration window.
+The original week-by-week hackathon schedule is obsolete. Current sequencing is
+owned by
+[`2026-05-26-marketplace-program-strategy.md`](../plans/2026-05-26-marketplace-program-strategy.md):
 
-| Day | Deliverable |
-|---|---|
-| 6/06 (Mon) | `marketplace` cargo feature scaffolded. `AnchorDriver` trait + `MockDriver` + `Erc8004MantleDriver` skeletons. `xvn marketplace list` works against local store. |
-| 6/07 (Tue) | Lineage NFT minting via `Erc8004MantleDriver` on Sepolia. `xvn marketplace mint-lineage` smoke test. |
-| 6/08 (Wed) | Counterfactual-chain Merkle receipt posting. `xvn marketplace anchor` smoke test on Sepolia. |
-| 6/09 (Thu) | In-house attester agents (regime-verifier + diversity-check). End-to-end on Sepolia. |
-| 6/10 (Fri) | Marketplace dashboard tab. Real-time updates from plugin SSE channel. |
-| 6/11 (Sat) | **Mainnet cutover.** Switch driver config to Mantle mainnet. Pre-fund operator wallet. Mint attester NFTs. Anchor SessionCommitment. |
-| 6/12 (Sun) | Live evening cycle on mainnet. Mint lineage NFTs as lineages emerge. Smoke run for the demo. |
-| 6/13 (Mon) | `xvn marketplace anchor --all-final` for submission. Submission packaged. |
-| 6/14 (Tue) | Buffer / rehearsal. |
-| 6/15 (Wed) | Submit. |
+1. Phase F builds the fixture-backed marketplace UI and data seam first.
+2. Phase 1 closes the metadata/data-contract spec from that seam.
+3. Phase 3 deploys ERC-8004 testnet stubs and the deterministic deployer.
+4. Phase 5 implements this plugin together with marketplace contracts, the
+   subgraph, `IpfsStore`, CLI verbs, and the Settings → Chain ops API surface.
+5. Phase 6 wires the frontend to real backends and wallet flows.
 
-**Wk 5 hard milestones:**
-- 6/08: Sepolia integration end-to-end (mint + anchor + attest) demonstrably working.
-- 6/11: Mainnet wallet funded, attester NFTs minted, SessionCommitment anchored.
-- 6/13: All active lineages have a LineageEnd Merkle receipt on Mantle mainnet.
-
-If the Sepolia integration is not working by 6/09 (Thu), trim scope: drop the in-house attesters (defer to v2), ship lineage NFTs + Merkle receipts only. The demo's marketplace beat becomes "see lineage NFTs and audit the Merkle path"; the attester surface is described but not demonstrated live.
+There is **no Mantle mainnet cutover in V2**. Mainnet is V4 after the V2 exit
+gate, audit, and governance prep.
 
 ---
 
@@ -291,26 +316,27 @@ Marketplace-specific risks. Loop-side risks live in the [autoresearcher spec §1
 
 | # | Failure | Mitigation |
 |---|---|---|
-| 1 | Mainnet cutover breaks on demo day | Sepolia mirror kept fully functional; demo can flip to Sepolia driver via config if mainnet wallet is compromised. Pre-recorded mainnet anchoring screencast as last-resort fallback. |
+| 1 | Sepolia deployment or RPC breaks during V2 testnet work | Keep `MockDriver` and local anvil paths working; retry via alternate Mantle Sepolia RPC; no mainnet fallback in V2. |
 | 2 | NFT mint flakiness (RPC errors, gas estimation off) | All mints idempotent against local `cycle_seals` table; restart resumes. Conservative gas multiplier (1.5×). Pre-fund 5× estimate. |
 | 3 | IPFS pin latency / pin failure | Operator-controlled storage with content hash works as fallback; manifest CID is content-derived so pinning is replaceable. |
 | 4 | In-house attesters look like rubber-stamping | Each attester has narrow, mechanical logic (regime claim vs trace; embedding distance threshold). Disagreements are rendered, not hidden. Public rationale text on IPFS. |
-| 5 | Judges think 1–2 attesters is too few to be a "marketplace" | Submission write-up explicitly frames v1 as "in-house seeded for demonstration; v2 opens the surface to external participants." Honesty over puffery. |
+| 5 | 1–2 attesters look too narrow | Product copy frames this as in-house seeded validation for V2; external attesters are later work. Honesty over puffery. |
 | 6 | Merkle root posted, but verification fails (manifest missing, wrong hash) | Anchor is idempotent and the manifest is content-addressed; if verification fails, post the corrected manifest CID and re-anchor. Old anchor is left as historical (signed bytes don't lie). |
-| 7 | Per-tx cost on Mantle mainnet higher than estimated | Conservative pre-fund (5×). Mantle is L2; even worst-case is small. Budget alarm in the dashboard if wallet balance falls below threshold. |
-| 8 | "It's not really decentralized — xvision runs the attesters" | True for v1; the plugin architecture explicitly enables external participation in v2. The submission write-up calls this out as a design feature, not a hack. |
+| 7 | Per-tx cost higher than estimated | Conservative Sepolia pre-fund (5× estimate) and budget alarm in the dashboard if wallet balance falls below threshold. |
+| 8 | "It's not really decentralized — xvision runs the attesters" | True for the first V2 slice; the plugin architecture explicitly enables later external participation. Product copy calls this out as a design feature, not a hack. |
 | 9 | A lineage's Merkle root differs between local computation and on-chain receipt | Single source of truth: `autoresearch::lineage::compute_merkle_root`. Plugin imports it, never re-implements. Test asserts byte-identical roots between core and plugin. |
-| 10 | Wallet key compromised during hackathon | Wallet is operator-controlled hot wallet with limited balance (just enough for hackathon ops). Cold storage of upgrade keys; v2 work after submission. |
+| 10 | Operator wallet key compromised during V2 testnet | Wallet is operator-controlled EOA with limited Sepolia funds. V4 moves upgrade authority to timelock + multisig before mainnet. |
 
 ---
 
 ## 11. Open questions (to resolve in the implementation plan)
 
-1. **IPFS pinning provider** — Pinata vs Web3.Storage vs Filebase vs operator-self-hosted. Resolve in Wk 5 day 1.
+1. **IPFS pinning architecture** — resolved by the marketplace strategy: V2
+   ships Pinata-only behind `IpfsStore`; `iroh` install-mesh is V3.
 2. **Attester wallet key custody** — separate wallets per attester or shared? Single wallet is simpler; separate is cleaner. Default to separate.
 3. **Mantle gas oracle** — use Mantle's gas-price oracle or a fixed multiplier? Test both during Sepolia week.
 4. **Anchor receipt format** — flat (just root) or include manifest metadata (lineage_id, kind, timestamp) on-chain? Trade-off: gas cost vs on-chain queryability. Default to including metadata; revisit if gas is unexpectedly high.
-5. **Attestation throttling** — should attesters score every committed bundle or sample? Default to every bundle in v1 (volume is low); revisit if cycle budgets grow.
+5. **Attestation throttling** — should attesters score every committed bundle or sample? Default to every bundle in the first slice (volume is low); revisit if cycle budgets grow.
 
 ---
 
