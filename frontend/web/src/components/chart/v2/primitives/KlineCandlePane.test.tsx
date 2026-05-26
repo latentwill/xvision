@@ -196,6 +196,90 @@ describe("KlineCandlePane", () => {
     );
   });
 
+  it("creates an xvnMarker overlay for each priced marker", async () => {
+    render(
+      <KlineCandlePane
+        candles={candles}
+        markers={[
+          { kind: "buy", time: 1, price: 10, text: "Buy 1" },
+          { kind: "veto", time: 2, price: 11, text: "Veto: risk" },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    await waitFor(() => {
+      expect(klineMocks.state.overlays.length).toBeGreaterThanOrEqual(2);
+    });
+
+    const markerOverlays = klineMocks.state.overlays.filter(
+      (o) => o.name === "xvnMarker",
+    );
+    expect(markerOverlays).toHaveLength(2);
+
+    const buy = markerOverlays.find(
+      (o) => (o.extendData as { kind: string }).kind === "buy",
+    )!;
+    expect(buy).toBeDefined();
+    expect((buy.extendData as { kind: string }).kind).toBe("buy");
+    expect((buy.extendData as { text: string }).text).toBe("Buy 1");
+    expect(buy.points).toEqual([{ timestamp: 1000, value: 10 }]);
+
+    const veto = markerOverlays.find(
+      (o) => (o.extendData as { kind: string }).kind === "veto",
+    )!;
+    expect(veto).toBeDefined();
+    expect((veto.extendData as { text: string }).text).toBe("Veto: risk");
+  });
+
+  it("registers the xvnMarker overlay template exactly once at module scope", async () => {
+    render(<KlineCandlePane candles={candles} />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    const markerTemplates = klineMocks.state.registeredTemplates.filter(
+      (t) => (t as { name?: string }).name === "xvnMarker",
+    );
+    expect(markerTemplates).toHaveLength(1);
+    expect(
+      typeof (markerTemplates[0] as { createPointFigures?: unknown })
+        .createPointFigures,
+    ).toBe("function");
+  });
+
+  it("skips markers without a price", async () => {
+    render(
+      <KlineCandlePane
+        candles={candles}
+        markers={[
+          { kind: "buy", time: 1, price: 10, text: "Buy 1" },
+          { kind: "hold", time: 2, text: "No price" },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    await waitFor(() => {
+      expect(
+        klineMocks.state.overlays.filter((o) => o.name === "xvnMarker").length,
+      ).toBeGreaterThanOrEqual(1);
+    });
+
+    const markerOverlays = klineMocks.state.overlays.filter(
+      (o) => o.name === "xvnMarker",
+    );
+    expect(markerOverlays).toHaveLength(1);
+    expect((markerOverlays[0].extendData as { kind: string }).kind).toBe("buy");
+  });
+
   it("skips line series toggled off via overlayActive", async () => {
     render(
       <KlineCandlePane

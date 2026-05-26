@@ -20,7 +20,6 @@ import {
 } from "../types";
 import { columnarToKLineData } from "../adapters/columnar-to-klinedata";
 import { themeToKlinechartsStyles } from "../adapters/theme-to-klinecharts";
-import { v2MarkersToKlineOverlay } from "../adapters/markers";
 import {
   overlayLineDescriptors,
   type OverlayLineKey,
@@ -59,6 +58,67 @@ registerOverlay({
       },
       ignoreEvent: true,
     };
+  },
+});
+
+// ── xvnMarker custom overlay ─────────────────────────────────────────────────
+// One overlay template for every trade/veto/hold marker pinned to a single
+// (timestamp, price) point on the candle pane. Like xvnLine it is registered
+// once at module scope and styled from per-instance extendData. Shape by kind:
+//   buy  → up-arrow polygon anchored below the bar
+//   sell → down-arrow polygon anchored above the bar
+//   veto → circle dot
+//   hold → circle dot
+// An optional text label is drawn beside the glyph. No try/catch on purpose
+// (see xvnLine note above).
+registerOverlay({
+  name: "xvnMarker",
+  totalStep: 1,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ coordinates, overlay }) => {
+    const ext = overlay.extendData as {
+      kind: string;
+      text: string;
+      color: string;
+    };
+    const c = coordinates?.[0];
+    if (!c) return [];
+    const isArrow = ext.kind === "buy" || ext.kind === "sell";
+    const up = ext.kind === "buy";
+    const yOff = up ? 14 : -14;
+    const figs: unknown[] = [];
+    if (isArrow) {
+      figs.push({
+        type: "polygon",
+        attrs: {
+          coordinates: [
+            { x: c.x, y: c.y + (up ? 8 : -8) },
+            { x: c.x - 5, y: c.y + yOff },
+            { x: c.x + 5, y: c.y + yOff },
+          ],
+        },
+        styles: { style: "fill", color: ext.color },
+        ignoreEvent: true,
+      });
+    } else {
+      figs.push({
+        type: "circle",
+        attrs: { x: c.x, y: c.y, r: 4 },
+        styles: { style: "fill", color: ext.color },
+        ignoreEvent: true,
+      });
+    }
+    if (ext.text) {
+      figs.push({
+        type: "text",
+        attrs: { x: c.x + 6, y: c.y + yOff, text: ext.text },
+        styles: { color: ext.color, size: 10 },
+        ignoreEvent: true,
+      });
+    }
+    return figs as never;
   },
 });
 
@@ -210,14 +270,22 @@ export function KlineCandlePane({
         });
       }
 
-      // TODO (later tasks): render markers + position bands.
-      const _markerExtData = markers
-        ? v2MarkersToKlineOverlay(markers, theme)
-        : [];
+      // Render trade/veto/hold markers as xvnMarker overlays, one per priced
+      // marker. Markers without a price have no candle-pane anchor, so skip
+      // them (they still surface in the MarkerDock list).
+      for (const m of markers ?? []) {
+        if (m.price == null) continue;
+        chart.createOverlay({
+          name: "xvnMarker",
+          points: [{ timestamp: m.time * 1000, value: m.price }],
+          extendData: { kind: m.kind, text: m.text ?? "", color: theme.marker[m.kind] },
+        });
+      }
+
+      // TODO (Task 3): render position bands.
       const _positionExtData = positions;
 
       // Suppress unused-variable lint for not-yet-wired stubs.
-      void _markerExtData;
       void _positionExtData;
     } catch (err) {
       console.warn("[KlineCandlePane] applyNewData threw:", err);
