@@ -56,6 +56,28 @@ export function formatCostUsdPrecise(value: number | null | undefined): string {
   return `${sign}$${trimmed}`;
 }
 
+/**
+ * Marketplace USD display formatter.
+ * Intended for amounts in the hundreds-to-millions range (buyer payments,
+ * lifetime earnings, clones upstream).
+ * - < $1 000: "$420"
+ * - ≥ $1 000 and < $1 000 000: "$4,820"
+ * - ≥ $1 000 000: "$1.2M"
+ * Returns "—" for null/undefined/non-finite inputs.
+ */
+export function formatUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000) {
+    return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  }
+  if (abs >= 1_000) {
+    return `${sign}$${abs.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  }
+  return `${sign}$${Math.round(abs)}`;
+}
+
 export function formatCadence(minutes: number): string {
   if (!Number.isFinite(minutes) || minutes <= 0) {
     return "—";
