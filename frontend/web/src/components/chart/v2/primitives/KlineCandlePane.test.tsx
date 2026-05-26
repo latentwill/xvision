@@ -2,6 +2,7 @@ import { render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { KlineCandlePane } from "./KlineCandlePane";
+import { CHART_V2_RANGE_EVENT } from "./ChartFrame";
 import type { CandleColumns } from "../types";
 
 const klineMocks = vi.hoisted(() => {
@@ -41,6 +42,12 @@ const klineMocks = vi.hoisted(() => {
       state.overlays.push(value);
       return "overlay-id";
     }),
+    setBarSpace: vi.fn(),
+    getBarSpace: vi.fn(() => ({ bar: 8, halfGap: 1, gap: 2 })),
+    scrollToRealTime: vi.fn(),
+    scrollToTimestamp: vi.fn(),
+    getVisibleRange: vi.fn(() => ({ from: 0, to: 2, realFrom: 0, realTo: 2 })),
+    getDom: vi.fn(() => ({ clientWidth: 800 }) as unknown as HTMLElement),
   };
 
   return {
@@ -391,5 +398,57 @@ describe("KlineCandlePane", () => {
     );
     expect(keys).toContain("sma20");
     expect(keys).not.toContain("ema50");
+  });
+
+  it("applies a finite range preset via setBarSpace + scrollToRealTime", async () => {
+    render(<KlineCandlePane candles={candles} />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    expect(() => {
+      window.dispatchEvent(
+        new CustomEvent(CHART_V2_RANGE_EVENT, { detail: "1d" }),
+      );
+    }).not.toThrow();
+
+    expect(klineMocks.chart.setBarSpace).toHaveBeenCalled();
+    expect(klineMocks.chart.scrollToRealTime).toHaveBeenCalled();
+  });
+
+  it("applies the All preset without throwing", async () => {
+    render(<KlineCandlePane candles={candles} />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    expect(() => {
+      window.dispatchEvent(
+        new CustomEvent(CHART_V2_RANGE_EVENT, { detail: "All" }),
+      );
+    }).not.toThrow();
+
+    expect(klineMocks.chart.setBarSpace).toHaveBeenCalled();
+    expect(klineMocks.chart.scrollToRealTime).toHaveBeenCalled();
+  });
+
+  it("removes the range listener on unmount (no throw after teardown)", async () => {
+    const { unmount } = render(<KlineCandlePane candles={candles} />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    unmount();
+    klineMocks.chart.setBarSpace.mockClear();
+
+    window.dispatchEvent(
+      new CustomEvent(CHART_V2_RANGE_EVENT, { detail: "1w" }),
+    );
+
+    // After unmount the listener is gone, so no chart calls should fire.
+    expect(klineMocks.chart.setBarSpace).not.toHaveBeenCalled();
   });
 });

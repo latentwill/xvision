@@ -25,7 +25,8 @@ import {
   type OverlayLineKey,
 } from "../adapters/overlay-lines";
 import { useChart2Theme } from "../hooks/useChart2Theme";
-import { CHART_V2_ZOOM_EVENT } from "./ChartFrame";
+import { CHART_V2_RANGE_EVENT, CHART_V2_ZOOM_EVENT } from "./ChartFrame";
+import { rangeWindowSeconds } from "./range-window";
 
 // ── xvnLine custom overlay ──────────────────────────────────────────────────
 // A single line overlay template used to render every precomputed candle-pane
@@ -198,6 +199,13 @@ export function KlineCandlePane({
   useEffect(() => {
     onReadyRef.current = onReady;
   });
+  // Keep a stable ref to the latest candles so the range-event listener
+  // (registered once in the init effect) always reads the current series
+  // without re-running init when candle data updates.
+  const candlesRef = useRef(candles);
+  useEffect(() => {
+    candlesRef.current = candles;
+  });
   const theme = useChart2Theme();
 
   // ── Init / Destroy ─────────────────────────────────────────────────────────
@@ -259,9 +267,40 @@ export function KlineCandlePane({
     };
     window.addEventListener(CHART_V2_ZOOM_EVENT, onZoom);
 
+    const onRange = (event: Event) => {
+      const preset = (event as CustomEvent).detail;
+      const ch = chartRef.current;
+      if (!ch) return;
+      const t = candlesRef.current.time;
+      if (t.length < 2) return;
+      const win = rangeWindowSeconds(preset);
+      const chAny = ch as unknown as {
+        setBarSpace?: (n: number) => void;
+        scrollToRealTime?: (ms?: number) => void;
+        getDom?: (paneId?: string) => HTMLElement | null;
+      };
+      const dom = chAny.getDom?.();
+      const width = dom?.clientWidth ?? 600;
+      try {
+        if (win == null) {
+          chAny.setBarSpace?.(Math.max(1, width / t.length));
+          chAny.scrollToRealTime?.();
+          return;
+        }
+        const intervalSec = Math.max(1, t[t.length - 1] - t[t.length - 2]);
+        const count = Math.max(1, Math.ceil(win / intervalSec));
+        chAny.setBarSpace?.(Math.max(1, width / count));
+        chAny.scrollToRealTime?.();
+      } catch (err) {
+        console.warn("[KlineCandlePane] range apply threw:", err);
+      }
+    };
+    window.addEventListener(CHART_V2_RANGE_EVENT, onRange);
+
     return () => {
       obs.disconnect();
       window.removeEventListener(CHART_V2_ZOOM_EVENT, onZoom);
+      window.removeEventListener(CHART_V2_RANGE_EVENT, onRange);
       // Notify the consumer that the chart is being destroyed.
       onReadyRef.current?.(null);
       try {

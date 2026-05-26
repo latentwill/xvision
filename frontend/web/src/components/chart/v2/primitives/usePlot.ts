@@ -7,7 +7,8 @@
  */
 import { useEffect, useRef } from "react";
 import uPlot from "uplot";
-import { CHART_V2_ZOOM_EVENT } from "./ChartFrame";
+import { CHART_V2_RANGE_EVENT, CHART_V2_ZOOM_EVENT } from "./ChartFrame";
+import { rangeWindowSeconds } from "./range-window";
 
 /**
  * Constructs, owns, and destroys a uPlot instance.
@@ -85,10 +86,27 @@ export function usePlot(
     };
     window.addEventListener(CHART_V2_ZOOM_EVENT, onZoom);
 
+    const onRange = (event: Event) => {
+      const preset = (event as CustomEvent).detail;
+      const plot = plotRef.current;
+      if (!plot) return;
+      const xs = plot.data[0] as number[] | undefined;
+      if (!xs || xs.length === 0) return;
+      const maxX = xs[xs.length - 1];
+      const win = rangeWindowSeconds(preset);
+      if (win == null) {
+        plot.setScale("x", { min: xs[0], max: maxX });
+        return;
+      }
+      plot.setScale("x", { min: maxX - win, max: maxX });
+    };
+    window.addEventListener(CHART_V2_RANGE_EVENT, onRange);
+
     return () => {
       obs.disconnect();
       over?.removeEventListener("wheel", onWheel);
       window.removeEventListener(CHART_V2_ZOOM_EVENT, onZoom);
+      window.removeEventListener(CHART_V2_RANGE_EVENT, onRange);
       if (plotRef.current) {
         plotRef.current.destroy();
         plotRef.current = null;

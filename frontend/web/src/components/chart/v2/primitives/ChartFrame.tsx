@@ -5,11 +5,18 @@ export type RangePreset = "1d" | "1w" | "1m" | "3m" | "All";
 const RANGE_PRESETS: RangePreset[] = ["1d", "1w", "1m", "3m", "All"];
 
 export const CHART_V2_ZOOM_EVENT = "xvn:chart-v2:zoom";
+export const CHART_V2_RANGE_EVENT = "xvn:chart-v2:range";
 
 type Props = {
   title?: string;
   range: RangePreset;
   onRange: (r: RangePreset) => void;
+  /**
+   * When `false`, the range preset buttons (1d/1w/1m/3m/All) are not rendered.
+   * Fallback for surfaces where a finite visible window can't be supported.
+   * Defaults to `true`.
+   */
+  rangeEnabled?: boolean;
   layersPanel?: ReactNode;
   dataTable?: ReactNode;
   children: ReactNode;
@@ -19,6 +26,7 @@ export function ChartFrame({
   title,
   range,
   onRange,
+  rangeEnabled = true,
   layersPanel,
   dataTable,
   children,
@@ -35,20 +43,26 @@ export function ChartFrame({
         )}
 
         {/* Range toggles */}
-        {RANGE_PRESETS.map((r) => (
-          <button
-            key={r}
-            type="button"
-            onClick={() => onRange(r)}
-            className={`px-2 py-0.5 text-[12px] rounded transition-colors ${
-              range === r
-                ? "bg-surface-elev text-text"
-                : "text-text-3 hover:text-text-2"
-            }`}
-          >
-            {r}
-          </button>
-        ))}
+        {rangeEnabled &&
+          RANGE_PRESETS.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => {
+                onRange(r);
+                window.dispatchEvent(
+                  new CustomEvent(CHART_V2_RANGE_EVENT, { detail: r }),
+                );
+              }}
+              className={`px-2 py-0.5 text-[12px] rounded transition-colors ${
+                range === r
+                  ? "bg-surface-elev text-text"
+                  : "text-text-3 hover:text-text-2"
+              }`}
+            >
+              {r}
+            </button>
+          ))}
 
         {/* Right controls */}
         <div className="ml-auto flex items-center gap-2">
