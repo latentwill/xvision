@@ -93,6 +93,7 @@ function ToolButton({ tool }: { tool: Tool }) {
   const pending = tool.pending;
   const label = friendlyToolLabel(tool);
   const status = friendlyToolStatus(tool);
+  const failed = !ok && !pending;
   // QA flagged the tool cards as having a "hard white border" — the
   // border tone was set at /40 opacity against the rail surface,
   // which read as a bright outline. Softened to /15 (and the
@@ -119,10 +120,13 @@ function ToolButton({ tool }: { tool: Tool }) {
       ) : (
         <span aria-hidden className="flex-shrink-0">!</span>
       )}
-      <span className="font-mono truncate">{label}</span>
+      <span className="font-mono truncate">
+        {label}
+        {failed ? " failed:" : ""}
+      </span>
       {status && (
         <span className="text-text-3 truncate" title={status}>
-          · {status}
+          {failed ? status : `· ${status}`}
         </span>
       )}
     </div>
