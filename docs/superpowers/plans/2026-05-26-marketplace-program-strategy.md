@@ -388,6 +388,37 @@ its dependent phase.
 | E6 | Human-vs-agent buyer count source | Phase 1 / Phase 5 | Must be explicit in marketplace event/subgraph; `LicenseToken` transfer alone is insufficient |
 | — | **Gen-art algorithm** (input space, palette, family rules, lineage-coherence) | Phase 4 | **Open — unscoped (H3)** |
 
+### 7.1 Deferred items register (every deferral lands here → owning phase)
+
+> **Rule:** nothing gets deferred with only a chat mention. When an item is cut,
+> stubbed, or postponed, record it here against the phase that picks it up. Tick
+> it off (or migrate it into the owning spec) when done. Built 2026-05-26 after
+> Phase F; sourced from the F0 review + the F1–F6 route-plan open questions.
+
+| Item | Owning phase | Source / note |
+|---|---|---|
+| `tier` filter on `FilterState` + Tier-A "free" slice | ✅ DONE (F-route follow-up) | F0 review M2 / F4 OQ |
+| Creator profile resolves by address + ENS (not just `@handle`) | ✅ DONE (F-route follow-up) | F3 OQ |
+| `publishedAt`/`mintedAt` on `ListingRow` (so `newest` sort isn't an id proxy) | Phase 1 (schema field) → frontend rewire | F1 OQ |
+| `transferableLicense` surfaced on receipt/license UI (absent on `Receipt.license` today) | Phase 1 (enrich Tier-1/receipt metadata) | F6 OQ |
+| Human-vs-agent payer-class source in marketplace event/subgraph | Phase 1 (schema) + Phase 5 (contract event) | E6 |
+| Handle resolution (ENS / on-chain registry / `agentURI`) | Phase 1 decision | A8 |
+| Verification badge thresholds (green vs gray criteria) | Phase 1 decision | A9 |
+| Tier-B clone license-check semantics (gate timing) | Phase 1 (read model) + Phase 5 (contract) | A10 |
+| `auditedOnly` filter has no `ListingRow` field (no-op today) | Phase 1 (schema field) | F0 review M4 |
+| Equity curve real backtest+live two-layer data | Phase 4 (real chart data) | F2 OQ-1 (placeholder today) |
+| Production gen-art (replace `GenArtPlaceholder`) | Phase 4 | H3 |
+| Save view (persist a filter slice) | Phase 6 (needs storage) | F1 deferred affordance |
+| Follow / Tip creator | Phase 6+ (on-chain follow/tip) | F3 deferred affordance |
+| Decrypt-now sealed-bundle relay (the "Decrypt" step) | Phase 5/6 (relay) | F6 / A7 |
+| Install-missing ingredients action (MCP/skill install) | Phase 6 (local XVN API) | F6 / F2 affordance |
+| Real wallet-connect (Buy/Clone/Mint behind it) | Phase 6 | A5 |
+| Real on-chain tx submission (replace fixture `TxRef`) | Phase 6 (contracts live) | spec deferred |
+| Chain-native purchase notifications + share-composer wiring | Phase 6 | direction §3.3 |
+| OG-card server-side PNG render | Phase 6 / public viewer | A6 |
+| Public `/` landing page | Phase 6 / public viewer | spec deferred |
+| Discord share-intent URL (confirm format) | Phase 6 (product decision) | F6 OQ |
+
 ---
 
 ## 8. Ordering + delegation notes
