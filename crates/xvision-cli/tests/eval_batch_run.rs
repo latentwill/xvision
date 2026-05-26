@@ -196,6 +196,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
                 system_prompt: "Use the supplied OHLCV context, risk limits, and scenario metadata to produce a disciplined trading decision. Explain position sizing, invalidation, and risk controls before choosing an action.".into(),
                 skill_ids: vec![],
                 max_tokens: Some(1024),
+                max_wall_ms: None,
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,

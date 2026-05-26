@@ -75,6 +75,41 @@ export function SlotForm({
     patch("bar_history_limit", clamped);
   }
 
+  // QA30 follow-on — per-step wall-clock budget for the Cline runtime.
+  // The UI accepts seconds for human-friendliness; we store milliseconds
+  // on the wire (matching the sidecar's `BudgetLimits.max_wall_ms`).
+  //
+  //   - empty string  → null   (no enforcement; the operator's preferred default)
+  //   - positive int  → ms     (n seconds * 1000)
+  //   - 0 / negative  → null   (zero would synchronous-abort in the sidecar)
+  //   - non-integer   → null   (HTML number input keeps the UI honest)
+  //
+  // Range: 1s..=1800s (30 minutes). Anything past that is a configuration
+  // smell; the operator should investigate why a single step needs so long.
+  const MAX_WALL_SEC_MIN = 1;
+  const MAX_WALL_SEC_MAX = 1800;
+  function patchMaxWallSec(raw: string) {
+    if (raw.trim() === "") {
+      patch("max_wall_ms", null);
+      return;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+      patch("max_wall_ms", null);
+      return;
+    }
+    if (parsed < MAX_WALL_SEC_MIN) {
+      patch("max_wall_ms", null);
+      return;
+    }
+    const clampedSec = Math.min(parsed, MAX_WALL_SEC_MAX);
+    patch("max_wall_ms", clampedSec * 1000);
+  }
+  const maxWallSecValue =
+    slot.max_wall_ms != null && Number.isFinite(slot.max_wall_ms)
+      ? Math.round(slot.max_wall_ms / 1000)
+      : "";
+
   function changeProvider(provider: string) {
     const row = providerRows.find((p) => p.name === provider);
     const modelStillValid =
@@ -219,6 +254,37 @@ export function SlotForm({
             cheaper + faster. Higher = more context. Defaults to the
             engine's runtime cap (currently set per-provider). Leave blank
             for the default; integer 1–1000.
+          </small>
+        </Field>
+      </div>
+
+      {/* QA30 follow-on — per-step wall-clock budget for the Cline
+          runtime. Empty (the default) leaves the budget OFF so the
+          step runs to natural completion; an integer N pins a hard
+          cap of N seconds. Stored as milliseconds on the wire to match
+          the sidecar's `BudgetLimits.max_wall_ms`. */}
+      <div className="mt-4">
+        <Field label="Max wall time (seconds)">
+          <input
+            type="number"
+            inputMode="numeric"
+            step={1}
+            min={MAX_WALL_SEC_MIN}
+            max={MAX_WALL_SEC_MAX}
+            value={maxWallSecValue}
+            onChange={(e) => patchMaxWallSec(e.target.value)}
+            placeholder="off — no enforcement"
+            aria-describedby={`slot-${index}-max-wall-help`}
+            className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
+          />
+          <small
+            id={`slot-${index}-max-wall-help`}
+            className="block mt-1.5 text-[11.5px] text-text-3 leading-snug"
+          >
+            Hard ceiling per agent step. Leave blank to disable (the
+            recommended default — slow but healthy completions stay
+            alive). Set only when you want to kill wedged sidecar steps
+            quickly. Range: 1–1800 seconds.
           </small>
         </Field>
       </div>

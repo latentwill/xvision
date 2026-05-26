@@ -26,7 +26,20 @@ skill_ids: Array<string>,
  * for `None`; the store layer maps between the sentinel and the
  * Rust-side `Option`.
  */
-max_tokens: number | null, 
+max_tokens: number | null,
+/**
+ * QA30 follow-on: optional operator override for the per-step
+ * wall-clock budget (Cline runtime). `None` means "no enforcement"
+ * — the runtime defaults to `u32::MAX` so a wedged sidecar step
+ * would still hang the cycle, but a still-responding slow model
+ * is not killed. `Some(n)` is honoured verbatim; the unit is
+ * milliseconds.
+ *
+ * Stored in SQLite as a non-null integer with `0` as the sentinel
+ * for `None` (migration 047), matching the `max_tokens` shape so
+ * the store-layer 0-as-unset projection can be reused.
+ */
+max_wall_ms: number | null,
 /**
  * Optional operator override for the sampling temperature
  * forwarded to the provider. `None` lets the provider's default

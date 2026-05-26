@@ -59,6 +59,7 @@ fn slot(name: &str, prompt: impl Into<String>, skill_ids: Vec<&str>) -> AgentSlo
         system_prompt: prompt.into(),
         skill_ids: skill_ids.into_iter().map(String::from).collect(),
         max_tokens: Some(4096),
+        max_wall_ms: None,
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,

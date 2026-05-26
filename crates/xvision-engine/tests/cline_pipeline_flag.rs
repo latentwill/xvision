@@ -105,6 +105,7 @@ fn trader_slot() -> ResolvedAgentSlot {
         },
         system_prompt: "Decide.".into(),
         max_tokens: Some(4096),
+        max_wall_ms: None,
         temperature: None,
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,

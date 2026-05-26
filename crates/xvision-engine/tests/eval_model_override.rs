@@ -136,6 +136,7 @@ async fn seed_anthropic_agent(ctx: &ApiContext, label: &str) -> String {
                 system_prompt: "Decide.".into(),
                 skill_ids: vec![],
                 max_tokens: Some(4096),
+                max_wall_ms: None,
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,

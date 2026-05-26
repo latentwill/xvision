@@ -901,6 +901,7 @@ async fn new_atomic(
                 system_prompt: prompt_text,
                 skill_ids: Vec::new(),
                 max_tokens: None,
+                max_wall_ms: None,
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
@@ -2240,6 +2241,7 @@ fn slot_to_agent_slot(
         // (q15 §1). Old auto-create paths can let this stay `None` so
         // the operator-facing UX is consistent with `+ New agent`.
         max_tokens: None,
+        max_wall_ms: None,
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
@@ -2436,6 +2438,7 @@ async fn resolve_agent_slots_for_cli(
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             system_prompt: slot.system_prompt.clone(),
             max_tokens: slot.resolve_max_tokens(),
+            max_wall_ms: None,
             temperature: slot.temperature,
             inputs_policy: slot.inputs_policy,
             bar_history_limit: slot.bar_history_limit,

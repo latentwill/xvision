@@ -111,6 +111,7 @@ fn seed_strategy(home: &std::path::Path) -> String {
                     system_prompt: "You are a disciplined crypto trader.".into(),
                     skill_ids: vec![],
                     max_tokens: Some(512),
+                    max_wall_ms: None,
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,

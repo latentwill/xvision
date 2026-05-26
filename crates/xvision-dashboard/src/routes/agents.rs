@@ -219,6 +219,7 @@ pub mod get {
                     system_prompt: system_prompt.into(),
                     skill_ids: vec![],
                     max_tokens: Some(2048),
+                    max_wall_ms: None,
                     temperature: None,
                     prompt_version: AgentSlot::compute_prompt_version(system_prompt),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,

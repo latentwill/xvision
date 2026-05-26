@@ -1150,6 +1150,7 @@ mod tests {
             system_prompt: prompt.into(),
             skill_ids: Vec::new(),
             max_tokens: None,
+            max_wall_ms: None,
             temperature: None,
             prompt_version: String::new(),
             inputs_policy: InputsPolicy::Raw,

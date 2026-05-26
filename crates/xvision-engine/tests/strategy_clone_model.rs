@@ -108,6 +108,7 @@ async fn seed_trader_agent(ctx: &ApiContext, provider: &str, model: &str) -> Str
                     .into(),
                 skill_ids: vec![],
                 max_tokens: Some(1024),
+                max_wall_ms: None,
                 temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,

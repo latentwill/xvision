@@ -156,6 +156,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     system_prompt: "Use the supplied OHLCV context, risk limits, and scenario metadata to produce a disciplined trading decision. Explain position sizing, invalidation, and risk controls before choosing an action. Avoid placeholders and keep the response grounded in active market data.".into(),
                     skill_ids: vec![],
                     max_tokens: Some(1024),
+                    max_wall_ms: None,
                     temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,

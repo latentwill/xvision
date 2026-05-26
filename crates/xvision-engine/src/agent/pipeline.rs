@@ -29,6 +29,12 @@ pub struct ResolvedAgentSlot {
     /// per-model auto value because the API requires the field. Explicit
     /// values pass through verbatim — no clamping.
     pub max_tokens: Option<u32>,
+    /// QA30 follow-on: operator's per-step wall-clock budget (Cline
+    /// runtime). `None` means "no enforcement" — the runtime falls
+    /// back to `DEFAULT_MAX_WALL_MS = u32::MAX`. `Some(ms)` is honoured
+    /// verbatim. Wired from `AgentSlot.max_wall_ms` at
+    /// strategy-resolution time via `resolve_agent_slot`.
+    pub max_wall_ms: Option<u32>,
     /// Operator's per-request sampling temperature. `None` lets the
     /// provider apply its own default. `Some(t)` is passed through to
     /// the outbound request body verbatim — Anthropic's
@@ -596,12 +602,11 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 dispatch: input.dispatch.clone(),
                 tools: input.tools.clone(),
                 max_tokens: resolved.max_tokens,
-                // QA30: per-slot wall budget is not yet persisted on
-                // `AgentSlot`. Pass `None` so the Cline runtime
-                // defaults to its "no enforcement" sentinel. Adding a
-                // `max_wall_ms` column to `agent_slots` + a UI control
-                // is a follow-on QA30 item.
-                max_wall_ms: None,
+                // QA30 follow-on: per-slot wall budget is now persisted
+                // on `AgentSlot.max_wall_ms` (migration 047) and
+                // surfaced through `ResolvedAgentSlot`. `None` keeps the
+                // runtime's no-enforcement default.
+                max_wall_ms: resolved.max_wall_ms,
                 temperature: resolved.temperature,
                 obs: input.obs.clone(),
                 memory: input.memory_recorder.clone(),
@@ -755,10 +760,12 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         dispatch: input.dispatch.clone(),
                         tools: input.tools.clone(),
                         max_tokens: resolved.max_tokens,
-                        // QA30: see sibling DispatchInput call site;
-                        // wall budget is currently no-default until the
-                        // per-agent UI ships.
-                        max_wall_ms: None,
+                        // QA30 follow-on: sibling DispatchInput site —
+                        // wall budget now reads from
+                        // `ResolvedAgentSlot.max_wall_ms`, populated
+                        // from the persisted `agent_slots.max_wall_ms`
+                        // column.
+                        max_wall_ms: resolved.max_wall_ms,
                         temperature: resolved.temperature,
                         obs: input.obs.clone(),
                         memory: input.memory_recorder.clone(),
@@ -951,6 +958,7 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
         slot: agent_slot_to_llm_slot(role, slot),
         system_prompt: slot.system_prompt.clone(),
         max_tokens: slot.resolve_max_tokens(),
+        max_wall_ms: slot.resolve_max_wall_ms(),
         temperature: slot.temperature,
         inputs_policy: slot.inputs_policy,
         bar_history_limit: slot.bar_history_limit,

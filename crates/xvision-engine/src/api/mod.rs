@@ -183,6 +183,14 @@ const MIGRATION_045_OPTIMIZATION_STORE: &str = include_str!("../../migrations/04
 /// INVARIANT: holdout metric values are scalars produced by the eval harness;
 /// the engine does NOT depend on `xvision-dspy`.
 const MIGRATION_046_HOLDOUT: &str = include_str!("../../migrations/046_holdout.sql");
+/// QA30 follow-on: `agent_slots.max_wall_ms` — per-slot wall-clock
+/// budget the operator can pin from the agent form. Sentinel `0` means
+/// "use the runtime default" (which is `u32::MAX` per
+/// `execute_cline::DEFAULT_MAX_WALL_MS` — i.e. no enforcement).
+/// Applied via `migrate_agent_slot_max_wall_ms` (guarded on column
+/// probe for idempotence).
+const MIGRATION_047_AGENT_SLOT_MAX_WALL_MS: &str =
+    include_str!("../../migrations/047_agent_slot_max_wall_ms.sql");
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
 /// `Mutex` so the entry-or-insert step is itself atomic.
@@ -373,6 +381,7 @@ impl ApiContext {
         migrate_checkpoints(&pool).await?;
         migrate_optimization_store(&pool).await?;
         migrate_holdout(&pool).await?;
+        migrate_agent_slot_max_wall_ms(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -878,6 +887,21 @@ async fn migrate_agent_slot_memory_mode(pool: &SqlitePool) -> ApiResult<()> {
             .await?;
     }
 
+    Ok(())
+}
+
+/// QA30 follow-on: `agent_slots.max_wall_ms` column (migration 047).
+/// Per-slot wall-clock budget surface so operators can pin a hard
+/// ceiling on cycle time from the agent form. Stored as a non-null
+/// INTEGER with `0` as the "unset" sentinel — matches the `max_tokens`
+/// shape exactly so the store layer's read/write helpers can reuse the
+/// same `0 → None` projection.
+async fn migrate_agent_slot_max_wall_ms(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agent_slots", "max_wall_ms").await? {
+        sqlx::query(MIGRATION_047_AGENT_SLOT_MAX_WALL_MS)
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 

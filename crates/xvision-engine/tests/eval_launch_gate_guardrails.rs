@@ -54,6 +54,7 @@ fn slot(
         system_prompt: system_prompt.into(),
         skill_ids: vec![],
         max_tokens: Some(4096),
+        max_wall_ms: None,
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,

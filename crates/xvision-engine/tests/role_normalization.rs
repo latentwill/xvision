@@ -74,6 +74,7 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
         },
         system_prompt: String::new(),
         max_tokens: None,
+        max_wall_ms: None,
         temperature: None,
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,

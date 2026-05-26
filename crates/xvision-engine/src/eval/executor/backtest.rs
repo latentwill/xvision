@@ -3749,6 +3749,7 @@ mod tests {
             },
             system_prompt: "p".into(),
             max_tokens: None,
+            max_wall_ms: None,
             temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
             bar_history_limit: None,

@@ -49,6 +49,7 @@ fn slot(provider: &str, model: &str, prompt: &str, caps: &[Capability]) -> Agent
         system_prompt: prompt.into(),
         skill_ids: vec![],
         max_tokens: None,
+        max_wall_ms: None,
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,

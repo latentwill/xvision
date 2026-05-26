@@ -212,6 +212,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
             .to_string(),
         skill_ids: vec![],
         max_tokens: Some(2048),
+        max_wall_ms: None,
         temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
