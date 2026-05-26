@@ -865,12 +865,9 @@ export function AttachedAgentRow({
                 </>
               ) : null}
               {modelLabel ? (
-                <>
-                  <span className="text-text-3"> · </span>
-                  <span className="font-mono text-text-2 text-[12px]">
-                    {modelLabel}
-                  </span>
-                </>
+                <span className="ml-2 inline-flex items-center rounded-sm border border-gold/30 bg-gold/[0.1] px-1.5 py-0.5 align-middle font-mono text-[11px] leading-none text-gold">
+                  {modelLabel}
+                </span>
               ) : null}
             </div>
           </div>
@@ -894,7 +891,11 @@ export function AttachedAgentRow({
               <div className="text-[11px] uppercase tracking-wide text-text-3">
                 Model
               </div>
-              <div className="font-mono text-text-2">{modelLabel}</div>
+              <div className="mt-1">
+                <span className="inline-flex items-center rounded-sm border border-gold/30 bg-gold/[0.1] px-2 py-0.5 font-mono text-[12px] leading-none text-gold">
+                  {modelLabel}
+                </span>
+              </div>
             </div>
           ) : null}
           {primarySlot?.system_prompt ? (
