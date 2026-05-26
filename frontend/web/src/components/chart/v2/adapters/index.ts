@@ -11,10 +11,7 @@ export {
   columnarToUplotHistogram,
 } from "./columnar-to-uplot";
 
-export {
-  v2MarkersToKlineOverlay,
-  markersToDockEntries,
-} from "./markers";
+export { markersToDockEntries } from "./markers";
 export type { MarkerDockEntry } from "./markers";
 
 export { themeToKlinechartsStyles } from "./theme-to-klinecharts";

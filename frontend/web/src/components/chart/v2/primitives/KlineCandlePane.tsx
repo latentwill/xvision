@@ -78,7 +78,7 @@ registerOverlay({
   needDefaultXAxisFigure: false,
   needDefaultYAxisFigure: false,
   createPointFigures: ({ coordinates, overlay }) => {
-    const ext = overlay.extendData as {
+    const ext = (overlay.extendData ?? {}) as {
       kind: string;
       text: string;
       color: string;
