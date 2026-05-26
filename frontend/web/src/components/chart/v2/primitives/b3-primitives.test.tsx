@@ -335,6 +335,11 @@ const klineMocksForReady = vi.hoisted(() => {
     setSymbol: vi.fn(),
     setPeriod: vi.fn(),
     setDataLoader: vi.fn(),
+    // KlineCandlePane's data effect calls createOverlay per overlay/marker/band
+    // and removeOverlay in its cleanup. These fixtures pass no overlay props so
+    // neither fires here, but a complete mock keeps the surface resilient.
+    createOverlay: vi.fn(() => "overlay-id"),
+    removeOverlay: vi.fn(),
   };
   return {
     chart,

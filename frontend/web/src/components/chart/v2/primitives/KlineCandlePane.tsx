@@ -318,6 +318,27 @@ export function KlineCandlePane({
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
+
+    // Track every overlay id created on this run so the effect's cleanup can
+    // remove them before the next run re-creates the (re-derived) overlay set.
+    // `setDataLoader` resets only the candle DATA — it does NOT touch the
+    // overlay store. Without this, each live SSE tick re-derives overlays from
+    // the new `candles`/`markers`/`positions` props and STACKS fresh overlays
+    // on top of the old ones, producing unbounded duplicate lines/markers/bands
+    // that grow with tick count. React fires the previous run's cleanup before
+    // the next run's body, so old overlays are cleared first, then the current
+    // props' overlays are created — and everything is cleared on unmount too.
+    const createdOverlayIds: string[] = [];
+    const pushId = (r: ReturnType<typeof chart.createOverlay>): void => {
+      if (typeof r === "string") {
+        createdOverlayIds.push(r);
+      } else if (Array.isArray(r)) {
+        for (const x of r) {
+          if (typeof x === "string") createdOverlayIds.push(x);
+        }
+      }
+    };
+
     try {
       // klinecharts v10-beta2 uses a DataLoader pattern — there is no
       // applyNewData(). We provide a one-shot DataLoader that returns the
@@ -336,11 +357,13 @@ export function KlineCandlePane({
         overlayActive ?? {},
       );
       for (const d of descriptors) {
-        chart.createOverlay({
-          name: d.name,
-          points: d.points,
-          extendData: d.extendData,
-        });
+        pushId(
+          chart.createOverlay({
+            name: d.name,
+            points: d.points,
+            extendData: d.extendData,
+          }),
+        );
       }
 
       // Render trade/veto/hold markers as xvnMarker overlays, one per priced
@@ -348,11 +371,13 @@ export function KlineCandlePane({
       // them (they still surface in the MarkerDock list).
       for (const m of markers ?? []) {
         if (m.price == null) continue;
-        chart.createOverlay({
-          name: "xvnMarker",
-          points: [{ timestamp: m.time * 1000, value: m.price }],
-          extendData: { kind: m.kind, text: m.text ?? "", color: theme.marker[m.kind] },
-        });
+        pushId(
+          chart.createOverlay({
+            name: "xvnMarker",
+            points: [{ timestamp: m.time * 1000, value: m.price }],
+            extendData: { kind: m.kind, text: m.text ?? "", color: theme.marker[m.kind] },
+          }),
+        );
       }
 
       // Render held long/short position spans as full-height xvnPositionBand
@@ -360,23 +385,36 @@ export function KlineCandlePane({
       // low-opacity position fill so it shades the pane without overwhelming
       // the candles underneath.
       for (const p of positions ?? []) {
-        chart.createOverlay({
-          name: "xvnPositionBand",
-          points: [
-            { timestamp: p.start * 1000, value: 0 },
-            { timestamp: p.end * 1000, value: 0 },
-          ],
-          extendData: {
-            color:
-              p.side === "long"
-                ? theme.position.longBand
-                : theme.position.shortBand,
-          },
-        });
+        pushId(
+          chart.createOverlay({
+            name: "xvnPositionBand",
+            points: [
+              { timestamp: p.start * 1000, value: 0 },
+              { timestamp: p.end * 1000, value: 0 },
+            ],
+            extendData: {
+              color:
+                p.side === "long"
+                  ? theme.position.longBand
+                  : theme.position.shortBand,
+            },
+          }),
+        );
       }
     } catch (err) {
       console.warn("[KlineCandlePane] applyNewData threw:", err);
     }
+
+    return () => {
+      for (const id of createdOverlayIds) {
+        try {
+          // removeOverlay takes an OverlayFilter; match by overlay id.
+          chart.removeOverlay({ id });
+        } catch (err) {
+          console.warn("[KlineCandlePane] removeOverlay threw:", err);
+        }
+      }
+    };
   }, [candles, overlays, markers, positions, overlayActive, theme]);
 
   // ── Theme ──────────────────────────────────────────────────────────────────

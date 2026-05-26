@@ -11,6 +11,14 @@ const klineMocks = vi.hoisted(() => {
     period: null as unknown,
     loadedBars: [] as unknown[][],
     overlays: [] as Array<Record<string, unknown>>,
+    // Every overlay id minted by createOverlay, in creation order, paired with
+    // the create payload, so tests can assert which ids get removed on rerun.
+    createdOverlayIds: [] as string[],
+    // Every id passed to removeOverlay (extracted from the OverlayFilter).
+    removedOverlayIds: [] as string[],
+    // Monotonic counter so each createOverlay call returns a UNIQUE id; the
+    // accumulation bug is invisible if every overlay shares one id.
+    overlayIdCounter: 0,
     // Every template ever registered for the lifetime of this module. Unlike
     // `state`-reset arrays this is NEVER cleared in beforeEach, because the
     // module-scope `registerOverlay("xvnLine")` in KlineCandlePane fires once
@@ -39,8 +47,23 @@ const klineMocks = vi.hoisted(() => {
       }
     }),
     createOverlay: vi.fn((value: Record<string, unknown>) => {
-      state.overlays.push(value);
-      return "overlay-id";
+      const id = `overlay-${state.overlayIdCounter++}`;
+      // Tag the recorded payload with its minted id so removeOverlay can drop
+      // the exact live entry by id, keeping `overlays` a faithful NET view.
+      state.overlays.push({ ...value, __id: id });
+      state.createdOverlayIds.push(id);
+      return id;
+    }),
+    removeOverlay: vi.fn((filter: { id?: string } | string) => {
+      const id = typeof filter === "string" ? filter : filter?.id;
+      if (typeof id === "string") {
+        state.removedOverlayIds.push(id);
+        // Mirror the real store: drop the removed overlay from the live set so
+        // tests can assert the NET overlay population, not just create-count.
+        const idx = state.overlays.findIndex((o) => o.__id === id);
+        if (idx > -1) state.overlays.splice(idx, 1);
+      }
+      return true;
     }),
     setBarSpace: vi.fn(),
     getBarSpace: vi.fn(() => ({ bar: 8, halfGap: 1, gap: 2 })),
@@ -82,6 +105,9 @@ describe("KlineCandlePane", () => {
     klineMocks.state.period = null;
     klineMocks.state.loadedBars = [];
     klineMocks.state.overlays = [];
+    klineMocks.state.createdOverlayIds = [];
+    klineMocks.state.removedOverlayIds = [];
+    klineMocks.state.overlayIdCounter = 0;
     // Intentionally NOT clearing state.registeredTemplates: the xvnLine
     // template is registered once at module-import time, which is before this
     // beforeEach ever runs. Clearing it would erase the only evidence the
@@ -450,5 +476,71 @@ describe("KlineCandlePane", () => {
 
     // After unmount the listener is gone, so no chart calls should fire.
     expect(klineMocks.chart.setBarSpace).not.toHaveBeenCalled();
+  });
+
+  it("removes the previous run's overlays on rerender so live ticks don't accumulate", async () => {
+    // Live surface (LiveChartV2Container) re-adapts a fresh payload every SSE
+    // tick, so candles/markers change identity each render and the data effect
+    // re-runs. Without effect-cleanup the effect stacks NEW overlays on top of
+    // the old ones every tick — unbounded duplicates. This asserts the cleanup
+    // removes the prior run's overlay ids before the next run creates new ones.
+    const { rerender } = render(
+      <KlineCandlePane
+        candles={candles}
+        markers={[{ kind: "buy", time: 1, price: 10, text: "Buy 1" }]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    // First render created exactly one marker overlay and removed nothing yet.
+    await waitFor(() => {
+      expect(
+        klineMocks.state.overlays.filter((o) => o.name === "xvnMarker"),
+      ).toHaveLength(1);
+    });
+    expect(klineMocks.state.createdOverlayIds).toHaveLength(1);
+    expect(klineMocks.state.removedOverlayIds).toHaveLength(0);
+    const firstRunIds = [...klineMocks.state.createdOverlayIds];
+
+    // A new tick: changed candles AND a grown markers array (two markers).
+    const nextCandles: CandleColumns = {
+      time: [1_700_000_000, 1_700_000_060, 1_700_000_120],
+      open: [100, 101, 102],
+      high: [102, 103, 104],
+      low: [99, 100, 101],
+      close: [101, 102, 103],
+      volume: [10, 12, 14],
+    };
+    rerender(
+      <KlineCandlePane
+        candles={nextCandles}
+        markers={[
+          { kind: "buy", time: 1, price: 10, text: "Buy 1" },
+          { kind: "sell", time: 2, price: 12, text: "Sell 1" },
+        ]}
+      />,
+    );
+
+    // React fires the prior run's cleanup BEFORE the next run's body, so the
+    // first run's overlay id must be removed.
+    await waitFor(() => {
+      expect(klineMocks.state.removedOverlayIds).toEqual(
+        expect.arrayContaining(firstRunIds),
+      );
+    });
+
+    // The NET live overlay set reflects the NEW props (two markers), not the
+    // accumulation of old + new (which would be three).
+    await waitFor(() => {
+      expect(
+        klineMocks.state.overlays.filter((o) => o.name === "xvnMarker"),
+      ).toHaveLength(2);
+    });
+    expect(
+      klineMocks.state.overlays.filter((o) => o.name === "xvnMarker"),
+    ).not.toHaveLength(3);
   });
 });
