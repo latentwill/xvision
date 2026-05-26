@@ -24,7 +24,9 @@ import {
   type SortOption,
 } from "@/components/lists";
 import { MListRow } from "@/components/lists/MListRow";
-import { ScenarioChart } from "@/components/chart/ScenarioChart";
+import { ScenarioChartV2 } from "@/components/chart/v2/surfaces/ScenarioChartV2";
+import { scenarioChartPayloadToV2 } from "@/components/chart/v2/adapters/scenario-chart-payload";
+import { CacheStatusBadge } from "@/components/scenario/CacheStatusBadge";
 import {
   scenarioGranularityToCli,
   useBarsFetchJob,
@@ -493,12 +495,30 @@ function DefinitionTab({ s }: { s: Scenario }) {
                 </select>
               </div>
             </div>
-            <ScenarioChart
-              payload={chart.data}
-              onFetch={barsFetch.start}
-              fetchStatus={barsFetch.statusText}
-              fetchDisabled={!barsFetch.canStart}
-            />
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-text-3 text-[12px]">
+                {chartAsset} · {chartGranularity}
+              </span>
+              <CacheStatusBadge
+                status={chart.data.cache_status}
+                onFetch={barsFetch.start}
+                fetchStatus={barsFetch.statusText}
+                disabled={!barsFetch.canStart}
+              />
+            </div>
+            {chart.data.bars.length === 0 ? (
+              <div className="flex items-center justify-center h-[360px] text-text-3 text-[13px] border border-border rounded">
+                No bars cached yet. Use Fetch bars to populate this chart.
+              </div>
+            ) : (
+              <ScenarioChartV2
+                payload={scenarioChartPayloadToV2(
+                  chart.data,
+                  chartAsset,
+                  chartGranularity,
+                )}
+              />
+            )}
             <BarsFetchJobStatus fetch={barsFetch} />
           </div>
         )}
