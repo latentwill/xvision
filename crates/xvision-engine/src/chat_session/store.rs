@@ -8,6 +8,8 @@
 //! a transaction; on commit the row is durably persisted with a monotonic
 //! sequence relative to existing rows for the session.
 
+use std::time::Instant;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -15,6 +17,25 @@ use sqlx::SqlitePool;
 use ulid::Ulid;
 
 use super::context::ContextScope;
+
+#[derive(Debug, Clone, Copy)]
+struct PoolSnapshot {
+    size: u32,
+    idle: usize,
+}
+
+impl PoolSnapshot {
+    fn in_use(self) -> u32 {
+        self.size.saturating_sub(self.idle as u32)
+    }
+}
+
+fn pool_snapshot(pool: &SqlitePool) -> PoolSnapshot {
+    PoolSnapshot {
+        size: pool.size(),
+        idle: pool.num_idle(),
+    }
+}
 
 /// Classify a SQLx error into a short, operator-readable label naming the
 /// SQLite error class. This makes the `append` error visible to operators
@@ -138,7 +159,25 @@ impl ChatSessionStore {
         let now_rfc = now.to_rfc3339();
         let blocks_json = serde_json::to_string(blocks).context("serialize content_blocks array")?;
 
-        let mut tx = pool.begin().await.context("begin tx for append")?;
+        let begin_pool = pool_snapshot(pool);
+        let begin_started = Instant::now();
+        let mut tx = pool.begin().await.map_err(|e| {
+            let wait_ms = begin_started.elapsed().as_millis() as u64;
+            let label = sqlite_error_label(&e);
+            tracing::error!(
+                session_id = session_id,
+                wait_ms = wait_ms,
+                pool_size = begin_pool.size,
+                pool_idle = begin_pool.idle,
+                pool_in_use = begin_pool.in_use(),
+                db_error = %e,
+                "begin chat append tx failed: {label}",
+            );
+            anyhow::anyhow!(
+                "begin tx for append: {label} (wait_ms={wait_ms}, pool_in_use={}) - {e}",
+                begin_pool.in_use()
+            )
+        })?;
 
         let next_seq: i64 =
             sqlx::query_scalar("SELECT COALESCE(MAX(seq), -1) + 1 FROM chat_messages WHERE session_id = ?1")
@@ -147,6 +186,8 @@ impl ChatSessionStore {
                 .await
                 .context("compute next seq")?;
 
+        let insert_pool = pool_snapshot(pool);
+        let insert_started = Instant::now();
         sqlx::query(
             "INSERT INTO chat_messages (id, session_id, seq, role, content_blocks_json, ts) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -160,14 +201,22 @@ impl ChatSessionStore {
         .execute(&mut *tx)
         .await
         .map_err(|e| {
+            let wait_ms = insert_started.elapsed().as_millis() as u64;
             let label = sqlite_error_label(&e);
             tracing::error!(
                 session_id = session_id,
                 seq = next_seq,
+                wait_ms = wait_ms,
+                pool_size = insert_pool.size,
+                pool_idle = insert_pool.idle,
+                pool_in_use = insert_pool.in_use(),
                 db_error = %e,
                 "insert chat_messages row failed: {label}",
             );
-            anyhow::anyhow!("insert chat_messages row: {label} — {e}")
+            anyhow::anyhow!(
+                "insert chat_messages row: {label} (wait_ms={wait_ms}, pool_in_use={}) - {e}",
+                insert_pool.in_use()
+            )
         })?;
 
         sqlx::query("UPDATE chat_sessions SET last_activity_at = ?2 WHERE id = ?1")
