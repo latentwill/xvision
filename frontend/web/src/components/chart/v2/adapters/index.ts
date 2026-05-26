@@ -31,9 +31,6 @@ export { themeToUplotOptions, paneSeriesStroke } from "./theme-to-uplot";
 export { createSyncBridge } from "./sync-bridge";
 export type { SyncBridge } from "./sync-bridge";
 
-export { createStreamingBuffer } from "./streaming";
-export type { StreamingBuffer } from "./streaming";
-
 export {
   xvnLastDot,
   xvnAreaFill,

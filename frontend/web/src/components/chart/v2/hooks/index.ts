@@ -12,12 +12,6 @@ export {
   type FixtureKey,
 } from "./useChart2Fixture";
 export {
-  useChart2Streaming,
-  type KLineDataLike,
-  type Chart2StreamingResult,
-  type UseChart2StreamingOpts,
-} from "./useChart2Streaming";
-export {
   useChart2Roster,
   addId,
   removeId,
