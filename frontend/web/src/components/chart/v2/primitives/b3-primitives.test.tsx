@@ -335,13 +335,26 @@ const klineMocksForReady = vi.hoisted(() => {
     setSymbol: vi.fn(),
     setPeriod: vi.fn(),
     setDataLoader: vi.fn(),
+    // KlineCandlePane's data effect calls createOverlay per overlay/marker/band
+    // and removeOverlay in its cleanup. These fixtures pass no overlay props so
+    // neither fires here, but a complete mock keeps the surface resilient.
+    createOverlay: vi.fn(() => "overlay-id"),
+    removeOverlay: vi.fn(),
   };
-  return { chart, init: vi.fn(() => chart), dispose: vi.fn() };
+  return {
+    chart,
+    init: vi.fn(() => chart),
+    dispose: vi.fn(),
+    registerOverlay: vi.fn(),
+  };
 });
 
 vi.mock("klinecharts", () => ({
   init: klineMocksForReady.init,
   dispose: klineMocksForReady.dispose,
+  // registerOverlay runs at module scope when KlineCandlePane is imported;
+  // it's a real named export of klinecharts, so the mock must provide a no-op.
+  registerOverlay: klineMocksForReady.registerOverlay,
 }));
 
 import { KlineCandlePane } from "./KlineCandlePane";

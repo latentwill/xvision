@@ -3,10 +3,17 @@ import { useEffect, useState } from "react";
 export type ChartV2LayerKey =
   | "candles"
   | "sma20"
+  | "sma30"
   | "sma50"
+  | "sma60"
+  | "sma90"
   | "sma200"
   | "ema20"
+  | "ema30"
   | "ema50"
+  | "ema60"
+  | "ema90"
+  | "ema200"
   | "bollinger"
   | "donchian"
   | "markerBuy"
@@ -25,10 +32,17 @@ export type ChartV2LayerKey =
 export const DEFAULT_V2_LAYERS: Record<ChartV2LayerKey, boolean> = {
   candles: true,
   sma20: true,
+  sma30: false,
   sma50: true,
+  sma60: false,
+  sma90: false,
   sma200: true,
   ema20: false,
+  ema30: false,
   ema50: false,
+  ema60: false,
+  ema90: false,
+  ema200: false,
   bollinger: false,
   donchian: false,
   markerBuy: true,

@@ -13,7 +13,8 @@ import {
   retryRun,
 } from "@/api/eval";
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
-import { RunChart } from "@/components/chart/RunChart";
+import { RunChartV2 } from "@/components/chart/v2/surfaces/RunChartV2";
+import { runChartPayloadToV2 } from "@/components/chart/v2/adapters/run-chart-payload";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
 import { useAdaptivePoll } from "@/features/eval-runs/useAdaptivePoll";
@@ -280,7 +281,7 @@ export function EvalRunDetailRoute() {
                 totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
                 chartPending={chart.isPending}
                 chartError={chart.isError ? String(chart.error) : null}
-                chartNode={chart.data ? <RunChart payload={chart.data} /> : null}
+                chartNode={chart.data ? <RunChartV2 payload={runChartPayloadToV2(chart.data)} /> : null}
                 onCancel={() => cancel.mutate(detail.summary.id)}
                 cancelling={cancel.variables === detail.summary.id && cancel.isPending}
                 onRetry={() => retry.mutate(detail.summary.id)}

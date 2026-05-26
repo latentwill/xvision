@@ -24,7 +24,8 @@ import {
 import { MListRow } from "@/components/lists/MListRow";
 import { ApiError } from "@/api/client";
 import { chartKeys, getRunChart } from "@/api/chart";
-import { RunChart } from "@/components/chart/RunChart";
+import { RunChartV2 } from "@/components/chart/v2/surfaces/RunChartV2";
+import { runChartPayloadToV2 } from "@/components/chart/v2/adapters/run-chart-payload";
 import {
   evalKeys,
   cancelRun,
@@ -466,7 +467,7 @@ export function EvalRunsRoute() {
             Chart unavailable for latest run.
           </div>
         ) : latestChart.data ? (
-          <RunChart payload={latestChart.data} />
+          <RunChartV2 payload={runChartPayloadToV2(latestChart.data)} />
         ) : null}
       </Card>
     </>

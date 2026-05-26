@@ -6,7 +6,7 @@ import { ApiError } from "@/api/client";
 import { createScenario, scenarioKeys } from "@/api/scenarios";
 import { ScenarioForm, type ScenarioFormDraft } from "@/components/scenario/ScenarioForm";
 import { Topbar } from "@/components/shell/Topbar";
-import { WizardPreviewChart } from "@/components/chart/WizardPreviewChart";
+import { WizardPreviewChartV2Container } from "@/components/chart/v2/surfaces/WizardPreviewChartV2Container";
 
 const DEFAULT_DRAFT: ScenarioFormDraft = {
   from: "",
@@ -45,7 +45,7 @@ export function ScenariosNewRoute() {
           }}
           onCancel={() => navigate("/scenarios")}
         />
-        <WizardPreviewChart
+        <WizardPreviewChartV2Container
           asset="ETH"
           from={draft.from}
           to={draft.to}

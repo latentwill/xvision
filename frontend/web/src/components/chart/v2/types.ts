@@ -88,6 +88,7 @@ export type ScenarioChartV2Payload = {
   asset: string;
   granularity: string;
   candles: CandleColumns;
+  indicators: IndicatorMap;
   markers: V2Marker[];
   positions: PositionSpan[];
   equity: EquityPoint[];

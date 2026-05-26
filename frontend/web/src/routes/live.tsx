@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 
-import { LiveChart } from "@/components/chart/LiveChart";
+import { LiveChartV2Container } from "@/components/chart/v2/surfaces/LiveChartV2Container";
 import { Topbar } from "@/components/shell/Topbar";
 import { useTraceDock } from "@/stores/trace-dock";
 
@@ -17,7 +17,7 @@ export function LiveRoute() {
     <>
       <Topbar title="Live cockpit" sub={id || "—"} />
       <div className="px-6 py-5">
-        <LiveChart runId={id} />
+        <LiveChartV2Container runId={id} />
       </div>
     </>
   );

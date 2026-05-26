@@ -18,15 +18,21 @@ import type { Scenario } from "@/api/types.gen";
 import type { ScenarioChartPayload } from "@/api/types.gen/ScenarioChartPayload";
 import { ScenariosDetailRoute } from "./scenarios-detail";
 
-vi.mock("lightweight-charts", () => ({
-  ColorType: { Solid: "solid" },
-  CrosshairMode: { Normal: "normal" },
-  createChart: vi.fn(() => ({
-    addCandlestickSeries: vi.fn(() => ({ setData: vi.fn() })),
-    addHistogramSeries: vi.fn(() => ({ setData: vi.fn() })),
-    priceScale: vi.fn(() => ({ applyOptions: vi.fn() })),
-    remove: vi.fn(),
-  })),
+// The chart region now renders ScenarioChartV2, whose candle pane drives
+// klinecharts and whose equity/volume panes drive uPlot — neither plays
+// well in jsdom (canvas + matchMedia). Stub the v2 pane primitives to
+// lightweight markers, mirroring the surface-test mocking pattern in
+// `src/components/chart/v2/surfaces/ScenarioChartV2.test.tsx`. The bulk of
+// the route tests use a `bars: []` fixture (empty-state path, no panes),
+// but the bars-present test below renders the real surface.
+vi.mock("@/components/chart/v2/primitives/KlineCandlePane", () => ({
+  KlineCandlePane: () => <div data-testid="kline-candle-pane" />,
+}));
+vi.mock("@/components/chart/v2/primitives/UplotEquityPane", () => ({
+  UplotEquityPane: () => <div data-testid="uplot-equity-pane" />,
+}));
+vi.mock("@/components/chart/v2/primitives/UplotHistogramPane", () => ({
+  UplotHistogramPane: () => <div data-testid="uplot-histogram-pane" />,
 }));
 
 vi.mock("@/api/scenarios", async () => {
@@ -417,6 +423,56 @@ describe("ScenariosDetailRoute bars cache actions", () => {
         argv: expect.arrayContaining(["--asset", "ETH/USD"]),
       });
     });
+  });
+
+  it("renders the route-level empty state when no bars are cached", async () => {
+    // Task 12: the v1 ScenarioChart owned the empty-bars message; the
+    // route now renders it directly (the v2 surface is a pure renderer).
+    // The chartPayload fixture has `bars: []`, so the empty state shows.
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+
+    renderRoute();
+
+    expect(
+      await screen.findByText(
+        "No bars cached yet. Use Fetch bars to populate this chart.",
+      ),
+    ).toBeInTheDocument();
+    // The v2 candle pane must NOT render while there are no bars.
+    expect(screen.queryByTestId("kline-candle-pane")).not.toBeInTheDocument();
+    // The route-level asset · granularity label uses the preview defaults.
+    expect(screen.getByText("BTC/USD · 4h")).toBeInTheDocument();
+  });
+
+  it("renders ScenarioChartV2 when bars are present", async () => {
+    // With cached bars the route hands the payload to ScenarioChartV2
+    // (klinecharts/uPlot panes stubbed above) instead of the empty state.
+    const withBars: ScenarioChartPayload = {
+      ...chartPayload,
+      bars: [
+        {
+          time: 1700000000,
+          open: 100,
+          high: 105,
+          low: 95,
+          close: 101,
+          volume: 10,
+        },
+      ],
+      cache_status: { type: "FullyCached", bar_count: 1, fetched_at: "2026-05-12T00:00:00Z" },
+    };
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(withBars);
+
+    renderRoute();
+
+    expect(await screen.findByTestId("kline-candle-pane")).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "No bars cached yet. Use Fetch bars to populate this chart.",
+      ),
+    ).not.toBeInTheDocument();
   });
 });
 
