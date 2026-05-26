@@ -174,6 +174,24 @@ export interface KlineCandlePaneProps {
    * absent; `false` hides it. Defaults to all-present-lines-active.
    */
   overlayActive?: Partial<Record<OverlayLineKey, boolean>>;
+  /**
+   * Live follow/freeze contract for the candle pane's scroll position.
+   *
+   * - `true` (following): after each candle-data load the pane scrolls so the
+   *   latest bar is pinned to the right edge (`scrollToRealTime`) — the view
+   *   tracks live ticks. Flipping `false → true` also snaps to realtime
+   *   immediately (the "Resume live" affordance), not only on the next tick.
+   * - `false` (frozen): new streaming bars must NOT yank the view to realtime.
+   *   `setDataLoader` resets scroll to a default right offset on every load
+   *   (see klinecharts `_addData` "init" branch), so frozen actively restores
+   *   the prior window by pushing the freshly-appended bars off the right edge.
+   * - `undefined` (default): do NOTHING with scroll. The data effect re-runs on
+   *   overlay/marker/layer-toggle changes too, so unconditional scrolling would
+   *   snap away a static consumer's pan/zoom. Only manage scroll when `follow`
+   *   is explicitly a boolean — this is what keeps RunChartV2 /
+   *   ScenarioChartV2 / WizardPreviewChartV2 byte-behavior-identical.
+   */
+  follow?: boolean;
   height?: number;
   /**
    * Called once with the live `Chart` instance after `init()` succeeds,
@@ -189,6 +207,7 @@ export function KlineCandlePane({
   markers,
   positions,
   overlayActive,
+  follow,
   height = 380,
   onReady,
 }: KlineCandlePaneProps): React.ReactElement {
@@ -206,6 +225,14 @@ export function KlineCandlePane({
   const candlesRef = useRef(candles);
   useEffect(() => {
     candlesRef.current = candles;
+  });
+  // Keep a stable ref to the latest follow value so the data effect reads the
+  // current setting WITHOUT adding `follow` to its deps — toggling follow must
+  // not re-run the data effect (which would re-load candles and re-derive every
+  // overlay needlessly). The resume-snap effect below owns the toggle reaction.
+  const followRef = useRef(follow);
+  useEffect(() => {
+    followRef.current = follow;
   });
   const theme = useChart2Theme();
 
@@ -340,6 +367,27 @@ export function KlineCandlePane({
       }
     };
 
+    // Snapshot the current follow setting for THIS effect run. Read from the
+    // ref so toggling follow doesn't re-run the data effect (follow is not a
+    // dep); the toggle reaction lives in the resume-snap effect below.
+    const followNow = followRef.current;
+
+    // When frozen, capture the pre-load scroll state BEFORE setDataLoader runs.
+    // setDataLoader → resetData → _addData("init") resets scroll to a default
+    // right offset (klinecharts ignores the prior window), so to keep the view
+    // stationary we must restore afterwards. `getDataList()` still holds the
+    // OLD bars here, and `getOffsetRightDistance()` the OLD scroll position.
+    let offsetBefore = 0;
+    let prevLen = 0;
+    if (followNow === false) {
+      try {
+        offsetBefore = chart.getOffsetRightDistance();
+        prevLen = chart.getDataList().length;
+      } catch (err) {
+        console.warn("[KlineCandlePane] capture pre-load scroll state threw:", err);
+      }
+    }
+
     try {
       // klinecharts v10-beta2 uses a DataLoader pattern — there is no
       // applyNewData(). We provide a one-shot DataLoader that returns the
@@ -406,6 +454,35 @@ export function KlineCandlePane({
       console.warn("[KlineCandlePane] applyNewData threw:", err);
     }
 
+    // ── Follow / freeze scroll management ──────────────────────────────────
+    // Run AFTER the data+overlay block so the chart already holds the newly
+    // loaded bars. Only act when `follow` is explicitly a boolean — undefined
+    // (static consumers) must leave scroll untouched so a user's pan/zoom on a
+    // run chart is never snapped away by an overlay/marker re-render.
+    if (followNow === true) {
+      try {
+        chart.scrollToRealTime();
+      } catch (err) {
+        console.warn("[KlineCandlePane] scrollToRealTime threw:", err);
+      }
+    } else if (followNow === false) {
+      // Frozen: setDataLoader's "init" reset moved the last bar to a default
+      // right offset. Restore the prior window by pushing the freshly-appended
+      // bars off the right edge. A larger offsetRightDistance scrolls further
+      // back into the past (klinecharts: offset = lastBarRightSideDiffBarCount
+      // * barSpace), so adding numNew bar-widths keeps the old window put.
+      try {
+        const newLen = candles.time.length;
+        const numNew = Math.max(0, newLen - prevLen);
+        if (numNew > 0) {
+          const barWidth = chart.getBarSpace().bar;
+          chart.setOffsetRightDistance(offsetBefore + numNew * barWidth);
+        }
+      } catch (err) {
+        console.warn("[KlineCandlePane] freeze restore scroll threw:", err);
+      }
+    }
+
     return () => {
       for (const id of createdOverlayIds) {
         try {
@@ -417,6 +494,21 @@ export function KlineCandlePane({
       }
     };
   }, [candles, overlays, markers, positions, overlayActive, theme]);
+
+  // ── Resume-snap ──────────────────────────────────────────────────────────
+  // When follow flips to true (e.g. clicking "Resume live"), snap to realtime
+  // immediately rather than waiting for the next streaming tick to re-run the
+  // data effect. Keyed only on `follow` so it fires on the toggle itself.
+  useEffect(() => {
+    if (follow !== true) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    try {
+      chart.scrollToRealTime();
+    } catch (err) {
+      console.warn("[KlineCandlePane] resume scrollToRealTime threw:", err);
+    }
+  }, [follow]);
 
   // ── Theme ──────────────────────────────────────────────────────────────────
   useEffect(() => {

@@ -340,6 +340,14 @@ const klineMocksForReady = vi.hoisted(() => {
     // neither fires here, but a complete mock keeps the surface resilient.
     createOverlay: vi.fn(() => "overlay-id"),
     removeOverlay: vi.fn(),
+    // Follow/freeze scroll primitives. These fixtures pass no follow prop
+    // (follow undefined → the pane never touches scroll), but a complete mock
+    // keeps the surface resilient if the data effect ever reads them.
+    scrollToRealTime: vi.fn(),
+    getOffsetRightDistance: vi.fn(() => 0),
+    setOffsetRightDistance: vi.fn(),
+    getDataList: vi.fn(() => []),
+    getBarSpace: vi.fn(() => ({ bar: 8, halfBar: 4, gapBar: 1, halfGapBar: 0.5 })),
   };
   return {
     chart,
