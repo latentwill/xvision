@@ -1,0 +1,189 @@
+// src/features/marketplace/routes/LineageRoute.test.tsx
+import { render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi, beforeAll, afterAll } from "vitest";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
+import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
+import { LineageRoute } from "./LineageRoute";
+
+// Mock uPlot so tests don't need a DOM canvas environment
+vi.mock("uplot", () => ({
+  default: class {
+    constructor() {}
+    setSize() {}
+    destroy() {}
+  },
+}));
+
+// Mock ResizeObserver — jsdom doesn't provide it, but HeroGradientEquity uses it
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+beforeAll(() => {
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    writable: true,
+    configurable: true,
+    value: ResizeObserverStub,
+  });
+});
+afterAll(() => {
+  delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+});
+
+function qc() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
+function Wrapper({
+  initialPath = "/marketplace/lineage/btc-momentum-v3",
+  client = new FixtureMarketplaceData(),
+}: {
+  initialPath?: string;
+  client?: FixtureMarketplaceData;
+}) {
+  return (
+    <QueryClientProvider client={qc()}>
+      <MarketplaceDataProvider client={client}>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <Routes>
+            <Route path="/marketplace/lineage/:name" element={<LineageRoute />} />
+            <Route path="/marketplace/receipts/:tx" element={<div>receipt</div>} />
+          </Routes>
+        </MemoryRouter>
+      </MarketplaceDataProvider>
+    </QueryClientProvider>
+  );
+}
+
+describe("LineageRoute", () => {
+  it("renders the hero info stack with title, promise, and 30d return", async () => {
+    render(<Wrapper />);
+    expect(await screen.findByTestId("lineage-info-stack")).toBeInTheDocument();
+    expect(screen.getByText("btc-momentum-v3")).toBeInTheDocument();
+    expect(screen.getByText(/BTC momentum/)).toBeInTheDocument();
+    // 30D RETURN label
+    expect(screen.getByText(/30D Return/i)).toBeInTheDocument();
+    // value shown as percentage
+    expect(screen.getByText(/47\.2/)).toBeInTheDocument();
+  });
+
+  it("renders asset pills and badges in the hero", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-hero");
+    expect(screen.getByText("BTC")).toBeInTheDocument(); // AssetPill
+    // VerifiedBadge and X402Badge rendered (fixture: verified + acceptsX402)
+    expect(screen.getByTestId("verified-badge")).toBeInTheDocument();
+    expect(screen.getByTestId("x402-badge")).toBeInTheDocument();
+  });
+
+  it("shows buyer count: N humans + M agents", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-info-stack");
+    expect(screen.getByText(/247/)).toBeInTheDocument();
+    // "14" appears in both buyer card ("14 agents") and recent buyers ("agent #14")
+    expect(screen.getAllByText(/14/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("NFT token id stamped on the gen-art panel", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-hero");
+    expect(screen.getByText(/#0043/)).toBeInTheDocument();
+  });
+
+  it("renders the purchase column with price", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-purchase-col");
+    expect(screen.getByText(/49/)).toBeInTheDocument(); // 49 USDC
+    expect(screen.getByRole("button", { name: /buy/i })).toBeInTheDocument();
+  });
+
+  it("Buy calls purchaseIntent and navigates to receipts", async () => {
+    const client = new FixtureMarketplaceData();
+    const spy = vi.spyOn(client, "purchaseIntent").mockResolvedValue({
+      txHash: "0xdeadbeef",
+      network: "mantle-sepolia",
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByRole("button", { name: /buy/i });
+    await act(async () => {
+      await userEvent.click(screen.getByRole("button", { name: /buy/i }));
+    });
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledWith("btc-momentum-v3");
+    });
+    // After success, navigated to receipts
+    expect(await screen.findByText("receipt")).toBeInTheDocument();
+  });
+
+  it("Clone to edit is enabled for open-tier listings", async () => {
+    // btc-momentum-v3 is "sealed" but viewer owns it (ownedListingIds includes it via fixture)
+    // Override viewer to have ownership
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getViewer").mockResolvedValue({
+      isConnected: true,
+      address: "0xabc",
+      handle: "@test",
+      createdListingIds: [],
+      ownedListingIds: ["btc-momentum-v3"],
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-purchase-col");
+    const cloneBtn = screen.getByRole("button", { name: /clone to edit/i });
+    expect(cloneBtn).not.toBeDisabled();
+  });
+
+  it("Clone to edit is disabled when not owned and tier is sealed", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getViewer").mockResolvedValue({
+      isConnected: true,
+      address: "0xabc",
+      handle: "@stranger",
+      createdListingIds: [],
+      ownedListingIds: [], // does NOT own btc-momentum-v3
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-purchase-col");
+    const cloneBtn = screen.getByRole("button", { name: /clone to edit/i });
+    expect(cloneBtn).toBeDisabled();
+  });
+
+  it("ingredient banner is shown when some ingredients are missing", async () => {
+    render(<Wrapper />);
+    // fixture has 2 missing ingredients
+    expect(await screen.findByTestId("ingredient-banner")).toBeInTheDocument();
+    expect(screen.getByText(/2 of 4/)).toBeInTheDocument();
+  });
+
+  it("receipts drawer is collapsed by default", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-page");
+    expect(screen.getByTestId("receipts-toggle")).toBeInTheDocument();
+    expect(screen.queryByTestId("receipts-body")).not.toBeInTheDocument();
+  });
+
+  it("receipts drawer expands when ?receipts=open is in URL", async () => {
+    render(
+      <Wrapper initialPath="/marketplace/lineage/btc-momentum-v3?receipts=open" />,
+    );
+    await screen.findByTestId("lineage-page");
+    expect(await screen.findByTestId("receipts-body")).toBeInTheDocument();
+  });
+
+  it("clicking the receipts toggle adds ?receipts=open to the URL", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-page");
+    await act(async () => {
+      await userEvent.click(screen.getByTestId("receipts-toggle"));
+    });
+    expect(await screen.findByTestId("receipts-body")).toBeInTheDocument();
+  });
+
+  it("shows an error state for an unknown strategy name", async () => {
+    render(<Wrapper initialPath="/marketplace/lineage/does-not-exist" />);
+    expect(await screen.findByText(/not found/i)).toBeInTheDocument();
+  });
+});
