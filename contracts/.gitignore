@@ -1,0 +1,12 @@
+# Foundry build artifacts
+/out/
+/cache/
+/broadcast/
+
+# Dependencies are vendored via `forge install` (git submodules under lib/).
+# They are intentionally NOT committed here; see README.md for the install
+# commands a reviewer/builder must run.
+/lib/
+
+# Local env
+.env

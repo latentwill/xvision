@@ -35,7 +35,9 @@
 //! only (`#[ignore]`d; see `client::tests`).
 
 pub mod client;
+pub mod contracts;
 pub mod manifest;
 
 pub use client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
+pub use contracts::MarketplaceAddresses;
 pub use manifest::{AgentManifest, ReputationEntry, StrategyConfigSummary, TradeOutcome};
