@@ -317,9 +317,16 @@ export function StripDockSlot() {
           r.scenario_id,
         ),
         status: deriveSiblingTone(r.status),
+        // QA30: sibling rows previously hardcoded "—" for spans + cost.
+        // Span counts live on the AgentRunSummary (one-per-eval lookup);
+        // making that hop is a follow-on task because `RunSummary` (the
+        // wire shape the eval-runs list returns) doesn't carry
+        // `agent_run_id`. As a partial improvement, surface the LLM
+        // inference cost already on `RunSummary` so the operator sees a
+        // running cost figure for each concurrent eval at a glance.
         spans: "—",
         elapsed: fmtElapsedSec(sibElapsedSec),
-        cost: "—",
+        cost: formatCostUsd(r.inference_cost_quote_total ?? null),
         pnl: formatPnlPct(r.total_return_pct ?? null),
       };
     });

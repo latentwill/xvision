@@ -299,15 +299,26 @@ impl ApiContext {
         // form used sqlx defaults: rollback journal (one writer at a
         // time, blocks readers), no `busy_timeout` (writers fail
         // immediately instead of waiting on the lock), and no
-        // connection cap. WAL + a 5s busy timeout + a bounded pool is
+        // connection cap. WAL + a busy timeout + a bounded pool is
         // the standard server SQLite recipe; it's a no-op on a fresh
         // file and idempotent on an existing one.
+        //
+        // QA30: bumped `busy_timeout` from 5s → 15s. The `!create_strategy`
+        // slash command triggers three serialized DB writes from the
+        // chat handler (chat_messages append) and the API context
+        // (api_audit + search index upsert) — under operator load
+        // these contend with the FinalizeWriter actor + the
+        // observability event bus writer, and 5s wasn't enough time
+        // for the queue to drain. 15s is the standard server SQLite
+        // recipe; if writers are pathologically slow we have a
+        // separate problem to debug (look at the wait_ms tag in the
+        // structured log).
         let opts = SqliteConnectOptions::new()
             .filename(&db_path)
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
-            .busy_timeout(Duration::from_secs(5))
+            .busy_timeout(Duration::from_secs(15))
             .foreign_keys(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(8)
