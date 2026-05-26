@@ -56,12 +56,12 @@ const ChartsCompare = lazy(() => import("./routes/charts/ChartsCompare").then((m
 const ChartsAnnotated = lazy(() => import("./routes/charts/ChartsAnnotated").then((m) => ({ default: m.ChartsAnnotated })));
 const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => ({ default: m.ChartsHero })));
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
-const MarketplaceBrowseStub = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
+const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const MarketplaceLeaderboardStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceLeaderboardStub })));
-const MarketplaceLineageStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceLineageStub })));
-const MarketplaceCreatorStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceCreatorStub })));
-const MarketplaceSellStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceSellStub })));
-const MarketplaceReceiptStub = lazy(() => import("./features/marketplace/routes/stubs").then((m) => ({ default: m.MarketplaceReceiptStub })));
+const LineageRoute = lazy(() => import("./features/marketplace/routes/LineageRoute").then((m) => ({ default: m.LineageRoute })));
+const CreatorRoute = lazy(() => import("./features/marketplace/routes/CreatorRoute").then((m) => ({ default: m.CreatorRoute })));
+const SellRoute = lazy(() => import("./features/marketplace/routes/SellRoute").then((m) => ({ default: m.SellRoute })));
+const ReceiptRoute = lazy(() => import("./features/marketplace/routes/ReceiptRoute").then((m) => ({ default: m.ReceiptRoute })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -183,13 +183,13 @@ export const router = createBrowserRouter([
         path: "marketplace",
         element: page(<MarketplaceLayout />),
         children: [
-          { index: true, element: page(<MarketplaceBrowseStub />) },
+          { index: true, element: page(<BrowseRoute />) },
           { path: "leaderboard", element: page(<MarketplaceLeaderboardStub />) },
           { path: "leaderboard/:sliceId", element: page(<MarketplaceLeaderboardStub />) },
-          { path: "lineage/:name", element: page(<MarketplaceLineageStub />) },
-          { path: "creator/:handleOrAddr", element: page(<MarketplaceCreatorStub />) },
-          { path: "sell", element: page(<MarketplaceSellStub />) },
-          { path: "receipts/:tx", element: page(<MarketplaceReceiptStub />) },
+          { path: "lineage/:name", element: page(<LineageRoute />) },
+          { path: "creator/:handleOrAddr", element: page(<CreatorRoute />) },
+          { path: "sell", element: page(<SellRoute />) },
+          { path: "receipts/:tx", element: page(<ReceiptRoute />) },
         ],
       },
       { path: "docs", element: page(<DocsRoute />) },
