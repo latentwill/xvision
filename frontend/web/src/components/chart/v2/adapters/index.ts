@@ -19,6 +19,12 @@ export type { MarkerDockEntry } from "./markers";
 
 export { themeToKlinechartsStyles } from "./theme-to-klinecharts";
 
+export { overlayLineDescriptors, OVERLAY_LINE_KEYS } from "./overlay-lines";
+export type {
+  OverlayLineKey,
+  OverlayLineDescriptor,
+} from "./overlay-lines";
+
 export { themeToUplotOptions, paneSeriesStroke } from "./theme-to-uplot";
 
 export { createSyncBridge } from "./sync-bridge";

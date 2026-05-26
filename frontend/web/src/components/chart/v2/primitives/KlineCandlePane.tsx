@@ -9,37 +9,74 @@
  *          chart.createIndicator / chart.createOverlay.
  */
 import React, { useEffect, useRef } from "react";
-import { init, dispose } from "klinecharts";
+import { init, dispose, registerOverlay } from "klinecharts";
 import type { Chart, KLineData } from "klinecharts";
 
 import {
   type CandleColumns,
-  type LineSeries,
+  type IndicatorMap,
   type V2Marker,
   type PositionSpan,
 } from "../types";
 import { columnarToKLineData } from "../adapters/columnar-to-klinedata";
 import { themeToKlinechartsStyles } from "../adapters/theme-to-klinecharts";
 import { v2MarkersToKlineOverlay } from "../adapters/markers";
+import { overlayLineDescriptors } from "../adapters/overlay-lines";
 import { useChart2Theme } from "../hooks/useChart2Theme";
 import { CHART_V2_ZOOM_EVENT } from "./ChartFrame";
 
+// ── xvnLine custom overlay ──────────────────────────────────────────────────
+// A single line overlay template used to render every precomputed candle-pane
+// indicator (SMA / EMA / Bollinger / Donchian). Registered once at module
+// scope (KlineCharts keeps a global template registry). Color + dash come from
+// the per-overlay extendData carried on each created overlay instance.
+let xvnLineRegistered = false;
+
+function registerXvnLineOverlay(): void {
+  if (xvnLineRegistered) return;
+  xvnLineRegistered = true;
+  registerOverlay({
+    name: "xvnLine",
+    totalStep: 1,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ coordinates, overlay }) => {
+      if (coordinates.length < 2) return [];
+      const ext = (overlay.extendData ?? {}) as {
+        color?: string;
+        dashed?: boolean;
+      };
+      return {
+        type: "line",
+        attrs: { coordinates },
+        styles: {
+          color: ext.color ?? "#888888",
+          size: 1,
+          style: ext.dashed ? "dashed" : "solid",
+        },
+        ignoreEvent: true,
+      };
+    },
+  });
+}
+
 export interface KlineCandlePaneProps {
   candles: CandleColumns;
-  overlays?: {
-    sma20?: LineSeries;
-    sma50?: LineSeries;
-    sma200?: LineSeries;
-    ema20?: LineSeries;
-    ema50?: LineSeries;
-    bollUpper?: LineSeries;
-    bollMiddle?: LineSeries;
-    bollLower?: LineSeries;
-    donchianUpper?: LineSeries;
-    donchianLower?: LineSeries;
-  };
+  /**
+   * Precomputed indicator line series. Candle-pane lines (SMA / EMA /
+   * Bollinger / Donchian) render as `xvnLine` overlays; oscillator keys
+   * (rsi / macd* / atr) are ignored here — they belong to uPlot subpanes.
+   */
+  overlays?: Partial<IndicatorMap>;
   markers?: V2Marker[];
   positions?: PositionSpan[];
+  /**
+   * Per-overlay-line on/off map keyed by IndicatorMap line key
+   * (e.g. `sma20`, `ema50`). A line renders when its entry is `true` or
+   * absent; `false` hides it. Defaults to all-present-lines-active.
+   */
+  overlayActive?: Partial<Record<string, boolean>>;
   height?: number;
   /**
    * Called once with the live `Chart` instance after `init()` succeeds,
@@ -54,6 +91,7 @@ export function KlineCandlePane({
   overlays,
   markers,
   positions,
+  overlayActive,
   height = 380,
   onReady,
 }: KlineCandlePaneProps): React.ReactElement {
@@ -71,6 +109,13 @@ export function KlineCandlePane({
   useEffect(() => {
     const el = divRef.current;
     if (!el) return;
+
+    // Register the shared xvnLine overlay template (idempotent / module-scope).
+    try {
+      registerXvnLineOverlay();
+    } catch (err) {
+      console.warn("[KlineCandlePane] registerOverlay(xvnLine) threw:", err);
+    }
 
     let chart: Chart | null = null;
     try {
@@ -154,22 +199,33 @@ export function KlineCandlePane({
         },
       });
 
-      // M0: store overlay/marker data as extData for later wiring.
-      // TODO M1: register overlays via chart.createIndicator / chart.createOverlay.
-      const _overlayExtData = overlays;
+      // Render precomputed candle-pane indicator lines as xvnLine overlays.
+      const descriptors = overlayLineDescriptors(
+        overlays ?? {},
+        theme,
+        overlayActive ?? {},
+      );
+      for (const d of descriptors) {
+        chart.createOverlay({
+          name: d.name,
+          points: d.points,
+          extendData: d.extendData,
+        });
+      }
+
+      // TODO (later tasks): render markers + position bands.
       const _markerExtData = markers
         ? v2MarkersToKlineOverlay(markers, theme)
         : [];
       const _positionExtData = positions;
 
-      // Suppress unused-variable lint for M0 stubs.
-      void _overlayExtData;
+      // Suppress unused-variable lint for not-yet-wired stubs.
       void _markerExtData;
       void _positionExtData;
     } catch (err) {
       console.warn("[KlineCandlePane] applyNewData threw:", err);
     }
-  }, [candles, overlays, markers, positions, theme]);
+  }, [candles, overlays, markers, positions, overlayActive, theme]);
 
   // ── Theme ──────────────────────────────────────────────────────────────────
   useEffect(() => {
