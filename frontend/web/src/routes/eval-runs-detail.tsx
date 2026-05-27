@@ -32,6 +32,8 @@ import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
 import { MetaChip } from "@/components/eval-detail/MetaChip";
 import { DecisionsTable } from "@/components/eval-detail/DecisionsTable";
 import { toTimelineDecisions } from "@/components/eval-detail/decision-view";
+import { FilterSummaryPanel } from "@/features/eval-runs/FilterSummaryPanel";
+import { FilterEventTimeline } from "@/features/eval-runs/FilterEventTimeline";
 import {
   MobileEvalRunDetail,
   MobileEvalRunDetailError,
@@ -323,6 +325,19 @@ export function EvalRunDetailRoute() {
 
             {/* Multi-asset: per-asset decision rollup above the decisions list. */}
             <AssetRollupPanel decisions={detail.decisions} />
+
+            {/*
+              Filter v1 read-only panels. Both return `null` when their input is
+              empty, so EveryBar runs render nothing. Originally added in #493
+              and dropped during the Signal redesign (624feb59); remounted here
+              so FilterGated runs surface their suppression stats again.
+            */}
+            <FilterSummaryPanel summaries={detail.filter_summaries ?? []} />
+            <FilterEventTimeline
+              events={detail.filter_events ?? []}
+              title="Filter timeline"
+            />
+
             <DecisionsCard rows={detail.decisions} />
 
             {/*

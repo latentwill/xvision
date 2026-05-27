@@ -69,7 +69,7 @@ const PILLS: {
   },
   {
     k: "FILTERED",
-    label: "Filtered",
+    label: "No-op",
     dotColor: "var(--text-3)",
     activeBg: "transparent",
     activeBd: "var(--text-3)",

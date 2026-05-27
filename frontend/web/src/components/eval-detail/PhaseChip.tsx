@@ -1,9 +1,14 @@
 // Signal phase chip — sits in the Decisions table PHASE column. Distinguishes a
-// step where the agent engaged a decision (ENGAGED, filled green dot) from one
-// intercepted by a risk/freshness/regime filter (FILTERED, hollow ring).
+// step where the trader engaged a decision (ENGAGED, filled green dot) from a
+// synthesized no-op step (NO-OP, hollow ring) — e.g. a hold/flat row inherited
+// from an early-stop policy or `noop_skip` marker. The internal `Phase`
+// discriminant is still `"filtered"` to keep the wire shape and existing tests
+// stable; only the user-visible label was renamed so it doesn't collide with
+// the engine-level filter (FilterGated) suppression which is a separate
+// concept surfaced by `FilterSummaryPanel` / `FilterEventTimeline`.
 //
-// Design intent (README §6): FILTERED must read *quieter* than ENGAGED but NOT
-// as an error — no red, no amber. The filter doing its job is a normal outcome.
+// Design intent (README §6): NO-OP must read *quieter* than ENGAGED but NOT as
+// an error — no red, no amber. A synthesized step is a normal outcome.
 // Achieved via hollow ring + lighter text + transparent background.
 
 export type Phase = "engaged" | "filtered";
@@ -35,7 +40,7 @@ export function PhaseChip({ phase }: { phase: Phase }) {
           border: filtered ? "1px solid var(--text-3)" : "none",
         }}
       />
-      {filtered ? "FILTERED" : "ENGAGED"}
+      {filtered ? "NO-OP" : "ENGAGED"}
     </span>
   );
 }
