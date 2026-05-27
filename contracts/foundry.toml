@@ -1,0 +1,37 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc_version = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+# Conservative EVM target. Mantle (5000) / Mantle Sepolia (5003) historically
+# lagged mainnet on PUSH0 and transient-storage opcodes. `paris` avoids PUSH0
+# (shanghai) and tstore/mcopy (cancun). Bump to `shanghai`/`cancun` only after
+# confirming opcode support on the target chain. See contracts/README.md.
+evm_version = "paris"
+fs_permissions = [{ access = "read", path = "./" }]
+remappings = [
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+  "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+  "forge-std/=lib/forge-std/src/",
+]
+
+# Storage-layout snapshots for UUPS upgrade safety (see README §Upgrade safety).
+build_info = true
+extra_output = ["storageLayout"]
+
+[profile.ci]
+# CI runs deeper fuzzing + invariant campaigns.
+fuzz = { runs = 1000 }
+invariant = { runs = 256, depth = 32 }
+
+[rpc_endpoints]
+mantle_sepolia = "${MANTLE_SEPOLIA_RPC_URL}"
+mantle = "${MANTLE_RPC_URL}"
+
+[etherscan]
+mantle_sepolia = { key = "${MANTLESCAN_API_KEY}", url = "https://api-sepolia.mantlescan.xyz/api", chain = 5003 }
+mantle = { key = "${MANTLESCAN_API_KEY}", url = "https://api.mantlescan.xyz/api", chain = 5000 }

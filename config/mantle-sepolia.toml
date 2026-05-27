@@ -1,0 +1,28 @@
+# Mantle Sepolia (chain 5003) — V2 testnet marketplace config (surface spec §8.4).
+#
+# PLACEHOLDERS. Addresses are filled in by the operator after running
+# `contracts/script/DeployTestnet.s.sol` (which prints them). Selected at
+# runtime by XVN_NETWORK=sepolia. No real addresses exist yet (Phase 3/5).
+
+network  = "mantle-sepolia"
+chain_id = 5003
+rpc_url  = "https://rpc.sepolia.mantle.xyz"
+
+[erc8004]
+identity_registry   = "0x0000000000000000000000000000000000000000"
+reputation_registry = "0x0000000000000000000000000000000000000000"
+validation_registry = "0x0000000000000000000000000000000000000000"
+
+[marketplace]
+xvn_deployer            = "0x0000000000000000000000000000000000000000" # CREATE2 factory (nonce-0 EOA)
+listing_registry        = "0x0000000000000000000000000000000000000000" # UUPS proxy
+marketplace             = "0x0000000000000000000000000000000000000000" # UUPS proxy
+license_token           = "0x0000000000000000000000000000000000000000" # UUPS proxy
+eval_attestation        = "0x0000000000000000000000000000000000000000" # UUPS proxy
+platform_agent_token_id = 0                                            # IdentityRegistry NFT minted in deploy step 9
+fee_recipient           = "0x0000000000000000000000000000000000000000" # V2: operator EOA
+admin                   = "0x0000000000000000000000000000000000000000" # V2: operator EOA
+
+[marketplace.usdc]
+address  = "0x0000000000000000000000000000000000000000" # USDC.e on Mantle Sepolia
+decimals = 6

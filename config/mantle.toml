@@ -1,0 +1,35 @@
+# Mantle mainnet (chain 5000) — V4-GATED marketplace config (surface spec §8.4).
+#
+# PLACEHOLDERS. Mainnet deploy is gated on the V2 exit gate + external audit +
+# timelock/multisig governance (nav doc Phase 8). Because the deploy reuses the
+# same nonce-0 EOA, the same XvnDeployer address, and the same
+# keccak256("xvn.<name>.v1") salts, the four marketplace proxy addresses are
+# PREDICTABLE from testnet and can be pre-filled + verified post-deploy by hash
+# equality. Selected at runtime by XVN_NETWORK=mainnet.
+
+network  = "mantle"
+chain_id = 5000
+rpc_url  = "https://rpc.mantle.xyz"
+
+[erc8004]
+identity_registry   = "0x0000000000000000000000000000000000000000"
+reputation_registry = "0x0000000000000000000000000000000000000000"
+validation_registry = "0x0000000000000000000000000000000000000000"
+
+[marketplace]
+xvn_deployer            = "0x0000000000000000000000000000000000000000"
+listing_registry        = "0x0000000000000000000000000000000000000000"
+marketplace             = "0x0000000000000000000000000000000000000000"
+license_token           = "0x0000000000000000000000000000000000000000"
+eval_attestation        = "0x0000000000000000000000000000000000000000"
+platform_agent_token_id = 0
+fee_recipient           = "0x0000000000000000000000000000000000000000" # V4: treasury multisig
+admin                   = "0x0000000000000000000000000000000000000000" # V4: TimelockController
+
+# V4/mainnet only — populated during V4 prep:
+# admin_multisig = "0x0000000000000000000000000000000000000000" # 2-of-3
+# timelock       = "0x0000000000000000000000000000000000000000" # 7-day delay
+
+[marketplace.usdc]
+address  = "0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9" # USDC.e on Mantle (illustrative; verify before mainnet)
+decimals = 6

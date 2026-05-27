@@ -1,0 +1,32 @@
+[package]
+name        = "xvision-marketplace"
+description = "Marketplace orchestration — listings, sales, attestations, anchoring (surface spec §8.2)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xvision_marketplace"
+path = "src/lib.rs"
+
+# NOTE: like `xvision-identity`, this crate is excluded from the workspace
+# `default-members` (it is not in that explicit list), so bare `cargo build` /
+# `cargo test` skip it and its heavy `alloy v2` transitive compile. It wraps
+# `xvision-identity`'s bindings; nothing in the trading pipeline depends on it.
+
+[dependencies]
+xvision-identity = { path = "../xvision-identity" }
+xvision-core     = { path = "../xvision-core" }
+
+alloy       = { workspace = true }
+async-trait = { workspace = true }
+thiserror   = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tracing     = { workspace = true }
+tokio       = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

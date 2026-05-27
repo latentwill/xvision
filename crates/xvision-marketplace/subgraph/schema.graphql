@@ -1,0 +1,68 @@
+# Marketplace subgraph schema (surface spec §6.3).
+#
+# The public marketplace browse experience reads entirely from this indexer —
+# no centralized DB. Third-party explorers can surface xvn listings without
+# permission. Entity ids and the `payerKind` / `purchasePath` fields are the
+# human-vs-agent moat surfaced by the Phase-1 data contract.
+
+type Lineage @entity {
+  id: ID! # agentNftId
+  owner: Bytes!
+  manifestCid: String!
+  reputation: [Feedback!]! @derivedFrom(field: "lineage")
+  validations: [Validation!]! @derivedFrom(field: "lineage")
+  listings: [Listing!]! @derivedFrom(field: "lineage")
+}
+
+type Listing @entity {
+  id: ID! # listingId
+  lineage: Lineage! # agentNftId
+  seller: Bytes!
+  contentHash: Bytes!
+  tier: Int!
+  priceUSDC: BigInt!
+  protocolFeeBps: Int!
+  revoked: Boolean!
+  sales: [Sale!]! @derivedFrom(field: "listing")
+  attestations: [EvalAttestation!]! @derivedFrom(field: "listing")
+}
+
+type Sale @entity {
+  id: ID! # txHash-logIndex
+  listing: Listing!
+  buyer: Bytes!
+  priceUSDC: BigInt!
+  sellerProceeds: BigInt!
+  protocolProceeds: BigInt!
+  payerKind: Int! # 0 = human, 1 = agent
+  purchasePath: Int! # 0 = direct, 1 = x402
+  blockTimestamp: BigInt!
+}
+
+type EvalAttestation @entity {
+  id: ID!
+  listing: Listing!
+  attester: Bytes!
+  evalResultHash: Bytes!
+  schema: Bytes!
+  postedAt: BigInt!
+}
+
+type Feedback @entity {
+  id: ID! # txHash-logIndex
+  lineage: Lineage!
+  rater: Bytes!
+  value: BigInt!
+  feedbackHash: Bytes!
+  tag1: String!
+  blockTimestamp: BigInt!
+}
+
+type Validation @entity {
+  id: ID! # txHash-logIndex
+  lineage: Lineage!
+  validator: Bytes!
+  resultHash: Bytes!
+  tag: String!
+  blockTimestamp: BigInt!
+}

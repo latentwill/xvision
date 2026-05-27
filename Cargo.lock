@@ -9488,6 +9488,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "xvision-marketplace"
+version = "0.21.0"
+dependencies = [
+ "alloy",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "xvision-core",
+ "xvision-identity",
+]
+
+[[package]]
 name = "xvision-mcp"
 version = "0.21.0"
 dependencies = [
