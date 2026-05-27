@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 use xvision_engine::chat_session::ContextScope;
 use xvision_observability::types::{RiskLevel, SideEffectLevel, ToolOrigin};
 use xvision_observability::{
-    Actor, EventScope, EventSource, ToolCallFinishedEvent, ToolCallStartedEvent, UnifiedEvent, UnifiedPayload,
+    Actor, EventScope, EventSource, ToolCallFinishedEvent, ToolCallStartedEvent, ToolDenied,
+    ToolPolicyChecked, ToolPolicyOutcome, UnifiedEvent, UnifiedPayload,
 };
 
 use crate::wizard_loop::WizardEvent;
@@ -115,10 +116,39 @@ impl WizardEventProjector {
         &mut self,
         event_id: impl Into<String>,
         actor: Actor,
-        span_id: Option<String>,
-        payload: UnifiedPayload,
+        mut span_id: Option<String>,
+        mut payload: UnifiedPayload,
         ts: DateTime<Utc>,
     ) -> UnifiedEvent {
+        // Policy events are produced inside WizardLoop before the route has
+        // projected the legacy ToolCall into its canonical tool span. Once the
+        // ToolCall has been projected, attach policy updates to that same
+        // queued span instead of rendering them as a second "open" tool row.
+        match &mut payload {
+            UnifiedPayload::ToolPolicyChecked(ev) => {
+                if let Some(span) = self
+                    .tool_spans
+                    .get(&ev.tool_name)
+                    .and_then(|queue| queue.front())
+                    .cloned()
+                {
+                    ev.span_id = span.clone();
+                    span_id = Some(span);
+                }
+            }
+            UnifiedPayload::ToolDenied(ev) => {
+                if let Some(span) = self
+                    .tool_spans
+                    .get(&ev.tool_name)
+                    .and_then(|queue| queue.front())
+                    .cloned()
+                {
+                    ev.span_id = span.clone();
+                    span_id = Some(span);
+                }
+            }
+            _ => {}
+        }
         let out = UnifiedEvent {
             event_id: event_id.into(),
             session_id: Some(self.session_id.clone()),
@@ -319,6 +349,70 @@ mod tests {
                 assert_eq!(req.tool_name, "create_strategy");
                 assert_eq!(req.span_id, fin.span_id);
                 assert!(fin.output_hash.is_some());
+            }
+            other => panic!("wrong payloads: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn policy_events_update_the_requested_tool_span() {
+        let mut p = WizardEventProjector::new("sess_policy", &ContextScope::Workspace);
+        let mut minted = 0;
+        let mut mint = || {
+            minted += 1;
+            format!("sp_{minted}")
+        };
+
+        let call = p.project(
+            "call",
+            WizardEvent::ToolCall {
+                tool: "create_strategy".into(),
+                args: json!({"name": "x"}),
+            },
+            ts(),
+            &mut mint,
+        );
+        let checked = p.project_payload(
+            "policy",
+            Actor::Hook,
+            Some("policy_tmp".into()),
+            UnifiedPayload::ToolPolicyChecked(ToolPolicyChecked {
+                span_id: "policy_tmp".into(),
+                tool_name: "create_strategy".into(),
+                outcome: ToolPolicyOutcome::NeedsApproval,
+                mode: "research".into(),
+            }),
+            ts(),
+        );
+        let denied = p.project_payload(
+            "denied",
+            Actor::Hook,
+            Some("policy_tmp".into()),
+            UnifiedPayload::ToolDenied(ToolDenied {
+                span_id: "policy_tmp".into(),
+                tool_name: "create_strategy".into(),
+                code: "write_tool_in_research_mode".into(),
+                message: "blocked".into(),
+            }),
+            ts(),
+        );
+        let result = p.project(
+            "result",
+            WizardEvent::ToolResult {
+                tool: "create_strategy".into(),
+                result: json!({"error": "blocked"}),
+            },
+            ts(),
+            &mut mint,
+        );
+
+        assert_eq!(call.span_id, checked.span_id);
+        assert_eq!(call.span_id, denied.span_id);
+        assert_eq!(call.span_id, result.span_id);
+        match (&checked.payload, &denied.payload) {
+            (UnifiedPayload::ToolPolicyChecked(checked), UnifiedPayload::ToolDenied(denied)) => {
+                assert_eq!(checked.span_id, "sp_1");
+                assert_eq!(denied.span_id, "sp_1");
             }
             other => panic!("wrong payloads: {other:?}"),
         }
