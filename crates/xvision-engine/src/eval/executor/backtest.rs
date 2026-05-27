@@ -877,6 +877,14 @@ impl Executor {
             // BTreeMap gives a deterministic representative bar. The
             // strategy filter is a STRATEGY-level signal — it doesn't care
             // which asset's bar it sees, only that the timestamp has one.
+            //
+            // The wakeup gate is `is_trip()` — Trip is the bar an LLM
+            // dispatch fires, matching `FilterEventV1.triggered` semantics
+            // and the dashboard's `FilterSummary.wakeups` /
+            // `llm_calls_saved` math. `Active { Hold }` (sustained true
+            // after cooldown expires) is NOT a wakeup; treating it as one
+            // re-introduces the "fires every bar" bug whenever the
+            // condition tree stays true for multiple bars.
             let mut filter_gated = false;
             if let Some(hook) = filter_hook.as_mut() {
                 if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
@@ -885,7 +893,7 @@ impl Executor {
                     let evaluation = hook.evaluate(gate_bar, in_position);
                     hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
                         .await?;
-                    if !evaluation.outcome.decision.is_active() {
+                    if !evaluation.outcome.decision.is_trip() {
                         filter_gated = true;
                     }
                 }
