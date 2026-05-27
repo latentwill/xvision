@@ -169,7 +169,11 @@ export function EvalRunDetailRoute() {
     );
   }
 
-  if (q.isError || !q.data) {
+  // A background refetch can fail transiently while React Query still has the
+  // last good detail payload. Keep rendering that known run instead of
+  // replacing the page with "Run not found"; only show the not-found/error
+  // screen when there is no usable run data at all.
+  if (!q.data) {
     if (isPhone) {
       return (
         <MobileEvalRunDetailError
