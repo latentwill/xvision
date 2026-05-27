@@ -18,6 +18,7 @@
 //! - `POST   /api/chat-rail/chat` (SSE)             → `WizardEvent`s
 
 use std::convert::Infallible;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_stream::stream;
@@ -27,6 +28,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::SqlitePool;
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
@@ -42,8 +44,9 @@ use xvision_observability::{Actor as UnifiedActor, FocusEvent, UnifiedEvent, Uni
 use crate::chat_unified::WizardEventProjector;
 use crate::error::DashboardError;
 use crate::llm_dispatch;
+use crate::session_bus::SessionEventBus;
 use crate::state::AppState;
-use crate::wizard_loop::{AgentProfile, WizardEvent, WizardLoop};
+use crate::wizard_loop::{AgentProfile, PolicyEvent, WizardEvent, WizardLoop};
 
 #[derive(Debug, Deserialize)]
 pub struct ResolveSessionReq {
@@ -250,6 +253,64 @@ fn default_model() -> &'static str {
     "claude-sonnet-4-6"
 }
 
+fn policy_tool_name(event: &PolicyEvent) -> Option<&str> {
+    match &event.payload {
+        UnifiedPayload::ToolPolicyChecked(ev) => Some(&ev.tool_name),
+        UnifiedPayload::ToolDenied(ev) => Some(&ev.tool_name),
+        _ => None,
+    }
+}
+
+fn drain_policy_events_for_tool(events: &mut Vec<PolicyEvent>, tool: &str) -> Vec<PolicyEvent> {
+    let mut drained = Vec::new();
+    let mut i = 0;
+    let mut take_following_policy_error = false;
+    while i < events.len() {
+        let matches_tool = policy_tool_name(&events[i]) == Some(tool);
+        let is_policy_error = matches!(events[i].payload, UnifiedPayload::ErrorPolicyDenied(_));
+        if matches_tool || (take_following_policy_error && is_policy_error) {
+            let event = events.remove(i);
+            take_following_policy_error = matches!(
+                event.payload,
+                UnifiedPayload::ToolPolicyChecked(_) | UnifiedPayload::ToolDenied(_)
+            );
+            drained.push(event);
+            continue;
+        }
+        take_following_policy_error = false;
+        i += 1;
+    }
+    drained
+}
+
+async fn project_policy_event(
+    projector: &mut WizardEventProjector,
+    pool: &SqlitePool,
+    session_bus: &Arc<SessionEventBus>,
+    session_id: &str,
+    pe: PolicyEvent,
+) {
+    let unified = projector.project_payload(
+        Ulid::new().to_string(),
+        pe.actor,
+        pe.span_id,
+        pe.payload,
+        Utc::now(),
+    );
+    if let Err(e) = SessionEventLog::append(pool, &unified).await {
+        tracing::error!(
+            target: "xvision::dashboard::chat_rail",
+            session_id = %session_id,
+            seq = unified.seq,
+            kind = unified.event_name(),
+            error = %e,
+            "failed to append unified policy event",
+        );
+    } else {
+        session_bus.publish(&unified).await;
+    }
+}
+
 pub async fn chat(
     State(state): State<AppState>,
     Json(body): Json<ChatBody>,
@@ -404,34 +465,24 @@ pub async fn chat(
                 return;
             }
         };
+        let mut pending_policy_events: Vec<PolicyEvent> = Vec::new();
         while let Some(ev) = wl.next_event().await {
-            // Phase 2 SAFETY CORE: drain any net-new unified safety events
-            // (ToolPolicyChecked / ToolDenied / ErrorPolicyDenied) the loop
-            // queued while producing this WizardEvent. Project + persist +
-            // publish them through the SAME projector so the unified seq stays
-            // gap-free. These carry no legacy WizardEvent equivalent — they
-            // exist only on the unified stream. Drained before the legacy
-            // event below so a denial's record precedes the tool-call bubble's
-            // result on the unified log.
-            for pe in wl.take_policy_events() {
-                let unified = projector.project_payload(
-                    Ulid::new().to_string(),
-                    pe.actor,
-                    pe.span_id,
-                    pe.payload,
-                    Utc::now(),
-                );
-                if let Err(e) = SessionEventLog::append(&projector_pool, &unified).await {
-                    tracing::error!(
-                        target: "xvision::dashboard::chat_rail",
-                        session_id = %projector_session_id,
-                        seq = unified.seq,
-                        kind = unified.event_name(),
-                        error = %e,
-                        "failed to append unified policy event",
-                    );
-                } else {
-                    session_bus.publish(&unified).await;
+            pending_policy_events.extend(wl.take_policy_events());
+
+            // A tool result closes the queued canonical tool span. Drain any
+            // still-pending policy updates for that tool before projecting the
+            // result so policy/result share one row instead of splitting into
+            // "open policy" above and "closed tool" below.
+            if let WizardEvent::ToolResult { tool, .. } = &ev {
+                for pe in drain_policy_events_for_tool(&mut pending_policy_events, tool) {
+                    project_policy_event(
+                        &mut projector,
+                        &projector_pool,
+                        &session_bus,
+                        &projector_session_id,
+                        pe,
+                    )
+                    .await;
                 }
             }
 
@@ -462,32 +513,38 @@ pub async fn chat(
                 session_bus.publish(&unified).await;
             }
 
+            // Policy checks are updates to a just-requested tool. Drain only
+            // the policy group for this tool after the ToolCall has minted its
+            // canonical span; leave policy groups for later tool calls queued.
+            if let WizardEvent::ToolCall { tool, .. } = &ev {
+                for pe in drain_policy_events_for_tool(&mut pending_policy_events, tool) {
+                    project_policy_event(
+                        &mut projector,
+                        &projector_pool,
+                        &session_bus,
+                        &projector_session_id,
+                        pe,
+                    )
+                    .await;
+                }
+            }
+
             if tx.send(ev).await.is_err() {
                 break;
             }
         }
         // Final drain: the terminal WizardEvent (Done/Error) may itself have
         // queued policy events (e.g. a denial on the last tool of the turn).
-        for pe in wl.take_policy_events() {
-            let unified = projector.project_payload(
-                Ulid::new().to_string(),
-                pe.actor,
-                pe.span_id,
-                pe.payload,
-                Utc::now(),
-            );
-            if let Err(e) = SessionEventLog::append(&projector_pool, &unified).await {
-                tracing::error!(
-                    target: "xvision::dashboard::chat_rail",
-                    session_id = %projector_session_id,
-                    seq = unified.seq,
-                    kind = unified.event_name(),
-                    error = %e,
-                    "failed to append trailing unified policy event",
-                );
-            } else {
-                session_bus.publish(&unified).await;
-            }
+        pending_policy_events.extend(wl.take_policy_events());
+        for pe in pending_policy_events {
+            project_policy_event(
+                &mut projector,
+                &projector_pool,
+                &session_bus,
+                &projector_session_id,
+                pe,
+            )
+            .await;
         }
     });
 

@@ -182,6 +182,7 @@ pub enum WizardEvent {
 ///
 /// `actor` is the unified-event actor (`Hook` for policy enforcement); `span_id`
 /// correlates the event with the tool the check ran for.
+#[derive(Debug, Clone)]
 pub struct PolicyEvent {
     pub actor: UnifiedActor,
     pub span_id: Option<String>,
@@ -1009,11 +1010,9 @@ impl WizardLoop {
                                 // tool can't leave the chat rail's tool
                                 // card pending forever — see the
                                 // constant's doc for the rationale.
-                                let result = tokio::time::timeout(
-                                    TOOL_EXECUTION_TIMEOUT,
-                                    self.run_tool(&name, input),
-                                )
-                                .await;
+                                let result =
+                                    tokio::time::timeout(TOOL_EXECUTION_TIMEOUT, self.run_tool(&name, input))
+                                        .await;
                                 match result {
                                     Ok(Ok(v)) => v,
                                     Ok(Err(e)) => {

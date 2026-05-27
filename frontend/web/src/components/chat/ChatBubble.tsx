@@ -102,10 +102,10 @@ function ToolButton({ tool }: { tool: Tool }) {
   // / colour intent is unchanged; only the contrast on the outline
   // is dialled back.
   const tone = !ok
-    ? "border-danger/15 bg-danger/10 text-danger"
+    ? "border-border-soft bg-danger/[0.08] text-danger"
     : pending
-      ? "border-transparent bg-surface-2/60 text-text-2"
-      : "border-success/15 bg-success/10 text-success";
+      ? "border-border-soft/70 bg-surface-2/50 text-text-2"
+      : "border-border-soft bg-success/[0.08] text-success";
   return (
     <div
       className={`inline-flex items-center gap-1.5 self-start max-w-full px-2 py-1 rounded-md border text-[12px] ${tone}`}
