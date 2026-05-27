@@ -32,11 +32,7 @@ contract ReputationRegistry {
     /// @notice Indexer-friendly event (surface spec §6.1). `agentId` and
     ///         `rater` are indexed for subgraph filtering.
     event FeedbackPosted(
-        uint256 indexed agentId,
-        address indexed rater,
-        int128 value,
-        bytes32 feedbackHash,
-        string tag1
+        uint256 indexed agentId, address indexed rater, int128 value, bytes32 feedbackHash, string tag1
     );
 
     /// @notice Post one feedback entry for `agentId`.

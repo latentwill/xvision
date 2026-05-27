@@ -61,12 +61,9 @@ contract DeployTestnet is Script {
 
         // 1-3. Immutable ERC-8004 registries (no proxy), via the factory so
         //      their addresses are deterministic too.
-        d.identityRegistry =
-            _via(factory, _salt("IdentityRegistry"), type(IdentityRegistry).creationCode);
-        d.reputationRegistry =
-            _via(factory, _salt("ReputationRegistry"), type(ReputationRegistry).creationCode);
-        d.validationRegistry =
-            _via(factory, _salt("ValidationRegistry"), type(ValidationRegistry).creationCode);
+        d.identityRegistry = _via(factory, _salt("IdentityRegistry"), type(IdentityRegistry).creationCode);
+        d.reputationRegistry = _via(factory, _salt("ReputationRegistry"), type(ReputationRegistry).creationCode);
+        d.validationRegistry = _via(factory, _salt("ValidationRegistry"), type(ValidationRegistry).creationCode);
 
         // 5. LicenseToken (UUPS) — init(admin, uri). Minter set empty.
         d.licenseToken = _proxy(
@@ -98,8 +95,7 @@ contract DeployTestnet is Script {
             "Marketplace",
             type(Marketplace).creationCode,
             abi.encodeCall(
-                Marketplace.initialize,
-                (operator, d.listingRegistry, d.licenseToken, usdc, operator, feeBps)
+                Marketplace.initialize, (operator, d.listingRegistry, d.licenseToken, usdc, operator, feeBps)
             )
         );
 
@@ -134,10 +130,7 @@ contract DeployTestnet is Script {
     }
 
     /// @dev Deploy a non-proxied contract (registry) via CREATE2.
-    function _via(XvnDeployer factory, bytes32 salt, bytes memory code)
-        internal
-        returns (address)
-    {
+    function _via(XvnDeployer factory, bytes32 salt, bytes memory code) internal returns (address) {
         address predicted = factory.computeAddress(salt, keccak256(code));
         address deployed = factory.deploy(salt, code);
         require(deployed == predicted, "DeployTestnet: addr mismatch");
@@ -145,20 +138,17 @@ contract DeployTestnet is Script {
     }
 
     /// @dev Deploy a UUPS impl + initialized ERC1967 proxy, both via CREATE2.
-    function _proxy(
-        XvnDeployer factory,
-        string memory name,
-        bytes memory implCode,
-        bytes memory initData
-    ) internal returns (address proxy) {
+    function _proxy(XvnDeployer factory, string memory name, bytes memory implCode, bytes memory initData)
+        internal
+        returns (address proxy)
+    {
         address impl = _via(factory, _implSalt(name), implCode);
-        bytes memory proxyCode =
-            abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, initData));
+        bytes memory proxyCode = abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, initData));
         proxy = _via(factory, _salt(name), proxyCode);
     }
 
     function _log(Deployed memory d) internal pure {
-        console2.log("=== xvn marketplace — Mantle Sepolia (chain 5003) ===");
+        console2.log("=== xvn marketplace - Mantle Sepolia (chain 5003) ===");
         console2.log("XvnDeployer            ", d.xvnDeployer);
         console2.log("IdentityRegistry       ", d.identityRegistry);
         console2.log("ReputationRegistry     ", d.reputationRegistry);

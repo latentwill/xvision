@@ -52,17 +52,13 @@ abstract contract BaseTest is Test {
         // 6. ListingRegistry proxy (reads IdentityRegistry).
         listings = ListingRegistry(
             _proxy(
-                address(new ListingRegistry()),
-                abi.encodeCall(ListingRegistry.initialize, (admin, address(identity)))
+                address(new ListingRegistry()), abi.encodeCall(ListingRegistry.initialize, (admin, address(identity)))
             )
         );
 
         // 7. EvalAttestationRegistry proxy.
         attest = EvalAttestationRegistry(
-            _proxy(
-                address(new EvalAttestationRegistry()),
-                abi.encodeCall(EvalAttestationRegistry.initialize, (admin))
-            )
+            _proxy(address(new EvalAttestationRegistry()), abi.encodeCall(EvalAttestationRegistry.initialize, (admin)))
         );
 
         // 8. Marketplace proxy (reads ListingRegistry, calls LicenseToken).
@@ -71,14 +67,7 @@ abstract contract BaseTest is Test {
                 address(new Marketplace()),
                 abi.encodeCall(
                     Marketplace.initialize,
-                    (
-                        admin,
-                        address(listings),
-                        address(license),
-                        address(usdc),
-                        feeRecipient,
-                        INITIAL_FEE_BPS
-                    )
+                    (admin, address(listings), address(license), address(usdc), feeRecipient, INITIAL_FEE_BPS)
                 )
             )
         );
@@ -110,9 +99,8 @@ abstract contract BaseTest is Test {
         returns (uint256 listingId)
     {
         vm.prank(seller);
-        listingId = listings.createListing(
-            agentNftId, keccak256("variant-bundle"), "ipfs://variant", 0, price, transferable
-        );
+        listingId =
+            listings.createListing(agentNftId, keccak256("variant-bundle"), "ipfs://variant", 0, price, transferable);
     }
 
     /// @dev Fund `who` with `amount` mock-USDC and approve the Marketplace.

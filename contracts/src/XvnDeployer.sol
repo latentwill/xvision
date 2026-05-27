@@ -42,10 +42,6 @@ contract XvnDeployer {
     /// @param bytecodeHash `keccak256(bytecode)` of the init code.
     /// @return The counterfactual deployment address.
     function computeAddress(bytes32 salt, bytes32 bytecodeHash) external view returns (address) {
-        return address(
-            uint160(
-                uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, bytecodeHash)))
-            )
-        );
+        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, bytecodeHash)))));
     }
 }

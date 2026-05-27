@@ -37,9 +37,7 @@ contract ListingRegistryTest is BaseTest {
     function test_createListing_revert_notLineageOwner() public {
         uint256 lineage = _mintLineage(seller);
         vm.prank(other);
-        vm.expectRevert(
-            abi.encodeWithSelector(ListingRegistry.NotLineageOwner.selector, lineage, other)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ListingRegistry.NotLineageOwner.selector, lineage, other));
         listings.createListing(lineage, keccak256("v"), "ipfs://v", 0, 1, false);
     }
 

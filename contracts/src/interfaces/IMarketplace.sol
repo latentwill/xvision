@@ -19,11 +19,9 @@ interface IMarketplace {
 
     function buy(uint256 listingId, address recipient) external returns (uint256 licenseTokenId);
 
-    function buyWithAuthorization(
-        uint256 listingId,
-        address recipient,
-        TransferAuthorization calldata auth
-    ) external returns (uint256 licenseTokenId);
+    function buyWithAuthorization(uint256 listingId, address recipient, TransferAuthorization calldata auth)
+        external
+        returns (uint256 licenseTokenId);
 
     function setProtocolFeeBps(uint16 newBps) external;
 

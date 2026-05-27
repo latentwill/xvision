@@ -5,8 +5,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from
-    "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -31,7 +30,7 @@ contract Marketplace is
     Initializable,
     OwnableUpgradeable,
     PausableUpgradeable,
-    ReentrancyGuardUpgradeable,
+    ReentrancyGuard,
     UUPSUpgradeable,
     IMarketplace
 {
@@ -47,9 +46,10 @@ contract Marketplace is
     address private _feeRecipient;
     uint16 private _protocolFeeBps;
 
-    /// @dev Storage gap (surface spec §7.5). Four slots used above
-    ///      (`_feeRecipient` + `_protocolFeeBps` pack into one).
-    uint256[46] private __gap;
+    /// @dev Storage gap (surface spec §7.5). Five slots used above
+    ///      (`_feeRecipient` + `_protocolFeeBps` pack into one, plus
+    ///      ReentrancyGuard's `_status` slot).
+    uint256[45] private __gap;
 
     error ListingRevoked(uint256 listingId);
     error FeeTooHigh(uint16 bps);
@@ -71,15 +71,13 @@ contract Marketplace is
         uint16 initialFeeBps
     ) external initializer {
         if (
-            admin == address(0) || listingRegistry_ == address(0) || licenseToken_ == address(0)
-                || usdc_ == address(0) || feeRecipient_ == address(0)
+            admin == address(0) || listingRegistry_ == address(0) || licenseToken_ == address(0) || usdc_ == address(0)
+                || feeRecipient_ == address(0)
         ) revert ZeroAddress();
         if (initialFeeBps > MAX_PROTOCOL_FEE_BPS) revert FeeTooHigh(initialFeeBps);
 
         __Ownable_init(admin);
         __Pausable_init();
-        __ReentrancyGuard_init();
-        __UUPSUpgradeable_init();
 
         _listingRegistry = IListingRegistry(listingRegistry_);
         _licenseToken = ILicenseToken(licenseToken_);
@@ -118,11 +116,13 @@ contract Marketplace is
     ///      THIS contract (`auth.to == address(this)`) for exactly the listing
     ///      price. `msg.sender` is the facilitator submitting it. One tx settles
     ///      USDC and mints the license.
-    function buyWithAuthorization(
-        uint256 listingId,
-        address recipient,
-        TransferAuthorization calldata auth
-    ) external override nonReentrant whenNotPaused returns (uint256 licenseTokenId) {
+    function buyWithAuthorization(uint256 listingId, address recipient, TransferAuthorization calldata auth)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        returns (uint256 licenseTokenId)
+    {
         IListingRegistry.Listing memory l = _loadActive(listingId);
 
         if (auth.value != l.priceUSDC) revert BadAuthorizationValue(auth.value, l.priceUSDC);
@@ -132,17 +132,18 @@ contract Marketplace is
             // Pulls `auth.value` from `auth.from` into this contract atomically;
             // reverts (consuming the single-use nonce) on a bad signature or
             // insufficient balance.
-            IERC3009(_usdc).transferWithAuthorization(
-                auth.from,
-                auth.to,
-                auth.value,
-                auth.validAfter,
-                auth.validBefore,
-                auth.nonce,
-                auth.v,
-                auth.r,
-                auth.s
-            );
+            IERC3009(_usdc)
+                .transferWithAuthorization(
+                    auth.from,
+                    auth.to,
+                    auth.value,
+                    auth.validAfter,
+                    auth.validBefore,
+                    auth.nonce,
+                    auth.v,
+                    auth.r,
+                    auth.s
+                );
         }
 
         // purchasePath = 1 (x402).
@@ -155,8 +156,7 @@ contract Marketplace is
         private
         returns (uint256 licenseTokenId)
     {
-        (uint96 sellerProceeds, uint96 protocolProceeds) =
-            Splits.computeSplit(l.priceUSDC, l.protocolFeeBps);
+        (uint96 sellerProceeds, uint96 protocolProceeds) = Splits.computeSplit(l.priceUSDC, l.protocolFeeBps);
 
         if (l.priceUSDC > 0) {
             if (sellerProceeds > 0) IERC20(_usdc).safeTransfer(l.seller, sellerProceeds);
@@ -188,11 +188,7 @@ contract Marketplace is
 
     /// @dev Load a listing and require it to be sellable. `getListing` reverts
     ///      with `UnknownListing` if the id was never created.
-    function _loadActive(uint256 listingId)
-        private
-        view
-        returns (IListingRegistry.Listing memory l)
-    {
+    function _loadActive(uint256 listingId) private view returns (IListingRegistry.Listing memory l) {
         l = _listingRegistry.getListing(listingId);
         if (l.revoked) revert ListingRevoked(listingId);
     }

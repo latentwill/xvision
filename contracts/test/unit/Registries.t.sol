@@ -51,9 +51,7 @@ contract RegistriesTest is Test {
 
     function test_giveFeedback_storesAndReads() public {
         vm.prank(bob);
-        reputation.giveFeedback(
-            0, int128(12_340_000), 6, "xvision", "cycle-1", "", "ipfs://fb", keccak256("fb")
-        );
+        reputation.giveFeedback(0, int128(12_340_000), 6, "xvision", "cycle-1", "", "ipfs://fb", keccak256("fb"));
 
         assertEq(reputation.getFeedbackCount(0), 1);
         (
@@ -100,8 +98,8 @@ contract RegistriesTest is Test {
         validation.postValidation(0, keccak256("proof"), "ipfs://proof", "trade-proof");
 
         assertEq(validation.getValidationCount(0), 1);
-        (address validator, bytes32 resultHash, string memory resultURI, string memory tag, uint256 ts)
-        = validation.getValidation(0, 0);
+        (address validator, bytes32 resultHash, string memory resultURI, string memory tag, uint256 ts) =
+            validation.getValidation(0, 0);
         assertEq(validator, alice);
         assertEq(resultHash, keccak256("proof"));
         assertEq(resultURI, "ipfs://proof");

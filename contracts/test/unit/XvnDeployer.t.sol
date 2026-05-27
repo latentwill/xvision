@@ -62,8 +62,6 @@ contract XvnDeployerTest is Test {
 
     function test_computeAddress_dependsOnSalt() public view {
         bytes32 h = keccak256(_initCode(1));
-        assertTrue(
-            deployer.computeAddress(keccak256("a"), h) != deployer.computeAddress(keccak256("b"), h)
-        );
+        assertTrue(deployer.computeAddress(keccak256("a"), h) != deployer.computeAddress(keccak256("b"), h));
     }
 }

@@ -44,14 +44,16 @@ them before building:
 
 ```bash
 cd contracts
-forge install foundry-rs/forge-std
-forge install OpenZeppelin/openzeppelin-contracts
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable
+forge install foundry-rs/forge-std@v1.9.7
+forge install OpenZeppelin/openzeppelin-contracts@v5.0.2
+forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.0.2
 ```
 
 Remappings are declared in `foundry.toml`. The code targets **OpenZeppelin v5**
 (`Ownable(initialOwner)`, ERC-1155 `_update` hook, namespaced upgradeable
-storage). Pin OZ to a `v5.x` tag if `forge install` pulls `master`.
+storage). The exact tags above are intentional: newer OZ v5 releases may use
+Cancun-only builtins such as `mcopy`, while this tree currently compiles for the
+conservative `paris` EVM target.
 
 ## Build & test
 

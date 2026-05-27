@@ -21,28 +21,22 @@ contract ReentrantReceiver is IERC1155Receiver {
         targetListingId = targetListingId_;
     }
 
-    function onERC1155Received(address, address, uint256, uint256, bytes calldata)
-        external
-        returns (bytes4)
-    {
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external returns (bytes4) {
         reentered = true;
         // Re-enter — expected to revert under the nonReentrant guard.
         marketplace.buy(targetListingId, address(this));
         return this.onERC1155Received.selector;
     }
 
-    function onERC1155BatchReceived(
-        address,
-        address,
-        uint256[] calldata,
-        uint256[] calldata,
-        bytes calldata
-    ) external pure returns (bytes4) {
+    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
         return this.onERC1155BatchReceived.selector;
     }
 
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IERC1155Receiver).interfaceId
-            || interfaceId == type(IERC165).interfaceId;
+        return interfaceId == type(IERC1155Receiver).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 }

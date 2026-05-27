@@ -11,21 +11,14 @@ interface IEvalAttestationRegistry {
         bytes32 schema; // EAS-style schema id, future-compatible
     }
 
-    function postAttestation(
-        uint256 listingId,
-        bytes32 evalResultHash,
-        string calldata evalResultURI,
-        bytes32 schema
-    ) external;
+    function postAttestation(uint256 listingId, bytes32 evalResultHash, string calldata evalResultURI, bytes32 schema)
+        external;
 
     function getAttestations(uint256 listingId) external view returns (Attestation[] memory);
 
     function getAttestationCount(uint256 listingId) external view returns (uint256);
 
     event AttestationPosted(
-        uint256 indexed listingId,
-        address indexed attester,
-        bytes32 evalResultHash,
-        bytes32 schema
+        uint256 indexed listingId, address indexed attester, bytes32 evalResultHash, bytes32 schema
     );
 }

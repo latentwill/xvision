@@ -55,7 +55,6 @@ contract ListingRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, 
     function initialize(address admin, address identityRegistry_) external initializer {
         if (admin == address(0) || identityRegistry_ == address(0)) revert ZeroAddress();
         __Ownable_init(admin);
-        __UUPSUpgradeable_init();
         _identityRegistry = IIdentityRegistry(identityRegistry_);
         _nextListingId = 1;
     }
@@ -124,10 +123,7 @@ contract ListingRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, 
     /// @inheritdoc IListingRegistry
     /// @dev Content rotation only — price, tier, fee snapshot, and the
     ///      transferable flag are immutable after creation.
-    function updateListing(uint256 listingId, bytes32 contentHash, string calldata contentURI)
-        external
-        override
-    {
+    function updateListing(uint256 listingId, bytes32 contentHash, string calldata contentURI) external override {
         Listing storage l = _listings[listingId];
         if (l.seller == address(0)) revert UnknownListing(listingId);
         if (l.seller != msg.sender) revert NotSeller(listingId, msg.sender);

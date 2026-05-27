@@ -5,7 +5,7 @@
 //! in-memory implementation for tests, [`Erc8004MantleDriver`] is the (stubbed)
 //! real path that wraps `xvision_identity::contracts` bindings.
 
-use alloy::primitives::{keccak256, Address, B256, TxHash, U256};
+use alloy::primitives::{keccak256, Address, TxHash, B256, U256};
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -109,7 +109,9 @@ impl AnchorDriver for MockDriver {
         let mut st = self.state.lock().expect("mock lock");
         st.listings.push(req);
         let listing_id = st.listings.len() as u64; // 1-based
-        Ok(ListingRef { listing_id: U256::from(listing_id) })
+        Ok(ListingRef {
+            listing_id: U256::from(listing_id),
+        })
     }
 
     async fn buy_listing(&self, req: BuyRequest) -> Result<SaleReceipt, MarketplaceError> {
@@ -122,7 +124,10 @@ impl AnchorDriver for MockDriver {
             return Err(MarketplaceError::ListingRevoked(id));
         }
         st.tx_counter += 1;
-        Ok(SaleReceipt { tx_hash: fake_tx(st.tx_counter), license_token_id: req.listing_id })
+        Ok(SaleReceipt {
+            tx_hash: fake_tx(st.tx_counter),
+            license_token_id: req.listing_id,
+        })
     }
 
     async fn attest_eval(&self, req: AttestRequest) -> Result<TxHash, MarketplaceError> {
@@ -165,7 +170,11 @@ pub struct Erc8004MantleDriver {
 
 impl Erc8004MantleDriver {
     pub fn new(addresses: MarketplaceAddresses, rpc_url: impl Into<String>, chain_id: u64) -> Self {
-        Self { addresses, rpc_url: rpc_url.into(), chain_id }
+        Self {
+            addresses,
+            rpc_url: rpc_url.into(),
+            chain_id,
+        }
     }
 
     pub fn addresses(&self) -> &MarketplaceAddresses {
@@ -186,22 +195,30 @@ impl AnchorDriver for Erc8004MantleDriver {
     async fn publish_listing(&self, _req: PublishRequest) -> Result<ListingRef, MarketplaceError> {
         // TODO(Phase 5): connect a wallet provider, call
         // IListingRegistry::createListing, read listing id from ListingCreated.
-        Err(MarketplaceError::NotImplemented("Erc8004MantleDriver::publish_listing"))
+        Err(MarketplaceError::NotImplemented(
+            "Erc8004MantleDriver::publish_listing",
+        ))
     }
 
     async fn buy_listing(&self, _req: BuyRequest) -> Result<SaleReceipt, MarketplaceError> {
         // TODO(Phase 5): IMarketplace::buy (direct) or buyWithAuthorization (x402).
-        Err(MarketplaceError::NotImplemented("Erc8004MantleDriver::buy_listing"))
+        Err(MarketplaceError::NotImplemented(
+            "Erc8004MantleDriver::buy_listing",
+        ))
     }
 
     async fn attest_eval(&self, _req: AttestRequest) -> Result<TxHash, MarketplaceError> {
         // TODO(Phase 5): IEvalAttestationRegistry::postAttestation.
-        Err(MarketplaceError::NotImplemented("Erc8004MantleDriver::attest_eval"))
+        Err(MarketplaceError::NotImplemented(
+            "Erc8004MantleDriver::attest_eval",
+        ))
     }
 
     async fn revoke_listing(&self, _listing_id: U256) -> Result<TxHash, MarketplaceError> {
         // TODO(Phase 5): IListingRegistry::revokeListing.
-        Err(MarketplaceError::NotImplemented("Erc8004MantleDriver::revoke_listing"))
+        Err(MarketplaceError::NotImplemented(
+            "Erc8004MantleDriver::revoke_listing",
+        ))
     }
 }
 
@@ -231,7 +248,10 @@ mod tests {
         assert_eq!(lref.listing_id, U256::from(1u64));
 
         let receipt = d
-            .buy_listing(BuyRequest { listing_id: lref.listing_id, recipient: Address::ZERO })
+            .buy_listing(BuyRequest {
+                listing_id: lref.listing_id,
+                recipient: Address::ZERO,
+            })
             .await
             .unwrap();
         assert_eq!(receipt.license_token_id, lref.listing_id);
@@ -241,7 +261,10 @@ mod tests {
     async fn mock_buy_unknown_listing_errs() {
         let d = MockDriver::new();
         let err = d
-            .buy_listing(BuyRequest { listing_id: U256::from(99u64), recipient: Address::ZERO })
+            .buy_listing(BuyRequest {
+                listing_id: U256::from(99u64),
+                recipient: Address::ZERO,
+            })
             .await
             .unwrap_err();
         assert!(matches!(err, MarketplaceError::UnknownListing(99)));
@@ -254,7 +277,10 @@ mod tests {
         d.revoke_listing(lref.listing_id).await.unwrap();
 
         let err = d
-            .buy_listing(BuyRequest { listing_id: lref.listing_id, recipient: Address::ZERO })
+            .buy_listing(BuyRequest {
+                listing_id: lref.listing_id,
+                recipient: Address::ZERO,
+            })
             .await
             .unwrap_err();
         assert!(matches!(err, MarketplaceError::ListingRevoked(1)));
@@ -277,7 +303,11 @@ mod tests {
             31337,
         );
         assert_eq!(d.chain_id(), 31337);
-        let err = d.buy_listing(BuyRequest { listing_id: U256::from(1u64), recipient: Address::ZERO })
+        let err = d
+            .buy_listing(BuyRequest {
+                listing_id: U256::from(1u64),
+                recipient: Address::ZERO,
+            })
             .await
             .unwrap_err();
         assert!(matches!(err, MarketplaceError::NotImplemented(_)));

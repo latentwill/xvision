@@ -30,23 +30,15 @@ contract ValidationRegistry {
 
     /// @notice Indexer-friendly event (surface spec §6.1:
     ///         `ValidationPosted(uint256 agentId, bytes32 resultHash, ...)`).
-    event ValidationPosted(
-        uint256 indexed agentId,
-        address indexed validator,
-        bytes32 resultHash,
-        string tag
-    );
+    event ValidationPosted(uint256 indexed agentId, address indexed validator, bytes32 resultHash, string tag);
 
     /// @notice Post one validation entry for `agentId`.
     /// @dev Permissionless, like ReputationRegistry — anyone may validate any
     ///      agent. Trust weighting (in-house vs external attester) is an
     ///      off-chain indexer concern.
-    function postValidation(
-        uint256 agentId,
-        bytes32 resultHash,
-        string calldata resultURI,
-        string calldata tag
-    ) external {
+    function postValidation(uint256 agentId, bytes32 resultHash, string calldata resultURI, string calldata tag)
+        external
+    {
         _validations[agentId].push(
             Validation({
                 validator: msg.sender,
@@ -63,13 +55,7 @@ contract ValidationRegistry {
     function getValidation(uint256 agentId, uint256 index)
         external
         view
-        returns (
-            address validator,
-            bytes32 resultHash,
-            string memory resultURI,
-            string memory tag,
-            uint256 timestamp
-        )
+        returns (address validator, bytes32 resultHash, string memory resultURI, string memory tag, uint256 timestamp)
     {
         Validation storage v = _validations[agentId][index];
         return (v.validator, v.resultHash, v.resultURI, v.tag, v.timestamp);

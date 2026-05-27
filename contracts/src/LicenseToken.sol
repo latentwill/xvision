@@ -22,13 +22,7 @@ import {IListingRegistry} from "./interfaces/IListingRegistry.sol";
 ///      Authorised minters in v1: `Marketplace` only. The authorized-minter
 ///      pattern lets future settlement contracts (subscription, pay-per-fire)
 ///      mint without redeploying this contract (surface spec §3.3).
-contract LicenseToken is
-    Initializable,
-    ERC1155Upgradeable,
-    OwnableUpgradeable,
-    UUPSUpgradeable,
-    ILicenseToken
-{
+contract LicenseToken is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable, ILicenseToken {
     /// @dev Addresses allowed to call {authorizedMint} (v1: the Marketplace).
     mapping(address => bool) private _authorized;
 
@@ -61,7 +55,6 @@ contract LicenseToken is
         if (admin == address(0)) revert ZeroAddress();
         __ERC1155_init(uri_);
         __Ownable_init(admin);
-        __UUPSUpgradeable_init();
     }
 
     // -----------------------------------------------------------------------
@@ -132,10 +125,7 @@ contract LicenseToken is
     ///      `_beforeTokenTransfer` referenced in the spec). A real transfer has
     ///      both `from` and `to` non-zero; mint (`from==0`) and burn (`to==0`)
     ///      are always allowed.
-    function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
-        internal
-        override
-    {
+    function _update(address from, address to, uint256[] memory ids, uint256[] memory values) internal override {
         if (from != address(0) && to != address(0)) {
             uint256 len = ids.length;
             for (uint256 i = 0; i < len; ++i) {

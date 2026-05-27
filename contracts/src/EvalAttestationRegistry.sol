@@ -17,12 +17,7 @@ import {IEvalAttestationRegistry} from "./interfaces/IEvalAttestationRegistry.so
 ///      the implementation but CANNOT delete or mutate existing attestations
 ///      (surface spec §7.3). Schema id is EAS-style for future EAS
 ///      compatibility (open question §11: migrate to EAS on Mantle if deployed).
-contract EvalAttestationRegistry is
-    Initializable,
-    OwnableUpgradeable,
-    UUPSUpgradeable,
-    IEvalAttestationRegistry
-{
+contract EvalAttestationRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IEvalAttestationRegistry {
     /// @dev listingId => append-only attestation list.
     mapping(uint256 => Attestation[]) private _attestations;
 
@@ -39,18 +34,15 @@ contract EvalAttestationRegistry is
     function initialize(address admin) external initializer {
         if (admin == address(0)) revert ZeroAddress();
         __Ownable_init(admin);
-        __UUPSUpgradeable_init();
     }
 
     /// @inheritdoc IEvalAttestationRegistry
     /// @dev Permissionless. The `attester` is recorded as `msg.sender`; the
     ///      indexer/UI decides how to weight seller vs third-party attesters.
-    function postAttestation(
-        uint256 listingId,
-        bytes32 evalResultHash,
-        string calldata evalResultURI,
-        bytes32 schema
-    ) external override {
+    function postAttestation(uint256 listingId, bytes32 evalResultHash, string calldata evalResultURI, bytes32 schema)
+        external
+        override
+    {
         _attestations[listingId].push(
             Attestation({
                 evalResultHash: evalResultHash,
@@ -64,12 +56,7 @@ contract EvalAttestationRegistry is
     }
 
     /// @inheritdoc IEvalAttestationRegistry
-    function getAttestations(uint256 listingId)
-        external
-        view
-        override
-        returns (Attestation[] memory)
-    {
+    function getAttestations(uint256 listingId) external view override returns (Attestation[] memory) {
         return _attestations[listingId];
     }
 

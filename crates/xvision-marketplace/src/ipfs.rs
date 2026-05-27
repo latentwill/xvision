@@ -27,7 +27,10 @@ pub struct PinataDriver {
 
 impl PinataDriver {
     pub fn new(jwt: impl Into<String>, gateway: impl Into<String>) -> Self {
-        Self { jwt: jwt.into(), gateway: gateway.into() }
+        Self {
+            jwt: jwt.into(),
+            gateway: gateway.into(),
+        }
     }
 
     pub fn gateway(&self) -> &str {

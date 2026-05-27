@@ -6,8 +6,7 @@ import {Marketplace} from "../../src/Marketplace.sol";
 import {IMarketplace} from "../../src/interfaces/IMarketplace.sol";
 import {ReentrantReceiver} from "../mocks/ReentrantReceiver.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from
-    "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract MarketplaceTest is BaseTest {
     address seller = makeAddr("seller");
@@ -131,7 +130,7 @@ contract MarketplaceTest is BaseTest {
         // Minting to the reentrant receiver triggers onERC1155Received, which
         // re-enters buy(); the nonReentrant guard reverts and bubbles up.
         vm.prank(buyer);
-        vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
+        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         market.buy(lid, address(recv));
     }
 
@@ -192,9 +191,7 @@ contract MarketplaceTest is BaseTest {
         auth.to = makeAddr("notMarket");
 
         vm.prank(facilitator);
-        vm.expectRevert(
-            abi.encodeWithSelector(Marketplace.BadAuthorizationTarget.selector, auth.to)
-        );
+        vm.expectRevert(abi.encodeWithSelector(Marketplace.BadAuthorizationTarget.selector, auth.to));
         market.buyWithAuthorization(lid, buyer, auth);
     }
 
@@ -204,9 +201,7 @@ contract MarketplaceTest is BaseTest {
         IMarketplace.TransferAuthorization memory auth = _auth(buyer, PRICE - 1, keccak256("n1"));
 
         vm.prank(facilitator);
-        vm.expectRevert(
-            abi.encodeWithSelector(Marketplace.BadAuthorizationValue.selector, PRICE - 1, PRICE)
-        );
+        vm.expectRevert(abi.encodeWithSelector(Marketplace.BadAuthorizationValue.selector, PRICE - 1, PRICE));
         market.buyWithAuthorization(lid, buyer, auth);
     }
 
