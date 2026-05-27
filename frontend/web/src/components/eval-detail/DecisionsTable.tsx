@@ -12,7 +12,7 @@ import { Icon } from "@/components/primitives/Icon";
 import { ActionPill } from "./ActionPill";
 import { PhaseChip } from "./PhaseChip";
 import { DecisionTimeline } from "./DecisionTimeline";
-import type { TimelineDecision } from "./decision-view";
+import { shortAsset, stepOrdinalsByDecision, type TimelineDecision } from "./decision-view";
 import {
   actionCounts,
   matchesActionFilter,
@@ -69,7 +69,7 @@ const PILLS: {
   },
   {
     k: "FILTERED",
-    label: "No-op",
+    label: "Filtered",
     dotColor: "var(--text-3)",
     activeBg: "transparent",
     activeBd: "var(--text-3)",
@@ -122,6 +122,16 @@ export function DecisionsTable({
     [decisions],
   );
 
+  // Step ordinals are keyed by decision_index and computed over the FULL list so
+  // they stay stable under filtering. A multi-asset step (BTC+ETH at one
+  // timestamp) shares one step number; `stepCount` is the number of distinct
+  // decision steps, which is what the header should report (not the per-asset
+  // row count). Blanking the step number on the 2nd+ row of a step only makes
+  // sense when same-step rows are adjacent — i.e. in chronological sort.
+  const stepByI = useMemo(() => stepOrdinalsByDecision(decisions), [decisions]);
+  const stepCount = useMemo(() => new Set(decisions.map((d) => d.t)).size, [decisions]);
+  const isChronological = sortKey === "time-asc" || sortKey === "time-desc";
+
   return (
     <div className="bg-surface-card border border-border rounded-card">
       <div
@@ -133,7 +143,8 @@ export function DecisionsTable({
             Decisions
           </h2>
           <span className="text-[11px] font-mono text-text-3">
-            {filteredView.length} of {decisions.length} steps · {engagedCount} engaged
+            {filteredView.length} of {decisions.length} decisions · {stepCount}{" "}
+            {stepCount === 1 ? "step" : "steps"} · {engagedCount} engaged
           </span>
         </div>
         <span className="text-[10px] font-mono text-text-3">click row → focus</span>
@@ -158,7 +169,7 @@ export function DecisionsTable({
             onChange={(e) => setSearch(e.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
-            placeholder="Search decisions… (id, justification, action)"
+            placeholder="Search decisions… (asset, justification, action)"
             spellCheck={false}
             aria-label="Search decisions"
             className="flex-1 bg-transparent border-none outline-none text-text text-[12.5px] font-mono"
@@ -257,7 +268,8 @@ export function DecisionsTable({
         <table className="w-full text-[11px] font-mono">
           <thead style={{ background: "var(--surface-elev)" }}>
             <tr className="text-left text-text-3">
-              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-10">#</th>
+              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-12">STEP</th>
+              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-16">ASSET</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-32">TIMESTAMP</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-24">PHASE</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-20">ACTION</th>
@@ -269,14 +281,21 @@ export function DecisionsTable({
           <tbody>
             {filteredView.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-text-3">
+                <td colSpan={8} className="px-4 py-8 text-center text-text-3">
                   No decisions match these filters.
                 </td>
               </tr>
             ) : (
-              filteredView.map((d) => {
+              filteredView.map((d, idx) => {
                 const focus = d.i === focusedIdx;
                 const isFiltered = d.phase === "filtered";
+                // Show the step number on the first row of each step; blank the
+                // 2nd+ rows of the same step (the per-asset fan-out) so the count
+                // tracks decision steps, not rows. Only blank in chronological
+                // sort, where same-step rows are adjacent; otherwise number every
+                // row since a step's rows may be scattered.
+                const prev = filteredView[idx - 1];
+                const sameStepAsPrev = isChronological && prev != null && prev.t === d.t;
                 return (
                   <tr
                     key={d.i}
@@ -290,7 +309,12 @@ export function DecisionsTable({
                       opacity: isFiltered ? 0.78 : 1,
                     }}
                   >
-                    <td className="px-4 py-2 tabular-nums text-text-3">{d.i}</td>
+                    <td className="px-4 py-2 tabular-nums text-text-3">
+                      {sameStepAsPrev ? "" : stepByI.get(d.i)}
+                    </td>
+                    <td className="px-4 py-2 text-text-2 whitespace-nowrap" title={d.asset}>
+                      {shortAsset(d.asset)}
+                    </td>
                     <td className="px-4 py-2 tabular-nums text-text-2">{fmtRowTime(d.t)}</td>
                     <td className="px-4 py-2">
                       <PhaseChip phase={d.phase} />

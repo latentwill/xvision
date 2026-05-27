@@ -88,6 +88,36 @@ export function justificationText(row: DecisionRowDto): string {
   return row.reasoning?.trim() || row.justification?.trim() || "";
 }
 
+/** "BTC/USD" → "BTC"; bare symbols and the empty string pass through. The full
+ *  pair stays available for tooltip/search; this is just the column label. */
+export function shortAsset(asset: string): string {
+  return asset.split("/")[0] ?? asset;
+}
+
+/**
+ * Assign a 1-based *step* ordinal per distinct timestamp, ranked chronologically,
+ * returning a map keyed by `i` (decision_index).
+ *
+ * A multi-asset run fans one decision step out into one row per asset, all sharing
+ * that step's timestamp (e.g. decision_index 0=BTC and 1=ETH both at 20:00). Those
+ * rows collapse to the same step number here, so the table can show the step on the
+ * first row and blank the rest instead of counting per-asset rows as separate steps.
+ *
+ * Computed over the FULL decision list (not a filtered view) so a row's step number
+ * stays stable when the table is filtered — step 33 reads "33" even if step 32 is
+ * filtered out.
+ */
+export function stepOrdinalsByDecision(rows: TimelineDecision[]): Map<number, number> {
+  const distinct = [...new Set(rows.map((r) => r.t))].sort(
+    (a, b) => new Date(a).getTime() - new Date(b).getTime(),
+  );
+  const stepByTs = new Map<string, number>();
+  distinct.forEach((t, idx) => stepByTs.set(t, idx + 1));
+  const out = new Map<number, number>();
+  for (const r of rows) out.set(r.i, stepByTs.get(r.t) ?? 0);
+  return out;
+}
+
 /**
  * Project the real decision rows into the Signal table/timeline view model,
  * computing `phase` and the direction-aware action verb per row.

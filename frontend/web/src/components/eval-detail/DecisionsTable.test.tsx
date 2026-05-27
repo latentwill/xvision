@@ -1,0 +1,62 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, test } from "vitest";
+
+import { DecisionsTable } from "./DecisionsTable";
+import type { TimelineDecision } from "./decision-view";
+
+// Two decision steps, each fanned out into a BTC + ETH row at one shared
+// timestamp — the real multi-asset shape (decision_index 0/1 then 2/3).
+const TS_A = "2024-01-01T20:00:00+00:00";
+const TS_B = "2024-01-07T13:00:00+00:00";
+const decisions: TimelineDecision[] = [
+  { i: 0, t: TS_A, phase: "engaged", action: "BUY", conv: 0.7, just: "btc entry", pnl: -3.75, asset: "BTC/USD" },
+  { i: 1, t: TS_A, phase: "engaged", action: "BUY", conv: 0.7, just: "eth entry", pnl: -3.75, asset: "ETH/USD" },
+  { i: 2, t: TS_B, phase: "engaged", action: "HOLD", conv: 0.6, just: "btc hold", pnl: null, asset: "BTC/USD" },
+  { i: 3, t: TS_B, phase: "engaged", action: "HOLD", conv: 0.5, just: "eth hold", pnl: null, asset: "ETH/USD" },
+];
+
+function stepColumn(container: HTMLElement): string[] {
+  return [...container.querySelectorAll("tbody tr")].map(
+    (tr) => tr.querySelector("td")?.textContent?.trim() ?? "",
+  );
+}
+
+describe("DecisionsTable step + asset columns", () => {
+  test("renders STEP and ASSET headers and both assets", () => {
+    render(<DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />);
+    expect(screen.getByText("STEP")).toBeInTheDocument();
+    expect(screen.getByText("ASSET")).toBeInTheDocument();
+    // Short symbols, one per row.
+    expect(screen.getAllByText("BTC")).toHaveLength(2);
+    expect(screen.getAllByText("ETH")).toHaveLength(2);
+  });
+
+  test("reports distinct step count, not per-asset row count", () => {
+    const { container } = render(
+      <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
+    );
+    // 4 per-asset decisions, but only 2 decision steps.
+    expect(container.textContent).toContain("4 of 4 decisions");
+    expect(container.textContent).toContain("2 steps");
+  });
+
+  test("chronological sort shows the step on the first row of each step and blanks the rest", () => {
+    const { container } = render(
+      <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
+    );
+    // Default sort is time-asc → step 1 (BTC, ETH) then step 2 (BTC, ETH).
+    expect(stepColumn(container)).toEqual(["1", "", "2", ""]);
+  });
+
+  test("non-chronological sort numbers every row (no blanking)", () => {
+    const { container } = render(
+      <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
+    );
+    fireEvent.change(screen.getByLabelText("Sort decisions"), {
+      target: { value: "pnl-desc" },
+    });
+    // Every row carries its own step number when the rows may be scattered.
+    expect(stepColumn(container).every((s) => s === "1" || s === "2")).toBe(true);
+    expect(stepColumn(container)).not.toContain("");
+  });
+});
