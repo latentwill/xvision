@@ -167,11 +167,12 @@ contract Marketplace is
         licenseTokenId = l.listingId;
         _licenseToken.authorizedMint(recipient, licenseTokenId, 1);
 
-        // payerKind (0 = human, 1 = agent): exact derivation deferred to a
-        // future impl (spec §3.2 "locked in Phase 1/5"). v1 placeholder mirrors
-        // purchasePath — direct≈human, x402≈agent — kept as a distinct event
-        // field so the indexer/UI can refine without an ABI change.
-        uint8 payerKind = purchasePath;
+        // payerKind: v1 PLACEHOLDER — mirrors purchasePath. Exact derivation
+        // deferred (spec §3.2 "locked in Phase 1/5"; refinement ticket in the
+        // program plan §7.1). Typed uint16 (wider than purchasePath) so a future
+        // impl can encode richer payer identity without an ABI change. Indexers
+        // MUST NOT derive analytics from this in v1.
+        uint16 payerKind = purchasePath;
 
         emit Sold(
             l.listingId,
