@@ -372,7 +372,7 @@ in the marketplace strategy §7 as E1.
 - **402 → buyer never pays:** server has no obligation, no on-chain state changes. Buyer retries.
 - **Auth signed but tx fails (e.g. insufficient balance):** EIP-3009 nonces are single-use; buyer signs a new one. No on-chain state changes from the failed tx.
 - **Tx succeeds but server can't deliver bundle (Tier B server outage):** license token is already minted — buyer is licensed. Server should retry serving the bundle on next request. Refund flow is **not in v1** — listing seller can issue a refund manually off-chain (USDC → buyer wallet), but no contract path. Documented gap.
-- **Listing revoked between 402 issue and tx settlement:** `Marketplace.buyWithAuthorization` checks `Listing.revoked == false` at settlement time; reverts cleanly. EIP-3009 nonce is consumed but USDC isn't moved.
+- **Listing revoked between 402 issue and tx settlement:** `Marketplace.buyWithAuthorization` checks `Listing.revoked == false` *before* it calls `transferWithAuthorization`, so the whole tx reverts cleanly and **the EIP-3009 nonce is NOT consumed** (USDC never sees the call; its nonce write is skipped). The auth therefore stays replayable — but only against a *non-revoked* listing, and revocation is monotonic (one-way), so the actual replay risk is zero. (Corrected 2026-05-27: an earlier draft claimed "nonce is consumed but USDC isn't moved," which is mechanically impossible — EIP-3009 burns the nonce *inside* `transferWithAuthorization`, and reverting around that call would also roll back the nonce write. See [ADR 0013](../../../decisions/0013-revoked-listing-clean-revert.md).)
 
 ---
 

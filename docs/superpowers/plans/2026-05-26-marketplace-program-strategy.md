@@ -402,6 +402,7 @@ its dependent phase.
 | `publishedAt`/`mintedAt` on `ListingRow` (so `newest` sort isn't an id proxy) | ✅ SCHEMA LOCKED (Phase 1) → frontend rewire | F1 OQ |
 | `transferableLicense` surfaced on receipt/license UI (absent on `Receipt.license` today) | ✅ SCHEMA LOCKED (Phase 1) → receipt UI rewire | F6 OQ |
 | Human-vs-agent payer-class source in marketplace event/subgraph | ✅ SCHEMA LOCKED (Phase 1) → Phase 5 contract event | E6 |
+| `Sold.payerKind` real **derivation** (v1 just mirrors `purchasePath`; typed `uint16` for headroom — EOA vs smart-account vs intent-solver vs sponsored). Indexers MUST NOT derive analytics from it until refined. | Phase 5.x (post-testnet-deploy) / indexer | spec §3.2 deferred; Sold event note in `IMarketplace.sol`; subgraph `schema.graphql` |
 | Handle resolution (ENS / on-chain registry / `agentURI`) | ✅ LOCKED (Phase 1): address canonical; handle/ENS optional display | A8 |
 | Verification badge thresholds (green vs gray criteria) | ✅ LOCKED (Phase 1): backtest + ≥30d live-paper + ≥1 positive closed-cycle hash | A9 |
 | Tier-B clone license-check semantics (gate timing) | Phase-1 read model recommended → Phase 5 contract check | A10 |

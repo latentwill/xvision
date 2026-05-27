@@ -31,6 +31,13 @@ interface IMarketplace {
 
     function feeRecipient() external view returns (address);
 
+    /// @dev `payerKind` is a **v1 placeholder** — in v1 it merely mirrors
+    ///      `purchasePath` (0/1). DO NOT derive analytics from it yet. It is
+    ///      typed `uint16` (wider than `purchasePath`'s tight enum) so the
+    ///      eventual derivation can encode richer payer identity (EOA vs smart
+    ///      account vs intent solver vs sponsored, possibly composite) without
+    ///      an ABI change. Refinement ticket tracked in the marketplace program
+    ///      plan §7.1 deferred-items register.
     event Sold(
         uint256 indexed listingId,
         uint256 indexed agentNftId,
@@ -39,7 +46,7 @@ interface IMarketplace {
         uint96 sellerProceeds,
         uint96 protocolProceeds,
         uint256 licenseTokenId,
-        uint8 payerKind, // 0 = human, 1 = agent
+        uint16 payerKind, // v1 placeholder (mirrors purchasePath); see note above
         uint8 purchasePath // 0 = direct, 1 = x402
     );
     event ProtocolFeeBpsChanged(uint16 oldBps, uint16 newBps);
