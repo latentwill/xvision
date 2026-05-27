@@ -1204,13 +1204,8 @@ async fn fk_targets_old_eval_runs(pool: &SqlitePool, table: &str, column: &str) 
     if !table_exists(pool, table).await? {
         return Ok(false);
     }
-    let sql = format!(
-        r#"SELECT "table" FROM pragma_foreign_key_list('{table}') WHERE "from" = ?"#
-    );
-    let target: Option<(String,)> = sqlx::query_as(&sql)
-        .bind(column)
-        .fetch_optional(pool)
-        .await?;
+    let sql = format!(r#"SELECT "table" FROM pragma_foreign_key_list('{table}') WHERE "from" = ?"#);
+    let target: Option<(String,)> = sqlx::query_as(&sql).bind(column).fetch_optional(pool).await?;
     Ok(target
         .map(|(t,)| t == "eval_runs_old_live_migration")
         .unwrap_or(false))
@@ -1382,7 +1377,9 @@ async fn rebuild_eval_attestations_fk(pool: &SqlitePool) -> ApiResult<()> {
         )
         .execute(&mut *tx)
         .await?;
-        sqlx::query("DROP TABLE eval_attestations").execute(&mut *tx).await?;
+        sqlx::query("DROP TABLE eval_attestations")
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("ALTER TABLE eval_attestations_new RENAME TO eval_attestations")
             .execute(&mut *tx)
             .await?;

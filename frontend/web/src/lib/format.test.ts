@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatCadence, formatCostUsd, formatCostUsdPrecise } from "./format";
+import { formatCadence, formatCostUsd, formatCostUsdPrecise, formatSpendUsd } from "./format";
 
 describe("formatCostUsd", () => {
   it("renders zero as $0.00", () => {
@@ -56,6 +56,25 @@ describe("formatCostUsd", () => {
     expect(formatCostUsd(0.0123)).toBe("$0.0123");
     expect(formatCostUsd(0.5)).toBe("$0.5000");
     expect(formatCostUsd(0.9999)).toBe("$0.9999");
+  });
+});
+
+describe("formatSpendUsd", () => {
+  it("renders zero / null / negative / non-finite as em-dash (unknown spend)", () => {
+    // Unlike formatCostUsd, a zero aggregate means "no priced model call
+    // recorded" — spend is unknown, not a genuine $0.00.
+    expect(formatSpendUsd(0)).toBe("—");
+    expect(formatSpendUsd(null)).toBe("—");
+    expect(formatSpendUsd(undefined)).toBe("—");
+    expect(formatSpendUsd(-1.5)).toBe("—");
+    expect(formatSpendUsd(Number.NaN)).toBe("—");
+    expect(formatSpendUsd(Number.POSITIVE_INFINITY)).toBe("—");
+  });
+
+  it("delegates positive amounts to formatCostUsd", () => {
+    expect(formatSpendUsd(0.18)).toBe(formatCostUsd(0.18));
+    expect(formatSpendUsd(0.18)).toBe("$0.1800");
+    expect(formatSpendUsd(12.5)).toBe("$12.50");
   });
 });
 

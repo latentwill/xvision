@@ -25,7 +25,7 @@ import { listScenarios, scenarioKeys } from "@/api/scenarios";
 import { getStrategy, listStrategies, strategyKeys } from "@/api/strategies";
 import { agentKeys, listAgents } from "@/api/agents";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
-import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
+import { formatCostUsdPrecise, formatSpendUsd } from "@/lib/format";
 import { drawdownMetricTone } from "@/lib/metric-tone";
 import type { DecisionRowDto, RunDetail, RunSummary } from "@/api/types.gen";
 import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
@@ -247,7 +247,7 @@ export function EvalRunDetailRoute() {
                 started{" "}
                 <span className="text-text-2">{fmtTime(detail.summary.started_at)}</span>
                 <span className="text-text-4 mx-2">·</span>
-                budget <span className="text-text-2">{formatCostUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd ?? null))}</span>
+                token cost <span className="text-text-2">{formatSpendUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd ?? null))}</span>
                 <span className="text-text-4 mx-2">·</span>
                 <span className="text-text-2">{disambiguator}</span>
               </div>
@@ -262,15 +262,6 @@ export function EvalRunDetailRoute() {
                   navigate(`/strategies/${encodeURIComponent(detail.summary.agent_id)}`)
                 }
               />
-              <MetaChip
-                label="Scenario"
-                value={labels.scenarioName}
-                tone="neutral"
-                ariaLabel={`Open Scenario ${labels.scenarioName}`}
-                onClick={() =>
-                  navigate(`/scenarios/${encodeURIComponent(detail.summary.scenario_id)}`)
-                }
-              />
               {agentChipValue && primaryAgent ? (
                 <MetaChip
                   label="Agent"
@@ -282,6 +273,15 @@ export function EvalRunDetailRoute() {
                   }
                 />
               ) : null}
+              <MetaChip
+                label="Scenario"
+                value={labels.scenarioName}
+                tone="neutral"
+                ariaLabel={`Open Scenario ${labels.scenarioName}`}
+                onClick={() =>
+                  navigate(`/scenarios/${encodeURIComponent(detail.summary.scenario_id)}`)
+                }
+              />
             </div>
           </div>
 
@@ -441,6 +441,14 @@ function displayCost(summary: RunSummary, totalCostUsd: number | null): number |
 
 // ────────────────────────────────────────────────────────────────────────────
 
+// Unified Summary action-row button. Quiet at rest — soft #141414 border on the
+// elevated surface, semantic intent carried by text color — and the full accent
+// (border + tint) only emerges on hover. No loud colored outlines boxing each
+// label; the row reads as one toolbar rather than four competing chips. Tone
+// classes append on top of this base.
+const ACTION_BTN =
+  "inline-flex items-center gap-1.5 rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] transition-colors disabled:opacity-50";
+
 function SummaryCard({
   summary,
   equityCurve,
@@ -529,14 +537,14 @@ function SummaryCard({
               aria-label={`Stop eval run ${summary.id}`}
               onClick={onCancel}
               disabled={cancelling}
-              className="min-w-[16ch] rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
+              className={`${ACTION_BTN} text-warn hover:border-warn/40 hover:bg-warn/[0.08] hover:text-text`}
             >
               {cancelling ? "Stopping..." : "Stop eval"}
             </button>
           ) : null}
           <Link
             to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
-            className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-center text-[12px] text-info hover:border-info/50 hover:text-text"
+            className={`${ACTION_BTN} text-info hover:border-info/40 hover:text-text`}
           >
             View agent trace →
           </Link>
@@ -547,7 +555,7 @@ function SummaryCard({
               title={retryTooltip}
               onClick={onRetry}
               disabled={retrying}
-              className="min-w-[16ch] rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
+              className={`${ACTION_BTN} text-text-2 hover:border-info/40 hover:bg-info/[0.08] hover:text-info`}
             >
               {retrying ? retryInflightLabel : retryLabel}
             </button>
@@ -558,7 +566,7 @@ function SummaryCard({
               aria-label={`Download eval run ${summary.id} as JSON`}
               onClick={handleDownload}
               disabled={downloading}
-              className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
+              className={`${ACTION_BTN} text-text-2 hover:border-gold/40 hover:text-text`}
             >
               {downloading ? "Preparing JSON…" : "Download JSON"}
             </button>
@@ -568,7 +576,7 @@ function SummaryCard({
             aria-label={`Delete eval run ${summary.id}`}
             onClick={onDelete}
             disabled={deleting}
-            className="min-w-[16ch] rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
+            className={`${ACTION_BTN} text-text-3 hover:border-danger/40 hover:bg-danger/[0.08] hover:text-danger`}
           >
             {deleting ? "Deleting…" : "Delete"}
           </button>
@@ -626,7 +634,7 @@ function SummaryCard({
         <Stat
           label="NET %"
           value={summary.net_return_pct != null ? fmtPct(summary.net_return_pct) : "—"}
-          sub={`cost ${formatCostUsd(displayedCostUsd)}`}
+          sub={`token cost ${formatSpendUsd(displayedCostUsd)}`}
           tone={
             summary.net_return_pct == null
               ? "neu"
@@ -730,7 +738,7 @@ function MetaCard({
   const rows: [string, string][] = [
     ["mode", summary.mode],
     ["status", summary.status],
-    ["budget", formatCostUsd(displayedCostUsd)],
+    ["token cost", formatSpendUsd(displayedCostUsd)],
     ["tokens", fmtTokens(summary)],
     ["started", fmtTime(summary.started_at)],
     ["completed", summary.completed_at ? fmtTime(summary.completed_at) : "—"],

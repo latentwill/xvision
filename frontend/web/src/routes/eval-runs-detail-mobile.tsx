@@ -500,12 +500,6 @@ function MobileContextStrip({
         label={strategyName}
         idForAria={strategyId}
       />
-      <MobileContextPill
-        kind="Scenario"
-        to={`/scenarios/${encodeURIComponent(scenarioId)}`}
-        label={scenarioName}
-        idForAria={scenarioId}
-      />
       {agents.map((ref) => (
         <MobileContextPill
           key={`${ref.agent_id}:${ref.role}`}
@@ -515,6 +509,12 @@ function MobileContextStrip({
           idForAria={ref.agent_id}
         />
       ))}
+      <MobileContextPill
+        kind="Scenario"
+        to={`/scenarios/${encodeURIComponent(scenarioId)}`}
+        label={scenarioName}
+        idForAria={scenarioId}
+      />
     </div>
   );
 }
@@ -581,6 +581,13 @@ function MetaCard({
   );
 }
 
+// Mobile twin of the desktop ACTION_BTN base (see eval-runs-detail.tsx): one
+// quiet toolbar button — soft #141414 border on the elevated surface, accent
+// (border + tint) only on hover, no loud at-rest colored box. `py-1.5` keeps a
+// taller touch target than the desktop `py-1`. Tone classes append on top.
+const ACTION_BTN =
+  "inline-flex items-center justify-center gap-1.5 rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1.5 text-[12px] transition-colors disabled:opacity-50";
+
 function RunActions({
   summary,
   onRetry,
@@ -617,21 +624,20 @@ function RunActions({
   return (
     <div className="flex flex-col gap-2">
       {/*
-        `min-w-[16ch]` on each button gives a column floor that matches
-        the widest natural label ("Preparing JSON…" with padding) so
-        Retry / Download render at the same visual width on mobile.
-        Replaces a `grid auto-cols-fr` shell that didn't actually
-        equalize widths in the unconstrained inline-grid case. See
-        `qa-eval-inspector-buttons-actually-uniform`.
+        Content-sized buttons sharing ACTION_BTN read as one quiet toolbar
+        (matching the desktop SummaryCard row); `flex-wrap` lets the row
+        reflow on the narrowest phones rather than overflow. The earlier
+        `min-w-[16ch]` floor + loud colored borders made three chunky
+        competing boxes — removed in the QA30 inspector redesign.
       */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {canRetry && (
           <button
             type="button"
             aria-label={`Retry eval run ${summary.id}`}
             onClick={onRetry}
             disabled={retrying}
-            className="min-w-[16ch] rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1.5 text-[12px] text-info hover:border-info/70 hover:text-text disabled:opacity-50"
+            className={`${ACTION_BTN} text-text-2 hover:border-info/40 hover:bg-info/[0.08] hover:text-info`}
           >
             {retrying ? "Retrying..." : "Retry"}
           </button>
@@ -642,7 +648,7 @@ function RunActions({
             aria-label={`Download eval run ${summary.id} as JSON`}
             onClick={handleDownload}
             disabled={downloading}
-            className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1.5 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
+            className={`${ACTION_BTN} text-text-2 hover:border-gold/40 hover:text-text`}
           >
             {downloading ? "Preparing JSON…" : "Download JSON"}
           </button>
@@ -652,7 +658,7 @@ function RunActions({
           aria-label={`Delete eval run ${summary.id}`}
           onClick={onDelete}
           disabled={deleting}
-          className="min-w-[16ch] rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1.5 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
+          className={`${ACTION_BTN} text-text-3 hover:border-danger/40 hover:bg-danger/[0.08] hover:text-danger`}
         >
           {deleting ? "Deleting…" : "Delete"}
         </button>

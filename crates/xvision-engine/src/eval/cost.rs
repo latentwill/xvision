@@ -73,10 +73,11 @@ pub fn compute_token_cost_usd(input_tokens: u64, output_tokens: u64, model: &Mod
     Some(cost)
 }
 
-/// Convenience wrapper: look up the model by id in a `Catalog` first,
-/// then delegate to [`compute_token_cost_usd`]. Returns `None` when the
-/// model isn't in the catalog at all (e.g. an enabled-but-not-fetched
-/// id) — same "unknown" semantics so the caller can't mistake an
+/// Convenience wrapper: resolve the model id to a `Catalog` entry via
+/// [`resolve_priced_entry`] first, then delegate to
+/// [`compute_token_cost_usd`]. Returns `None` when the model can't be
+/// resolved (e.g. an enabled-but-not-fetched id, or an ambiguous match)
+/// — same "unknown" semantics so the caller can't mistake an
 /// out-of-cache model for a free one.
 pub fn compute_token_cost_usd_from_catalog(
     input_tokens: u64,
@@ -84,8 +85,81 @@ pub fn compute_token_cost_usd_from_catalog(
     model_id: &str,
     catalog: &Catalog,
 ) -> Option<f64> {
-    let entry = catalog.find(model_id)?;
+    let entry = resolve_priced_entry(model_id, catalog)?;
     compute_token_cost_usd(input_tokens, output_tokens, entry)
+}
+
+/// Resolve a model id to a catalog entry for *pricing*, tolerating the
+/// id-format gap between a model's executing provider and OpenRouter's
+/// `vendor/model` pricing ids. A strategy may run a slot directly
+/// against Anthropic (`claude-opus-4-7`) or OpenAI (`gpt-4o`) while the
+/// only catalog carrying a price is OpenRouter, where the same model is
+/// listed as `anthropic/claude-opus-4.7` / `openai/gpt-4o`. Exact-id
+/// lookup misses these, leaving `model_calls.cost_usd` NULL.
+///
+/// Resolution is deliberately conservative — a *wrong* price is worse
+/// than no price, so any ambiguity yields `None`:
+///   1. Exact id match (OpenRouter-native and same-provider case).
+///   2. Unique suffix match: the query equals the `<rest>` of exactly
+///      one `<vendor>/<rest>` entry (`gpt-4o` → `openai/gpt-4o`).
+///   3. Unique normalized match: lowercase + keep only `[a-z0-9]` on
+///      both the query and each entry's id (and its `<vendor>/`-stripped
+///      suffix), matching exactly one entry. Bridges punctuation drift
+///      like Anthropic's `claude-opus-4-7` ↔ OpenRouter's
+///      `anthropic/claude-opus-4.7`.
+///
+/// Whenever a step finds two or more candidates the function returns
+/// `None` rather than picking one — surfacing "unknown" is always
+/// preferable to billing the operator against the wrong model's rate.
+fn resolve_priced_entry<'a>(model_id: &str, catalog: &'a Catalog) -> Option<&'a ModelEntry> {
+    // 1. Exact id match — the common path for OpenRouter-sourced slots
+    //    and same-provider catalogs.
+    if let Some(entry) = catalog.find(model_id) {
+        return Some(entry);
+    }
+    // 2. Unique `<vendor>/<suffix>` match where suffix == query.
+    let mut suffix_hits = catalog.models.iter().filter(|m| id_suffix(&m.id) == model_id);
+    if let Some(first) = suffix_hits.next() {
+        if suffix_hits.next().is_none() {
+            return Some(first);
+        }
+        // Ambiguous suffix (same model name under multiple vendors) —
+        // refuse to guess.
+        return None;
+    }
+    // 3. Unique normalized match (punctuation-insensitive).
+    let want = normalize_model_id(model_id);
+    if want.is_empty() {
+        return None;
+    }
+    let mut norm_hits = catalog
+        .models
+        .iter()
+        .filter(|m| normalize_model_id(&m.id) == want || normalize_model_id(id_suffix(&m.id)) == want);
+    let first = norm_hits.next()?;
+    if norm_hits.next().is_some() {
+        return None; // ambiguous
+    }
+    Some(first)
+}
+
+/// The portion of an id after the last `/` — i.e. OpenRouter's
+/// `<vendor>/<model>` reduced to `<model>`. Ids without a slash are
+/// returned unchanged.
+fn id_suffix(id: &str) -> &str {
+    id.rsplit('/').next().unwrap_or(id)
+}
+
+/// Lowercase and strip every character that isn't `[a-z0-9]`. Collapses
+/// the `.` / `-` / `_` punctuation drift between provider-native model
+/// ids and OpenRouter's pricing ids without inventing a per-vendor alias
+/// table: `claude-opus-4-7` and `claude-opus-4.7` both become
+/// `claudeopus47`.
+fn normalize_model_id(id: &str) -> String {
+    id.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 /// Aggregate per-call `model_calls.cost_usd` for all model calls produced
@@ -247,6 +321,79 @@ mod tests {
         // whether to fall back to a provider-specific out-of-band path.
         assert_eq!(
             compute_token_cost_usd_from_catalog(10_000, 2_000, "deepseek/deepseek-v4-pro", &catalog),
+            None,
+        );
+    }
+
+    /// Build a priced OpenRouter-shaped entry for resolver tests.
+    fn priced(id: &str, in_usd: f64, out_usd: f64) -> ModelEntry {
+        ModelEntry {
+            id: id.into(),
+            display_name: None,
+            context_window: None,
+            max_output_tokens: None,
+            supports_reasoning: None,
+            supports_tools: None,
+            pricing_per_million_input_usd: Some(in_usd),
+            pricing_per_million_output_usd: Some(out_usd),
+            raw: Value::Null,
+        }
+    }
+
+    fn catalog_of(models: Vec<ModelEntry>) -> Catalog {
+        Catalog {
+            provider: "openrouter".into(),
+            fetched_at: Utc::now(),
+            source_url: "https://openrouter.ai/api/v1/models".into(),
+            models,
+        }
+    }
+
+    #[test]
+    fn resolves_bare_anthropic_id_to_openrouter_pricing() {
+        // A slot run directly against Anthropic emits the bare id
+        // `claude-opus-4-7`; OpenRouter prices it as
+        // `anthropic/claude-opus-4.7` (note `.` vs `-`). The normalized
+        // match bridges the punctuation gap so cost isn't lost.
+        let catalog = catalog_of(vec![openrouter_claude_opus_47()]);
+        let cost = compute_token_cost_usd_from_catalog(10_000, 2_000, "claude-opus-4-7", &catalog);
+        assert_eq!(cost, Some(0.30));
+    }
+
+    #[test]
+    fn resolves_bare_openai_id_by_unique_suffix() {
+        // `gpt-4o` (bare, from a direct OpenAI slot) → `openai/gpt-4o`
+        // by suffix, even with sibling `gpt-4o-mini` / `gpt-4o-2024-…`
+        // present (their suffixes differ, so no ambiguity).
+        let catalog = catalog_of(vec![
+            priced("openai/gpt-4o", 2.5, 10.0),
+            priced("openai/gpt-4o-mini", 0.15, 0.6),
+            priced("openai/gpt-4o-2024-08-06", 2.5, 10.0),
+        ]);
+        // 1_000_000 in @ $2.5/Mtok + 1_000_000 out @ $10/Mtok = $12.50
+        let cost = compute_token_cost_usd_from_catalog(1_000_000, 1_000_000, "gpt-4o", &catalog);
+        assert_eq!(cost, Some(12.5));
+    }
+
+    #[test]
+    fn resolver_refuses_ambiguous_suffix() {
+        // Same model name under two vendors → we cannot know which the
+        // operator ran, so refuse rather than bill the wrong rate.
+        let catalog = catalog_of(vec![
+            priced("vendora/llama-3-70b", 1.0, 1.0),
+            priced("vendorb/llama-3-70b", 99.0, 99.0),
+        ]);
+        assert_eq!(
+            compute_token_cost_usd_from_catalog(1_000, 1_000, "llama-3-70b", &catalog),
+            None,
+        );
+    }
+
+    #[test]
+    fn resolver_returns_none_for_unrelated_id() {
+        let catalog = catalog_of(vec![openrouter_claude_opus_47()]);
+        assert_eq!(
+            compute_token_cost_usd_from_catalog(1_000, 1_000, "some-unknown-model", &catalog),
             None,
         );
     }

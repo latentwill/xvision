@@ -373,12 +373,13 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     expect(meta.textContent ?? "").not.toMatch(/strategy mean-reversion-v3/);
   });
 
-  it("sizes every mobile action-row button at the same min-width floor", async () => {
+  it("renders the mobile action row as one quiet toolbar sharing the ACTION_BTN base", async () => {
     // Failed + terminal so all three actions (Retry + Download + Delete)
-    // render on the same row — the case where uneven widths are most
-    // visible. Each button must carry `min-w-[16ch]` so the operator
-    // sees a uniform row. Regression for the qa-review of PR #265:
-    // the Delete button was missing the min-width class on mobile.
+    // render on the same row. Each shares the quiet ACTION_BTN base — soft
+    // border on the elevated surface, accent only on hover — so the rest
+    // className begins with that prefix and carries no `min-w-[16ch]`
+    // floor or loud at-rest colored box (QA30 inspector redesign; replaces
+    // the prior uniform-min-width row from the PR #265 qa-review).
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
         summary: {
@@ -402,7 +403,10 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
       name: /delete eval run 01LIVE/i,
     });
     for (const button of [retry, download, del]) {
-      expect(button.className).toContain("min-w-[16ch]");
+      expect(button.className).toMatch(
+        /^inline-flex items-center justify-center gap-1\.5 rounded-sm border border-border-soft bg-surface-elev\b/,
+      );
+      expect(button.className).not.toContain("min-w-[16ch]");
     }
   });
 

@@ -23,9 +23,7 @@ use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::store::RunStore;
-use xvision_observability::{
-    AgentRunRecorder, RunEvent, RunEventBus, RunStartedEvent, SqliteRecorder,
-};
+use xvision_observability::{AgentRunRecorder, RunEvent, RunEventBus, RunStartedEvent, SqliteRecorder};
 
 async fn fk_on_pool() -> (SqlitePool, tempfile::TempDir) {
     // Temp-file SQLite — see eval_observability::setup_pool for the
@@ -99,12 +97,11 @@ async fn ensure_agent_run_baseline_creates_parent_with_fk_on() {
         .unwrap();
     assert_eq!(count, 1, "exactly one agent_runs row for the eval id");
 
-    let note_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM supervisor_notes WHERE run_id = ?")
-            .bind(&run_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let note_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM supervisor_notes WHERE run_id = ?")
+        .bind(&run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(note_count, 1, "supervisor_notes row must have landed");
 }
 

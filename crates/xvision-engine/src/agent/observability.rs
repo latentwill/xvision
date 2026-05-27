@@ -535,10 +535,7 @@ impl ObsEmitter {
             base.insert("asset".to_string(), serde_json::Value::String(a.to_string()));
         }
         if let Some(ts) = bar_ts {
-            base.insert(
-                "bar_ts".to_string(),
-                serde_json::Value::String(ts.to_rfc3339()),
-            );
+            base.insert("bar_ts".to_string(), serde_json::Value::String(ts.to_rfc3339()));
         }
         if let Some(p) = mark_price {
             if let Some(n) = serde_json::Number::from_f64(p) {

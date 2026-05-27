@@ -8,7 +8,7 @@ import { agentKeys, listAgents } from "@/api/agents";
 import { scenarioKeys, listScenarios } from "@/api/scenarios";
 import { evalKeys, getRun as getEvalRun, listRuns } from "@/api/eval";
 import { useTraceDock } from "@/stores/trace-dock";
-import { formatCostUsd } from "@/lib/format";
+import { formatSpendUsd } from "@/lib/format";
 import { shortTag } from "@/lib/short-tag";
 import { spanColor } from "./span-colors";
 import {
@@ -277,7 +277,7 @@ export function StripDockSlot() {
     status: focusedTone,
     spans: summary.span_count,
     elapsed: isLive ? fmtElapsedSec(liveDurationSec) : fmtPostHoc(frozenDurationMs),
-    cost: formatCostUsd(summary.total_cost_usd),
+    cost: formatSpendUsd(summary.total_cost_usd),
     pnl: focusedPnl,
     currentSpan: liveChip,
   };
@@ -326,7 +326,7 @@ export function StripDockSlot() {
         // running cost figure for each concurrent eval at a glance.
         spans: "—",
         elapsed: fmtElapsedSec(sibElapsedSec),
-        cost: formatCostUsd(r.inference_cost_quote_total ?? null),
+        cost: formatSpendUsd(r.inference_cost_quote_total ?? null),
         pnl: formatPnlPct(r.total_return_pct ?? null),
       };
     });

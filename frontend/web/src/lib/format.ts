@@ -40,6 +40,22 @@ export function formatCostUsd(value: number | null | undefined): string {
 export const formatUsdCost = formatCostUsd;
 
 /**
+ * Token-cost ("spend") display for aggregate run/eval spend. Unlike
+ * `formatCostUsd`, a value of `0` (or null / negative) renders as "—"
+ * rather than "$0.00": across the cost path a zero aggregate means "no
+ * priced model call was recorded" — i.e. spend is *unknown*, not a
+ * genuine $0.00. Showing "—" matches the backend's "zero pricing =
+ * unknown" convention (`compute_token_cost_usd`,
+ * `aggregate_eval_run_inference_cost`) and avoids advertising a
+ * misleadingly precise zero. Any positive amount delegates to
+ * `formatCostUsd` so the precision rules stay in one place.
+ */
+export function formatSpendUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return "—";
+  return formatCostUsd(value);
+}
+
+/**
  * Full-precision USD string for tooltips. Renders up to 12 fraction
  * digits with trailing zeros trimmed so the operator can confirm the
  * exact paid amount on hover (e.g. "$0.00000123" rather than guessing
