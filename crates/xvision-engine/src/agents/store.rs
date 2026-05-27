@@ -637,6 +637,11 @@ mod tests {
         // path needs the column to exist.
         let migration_036 = include_str!("../../migrations/036_agents_scope_strategy_id.sql");
         sqlx::query(migration_036).execute(&pool).await.unwrap();
+        // 047 adds agent_slots.max_wall_ms (QA30 follow-on per-slot
+        // wall-clock budget). AgentStore::insert_slot writes the column
+        // on every save; the read path projects `0` back to `None`.
+        let migration_047 = include_str!("../../migrations/047_agent_slot_max_wall_ms.sql");
+        sqlx::query(migration_047).execute(&pool).await.unwrap();
         pool
     }
 
@@ -817,6 +822,45 @@ mod tests {
             .unwrap();
         let loaded = store.get(&id).await.unwrap().expect("exists");
         assert_eq!(loaded.slots[0].max_tokens, None);
+    }
+
+    #[tokio::test]
+    async fn max_wall_ms_round_trips_and_zero_is_unset() {
+        let store = AgentStore::new(fresh_pool().await);
+        let id = store
+            .create(NewAgent {
+                name: "wall-budget".to_string(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    max_wall_ms: Some(30_000),
+                    ..sample_slot()
+                }],
+                scope_strategy_id: None,
+            })
+            .await
+            .unwrap();
+
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].max_wall_ms, Some(30_000));
+
+        store
+            .update(
+                &id,
+                UpdateAgent {
+                    slots: Some(vec![AgentSlot {
+                        max_wall_ms: Some(0),
+                        ..sample_slot()
+                    }]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .expect("exists");
+
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].max_wall_ms, None);
     }
 
     #[tokio::test]

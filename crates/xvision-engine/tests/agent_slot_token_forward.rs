@@ -41,6 +41,13 @@ fn slot_with(max_tokens: Option<u32>, temperature: Option<f64>) -> AgentSlot {
     }
 }
 
+fn slot_with_wall(max_wall_ms: Option<u32>) -> AgentSlot {
+    AgentSlot {
+        max_wall_ms,
+        ..slot_with(None, None)
+    }
+}
+
 fn req_from(resolved_max: Option<u32>, resolved_temp: Option<f64>) -> LlmRequest {
     LlmRequest {
         model: "deepseek/deepseek-v4-flash".into(),
@@ -145,4 +152,27 @@ fn sentinel_zero_max_tokens_resolves_to_none() {
     let slot = slot_with(Some(0), None);
     let resolved = resolve_agent_slot("trader", &slot, "");
     assert_eq!(resolved.max_tokens, None);
+}
+
+#[test]
+fn slot_max_wall_ms_round_trips_through_resolve_agent_slot() {
+    let slot = slot_with_wall(Some(30_000));
+    let resolved = resolve_agent_slot("trader", &slot, "");
+
+    assert_eq!(
+        resolved.max_wall_ms,
+        Some(30_000),
+        "resolved slot must carry the operator's max_wall_ms verbatim",
+    );
+}
+
+#[test]
+fn sentinel_zero_max_wall_ms_resolves_to_none() {
+    let slot = slot_with_wall(Some(0));
+    let resolved = resolve_agent_slot("trader", &slot, "");
+
+    assert_eq!(
+        resolved.max_wall_ms, None,
+        "max_wall_ms=0 is the SQLite unset sentinel and must resolve to None",
+    );
 }

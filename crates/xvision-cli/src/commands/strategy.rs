@@ -2438,7 +2438,7 @@ async fn resolve_agent_slots_for_cli(
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             system_prompt: slot.system_prompt.clone(),
             max_tokens: slot.resolve_max_tokens(),
-            max_wall_ms: None,
+            max_wall_ms: slot.resolve_max_wall_ms(),
             temperature: slot.temperature,
             inputs_policy: slot.inputs_policy,
             bar_history_limit: slot.bar_history_limit,

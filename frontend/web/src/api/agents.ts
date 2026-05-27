@@ -21,6 +21,10 @@ export type AgentSlot = {
   /// metadata table (q15 §1). A number is honored verbatim, clamped to
   /// the model's per-request ceiling server-side.
   max_tokens: number | null;
+  /// Optional per-step wall-clock budget for the Cline runtime,
+  /// measured in milliseconds. `null` means no enforcement; the
+  /// SlotForm UI accepts seconds and converts to this wire unit.
+  max_wall_ms?: number | null;
   /// Optional cap on the number of `bar_history` entries the eval
   /// executor surfaces to the trader LLM at each decision. `null`
   /// preserves today's behavior — the full `warmup_bars`-sized history
