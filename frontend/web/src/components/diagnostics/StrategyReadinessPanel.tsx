@@ -14,6 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
+import { agentKeys, listAgents } from "@/api/agents";
 import {
   diagnosticsKeys,
   getStrategyDiagnostics,
@@ -36,6 +37,23 @@ export function StrategyReadinessPanel({
     queryFn: () => getStrategyDiagnostics(strategyId),
     enabled: strategyId.length > 0,
   });
+  // QA31: surface each agent's primary slot model alongside the
+  // readiness rows. The diagnostics endpoint doesn't carry the model
+  // (it's strictly about capability satisfaction), so we fetch the
+  // workspace agent list — cached aggressively because names + models
+  // rarely change — and project a (agent_id → model display) map.
+  const agentsQ = useQuery({
+    queryKey: agentKeys.list(undefined),
+    queryFn: () => listAgents(),
+    staleTime: 60_000,
+  });
+  const agentModelById = new Map<string, string>();
+  const agentProviderById = new Map<string, string>();
+  for (const a of agentsQ.data ?? []) {
+    const firstSlot = a.slots[0];
+    if (firstSlot?.model) agentModelById.set(a.agent_id, firstSlot.model);
+    if (firstSlot?.provider) agentProviderById.set(a.agent_id, firstSlot.provider);
+  }
 
   if (q.isPending) {
     return (
@@ -125,13 +143,26 @@ export function StrategyReadinessPanel({
       </Card>
 
       {d.per_agent.map((a, i) => (
-        <AgentReadinessCard key={`${a.role}-${a.agent_id}-${i}`} agent={a} />
+        <AgentReadinessCard
+          key={`${a.role}-${a.agent_id}-${i}`}
+          agent={a}
+          model={agentModelById.get(a.agent_id) ?? null}
+          provider={agentProviderById.get(a.agent_id) ?? null}
+        />
       ))}
     </div>
   );
 }
 
-function AgentReadinessCard({ agent }: { agent: StrategyAgentDiagnostics }) {
+function AgentReadinessCard({
+  agent,
+  model,
+  provider,
+}: {
+  agent: StrategyAgentDiagnostics;
+  model: string | null;
+  provider: string | null;
+}) {
   return (
     <Card
       className="px-5 py-4"
@@ -152,6 +183,28 @@ function AgentReadinessCard({ agent }: { agent: StrategyAgentDiagnostics }) {
           </Pill>
         )}
       </div>
+      {/*
+        QA31: surface the agent's bound model as a first-class row at the
+        top of the card. Previously the model lived only inside the
+        agent editor — operators had to navigate away to see what the
+        strategy was actually about to run. The "MODEL" pill style
+        deliberately stands out so it's the first thing the eye lands
+        on when scanning the readiness section.
+      */}
+      {model ? (
+        <div
+          className="mb-3 flex items-center gap-2 rounded border border-gold/40 bg-gold/[0.06] px-3 py-2"
+          data-testid={`agent-model-${agent.role}`}
+        >
+          <span className="text-[10px] uppercase tracking-[0.14em] font-semibold text-gold">
+            Model
+          </span>
+          <span className="text-[13px] font-mono text-text">{model}</span>
+          {provider ? (
+            <span className="text-[11px] text-text-3">· {provider}</span>
+          ) : null}
+        </div>
+      ) : null}
       <ul className="flex flex-col gap-2 m-0 p-0 list-none">
         {agent.capabilities.map((line) => {
           const blocked = line.required && isBlocker(line.status);

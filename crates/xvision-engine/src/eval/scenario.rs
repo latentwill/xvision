@@ -490,6 +490,38 @@ pub struct VenueSettings {
     pub overrides: Vec<VenueOverride>,
 }
 
+impl Default for VenueSettings {
+    /// QA31: a sensible default so `CreateScenarioRequest` can use
+    /// `#[serde(default)]` on the `venue` field. Mirrors the JSON shape
+    /// the wizard normalizer's `default_venue_json` produces — Alpaca,
+    /// 0/10 bps maker/taker fees, linear 2 bps slippage, 500 ms
+    /// decision-to-fill latency, next-bar-open market fills,
+    /// limit-orders never fill, no partial fills, no volume constraint.
+    /// Chat-agent callers (Gemini Flash etc.) that omit `venue` would
+    /// otherwise hit a serde "missing field" error and the wizard's
+    /// 12-iteration retry loop.
+    fn default() -> Self {
+        VenueSettings {
+            venue: Venue::Alpaca,
+            fees: Fees {
+                maker_bps: 0,
+                taker_bps: 10,
+            },
+            slippage: SlippageModel::Linear { bps: 2 },
+            latency: LatencyModel {
+                decision_to_fill_ms: 500,
+            },
+            fill_model: FillModel {
+                market_order_fill: MarketOrderFill::NextBarOpen,
+                limit_order_fill: LimitOrderFill::NeverFills,
+                partial_fills: false,
+                volume_constraints: None,
+            },
+            overrides: Vec::new(),
+        }
+    }
+}
+
 /// Per-asset cost override matched by a glob pattern on the venue symbol
 /// (e.g. `"BTC/USD"`, `"*USD"`, `"NVDA*"`).
 ///

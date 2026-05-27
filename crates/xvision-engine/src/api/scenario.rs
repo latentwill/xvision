@@ -47,6 +47,15 @@ pub struct CreateScenarioRequest {
     pub granularity: BarGranularity,
     pub timezone: String,
     pub calendar: CalendarRef,
+    /// QA31: chat-agent callers (Gemini Flash etc.) repeatedly omit
+    /// `venue` because the tool schema declares it as required but its
+    /// shape is opaque to the model. Default to a sensible Alpaca
+    /// preset (matches `VenueSettings::default()` and the wizard
+    /// normalizer's `default_venue_json`) so the request deserializes
+    /// even when the caller didn't supply it. The wizard normalizer
+    /// still pre-fills the field where it can; this is the
+    /// belt-and-suspenders fallback.
+    #[serde(default)]
     pub venue: VenueSettings,
     pub data_source: DataSource,
     pub replay_mode: ReplayMode,

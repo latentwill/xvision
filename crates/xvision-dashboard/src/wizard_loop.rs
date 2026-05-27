@@ -90,7 +90,15 @@ const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// Cap on tool-use → tool-result iterations per `next_event` call. Prevents
 /// a misbehaving model from looping forever; v1 wizards never need more
 /// than 3-4 round trips per user turn.
-const MAX_TOOL_LOOP_ITERATIONS: usize = 12;
+///
+/// QA31: was 12 — operators saw the chat rail flood with up to 12 retry
+/// chips when the model fixated on a missing-field error (the
+/// `create_scenario → missing field venue` repro). The streak guard
+/// (`MAX_TOOL_FAILURE_STREAK`) usually catches sooner, but multi-tool
+/// turns where another tool succeeds reset the streak between same-tool
+/// failures. 6 is a tighter ceiling that still leaves headroom for
+/// healthy 3-4 round-trip workflows.
+const MAX_TOOL_LOOP_ITERATIONS: usize = 6;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1052,6 +1060,44 @@ impl WizardLoop {
                     "tool_use_id": id,
                     "content": result_value.to_string(),
                 }));
+                // QA31: check the streak guard PER TOOL within the turn,
+                // not just at the end of the turn. Previously a multi-tool
+                // turn like [create_scenario → fail, set_filter → ok]
+                // ended with `tool_failure_streak = 0` (the success
+                // cleared it), so the outer guard never saw the
+                // create_scenario failure. Moving the probe inside lets
+                // us catch a same-tool repeat as soon as it happens.
+                if self.tool_failure_streak >= MAX_TOOL_FAILURE_STREAK {
+                    // Persist the partial tool_results we've already
+                    // collected (the prior tool_uses in this turn) so
+                    // the chat history doesn't lose them when we bail
+                    // early.
+                    ChatSessionStore::append(
+                        &self.pool,
+                        &self.session_id,
+                        "user",
+                        &tool_result_blocks,
+                    )
+                    .await?;
+                    if !rich_blocks.is_empty() {
+                        ChatSessionStore::append(
+                            &self.pool,
+                            &self.session_id,
+                            "assistant",
+                            &rich_blocks,
+                        )
+                        .await?;
+                        for block in std::mem::take(&mut rich_blocks) {
+                            self.pending.push(WizardEvent::ContentBlock { block });
+                        }
+                    }
+                    self.emit_tool_loop_break().await?;
+                    self.is_done = true;
+                    self.pending.push(WizardEvent::Done {
+                        draft_id: self.last_draft_id.clone(),
+                    });
+                    return Ok(());
+                }
             }
             ChatSessionStore::append(&self.pool, &self.session_id, "user", &tool_result_blocks).await?;
             if !rich_blocks.is_empty() {
@@ -3003,10 +3049,15 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "parent_scenario_id": {"type": ["string", "null"]},
                     "source": {"type": "string"}
                 },
+                // QA31: `venue` removed from required. `CreateScenarioRequest`
+                // now `#[serde(default)]`s the field to a sensible Alpaca
+                // preset, so chat agents (Gemini Flash, etc.) that don't
+                // know the inner shape don't get stuck in the 12-iteration
+                // retry loop on `missing field venue`.
                 "required": [
                     "display_name", "description", "asset_class",
                     "quote_currency", "time_window", "capital", "granularity",
-                    "timezone", "calendar", "venue", "data_source",
+                    "timezone", "calendar", "data_source",
                     "replay_mode", "tags", "source"
                 ]
             }),
