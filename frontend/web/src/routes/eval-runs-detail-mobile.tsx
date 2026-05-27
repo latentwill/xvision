@@ -5,6 +5,8 @@ import { ApiError } from "@/api/client";
 import { downloadEvalRunExport } from "@/api/eval";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
+import { FilterSummaryPanel } from "@/features/eval-runs/FilterSummaryPanel";
+import { FilterEventTimeline } from "@/features/eval-runs/FilterEventTimeline";
 import {
   derivePriorSideByDecision,
   type PositionSide,
@@ -138,7 +140,7 @@ export function MobileEvalRunDetail({
             deleting={deleting}
           />
         )}
-        {tab === "DECISIONS" && <DecisionsTab decisions={detail.decisions} />}
+        {tab === "DECISIONS" && <DecisionsTab detail={detail} />}
         {tab === "TRACE" && (
           <TraceTab summary={summary} labels={labels} spanCount={detail.decisions.length} />
         )}
@@ -738,7 +740,8 @@ function EquityCard({
 
 // ── DECISIONS tab ──────────────────────────────────────────────────
 
-function DecisionsTab({ decisions }: { decisions: DecisionRowDto[] }) {
+function DecisionsTab({ detail }: { detail: RunDetail }) {
+  const { decisions } = detail;
   const tradeCount = useMemo(
     () => decisions.filter((d) => d.pnl_realized != null).length,
     [decisions],
@@ -767,6 +770,11 @@ function DecisionsTab({ decisions }: { decisions: DecisionRowDto[] }) {
       <div className={`${MONO_TINY} text-text-3 px-1`}>
         {decisions.length} STEPS · {tradeCount} TRADES
       </div>
+      <FilterSummaryPanel summaries={detail.filter_summaries ?? []} />
+      <FilterEventTimeline
+        events={detail.filter_events ?? []}
+        title="Filter timeline"
+      />
       {decisions.map((d) => (
         <DecisionCard
           key={d.decision_index}

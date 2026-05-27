@@ -253,7 +253,7 @@ export function DecisionTimeline({
                           : "var(--text)",
                 }}
               >
-                {hover.d.phase === "filtered" ? "FILTERED" : hover.d.action}
+                {hover.d.phase === "filtered" ? "NO-OP" : hover.d.action}
               </span>
               {hover.d.conv != null && hover.d.phase !== "filtered" && (
                 <>

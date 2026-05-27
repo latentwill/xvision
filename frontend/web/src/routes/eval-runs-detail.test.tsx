@@ -393,9 +393,9 @@ describe("EvalRunDetailRoute", () => {
 
     renderDetail();
 
-    // One engaged (the breakout) + two filtered (the synthesized rows).
+    // One engaged (the breakout) + two no-op (the synthesized rows).
     expect((await screen.findAllByText("ENGAGED")).length).toBe(1);
-    expect(screen.getAllByText("FILTERED").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("NO-OP").length).toBeGreaterThanOrEqual(2);
   });
 
   it("dims filtered rows and dashes out their engaged-only cells", async () => {
@@ -418,10 +418,10 @@ describe("EvalRunDetailRoute", () => {
 
     renderDetail();
 
-    const filteredChip = await screen.findByText("FILTERED");
+    const filteredChip = await screen.findByText("NO-OP");
     const row = filteredChip.closest("tr");
     expect(row).not.toBeNull();
-    // Filtered rows render at reduced opacity (0.78) and replace engaged-only
+    // No-op rows render at reduced opacity (0.78) and replace engaged-only
     // cells with em dashes.
     expect(row?.getAttribute("style") ?? "").toMatch(/opacity:\s*0\.78/);
     expect((row?.querySelectorAll("td") ?? [])).not.toHaveLength(0);
