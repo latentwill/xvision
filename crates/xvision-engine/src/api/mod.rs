@@ -1215,7 +1215,18 @@ async fn rebuild_agent_runs_fk(pool: &SqlitePool) -> ApiResult<()> {
     if !fk_targets_old_eval_runs(pool, "agent_runs", "eval_run_id").await? {
         return Ok(());
     }
-    run_fk_rebuild(pool, "rebuild_agent_runs_fk", |pool| async move {
+    // This FK rebuild must NOT assume columns added by a LATER migration exist
+    // on the source table. On a cold (from-scratch) boot the apply order is
+    // this 038 repoint → 039 `trajectory_mode` (`migrate_run_trajectory_mode`),
+    // so the source `agent_runs` predates the four 039 columns
+    // (`trajectory_mode` / `replay_hit_ratio` / `dropped_events` /
+    // `recovery_reason`). Copy them only when present; otherwise omit them and
+    // let `agent_runs_new`'s column DEFAULTs fill them (the later 039 apply is a
+    // guarded no-op). On an already-migrated (warm) DB the columns exist and
+    // their values are preserved. The four 039 columns are added atomically, so
+    // `trajectory_mode` is a sufficient probe for all four.
+    let copy_trajectory_cols = table_has_column(pool, "agent_runs", "trajectory_mode").await?;
+    run_fk_rebuild(pool, "rebuild_agent_runs_fk", move |pool| async move {
         let mut tx = pool.begin().await?;
         sqlx::query(
             "CREATE TABLE agent_runs_new (
@@ -1249,7 +1260,10 @@ async fn rebuild_agent_runs_fk(pool: &SqlitePool) -> ApiResult<()> {
 
         // Null out eval_run_ids that don't resolve in the live `eval_runs`
         // (only possible if 038's DROP ran and rows existed only in the shell).
-        sqlx::query(
+        // Copy the trailing 039 trajectory columns only when the source has
+        // them (see `copy_trajectory_cols` above); otherwise omit them so the
+        // new table's DEFAULTs apply.
+        let insert_sql = if copy_trajectory_cols {
             "INSERT INTO agent_runs_new
                 (id, objective, strategy_id, eval_run_id, source_cli_job_id,
                  status, started_at, finished_at, retention_mode,
@@ -1271,10 +1285,30 @@ async fn rebuild_agent_runs_fk(pool: &SqlitePool) -> ApiResult<()> {
                 skills_json, mcp_servers_json, otel_trace_id,
                 final_artifact_id, error, trajectory_mode, replay_hit_ratio,
                 dropped_events, recovery_reason
-             FROM agent_runs",
-        )
-        .execute(&mut *tx)
-        .await?;
+             FROM agent_runs"
+        } else {
+            "INSERT INTO agent_runs_new
+                (id, objective, strategy_id, eval_run_id, source_cli_job_id,
+                 status, started_at, finished_at, retention_mode,
+                 sidecar_version, cline_sdk_version, protocol_version,
+                 skills_json, mcp_servers_json, otel_trace_id,
+                 final_artifact_id, error)
+             SELECT
+                id, objective, strategy_id,
+                CASE
+                    WHEN eval_run_id IS NULL THEN NULL
+                    WHEN EXISTS (SELECT 1 FROM eval_runs WHERE id = agent_runs.eval_run_id)
+                        THEN eval_run_id
+                    ELSE NULL
+                END,
+                source_cli_job_id,
+                status, started_at, finished_at, retention_mode,
+                sidecar_version, cline_sdk_version, protocol_version,
+                skills_json, mcp_servers_json, otel_trace_id,
+                final_artifact_id, error
+             FROM agent_runs"
+        };
+        sqlx::query(insert_sql).execute(&mut *tx).await?;
 
         sqlx::query("DROP TABLE agent_runs").execute(&mut *tx).await?;
         sqlx::query("ALTER TABLE agent_runs_new RENAME TO agent_runs")
