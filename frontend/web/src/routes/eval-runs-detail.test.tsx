@@ -479,7 +479,7 @@ describe("EvalRunDetailRoute", () => {
     expect(meta.textContent ?? "").not.toMatch(/scenario btc-4h/);
   });
 
-  it("renders the action-row buttons at uniform widths via per-button min-w", async () => {
+  it("renders the action-row buttons as one quiet toolbar sharing the ACTION_BTN base", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
         summary: {
@@ -498,15 +498,21 @@ describe("EvalRunDetailRoute", () => {
     // same row (Delete added by qa-eval-action-lifecycle / #260).
     const buttons = actions.querySelectorAll("button");
     expect(buttons.length).toBe(3);
-    // Each button carries the same min-width floor so they read at
-    // uniform widths regardless of label length. The previous
-    // `grid grid-flow-col auto-cols-fr` shell (PR #255) did NOT
-    // equalize widths in an unconstrained inline-grid (`1fr`
-    // collapses to content size when there's no fixed container
-    // width), so the operator still saw uneven buttons — see
-    // `qa-eval-inspector-buttons-actually-uniform`.
+    // The action row reads as one quiet toolbar: every button shares the
+    // ACTION_BTN base (soft #141414 border on the elevated surface, accent
+    // only on hover). The earlier design forced a `min-w-[16ch]` uniform
+    // floor + loud colored borders, which read as four chunky competing
+    // boxes; that was deliberately removed in favor of content-sized
+    // buttons with a shared base. Assert the shared base is present and the
+    // old hard colored outlines are gone.
     for (const button of Array.from(buttons)) {
-      expect(button.className).toContain("min-w-[16ch]");
+      // Rest state is the shared quiet base — soft border on the elevated
+      // surface. Accent borders/tints are hover-only, so the rest className
+      // begins with this exact prefix and never carries a loud at-rest box.
+      expect(button.className).toMatch(
+        /^inline-flex items-center gap-1\.5 rounded-sm border border-border-soft bg-surface-elev\b/,
+      );
+      expect(button.className).not.toContain("min-w-[16ch]");
     }
   });
 

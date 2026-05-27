@@ -2283,7 +2283,96 @@ async fn load_provider_catalogs(
             out.insert(p.name.clone(), cat);
         }
     }
+    // Token cost is priced from OpenRouter (the only catalog that
+    // publishes per-token pricing). Slots that run directly against
+    // Anthropic / OpenAI would otherwise leave `model_calls.cost_usd`
+    // NULL, so ensure an OpenRouter pricing reference is loaded even when
+    // OpenRouter isn't a configured execution provider.
+    ensure_openrouter_pricing(&svc, &mut out).await;
     out
+}
+
+/// Best-effort: guarantee an OpenRouter pricing catalog is present in
+/// `out` so token cost can be computed even for slots that run against a
+/// non-OpenRouter provider. OpenRouter's `/api/v1/models` is public — no
+/// key required — so it works as a pricing reference regardless of which
+/// providers the operator configured for *execution*.
+///
+/// Strictly best-effort and bounded:
+///   - If a fresh OpenRouter catalog is already loaded (configured
+///     execution provider) or freshly cached on disk, use it — no
+///     network.
+///   - Only when the cache is missing or stale do we attempt one network
+///     fetch under a hard timeout.
+///   - On any timeout / error, fall back to whatever (possibly stale)
+///     catalog is cached on disk, or nothing.
+///
+/// A run must never hang or fail because pricing was unavailable — in
+/// the worst case `model_calls.cost_usd` stays NULL and the UI shows
+/// "unknown" rather than a wrong or zero number. The on-disk cache (24h
+/// TTL) makes the network fetch a once-per-TTL cost, not per-run.
+async fn ensure_openrouter_pricing(
+    svc: &crate::providers::CatalogService,
+    out: &mut std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
+) {
+    use std::time::Duration;
+
+    // Bound the cold-fetch so a slow/unreachable OpenRouter can't slow a
+    // run by more than this.
+    const FETCH_BUDGET: Duration = Duration::from_secs(15);
+
+    let now = chrono::Utc::now();
+    let is_fresh = |c: &xvision_core::providers::Catalog| {
+        c.source_url.contains("openrouter.ai")
+            && !crate::providers::is_stale(c, crate::providers::DEFAULT_TTL, now)
+    };
+
+    // 1. A fresh OpenRouter catalog already loaded as a configured
+    //    execution provider (under any name)? Nothing to do.
+    if out.values().any(|c| is_fresh(c)) {
+        return;
+    }
+
+    // Keyless reference entry pointed at the canonical public endpoint.
+    // Pricing needs no auth, so we deliberately don't depend on an
+    // operator having configured an OpenRouter provider or set a key.
+    let entry = ProviderEntry {
+        name: "openrouter".to_string(),
+        kind: ProviderKind::OpenaiCompat,
+        base_url: "https://openrouter.ai/api/v1".to_string(),
+        api_key_env: String::new(),
+        enabled_models: Vec::new(),
+    };
+
+    // 2. Fresh on-disk cache under our reference name? Use it — no
+    //    network. (refresh() always hits the network, so the staleness
+    //    gate lives here, not in get_or_load.)
+    if let Ok(Some(cached)) = svc.get_or_load(&entry.name).await {
+        if !crate::providers::is_stale(&cached, crate::providers::DEFAULT_TTL, now) {
+            out.insert(entry.name.clone(), cached);
+            return;
+        }
+    }
+
+    // 3. Missing or stale — attempt one bounded refresh, falling back to
+    //    a stale cache (or nothing) on failure.
+    match tokio::time::timeout(FETCH_BUDGET, svc.refresh(&entry)).await {
+        Ok(Ok(cat)) => {
+            out.insert(entry.name.clone(), cat);
+        }
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "openrouter pricing refresh failed; using cached if any");
+            if let Ok(Some(cat)) = svc.get_or_load(&entry.name).await {
+                out.entry(entry.name.clone()).or_insert(cat);
+            }
+        }
+        Err(_elapsed) => {
+            tracing::debug!("openrouter pricing refresh timed out; using cached if any");
+            if let Ok(Some(cat)) = svc.get_or_load(&entry.name).await {
+                out.entry(entry.name.clone()).or_insert(cat);
+            }
+        }
+    }
 }
 
 /// Testable / deps-injecting variant of `run`. Tests pass a
@@ -2568,9 +2657,7 @@ async fn run_inner(
             rec.finalize(false, recording_persist_failed(&recording_client))
                 .await;
         }
-        return Err(ApiError::Internal(format!(
-            "ensure agent_runs baseline: {e}"
-        )));
+        return Err(ApiError::Internal(format!("ensure agent_runs baseline: {e}")));
     }
     // Persist the per-launch override receipt as soon as the run row
     // exists. We write it here (not only in the outer `run` wrapper) so

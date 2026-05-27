@@ -743,11 +743,7 @@ impl RunStore {
     /// * The CLI and most tests run without an obs bus at all, so
     ///   without this synchronous seed there is no parent row to
     ///   write notes against.
-    pub async fn ensure_agent_run_baseline(
-        &self,
-        run_id: &str,
-        retention_mode: &str,
-    ) -> Result<()> {
+    pub async fn ensure_agent_run_baseline(&self, run_id: &str, retention_mode: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT OR IGNORE INTO agent_runs \
