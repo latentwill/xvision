@@ -40,11 +40,12 @@ export function StrategyReadinessPanel({
   // QA31: surface each agent's primary slot model alongside the
   // readiness rows. The diagnostics endpoint doesn't carry the model
   // (it's strictly about capability satisfaction), so we fetch the
-  // workspace agent list — cached aggressively because names + models
-  // rarely change — and project a (agent_id → model display) map.
+  // strategy-scoped agent list — cached aggressively because names +
+  // models rarely change — and project a (agent_id → model display) map.
   const agentsQ = useQuery({
-    queryKey: agentKeys.list(undefined),
-    queryFn: () => listAgents(),
+    queryKey: agentKeys.list({ scope: strategyId }),
+    queryFn: () => listAgents({ scope: strategyId }),
+    enabled: strategyId.length > 0,
     staleTime: 60_000,
   });
   const agentModelById = new Map<string, string>();

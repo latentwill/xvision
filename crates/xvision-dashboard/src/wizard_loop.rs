@@ -91,14 +91,10 @@ const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// a misbehaving model from looping forever; v1 wizards never need more
 /// than 3-4 round trips per user turn.
 ///
-/// QA31: was 12 — operators saw the chat rail flood with up to 12 retry
-/// chips when the model fixated on a missing-field error (the
-/// `create_scenario → missing field venue` repro). The streak guard
-/// (`MAX_TOOL_FAILURE_STREAK`) usually catches sooner, but multi-tool
-/// turns where another tool succeeds reset the streak between same-tool
-/// failures. 6 is a tighter ceiling that still leaves headroom for
-/// healthy 3-4 round-trip workflows.
-const MAX_TOOL_LOOP_ITERATIONS: usize = 6;
+/// Keep enough headroom for legitimate multi-step authoring turns while
+/// relying on the repeated same-tool/same-error streak guard below to stop
+/// noisy failure loops early.
+const MAX_TOOL_LOOP_ITERATIONS: usize = 12;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
