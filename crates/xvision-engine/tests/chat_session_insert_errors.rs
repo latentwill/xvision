@@ -42,7 +42,9 @@
 
 use std::{str::FromStr, time::Duration};
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
+};
 use sqlx::SqlitePool;
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 
@@ -75,6 +77,34 @@ async fn file_pool_with_short_busy_timeout() -> (SqlitePool, tempfile::TempDir) 
         .busy_timeout(Duration::from_millis(1));
     let pool = SqlitePoolOptions::new()
         .max_connections(2)
+        .connect_with(opts)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/003_chat_sessions.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    (pool, td)
+}
+
+/// File-backed pool configured exactly like the production `xvn.db` pool
+/// (`ApiContext::open`): WAL journaling + non-zero `busy_timeout` + a bounded
+/// connection cap. This is the shape under which the `wait_ms=0`
+/// SQLITE_BUSY_SNAPSHOT cluster occurred — WAL lets a concurrent writer commit
+/// while a deferred reader holds its snapshot, so the read→write upgrade fails
+/// immediately and `busy_timeout` can't rescue it.
+async fn wal_file_pool() -> (SqlitePool, tempfile::TempDir) {
+    let td = tempfile::tempdir().unwrap();
+    let db_path = td.path().join("chat.sqlite");
+    let opts = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(10))
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(8)
         .connect_with(opts)
         .await
         .unwrap();
@@ -246,12 +276,65 @@ async fn append_error_includes_sqlite_busy_label_when_writer_lock_is_held() {
         .await
         .expect_err("held writer transaction must force SQLITE_BUSY on append");
     let msg = err.to_string();
+    // With the `BEGIN IMMEDIATE` fix the write lock is taken up front, so a
+    // held writer surfaces SQLITE_BUSY at the begin step rather than the
+    // INSERT. The contract is unchanged: the error must still name the
+    // SQLite class inline rather than swallowing it.
     assert!(
-        msg.contains("insert chat_messages row: database is locked (SQLITE_BUSY)"),
+        msg.contains("database is locked (SQLITE_BUSY)"),
         "append error must include the inline SQLITE_BUSY label; got: {msg}"
     );
 
     tx.rollback().await.unwrap();
+}
+
+/// Regression for the `wait_ms=0` "database is locked (SQLITE_BUSY)" stream
+/// errors (2026-05-27 session, eval-run chat thread). `append` is a
+/// read-modify-write: `SELECT MAX(seq)+1` → `INSERT` → `UPDATE`. Run as a
+/// *deferred* transaction (sqlx's `pool.begin()`), the SELECT takes a read
+/// snapshot and the INSERT must upgrade to a writer. Under WAL a concurrent
+/// writer can commit in that window, so the upgrade fails with
+/// SQLITE_BUSY_SNAPSHOT — returned immediately (`wait_ms=0`), which
+/// `busy_timeout` cannot rescue. Because `(session_id, seq)` is a non-unique
+/// index, the deferred form can also silently commit duplicate seqs.
+///
+/// `BEGIN IMMEDIATE` takes the write lock up front, serializing same-session
+/// appends so every one commits with a distinct, gap-free monotonic seq.
+///
+/// Pre-fix this panics (a dropped append) or fails the seq assertion (a
+/// duplicate/gap); post-fix all N appends commit with seqs `0..N`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_same_session_appends_all_commit_with_monotonic_seq() {
+    let (pool, _td) = wal_file_pool().await;
+    let sid = ChatSessionStore::create_session(&pool, &ContextScope::Workspace)
+        .await
+        .unwrap();
+
+    const N: i64 = 48;
+    let mut handles = Vec::new();
+    for i in 0..N {
+        let pool = pool.clone();
+        let sid = sid.clone();
+        handles.push(tokio::spawn(async move {
+            ChatSessionStore::append(&pool, &sid, "user", &[block(&format!("m{i}"))]).await
+        }));
+    }
+
+    let mut seqs = Vec::new();
+    for h in handles {
+        let msg = h
+            .await
+            .expect("task join")
+            .expect("every concurrent append must commit (no SQLITE_BUSY / seq collision)");
+        seqs.push(msg.seq);
+    }
+
+    seqs.sort_unstable();
+    let expected: Vec<i64> = (0..N).collect();
+    assert_eq!(
+        seqs, expected,
+        "concurrent appends must each get a distinct, gap-free monotonic seq"
+    );
 }
 
 /// Integration: after a rolled-back transaction that simulates a failed
