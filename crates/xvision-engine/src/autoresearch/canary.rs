@@ -14,7 +14,6 @@
 //! `passed_check` to use the new `GateVerdict::Fail { .. }` variant.
 
 use anyhow::Result;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::autoresearch::config::AutoresearchConfig;
@@ -24,6 +23,8 @@ use crate::autoresearch::mutator::Mutator;
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
+
+pub use crate::autoresearch::eval_adapter::PaperTestRunner;
 
 /// Minimal gate-input bundle for the honesty-check path.
 ///

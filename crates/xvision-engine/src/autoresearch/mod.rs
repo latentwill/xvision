@@ -22,6 +22,7 @@
 pub mod blob_store;
 pub mod canary;
 pub mod config;
+pub mod cycle;
 pub mod cycle_loosen;
 pub mod content_hash;
 pub mod eval_adapter;
@@ -38,11 +39,9 @@ pub mod seal;
 pub mod session;
 pub mod validator;
 
-// AR-1 public surface — confirmed against each submodule file.
-// Items from the plan draft that do not exist are omitted:
-//   blob_store::BlobStore (placeholder), config::{MutatorConfig,LooseningSchedule,DayWindow,BaselineUntouchedWindow},
-//   gate::{GateInput,evaluate}, program_view::from_markdown.
-pub use canary::{build_sabotaged_strategy, run_honesty_check, GateInput, HonestyCheckResult, PaperTestRunner};
+// AR-1/AR-2 public surface.
+// PaperTestRunner is canonical in eval_adapter; canary re-exports it.
+pub use canary::{build_sabotaged_strategy, run_honesty_check, GateInput, HonestyCheckResult};
 pub use config::AutoresearchConfig;
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
