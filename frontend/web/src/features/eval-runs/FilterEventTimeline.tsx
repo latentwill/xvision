@@ -105,8 +105,15 @@ export const FilterEventTimeline: FC<{
   title?: string;
 }> = ({ events, title }) => {
   if (events.length === 0) return null;
-  const first = events[0]?.bar_timestamp;
-  const last = events[events.length - 1]?.bar_timestamp;
+
+  // Range endpoints used to render here as `formatTimelineStamp(first)` /
+  // `(last)` in two corners of the strip — a "Feb 28, 07:00 PM" stamp in the
+  // top-right read as a static page-level date rather than as the last bar.
+  // The labels were also in the host's local timezone (toLocaleString) while
+  // every other timestamp surface on this page is UTC, which compounded the
+  // confusion. Each tick already carries the full bar ISO via the `title=`
+  // tooltip and aria-label, so per-bar timestamps remain one hover away.
+  // Intake 2026-05-28 §4 — keep the strip, drop the static corner stamps.
 
   return (
     <section
@@ -115,16 +122,6 @@ export const FilterEventTimeline: FC<{
     >
       {title && (
         <h4 className="font-sans font-semibold text-[14px] text-text mb-2">{title}</h4>
-      )}
-
-      {first && last && (
-        <div
-          data-testid="filter-event-timeline-range"
-          className="mb-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[11px] text-text-2"
-        >
-          <span>{formatTimelineStamp(first)}</span>
-          <span>{formatTimelineStamp(last)}</span>
-        </div>
       )}
 
       <div
@@ -168,14 +165,3 @@ export const FilterEventTimeline: FC<{
     </section>
   );
 };
-
-function formatTimelineStamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
