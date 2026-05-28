@@ -54,6 +54,25 @@ impl fmt::Display for ContentHash {
     }
 }
 
+/// Hash raw bytes with BLAKE3. Convenience alias for `ContentHash::of_bytes`.
+pub fn hash_bytes(bytes: &[u8]) -> ContentHash {
+    ContentHash::of_bytes(bytes)
+}
+
+/// Serialize `v` to canonical JSON and hash the bytes with BLAKE3.
+pub fn hash_canonical_json<T: serde::Serialize>(v: &T) -> anyhow::Result<ContentHash> {
+    let value = serde_json::to_value(v)?;
+    let canonical = canonical_json(&value);
+    let s = serde_json::to_string(&canonical)?;
+    Ok(ContentHash::of_bytes(s.as_bytes()))
+}
+
+/// Owned-value variant of [`canonical_json`]: sorts object keys recursively.
+/// Avoids cloning `v` when the caller already owns it.
+pub fn canonicalize_json(v: serde_json::Value) -> serde_json::Value {
+    canonical_json(&v)
+}
+
 /// Returns a semantically equivalent JSON value with all object keys sorted
 /// lexicographically at every level of nesting.
 pub fn canonical_json(v: &serde_json::Value) -> serde_json::Value {

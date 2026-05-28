@@ -1,6 +1,6 @@
 use crate::autoresearch::{
     config::AutoresearchConfig,
-    content_hash::{canonicalize_json, hash_canonical_json, ContentHash},
+    content_hash::{canonical_json, hash_canonical_json, ContentHash},
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -73,14 +73,14 @@ fn signing_payload(
     config_hash: &ContentHash,
     parents: &[ContentHash],
 ) -> Result<Vec<u8>> {
-    let parent_hex: Vec<String> = parents.iter().map(|h| hex::encode(h.0)).collect();
+    let parent_hex: Vec<String> = parents.iter().map(|h| hex::encode(h.as_bytes())).collect();
     let v = json!({
-        "config_hash": hex::encode(config_hash.0),
+        "config_hash": hex::encode(config_hash.as_bytes()),
         "created_at": created_at.to_rfc3339(),
         "parent_strategy_hashes": parent_hex,
         "session_id": session_id.to_string(),
     });
-    let canonical = canonicalize_json(v);
+    let canonical = canonical_json(&v);
     Ok(serde_json::to_vec(&canonical)?)
 }
 
