@@ -21,6 +21,7 @@
 
 pub mod blob_store;
 pub mod config;
+pub mod cycle_loosen;
 pub mod content_hash;
 pub mod gate;
 pub mod lineage;
