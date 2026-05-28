@@ -2265,12 +2265,7 @@ impl WizardLoop {
             .description
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                format!(
-                    "Auto-created for strategy {} as role `{role}`.",
-                    strategy.manifest.id
-                )
-            });
+            .unwrap_or_else(|| derive_strategy_agent_description(&strategy, &role));
         let agent = api_agents::create(
             &self.api_context,
             api_agents::CreateAgentRequest {
@@ -2433,6 +2428,30 @@ fn default_strategy_agent_prompt(strategy: &xvision_engine::strategies::Strategy
          decision required by the runtime; do not invent unavailable data.",
         strategy.manifest.display_name
     )
+}
+
+/// Derive a one-line, operator-facing description for an agent created by
+/// the chat-rail wizard when the LLM didn't supply one via the
+/// `description` tool argument. Prefers strategy `display_name` over the
+/// raw ULID so the Agents list shows a meaningful label; folds in
+/// `plain_summary` when the strategy author has filled one in.
+fn derive_strategy_agent_description(
+    strategy: &xvision_engine::strategies::Strategy,
+    role: &str,
+) -> String {
+    let role = role.trim();
+    let name = strategy.manifest.display_name.trim();
+    let display = if name.is_empty() {
+        strategy.manifest.id.as_str()
+    } else {
+        name
+    };
+    let summary = strategy.manifest.plain_summary.trim();
+    if summary.is_empty() {
+        format!("{role} agent for strategy '{display}'.")
+    } else {
+        format!("{role} agent for strategy '{display}' — {summary}")
+    }
 }
 
 fn strategy_resolution_json(strategy: &api_strategy::StrategySummary) -> serde_json::Value {
