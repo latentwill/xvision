@@ -27,6 +27,7 @@ pub mod lineage;
 pub mod mutator;
 pub mod program_view;
 pub mod progress;
+pub mod scenario_synthesis;
 pub mod seal;
 pub mod session;
 pub mod validator;
@@ -35,7 +36,8 @@ pub mod validator;
 // Items from the plan draft that do not exist are omitted:
 //   blob_store::BlobStore (placeholder), config::{MutatorConfig,LooseningSchedule,DayWindow,BaselineUntouchedWindow},
 //   gate::{GateInput,evaluate}, program_view::from_markdown.
-pub use config::AutoresearchConfig;
+pub use config::{AutoresearchConfig, BaselineUntouchedWindow};
+pub use scenario_synthesis::synthesize_baseline_untouched_scenario;
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
 pub use gate::GateVerdict;
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
