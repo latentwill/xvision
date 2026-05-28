@@ -1,56 +1,74 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
+use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContentHash(pub [u8; 32]);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContentHash([u8; 32]);
 
 impl Serialize for ContentHash {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&hex::encode(self.0))
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
     }
 }
 
 impl<'de> Deserialize<'de> for ContentHash {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let hex_str = String::deserialize(d)?;
-        let bytes = hex::decode(&hex_str).map_err(serde::de::Error::custom)?;
-        let arr: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| serde::de::Error::custom("expected 32 hex bytes (64 chars)"))?;
-        Ok(ContentHash(arr))
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        ContentHash::from_hex(&s).map_err(serde::de::Error::custom)
     }
 }
 
 impl ContentHash {
-    pub fn from_hex(s: &str) -> anyhow::Result<Self> {
+    pub fn of_bytes(bytes: &[u8]) -> Self {
+        Self(*blake3::hash(bytes).as_bytes())
+    }
+
+    pub fn of_json(v: &serde_json::Value) -> Self {
+        let canonical = canonical_json(v);
+        let s = serde_json::to_string(&canonical).expect("serialize canonical json");
+        Self::of_bytes(s.as_bytes())
+    }
+
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+
+    pub fn from_hex(s: &str) -> Result<Self> {
         let bytes = hex::decode(s)?;
-        let arr: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("parent hash must be 32 bytes (64 hex chars)"))?;
+        if bytes.len() != 32 {
+            bail!("expected 32 bytes, got {}", bytes.len());
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
         Ok(Self(arr))
     }
-}
 
-pub fn canonicalize_json(v: Value) -> Value {
-    match v {
-        Value::Object(map) => {
-            let mut entries: Vec<(String, Value)> = map
-                .into_iter()
-                .map(|(k, val)| (k, canonicalize_json(val)))
-                .collect();
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
-            Value::Object(entries.into_iter().collect())
-        }
-        Value::Array(arr) => Value::Array(arr.into_iter().map(canonicalize_json).collect()),
-        other => other,
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
     }
 }
 
-pub fn hash_canonical_json<T: Serialize>(value: &T) -> Result<ContentHash> {
-    let v = serde_json::to_value(value)?;
-    let canonical = canonicalize_json(v);
-    let bytes = serde_json::to_vec(&canonical)?;
-    let hash = blake3::hash(&bytes);
-    Ok(ContentHash(*hash.as_bytes()))
+impl fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.to_hex())
+    }
+}
+
+/// Returns a semantically equivalent JSON value with all object keys sorted
+/// lexicographically at every level of nesting.
+pub fn canonical_json(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(map) => {
+            let mut pairs: Vec<(String, serde_json::Value)> = map
+                .iter()
+                .map(|(k, val)| (k.clone(), canonical_json(val)))
+                .collect();
+            pairs.sort_by(|a, b| a.0.cmp(&b.0));
+            serde_json::Value::Object(pairs.into_iter().collect())
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(canonical_json).collect())
+        }
+        other => other.clone(),
+    }
 }
