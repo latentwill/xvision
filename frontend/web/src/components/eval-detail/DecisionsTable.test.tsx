@@ -31,13 +31,30 @@ describe("DecisionsTable step + asset columns", () => {
     expect(screen.getAllByText("ETH")).toHaveLength(2);
   });
 
-  test("reports distinct step count, not per-asset row count", () => {
+  test("summary chip is step-centric, not per-asset row count", () => {
+    // Regression guard: the chip used to read
+    //   "4 of 4 decisions · 2 steps · 4 engaged"
+    // triple-counting the multi-asset fanout. 4 rows / 2 assets across 2
+    // steps should surface as 2 steps (primary), 2 engaged, 4 trader calls.
     const { container } = render(
       <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
     );
-    // 4 per-asset decisions, but only 2 decision steps.
-    expect(container.textContent).toContain("4 of 4 decisions");
-    expect(container.textContent).toContain("2 steps");
+    expect(container.textContent).toContain("2 of 2 steps");
+    expect(container.textContent).toContain("2 engaged");
+    expect(container.textContent).toContain("4 trader calls");
+    expect(container.textContent).not.toContain("decisions");
+  });
+
+  test("density-strip header reports step count, not per-asset row count", () => {
+    const { container } = render(
+      <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
+    );
+    const strip = container.querySelector('[data-testid="decision-density-strip"]');
+    expect(strip).not.toBeNull();
+    // The strip used to read "4 steps · …" (using sorted.length). Now it
+    // reports the distinct step count and the per-asset rows separately.
+    expect(strip?.textContent).toContain("2 steps");
+    expect(strip?.textContent).toContain("4 trader calls");
   });
 
   test("chronological sort shows the step on the first row of each step and blanks the rest", () => {

@@ -746,6 +746,14 @@ function DecisionsTab({ detail }: { detail: RunDetail }) {
     () => decisions.filter((d) => d.pnl_realized != null).length,
     [decisions],
   );
+  // Step count is distinct decision timestamps. A multi-asset wakeup produces
+  // one row per asset; without this dedupe the chip below would say e.g.
+  // "22 STEPS" for a 5-step / 5-asset run.
+  const stepCount = useMemo(
+    () => new Set(decisions.map((d) => d.timestamp)).size,
+    [decisions],
+  );
+  const traderCallCount = decisions.length;
   // Same prior-side derivation as the desktop view — drives the
   // direction-aware action label on each card (SELL vs COVER for a
   // `flat`, SHORT vs BUY for an open).
@@ -768,7 +776,9 @@ function DecisionsTab({ detail }: { detail: RunDetail }) {
   return (
     <div className="flex flex-col gap-2 py-3 pb-24">
       <div className={`${MONO_TINY} text-text-3 px-1`}>
-        {decisions.length} STEPS · {tradeCount} TRADES
+        {stepCount} {stepCount === 1 ? "STEP" : "STEPS"} ·{" "}
+        {traderCallCount} TRADER {traderCallCount === 1 ? "CALL" : "CALLS"} ·{" "}
+        {tradeCount} {tradeCount === 1 ? "TRADE" : "TRADES"}
       </div>
       <FilterSummaryPanel summaries={detail.filter_summaries ?? []} />
       <FilterEventTimeline

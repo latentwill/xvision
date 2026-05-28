@@ -126,6 +126,55 @@ export function fmtStepStamp(t: string): string {
 }
 
 /**
+ * Step- vs row-level counts for the Decisions summary chips.
+ *
+ * A multi-asset wakeup is ONE decision step in the strategy's perspective; the
+ * per-asset trader calls are children of that step. The deployed UI used to
+ * count rows where it meant steps ("22 of 22 decisions · 5 steps · 22 engaged"
+ * for a 5-step / 5-asset run), inflating the cardinality the operator was
+ * trying to read. These four numbers are the source of truth for the
+ * summary-chip strip on the desktop table, the density-strip header, and the
+ * mobile Decisions tab.
+ *
+ * Semantics:
+ *   - `totalSteps` / `viewedSteps` count distinct timestamps in the full data
+ *     and the filtered/searched view respectively.
+ *   - `engagedSteps` counts visible timestamps where at least one row produced
+ *     a real trader decision (phase !== "filtered"). Scoped to the view so it
+ *     stays consistent with `viewedSteps` under filtering.
+ *   - `viewedTraderCalls` / `totalTraderCalls` are the per-asset row counts —
+ *     i.e. how many trader invocations happened. A "trader call" can be either
+ *     engaged (real decision) or filtered (synthesized no-op).
+ */
+export type DecisionCounts = {
+  viewedSteps: number;
+  totalSteps: number;
+  engagedSteps: number;
+  viewedTraderCalls: number;
+  totalTraderCalls: number;
+};
+
+export function decisionCounts(
+  filteredView: TimelineDecision[],
+  all: TimelineDecision[],
+): DecisionCounts {
+  const viewSteps = new Set<string>();
+  const engagedSteps = new Set<string>();
+  for (const d of filteredView) {
+    viewSteps.add(d.t);
+    if (d.phase !== "filtered") engagedSteps.add(d.t);
+  }
+  const totalSteps = new Set(all.map((d) => d.t));
+  return {
+    viewedSteps: viewSteps.size,
+    totalSteps: totalSteps.size,
+    engagedSteps: engagedSteps.size,
+    viewedTraderCalls: filteredView.length,
+    totalTraderCalls: all.length,
+  };
+}
+
+/**
  * Assign a 1-based *step* ordinal per distinct timestamp, ranked chronologically,
  * returning a map keyed by `i` (decision_index).
  *

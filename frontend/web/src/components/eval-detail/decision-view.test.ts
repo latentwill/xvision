@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  decisionCounts,
   fmtStepStamp,
   shortAsset,
   stepOrdinalsByDecision,
@@ -79,5 +80,57 @@ describe("fmtStepStamp", () => {
   test("returns the raw input on parse failure (matches prior behaviour)", () => {
     expect(fmtStepStamp("not-a-date")).toBe("not-a-date");
     expect(fmtStepStamp("")).toBe("");
+  });
+});
+
+describe("decisionCounts", () => {
+  // Two steps, each fanned out into BTC + ETH (real multi-asset shape).
+  const TS_A = "2024-01-01T20:00:00+00:00";
+  const TS_B = "2024-01-07T13:00:00+00:00";
+  const rows: TimelineDecision[] = [
+    td(0, TS_A, "BTC/USD"),
+    td(1, TS_A, "ETH/USD"),
+    td(2, TS_B, "BTC/USD"),
+    td(3, TS_B, "ETH/USD"),
+  ];
+
+  test("unfiltered view: steps count distinct timestamps, trader calls count rows", () => {
+    const c = decisionCounts(rows, rows);
+    expect(c.totalSteps).toBe(2);
+    expect(c.viewedSteps).toBe(2);
+    expect(c.engagedSteps).toBe(2);
+    expect(c.totalTraderCalls).toBe(4);
+    expect(c.viewedTraderCalls).toBe(4);
+  });
+
+  test("narrowing the view by row narrows steps too", () => {
+    // The action-filter pill / search box can shrink the view to a subset of
+    // rows; the chip should report the visible step count, not the total.
+    const c = decisionCounts([rows[0]!, rows[1]!], rows);
+    expect(c.viewedSteps).toBe(1);
+    expect(c.totalSteps).toBe(2);
+    expect(c.viewedTraderCalls).toBe(2);
+    expect(c.totalTraderCalls).toBe(4);
+  });
+
+  test("engagedSteps counts steps where at least one visible row is engaged", () => {
+    const mixed: TimelineDecision[] = [
+      { ...rows[0]!, phase: "engaged" },
+      { ...rows[1]!, phase: "filtered" }, // same step as [0] — still engaged at step level
+      { ...rows[2]!, phase: "filtered" },
+      { ...rows[3]!, phase: "filtered" }, // step B has no engaged row
+    ];
+    const c = decisionCounts(mixed, mixed);
+    expect(c.totalSteps).toBe(2);
+    expect(c.engagedSteps).toBe(1);
+  });
+
+  test("empty view zeroes the visible counts but preserves totals", () => {
+    const c = decisionCounts([], rows);
+    expect(c.viewedSteps).toBe(0);
+    expect(c.engagedSteps).toBe(0);
+    expect(c.viewedTraderCalls).toBe(0);
+    expect(c.totalSteps).toBe(2);
+    expect(c.totalTraderCalls).toBe(4);
   });
 });

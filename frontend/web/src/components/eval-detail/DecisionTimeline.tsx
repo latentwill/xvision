@@ -47,11 +47,16 @@ export function DecisionTimeline({
   focusedIdx,
   onJump,
   activeFilter,
+  stepsCount,
 }: {
   decisions: TimelineDecision[];
   focusedIdx: number | null;
   onJump: (i: number) => void;
   activeFilter: ActionFilter;
+  /** Distinct step count (passed from the parent so the strip header reports
+   *  step moments, not per-asset rows — the previous label used
+   *  `decisions.length` and read "22 steps" on a 5-step / 5-asset run). */
+  stepsCount: number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -105,7 +110,10 @@ export function DecisionTimeline({
             Density
           </span>
           <span className="text-[10.5px] font-mono text-text-3">
-            <span className="text-text-2 tabular-nums">{n}</span> steps ·{" "}
+            <span className="text-text-2 tabular-nums">{stepsCount}</span>{" "}
+            {stepsCount === 1 ? "step" : "steps"} ·{" "}
+            <span className="tabular-nums">{n}</span> trader{" "}
+            {n === 1 ? "call" : "calls"} ·{" "}
             <span className="tabular-nums">{firstWindow}</span> window
           </span>
         </div>
