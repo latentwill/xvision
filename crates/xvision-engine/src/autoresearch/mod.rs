@@ -22,7 +22,7 @@
 pub mod blob_store;
 pub mod canary;
 pub mod config;
-pub mod eval_adapter;
+pub mod cycle_loosen;
 pub mod content_hash;
 pub mod eval_adapter;
 pub mod gate;
