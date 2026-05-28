@@ -161,6 +161,21 @@ export function EvalRunDetailRoute() {
     };
   }, [traceRun]);
 
+  // Push the eval-side cost into the trace-dock so the floating capsule
+  // renders the same number as the meta strip / SummaryCard. Without this
+  // the capsule would read only the agent-run's `total_cost_usd`, which
+  // can be 0/null when pricing was rolled up on the eval side only —
+  // leaving the capsule showing "$0.00" while the meta strip shows the
+  // real cost.
+  useEffect(() => {
+    if (!q.data) return;
+    const cost = displayCost(
+      q.data.summary,
+      linkedAgentRun.data?.summary.total_cost_usd ?? null,
+    );
+    useTraceDock.getState().setCostOverrideUsd(cost);
+  }, [q.data, linkedAgentRun.data?.summary.total_cost_usd]);
+
   if (q.isPending) {
     if (isPhone) return <MobileEvalRunDetailLoading id={id} />;
     return (
