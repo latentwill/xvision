@@ -26,6 +26,7 @@ pub mod gate;
 pub mod lineage;
 pub mod mutator;
 pub mod program_view;
+pub mod parent_policy;
 pub mod progress;
 pub mod seal;
 pub mod session;
@@ -36,6 +37,7 @@ pub mod validator;
 //   blob_store::BlobStore (placeholder), config::{MutatorConfig,LooseningSchedule,DayWindow,BaselineUntouchedWindow},
 //   gate::{GateInput,evaluate}, program_view::from_markdown.
 pub use config::AutoresearchConfig;
+pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
 pub use gate::GateVerdict;
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
