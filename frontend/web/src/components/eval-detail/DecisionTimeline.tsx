@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFilter } from "./decision-table-state";
 import { matchesActionFilter } from "./decision-table-state";
-import type { TimelineDecision } from "./decision-view";
+import { fmtStepStamp, type TimelineDecision } from "./decision-view";
 
 const COLOR_BY_ACTION: Record<string, string> = {
   BUY: "var(--gold)",
@@ -33,17 +33,6 @@ type HoverState = {
   x: number;
   d: TimelineDecision;
 };
-
-function parseStamp(t: string): string {
-  // The wire timestamp is ISO; show HH:MM:SS.mmm if it parses, else raw.
-  const date = new Date(t);
-  if (Number.isNaN(date.getTime())) return t;
-  const hh = String(date.getUTCHours()).padStart(2, "0");
-  const mm = String(date.getUTCMinutes()).padStart(2, "0");
-  const ss = String(date.getUTCSeconds()).padStart(2, "0");
-  const ms = String(date.getUTCMilliseconds()).padStart(3, "0");
-  return `${hh}:${mm}:${ss}.${ms}`;
-}
 
 function windowLabel(t: string): string {
   const date = new Date(t);
@@ -239,7 +228,7 @@ export function DecisionTimeline({
               <span className="text-text-3">#</span>
               <span className="tabular-nums">{hover.d.i}</span>
               <span className="text-text-4">·</span>
-              <span className="tabular-nums text-text-2">{parseStamp(hover.d.t)}</span>
+              <span className="tabular-nums text-text-2">{fmtStepStamp(hover.d.t)}</span>
               <span className="text-text-4">·</span>
               <span
                 style={{

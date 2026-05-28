@@ -35,7 +35,9 @@ import type { Phase } from "./PhaseChip";
 export type TimelineDecision = {
   /** decision index (matches `decision_index`, used as the jump key). */
   i: number;
-  /** raw ISO timestamp (rendered as HH:MM:SS.mmm by callers). */
+  /** raw ISO timestamp. Callers render via `fmtStepStamp` (UTC, date-bearing)
+   *  so multi-day runs can be read at a glance; keep the raw ISO for `title=`
+   *  tooltips and downstream tooling. */
   t: string;
   phase: Phase;
   /** present only when engaged. */
@@ -92,6 +94,35 @@ export function justificationText(row: DecisionRowDto): string {
  *  pair stays available for tooltip/search; this is just the column label. */
 export function shortAsset(asset: string): string {
   return asset.split("/")[0] ?? asset;
+}
+
+/**
+ * Render a step's raw ISO timestamp as `YYYY-MM-DD HH:MM:SS` in UTC.
+ *
+ * Shared by the Decisions table TIMESTAMP column and the density-strip hover
+ * tooltip so the two surfaces can't drift. The format is intentionally
+ * locale-free and tabular — sortable as a string, copy-pasteable into the CLI,
+ * and unambiguous regardless of the operator's locale.
+ *
+ * Why date + seconds, no milliseconds: scenarios span days to months, so the
+ * date is load-bearing for orientation; bar boundaries are integer seconds
+ * (the engine writes `YYYY-MM-DDTHH:MM:SSZ`), so milliseconds are always `.000`
+ * and would only add noise. Anyone who needs the original ISO can read the
+ * full string from the row's `title=` attribute.
+ *
+ * Returns the raw input on parse failure (matches the previous behaviour of
+ * the two local formatters this replaced).
+ */
+export function fmtStepStamp(t: string): string {
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return t;
+  const yyyy = String(d.getUTCFullYear()).padStart(4, "0");
+  const MM = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}`;
 }
 
 /**
