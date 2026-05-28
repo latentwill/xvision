@@ -9,6 +9,7 @@
 
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/primitives/Icon";
+import type { FilterSummary } from "@/api/types.gen/FilterSummary";
 import { ActionPill } from "./ActionPill";
 import { PhaseChip } from "./PhaseChip";
 import { DecisionTimeline } from "./DecisionTimeline";
@@ -75,7 +76,12 @@ const PILLS: {
   },
   {
     k: "FILTERED",
-    label: "Filtered",
+    // Pill label matches the PhaseChip's `NO-OP` (commit 970433b renamed the
+    // chip but missed the pill, leaving the toolbar reading "Filtered 0"
+    // when in fact 1399 bars were suppressed by the engine filter — two
+    // distinct concepts. Engine-filter suppression is surfaced as a
+    // separate activity line on the card header.)
+    label: "No-op",
     dotColor: "var(--text-3)",
     activeBg: "transparent",
     activeBd: "var(--text-3)",
@@ -83,6 +89,37 @@ const PILLS: {
     filled: false,
   },
 ];
+
+/** Aggregate the engine-filter activity across all `FilterSummary` entries.
+ *
+ *  Returns:
+ *  - `barsScanned` — total cadence-gated bars the engine evaluated.
+ *  - `wakeups` — bars where the filter fired and the trader was woken.
+ *  - `suppressed` — bars that DID NOT wake the trader, for any reason.
+ *    This is `bars_scanned - wakeups` (= `llm_calls_saved`), which folds
+ *    together "filter conditions evaluated false" AND the three rule-based
+ *    suppression counters (in-position / cooldown / daily-cap). The pill
+ *    row already separates row-level NO-OP (synthesized decisions); this
+ *    counter is strictly the engine-gate-rejected bars that never produced
+ *    a decision row at all — the number the operator means when they say
+ *    "the filter rejected 1399 of 1404 bars."
+ *
+ *  Returns `null` when there's no activity to report (no summaries, or
+ *  `bars_scanned` is zero across all of them) so the activity line is
+ *  omitted entirely on EveryBar runs. */
+function aggregateFilterActivity(
+  summaries: FilterSummary[] | undefined,
+): { barsScanned: number; wakeups: number; suppressed: number } | null {
+  if (!summaries || summaries.length === 0) return null;
+  let barsScanned = 0;
+  let wakeups = 0;
+  for (const s of summaries) {
+    barsScanned += s.bars_scanned;
+    wakeups += s.wakeups;
+  }
+  if (barsScanned === 0) return null;
+  return { barsScanned, wakeups, suppressed: barsScanned - wakeups };
+}
 
 function fmtPnl(pnl: number | null | undefined): string {
   if (pnl == null || pnl === 0) return "—";
@@ -94,10 +131,17 @@ export function DecisionsTable({
   decisions,
   focusedIdx,
   onJump,
+  filterSummaries,
 }: {
   decisions: TimelineDecision[];
   focusedIdx: number | null;
   onJump: (i: number) => void;
+  /** Engine-filter activity summary from the run export. The table only shows
+   *  bars where the filter fired (= rows in `decisions`); the suppressed bars
+   *  are invisible without this context. Surfaced as a one-line header
+   *  alongside the steps chip on FilterGated runs. Omit / pass `[]` for
+   *  EveryBar runs to hide the line entirely. */
+  filterSummaries?: FilterSummary[];
 }) {
   const [search, setSearch] = useState("");
   const [actionFilter, setActionFilter] = useState<ActionFilter>("all");
@@ -125,34 +169,59 @@ export function DecisionsTable({
     () => decisionCounts(filteredView, decisions),
     [filteredView, decisions],
   );
+  const filterActivity = useMemo(
+    () => aggregateFilterActivity(filterSummaries),
+    [filterSummaries],
+  );
   const isChronological = sortKey === "time-asc" || sortKey === "time-desc";
 
   return (
     <div className="bg-surface-card border border-border rounded-card">
       <div
-        className="flex items-center justify-between px-5 pt-4 pb-3"
+        className="flex items-start justify-between px-5 pt-4 pb-3 gap-3"
         style={{ borderBottom: "1px solid var(--border-soft)" }}
       >
-        <div className="flex items-baseline gap-3">
-          <h2 className="m-0 font-sans text-[22px] tracking-tight text-text" style={{ fontWeight: 600 }}>
-            Decisions
-          </h2>
-          {/* Step-centric counts. The legacy chip read
-                "{rows} of {rows} decisions · {steps} steps · {rows} engaged"
-              and triple-counted the multi-asset fanout — a 5-step / 5-asset run
-              read as "22 of 22 decisions · 5 steps · 22 engaged." We now report
-              steps (the strategy's decision moments) as the primary count and
-              keep the per-asset row total visible as "trader calls" so the
-              operator can still see the fanout cardinality. Both step counts
-              follow filtering; trader calls follow the view too. */}
-          <span className="text-[11px] font-mono text-text-3">
-            {summary.viewedSteps} of {summary.totalSteps}{" "}
-            {summary.totalSteps === 1 ? "step" : "steps"} ·{" "}
-            {summary.engagedSteps} engaged · {summary.viewedTraderCalls} trader{" "}
-            {summary.viewedTraderCalls === 1 ? "call" : "calls"}
-          </span>
+        <div className="flex flex-col gap-1 min-w-0">
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <h2 className="m-0 font-sans text-[22px] tracking-tight text-text" style={{ fontWeight: 600 }}>
+              Decisions
+            </h2>
+            {/* Step-centric counts. The legacy chip read
+                  "{rows} of {rows} decisions · {steps} steps · {rows} engaged"
+                and triple-counted the multi-asset fanout — a 5-step / 5-asset run
+                read as "22 of 22 decisions · 5 steps · 22 engaged." We now report
+                steps (the strategy's decision moments) as the primary count and
+                keep the per-asset row total visible as "trader calls" so the
+                operator can still see the fanout cardinality. Both step counts
+                follow filtering; trader calls follow the view too. */}
+            <span className="text-[11px] font-mono text-text-3">
+              {summary.viewedSteps} of {summary.totalSteps}{" "}
+              {summary.totalSteps === 1 ? "step" : "steps"} ·{" "}
+              {summary.engagedSteps} engaged · {summary.viewedTraderCalls} trader{" "}
+              {summary.viewedTraderCalls === 1 ? "call" : "calls"}
+            </span>
+          </div>
+          {/* Engine-filter activity. Without this line the operator reads the
+              steps chip in isolation and concludes "every step was engaged" —
+              missing the 1399 suppressed bars that never produced a decision
+              row at all. Only the bars that wake the trader become rows in
+              this table; the rest are visible to the operator only through
+              this header (and the FilterSummaryPanel / FilterEventTimeline
+              above). Conditional render — EveryBar runs (no filterSummaries)
+              get no line, so the layout doesn't shift for them. */}
+          {filterActivity && (
+            <span
+              data-testid="decisions-filter-activity"
+              className="text-[11px] font-mono text-text-3"
+            >
+              engine filter: {filterActivity.barsScanned.toLocaleString()}{" "}
+              {filterActivity.barsScanned === 1 ? "bar" : "bars"} scanned ·{" "}
+              {filterActivity.wakeups.toLocaleString()} fired ·{" "}
+              {filterActivity.suppressed.toLocaleString()} suppressed
+            </span>
+          )}
         </div>
-        <span className="text-[10px] font-mono text-text-3">click row → focus</span>
+        <span className="text-[10px] font-mono text-text-3 shrink-0">click row → focus</span>
       </div>
 
       {/* Toolbar — search + sort */}

@@ -1,8 +1,24 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 
+import type { FilterSummary } from "@/api/types.gen/FilterSummary";
+
 import { DecisionsTable } from "./DecisionsTable";
 import type { TimelineDecision } from "./decision-view";
+
+function makeSummary(overrides: Partial<FilterSummary> = {}): FilterSummary {
+  return {
+    filter_id: "f_test",
+    bars_scanned: 0,
+    wakeups: 0,
+    suppressed_in_position: 0,
+    suppressed_cooldown: 0,
+    suppressed_daily_cap: 0,
+    llm_calls_saved: 0,
+    estimated_tokens_saved: 0,
+    ...overrides,
+  };
+}
 
 // Two decision steps, each fanned out into a BTC + ETH row at one shared
 // timestamp — the real multi-asset shape (decision_index 0/1 then 2/3).
@@ -111,5 +127,93 @@ describe("DecisionsTable step + asset columns", () => {
     // The raw ISO stays accessible via the title attr for copy-paste into the
     // CLI / log search.
     expect(stamps[0]?.getAttribute("title")).toBe(TS_A);
+  });
+
+  test("action-filter pill reads 'No-op', not 'Filtered'", () => {
+    // Intake §5. The 970433b commit renamed the row-level chip from
+    // "FILTERED" to "NO-OP" but left the action-filter pill in this toolbar
+    // saying "Filtered" — which then read as "Filtered 0" on a run where
+    // the engine filter actually suppressed 1399 bars, conflating the two
+    // distinct concepts.
+    render(<DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />);
+    expect(screen.getByRole("button", { name: /No-op/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Filtered/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  test("engine-filter activity line is omitted when no filter summaries are present", () => {
+    // EveryBar runs (and any run with empty filter_summaries) must not
+    // render the activity line at all — the layout shouldn't shift for them.
+    render(<DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />);
+    expect(
+      screen.queryByTestId("decisions-filter-activity"),
+    ).not.toBeInTheDocument();
+  });
+
+  test("engine-filter activity line surfaces bars scanned / fired / suppressed", () => {
+    // Intake §5. The 1399 suppressed bars exist in filter_summaries but
+    // never become decision rows; without this line the operator reading
+    // the Decisions card in isolation concludes "every step was engaged."
+    render(
+      <DecisionsTable
+        decisions={decisions}
+        focusedIdx={null}
+        onJump={() => {}}
+        filterSummaries={[
+          makeSummary({
+            bars_scanned: 1404,
+            wakeups: 5,
+            llm_calls_saved: 1399,
+          }),
+        ]}
+      />,
+    );
+    const activity = screen.getByTestId("decisions-filter-activity");
+    expect(activity.textContent).toContain("1,404 bars scanned");
+    expect(activity.textContent).toContain("5 fired");
+    expect(activity.textContent).toContain("1,399 suppressed");
+  });
+
+  test("engine-filter activity sums across multiple filter summaries", () => {
+    // Multi-filter runs (a strategy with more than one filter artifact)
+    // aggregate their counters into one operator-readable activity line.
+    render(
+      <DecisionsTable
+        decisions={decisions}
+        focusedIdx={null}
+        onJump={() => {}}
+        filterSummaries={[
+          makeSummary({ bars_scanned: 1000, wakeups: 3, llm_calls_saved: 997 }),
+          makeSummary({
+            filter_id: "f_other",
+            bars_scanned: 404,
+            wakeups: 2,
+            llm_calls_saved: 402,
+          }),
+        ]}
+      />,
+    );
+    const activity = screen.getByTestId("decisions-filter-activity");
+    expect(activity.textContent).toContain("1,404 bars scanned");
+    expect(activity.textContent).toContain("5 fired");
+    expect(activity.textContent).toContain("1,399 suppressed");
+  });
+
+  test("engine-filter activity line is omitted when all counters are zero", () => {
+    // Defensive: a summary present but with no activity (e.g. run errored
+    // before scanning any bars) shouldn't render a meaningless "0 bars
+    // scanned · 0 fired · 0 suppressed" line.
+    render(
+      <DecisionsTable
+        decisions={decisions}
+        focusedIdx={null}
+        onJump={() => {}}
+        filterSummaries={[makeSummary()]}
+      />,
+    );
+    expect(
+      screen.queryByTestId("decisions-filter-activity"),
+    ).not.toBeInTheDocument();
   });
 });
