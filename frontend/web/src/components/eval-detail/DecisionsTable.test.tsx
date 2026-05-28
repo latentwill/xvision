@@ -59,4 +59,26 @@ describe("DecisionsTable step + asset columns", () => {
     expect(stepColumn(container).every((s) => s === "1" || s === "2")).toBe(true);
     expect(stepColumn(container)).not.toContain("");
   });
+
+  test("PHASE chip renders once per step in chronological sort, not per asset row", () => {
+    // Regression guard: a single multi-asset step used to render ENGAGED on
+    // every per-asset row, reading as "engaged every row" instead of "engaged
+    // every step."
+    const { container } = render(
+      <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
+    );
+    // PhaseChip uppercases its label. Two steps ⇒ two chips in chrono sort,
+    // not four (one per row).
+    expect(screen.getAllByText("ENGAGED")).toHaveLength(2);
+  });
+
+  test("PHASE chip renders on every row in non-chronological sort", () => {
+    // When same-step rows can be scattered by sort key, every row needs its
+    // own chip — mirrors the STEP-number behaviour.
+    render(<DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Sort decisions"), {
+      target: { value: "pnl-desc" },
+    });
+    expect(screen.getAllByText("ENGAGED")).toHaveLength(4);
+  });
 });
