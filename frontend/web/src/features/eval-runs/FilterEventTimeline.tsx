@@ -165,4 +165,3 @@ export const FilterEventTimeline: FC<{
     </section>
   );
 };
-
