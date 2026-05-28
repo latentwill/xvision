@@ -24,6 +24,7 @@ pub mod canary;
 pub mod config;
 pub mod eval_adapter;
 pub mod content_hash;
+pub mod diversity;
 pub mod gate;
 pub mod judge;
 pub mod lineage;
