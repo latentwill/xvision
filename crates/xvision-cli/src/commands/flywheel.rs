@@ -147,11 +147,11 @@ async fn run_velocity(args: VelocityArgs) -> CliResult<()> {
         println!("days: {}", velocity.days);
         println!("since: {}", velocity.since);
         println!("observations_captured: {}", velocity.observations_captured);
-        println!("patterns_promoted: {}", velocity.patterns_promoted);
-        println!("patterns_demoted: {}", velocity.patterns_demoted);
+        println!("patterns_activated: {}", velocity.patterns_promoted);
+        println!("patterns_retired: {}", velocity.patterns_demoted);
         println!("autoresearch_runs: {}", velocity.autoresearch_runs);
-        println!("optimized_child_agents: {}", velocity.optimized_child_agents);
-        println!("average_lineage_depth: {:.2}", velocity.average_lineage_depth);
+        println!("new_versions_trained: {}", velocity.optimized_child_agents);
+        println!("average_generations_deep: {:.2}", velocity.average_lineage_depth);
         if let Some(ts) = velocity.latest_activity_at {
             println!("latest_activity_at: {ts}");
         }
@@ -194,16 +194,25 @@ async fn run_lineage(args: LineageArgs) -> CliResult<()> {
                 item.holdout_observation_count,
                 item.demo_source_pattern_ids.len(),
                 item.prior_pattern_ids.len(),
-                item.status
+                match item.status.as_str() {
+                    "ghost" => "rejected",
+                    "quarantined" => "suspect",
+                    other => other,
+                }
             );
             println!(
-                "  hashes train={} dev={} holdout={}",
+                "  hashes training={} validation={} untouched={}",
                 item.train_hash, item.dev_hash, item.holdout_hash
             );
             if let Some(verdict) = item.gate_verdict {
+                let verdict_display = match verdict.as_str() {
+                    "passed" => "Kept",
+                    "failed" => "Dropped",
+                    other => other,
+                };
                 println!(
-                    "  gate verdict={} delta_dev={} delta_holdout={}{}",
-                    verdict,
+                    "  gate decision: {}  validation improvement: {} · untouched improvement: {}{}",
+                    verdict_display,
                     item.delta_dev
                         .map(|v| format!("{v:.6}"))
                         .unwrap_or_else(|| "<none>".to_string()),

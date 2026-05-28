@@ -2363,6 +2363,17 @@
       "path": [
         "help",
         "memory",
+        "distill"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
         "forget"
       ]
     },
@@ -2397,6 +2408,17 @@
         "help",
         "memory",
         "promote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
+        "retire"
       ]
     },
     {
@@ -3708,7 +3730,7 @@
       "has_subcommands": false,
       "long_flags": [
         "--agent",
-        "--attest-null-window",
+        "--confirm-no-cutoff",
         "--force",
         "--help",
         "--json",
@@ -3733,6 +3755,24 @@
       "path": [
         "memory",
         "demote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--active",
+        "--embedding-json",
+        "--help",
+        "--ids",
+        "--json",
+        "--namespace",
+        "--text"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "distill"
       ]
     },
     {
@@ -3801,6 +3841,17 @@
       "path": [
         "memory",
         "help",
+        "distill"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
         "forget"
       ]
     },
@@ -3852,6 +3903,17 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
+        "retire"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
       "mutates": true,
       "path": [
         "memory",
@@ -3890,13 +3952,13 @@
         "--help",
         "--include-forgotten",
         "--json",
+        "--kind",
         "--limit",
         "--namespace",
         "--offset",
-        "--promotion-state",
         "--run",
         "--scenario",
-        "--tier"
+        "--status"
       ],
       "mutates": false,
       "path": [
@@ -3933,6 +3995,19 @@
       "path": [
         "memory",
         "promote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "retire"
       ]
     },
     {
