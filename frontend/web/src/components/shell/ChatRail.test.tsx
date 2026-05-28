@@ -35,6 +35,7 @@ vi.mock("@/api/chat_rail", async () => {
     resolveSession: vi.fn(),
     streamChat: vi.fn(),
     setSessionMode: vi.fn(),
+    scopeFromPath: vi.fn(),
   };
 });
 
@@ -70,6 +71,7 @@ const workspaceScope = { scope: "workspace" } as const;
 
 beforeEach(() => {
   localStorage.clear();
+  vi.mocked(chatApi.scopeFromPath).mockReturnValue(workspaceScope);
   vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
       default_model: null,
   });
@@ -793,6 +795,66 @@ describe("ChatRail", () => {
 
     expect(await screen.findByText(/01OK/)).toBeInTheDocument();
     expect(screen.queryByText(/Create strategy failed/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * Context switcher (2026-05-28). Header shows a dropdown letting the
+   * operator pick "Active page" (scopeFromPath result) or "Whole
+   * workspace" ({ scope: "workspace" }). Defaults to "Active page" and
+   * persists via localStorage.
+   */
+  describe("context switcher", () => {
+    const routeScope = { scope: "route" as const, route: "/strategies" };
+
+    it("defaults to 'Active page' and resolves with the scopeFromPath result", async () => {
+      vi.mocked(chatApi.scopeFromPath).mockReturnValue(routeScope);
+      renderRail("/strategies");
+
+      expect(
+        await screen.findByRole("button", { name: /Active page/i }),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(chatApi.resolveSession).toHaveBeenCalledWith(routeScope);
+      });
+    });
+
+    it("uses workspace scope when 'Whole workspace' is selected on a non-workspace route", async () => {
+      vi.mocked(chatApi.scopeFromPath).mockReturnValue(routeScope);
+      renderRail("/strategies");
+
+      await waitFor(() => {
+        expect(chatApi.resolveSession).toHaveBeenCalledWith(routeScope);
+      });
+      vi.mocked(chatApi.resolveSession).mockClear();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: /Active page/i }),
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitemradio", { name: /Whole workspace/i }),
+      );
+
+      await waitFor(() => {
+        expect(chatApi.resolveSession).toHaveBeenCalledWith(workspaceScope);
+      });
+      expect(localStorage.getItem("xvn.chat_rail.context_mode")).toBe(
+        "workspace",
+      );
+    });
+
+    it("restores the persisted selection on remount", async () => {
+      vi.mocked(chatApi.scopeFromPath).mockReturnValue(routeScope);
+      localStorage.setItem("xvn.chat_rail.context_mode", "workspace");
+
+      renderRail("/strategies");
+
+      expect(
+        await screen.findByRole("button", { name: /Whole workspace/i }),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(chatApi.resolveSession).toHaveBeenCalledWith(workspaceScope);
+      });
+    });
   });
 });
 
