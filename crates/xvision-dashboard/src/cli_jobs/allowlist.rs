@@ -25,9 +25,13 @@
 //! operator-safety P1 #12 safe-eval verbs from
 //! `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`.
 //!
-//! The policy is intentionally an operator command allowlist, not a dev-mode
-//! bypass. Normal read/eval/research commands work on live nodes without setting
-//! `XVN_DASHBOARD_CLI_DEVMODE`; categorically dangerous heads stay denied.
+//! By default the policy is an operator command allowlist: normal
+//! read/eval/research commands work on live nodes with no flag, and
+//! categorically dangerous heads stay denied. Setting `XVN_DASHBOARD_CLI_DEVMODE`
+//! (`1`/`true`) turns the policy into a FULL bypass — every argv is accepted,
+//! including live-trade and host-admin verbs. That flag is an explicit per-node
+//! opt-in for a trusted dev tailnet with no live broker credentials; it does
+//! not replace the (pending) dashboard auth gate. See [`check_argv_with_env`].
 
 /// Verdict from a single allowlist check. The string is shown verbatim
 /// in the dashboard's HTTP error so the operator can diagnose why a
@@ -350,6 +354,39 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
     }
 
     AllowlistDecision::Allow
+}
+
+/// Env var that opts a node into the remote CLI full-bypass dev mode.
+pub const DEVMODE_ENV: &str = "XVN_DASHBOARD_CLI_DEVMODE";
+
+/// Whether the full-bypass dev mode is enabled on this node. Off unless the
+/// env var is `1` or (case-insensitively) `true`.
+pub fn devmode_enabled() -> bool {
+    std::env::var(DEVMODE_ENV)
+        .map(|v| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true")
+        })
+        .unwrap_or(false)
+}
+
+/// Policy entry point for the HTTP route.
+///
+/// With dev mode **off** (the default, and the only safe posture for any node
+/// reachable beyond a trusted tailnet) this is exactly [`check_argv`]: the
+/// allowlist + denylist apply.
+///
+/// With dev mode **on** it is a FULL bypass — every non-empty argv is allowed,
+/// including the live-trade (`fire-trade`, `close-position`) and host-admin
+/// (`migrate`, `dashboard`, `mcp`) verbs that [`check_argv`] denies. This is an
+/// explicit per-node opt-in (set [`DEVMODE_ENV`] only on a trusted dev node
+/// with no live broker credentials); it does NOT replace the (pending) auth
+/// gate.
+pub fn check_argv_with_env(argv: &[String]) -> AllowlistDecision {
+    if devmode_enabled() && !argv.is_empty() {
+        return AllowlistDecision::Allow;
+    }
+    check_argv(argv)
 }
 
 fn denied_nested_subcommand(argv: &[String]) -> Option<String> {
