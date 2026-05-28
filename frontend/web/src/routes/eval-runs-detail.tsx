@@ -372,6 +372,12 @@ type LiveRunEvent =
   | { event: "decision"; data: DecisionRowDto }
   | { event: "status"; data: { phase: string; message: string | null } };
 
+// Trailing-edge debounce window for refetching server-derived fields
+// (`filter_events`, `filter_summaries`, `summary.error`) off the back of
+// SSE traffic. The SSE stream only carries `decision` and `status`, so
+// per-bar filter ticks would otherwise wait on the 2s adaptive poll.
+const RUN_REFETCH_DEBOUNCE_MS = 250;
+
 function useLiveRunStream(
   runId: string,
   detail: RunDetail | undefined,
@@ -388,6 +394,18 @@ function useLiveRunStream(
         if (!current) return current;
         return updater(current);
       });
+    };
+
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRunRefetch = () => {
+      if (refetchTimer !== null) return;
+      refetchTimer = setTimeout(() => {
+        refetchTimer = null;
+        queryClient.invalidateQueries({
+          queryKey: evalKeys.run(runId),
+          refetchType: "active",
+        });
+      }, RUN_REFETCH_DEBOUNCE_MS);
     };
 
     const onDecision = (ev: Event) => {
@@ -416,6 +434,7 @@ function useLiveRunStream(
           ),
         };
       });
+      scheduleRunRefetch();
     };
 
     const onStatus = (ev: Event) => {
@@ -436,7 +455,9 @@ function useLiveRunStream(
         es.close();
         queryClient.invalidateQueries({ queryKey: evalKeys.run(runId) });
         queryClient.invalidateQueries({ queryKey: chartKeys.run(runId) });
+        return;
       }
+      scheduleRunRefetch();
     };
 
     es.addEventListener("decision", onDecision);
@@ -449,6 +470,7 @@ function useLiveRunStream(
     return () => {
       es.removeEventListener("decision", onDecision);
       es.removeEventListener("status", onStatus);
+      if (refetchTimer !== null) clearTimeout(refetchTimer);
       es.close();
     };
   }, [runId, shouldStream, queryClient]);
