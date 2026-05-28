@@ -12,7 +12,12 @@ import { Icon } from "@/components/primitives/Icon";
 import { ActionPill } from "./ActionPill";
 import { PhaseChip } from "./PhaseChip";
 import { DecisionTimeline } from "./DecisionTimeline";
-import { shortAsset, stepOrdinalsByDecision, type TimelineDecision } from "./decision-view";
+import {
+  fmtStepStamp,
+  shortAsset,
+  stepOrdinalsByDecision,
+  type TimelineDecision,
+} from "./decision-view";
 import {
   actionCounts,
   matchesActionFilter,
@@ -77,16 +82,6 @@ const PILLS: {
     filled: false,
   },
 ];
-
-function fmtRowTime(t: string): string {
-  const d = new Date(t);
-  if (Number.isNaN(d.getTime())) return t;
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  const ss = String(d.getUTCSeconds()).padStart(2, "0");
-  const ms = String(d.getUTCMilliseconds()).padStart(3, "0");
-  return `${hh}:${mm}:${ss}.${ms}`;
-}
 
 function fmtPnl(pnl: number | null | undefined): string {
   if (pnl == null || pnl === 0) return "—";
@@ -270,7 +265,7 @@ export function DecisionsTable({
             <tr className="text-left text-text-3">
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-12">STEP</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-16">ASSET</th>
-              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-32">TIMESTAMP</th>
+              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-44">TIMESTAMP</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-24">PHASE</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-20">ACTION</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-28">CONVICTION</th>
@@ -315,7 +310,12 @@ export function DecisionsTable({
                     <td className="px-4 py-2 text-text-2 whitespace-nowrap" title={d.asset}>
                       {shortAsset(d.asset)}
                     </td>
-                    <td className="px-4 py-2 tabular-nums text-text-2">{fmtRowTime(d.t)}</td>
+                    <td
+                      className="px-4 py-2 tabular-nums text-text-2 whitespace-nowrap"
+                      title={d.t}
+                    >
+                      {fmtStepStamp(d.t)}
+                    </td>
                     <td className="px-4 py-2">
                       {/* PHASE is a step-level concept (filter fired vs not),
                           so blank the chip on per-asset child rows the same
