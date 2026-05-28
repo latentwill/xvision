@@ -257,12 +257,20 @@ impl Checkpointer {
             // etc.) surfaces as the existing `checkpoint_restore_failed`
             // signature — preserving the prior behaviour where bad ids
             // failed inside `store.load`.
-            let path = store.path_for(strategy_id).map_err(|e| CheckpointError::Restore {
-                checkpoint_id: String::new(),
-                artifact: "strategy",
-                source: anyhow::anyhow!(e),
-            })?;
-            let exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
+            let path = store
+                .path_for(strategy_id)
+                .map_err(|e| CheckpointError::Restore {
+                    checkpoint_id: String::new(),
+                    artifact: "strategy",
+                    source: anyhow::anyhow!(e),
+                })?;
+            let exists = tokio::fs::try_exists(&path)
+                .await
+                .map_err(|e| CheckpointError::Restore {
+                    checkpoint_id: String::new(),
+                    artifact: "strategy",
+                    source: anyhow::Error::from(e),
+                })?;
             if !exists {
                 // CREATE-like pre-state: the strategy file does not exist yet.
                 // Capture an empty blob with `was_absent: true` so restore can
@@ -284,7 +292,8 @@ impl Checkpointer {
                     })?;
                 // Capture the EXACT bytes the store persists (to_vec_pretty), so a
                 // byte-compare of the restored file against the original is identical.
-                let bytes = serde_json::to_vec_pretty(&strategy).map_err(|e| CheckpointError::Other(e.into()))?;
+                let bytes =
+                    serde_json::to_vec_pretty(&strategy).map_err(|e| CheckpointError::Other(e.into()))?;
                 let blob = self.blobs.write(&bytes)?;
                 artifacts.push(CapturedArtifact::Strategy {
                     id: strategy_id.clone(),
@@ -1043,8 +1052,10 @@ mod tests {
         // RESTORE rewinds to the absent state by deleting the file.
         let outcome = ckpt.restore(&snapshot.checkpoint_id).await.unwrap();
         assert_eq!(outcome.restored, vec!["strategy".to_string()]);
-        assert!(!tokio::fs::try_exists(&path).await.unwrap(),
-            "restore of a was_absent snapshot must delete the created file");
+        assert!(
+            !tokio::fs::try_exists(&path).await.unwrap(),
+            "restore of a was_absent snapshot must delete the created file"
+        );
     }
 
     #[tokio::test]
@@ -1094,11 +1105,15 @@ mod tests {
                 }
             ]
         }"#;
-        let manifest: CapturedManifest = serde_json::from_str(legacy_json)
-            .expect("legacy manifest must deserialize");
+        let manifest: CapturedManifest =
+            serde_json::from_str(legacy_json).expect("legacy manifest must deserialize");
         assert_eq!(manifest.artifacts.len(), 1);
         match &manifest.artifacts[0] {
-            CapturedArtifact::Strategy { id, blob_hash, was_absent } => {
+            CapturedArtifact::Strategy {
+                id,
+                blob_hash,
+                was_absent,
+            } => {
                 assert_eq!(id, "01HZLEGACY0000000000000000");
                 assert_eq!(blob_hash, "deadbeefcafebabe");
                 assert!(
