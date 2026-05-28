@@ -27,7 +27,12 @@ import { agentKeys, listAgents } from "@/api/agents";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { formatCostUsdPrecise, formatSpendUsd } from "@/lib/format";
 import { drawdownMetricTone } from "@/lib/metric-tone";
-import type { DecisionRowDto, RunDetail, RunSummary } from "@/api/types.gen";
+import type {
+  DecisionRowDto,
+  FilterSummary,
+  RunDetail,
+  RunSummary,
+} from "@/api/types.gen";
 import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
 import { MetaChip } from "@/components/eval-detail/MetaChip";
 import { DecisionsTable } from "@/components/eval-detail/DecisionsTable";
@@ -338,7 +343,10 @@ export function EvalRunDetailRoute() {
               title="Filter timeline"
             />
 
-            <DecisionsCard rows={detail.decisions} />
+            <DecisionsCard
+              rows={detail.decisions}
+              filterSummaries={detail.filter_summaries ?? []}
+            />
 
             {/*
               `key={detail.summary.id}` resets ReviewPanel local state when
@@ -708,7 +716,13 @@ function Stat({
   );
 }
 
-function DecisionsCard({ rows }: { rows: DecisionRowDto[] }) {
+function DecisionsCard({
+  rows,
+  filterSummaries,
+}: {
+  rows: DecisionRowDto[];
+  filterSummaries: FilterSummary[];
+}) {
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const decisions = useMemo(() => toTimelineDecisions(rows), [rows]);
 
@@ -733,7 +747,12 @@ function DecisionsCard({ rows }: { rows: DecisionRowDto[] }) {
   const onJump = (i: number) => setFocusedIdx((cur) => (cur === i ? null : i));
 
   return (
-    <DecisionsTable decisions={decisions} focusedIdx={focusedIdx} onJump={onJump} />
+    <DecisionsTable
+      decisions={decisions}
+      focusedIdx={focusedIdx}
+      onJump={onJump}
+      filterSummaries={filterSummaries}
+    />
   );
 }
 
