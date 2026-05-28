@@ -25,6 +25,7 @@ pub mod content_hash;
 pub mod gate;
 pub mod lineage;
 pub mod mutator;
+pub mod mutator_ladder;
 pub mod program_view;
 pub mod progress;
 pub mod seal;
