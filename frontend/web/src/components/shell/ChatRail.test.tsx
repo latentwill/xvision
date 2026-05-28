@@ -10,7 +10,12 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
-import { ChatRail, invalidateForToolResult, mergeUnifiedRows } from "./ChatRail";
+import {
+  ChatRail,
+  computeUserAnchor,
+  invalidateForToolResult,
+  mergeUnifiedRows,
+} from "./ChatRail";
 import * as chatApi from "@/api/chat_rail";
 import * as settingsApi from "@/api/settings";
 import { strategyKeys } from "@/api/strategies";
@@ -18,6 +23,7 @@ import { scenarioKeys } from "@/api/scenarios";
 import { agentKeys } from "@/api/agents";
 import { evalKeys } from "@/api/eval";
 import type { WizardEvent } from "@/api/chat_rail";
+import type { Bubble } from "@/components/chat/types";
 import type { MessageRow } from "@/stores/message-row-reducer";
 
 const defaultStorage = globalThis.localStorage;
@@ -750,6 +756,106 @@ describe("ChatRail", () => {
       "assistant",
       "assistant",
       "user",
+    ]);
+  });
+
+  /**
+   * Regression for the "user message appears above the agent message" bug.
+   *
+   * Repro: an existing session with one historical assistant in `bubbles`
+   * (hydrated synchronously from `resolveSession.history`) and a unified
+   * SSE replay that hasn't caught up yet (`unifiedRows` still empty).
+   * Pre-fix, `send` derived the new user's `assistantAnchor` solely from
+   * `unifiedRows`, so it stamped anchor=0 — the SAME anchor we use for
+   * "user spoke before any assistant existed." Once the SSE replay
+   * landed, `mergeUnifiedRows` then dutifully sorted that user bubble
+   * BEFORE the historical assistant row.
+   */
+  it("anchors new user past assistants already in bubbles even when unified is empty", () => {
+    const bubbles: Bubble[] = [
+      {
+        role: "assistant",
+        blocks: [{ kind: "text", text: "historical answer" }],
+        tools: [],
+      },
+    ];
+    const unifiedRows: MessageRow[] = [];
+    expect(computeUserAnchor(bubbles, unifiedRows)).toBe(1);
+  });
+
+  it("anchors new user past projected assistants when unified leads bubbles", () => {
+    const bubbles: Bubble[] = [];
+    const unifiedRows: MessageRow[] = [
+      {
+        type: "assistant",
+        id: "a1",
+        seq: 1,
+        streamId: "s",
+        appliedEventIds: new Set(["e1"]),
+        actor: "agent",
+        text: "fanned-out step 1",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+      {
+        type: "assistant",
+        id: "a2",
+        seq: 2,
+        streamId: "s",
+        appliedEventIds: new Set(["e2"]),
+        actor: "agent",
+        text: "fanned-out step 2",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 1,
+      },
+    ];
+    expect(computeUserAnchor(bubbles, unifiedRows)).toBe(2);
+  });
+
+  it("anchors to zero when neither bubbles nor unified rows have an assistant", () => {
+    expect(computeUserAnchor([], [])).toBe(0);
+  });
+
+  it("places the new user after the historical assistant once unified catches up", () => {
+    // Full bug scenario: bubbles started with a historical assistant,
+    // user sent a message during the SSE replay window, and the
+    // unified projection then caught up to that same assistant. With
+    // the corrected anchor (1), the merge must produce
+    // [historical assistant, new user, optimistic placeholder] — never
+    // [new user, historical assistant, ...].
+    const bubblesAfterSend: Bubble[] = [
+      {
+        role: "assistant",
+        blocks: [{ kind: "text", text: "historical answer" }],
+        tools: [],
+      },
+      { role: "user", text: "new question", assistantAnchor: 1 },
+      { role: "assistant", blocks: [{ kind: "text", text: "" }], tools: [] },
+    ];
+    const unifiedRowsAfterReplay: MessageRow[] = [
+      {
+        type: "assistant",
+        id: "a1",
+        seq: 1,
+        streamId: "s",
+        appliedEventIds: new Set(["e1"]),
+        actor: "agent",
+        text: "historical answer",
+        blocks: [],
+        done: true,
+        draftId: null,
+        messageIndex: 0,
+      },
+    ];
+    const merged = mergeUnifiedRows(bubblesAfterSend, unifiedRowsAfterReplay);
+    expect(merged.map((b) => b.role)).toEqual([
+      "assistant",
+      "user",
+      "assistant",
     ]);
   });
 

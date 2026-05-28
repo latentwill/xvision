@@ -322,11 +322,14 @@ export function ChatRail({
       setError(null);
       const userText = text.trim();
       setInput("");
-      // Anchor the new user turn to the count of assistant rows that have
-      // already streamed into the unified log. Multi-step prior turns produce
-      // multiple assistant rows for a single legacy bubble, and without this
-      // anchor the merge would place this user message in between them.
-      const anchor = unifiedRows.filter((r) => r.type === "assistant").length;
+      // Anchor the new user turn to the count of assistant rows already
+      // visible. Use the MAX of the bubbles-side and unified-side counts:
+      // during the SSE replay window after `resolveSession`, bubbles is
+      // hydrated synchronously while unifiedRows is still empty, so a
+      // unified-only count would stamp anchor=0 and the merge would place
+      // this user above the historical assistant. Symmetrically, multi-step
+      // prior turns can produce more unified assistant rows than bubbles.
+      const anchor = computeUserAnchor(bubbles, unifiedRows);
       setBubbles((b) => [
         ...b,
         { role: "user", text: userText, assistantAnchor: anchor },
@@ -440,6 +443,7 @@ export function ChatRail({
       modelId,
       key,
       qc,
+      bubbles,
       unifiedRows,
       scope,
       resetSessionEvents,
@@ -795,6 +799,24 @@ function RailModelBar({
  * `crates/xvision-dashboard/src/wizard_loop.rs:446-541`. New tools that
  * mutate must be added here in the same PR they ship.
  */
+/**
+ * Anchor a new user turn to the count of assistant rows already visible.
+ * Returns the max of the assistant counts in `bubbles` and `unifiedRows`
+ * so the merge places the user *after* whichever side currently leads —
+ * critical during the SSE replay window when bubbles is hydrated but
+ * unifiedRows hasn't caught up.
+ */
+export function computeUserAnchor(
+  bubbles: Bubble[],
+  unifiedRows: MessageRow[],
+): number {
+  let inBubbles = 0;
+  for (const b of bubbles) if (b.role === "assistant") inBubbles += 1;
+  let inUnified = 0;
+  for (const r of unifiedRows) if (r.type === "assistant") inUnified += 1;
+  return inBubbles > inUnified ? inBubbles : inUnified;
+}
+
 /** First user-turn text in a bubble list, or undefined if none yet. */
 function firstUserText(bubbles: Bubble[]): string | undefined {
   for (const b of bubbles) if (b.role === "user") return b.text;
