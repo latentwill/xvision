@@ -1,1 +1,14 @@
-//! AR-1 placeholder — implementation lands in a follow-on task per docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoresearchConfig {
+    pub allowed_mutation_kinds: Vec<String>,
+}
+
+impl Default for AutoresearchConfig {
+    fn default() -> Self {
+        Self {
+            allowed_mutation_kinds: vec!["prose".into(), "param".into(), "tool".into()],
+        }
+    }
+}
