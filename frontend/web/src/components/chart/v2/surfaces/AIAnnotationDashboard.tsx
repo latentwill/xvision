@@ -24,6 +24,12 @@ import { EmptyState } from "../primitives/EmptyState";
 
 export interface AIAnnotationDashboardProps {
   payload: AnnotatedChartPayload;
+  /**
+   * Initial value for annotation mode. Defaults to `false` — the overlay
+   * loads but is hidden until the operator clicks the header toggle.
+   * Fixture/demo pages can pass `true` to ship mode-on.
+   */
+  initialAnnotationMode?: boolean;
 }
 
 const FILTER_TABS: { id: "ALL" | "PATTERN" | "RISK" | "FLOW"; label: string }[] = [
@@ -66,11 +72,13 @@ function pct24h(payload: AnnotatedChartPayload): number | undefined {
 
 export function AIAnnotationDashboard({
   payload,
+  initialAnnotationMode = false,
 }: AIAnnotationDashboardProps): ReactElement {
   const [filter, setFilter] = useState<"ALL" | "PATTERN" | "RISK" | "FLOW">(
     "ALL",
   );
   const [logOpen, setLogOpen] = useState(true);
+  const [isAnnotationMode, setIsAnnotationMode] = useState(initialAnnotationMode);
 
   // Hold the live klinecharts instance so AnnotationOverlay can use
   // pixel-precise anchoring. Null until KlineCandlePane fires onReady.
@@ -139,6 +147,21 @@ export function AIAnnotationDashboard({
           <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-border-soft text-[11px] text-text-3">
             model · xvn-annot-v3
           </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isAnnotationMode}
+            aria-label="Toggle annotation mode"
+            onClick={() => setIsAnnotationMode((v) => !v)}
+            className={[
+              "inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] transition-colors",
+              isAnnotationMode
+                ? "border-gold/40 bg-gold/[0.10] text-gold"
+                : "border-border-soft text-text-3 hover:text-text",
+            ].join(" ")}
+          >
+            annotations · {isAnnotationMode ? "on" : "off"}
+          </button>
           <div
             className="inline-flex rounded border border-border-soft overflow-hidden"
             role="tablist"
@@ -191,6 +214,7 @@ export function AIAnnotationDashboard({
               annotations={payload.annotations}
               visibleTypes={visibleTypes}
               chart={chartInstance}
+              isAnnotationMode={isAnnotationMode}
             />
           )}
         </div>
@@ -207,8 +231,12 @@ export function AIAnnotationDashboard({
         style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
       >
         EMA(21) · candle_pane · drag to pan ·{" "}
-        {chartInstance ? "callouts pixel-anchored" : "callouts approximate-anchored"} ·{" "}
-        {payload.annotations.length} annotations · source: {payload.source}
+        {isAnnotationMode
+          ? chartInstance
+            ? "callouts pixel-anchored"
+            : "callouts approximate-anchored"
+          : "annotation mode off"}{" "}
+        · {payload.annotations.length} annotations · source: {payload.source}
       </footer>
     </div>
   );

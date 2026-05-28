@@ -42,6 +42,12 @@ export interface AnnotationOverlayProps {
    * pan/zoom. When absent, falls back to the geometric approximation.
    */
   chart?: Chart | null;
+  /**
+   * Gate for whether annotation callouts/connectors render. Annotation
+   * data still loads regardless; only the visual overlay is conditional.
+   * Defaults to `false` so charts are clean unless mode is enabled.
+   */
+  isAnnotationMode?: boolean;
 }
 
 /**
@@ -80,7 +86,8 @@ export function AnnotationOverlay({
   annotations,
   visibleTypes,
   chart,
-}: AnnotationOverlayProps): ReactElement {
+  isAnnotationMode = false,
+}: AnnotationOverlayProps): ReactElement | null {
   const hostRef = useRef<HTMLDivElement>(null);
   // `tick` increments whenever the layout changes so the component re-renders
   // with fresh pixel positions from the chart instance.
@@ -92,16 +99,18 @@ export function AnnotationOverlay({
 
   // ── Pixel-precise mode: subscribe to layout changes when chart is live ──
   useEffect(() => {
+    if (!isAnnotationMode) return;
     if (!chart) return;
     const anchor = createKlineAnchor(chart);
     const unsub = anchor.subscribeLayout(bumpTick);
     // Fire once to prime pixel positions.
     bumpTick();
     return unsub;
-  }, [chart, bumpTick]);
+  }, [chart, bumpTick, isAnnotationMode]);
 
   // ── Geometric fallback: ResizeObserver on the host div ─────────────────
   useEffect(() => {
+    if (!isAnnotationMode) return;
     if (chart) return; // pixel-precise mode handles resize via subscribeLayout
     const host = hostRef.current;
     if (!host) return;
@@ -118,7 +127,9 @@ export function AnnotationOverlay({
     const rect = host.getBoundingClientRect();
     setBounds((prev) => ({ ...prev, width: rect.width, height: rect.height }));
     return () => obs.disconnect();
-  }, [chart]);
+  }, [chart, isAnnotationMode]);
+
+  if (!isAnnotationMode) return null;
 
   const filtered = visibleTypes
     ? annotations.filter((a) => visibleTypes.has(a.type))

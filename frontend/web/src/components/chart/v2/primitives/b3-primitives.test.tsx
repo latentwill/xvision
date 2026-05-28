@@ -307,6 +307,7 @@ describe("AnnotationOverlay fallback path", () => {
       <AnnotationOverlay
         candles={CANDLES}
         annotations={[SAMPLE]}
+        isAnnotationMode={true}
       />,
     );
     expect(screen.getByTestId("annotation-overlay-host")).toBeInTheDocument();
@@ -318,9 +319,32 @@ describe("AnnotationOverlay fallback path", () => {
         candles={CANDLES}
         annotations={[SAMPLE]}
         chart={null}
+        isAnnotationMode={true}
       />,
     );
     expect(screen.getByTestId("annotation-overlay-host")).toBeInTheDocument();
+  });
+
+  it("renders nothing when isAnnotationMode is false (default)", () => {
+    render(
+      <AnnotationOverlay
+        candles={CANDLES}
+        annotations={[SAMPLE]}
+      />,
+    );
+    expect(screen.queryByTestId("annotation-overlay-host")).toBeNull();
+    expect(screen.queryByText("Bull Flag")).toBeNull();
+  });
+
+  it("renders nothing when isAnnotationMode is explicitly false", () => {
+    render(
+      <AnnotationOverlay
+        candles={CANDLES}
+        annotations={[SAMPLE]}
+        isAnnotationMode={false}
+      />,
+    );
+    expect(screen.queryByTestId("annotation-overlay-host")).toBeNull();
   });
 });
 
