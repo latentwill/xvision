@@ -51,7 +51,13 @@ describe("FilterEventTimeline", () => {
     expect(ticks).toHaveLength(3);
   });
 
-  it("renders a visible date range for the timeline", () => {
+  it("does not render a static range stamp at the strip corners", () => {
+    // Intake 2026-05-28 §4. The strip used to render the first and last bar
+    // timestamps via `formatTimelineStamp` in two corners (`Feb 28, 07:00 PM`
+    // on the right). The right-hand stamp read as a static page-level date
+    // and the locale-formatted output (toLocaleString) drifted into the host
+    // timezone while everything else on the page is UTC. Per-bar info is now
+    // accessed via the per-tick title/aria-label tooltip.
     render(
       <FilterEventTimeline
         events={[
@@ -60,9 +66,23 @@ describe("FilterEventTimeline", () => {
         ]}
       />,
     );
-    const range = screen.getByTestId("filter-event-timeline-range");
-    expect(range).toHaveTextContent(/May 21/);
-    expect(range).toHaveTextContent(/May 22/);
+    expect(
+      screen.queryByTestId("filter-event-timeline-range"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps per-tick timestamps reachable via the title/aria-label tooltip", () => {
+    // After removing the static range stamps, the per-bar timestamps must
+    // still be one hover away — the title attr is the operator's only path
+    // back to the bar's ISO.
+    render(
+      <FilterEventTimeline
+        events={[makeEvent({ bar_timestamp: "2026-05-21T00:00:00Z" })]}
+      />,
+    );
+    const tick = screen.getByTestId("filter-event-tick");
+    expect(tick.getAttribute("title") ?? "").toContain("2026-05-21T00:00:00Z");
+    expect(tick.getAttribute("aria-label") ?? "").toContain("2026-05-21T00:00:00Z");
   });
 
   it("classifies each suppression reason with a distinct data-kind/data-reason marker", () => {
