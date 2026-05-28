@@ -54,6 +54,17 @@ impl fmt::Display for ContentHash {
     }
 }
 
+/// Owned variant of [`canonical_json`] — session.rs imports this name.
+pub fn canonicalize_json(v: serde_json::Value) -> serde_json::Value {
+    canonical_json(&v)
+}
+
+/// Hash the canonical JSON serialization of any `Serialize` value.
+pub fn hash_canonical_json<T: serde::Serialize>(value: &T) -> anyhow::Result<ContentHash> {
+    let v = serde_json::to_value(value)?;
+    Ok(ContentHash::of_json(&v))
+}
+
 /// Returns a semantically equivalent JSON value with all object keys sorted
 /// lexicographically at every level of nesting.
 pub fn canonical_json(v: &serde_json::Value) -> serde_json::Value {
