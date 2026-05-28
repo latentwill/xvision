@@ -973,6 +973,30 @@ impl WizardLoop {
                 .collect();
 
             if tool_uses.is_empty() {
+                // The model signaled it intended to call a tool
+                // (`stop_reason == ToolUse`) but emitted no tool_use
+                // block. Without this branch the loop bails as Done
+                // after the first malformed text-only turn, cutting
+                // off any planned follow-up steps. Persist a synthetic
+                // user-role nudge so the next iteration re-prompts the
+                // model with explicit guidance; MAX_TOOL_LOOP_ITERATIONS
+                // is the safety net for tight loops.
+                if matches!(resp.stop_reason, StopReason::ToolUse) {
+                    let nudge_blocks: Vec<serde_json::Value> = vec![serde_json::json!({
+                        "type": "text",
+                        "text": "Your previous turn signaled `tool_use` but contained no \
+                                 tool_use block. Either call the tool you intended to call, \
+                                 or finish the turn cleanly with a final text response."
+                    })];
+                    ChatSessionStore::append(
+                        &self.pool,
+                        &self.session_id,
+                        "user",
+                        &nudge_blocks,
+                    )
+                    .await?;
+                    continue;
+                }
                 self.is_done = true;
                 self.pending.push(WizardEvent::Done {
                     draft_id: self.last_draft_id.clone(),
@@ -3557,6 +3581,78 @@ mod tests {
         }
         assert!(matches!(&events[2], WizardEvent::Token { text } if text.contains("strategies")));
         assert!(matches!(&events[3], WizardEvent::Done { .. }));
+    }
+
+    /// Regression: a model turn that signals `stop_reason == ToolUse`
+    /// but emits no `tool_use` block (text-only / malformed content)
+    /// USED to bail as Done after the first response, cutting off any
+    /// planned follow-up tool calls. The loop must instead nudge the
+    /// model and iterate so multi-step plans complete.
+    #[tokio::test]
+    async fn malformed_tool_use_stop_reason_continues_loop() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            // Turn 1: malformed — stop_reason=ToolUse with text only.
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Let me check.".into(),
+                }],
+                stop_reason: StopReason::ToolUse,
+                input_tokens: 5,
+                output_tokens: 5,
+            },
+            // Turn 2: model recovers and emits a proper tool_use.
+            MockDispatch::tool_use("tu_late", "list_strategies", serde_json::json!({})),
+            // Turn 3: final wrap-up text.
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Here you go.".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "list strategies", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, WizardEvent::ToolCall { tool, .. } if tool == "list_strategies")),
+            "expected a late ToolCall after the malformed turn; got {events:?}"
+        );
+        assert!(
+            matches!(events.last(), Some(WizardEvent::Done { .. })),
+            "expected Done as last event; got {events:?}"
+        );
+    }
+
+    /// Safety net: if the model never recovers and keeps emitting
+    /// malformed `stop_reason == ToolUse` turns with no tool_use block,
+    /// the `continue` branch must NOT spin forever — the bounded
+    /// `MAX_TOOL_LOOP_ITERATIONS` for-loop is responsible for bailing
+    /// with an Error event. `MockDispatch::sequence` clones the last
+    /// queued response once the queue drains to one entry, so a single
+    /// malformed canned response is enough to exercise this.
+    #[tokio::test]
+    async fn malformed_tool_use_stop_reason_eventually_bails() {
+        let mock = Arc::new(MockDispatch::sequence(vec![LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: "thinking…".into(),
+            }],
+            stop_reason: StopReason::ToolUse,
+            input_tokens: 1,
+            output_tokens: 1,
+        }]));
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "list strategies", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, WizardEvent::Error { message } if message.contains("exceeded"))),
+            "expected an Error event with 'exceeded' in the message; got {events:?}"
+        );
     }
 
     /// V2F foundation: wizard exposes `list_strategies_folder` and
