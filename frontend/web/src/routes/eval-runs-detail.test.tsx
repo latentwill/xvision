@@ -11,7 +11,7 @@ import * as scenariosApi from "@/api/scenarios";
 import * as settingsApi from "@/api/settings";
 import * as strategyApi from "@/api/strategies";
 import { useTraceDock } from "@/stores/trace-dock";
-import type { DecisionRowDto, RunDetail } from "@/api/types.gen";
+import type { DecisionRowDto, FilterEventV1, RunDetail } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {
   const actual = await vi.importActual<typeof import("@/api/eval")>(
@@ -307,6 +307,56 @@ describe("EvalRunDetailRoute", () => {
     expect((await screen.findAllByText("BUY")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("ENGAGED").length).toBeGreaterThan(0);
     expect(screen.getByText("77%")).toBeInTheDocument();
+  });
+
+  // The filter-event timeline is fed by `detail.filter_events`, which only
+  // refreshes via `GET /runs/:id`. SSE does not carry per-bar filter events,
+  // so without a streaming-side refetch nudge the strip lags the 2s adaptive
+  // poll (and can sit stale until a terminal status invalidates the cache).
+  // useLiveRunStream debounces a refetch off every decision/status event so
+  // the strip grows in step with streamed decisions.
+  it("grows the filter timeline as decisions stream in", async () => {
+    const filterEvent = (i: number): FilterEventV1 => ({
+      schema_version: 1,
+      bar_timestamp: `2026-05-13T15:0${i}:00Z`,
+      filter_id: "01FILTER",
+      triggered: i % 2 === 0,
+      suppressed_reason: null,
+      conditions_passed: [],
+      conditions_failed: [],
+      indicator_snapshot: {},
+    });
+    let calls = 0;
+    vi.mocked(evalApi.getRun).mockImplementation(async () => {
+      const next = detail({
+        filter_events: Array.from({ length: calls }, (_, i) => filterEvent(i)),
+      });
+      calls += 1;
+      return next;
+    });
+
+    renderDetail();
+
+    // First render: filter_events length 0 → timeline section is hidden.
+    await screen.findByText("No decisions");
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(screen.queryByTestId("filter-event-timeline")).toBeNull();
+
+    const es = FakeEventSource.instances[0];
+
+    for (let i = 1; i <= 3; i += 1) {
+      es.emit("decision", {
+        event: "decision",
+        data: decision({ decision_index: i - 1 }),
+      });
+      // The strip lives in `detail.filter_events`, which only refreshes via
+      // `GET /runs/:id`. Each emit schedules a debounced refetch; wait for
+      // the resulting render rather than the request itself so the test
+      // stays insensitive to the exact debounce timing.
+      await waitFor(() =>
+        expect(screen.getAllByTestId("filter-event-tick")).toHaveLength(i),
+      );
+    }
   });
 
   it("shows an explicit stop control for active runs", async () => {
