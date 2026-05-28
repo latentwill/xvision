@@ -13,6 +13,7 @@ import { ActionPill } from "./ActionPill";
 import { PhaseChip } from "./PhaseChip";
 import { DecisionTimeline } from "./DecisionTimeline";
 import {
+  decisionCounts,
   fmtStepStamp,
   shortAsset,
   stepOrdinalsByDecision,
@@ -112,19 +113,18 @@ export function DecisionsTable({
     return sortDecisions(out, sortKey);
   }, [decisions, search, actionFilter, sortKey]);
 
-  const engagedCount = useMemo(
-    () => decisions.filter((d) => d.phase !== "filtered").length,
-    [decisions],
-  );
-
   // Step ordinals are keyed by decision_index and computed over the FULL list so
   // they stay stable under filtering. A multi-asset step (BTC+ETH at one
-  // timestamp) shares one step number; `stepCount` is the number of distinct
-  // decision steps, which is what the header should report (not the per-asset
-  // row count). Blanking the step number on the 2nd+ row of a step only makes
-  // sense when same-step rows are adjacent — i.e. in chronological sort.
+  // timestamp) shares one step number; `summary.totalSteps` is the number of
+  // distinct decision steps, which is what the header should report (not the
+  // per-asset row count). Blanking the step number on the 2nd+ row of a step
+  // only makes sense when same-step rows are adjacent — i.e. in chronological
+  // sort.
   const stepByI = useMemo(() => stepOrdinalsByDecision(decisions), [decisions]);
-  const stepCount = useMemo(() => new Set(decisions.map((d) => d.t)).size, [decisions]);
+  const summary = useMemo(
+    () => decisionCounts(filteredView, decisions),
+    [filteredView, decisions],
+  );
   const isChronological = sortKey === "time-asc" || sortKey === "time-desc";
 
   return (
@@ -137,9 +137,19 @@ export function DecisionsTable({
           <h2 className="m-0 font-sans text-[22px] tracking-tight text-text" style={{ fontWeight: 600 }}>
             Decisions
           </h2>
+          {/* Step-centric counts. The legacy chip read
+                "{rows} of {rows} decisions · {steps} steps · {rows} engaged"
+              and triple-counted the multi-asset fanout — a 5-step / 5-asset run
+              read as "22 of 22 decisions · 5 steps · 22 engaged." We now report
+              steps (the strategy's decision moments) as the primary count and
+              keep the per-asset row total visible as "trader calls" so the
+              operator can still see the fanout cardinality. Both step counts
+              follow filtering; trader calls follow the view too. */}
           <span className="text-[11px] font-mono text-text-3">
-            {filteredView.length} of {decisions.length} decisions · {stepCount}{" "}
-            {stepCount === 1 ? "step" : "steps"} · {engagedCount} engaged
+            {summary.viewedSteps} of {summary.totalSteps}{" "}
+            {summary.totalSteps === 1 ? "step" : "steps"} ·{" "}
+            {summary.engagedSteps} engaged · {summary.viewedTraderCalls} trader{" "}
+            {summary.viewedTraderCalls === 1 ? "call" : "calls"}
           </span>
         </div>
         <span className="text-[10px] font-mono text-text-3">click row → focus</span>
@@ -251,12 +261,14 @@ export function DecisionsTable({
         })}
       </div>
 
-      {/* Density strip */}
+      {/* Density strip — one tick per per-asset row; header reports the
+          step count derived from the same source as the summary chip above. */}
       <DecisionTimeline
         decisions={decisions}
         focusedIdx={focusedIdx}
         onJump={onJump}
         activeFilter={actionFilter}
+        stepsCount={summary.totalSteps}
       />
 
       <div className="overflow-x-auto xvn-scroll">
