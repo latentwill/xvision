@@ -11,11 +11,11 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use xvision_engine::api::autoresearch::{self, AutoresearchGateRequest, AutoresearchRunRequest};
 use xvision_engine::api::memory;
-use xvision_engine::autoresearch::config::AutoresearchConfig;
 use xvision_engine::autoresearch::content_hash::ContentHash;
-use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
+use xvision_engine::autoresearch::lineage::{LineageStatus, LineageStore};
 use xvision_memory::embedder::Embedder;
 
 use crate::exit::{CliError, CliResult, XvnExit};
@@ -40,10 +40,10 @@ pub enum Op {
     Promote(InspectArgs),
     /// Soft-delete the Pattern produced by an autoresearch run.
     Demote(InspectArgs),
-    /// Write a signed pre-commitment before any experiment cycles run.
-    /// Locks in the baseline-untouched-window and min-improvement threshold
-    /// before any mutations are applied.
-    SessionInit(SessionInitArgs),
+    /// Lineage graph inspection (ls / show).
+    Lineage(LineageCmd),
+    /// Cycle seal inspection.
+    Seal(SealCmd),
 }
 
 #[derive(Args, Debug)]
@@ -162,22 +162,64 @@ pub struct GateArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct SessionInitArgs {
-    /// Path to autoresearch.toml. Defaults to ~/.xvn/autoresearch.toml.
+pub struct LineageCmd {
+    #[command(subcommand)]
+    pub op: LineageOp,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LineageOp {
+    /// List lineage experiments.
+    Ls(LineageLsArgs),
+    /// Show a single experiment node and its ancestry.
+    Show(LineageShowArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct LineageLsArgs {
     #[arg(long)]
-    pub config: Option<PathBuf>,
-    /// Comma-separated parent bundle hashes (seeds for this session).
-    /// Omit for a fresh seed-only run with no parent strategies.
+    pub db: String,
     #[arg(long)]
-    pub parents: Option<String>,
-    /// Output path for the pre-commitment JSON.
-    /// Defaults to ~/.xvn/lineage/sessions/session-<session-id>.json.
+    pub cycle: Option<String>,
+    #[arg(long, default_value = "all")]
+    pub status: String,
+    #[arg(long, default_value_t = 50)]
+    pub limit: usize,
+}
+
+#[derive(Args, Debug)]
+pub struct LineageShowArgs {
+    pub bundle_hash: String,
     #[arg(long)]
-    pub out: Option<PathBuf>,
-    /// Override the operator signing key path.
-    /// Defaults to ~/.xvn/keys/operator.ed25519. Primarily for testing.
-    #[arg(long, hide = true)]
-    pub key_path: Option<PathBuf>,
+    pub db: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SealCmd {
+    #[command(subcommand)]
+    pub op: SealOp,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SealOp {
+    /// Pretty-print an evening summary (cycle seal).
+    Show(SealShowArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct SealShowArgs {
+    pub seal_id: String,
+    #[arg(long)]
+    pub db: String,
+}
+
+struct LineageRow {
+    bundle_hash: String,
+    parent_hash: Option<String>,
+    status: String,
+    cycle_id: Option<String>,
+    created_at: String,
+    gate_verdict: String,
 }
 
 pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
@@ -188,7 +230,13 @@ pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
         Op::Gate(args) => run_gate(args).await,
         Op::Promote(args) => run_promote(args).await,
         Op::Demote(args) => run_demote(args).await,
-        Op::SessionInit(args) => run_session_init(args),
+        Op::Lineage(cmd) => match cmd.op {
+            LineageOp::Ls(args) => lineage_ls(args).await,
+            LineageOp::Show(args) => lineage_show(args).await,
+        },
+        Op::Seal(cmd) => match cmd.op {
+            SealOp::Show(args) => seal_show(args).await,
+        },
     }
 }
 
@@ -431,70 +479,163 @@ async fn run_demote(args: InspectArgs) -> CliResult<()> {
     Ok(())
 }
 
-fn run_session_init(args: SessionInitArgs) -> CliResult<()> {
-    let config_path = match args.config {
-        Some(p) => p,
-        None => AutoresearchConfig::default_path().map_err(CliError::upstream)?,
-    };
-    let config = AutoresearchConfig::load(&config_path).map_err(|e| {
-        CliError::usage(anyhow::anyhow!("{}: {}", config_path.display(), e))
-    })?;
-    config.validate().map_err(CliError::usage)?;
+async fn open_lineage_db(db: &str) -> CliResult<SqlitePool> {
+    SqlitePool::connect(&format!("sqlite://{db}"))
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("open db {db}: {e}")))
+}
 
-    let parents = parse_parent_hashes(args.parents.as_deref().unwrap_or(""))?;
+fn parse_lineage_row(row: SqliteRow) -> anyhow::Result<LineageRow> {
+    Ok(LineageRow {
+        bundle_hash: row.try_get("bundle_hash")?,
+        parent_hash: row.try_get("parent_hash")?,
+        status: row.try_get("status")?,
+        cycle_id: row.try_get("cycle_id")?,
+        created_at: row.try_get("created_at")?,
+        gate_verdict: row.try_get("gate_verdict")?,
+    })
+}
 
-    let key_path = match args.key_path {
-        Some(p) => p,
-        None => default_key_path().map_err(CliError::upstream)?,
-    };
-    let key = load_or_generate_key(&key_path)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("{}: {}", key_path.display(), e)))?;
-
-    let session_id = ulid::Ulid::new();
-    let commitment = SessionCommitment::new_signed(session_id, &config, parents, &key)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("session commitment: {e}")))?;
-
-    let out_path = match args.out {
-        Some(p) => p,
-        None => {
-            let home = dirs::home_dir()
-                .ok_or_else(|| CliError::upstream(anyhow::anyhow!("no home directory found")))?;
-            home.join(".xvn")
-                .join("lineage")
-                .join("sessions")
-                .join(format!("session-{}.json", session_id))
+async fn fetch_lineage_rows(
+    pool: &SqlitePool,
+    cycle: Option<&str>,
+    status: &str,
+    limit: usize,
+) -> CliResult<Vec<LineageRow>> {
+    const SEL: &str = "SELECT bundle_hash, parent_hash, status, cycle_id, created_at, gate_verdict FROM lineage_nodes";
+    let lim = limit as i64;
+    let raw = if status == "all" {
+        if let Some(c) = cycle {
+            sqlx::query(&format!("{SEL} WHERE cycle_id = ? ORDER BY created_at DESC LIMIT ?"))
+                .bind(c).bind(lim).fetch_all(pool).await
+        } else {
+            sqlx::query(&format!("{SEL} ORDER BY created_at DESC LIMIT ?"))
+                .bind(lim).fetch_all(pool).await
         }
-    };
-
-    if let Some(parent) = out_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            CliError::upstream(anyhow::anyhow!("{}: {}", parent.display(), e))
-        })?;
+    } else if let Some(c) = cycle {
+        sqlx::query(&format!("{SEL} WHERE cycle_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"))
+            .bind(c).bind(status).bind(lim).fetch_all(pool).await
+    } else {
+        sqlx::query(&format!("{SEL} WHERE status = ? ORDER BY created_at DESC LIMIT ?"))
+            .bind(status).bind(lim).fetch_all(pool).await
     }
-    let json = serde_json::to_string_pretty(&commitment)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize commitment: {e}")))?;
-    std::fs::write(&out_path, json.as_bytes())
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("{}: {}", out_path.display(), e)))?;
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("query lineage_nodes: {e}")))?;
+    raw.into_iter()
+        .map(parse_lineage_row)
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
 
-    println!("Session {} committed → {}", session_id, out_path.display());
+async fn lineage_ls(args: LineageLsArgs) -> CliResult<()> {
+    if !matches!(args.status.as_str(), "all" | "active" | "rejected") {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--status must be 'active', 'rejected', or 'all'"
+        )));
+    }
+    let pool = open_lineage_db(&args.db).await?;
+    let rows = fetch_lineage_rows(&pool, args.cycle.as_deref(), &args.status, args.limit).await?;
+    if rows.is_empty() {
+        println!("(no experiments)");
+        return Ok(());
+    }
+    println!(
+        "{:<10}  {:<10}  {:<10}  {:<24}  {:<10}  {}",
+        "Experiment", "Status", "Parent", "Cycle", "Created", "Gate"
+    );
+    for row in &rows {
+        let exp = row.bundle_hash.get(..8).unwrap_or(&row.bundle_hash);
+        let parent = row.parent_hash.as_deref().and_then(|h| h.get(..8)).unwrap_or("—");
+        let cycle = row.cycle_id.as_deref().unwrap_or("—");
+        let created = row.created_at.get(..10).unwrap_or(&row.created_at);
+        println!(
+            "{:<10}  {:<10}  {:<10}  {:<24}  {:<10}  {}",
+            exp, row.status, parent, cycle, created, row.gate_verdict
+        );
+    }
     Ok(())
 }
 
-fn parse_parent_hashes(raw: &str) -> CliResult<Vec<ContentHash>> {
-    if raw.is_empty() {
-        return Ok(vec![]);
-    }
-    let mut out = Vec::new();
-    for token in raw.split(',') {
-        let token = token.trim();
-        if token.is_empty() {
-            continue;
+async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
+    let hash = ContentHash::from_hex(&args.bundle_hash)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("invalid bundle_hash: {e}")))?;
+    let pool = open_lineage_db(&args.db).await?;
+    let store = LineageStore::new(pool);
+    let node = store
+        .get(&hash)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("lineage show: {e}")))?
+        .ok_or_else(|| CliError::not_found(anyhow::anyhow!("experiment {} not found", args.bundle_hash)))?;
+    println!("bundle_hash:  {}", node.bundle_hash);
+    println!(
+        "status:       {}",
+        match node.status {
+            LineageStatus::Active => "active",
+            LineageStatus::Rejected => "rejected",
         }
-        let hash = ContentHash::from_hex(token)
-            .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent hash {token:?}: {e}")))?;
-        out.push(hash);
+    );
+    println!("gate_verdict: {}", node.gate_verdict.as_str());
+    println!("cycle_id:     {}", node.cycle_id.as_deref().unwrap_or("—"));
+    println!("created_at:   {}", node.created_at.to_rfc3339());
+    if let Some(p) = &node.parent_hash {
+        println!("parent_hash:  {p}");
     }
-    Ok(out)
+    println!("\nAncestry:");
+    let mut current = node.parent_hash.clone();
+    for depth in 0..50usize {
+        let Some(ph) = current else {
+            println!("  [root]");
+            break;
+        };
+        match store.get(&ph).await {
+            Err(e) => { println!("  [error: {e}]"); break; }
+            Ok(None) => { println!("  [parent {ph} not in store]"); break; }
+            Ok(Some(anc)) => {
+                let s = match anc.status {
+                    LineageStatus::Active => "active",
+                    LineageStatus::Rejected => "rejected",
+                };
+                println!("  depth={} {} ({})", depth + 1, anc.bundle_hash, s);
+                current = anc.parent_hash.clone();
+            }
+        }
+        if depth == 49 {
+            println!("  [ancestry truncated at 50 levels]");
+        }
+    }
+    Ok(())
+}
+
+async fn seal_show(args: SealShowArgs) -> CliResult<()> {
+    let pool = open_lineage_db(&args.db).await?;
+    let row = sqlx::query(
+        "SELECT cycle_id, merkle_root, operator_signature, sealed_at \
+         FROM cycle_seals WHERE seal_id = ?",
+    )
+    .bind(&args.seal_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("query cycle_seals: {e}")))?
+    .ok_or_else(|| CliError::not_found(anyhow::anyhow!("seal {} not found", args.seal_id)))?;
+    let cycle_id: String = row.try_get("cycle_id").map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
+    let merkle_root: String = row.try_get("merkle_root").map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
+    let op_sig: String = row.try_get("operator_signature").map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
+    let sealed_at: String = row.try_get("sealed_at").map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
+    let node_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?",
+    )
+    .bind(&cycle_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("count nodes: {e}")))?;
+    let sig_short = op_sig.get(..8).unwrap_or(&op_sig);
+    println!("Evening summary");
+    println!("seal_id:      {}", args.seal_id);
+    println!("cycle_id:     {}", cycle_id);
+    println!("sealed_at:    {}", sealed_at);
+    println!("node_count:   {}", node_count);
+    println!("cycle_proof:  {}", merkle_root);
+    println!("signature:    {}…", sig_short);
+    Ok(())
 }
 
 fn parse_embedding_json(raw: &str) -> CliResult<Vec<f32>> {
