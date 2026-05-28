@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,4 +12,10 @@ impl Default for AutoresearchConfig {
             allowed_mutation_kinds: vec!["prose".into(), "param".into(), "tool".into()],
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BaselineUntouchedWindow {
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
 }
