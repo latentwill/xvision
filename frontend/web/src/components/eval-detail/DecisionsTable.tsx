@@ -317,7 +317,13 @@ export function DecisionsTable({
                       {fmtStepStamp(d.t)}
                     </td>
                     <td className="px-4 py-2">
-                      <PhaseChip phase={d.phase} />
+                      {/* PHASE is a step-level concept (filter fired vs not),
+                          so blank the chip on per-asset child rows the same
+                          way we blank the STEP number — otherwise a single
+                          step renders ENGAGED N times for an N-asset universe
+                          and reads as "engaged every row." Non-chronological
+                          sort numbers every row, so show every chip too. */}
+                      {sameStepAsPrev ? null : <PhaseChip phase={d.phase} />}
                     </td>
                     <td className="px-4 py-2">
                       {isFiltered || !d.action ? (

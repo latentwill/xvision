@@ -370,9 +370,19 @@ describe("EvalRunDetailRoute", () => {
       detail({
         summary: { ...detail().summary, status: "completed" },
         decisions: [
-          decision({ decision_index: 0, justification: "breakout confirmed" }),
+          // Each fixture row gets a distinct timestamp so it represents its
+          // own decision step. The PHASE chip dedupe collapses per-asset
+          // child rows of the SAME step, which isn't what this test is
+          // exercising — the contract here is phase derivation from the
+          // synthesized-row markers, one row per step.
+          decision({
+            decision_index: 0,
+            timestamp: "2026-05-13T15:00:00Z",
+            justification: "breakout confirmed",
+          }),
           decision({
             decision_index: 1,
+            timestamp: "2026-05-13T16:00:00Z",
             action: "hold",
             conviction: null,
             order_size: null,
@@ -381,6 +391,7 @@ describe("EvalRunDetailRoute", () => {
           }),
           decision({
             decision_index: 2,
+            timestamp: "2026-05-13T17:00:00Z",
             action: "flat",
             conviction: null,
             order_size: null,
@@ -403,9 +414,17 @@ describe("EvalRunDetailRoute", () => {
       detail({
         summary: { ...detail().summary, status: "completed" },
         decisions: [
-          decision({ decision_index: 0, justification: "breakout confirmed" }),
+          // Distinct timestamps so each row is its own step — the dimming /
+          // dash-out contract is per-row, separate from the PHASE-chip
+          // per-step dedupe.
+          decision({
+            decision_index: 0,
+            timestamp: "2026-05-13T15:00:00Z",
+            justification: "breakout confirmed",
+          }),
           decision({
             decision_index: 1,
+            timestamp: "2026-05-13T16:00:00Z",
             action: "hold",
             conviction: null,
             order_size: null,
