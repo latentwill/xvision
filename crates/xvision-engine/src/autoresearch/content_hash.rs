@@ -22,6 +22,16 @@ impl<'de> Deserialize<'de> for ContentHash {
     }
 }
 
+impl ContentHash {
+    pub fn from_hex(s: &str) -> anyhow::Result<Self> {
+        let bytes = hex::decode(s)?;
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("parent hash must be 32 bytes (64 hex chars)"))?;
+        Ok(Self(arr))
+    }
+}
+
 pub fn canonicalize_json(v: Value) -> Value {
     match v {
         Value::Object(map) => {
