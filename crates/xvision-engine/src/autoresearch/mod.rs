@@ -22,6 +22,7 @@
 pub mod blob_store;
 pub mod config;
 pub mod content_hash;
+pub mod diversity;
 pub mod gate;
 pub mod lineage;
 pub mod mutator;
