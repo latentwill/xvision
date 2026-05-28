@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { shortAsset, stepOrdinalsByDecision, type TimelineDecision } from "./decision-view";
+import {
+  fmtStepStamp,
+  shortAsset,
+  stepOrdinalsByDecision,
+  type TimelineDecision,
+} from "./decision-view";
 
 function td(i: number, t: string, asset = "BTC/USD"): TimelineDecision {
   return { i, t, phase: "engaged", asset };
@@ -52,5 +57,27 @@ describe("stepOrdinalsByDecision", () => {
     const m = stepOrdinalsByDecision(rows);
     expect(m.get(1)).toBe(1); // earlier timestamp ⇒ step 1
     expect(m.get(0)).toBe(2);
+  });
+});
+
+describe("fmtStepStamp", () => {
+  test("renders ISO UTC as YYYY-MM-DD HH:MM:SS (no ms)", () => {
+    expect(fmtStepStamp("2024-01-12T21:00:00Z")).toBe("2024-01-12 21:00:00");
+    expect(fmtStepStamp("2024-02-09T08:00:00+00:00")).toBe("2024-02-09 08:00:00");
+  });
+
+  test("forces UTC regardless of local timezone", () => {
+    // Same instant; the renderer must not shift it into the host TZ.
+    expect(fmtStepStamp("2024-01-12T21:00:00Z")).toBe("2024-01-12 21:00:00");
+  });
+
+  test("drops sub-second precision but keeps the seconds field", () => {
+    expect(fmtStepStamp("2024-01-12T21:00:00.500Z")).toBe("2024-01-12 21:00:00");
+    expect(fmtStepStamp("2024-01-12T21:00:42.999Z")).toBe("2024-01-12 21:00:42");
+  });
+
+  test("returns the raw input on parse failure (matches prior behaviour)", () => {
+    expect(fmtStepStamp("not-a-date")).toBe("not-a-date");
+    expect(fmtStepStamp("")).toBe("");
   });
 });

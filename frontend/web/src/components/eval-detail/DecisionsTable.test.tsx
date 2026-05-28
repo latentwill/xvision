@@ -59,4 +59,20 @@ describe("DecisionsTable step + asset columns", () => {
     expect(stepColumn(container).every((s) => s === "1" || s === "2")).toBe(true);
     expect(stepColumn(container)).not.toContain("");
   });
+
+  test("timestamp column shows UTC date + HH:MM:SS and exposes full ISO on hover", () => {
+    // Regression guard: the column used to render `HH:MM:SS.mmm` only, so a
+    // multi-day run looked like every step happened at the same time.
+    const { container } = render(
+      <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
+    );
+    const rows = [...container.querySelectorAll("tbody tr")];
+    // 3rd <td> is TIMESTAMP (after STEP, ASSET).
+    const stamps = rows.map((tr) => tr.querySelectorAll("td")[2]);
+    expect(stamps[0]?.textContent).toBe("2024-01-01 20:00:00");
+    expect(stamps[2]?.textContent).toBe("2024-01-07 13:00:00");
+    // The raw ISO stays accessible via the title attr for copy-paste into the
+    // CLI / log search.
+    expect(stamps[0]?.getAttribute("title")).toBe(TS_A);
+  });
 });
