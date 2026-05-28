@@ -64,9 +64,7 @@ describe("DecisionsTable step + asset columns", () => {
     // Regression guard: a single multi-asset step used to render ENGAGED on
     // every per-asset row, reading as "engaged every row" instead of "engaged
     // every step."
-    const { container } = render(
-      <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
-    );
+    render(<DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />);
     // PhaseChip uppercases its label. Two steps ⇒ two chips in chrono sort,
     // not four (one per row).
     expect(screen.getAllByText("ENGAGED")).toHaveLength(2);
