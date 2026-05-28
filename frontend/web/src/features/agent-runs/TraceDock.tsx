@@ -114,6 +114,7 @@ export function TraceDock() {
     setSelectedSpan,
     advanced_view,
     setAdvancedView,
+    costOverrideUsd,
   } = useTraceDock();
   const navigate = useNavigate();
 
@@ -360,8 +361,11 @@ export function TraceDock() {
             <span className="opacity-40">·</span>
             <span>{summary.model_call_count} model</span>
             <span className="opacity-40">·</span>
-            <span title={formatCostUsdPrecise(summary.total_cost_usd)}>
-              {formatCostUsd(summary.total_cost_usd)}
+            <span
+              data-testid="trace-dock-cost"
+              title={formatCostUsdPrecise(costOverrideUsd ?? summary.total_cost_usd)}
+            >
+              {formatCostUsd(costOverrideUsd ?? summary.total_cost_usd)}
             </span>
             {isLive ? <span className="text-blue-300 ml-2 animate-pulse">● LIVE</span> : null}
           </>

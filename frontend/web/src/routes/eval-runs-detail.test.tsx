@@ -974,6 +974,40 @@ describe("EvalRunDetailRoute", () => {
     expect(useTraceDock.getState().activeRunId).toBeNull();
   });
 
+  it("pushes the eval-side cost into the trace dock so the capsule matches the meta strip", async () => {
+    // Pricing rolled up on the eval table (`inference_cost_quote_total`)
+    // but not on the linked agent-run summary (`total_cost_usd === 0`):
+    // the meta strip uses `displayCost`, which prefers the eval-side
+    // value. The capsule reads from the trace-dock store's
+    // `costOverrideUsd`, so the eval-detail page must push the same
+    // computed value or the capsule will show "—" / "$0.00" while the
+    // strip shows the real cost.
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+          inference_cost_quote_total: 0.4242,
+        },
+      }),
+    );
+
+    renderDetail();
+
+    // Wait for the page to settle on the completed-run surface (the
+    // Rerun button is only mounted after the run summary loads).
+    await screen.findByRole("button", { name: /rerun eval run 01live/i });
+
+    await waitFor(() =>
+      expect(useTraceDock.getState().costOverrideUsd).toBe(0.4242),
+    );
+
+    // And the meta strip renders the same number.
+    const meta = screen.getByTestId("eval-run-meta");
+    expect(meta.textContent ?? "").toMatch(/\$0\.4242/);
+  });
+
   it("renders the topbar status pill from run.status while the run is running", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(detail());
 
