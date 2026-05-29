@@ -28,6 +28,7 @@ arrow-array  = { workspace = true }
 parquet      = { workspace = true }
 
 serde       = { workspace = true }
+similar     = "2"
 toml        = { workspace = true }
 toml_edit   = "0.22"
 serde_json  = { workspace = true }
