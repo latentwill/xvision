@@ -9,9 +9,9 @@ This page compares the agentic trading strategy report to xvision *as it exists 
 ## TL;DR
 
 - The research report is broader than xvision today. It assumes a generic LLM-assisted trading stack with regime filters, stock signals, richer onchain inputs, execution-policy selection, and a multi-agent Researcher → Trader → Risk → Execution flow.
-- xvision already has the *spine* of that idea: deterministic risk and execution, an Intern/Trader split, strategy graphs, filters, baselines, tracing, and real execution backends.
-- The biggest gaps are richer market-substrate signals, explicit execution-policy selection, stock/fundamental/news data, and the research report's broader signal taxonomy.
-- The roadmap in this repo closes some structural gaps, but it does not yet cover the full breadth of the research memo.
+- xvision already has the *spine* of that idea: deterministic risk and execution, an Intern/Trader split, regime-aware and news-reader templates, strategy graphs, filters, baselines, tracing, and real execution backends.
+- The biggest gaps are richer market-substrate signals, explicit execution-policy selection, broader stock/fundamental/news coverage, and the research report's wider signal taxonomy.
+- The roadmap in this repo closes some structural gaps, but it still does not cover the full breadth of the research memo.
 
 ## What the research report is asking for
 
@@ -39,6 +39,7 @@ xvision is not a blank slate. It already implements a substantial portion of the
 - A typed Rust workspace with separate crates for core types, engine, eval, execution, dashboard, CLI, MCP, intern, observability, and identity.
 - A `Strategy` / `AgentRef` / pipeline model that is more structured than the prose architecture in the report.
 - Capability-based agent dispatch with typed outputs for `Trader`, `Filter`, `Critic`, `Intern`, and `Router`.
+- Template coverage already includes regime-aware and news-reader variants, so xvision is not starting from a generic blank slate.
 - Deterministic risk code and explicit execution backends rather than letting the LLM directly place trades.
 - Baselines, A/B compare, trace capture, and replayable evaluation surfaces.
 - Real execution surfaces for paper and live-perps style execution.
@@ -48,7 +49,9 @@ xvision is not a blank slate. It already implements a substantial portion of the
 The current prompt surfaces already expose some of the report's key substrate ideas:
 
 - The trader prompt receives a balanced briefing, portfolio state, and structured evidence.
+- The trader-facing briefing already includes prices, indicators, regime, and a news digest.
 - The intern prompt receives a market snapshot plus an indicator panel and a compact onchain / derivatives panel.
+- The repo also ships dedicated regime-aware and news-reader agent templates, which narrow the gap even if they do not cover the report's full breadth.
 - The intern is asked to produce bull / bear / flat evidence rather than an implicit trade recommendation.
 
 ### Signal coverage already implemented
@@ -116,7 +119,7 @@ These are the biggest structure-level differences between the report and xvision
 
 - **No separate Researcher agent.**
   - The report wants an explicit evidence-producing role.
-  - xvision uses the Intern as a similar but not identical role.
+  - xvision uses the Intern plus specialized templates (for example, regime and news-reader) to cover parts of that surface, but it does not yet have the report's full Researcher-style evidence pipeline.
 
 - **No explicit Risk Manager agent.**
   - xvision has deterministic risk code, but the report's optional vetoing agent is not a first-class live component.
@@ -128,13 +131,13 @@ These are the biggest structure-level differences between the report and xvision
   - There is no LLM-driven branch that decides TWAP / VWAP / adaptive execution based on spread, impact, or volatility.
 
 - **No first-class market-regime subsystem at the report's breadth.**
-  - xvision has regime-related concepts and filters, but not the report's full regime taxonomy or classifier stack.
+  - xvision already has a regime-classifier template and regime-aware trader flow, but it still lacks the report's broader regime taxonomy, feature breadth, and classifier stack.
 
 - **No live news ingestion loop.**
-  - News velocity, social volume, and prompt-injection-aware news workflows are not part of the current prompt surface.
+  - xvision already has a news-reader template and news-digest field, but the report's broader headline/social/news-velocity pipelines and prompt-injection-aware handling are still not fully represented.
 
-- **No full audit chain of the report's shape.**
-  - xvision has tracing, but the report's evidence decomposition is broader than the current record model.
+- **No explicit evidence graph matching the report's handoff chain.**
+  - xvision has tracing, but it does not yet serialize the full Researcher → Trader → Risk evidence trail the way the report describes.
 
 ## Specific gaps: signals and indicators that are missing or not implemented
 
