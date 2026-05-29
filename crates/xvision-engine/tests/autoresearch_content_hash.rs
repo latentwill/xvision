@@ -56,7 +56,7 @@ fn arrays_of_objects_sorted_recursively() {
 #[test]
 fn known_blake3_vector_empty() {
     const EXPECTED: &str =
-        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9b8e41f09c18ce";
+        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
     assert_eq!(hash_bytes(b"").to_hex(), EXPECTED);
 }
 
