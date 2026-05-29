@@ -27,6 +27,7 @@ pub mod diversity;
 pub mod eval_adapter;
 pub mod gate;
 pub mod judge;
+pub mod inversion;
 pub mod lineage;
 pub mod mutator;
 pub mod parent_policy;
@@ -47,6 +48,7 @@ pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canon
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
 pub use eval_adapter::{BacktestPaperTester, PaperTestRunner, StubPaperTester};
 pub use gate::{evaluate, GateInput, GateVerdict};
+pub use inversion::{invert_mutation, run_inversion_pair, InversionPairResult};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
 pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, ToolDiff};
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
