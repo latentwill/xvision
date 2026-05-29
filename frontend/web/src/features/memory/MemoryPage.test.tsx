@@ -387,12 +387,12 @@ describe("MemoryPage — Flywheel panel", () => {
       });
     });
 
-    await user.click(screen.getByRole("button", { name: /^Promote$/i }));
+    await user.click(screen.getByRole("button", { name: /^Activate$/i }));
     await waitFor(() => {
       expect(flywheelApi.promoteAutoresearchRun).toHaveBeenCalledWith("ar-1");
     });
 
-    await user.click(screen.getByRole("button", { name: /^Demote$/i }));
+    await user.click(screen.getByRole("button", { name: /^Retire$/i }));
     await waitFor(() => {
       expect(flywheelApi.demoteAutoresearchRun).toHaveBeenCalledWith("ar-1");
     });

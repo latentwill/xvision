@@ -321,6 +321,17 @@
       "path": [
         "autoresearch",
         "help",
+        "lineage"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
         "ls"
       ]
     },
@@ -349,6 +360,17 @@
     {
       "aliases": [],
       "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "seal"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
       "long_flags": [
         "--help",
         "--json"
@@ -357,6 +379,96 @@
       "path": [
         "autoresearch",
         "inspect"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "lineage"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "lineage",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "lineage",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "lineage",
+        "help",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "lineage",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--cycle",
+        "--db",
+        "--help",
+        "--limit",
+        "--status"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "lineage",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "lineage",
+        "show"
       ]
     },
     {
@@ -409,6 +521,67 @@
       "path": [
         "autoresearch",
         "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "seal"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "seal",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "seal",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "seal",
+        "help",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "seal",
+        "show"
       ]
     },
     {

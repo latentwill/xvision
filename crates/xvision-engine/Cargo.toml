@@ -28,6 +28,7 @@ arrow-array  = { workspace = true }
 parquet      = { workspace = true }
 
 serde       = { workspace = true }
+similar     = "2"
 toml        = { workspace = true }
 toml_edit   = "0.22"
 serde_json  = { workspace = true }
@@ -53,6 +54,8 @@ sha2        = "0.10"
 include_dir = "0.7"
 dirs        = "5"
 rand_core   = { version = "0.6", features = ["getrandom"] }
+rand        = "0.8"
+rand_chacha = "0.3"
 arrow-schema = { workspace = true }
 
 [dev-dependencies]
