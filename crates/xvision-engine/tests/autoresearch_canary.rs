@@ -4,11 +4,10 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use serde_json::json;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
-use xvision_engine::autoresearch::canary::{
-    build_sabotaged_strategy, run_honesty_check, GateInput, PaperTestRunner,
-};
+use xvision_engine::autoresearch::canary::{build_sabotaged_strategy, run_honesty_check};
 use xvision_engine::autoresearch::config::AutoresearchConfig;
-use xvision_engine::autoresearch::gate::GateVerdict;
+use xvision_engine::autoresearch::eval_adapter::PaperTestRunner;
+use xvision_engine::autoresearch::gate::{GateInput, GateVerdict};
 use xvision_engine::autoresearch::mutator::Mutator;
 use xvision_engine::eval::{
     AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
@@ -201,7 +200,7 @@ async fn run_honesty_check_with_bad_child_metrics_passes() {
         "honesty check must pass when sabotaged mutation is rejected"
     );
     assert!(
-        matches!(result.gate_verdict, GateVerdict::Rejected),
+        matches!(result.gate_verdict, GateVerdict::Fail { .. }),
         "gate verdict must be Rejected for a sabotaged strategy"
     );
 }
