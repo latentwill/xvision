@@ -25,7 +25,7 @@ use xvision_engine::autoresearch::gate::GateVerdict;
 use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
 use xvision_engine::autoresearch::mutator::{MutationDiff, Mutator};
 use xvision_engine::autoresearch::seal::build_and_sign;
-use xvision_engine::autoresearch::session::{load_or_generate_key, SessionCommitment};
+use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
 use xvision_engine::strategies::Strategy;
 use xvision_memory::embedder::Embedder;
 
@@ -55,7 +55,7 @@ pub enum Op {
     Lineage(LineageCmd),
     /// Cycle seal inspection.
     Seal(SealCmd),
-    /// Create and sign an operator session commitment.
+    /// Write a signed pre-commitment before any experiment cycles run.
     SessionInit(SessionInitArgs),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
@@ -63,15 +63,21 @@ pub enum Op {
 
 #[derive(Args, Debug)]
 pub struct SessionInitArgs {
-    /// AutoresearchConfig TOML path.
+    /// Path to autoresearch.toml. Defaults to ~/.xvn/autoresearch.toml.
     #[arg(long)]
-    pub config: PathBuf,
-    /// Output path for the SessionCommitment JSON.
+    pub config: Option<PathBuf>,
+    /// Comma-separated parent bundle hashes (seeds for this session).
+    /// Omit for a fresh seed-only run with no parent strategies.
     #[arg(long)]
-    pub out: PathBuf,
-    /// Ed25519 operator key path (generated if absent).
+    pub parents: Option<String>,
+    /// Output path for the pre-commitment JSON.
+    /// Defaults to ~/.xvn/lineage/sessions/session-<session-id>.json.
     #[arg(long)]
-    pub key_path: PathBuf,
+    pub out: Option<PathBuf>,
+    /// Override the operator signing key path.
+    /// Defaults to ~/.xvn/keys/operator.ed25519. Primarily for testing.
+    #[arg(long, hide = true)]
+    pub key_path: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -701,23 +707,46 @@ async fn seal_show(args: SealShowArgs) -> CliResult<()> {
 // ── session-init ──────────────────────────────────────────────────────────────
 
 async fn run_session_init(args: SessionInitArgs) -> CliResult<()> {
-    let cfg = AutoresearchConfig::load(&args.config)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
-    cfg.validate()
-        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
-    let key = load_or_generate_key(&args.key_path)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("key: {e}")))?;
-    let session = SessionCommitment::new_signed(Ulid::new(), &cfg, vec![], &key)
+    let config_path = match args.config {
+        Some(p) => p,
+        None => AutoresearchConfig::default_path().map_err(CliError::upstream)?,
+    };
+    let cfg = AutoresearchConfig::load(&config_path).map_err(|e| {
+        CliError::usage(anyhow::anyhow!("{}: {}", config_path.display(), e))
+    })?;
+    cfg.validate().map_err(CliError::usage)?;
+
+    let parents = parse_parent_hashes(args.parents.as_deref().unwrap_or(""))?;
+    let key_path = match args.key_path {
+        Some(p) => p,
+        None => default_key_path().map_err(CliError::upstream)?,
+    };
+    let key = load_or_generate_key(&key_path)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("{}: {}", key_path.display(), e)))?;
+    let session = SessionCommitment::new_signed(Ulid::new(), &cfg, parents, &key)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("sign session: {e}")))?;
-    if let Some(parent) = args.out.parent() {
+
+    let out_path = match args.out {
+        Some(p) => p,
+        None => {
+            let home = dirs::home_dir()
+                .ok_or_else(|| CliError::upstream(anyhow::anyhow!("no home directory found")))?;
+            home.join(".xvn")
+                .join("lineage")
+                .join("sessions")
+                .join(format!("session-{}.json", session.session_id))
+        }
+    };
+
+    if let Some(parent) = out_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| CliError::upstream(anyhow::anyhow!("create output dir: {e}")))?;
     }
     let json = serde_json::to_string_pretty(&session)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize session: {e}")))?;
-    std::fs::write(&args.out, json.as_bytes())
+    std::fs::write(&out_path, json.as_bytes())
         .map_err(|e| CliError::upstream(anyhow::anyhow!("write session: {e}")))?;
-    println!("Session {} committed → {}", session.session_id, args.out.display());
+    println!("Session {} committed → {}", session.session_id, out_path.display());
     Ok(())
 }
 
@@ -730,7 +759,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let blobs = BlobStore::new(blob_dir);
     let parent_hash = ContentHash::from_hex(&args.parent_bundle_hash)
         .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent_bundle_hash: {e}")))?;
-    let parent = load_strategy_blob(&blobs, &parent_hash)?;
+    let parent = load_strategy_blob(&blobs, &parent_hash).await?;
     let dispatch = build_dispatch(args.mock)?;
     eprintln!("Proposing experiment...");
     let diff = propose(&parent, &cfg, &dispatch)
@@ -743,8 +772,14 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let diff_json = serde_json::to_value(&diff)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize diff: {e}")))?;
     let (pd, ph, cd, ch) = paper_test_sharpes(args.mock);
-    let passed = gate_passes(pd, cd, ph, ch, cfg.gate.min_improvement);
-    let verdict = if passed { GateVerdict::Passed } else { GateVerdict::Rejected };
+    let passed = gate_passes(pd, cd, ph, ch, cfg.min_improvement);
+    let verdict = if passed {
+        GateVerdict::Pass
+    } else {
+        GateVerdict::Fail {
+            reason: "minimum-improvement threshold not met".into(),
+        }
+    };
     let status = if passed { LineageStatus::Active } else { LineageStatus::Rejected };
     eprintln!("Gate: {} (day Δ={:.3}, untouched Δ={:.3})",
         verdict.as_str(), cd - pd, ch - ph);
@@ -754,13 +789,22 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     }
     let db_path = args.db.unwrap_or_else(default_db_path);
     let pool = open_and_migrate_db(&db_path).await?;
-    let diff_hash = blobs.put_json(&diff_json).map_err(CliError::from)?;
-    blobs.put_json(&child_json).map_err(CliError::from)?;
+    let diff_hash = blobs
+        .put_json(&diff_json)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("write diff blob: {e}")))?;
+    blobs
+        .put_json(&child_json)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("write child blob: {e}")))?;
     let cycle_id = args.cycle_id.unwrap_or_else(|| Ulid::new().to_string());
     let lineage = LineageStore::new(pool.clone());
     insert_lineage_node(&lineage, child_hash, parent_hash, diff_hash, verdict.clone(), status, &cycle_id).await?;
     if passed {
-        let key_path = args.key_path.unwrap_or_else(|| default_key_path());
+        let key_path = match args.key_path {
+            Some(p) => p,
+            None => default_key_path().map_err(CliError::upstream)?,
+        };
         seal_cycle(&pool, &lineage, &cycle_id, &session, &key_path).await?;
     }
     println!("Experiment complete: verdict={} cycle={}", verdict.as_str(), cycle_id);
@@ -787,11 +831,37 @@ fn load_ar_session(path: Option<&Path>) -> CliResult<SessionCommitment> {
         .map_err(|e| CliError::upstream(anyhow::anyhow!("load session: {e}")))
 }
 
-fn load_strategy_blob(blobs: &BlobStore, hash: &ContentHash) -> CliResult<Strategy> {
+fn parse_parent_hashes(raw: &str) -> CliResult<Vec<ContentHash>> {
+    if raw.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    for token in raw.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let hash = ContentHash::from_hex(token)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent hash {token:?}: {e}")))?;
+        out.push(hash);
+    }
+    Ok(out)
+}
+
+async fn load_strategy_blob(blobs: &BlobStore, hash: &ContentHash) -> CliResult<Strategy> {
     let v = blobs
         .get_json(hash)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("read blob: {e}")))?
-        .ok_or_else(|| CliError::not_found(anyhow::anyhow!("parent bundle {} not found", hash.to_hex())))?;
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                CliError::not_found(anyhow::anyhow!(
+                    "parent bundle {} not found",
+                    hash.to_hex()
+                ))
+            } else {
+                CliError::upstream(anyhow::anyhow!("read blob: {e}"))
+            }
+        })?;
     serde_json::from_value(v)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("deserialize strategy: {e}")))
 }
@@ -879,10 +949,34 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     let pool = SqlitePool::connect(&url)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("open lineage db: {e}")))?;
-    sqlx::migrate!("../xvision-engine/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("run migrations: {e}")))?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS lineage_nodes (
+            bundle_hash TEXT PRIMARY KEY,
+            parent_hash TEXT,
+            diff_hash TEXT,
+            metrics_day_hash TEXT,
+            metrics_untouched_hash TEXT,
+            gate_verdict TEXT NOT NULL,
+            status TEXT NOT NULL,
+            cycle_id TEXT,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage_nodes: {e}")))?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS cycle_seals (
+            seal_id TEXT PRIMARY KEY,
+            cycle_id TEXT NOT NULL,
+            merkle_root TEXT NOT NULL,
+            operator_signature TEXT NOT NULL,
+            sealed_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create cycle_seals: {e}")))?;
     Ok(pool)
 }
 
@@ -947,21 +1041,13 @@ async fn seal_cycle(
 }
 
 fn default_blob_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".xvn/lineage/blobs")
+    BlobStore::default_root().unwrap_or_else(|_| PathBuf::from(".xvn/lineage/blobs"))
 }
 
 fn default_db_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".xvn/lineage/lineage.db")
-}
-
-fn default_key_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".xvn/keys/operator.ed25519")
 }
 
 fn parse_embedding_json(raw: &str) -> CliResult<Vec<f32>> {

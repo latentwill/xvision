@@ -1,58 +1,116 @@
-use anyhow::{Context, Result};
+//! Filesystem-backed content-addressed blob store.
+//!
+//! Layout under `root`:
+//!   <root>/<hh>/<hh>/<remaining-60-hex>.json   — for JSON blobs
+//!   <root>/<hh>/<hh>/<remaining-60-hex>.bin    — for raw byte blobs
+//!
+//! Two-level fan-out keeps any single directory < a few thousand entries even
+//! with millions of blobs. The default root is `~/.xvn/lineage/blobs`; tests
+//! pass an explicit tempdir.
+
 use std::path::{Path, PathBuf};
 
 use crate::autoresearch::content_hash::ContentHash;
 
-/// Filesystem-backed content-addressed store.
-///
-/// Each blob is written as `<dir>/<hash-hex>.json`. Writes are
-/// idempotent: if the file already exists the hash is returned
-/// without re-writing.
 pub struct BlobStore {
-    dir: PathBuf,
+    root: PathBuf,
 }
 
 impl BlobStore {
-    pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+    /// Construct a store rooted at `root` without any I/O.
+    ///
+    /// Directories are created lazily on the first `put_*` call, so callers
+    /// that only need `exists` or path resolution can use this.
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
     }
 
-    /// Write `value` (as pretty-printed JSON) and return its content hash.
-    pub fn put_json(&self, value: &serde_json::Value) -> Result<ContentHash> {
+    /// Return the default root path (`~/.xvn/lineage/blobs`) without opening it.
+    pub fn default_root() -> anyhow::Result<PathBuf> {
+        let home = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("could not resolve home dir"))?;
+        Ok(home.join(".xvn/lineage/blobs"))
+    }
+
+    /// Open a store at `root`, creating the directory if necessary.
+    pub async fn open(root: PathBuf) -> anyhow::Result<Self> {
+        tokio::fs::create_dir_all(&root).await?;
+        Ok(Self { root })
+    }
+
+    /// Open the default store at `~/.xvn/lineage/blobs`.
+    pub async fn open_default() -> anyhow::Result<Self> {
+        Self::open(Self::default_root()?).await
+    }
+
+    pub async fn put_json(&self, value: &serde_json::Value) -> anyhow::Result<ContentHash> {
         let hash = ContentHash::of_json(value);
-        let path = self.blob_path(&hash);
-        if !path.exists() {
-            std::fs::create_dir_all(&self.dir)
-                .with_context(|| format!("create blob dir {}", self.dir.display()))?;
-            let bytes = serde_json::to_vec_pretty(value).context("serialize blob")?;
-            std::fs::write(&path, &bytes)
-                .with_context(|| format!("write blob {}", hash.to_hex()))?;
+        let path = self.path_for(&hash, "json");
+        if tokio::fs::try_exists(&path).await? {
+            return Ok(hash);
         }
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let canonical = crate::autoresearch::content_hash::canonicalize_json(value);
+        let bytes = serde_json::to_vec_pretty(&canonical)?;
+        atomic_write(&path, &bytes).await?;
         Ok(hash)
     }
 
-    /// Read and parse the blob for `hash`. Returns `None` when absent.
-    pub fn get_json(&self, hash: &ContentHash) -> Result<Option<serde_json::Value>> {
-        let path = self.blob_path(hash);
-        if !path.exists() {
-            return Ok(None);
+    pub async fn get_json(&self, hash: &ContentHash) -> anyhow::Result<serde_json::Value> {
+        let path = self.path_for(hash, "json");
+        if !tokio::fs::try_exists(&path).await? {
+            anyhow::bail!("blob not found: {hash}");
         }
-        let bytes =
-            std::fs::read(&path).with_context(|| format!("read blob {}", hash.to_hex()))?;
-        let v = serde_json::from_slice(&bytes)
-            .with_context(|| format!("parse blob {}", hash.to_hex()))?;
-        Ok(Some(v))
+        let bytes = tokio::fs::read(&path).await?;
+        Ok(serde_json::from_slice(&bytes)?)
     }
 
+    pub async fn put_bytes(&self, payload: &[u8]) -> anyhow::Result<ContentHash> {
+        let hash = ContentHash::of_bytes(payload);
+        let path = self.path_for(&hash, "bin");
+        if tokio::fs::try_exists(&path).await? {
+            return Ok(hash);
+        }
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        atomic_write(&path, payload).await?;
+        Ok(hash)
+    }
+
+    pub async fn get_bytes(&self, hash: &ContentHash) -> anyhow::Result<Vec<u8>> {
+        let path = self.path_for(hash, "bin");
+        if !tokio::fs::try_exists(&path).await? {
+            anyhow::bail!("blob not found: {hash}");
+        }
+        Ok(tokio::fs::read(&path).await?)
+    }
+
+    /// Check whether a blob with this hash exists in the store (sync).
+    ///
+    /// Checks both `.bin` and `.json` extensions because bytes and JSON blobs
+    /// are stored under the same fan-out tree with different file extensions.
     pub fn exists(&self, hash: &ContentHash) -> bool {
-        self.blob_path(hash).exists()
+        self.path_for(hash, "bin").exists() || self.path_for(hash, "json").exists()
     }
 
-    pub fn dir(&self) -> &Path {
-        &self.dir
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
-    fn blob_path(&self, hash: &ContentHash) -> PathBuf {
-        self.dir.join(format!("{}.json", hash.to_hex()))
+    fn path_for(&self, hash: &ContentHash, ext: &str) -> PathBuf {
+        let hex = hash.to_hex();
+        let (h1, rest) = hex.split_at(2);
+        let (h2, tail) = rest.split_at(2);
+        self.root.join(h1).join(h2).join(format!("{tail}.{ext}"))
     }
+}
+
+async fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let tmp = path.with_extension("tmp");
+    tokio::fs::write(&tmp, bytes).await?;
+    tokio::fs::rename(&tmp, path).await?;
+    Ok(())
 }

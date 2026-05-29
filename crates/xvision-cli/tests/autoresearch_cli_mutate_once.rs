@@ -47,7 +47,10 @@ fn write_parent_blob(blob_dir: &Path) -> String {
     let strategy = parent_strategy_json();
     let hash = ContentHash::of_json(&strategy);
     let hash_hex = hash.to_hex();
-    let blob_path = blob_dir.join(format!("{hash_hex}.json"));
+    let (h1, rest) = hash_hex.split_at(2);
+    let (h2, tail) = rest.split_at(2);
+    let blob_path = blob_dir.join(h1).join(h2).join(format!("{tail}.json"));
+    std::fs::create_dir_all(blob_path.parent().unwrap()).unwrap();
     std::fs::write(&blob_path, serde_json::to_vec_pretty(&strategy).unwrap()).unwrap();
     hash_hex
 }
@@ -56,7 +59,24 @@ fn write_config(dir: &Path, min_improvement: f64) -> std::path::PathBuf {
     let config_path = dir.join("autoresearch.toml");
     std::fs::write(
         &config_path,
-        format!("[gate]\nmin_improvement = {min_improvement}\n"),
+        format!(
+            r#"
+min_improvement = {min_improvement}
+
+[baseline_untouched_window]
+start = "2025-09-01"
+end = "2025-12-01"
+
+[day_window]
+start = "2024-01-01"
+end = "2025-09-01"
+
+[mutator]
+provider = "test"
+model = "test-model"
+max_retries = 2
+"#
+        ),
     )
     .unwrap();
     config_path
