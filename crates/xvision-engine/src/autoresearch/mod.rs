@@ -26,6 +26,7 @@ pub mod content_hash;
 pub mod gate;
 pub mod lineage;
 pub mod mutator;
+pub mod parent_policy;
 pub mod program_view;
 pub mod progress;
 pub mod seal;
@@ -42,6 +43,7 @@ pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canon
 pub use gate::{evaluate, GateInput, GateVerdict};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
 pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, ToolDiff};
+pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
 pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, ProgramViewError};
 pub use seal::{build_and_sign, CycleSeal, OPERATOR_DISPLAY_LABEL};
 pub use session::{default_key_path, load_or_generate_key, SessionCommitment};
