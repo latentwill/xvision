@@ -1,6 +1,6 @@
 use crate::autoresearch::{
     config::AutoresearchConfig,
-    content_hash::{canonical_json, hash_canonical_json, ContentHash},
+    content_hash::{canonicalize_json, hash_canonical_json, ContentHash},
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -73,14 +73,14 @@ fn signing_payload(
     config_hash: &ContentHash,
     parents: &[ContentHash],
 ) -> Result<Vec<u8>> {
-    let parent_hex: Vec<String> = parents.iter().map(|h| hex::encode(h.as_bytes())).collect();
+    let parent_hex: Vec<String> = parents.iter().map(ContentHash::to_hex).collect();
     let v = json!({
-        "config_hash": hex::encode(config_hash.as_bytes()),
+        "config_hash": config_hash.to_hex(),
         "created_at": created_at.to_rfc3339(),
         "parent_strategy_hashes": parent_hex,
         "session_id": session_id.to_string(),
     });
-    let canonical = canonical_json(&v);
+    let canonical = canonicalize_json(&v);
     Ok(serde_json::to_vec(&canonical)?)
 }
 
@@ -101,7 +101,8 @@ impl SessionCommitment {
         key: &SigningKey,
     ) -> Result<SessionCommitment> {
         let created_at = Utc::now();
-        let config_hash = hash_canonical_json(config)?;
+        let config_json = serde_json::to_value(config)?;
+        let config_hash = hash_canonical_json(&config_json);
         let payload = signing_payload(&session_id, &created_at, &config_hash, &parents)?;
         let sig: Signature = key.sign(&payload);
         let signature = hex::encode(sig.to_bytes());
