@@ -20,28 +20,42 @@
 //! substrate the API will eventually delegate to.
 
 pub mod blob_store;
+pub mod canary;
 pub mod config;
-pub mod cycle_loosen;
 pub mod content_hash;
+pub mod cycle_loosen;
+pub mod diversity;
+pub mod eval_adapter;
 pub mod gate;
+pub mod inversion;
+pub mod judge;
 pub mod lineage;
 pub mod mutator;
+pub mod mutator_ladder;
+pub mod parent_policy;
 pub mod program_view;
 pub mod progress;
+pub mod scenario_synthesis;
 pub mod seal;
 pub mod session;
 pub mod validator;
 
 // AR-1 public surface — confirmed against each submodule file.
-// Items from the plan draft that do not exist are omitted:
-//   blob_store::BlobStore (placeholder), config::{MutatorConfig,LooseningSchedule,DayWindow,BaselineUntouchedWindow},
-//   gate::{GateInput,evaluate}, program_view::from_markdown.
-pub use config::AutoresearchConfig;
+pub use blob_store::BlobStore;
+pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult};
+pub use config::{AutoresearchConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig};
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
-pub use gate::GateVerdict;
+pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
+pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
+pub use eval_adapter::{BacktestPaperTester, PaperTestRunner, StubPaperTester};
+pub use gate::{evaluate, GateInput, GateVerdict};
+pub use inversion::{invert_mutation, run_inversion_pair, InversionPairResult};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
 pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, ToolDiff};
-pub use program_view::to_markdown;
-pub use seal::CycleSeal;
+pub use mutator_ladder::{compute_ladder, record_outcome, record_proposal, MutatorScore};
+pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
+pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, ProgramViewError};
+pub use scenario_synthesis::synthesize_baseline_untouched_scenario;
+pub use seal::{build_and_sign, CycleSeal, OPERATOR_DISPLAY_LABEL};
 pub use session::{default_key_path, load_or_generate_key, SessionCommitment};
 pub use validator::{validate_mutation_diff, ValidationError};

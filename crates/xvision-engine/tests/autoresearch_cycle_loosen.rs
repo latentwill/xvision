@@ -7,8 +7,10 @@ use xvision_engine::autoresearch::{
 
 fn make_config(thresholds: Vec<f64>) -> AutoresearchConfig {
     AutoresearchConfig {
-        base_min_improvement: 0.10,
-        loosening_schedule: LooseningSchedule { day_n_thresholds: thresholds },
+        min_improvement: 0.10,
+        loosening_schedule: Some(LooseningSchedule {
+            day_n_thresholds: thresholds,
+        }),
         ..AutoresearchConfig::default()
     }
 }
@@ -24,7 +26,7 @@ async fn sustained_zero_returns_base() {
     let r = effective_min_improvement_for_cycle(&pool, &config, 0, 0)
         .await
         .unwrap();
-    assert_eq!(r.effective_min_improvement, config.base_min_improvement);
+    assert_eq!(r.effective_min_improvement, config.min_improvement);
     assert_eq!(r.loosening_steps_applied, 0);
 }
 
@@ -64,7 +66,8 @@ async fn schedule_hash_is_deterministic_and_matches_canonical() {
     let r = effective_min_improvement_for_cycle(&pool, &config, 0, 1)
         .await
         .unwrap();
-    let expected = hash_canonical_json(&config.loosening_schedule).unwrap();
+    let expected =
+        hash_canonical_json(&serde_json::to_value(config.loosening_schedule.as_ref().unwrap()).unwrap());
     assert_eq!(r.schedule_hash, expected);
 }
 
