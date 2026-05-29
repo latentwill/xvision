@@ -153,6 +153,8 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
             cost_usd: Some(0.01 * (i as f64 + 1.0)),
             prompt_hash: format!("sha256:prompt_{i:064x}"),
             response_hash: Some(format!("sha256:resp_{i:064x}")),
+            prompt_text: None,
+            response_text: None,
             prompt_payload_ref: None,
             response_payload_ref: None,
             tool_calls_requested: None,

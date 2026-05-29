@@ -19,13 +19,14 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::task::JoinHandle;
 use xvision_observability::{
-    AssistantTextDeltaEvent, BackpressureDroppedEvent, ModelCallFinishedEvent, RunEvent, RunEventBus,
-    RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent,
-    SpanStartedEvent, ToolCallCancelledEvent, ToolCallFailedEvent, ToolCallFinishedEvent,
+    AssistantTextDeltaEvent, BackpressureDroppedEvent, EngineEvent, ModelCallFinishedEvent, RunEvent,
+    RunEventBus, RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent,
+    SpanFinishedEvent, SpanStartedEvent, ToolCallCancelledEvent, ToolCallFailedEvent, ToolCallFinishedEvent,
     ToolCallStartedEvent,
 };
 use xvision_observability::{
@@ -369,6 +370,8 @@ fn dispatch_inner(
             let span_id = str_field("span_id")?;
             let provider = str_field("provider")?;
             let model = str_field("model")?;
+            let prompt_text = str_field("prompt");
+            let response_text = str_field("response");
             let now = Utc::now();
             vec![
                 RunEvent::SpanFinished(SpanFinishedEvent {
@@ -384,16 +387,59 @@ fn dispatch_inner(
                     input_token_count: i64_field("input_tokens"),
                     output_token_count: i64_field("output_tokens"),
                     cost_usd: f64_field("total_cost"),
-                    // For v1 we do not hash the full prompt at the sidecar
-                    // — that requires Cline-Agent internals access. Use a
-                    // synthetic marker; the recorder may upgrade this when
-                    // the Cline model-wrapping path lands.
-                    prompt_hash: format!("agentd-step:{}:{}", provider, model),
-                    response_hash: None,
+                    prompt_hash: prompt_text
+                        .as_deref()
+                        .map(sha256_text)
+                        .unwrap_or_else(|| format!("agentd-step:{}:{}", provider, model)),
+                    response_hash: response_text.as_deref().map(sha256_text),
+                    prompt_text,
+                    response_text,
                     prompt_payload_ref: None,
                     response_payload_ref: None,
                     tool_calls_requested: None,
                     capability_path: Some(CapabilityPath::StructuredOutput),
+                }),
+            ]
+        }
+
+        "event.decision_recorded" => {
+            let span_id = str_field("span_id")?;
+            let run_id = str_field("run_id")?;
+            let now = Utc::now();
+            let mut payload = serde_json::Map::new();
+            for key in ["action", "outcome", "asset", "active_positions", "decision_json"] {
+                if let Some(value) = params.get(key) {
+                    payload.insert(key.to_string(), value.clone());
+                }
+            }
+            let action = str_field("action").unwrap_or_else(|| "unknown".to_string());
+            let outcome = str_field("outcome").unwrap_or_else(|| "unknown".to_string());
+            let mut attrs = payload.clone();
+            attrs.insert("run_id".to_string(), serde_json::Value::String(run_id.clone()));
+            vec![
+                RunEvent::SpanStarted(SpanStartedEvent {
+                    span_id: span_id.clone(),
+                    run_id: run_id.clone(),
+                    parent_span_id: None,
+                    kind: SpanKind::AgentDecision,
+                    name: format!("decision {outcome}: {action}"),
+                    started_at: now,
+                    otel_trace_id: None,
+                    otel_span_id: None,
+                    attributes_json: Some(serde_json::Value::Object(attrs).to_string()),
+                }),
+                RunEvent::EngineEvent(EngineEvent {
+                    run_id,
+                    span_id: Some(span_id.clone()),
+                    kind: "decision_recorded".to_string(),
+                    payload_json: Some(serde_json::Value::Object(payload).to_string()),
+                    created_at: now,
+                }),
+                RunEvent::SpanFinished(SpanFinishedEvent {
+                    span_id,
+                    ended_at: now,
+                    status: SpanStatus::Ok,
+                    error_json: None,
                 }),
             ]
         }
@@ -478,6 +524,10 @@ fn parse_run_status(s: &str) -> RunStatus {
 
 fn ms_to_utc(ms: u64) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64).unwrap_or_else(|| Utc::now())
+}
+
+fn sha256_text(text: &str) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(text.as_bytes())))
 }
 
 // ---------------------------------------------------------------------------
@@ -785,6 +835,70 @@ mod tests {
             }
             _ => panic!("wrong variant for events[1]"),
         }
+    }
+
+    #[test]
+    fn dispatch_model_call_finished_carries_plaintext_prompt_and_response() {
+        let fp = SidecarFingerprint::default();
+        let events = dispatch(
+            "event.model_call_finished",
+            &serde_json::json!({
+                "span_id": "sp-plain",
+                "run_id": "r1",
+                "provider": "anthropic",
+                "model": "claude-opus-4-7",
+                "prompt": "{\"messages\":[\"decide\"]}",
+                "response": "{\"text\":\"hold\",\"tool_calls\":[]}",
+            }),
+            &fp,
+        );
+        match &events[1] {
+            RunEvent::ModelCallFinished(m) => {
+                assert_eq!(m.prompt_text.as_deref(), Some("{\"messages\":[\"decide\"]}"));
+                assert_eq!(
+                    m.response_text.as_deref(),
+                    Some("{\"text\":\"hold\",\"tool_calls\":[]}")
+                );
+                assert!(m.prompt_hash.starts_with("sha256:"));
+                assert!(m.response_hash.as_deref().unwrap().starts_with("sha256:"));
+            }
+            _ => panic!("wrong variant for events[1]"),
+        }
+    }
+
+    #[test]
+    fn dispatch_decision_recorded_emits_decision_span_and_event() {
+        let fp = SidecarFingerprint::default();
+        let events = dispatch(
+            "event.decision_recorded",
+            &serde_json::json!({
+                "span_id": "sp-decision",
+                "run_id": "r1",
+                "action": "hold",
+                "outcome": "held",
+                "asset": "BTC",
+                "active_positions": [{"asset": "BTC", "qty": 0.0}],
+                "decision_json": "{\"action\":\"hold\"}",
+            }),
+            &fp,
+        );
+        assert_eq!(events.len(), 3);
+        match &events[0] {
+            RunEvent::SpanStarted(s) => {
+                assert_eq!(s.span_id, "sp-decision");
+                assert!(matches!(s.kind, SpanKind::AgentDecision));
+                assert!(s.attributes_json.as_deref().unwrap().contains("active_positions"));
+            }
+            _ => panic!("wrong variant for events[0]"),
+        }
+        match &events[1] {
+            RunEvent::EngineEvent(e) => {
+                assert_eq!(e.kind, "decision_recorded");
+                assert_eq!(e.span_id.as_deref(), Some("sp-decision"));
+            }
+            _ => panic!("wrong variant for events[1]"),
+        }
+        assert!(matches!(events[2], RunEvent::SpanFinished(_)));
     }
 
     #[test]

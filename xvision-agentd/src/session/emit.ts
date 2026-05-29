@@ -18,6 +18,7 @@ export const NOTIFY = {
   ToolCallCancelled: "event.tool_call_cancelled",
   ModelCallStarted: "event.model_call_started",
   ModelCallFinished: "event.model_call_finished",
+  DecisionRecorded: "event.decision_recorded",
   AssistantTextDelta: "event.assistant_text_delta",
   Overloaded: "event.overloaded",
   Error: "event.error",
@@ -99,6 +100,8 @@ export function emitModelCallFinished(params: {
   input_tokens: number
   output_tokens: number
   total_cost?: number | undefined
+  prompt: string
+  response: string
 }): void {
   void emitNotification(NOTIFY.ModelCallFinished, {
     span_id: params.span_id,
@@ -108,6 +111,8 @@ export function emitModelCallFinished(params: {
     input_tokens: params.input_tokens,
     output_tokens: params.output_tokens,
     ...(typeof params.total_cost === "number" ? { total_cost: params.total_cost } : {}),
+    prompt: params.prompt,
+    response: params.response,
   })
 }
 
@@ -136,8 +141,34 @@ export function emitAssistantTextDelta(params: {
   span_id: string
   run_id: string
   delta_len: number
+  text?: string | undefined
 }): void {
-  void emitNotification(NOTIFY.AssistantTextDelta, params)
+  void emitNotification(NOTIFY.AssistantTextDelta, {
+    span_id: params.span_id,
+    run_id: params.run_id,
+    delta_len: params.delta_len,
+    ...(params.text !== undefined ? { text: params.text } : {}),
+  })
+}
+
+export function emitDecisionRecorded(params: {
+  span_id: string
+  run_id: string
+  action: string
+  outcome: "bought" | "sold" | "closed" | "held" | "unknown"
+  asset?: string | undefined
+  active_positions?: unknown
+  decision_json: string
+}): void {
+  void emitNotification(NOTIFY.DecisionRecorded, {
+    span_id: params.span_id,
+    run_id: params.run_id,
+    action: params.action,
+    outcome: params.outcome,
+    ...(params.asset !== undefined ? { asset: params.asset } : {}),
+    ...(params.active_positions !== undefined ? { active_positions: params.active_positions } : {}),
+    decision_json: params.decision_json,
+  })
 }
 
 /**

@@ -1,4 +1,6 @@
 import { createTool, type AgentTool } from "@cline/sdk"
+import { activeRunId } from "./active-run.js"
+import { emitDecisionRecorded, newSpanId } from "./emit.js"
 
 /**
  * Name of the built-in lifecycle tool the agent calls to emit its final
@@ -32,8 +34,76 @@ export function buildSubmitDecisionTool(
     inputSchema,
     lifecycle: { completesRun: true },
     execute: async (input: unknown) => {
-      capture(JSON.stringify(input))
+      const json = JSON.stringify(input)
+      capture(json)
+      const runId = activeRunId()
+      if (runId) {
+        const summary = summarizeDecisionInput(input)
+        emitDecisionRecorded({
+          span_id: newSpanId(),
+          run_id: runId,
+          action: summary.action,
+          outcome: summary.outcome,
+          ...(summary.asset !== undefined ? { asset: summary.asset } : {}),
+          ...(summary.active_positions !== undefined ? { active_positions: summary.active_positions } : {}),
+          decision_json: json,
+        })
+      }
       return { ok: true }
     },
   })
+}
+
+function summarizeDecisionInput(input: unknown): {
+  action: string
+  outcome: "bought" | "sold" | "closed" | "held" | "unknown"
+  asset?: string
+  active_positions?: unknown
+} {
+  const obj = isRecord(input) ? input : {}
+  const rawAction =
+    stringField(obj, "action") ??
+    stringField(obj, "decision") ??
+    stringField(obj, "side") ??
+    stringField(obj, "order_side") ??
+    "unknown"
+  const activePositions = extractActivePositions(obj)
+  return {
+    action: rawAction,
+    outcome: classifyDecisionOutcome(rawAction.toLowerCase()),
+    ...(stringField(obj, "asset") ?? stringField(obj, "symbol")
+      ? { asset: (stringField(obj, "asset") ?? stringField(obj, "symbol"))! }
+      : {}),
+    ...(activePositions !== undefined ? { active_positions: activePositions } : {}),
+  }
+}
+
+function classifyDecisionOutcome(action: string): "bought" | "sold" | "closed" | "held" | "unknown" {
+  if (["buy", "bought", "long", "long_open", "open_long"].includes(action)) return "bought"
+  if (["sell", "sold", "short", "short_open", "open_short"].includes(action)) return "sold"
+  if (["close", "closed", "exit", "flat", "close_long", "close_short"].includes(action)) return "closed"
+  if (["hold", "held", "noop", "no_op", "none"].includes(action)) return "held"
+  return "unknown"
+}
+
+function extractActivePositions(obj: Record<string, unknown>): unknown {
+  if ("active_positions" in obj) return obj.active_positions
+  if ("activePositions" in obj) return obj.activePositions
+  if ("positions" in obj) return obj.positions
+  if ("position" in obj) return obj.position
+  if (isRecord(obj.portfolio)) {
+    if ("active_positions" in obj.portfolio) return obj.portfolio.active_positions
+    if ("activePositions" in obj.portfolio) return obj.portfolio.activePositions
+    if ("positions" in obj.portfolio) return obj.portfolio.positions
+  }
+  return undefined
+}
+
+function stringField(obj: Record<string, unknown>, key: string): string | undefined {
+  const value = obj[key]
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
