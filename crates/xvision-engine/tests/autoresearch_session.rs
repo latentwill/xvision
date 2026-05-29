@@ -1,10 +1,32 @@
 use tempfile::TempDir;
 use ulid::Ulid;
 use xvision_engine::autoresearch::{
-    config::AutoresearchConfig,
+    config::{AutoresearchConfig, BaselineUntouchedWindow, DayWindow, MutatorConfig},
     content_hash::ContentHash,
     session::{load_or_generate_key, SessionCommitment},
 };
+
+fn test_config() -> AutoresearchConfig {
+    AutoresearchConfig {
+        min_improvement: 0.05,
+        baseline_untouched_window: BaselineUntouchedWindow {
+            start: "2026-01-01".parse().unwrap(),
+            end: "2026-01-31".parse().unwrap(),
+        },
+        day_window: DayWindow {
+            start: "2026-02-01".parse().unwrap(),
+            end: "2026-02-02".parse().unwrap(),
+        },
+        loosening_schedule: None,
+        mutator: MutatorConfig {
+            provider: "test".into(),
+            model: "test-model".into(),
+            max_retries: 2,
+        },
+        allowed_mutation_kinds: vec!["prose".into(), "param".into(), "tool".into()],
+        lineage_root: None,
+    }
+}
 
 #[test]
 fn key_generate_and_load_round_trips() {
@@ -20,9 +42,8 @@ fn new_signed_and_verify_succeed() {
     let dir = TempDir::new().unwrap();
     let key_path = dir.path().join("operator.ed25519");
     let key = load_or_generate_key(&key_path).unwrap();
-    let commitment =
-        SessionCommitment::new_signed(Ulid::new(), &AutoresearchConfig::default(), vec![], &key)
-            .unwrap();
+    let commitment = SessionCommitment::new_signed(Ulid::new(), &test_config(), vec![], &key)
+        .unwrap();
     commitment.verify(&key.verifying_key()).unwrap();
 }
 
@@ -31,9 +52,8 @@ fn verify_fails_on_tampered_fields() {
     let dir = TempDir::new().unwrap();
     let key_path = dir.path().join("operator.ed25519");
     let key = load_or_generate_key(&key_path).unwrap();
-    let mut commitment =
-        SessionCommitment::new_signed(Ulid::new(), &AutoresearchConfig::default(), vec![], &key)
-            .unwrap();
+    let mut commitment = SessionCommitment::new_signed(Ulid::new(), &test_config(), vec![], &key)
+        .unwrap();
     commitment.config_hash = ContentHash([0u8; 32]);
     assert!(
         commitment.verify(&key.verifying_key()).is_err(),
@@ -46,9 +66,8 @@ fn write_to_and_load_from_round_trip() {
     let dir = TempDir::new().unwrap();
     let key_path = dir.path().join("operator.ed25519");
     let key = load_or_generate_key(&key_path).unwrap();
-    let commitment =
-        SessionCommitment::new_signed(Ulid::new(), &AutoresearchConfig::default(), vec![], &key)
-            .unwrap();
+    let commitment = SessionCommitment::new_signed(Ulid::new(), &test_config(), vec![], &key)
+        .unwrap();
     let path = commitment.write_to(dir.path()).unwrap();
     let loaded = SessionCommitment::load_from(&path).unwrap();
     assert_eq!(commitment, loaded);
@@ -70,9 +89,8 @@ fn verify_fails_with_wrong_key() {
     let dir = TempDir::new().unwrap();
     let key1 = load_or_generate_key(&dir.path().join("key1.ed25519")).unwrap();
     let key2 = load_or_generate_key(&dir.path().join("key2.ed25519")).unwrap();
-    let commitment =
-        SessionCommitment::new_signed(Ulid::new(), &AutoresearchConfig::default(), vec![], &key1)
-            .unwrap();
+    let commitment = SessionCommitment::new_signed(Ulid::new(), &test_config(), vec![], &key1)
+        .unwrap();
     assert!(
         commitment.verify(&key2.verifying_key()).is_err(),
         "verification must fail with a different public key"
@@ -95,9 +113,8 @@ fn new_signed_with_parents_verifies() {
     let dir = TempDir::new().unwrap();
     let key = load_or_generate_key(&dir.path().join("operator.ed25519")).unwrap();
     let parents = vec![ContentHash([1u8; 32]), ContentHash([2u8; 32])];
-    let commitment =
-        SessionCommitment::new_signed(Ulid::new(), &AutoresearchConfig::default(), parents, &key)
-            .unwrap();
+    let commitment = SessionCommitment::new_signed(Ulid::new(), &test_config(), parents, &key)
+        .unwrap();
     commitment.verify(&key.verifying_key()).unwrap();
     assert_eq!(commitment.parent_strategy_hashes.len(), 2);
 }

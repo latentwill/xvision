@@ -10,7 +10,22 @@ async fn fresh_store() -> LineageStore {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query(
+        "CREATE TABLE lineage_nodes (
+            bundle_hash TEXT PRIMARY KEY,
+            parent_hash TEXT REFERENCES lineage_nodes(bundle_hash),
+            diff_hash TEXT,
+            metrics_day_hash TEXT,
+            metrics_untouched_hash TEXT,
+            gate_verdict TEXT NOT NULL,
+            status TEXT NOT NULL,
+            cycle_id TEXT,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     LineageStore::new(pool)
 }
 
@@ -21,7 +36,7 @@ fn make_node(seed: &[u8], parent: Option<ContentHash>, status: LineageStatus, cy
         diff_hash: None,
         metrics_day_hash: None,
         metrics_untouched_hash: None,
-        gate_verdict: GateVerdict::Passed,
+        gate_verdict: GateVerdict::Pass,
         status,
         cycle_id: Some(cycle.to_string()),
         created_at: Utc.with_ymd_and_hms(2026, 5, 29, 12, 0, 0).unwrap(),
@@ -37,7 +52,9 @@ async fn insert_get_round_trip() {
         diff_hash: Some(ContentHash::of_bytes(b"diff")),
         metrics_day_hash: Some(ContentHash::of_bytes(b"mday")),
         metrics_untouched_hash: Some(ContentHash::of_bytes(b"muntouched")),
-        gate_verdict: GateVerdict::Rejected,
+        gate_verdict: GateVerdict::Fail {
+            reason: "test rejection".into(),
+        },
         status: LineageStatus::Rejected,
         cycle_id: Some("cycle-x".into()),
         created_at: Utc.with_ymd_and_hms(2026, 5, 29, 10, 0, 0).unwrap(),
@@ -49,7 +66,7 @@ async fn insert_get_round_trip() {
     assert_eq!(back.diff_hash, node.diff_hash);
     assert_eq!(back.metrics_day_hash, node.metrics_day_hash);
     assert_eq!(back.metrics_untouched_hash, node.metrics_untouched_hash);
-    assert_eq!(back.gate_verdict, GateVerdict::Rejected);
+    assert!(matches!(back.gate_verdict, GateVerdict::Fail { .. }));
     assert_eq!(back.status, LineageStatus::Rejected);
     assert_eq!(back.cycle_id.as_deref(), Some("cycle-x"));
     assert_eq!(back.created_at, node.created_at);
@@ -133,7 +150,9 @@ async fn merkle_root_changes_when_node_content_changes() {
     let root1 = store.merkle_root_for_cycle(cycle).await.unwrap();
 
     let modified = LineageNode {
-        gate_verdict: GateVerdict::Rejected,
+        gate_verdict: GateVerdict::Fail {
+            reason: "changed verdict".into(),
+        },
         ..node
     };
     store.insert(&modified).await.unwrap();

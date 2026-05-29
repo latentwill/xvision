@@ -32,15 +32,15 @@ pub mod session;
 pub mod validator;
 
 // AR-1 public surface — confirmed against each submodule file.
-// Items from the plan draft that do not exist are omitted:
-//   blob_store::BlobStore (placeholder), config::{MutatorConfig,LooseningSchedule,DayWindow,BaselineUntouchedWindow},
-//   gate::{GateInput,evaluate}, program_view::from_markdown.
-pub use config::AutoresearchConfig;
+pub use blob_store::BlobStore;
+pub use config::{
+    AutoresearchConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig,
+};
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
-pub use gate::GateVerdict;
+pub use gate::{evaluate, GateInput, GateVerdict};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
 pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, ToolDiff};
-pub use program_view::to_markdown;
-pub use seal::CycleSeal;
+pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, ProgramViewError};
+pub use seal::{build_and_sign, CycleSeal, OPERATOR_DISPLAY_LABEL};
 pub use session::{default_key_path, load_or_generate_key, SessionCommitment};
 pub use validator::{validate_mutation_diff, ValidationError};
