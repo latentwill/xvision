@@ -80,7 +80,11 @@ pub async fn run_honesty_check(
 
     let parent_hash = ContentHash::of_json(&serde_json::to_value(base)?);
 
-    Ok(HonestyCheckResult { parent_hash, gate_verdict, passed_check })
+    Ok(HonestyCheckResult {
+        parent_hash,
+        gate_verdict,
+        passed_check,
+    })
 }
 
 fn apply_sabotage_kill_trades(s: &mut Strategy) {
