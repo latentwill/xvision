@@ -12,6 +12,8 @@ pub struct AutoresearchConfig {
     #[serde(default)]
     pub loosening_schedule: Option<LooseningSchedule>,
     pub mutator: MutatorConfig,
+    #[serde(default = "default_allowed_mutation_kinds")]
+    pub allowed_mutation_kinds: Vec<String>,
     #[serde(default)]
     pub lineage_root: Option<PathBuf>,
 }
@@ -38,6 +40,34 @@ pub struct MutatorConfig {
     pub provider: String,
     pub model: String,
     pub max_retries: u32,
+}
+
+fn default_allowed_mutation_kinds() -> Vec<String> {
+    vec!["prose".into(), "param".into(), "tool".into()]
+}
+
+impl Default for AutoresearchConfig {
+    fn default() -> Self {
+        Self {
+            min_improvement: 0.05,
+            baseline_untouched_window: BaselineUntouchedWindow {
+                start: NaiveDate::from_ymd_opt(2025, 9, 1).expect("valid date"),
+                end: NaiveDate::from_ymd_opt(2025, 12, 1).expect("valid date"),
+            },
+            day_window: DayWindow {
+                start: NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid date"),
+                end: NaiveDate::from_ymd_opt(2025, 9, 1).expect("valid date"),
+            },
+            loosening_schedule: None,
+            mutator: MutatorConfig {
+                provider: "test".into(),
+                model: "test-model".into(),
+                max_retries: 2,
+            },
+            allowed_mutation_kinds: default_allowed_mutation_kinds(),
+            lineage_root: None,
+        }
+    }
 }
 
 impl AutoresearchConfig {
