@@ -9357,6 +9357,8 @@ dependencies = [
  "hex",
  "include_dir",
  "parquet 58.3.0",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "reqwest 0.13.3",
  "serde",
