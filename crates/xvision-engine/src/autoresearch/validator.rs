@@ -158,7 +158,7 @@ fn validate_tools(
             errors.push(ValidationError::with_path(
                 "tool_not_present",
                 format!("Cannot remove tool '{name}': not present in strategy tool list."),
-                "tools.removed".into(),
+                "tools.removed",
             ));
         }
     }
@@ -170,14 +170,14 @@ fn validate_tools(
                     "Tool name '{name}' is invalid \
                      (only letters, digits, underscores allowed; max 64 chars)."
                 ),
-                "tools.added".into(),
+                "tools.added",
             ));
         }
         if current.contains(name.as_str()) {
             errors.push(ValidationError::with_path(
                 "tool_already_present",
                 format!("Cannot add tool '{name}': already present in strategy tool list."),
-                "tools.added".into(),
+                "tools.added",
             ));
         }
     }
