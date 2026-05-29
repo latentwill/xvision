@@ -1,4 +1,5 @@
 use crate::eval::MetricsSummary;
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 /// Factor by which the child's worst drawdown may exceed the parent's before rejection.
@@ -21,10 +22,32 @@ pub struct GateInput {
 }
 
 /// Outcome of `evaluate`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GateVerdict {
     Pass,
     Fail { reason: String },
+}
+
+impl GateVerdict {
+    pub fn as_str(&self) -> String {
+        match self {
+            Self::Pass => "pass".to_string(),
+            Self::Fail { reason } => format!("fail:{reason}"),
+        }
+    }
+
+    pub fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "pass" | "passed" => Ok(Self::Pass),
+            "fail" | "rejected" => Ok(Self::Fail {
+                reason: "stored fail verdict".to_string(),
+            }),
+            _ if s.starts_with("fail:") => Ok(Self::Fail {
+                reason: s.trim_start_matches("fail:").to_string(),
+            }),
+            _ => bail!("unknown GateVerdict: {s}"),
+        }
+    }
 }
 
 /// Deterministic numeric gate for AR-1 mutations.
