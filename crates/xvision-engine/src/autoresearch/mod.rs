@@ -30,6 +30,7 @@ pub mod program_view;
 pub mod progress;
 pub mod seal;
 pub mod session;
+pub mod scenario_synthesis;
 pub mod validator;
 
 // AR-1 public surface — confirmed against each submodule file.
@@ -44,5 +45,6 @@ pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, T
 pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, ProgramViewError};
 pub use seal::{build_and_sign, CycleSeal, OPERATOR_DISPLAY_LABEL};
 pub use session::{default_key_path, load_or_generate_key, SessionCommitment};
+pub use scenario_synthesis::synthesize_baseline_untouched_scenario;
 pub use validator::{validate_mutation_diff, ValidationError};
 pub use eval_adapter::{BacktestPaperTester, PaperTestRunner, StubPaperTester};
