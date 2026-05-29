@@ -73,8 +73,8 @@ const LADDER_SQL: &str = "
         ma.model,
         ma.prompt_version,
         CAST(COUNT(*) AS INTEGER) AS proposals,
-        CAST(SUM(CASE WHEN ln.gate_verdict = 'passed'   THEN 1 ELSE 0 END) AS INTEGER) AS accepted,
-        CAST(SUM(CASE WHEN ln.gate_verdict = 'rejected' THEN 1 ELSE 0 END) AS INTEGER) AS rejected_overfit,
+        CAST(SUM(CASE WHEN ln.gate_verdict = 'passed' THEN 1 ELSE 0 END) AS INTEGER) AS accepted,
+        CAST(SUM(CASE WHEN ln.gate_verdict = 'rejected' OR ln.gate_verdict LIKE 'rejected:%' THEN 1 ELSE 0 END) AS INTEGER) AS rejected_overfit,
         COALESCE(AVG(CASE WHEN ln.gate_verdict = 'passed' THEN ma.delta_sharpe END), 0.0) AS avg_delta_sharpe
     FROM mutator_attribution ma
     LEFT JOIN lineage_nodes ln ON ln.bundle_hash = ma.bundle_hash

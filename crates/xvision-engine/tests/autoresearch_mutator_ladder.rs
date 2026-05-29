@@ -11,7 +11,14 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query(include_str!("../migrations/048_autoresearch.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/050_mutator_attribution.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
