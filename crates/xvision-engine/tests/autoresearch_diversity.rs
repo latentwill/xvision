@@ -15,7 +15,14 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query(include_str!("../migrations/048_autoresearch.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/049_autoresearch_diversity.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -26,7 +33,7 @@ fn make_node(seed: &[u8], cycle: &str, status: LineageStatus) -> LineageNode {
         diff_hash: None,
         metrics_day_hash: None,
         metrics_untouched_hash: None,
-        gate_verdict: GateVerdict::Passed,
+        gate_verdict: GateVerdict::Pass,
         status,
         cycle_id: Some(cycle.to_string()),
         created_at: Utc::now(),

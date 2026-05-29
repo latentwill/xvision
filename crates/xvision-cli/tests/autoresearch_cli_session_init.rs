@@ -23,7 +23,26 @@ fn session_init_happy_path() {
     let out_path = dir.path().join("session.json");
     let key_path = dir.path().join("operator.ed25519");
 
-    std::fs::write(&config_path, "[gate]\nmin_improvement = 0.1\n").unwrap();
+    std::fs::write(
+        &config_path,
+        r#"
+min_improvement = 0.1
+
+[baseline_untouched_window]
+start = "2025-09-01"
+end = "2025-12-01"
+
+[day_window]
+start = "2024-01-01"
+end = "2025-09-01"
+
+[mutator]
+provider = "test"
+model = "test-model"
+max_retries = 2
+"#,
+    )
+    .unwrap();
 
     let out = xvn(
         &[
@@ -81,7 +100,26 @@ fn session_init_missing_config_returns_usage() {
 fn session_init_zero_min_improvement_returns_usage_with_operator_vocab() {
     let dir = tempdir().unwrap();
     let config_path = dir.path().join("bad.toml");
-    std::fs::write(&config_path, "[gate]\nmin_improvement = 0.0\n").unwrap();
+    std::fs::write(
+        &config_path,
+        r#"
+min_improvement = 0.0
+
+[baseline_untouched_window]
+start = "2025-09-01"
+end = "2025-12-01"
+
+[day_window]
+start = "2024-01-01"
+end = "2025-09-01"
+
+[mutator]
+provider = "test"
+model = "test-model"
+max_retries = 2
+"#,
+    )
+    .unwrap();
 
     let out = xvn(
         &[
@@ -100,8 +138,8 @@ fn session_init_zero_min_improvement_returns_usage_with_operator_vocab() {
     assert_eq!(code(&out), 2, "stderr={}", String::from_utf8_lossy(&out.stderr));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("min-improvement"),
-        "expected 'min-improvement' in stderr, got: {stderr}",
+        stderr.contains("min_improvement"),
+        "expected 'min_improvement' in stderr, got: {stderr}",
     );
 }
 
