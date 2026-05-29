@@ -4,6 +4,11 @@ use anyhow::{bail, Context};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LooseningSchedule {
+    pub day_n_thresholds: Vec<f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoresearchConfig {
     pub min_improvement: f64,
@@ -28,11 +33,6 @@ pub struct BaselineUntouchedWindow {
 pub struct DayWindow {
     pub start: NaiveDate,
     pub end: NaiveDate,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LooseningSchedule {
-    pub day_n_thresholds: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,8 +74,7 @@ impl AutoresearchConfig {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("reading autoresearch config at {}", path.display()))?;
-        toml::from_str(&raw)
-            .with_context(|| format!("parsing autoresearch config at {}", path.display()))
+        toml::from_str(&raw).with_context(|| format!("parsing autoresearch config at {}", path.display()))
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -83,8 +82,7 @@ impl AutoresearchConfig {
     }
 
     pub fn default_path() -> anyhow::Result<PathBuf> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+        let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
         Ok(home.join(".xvn/autoresearch.toml"))
     }
 
@@ -120,6 +118,16 @@ impl AutoresearchConfig {
         }
         if self.mutator.provider.is_empty() {
             bail!("mutator provider must not be empty");
+        }
+        if let Some(schedule) = &self.loosening_schedule {
+            for threshold in &schedule.day_n_thresholds {
+                if *threshold <= 0.0 {
+                    bail!(
+                        "loosening_schedule thresholds must be greater than 0 (got {})",
+                        threshold
+                    );
+                }
+            }
         }
         Ok(())
     }
