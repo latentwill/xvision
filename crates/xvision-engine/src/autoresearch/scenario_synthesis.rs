@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use chrono::{TimeZone, Utc};
 use ulid::Ulid;
 
 use crate::autoresearch::config::BaselineUntouchedWindow;
@@ -8,8 +9,10 @@ pub fn synthesize_baseline_untouched_scenario(
     day_scenario: &Scenario,
     baseline_untouched_window: &BaselineUntouchedWindow,
 ) -> Result<Scenario> {
-    let win_start = baseline_untouched_window.start;
-    let win_end = baseline_untouched_window.end;
+    let win_start = Utc
+        .from_utc_datetime(&baseline_untouched_window.start.and_hms_opt(0, 0, 0).unwrap());
+    let win_end = Utc
+        .from_utc_datetime(&baseline_untouched_window.end.and_hms_opt(0, 0, 0).unwrap());
 
     if win_start >= win_end {
         bail!("baseline-untouched window is empty");

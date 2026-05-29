@@ -8,37 +8,17 @@
 //! Developer-surface types use precise names (`HonestyCheckResult`,
 //! `run_honesty_check`). Operator-surface strings say "honesty check".
 //!
-//! TODO: when the AR-2 gate.rs update lands, replace the local `GateInput`
-//! definition and `evaluate_gate` helper with imports from
-//! `crate::autoresearch::gate::{GateInput, evaluate}` and update
-//! `passed_check` to use the new `GateVerdict::Fail { .. }` variant.
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::autoresearch::config::AutoresearchConfig;
 use crate::autoresearch::content_hash::ContentHash;
-use crate::autoresearch::gate::GateVerdict;
+use crate::autoresearch::eval_adapter::PaperTestRunner;
+use crate::autoresearch::gate::{evaluate, GateInput, GateVerdict};
 use crate::autoresearch::mutator::Mutator;
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
-
-pub use crate::autoresearch::eval_adapter::PaperTestRunner;
-
-/// Minimal gate-input bundle for the honesty-check path.
-///
-/// Mirrors the shape pre-written in `tests/autoresearch_gate.rs`.
-/// Replace with `use crate::autoresearch::gate::GateInput` once
-/// gate.rs defines it (AR-2 gate task).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GateInput {
-    pub parent_day_metrics: MetricsSummary,
-    pub child_day_metrics: MetricsSummary,
-    pub parent_untouched_metrics: MetricsSummary,
-    pub child_untouched_metrics: MetricsSummary,
-    pub min_improvement: f64,
-}
 
 /// Outcome of a single honesty-check run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,15 +30,6 @@ pub struct HonestyCheckResult {
     /// `true` when the honesty check WORKED — i.e., the gate correctly
     /// rejected the sabotaged mutation.
     pub passed_check: bool,
-}
-
-/// Runs a strategy against a scenario and returns performance metrics.
-///
-/// Implement this trait with your backtest / paper-test engine.
-/// The `run` method must be deterministic for a given strategy + scenario pair.
-#[async_trait]
-pub trait PaperTestRunner: Send + Sync {
-    async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary>;
 }
 
 /// Build a deterministically sabotaged copy of `base`.
@@ -104,23 +75,16 @@ pub async fn run_honesty_check(
     let child_untouched = paper_tester.run(&sabotaged, baseline_scenario).await?;
 
     let gate_in = gate_input_builder(&parent_day, &child_day, &parent_untouched, &child_untouched);
-    let gate_verdict = evaluate_gate(&gate_in);
-    let passed_check = matches!(gate_verdict, GateVerdict::Rejected);
+    let gate_verdict = evaluate(&gate_in);
+    let passed_check = matches!(gate_verdict, GateVerdict::Fail { .. });
 
     let parent_hash = ContentHash::of_json(&serde_json::to_value(base)?);
 
-    Ok(HonestyCheckResult { parent_hash, gate_verdict, passed_check })
-}
-
-fn evaluate_gate(input: &GateInput) -> GateVerdict {
-    let delta_day = input.child_day_metrics.sharpe - input.parent_day_metrics.sharpe;
-    let delta_untouched =
-        input.child_untouched_metrics.sharpe - input.parent_untouched_metrics.sharpe;
-    if delta_day >= input.min_improvement && delta_untouched >= input.min_improvement {
-        GateVerdict::Passed
-    } else {
-        GateVerdict::Rejected
-    }
+    Ok(HonestyCheckResult {
+        parent_hash,
+        gate_verdict,
+        passed_check,
+    })
 }
 
 fn apply_sabotage_kill_trades(s: &mut Strategy) {

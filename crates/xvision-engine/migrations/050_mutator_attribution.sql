@@ -12,7 +12,7 @@
 -- Callers must ensure the lineage_node is inserted before querying the ladder.
 
 CREATE TABLE IF NOT EXISTS mutator_attribution (
-    bundle_hash    TEXT PRIMARY KEY REFERENCES lineage_nodes(bundle_hash),
+    bundle_hash    TEXT PRIMARY KEY,
     provider       TEXT NOT NULL,
     model          TEXT NOT NULL,
     prompt_version TEXT NOT NULL,

@@ -24,9 +24,11 @@ pub async fn effective_min_improvement_for_cycle(
     _cycle_index: u32,
     sustained_no_pass_cycles: u32,
 ) -> Result<EffectiveGateConfig> {
-    let schedule_hash = hash_canonical_json(&config.loosening_schedule)?;
-    let base = config.base_min_improvement;
-    let thresholds = &config.loosening_schedule.day_n_thresholds;
+    let schedule = config.loosening_schedule.clone().unwrap_or_default();
+    let schedule_value = serde_json::to_value(&schedule)?;
+    let schedule_hash = hash_canonical_json(&schedule_value);
+    let base = config.min_improvement;
+    let thresholds = &schedule.day_n_thresholds;
 
     if sustained_no_pass_cycles == 0 || thresholds.is_empty() {
         return Ok(EffectiveGateConfig {

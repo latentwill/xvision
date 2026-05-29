@@ -138,3 +138,38 @@ title = "Operator Runbook"
 section = "Operator"
 last_reviewed = "2026-05-20"
 path = "runbook.md"
+
+[[page]]
+slug = "research-index"
+title = "Research Index"
+section = "Research"
+last_reviewed = "2026-05-28"
+path = "research-index.md"
+
+[[page]]
+slug = "xvision"
+title = "XVision / Agentic Trading"
+section = "Research"
+last_reviewed = "2026-05-28"
+path = "xvision.md"
+
+[[page]]
+slug = "growth-marketing"
+title = "Growth / Marketing"
+section = "Research"
+last_reviewed = "2026-05-28"
+path = "growth-marketing.md"
+
+[[page]]
+slug = "ai-courses"
+title = "AI Courses"
+section = "Research"
+last_reviewed = "2026-05-28"
+path = "ai-courses.md"
+
+[[page]]
+slug = "frontier-image-training"
+title = "Frontier Image Model Training"
+section = "Research"
+last_reviewed = "2026-05-28"
+path = "frontier-image-training.md"

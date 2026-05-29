@@ -13,12 +13,13 @@ use sqlx::SqlitePool;
 use ulid::Ulid;
 use xvision_observability::BlobStore;
 
-use crate::autoresearch::canary::{run_honesty_check, GateInput, HonestyCheckResult, PaperTestRunner};
+use crate::autoresearch::canary::{run_honesty_check, HonestyCheckResult};
 use crate::autoresearch::config::AutoresearchConfig;
 use crate::autoresearch::content_hash::ContentHash;
 use crate::autoresearch::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autoresearch::diversity::diversity_decay_for_cycle;
-use crate::autoresearch::gate::GateVerdict;
+use crate::autoresearch::eval_adapter::PaperTestRunner;
+use crate::autoresearch::gate::{evaluate, GateInput, GateVerdict};
 use crate::autoresearch::inversion::run_inversion_pair;
 use crate::autoresearch::judge::{run_judge, Finding, Judge};
 use crate::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
@@ -86,15 +87,23 @@ pub async fn run_evening_cycle(
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
 ) -> Result<CycleResult> {
     let cycle_id = Ulid::new().to_string();
-    let min_improvement = effective_min_improvement_for_cycle(
-        pool, config, 0, cycle_config.sustained_no_pass_cycles,
-    )
-    .await?
-    .effective_min_improvement;
+    let min_improvement =
+        effective_min_improvement_for_cycle(pool, config, 0, cycle_config.sustained_no_pass_cycles)
+            .await?
+            .effective_min_improvement;
 
     let lineage_store = LineageStore::new(pool.clone());
-    let parents = select_parents(parent_policy, &lineage_store, cycle_config.num_parents, cycle_config.sabotage_seed).await?;
-    progress(CycleProgressEvent::CycleStarted { cycle_id: cycle_id.clone(), parent_count: parents.len() });
+    let parents = select_parents(
+        parent_policy,
+        &lineage_store,
+        cycle_config.num_parents,
+        cycle_config.sabotage_seed,
+    )
+    .await?;
+    progress(CycleProgressEvent::CycleStarted {
+        cycle_id: cycle_id.clone(),
+        parent_count: parents.len(),
+    });
 
     let mut active_nodes: Vec<LineageNode> = Vec::new();
     let mut rejected_nodes: Vec<LineageNode> = Vec::new();
@@ -103,24 +112,60 @@ pub async fn run_evening_cycle(
     for parent_node in &parents {
         let ph = parent_node.bundle_hash.to_hex();
         if let Some(parent_strategy) = cycle_config.parent_strategies.get(&ph) {
-            progress(CycleProgressEvent::ParentSelected { cycle_id: cycle_id.clone(), parent_hash: ph });
+            progress(CycleProgressEvent::ParentSelected {
+                cycle_id: cycle_id.clone(),
+                parent_hash: ph,
+            });
             let (active, rejected) = process_parent_mutations(
-                pool, parent_node, parent_strategy, &cycle_id, min_improvement,
-                cycle_config, config, mutator, judge, paper_tester, &progress, &mut findings_by_node,
-            ).await?;
+                pool,
+                parent_node,
+                parent_strategy,
+                &cycle_id,
+                min_improvement,
+                cycle_config,
+                config,
+                mutator,
+                judge,
+                paper_tester,
+                &progress,
+                &mut findings_by_node,
+            )
+            .await?;
             active_nodes.extend(active);
             rejected_nodes.extend(rejected);
         }
     }
 
-    let honesty_check = run_cycle_canary(&parents, cycle_config, config, mutator, paper_tester, min_improvement, &cycle_id, &progress).await?;
+    let honesty_check = run_cycle_canary(
+        &parents,
+        cycle_config,
+        config,
+        mutator,
+        paper_tester,
+        min_improvement,
+        &cycle_id,
+        &progress,
+    )
+    .await?;
     let diversity_score = diversity_decay_for_cycle(pool, &cycle_id).await.unwrap_or(0.0);
     let merkle_root = lineage_store.merkle_root_for_cycle(&cycle_id).await?;
     let node_count = active_nodes.len() + rejected_nodes.len();
     let seal = build_and_sign(&cycle_id, session_id, merkle_root, node_count, operator_key)?;
     seal.persist(pool).await?;
-    progress(CycleProgressEvent::CycleSealed { cycle_id: cycle_id.clone(), merkle_root: seal.merkle_root.to_hex(), node_count });
-    Ok(CycleResult { cycle_id, active_nodes, rejected_nodes, honesty_check, diversity_score, seal, findings_by_node })
+    progress(CycleProgressEvent::CycleSealed {
+        cycle_id: cycle_id.clone(),
+        merkle_root: seal.merkle_root.to_hex(),
+        node_count,
+    });
+    Ok(CycleResult {
+        cycle_id,
+        active_nodes,
+        rejected_nodes,
+        honesty_check,
+        diversity_score,
+        seal,
+        findings_by_node,
+    })
 }
 
 async fn run_cycle_canary<F>(
@@ -136,27 +181,43 @@ async fn run_cycle_canary<F>(
 where
     F: Fn(CycleProgressEvent),
 {
-    let canary_parent = parents.iter().find(|n| cycle_config.parent_strategies.contains_key(&n.bundle_hash.to_hex()));
+    let canary_parent = parents.iter().find(|n| {
+        cycle_config
+            .parent_strategies
+            .contains_key(&n.bundle_hash.to_hex())
+    });
     let Some(cn) = canary_parent else {
         return Ok(HonestyCheckResult {
             parent_hash: ContentHash::of_bytes(b""),
-            gate_verdict: GateVerdict::Rejected,
+            gate_verdict: GateVerdict::Fail {
+                reason: "no canary parent available".to_string(),
+            },
             passed_check: true,
         });
     };
     let s = &cycle_config.parent_strategies[&cn.bundle_hash.to_hex()];
     let mi = min_improvement;
     let check = run_honesty_check(
-        s, mutator, paper_tester,
+        s,
+        mutator,
+        paper_tester,
         move |pd, cd, pu, cu| GateInput {
-            parent_day_metrics: pd.clone(), child_day_metrics: cd.clone(),
-            parent_untouched_metrics: pu.clone(), child_untouched_metrics: cu.clone(),
+            parent_day_metrics: pd.clone(),
+            child_day_metrics: cd.clone(),
+            parent_untouched_metrics: pu.clone(),
+            child_untouched_metrics: cu.clone(),
             min_improvement: mi,
         },
-        &cycle_config.day_scenario, &cycle_config.baseline_scenario, config,
+        &cycle_config.day_scenario,
+        &cycle_config.baseline_scenario,
+        config,
         cycle_config.sabotage_seed,
-    ).await?;
-    progress(CycleProgressEvent::HonestyCheckRun { cycle_id: cycle_id.to_string(), passed: check.passed_check });
+    )
+    .await?;
+    progress(CycleProgressEvent::HonestyCheckRun {
+        cycle_id: cycle_id.to_string(),
+        passed: check.passed_check,
+    });
     Ok(check)
 }
 
@@ -177,11 +238,18 @@ async fn process_parent_mutations<F>(
 where
     F: Fn(CycleProgressEvent),
 {
-    assert!(cycle_config.mutations_per_parent <= 64, "mutations_per_parent exceeds bound");
+    assert!(
+        cycle_config.mutations_per_parent <= 64,
+        "mutations_per_parent exceeds bound"
+    );
     let mut active: Vec<LineageNode> = Vec::new();
     let mut rejected: Vec<LineageNode> = Vec::new();
-    let parent_day = paper_tester.run(parent_strategy, &cycle_config.day_scenario).await?;
-    let parent_untouched = paper_tester.run(parent_strategy, &cycle_config.baseline_scenario).await?;
+    let parent_day = paper_tester
+        .run(parent_strategy, &cycle_config.day_scenario)
+        .await?;
+    let parent_untouched = paper_tester
+        .run(parent_strategy, &cycle_config.baseline_scenario)
+        .await?;
 
     for _ in 0..cycle_config.mutations_per_parent {
         let diff = match mutator.propose(parent_strategy, config).await {
@@ -189,25 +257,42 @@ where
             Err(_) => continue,
         };
         progress(CycleProgressEvent::MutationProposed {
-            cycle_id: cycle_id.to_string(), parent_hash: parent_node.bundle_hash.to_hex(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: parent_node.bundle_hash.to_hex(),
         });
         let outcome = gate_and_classify(
-            parent_strategy, diff, cycle_config, paper_tester, &parent_day, &parent_untouched, min_improvement,
-        ).await?;
+            parent_strategy,
+            diff,
+            cycle_config,
+            paper_tester,
+            &parent_day,
+            &parent_untouched,
+            min_improvement,
+        )
+        .await?;
         progress(CycleProgressEvent::MutationGated {
             cycle_id: cycle_id.to_string(),
             child_hash: outcome.child_hash.to_hex(),
-            passed: outcome.verdict == GateVerdict::Passed,
+            passed: matches!(outcome.verdict, GateVerdict::Pass),
         });
         let node = build_and_insert_node(pool, &outcome, parent_node, cycle_id).await?;
-        record_proposal(pool, &outcome.child_hash, &mutator.provider, &mutator.model, &cycle_config.prompt_version).await?;
+        record_proposal(
+            pool,
+            &outcome.child_hash,
+            &mutator.provider,
+            &mutator.model,
+            &cycle_config.prompt_version,
+        )
+        .await?;
         if outcome.status == LineageStatus::Active {
             record_outcome(pool, &outcome.child_hash, outcome.delta_sharpe).await?;
             let findings = run_judge(judge, parent_strategy, &outcome.child, &outcome.diff, "").await?;
             for f in &findings {
                 progress(CycleProgressEvent::JudgeFinding {
-                    cycle_id: cycle_id.to_string(), child_hash: outcome.child_hash.to_hex(),
-                    severity: format!("{:?}", f.severity), code: f.code.clone(),
+                    cycle_id: cycle_id.to_string(),
+                    child_hash: outcome.child_hash.to_hex(),
+                    severity: format!("{:?}", f.severity),
+                    code: f.code.clone(),
                 });
             }
             findings_by_node.insert(outcome.child_hash, findings);
@@ -231,22 +316,53 @@ async fn gate_and_classify(
     let child = apply_mutation_params(parent_strategy, &diff);
     let child_day = paper_tester.run(&child, &cycle_config.day_scenario).await?;
     let child_untouched = paper_tester.run(&child, &cycle_config.baseline_scenario).await?;
-    let raw_verdict = gate_check(parent_day, &child_day, parent_untouched, &child_untouched, min_improvement);
+    let raw_verdict = gate_check(
+        parent_day,
+        &child_day,
+        parent_untouched,
+        &child_untouched,
+        min_improvement,
+    );
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
     let diff_hash = ContentHash::of_json(&serde_json::to_value(&diff)?);
     let day_hash = ContentHash::of_json(&serde_json::to_value(&child_day)?);
     let untouched_hash = ContentHash::of_json(&serde_json::to_value(&child_untouched)?);
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
 
-    let (verdict, status) = if raw_verdict == GateVerdict::Passed {
-        let inv = run_inversion_pair(parent_strategy, &diff, paper_tester, &cycle_config.day_scenario, &cycle_config.baseline_scenario).await?;
-        if inv.symmetric_noise { (GateVerdict::Rejected, LineageStatus::Rejected) }
-        else { (GateVerdict::Passed, LineageStatus::Active) }
+    let (verdict, status) = if matches!(raw_verdict, GateVerdict::Pass) {
+        let inv = run_inversion_pair(
+            parent_strategy,
+            &diff,
+            paper_tester,
+            &cycle_config.day_scenario,
+            &cycle_config.baseline_scenario,
+        )
+        .await?;
+        if inv.symmetric_noise {
+            (
+                GateVerdict::Fail {
+                    reason: "inversion-pair symmetric noise".to_string(),
+                },
+                LineageStatus::Rejected,
+            )
+        } else {
+            (GateVerdict::Pass, LineageStatus::Active)
+        }
     } else {
-        (GateVerdict::Rejected, LineageStatus::Rejected)
+        (raw_verdict, LineageStatus::Rejected)
     };
 
-    Ok(MutationOutcome { child, diff, child_hash, diff_hash, day_hash, untouched_hash, verdict, status, delta_sharpe })
+    Ok(MutationOutcome {
+        child,
+        diff,
+        child_hash,
+        diff_hash,
+        day_hash,
+        untouched_hash,
+        verdict,
+        status,
+        delta_sharpe,
+    })
 }
 
 async fn build_and_insert_node(
@@ -288,11 +404,11 @@ fn gate_check(
     child_untouched: &MetricsSummary,
     min_improvement: f64,
 ) -> GateVerdict {
-    let delta_day = child_day.sharpe - parent_day.sharpe;
-    let delta_untouched = child_untouched.sharpe - parent_untouched.sharpe;
-    if delta_day >= min_improvement && delta_untouched >= min_improvement {
-        GateVerdict::Passed
-    } else {
-        GateVerdict::Rejected
-    }
+    evaluate(&GateInput {
+        parent_day_metrics: parent_day.clone(),
+        child_day_metrics: child_day.clone(),
+        parent_untouched_metrics: parent_untouched.clone(),
+        child_untouched_metrics: child_untouched.clone(),
+        min_improvement,
+    })
 }
