@@ -9,6 +9,14 @@ use xvision_engine::eval::scenario::{
 };
 use xvision_engine::safety::VenueLabel;
 
+fn d(y: i32, m: u32, day: u32) -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(y, m, day).unwrap()
+}
+
+fn dt(y: i32, m: u32, day: u32) -> chrono::DateTime<Utc> {
+    Utc.with_ymd_and_hms(y, m, day, 0, 0, 0).unwrap()
+}
+
 fn make_day_scenario() -> Scenario {
     Scenario {
         id: "day-sc-001".into(),
@@ -21,8 +29,8 @@ fn make_day_scenario() -> Scenario {
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow {
-            start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
-            end: Utc.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap(),
+            start: dt(2025, 1, 1),
+            end: dt(2025, 4, 1),
         },
         granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
@@ -56,7 +64,7 @@ fn make_day_scenario() -> Scenario {
         volatility_label: Some("low".into()),
         trend_direction: Some("up".into()),
         regime_derived: true,
-        created_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+        created_at: dt(2025, 1, 1),
         created_by: "test".into(),
         archived_at: None,
         venue_label: VenueLabel::Paper,
@@ -68,15 +76,15 @@ fn make_day_scenario() -> Scenario {
 fn valid_non_overlapping_window_produces_correct_scenario() {
     let day = make_day_scenario();
     let window = BaselineUntouchedWindow {
-        start: Utc.with_ymd_and_hms(2024, 7, 1, 0, 0, 0).unwrap(),
-        end: Utc.with_ymd_and_hms(2024, 10, 1, 0, 0, 0).unwrap(),
+        start: d(2024, 7, 1),
+        end: d(2024, 10, 1),
     };
     let result = synthesize_baseline_untouched_scenario(&day, &window).unwrap();
 
     assert_ne!(result.id, day.id, "synthesized id must differ from parent");
     assert_eq!(result.parent_scenario_id, Some(day.id.clone()));
-    assert_eq!(result.time_window.start, window.start);
-    assert_eq!(result.time_window.end, window.end);
+    assert_eq!(result.time_window.start, dt(2024, 7, 1));
+    assert_eq!(result.time_window.end, dt(2024, 10, 1));
     assert!(matches!(result.source, ScenarioSource::Generated));
     assert_eq!(result.bar_cache_policy.data_fetched_at, None);
     assert!(matches!(result.bar_cache_policy.refresh_policy, RefreshPolicy::NeverRefresh));
@@ -86,8 +94,8 @@ fn valid_non_overlapping_window_produces_correct_scenario() {
 fn preserves_data_source_venue_and_feed() {
     let day = make_day_scenario();
     let window = BaselineUntouchedWindow {
-        start: Utc.with_ymd_and_hms(2024, 7, 1, 0, 0, 0).unwrap(),
-        end: Utc.with_ymd_and_hms(2024, 10, 1, 0, 0, 0).unwrap(),
+        start: d(2024, 7, 1),
+        end: d(2024, 10, 1),
     };
     let result = synthesize_baseline_untouched_scenario(&day, &window).unwrap();
 
@@ -108,8 +116,8 @@ fn preserves_data_source_venue_and_feed() {
 fn overlapping_window_returns_operator_vocabulary_error() {
     let day = make_day_scenario();
     let window = BaselineUntouchedWindow {
-        start: Utc.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap(),
-        end: Utc.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap(),
+        start: d(2025, 2, 1),
+        end: d(2025, 5, 1),
     };
     let err = synthesize_baseline_untouched_scenario(&day, &window)
         .unwrap_err()
@@ -123,7 +131,7 @@ fn overlapping_window_returns_operator_vocabulary_error() {
 #[test]
 fn empty_window_returns_error() {
     let day = make_day_scenario();
-    let ts = Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap();
+    let ts = d(2024, 6, 1);
     let window = BaselineUntouchedWindow { start: ts, end: ts };
     let err = synthesize_baseline_untouched_scenario(&day, &window)
         .unwrap_err()
@@ -139,12 +147,12 @@ fn valid_window_after_day_is_accepted() {
     let day = make_day_scenario();
     // day window: [2025-01-01, 2025-04-01]; holdout window is entirely after it
     let window = BaselineUntouchedWindow {
-        start: Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap(),
-        end: Utc.with_ymd_and_hms(2025, 9, 1, 0, 0, 0).unwrap(),
+        start: d(2025, 6, 1),
+        end: d(2025, 9, 1),
     };
     let result = synthesize_baseline_untouched_scenario(&day, &window).unwrap();
-    assert_eq!(result.time_window.start, window.start);
-    assert_eq!(result.time_window.end, window.end);
+    assert_eq!(result.time_window.start, dt(2025, 6, 1));
+    assert_eq!(result.time_window.end, dt(2025, 9, 1));
     assert_eq!(result.parent_scenario_id, Some(day.id.clone()));
 }
 
@@ -153,8 +161,8 @@ fn window_fully_containing_day_is_overlap_error() {
     let day = make_day_scenario();
     // window spans before and after the day window — should still overlap
     let window = BaselineUntouchedWindow {
-        start: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-        end: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        start: d(2024, 1, 1),
+        end: d(2026, 1, 1),
     };
     let err = synthesize_baseline_untouched_scenario(&day, &window)
         .unwrap_err()

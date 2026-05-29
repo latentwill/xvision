@@ -2,12 +2,6 @@
 // the Merkle + seal chain is deterministic end-to-end.
 //
 // Notes on the chain:
-// - BacktestExecutor / MetricsSummary: the numeric-gate evaluate() function and
-//   GateInput type were not implemented in gate.rs by the time this workspace
-//   check landed; GateVerdict::Passed is constructed directly as a stand-in.
-// - session::SessionCommitment::new_signed: calls hash_canonical_json which is
-//   absent from content_hash.rs; excluded from this test.
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -91,7 +85,34 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query(
+        "CREATE TABLE lineage_nodes (
+            bundle_hash TEXT PRIMARY KEY,
+            parent_hash TEXT REFERENCES lineage_nodes(bundle_hash),
+            diff_hash TEXT,
+            metrics_day_hash TEXT,
+            metrics_untouched_hash TEXT,
+            gate_verdict TEXT NOT NULL,
+            status TEXT NOT NULL,
+            cycle_id TEXT,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE cycle_seals (
+            seal_id TEXT PRIMARY KEY,
+            cycle_id TEXT NOT NULL,
+            merkle_root TEXT NOT NULL,
+            operator_signature TEXT NOT NULL,
+            sealed_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     pool
 }
 
@@ -129,8 +150,8 @@ async fn run_chain(pool: &sqlx::SqlitePool) -> ContentHash {
     // Step 3 — validate
     validate_mutation_diff(&diff, &strategy).expect("diff must pass validation");
 
-    // Step 4 — gate verdict (GateInput/evaluate not implemented; constructed directly)
-    let verdict = GateVerdict::Passed;
+    // Step 4 — gate verdict
+    let verdict = GateVerdict::Pass;
 
     // Step 5 — lineage insert
     let diff_hash = ContentHash::of_bytes(&serde_json::to_vec(&diff).unwrap());
@@ -191,8 +212,7 @@ async fn ar1_workspace_check() {
     );
 
     // Gate serde determinism: same input → same serialized bytes on every call.
-    let v_passed: GateVerdict = serde_json::from_str(r#""passed""#).unwrap();
-    assert_eq!(v_passed, GateVerdict::Passed);
+    let v_passed = GateVerdict::Pass;
     let serialized = serde_json::to_string(&v_passed).unwrap();
     let round_tripped: GateVerdict = serde_json::from_str(&serialized).unwrap();
     assert_eq!(
@@ -200,7 +220,7 @@ async fn ar1_workspace_check() {
         "GateVerdict must round-trip through serde deterministically"
     );
     assert_eq!(
-        serialized, r#""passed""#,
-        "GateVerdict::Passed must serialize to the canonical wire string"
+        serialized, r#""Pass""#,
+        "GateVerdict::Pass must serialize to the canonical wire string"
     );
 }

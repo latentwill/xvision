@@ -1,64 +1,36 @@
-# skill: .claude/skills/xvision/autoresearch-ops/SKILL.md
-# docs:  docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md
-#
-# Autoresearch evening-cycle config.
-# Hashed at session-init; the hash is part of the evening-summary commitment.
-# Copy to config/autoresearch.toml and edit before running `xvn autoresearch session-init`.
+# Autoresearch configuration for xvn.
+# Copy to ~/.xvn/autoresearch.toml and edit before running `xvn autoresearch run`.
+# All settings are locked in at session start — changes take effect on the next run.
 
-[cycle]
-# How many experiment candidates to propose per parent strategy each evening.
-mutations_per_parent = 3
-# How many parent strategies to mutate per evening cycle.
-parents_per_evening  = 5
-# Total LLM token budget for the evening cycle (experiment writer + judge combined).
-per_cycle_token_cap  = 250000
+# Minimum improvement a candidate must beat the baseline by to be accepted.
+# 0.05 means the candidate must improve Sharpe ratio by at least 5%.
+# Must be greater than 0.
+min_improvement = 0.05
 
-[gate]
-# Minimum Sharpe improvement required on BOTH the day window and the
-# baseline-untouched window before a candidate is promoted.
-# Operator-surface flag: --min-improvement
-epsilon_initial = 0.10
+# Dates held out for final performance checks — never used during evening runs.
+# Must not overlap with day_window. Format: "YYYY-MM-DD" (quoted string).
+[baseline_untouched_window]
+start = "2025-09-01"
+end   = "2025-12-01"
 
-# Pre-committed loosening schedule. Each step fires after N consecutive
-# evenings with no promotion, relaxing the min-improvement threshold.
-# Activated by AR-2's cycle orchestrator; the schedule is sealed in the
-# evening-summary commitment at session-init time.
-loosening_schedule = [
-  { after_no_merge_nights = 3, new_epsilon = 0.07 },
-  { after_no_merge_nights = 6, new_epsilon = 0.05 },
-]
+# In-sample date range used during each evening run.
+# Should not overlap with baseline_untouched_window.
+[day_window]
+start = "2024-01-01"
+end   = "2025-09-01"
 
-[holdout]
-# Date range pinned at session-init. These bars are never seen during
-# day trading and serve as the baseline-untouched-score window.
-# Operator-surface flag: --baseline-untouched-score window
-start_iso = "2025-09-01T00:00:00Z"
-end_iso   = "2025-12-01T00:00:00Z"
+# Optional: lower the minimum-improvement bar if no experiment passes for
+# several consecutive evenings. Remove this section to keep min_improvement fixed.
+# Each threshold applies to the corresponding evening number (evening 1, 2, 3, …).
+[loosening_schedule]
+day_n_thresholds = [0.04, 0.03, 0.02]
 
-[parent_policy]
-# How to select which parent strategies to mutate each evening.
-# "round_robin" | "top_k" | "epsilon_greedy"
-kind            = "round_robin"
-top_k           = 5
-epsilon_explore = 0.20
-seed            = 1   # sealed in the evening-summary commitment
-
+# The model that writes experiment proposals each evening.
 [mutator]
-# LLM used by the experiment writer (AR-1). Operator-surface: "Experiment writer".
-model      = "claude-haiku-4-5"
-max_tokens = 4096
+provider    = "anthropic"
+model       = "claude-haiku-4-5"
+max_retries = 3
 
-[judge]
-# Consumed by AR-2; ignored by AR-1.
-# LLM used by the experiment judge. Operator-surface: "Experiment judge".
-model      = "claude-sonnet-4-6"
-max_tokens = 4096
-
-[diversity]
-# Consumed by AR-2; ignored by AR-1.
-embedding_model = "text-embedding-3-small"
-
-[canary]
-# Consumed by AR-2; ignored by AR-1.
-# Null-result honesty check. Operator-surface: "honesty check".
-seed = 17
+# Optional: where lineage data is stored.
+# Default is ~/.xvn/lineage if not set.
+# lineage_root = "/data/xvn/lineage"
