@@ -23,6 +23,7 @@ pub mod blob_store;
 pub mod canary;
 pub mod config;
 pub mod content_hash;
+pub mod diversity;
 pub mod eval_adapter;
 pub mod gate;
 pub mod judge;
@@ -43,6 +44,7 @@ pub use config::{
     AutoresearchConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig,
 };
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
+pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
 pub use eval_adapter::{BacktestPaperTester, PaperTestRunner, StubPaperTester};
 pub use gate::{evaluate, GateInput, GateVerdict};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
