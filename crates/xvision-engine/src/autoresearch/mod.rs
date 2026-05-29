@@ -24,6 +24,7 @@ pub mod config;
 pub mod eval_adapter;
 pub mod content_hash;
 pub mod gate;
+pub mod judge;
 pub mod lineage;
 pub mod mutator;
 pub mod parent_policy;
