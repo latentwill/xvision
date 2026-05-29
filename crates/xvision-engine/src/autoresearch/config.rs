@@ -78,6 +78,10 @@ impl AutoresearchConfig {
             .with_context(|| format!("parsing autoresearch config at {}", path.display()))
     }
 
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        Self::from_path(path)
+    }
+
     pub fn default_path() -> anyhow::Result<PathBuf> {
         let home = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;

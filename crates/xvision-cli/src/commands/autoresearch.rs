@@ -7,10 +7,15 @@
 //! command; this file intentionally keeps the first slice offline and
 //! memory-bound.
 
+use std::path::PathBuf;
+
 use clap::{Args, Subcommand};
 
 use xvision_engine::api::autoresearch::{self, AutoresearchGateRequest, AutoresearchRunRequest};
 use xvision_engine::api::memory;
+use xvision_engine::autoresearch::config::AutoresearchConfig;
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
 use xvision_memory::embedder::Embedder;
 
 use crate::exit::{CliError, CliResult, XvnExit};
@@ -35,6 +40,10 @@ pub enum Op {
     Promote(InspectArgs),
     /// Soft-delete the Pattern produced by an autoresearch run.
     Demote(InspectArgs),
+    /// Write a signed pre-commitment before any experiment cycles run.
+    /// Locks in the baseline-untouched-window and min-improvement threshold
+    /// before any mutations are applied.
+    SessionInit(SessionInitArgs),
 }
 
 #[derive(Args, Debug)]
@@ -152,6 +161,25 @@ pub struct GateArgs {
     pub json: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct SessionInitArgs {
+    /// Path to autoresearch.toml. Defaults to ~/.xvn/autoresearch.toml.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    /// Comma-separated parent bundle hashes (seeds for this session).
+    /// Omit for a fresh seed-only run with no parent strategies.
+    #[arg(long)]
+    pub parents: Option<String>,
+    /// Output path for the pre-commitment JSON.
+    /// Defaults to ~/.xvn/lineage/sessions/session-<session-id>.json.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+    /// Override the operator signing key path.
+    /// Defaults to ~/.xvn/keys/operator.ed25519. Primarily for testing.
+    #[arg(long, hide = true)]
+    pub key_path: Option<PathBuf>,
+}
+
 pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
     match cmd.op {
         Op::Run(args) => run_distill(args).await,
@@ -160,6 +188,7 @@ pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
         Op::Gate(args) => run_gate(args).await,
         Op::Promote(args) => run_promote(args).await,
         Op::Demote(args) => run_demote(args).await,
+        Op::SessionInit(args) => run_session_init(args),
     }
 }
 
@@ -400,6 +429,72 @@ async fn run_demote(args: InspectArgs) -> CliResult<()> {
         println!("autoresearch run {} demoted pattern {}", run.id, run.pattern_id);
     }
     Ok(())
+}
+
+fn run_session_init(args: SessionInitArgs) -> CliResult<()> {
+    let config_path = match args.config {
+        Some(p) => p,
+        None => AutoresearchConfig::default_path().map_err(CliError::upstream)?,
+    };
+    let config = AutoresearchConfig::load(&config_path).map_err(|e| {
+        CliError::usage(anyhow::anyhow!("{}: {}", config_path.display(), e))
+    })?;
+    config.validate().map_err(CliError::usage)?;
+
+    let parents = parse_parent_hashes(args.parents.as_deref().unwrap_or(""))?;
+
+    let key_path = match args.key_path {
+        Some(p) => p,
+        None => default_key_path().map_err(CliError::upstream)?,
+    };
+    let key = load_or_generate_key(&key_path)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("{}: {}", key_path.display(), e)))?;
+
+    let session_id = ulid::Ulid::new();
+    let commitment = SessionCommitment::new_signed(session_id, &config, parents, &key)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("session commitment: {e}")))?;
+
+    let out_path = match args.out {
+        Some(p) => p,
+        None => {
+            let home = dirs::home_dir()
+                .ok_or_else(|| CliError::upstream(anyhow::anyhow!("no home directory found")))?;
+            home.join(".xvn")
+                .join("lineage")
+                .join("sessions")
+                .join(format!("session-{}.json", session_id))
+        }
+    };
+
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            CliError::upstream(anyhow::anyhow!("{}: {}", parent.display(), e))
+        })?;
+    }
+    let json = serde_json::to_string_pretty(&commitment)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize commitment: {e}")))?;
+    std::fs::write(&out_path, json.as_bytes())
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("{}: {}", out_path.display(), e)))?;
+
+    println!("Session {} committed → {}", session_id, out_path.display());
+    Ok(())
+}
+
+fn parse_parent_hashes(raw: &str) -> CliResult<Vec<ContentHash>> {
+    if raw.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    for token in raw.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let hash = ContentHash::from_hex(token)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent hash {token:?}: {e}")))?;
+        out.push(hash);
+    }
+    Ok(out)
 }
 
 fn parse_embedding_json(raw: &str) -> CliResult<Vec<f32>> {

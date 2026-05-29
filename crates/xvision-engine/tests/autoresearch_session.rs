@@ -23,6 +23,7 @@ fn test_config() -> AutoresearchConfig {
             model: "test-model".into(),
             max_retries: 2,
         },
+        allowed_mutation_kinds: vec!["prose".into(), "param".into(), "tool".into()],
         lineage_root: None,
     }
 }

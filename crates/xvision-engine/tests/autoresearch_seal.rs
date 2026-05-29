@@ -10,7 +10,18 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query(
+        "CREATE TABLE cycle_seals (
+            seal_id TEXT PRIMARY KEY,
+            cycle_id TEXT NOT NULL,
+            merkle_root TEXT NOT NULL,
+            operator_signature TEXT NOT NULL,
+            sealed_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     pool
 }
 
