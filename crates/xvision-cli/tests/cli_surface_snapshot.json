@@ -315,7 +315,7 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
+      "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
       "path": [
@@ -332,7 +332,42 @@
       "path": [
         "autoresearch",
         "help",
+        "lineage",
         "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "lineage",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "mutate-once"
       ]
     },
     {
@@ -359,13 +394,36 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
+      "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
       "path": [
         "autoresearch",
         "help",
         "seal"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "seal",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "session-init"
       ]
     },
     {
@@ -492,6 +550,26 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--blob-dir",
+        "--config",
+        "--cycle-id",
+        "--db",
+        "--dry-run",
+        "--help",
+        "--key-path",
+        "--mock",
+        "--session"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "mutate-once"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
         "--help",
         "--json"
       ],
@@ -582,6 +660,22 @@
         "autoresearch",
         "seal",
         "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--config",
+        "--help",
+        "--key-path",
+        "--out",
+        "--parents"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "session-init"
       ]
     },
     {
@@ -1872,6 +1966,41 @@
     },
     {
       "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "lineage"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "lineage",
+        "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "lineage",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
       "mutates": false,
@@ -1879,6 +2008,17 @@
         "help",
         "autoresearch",
         "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "mutate-once"
       ]
     },
     {
@@ -1901,6 +2041,40 @@
         "help",
         "autoresearch",
         "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "seal"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "seal",
+        "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "session-init"
       ]
     },
     {
@@ -2536,6 +2710,17 @@
       "path": [
         "help",
         "memory",
+        "distill"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
         "forget"
       ]
     },
@@ -2570,6 +2755,17 @@
         "help",
         "memory",
         "promote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "memory",
+        "retire"
       ]
     },
     {
@@ -3881,7 +4077,7 @@
       "has_subcommands": false,
       "long_flags": [
         "--agent",
-        "--attest-null-window",
+        "--confirm-no-cutoff",
         "--force",
         "--help",
         "--json",
@@ -3906,6 +4102,24 @@
       "path": [
         "memory",
         "demote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--active",
+        "--embedding-json",
+        "--help",
+        "--ids",
+        "--json",
+        "--namespace",
+        "--text"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "distill"
       ]
     },
     {
@@ -3974,6 +4188,17 @@
       "path": [
         "memory",
         "help",
+        "distill"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
         "forget"
       ]
     },
@@ -4025,6 +4250,17 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
+      "mutates": false,
+      "path": [
+        "memory",
+        "help",
+        "retire"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
       "mutates": true,
       "path": [
         "memory",
@@ -4063,13 +4299,13 @@
         "--help",
         "--include-forgotten",
         "--json",
+        "--kind",
         "--limit",
         "--namespace",
         "--offset",
-        "--promotion-state",
         "--run",
         "--scenario",
-        "--tier"
+        "--status"
       ],
       "mutates": false,
       "path": [
@@ -4106,6 +4342,19 @@
       "path": [
         "memory",
         "promote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "memory",
+        "retire"
       ]
     },
     {

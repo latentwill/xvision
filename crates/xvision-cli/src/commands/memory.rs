@@ -51,7 +51,7 @@ pub struct MemoryCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// List memory items (default tier = pattern).
+    /// List memory items (default kind = pattern).
     Ls(LsArgs),
     /// List namespaces that currently contain memory rows.
     Namespaces(NamespacesArgs),
@@ -59,11 +59,15 @@ pub enum Op {
     Show(ShowArgs),
     /// Seed an operator-attested Pattern.
     AddPattern(AddPatternArgs),
-    /// Promote Observation rows into a staged or active Pattern.
+    /// Distill Observation rows into a staged or active Pattern. Each contributing Observation must resolve to the same namespace unless `--namespace` is set explicitly.
+    Distill(PromoteArgs),
+    #[command(hide = true)]
     Promote(PromoteArgs),
-    /// Activate an existing staged Pattern by id.
+    /// Activate a staged Pattern by id, putting it into recall. To produce a Pattern by distilling Observations, use `xvn memory distill`.
     Activate(ShowArgs),
-    /// Soft-delete an existing Pattern by id.
+    /// Retire an active or staged Pattern by id. Soft-delete with a grace window.
+    Retire(ShowArgs),
+    #[command(hide = true)]
     Demote(ShowArgs),
     /// Delete one item by id.
     Rm(RmArgs),
@@ -75,9 +79,8 @@ pub enum Op {
 
 #[derive(Args, Debug)]
 pub struct LsArgs {
-    /// `observation` or `pattern`. Defaults to `pattern` per intake Q1
-    /// — the more common operator interest.
-    #[arg(long)]
+    /// Filter by memory kind: `observation` (auto-captured) or `pattern` (operator-attested or distilled).
+    #[arg(long = "kind", alias = "tier")]
     pub tier: Option<String>,
     /// Exact namespace match. Mutually exclusive with `--agent`.
     #[arg(long)]
@@ -91,13 +94,13 @@ pub struct LsArgs {
     /// Observation provenance filter.
     #[arg(long)]
     pub run: Option<String>,
-    /// Pattern lifecycle filter (`active` or `staged`).
-    #[arg(long)]
+    /// Filter Patterns by status: `active` (in recall), `staged` (awaiting gate), `forgotten` (soft-deleted).
+    #[arg(long = "status", alias = "promotion-state")]
     pub promotion_state: Option<String>,
-    /// Include rows soft-deleted by forget/demote.
+    /// Include rows soft-deleted by forget/retire.
     #[arg(long)]
     pub include_forgotten: bool,
-    /// Show only rows soft-deleted by forget/demote.
+    /// Show only rows soft-deleted by forget/retire.
     #[arg(long)]
     pub forgotten_only: bool,
     /// Page size. Engine caps at 500.
@@ -139,13 +142,10 @@ pub struct AddPatternArgs {
     /// only recalled in scenarios that start AFTER this point.
     #[arg(long)]
     pub training_end: Option<String>,
-    /// Required when omitting `--training-end`. Records explicit
-    /// operator attestation that this Pattern may recall in every
-    /// scenario.
-    #[arg(long)]
+    /// Required when omitting `--training-end`. Records explicit operator sign-off that this Pattern has no training cutoff and may be recalled in every scenario.
+    #[arg(long = "confirm-no-cutoff", alias = "attest-null-window")]
     pub attest_null_window: bool,
-    /// Initials stored on the attestation row when
-    /// `--attest-null-window` is used.
+    /// Initials stored on the attestation row when `--confirm-no-cutoff` is used.
     #[arg(long)]
     pub operator_initials: Option<String>,
     /// Skip the no-embedder warning + non-zero exit. Use when seeding
@@ -223,9 +223,23 @@ pub async fn run(cmd: MemoryCmd) -> CliResult<()> {
         Op::Namespaces(args) => run_namespaces(args).await,
         Op::Show(args) => run_show(args).await,
         Op::AddPattern(args) => run_add_pattern(args).await,
-        Op::Promote(args) => run_promote(args).await,
+        Op::Distill(args) => run_distill(args).await,
+        Op::Promote(args) => {
+            eprintln!(
+                "Note: `xvn memory promote` is now `xvn memory distill`; \
+                 the old form still works in this release and will be removed in the next."
+            );
+            run_distill(args).await
+        }
         Op::Activate(args) => run_activate(args).await,
-        Op::Demote(args) => run_demote(args).await,
+        Op::Retire(args) => run_retire(args).await,
+        Op::Demote(args) => {
+            eprintln!(
+                "Note: `xvn memory demote` is now `xvn memory retire`; \
+                 the old form still works in this release and will be removed in the next."
+            );
+            run_retire(args).await
+        }
         Op::Rm(args) => run_rm(args).await,
         Op::Forget(args) => run_forget(args).await,
         Op::UndoForget(args) => run_undo_forget(args).await,
@@ -267,8 +281,8 @@ async fn run_ls(args: LsArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("memory ls", e))?;
 
-    // Apply default tier = "pattern" only when the caller didn't pass
-    // a `--tier` AND didn't filter by scenario/run (the latter is
+    // Apply default kind = "pattern" only when the caller didn't pass
+    // a `--kind` AND didn't filter by scenario/run (the latter is
     // Observation-shaped and the operator clearly wants Observations).
     let tier = match args.tier.as_deref() {
         Some(t) => Some(t.to_string()),
@@ -385,13 +399,13 @@ async fn run_add_pattern(args: AddPatternArgs) -> CliResult<()> {
     let attestation_id = if training_window_end.is_none() {
         if !args.attest_null_window {
             return Err(CliError::usage(anyhow::anyhow!(
-                "omitting --training-end requires --attest-null-window and --operator-initials"
+                "omitting --training-end requires --confirm-no-cutoff and --operator-initials"
             )));
         }
         let initials = args.operator_initials.as_deref().unwrap_or("").trim();
         if initials.is_empty() {
             return Err(CliError::usage(anyhow::anyhow!(
-                "--operator-initials is required with --attest-null-window"
+                "--operator-initials is required with --confirm-no-cutoff"
             )));
         }
         let attestation = memory_api::create_operator_attestation(
@@ -441,7 +455,7 @@ async fn run_add_pattern(args: AddPatternArgs) -> CliResult<()> {
     Ok(())
 }
 
-async fn run_promote(args: PromoteArgs) -> CliResult<()> {
+async fn run_distill(args: PromoteArgs) -> CliResult<()> {
     if args.ids.is_empty() {
         return Err(CliError::usage(anyhow::anyhow!(
             "--ids must include at least one Observation id"
@@ -459,7 +473,7 @@ async fn run_promote(args: PromoteArgs) -> CliResult<()> {
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| {
                     CliError::usage(anyhow::anyhow!(
-                        "memory promote requires --embedding-json or OPENAI_API_KEY"
+                        "memory distill requires --embedding-json or OPENAI_API_KEY"
                     ))
                 })?;
             let base_url = std::env::var("OPENAI_BASE_URL")
@@ -469,7 +483,7 @@ async fn run_promote(args: PromoteArgs) -> CliResult<()> {
             let embedder = xvision_engine::agent::openai_embedder::OpenAiEmbedder::new(base_url, api_key);
             let embedding = embedder.embed(&args.text).await.map_err(|e| CliError {
                 exit: XvnExit::Upstream,
-                source: anyhow::anyhow!("memory promote: embed Pattern text: {e}"),
+                source: anyhow::anyhow!("memory distill: embed Pattern text: {e}"),
             })?;
             (embedder.id().to_string(), embedding)
         }
@@ -482,7 +496,7 @@ async fn run_promote(args: PromoteArgs) -> CliResult<()> {
 
     let store = memory_api::open_default_store()
         .await
-        .map_err(|e| api_to_cli("memory promote", e))?;
+        .map_err(|e| api_to_cli("memory distill", e))?;
     let item = memory_api::promote_observations(
         &store,
         &embedder_id,
@@ -495,14 +509,14 @@ async fn run_promote(args: PromoteArgs) -> CliResult<()> {
         },
     )
     .await
-    .map_err(|e| api_to_cli("memory promote", e))?;
+    .map_err(|e| api_to_cli("memory distill", e))?;
 
     if args.json {
         let bytes = serde_json::to_vec_pretty(&item).exit_with(XvnExit::Upstream)?;
         write_stdout(&bytes)?;
     } else {
         let state = item.promotion_state.as_deref().unwrap_or("active");
-        println!("promoted pattern {} in {} ({state})", item.id, item.namespace);
+        println!("distilled pattern {} in {} ({state})", item.id, item.namespace);
     }
     Ok(())
 }
@@ -523,18 +537,18 @@ async fn run_activate(args: ShowArgs) -> CliResult<()> {
     Ok(())
 }
 
-async fn run_demote(args: ShowArgs) -> CliResult<()> {
+async fn run_retire(args: ShowArgs) -> CliResult<()> {
     let store = memory_api::open_default_store()
         .await
-        .map_err(|e| api_to_cli("memory demote", e))?;
+        .map_err(|e| api_to_cli("memory retire", e))?;
     let item = memory_api::demote_pattern(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("memory demote", e))?;
+        .map_err(|e| api_to_cli("memory retire", e))?;
     if args.json {
         let bytes = serde_json::to_vec_pretty(&item).exit_with(XvnExit::Upstream)?;
         write_stdout(&bytes)?;
     } else {
-        println!("demoted pattern {} in {}", item.id, item.namespace);
+        println!("retired pattern {} in {}", item.id, item.namespace);
     }
     Ok(())
 }
@@ -655,7 +669,7 @@ fn print_items_table(items: &[MemoryItemDto], total: u64) {
     // readable while still surfacing enough text for the operator to
     // recognize Patterns at a glance.
     let preview_width = 60;
-    println!("{:<26}  {:<10}  {:<24}  {}", "id", "tier", "namespace", "text");
+    println!("{:<26}  {:<10}  {:<24}  {}", "id", "kind", "namespace", "text");
     println!("{}", "-".repeat(26 + 2 + 10 + 2 + 24 + 2 + preview_width));
     for it in items {
         let preview: String = if it.text.chars().count() > preview_width {
@@ -678,7 +692,7 @@ fn print_items_table(items: &[MemoryItemDto], total: u64) {
 
 fn print_item_detail(item: &MemoryItemDto) {
     println!("id:                  {}", item.id);
-    println!("tier:                {}", item.tier);
+    println!("kind:                {}", item.tier);
     println!("namespace:           {}", item.namespace);
     println!("created_at:          {}", item.created_at);
     if let Some(end) = &item.training_window_end {
