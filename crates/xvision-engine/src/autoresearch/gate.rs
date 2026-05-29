@@ -31,8 +31,8 @@ pub enum GateVerdict {
 impl GateVerdict {
     pub fn as_str(&self) -> String {
         match self {
-            Self::Pass => "pass".to_string(),
-            Self::Fail { reason } => format!("fail:{reason}"),
+            Self::Pass => "passed".to_string(),
+            Self::Fail { reason } => format!("rejected:{reason}"),
         }
     }
 
@@ -44,6 +44,9 @@ impl GateVerdict {
             }),
             _ if s.starts_with("fail:") => Ok(Self::Fail {
                 reason: s.trim_start_matches("fail:").to_string(),
+            }),
+            _ if s.starts_with("rejected:") => Ok(Self::Fail {
+                reason: s.trim_start_matches("rejected:").to_string(),
             }),
             _ => bail!("unknown GateVerdict: {s}"),
         }
