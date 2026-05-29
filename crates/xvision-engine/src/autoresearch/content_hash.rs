@@ -1,61 +1,93 @@
-//! BLAKE3 content-hash type for the autoresearcher blob store (AR-1 Task 2).
-//!
-//! `ContentHash` is a newtype over a 32-byte BLAKE3 digest.
-//! `canonicalize_json` sorts object keys so the hash of a JSON value is
-//! independent of key insertion order.
+use anyhow::anyhow;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 
-use serde_json::Value;
-
-/// A 32-byte BLAKE3 content hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ContentHash([u8; 32]);
+pub struct ContentHash(pub [u8; 32]);
 
-impl ContentHash {
-    /// Hash raw bytes.
-    pub fn of_bytes(bytes: &[u8]) -> Self {
-        ContentHash(*blake3::hash(bytes).as_bytes())
-    }
-
-    /// Hash the canonical JSON form of `value` (object keys sorted recursively).
-    pub fn of_json(value: &Value) -> Self {
-        let canonical = canonicalize_json(value);
-        let bytes = serde_json::to_vec(&canonical)
-            .expect("serde_json::to_vec is infallible on a well-formed Value");
-        Self::of_bytes(&bytes)
-    }
-
-    /// Return the lower-hex digest string (64 characters for a 32-byte hash).
-    pub fn to_hex(&self) -> String {
-        hex::encode(self.0)
+impl Serialize for ContentHash {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
     }
 }
 
-impl std::fmt::Display for ContentHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'de> Deserialize<'de> for ContentHash {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Self::from_hex(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl ContentHash {
+    pub fn of_bytes(bytes: &[u8]) -> Self {
+        hash_bytes(bytes)
+    }
+
+    pub fn of_json(value: &serde_json::Value) -> Self {
+        hash_canonical_json(value)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+
+    pub fn from_hex(s: &str) -> anyhow::Result<Self> {
+        let bytes = hex::decode(s).map_err(|e| anyhow!("hex decode: {e}"))?;
+        if bytes.len() != 32 {
+            anyhow::bail!("expected 32 bytes, got {}", bytes.len());
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        debug_assert_eq!(arr.len(), 32);
+        Ok(Self(arr))
+    }
+}
+
+impl fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.to_hex())
     }
 }
 
-/// Hash raw bytes — free-function alias used by `BlobStore::put`.
-pub fn hash_bytes(bytes: &[u8]) -> ContentHash {
-    ContentHash::of_bytes(bytes)
+impl FromStr for ContentHash {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> anyhow::Result<Self> {
+        Self::from_hex(s)
+    }
 }
 
-/// Return a deterministic canonical form of `value` with object keys sorted.
-///
-/// Arrays are left in their original order; only map key order is normalised.
-pub fn canonicalize_json(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
+pub fn hash_bytes(bytes: &[u8]) -> ContentHash {
+    ContentHash(*blake3::hash(bytes).as_bytes())
+}
+
+pub fn canonical_json(value: &serde_json::Value) -> String {
+    serde_json::to_string(&canonicalize_json(value))
+        .expect("canonical JSON serialization is infallible")
+}
+
+pub fn hash_canonical_json(value: &serde_json::Value) -> ContentHash {
+    hash_bytes(canonical_json(value).as_bytes())
+}
+
+pub fn canonicalize_json(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_unstable();
-            let sorted = keys
-                .into_iter()
-                .map(|k| (k.clone(), canonicalize_json(&map[k])))
-                .collect();
-            Value::Object(sorted)
+            keys.sort();
+            let mut out = serde_json::Map::new();
+            for k in keys {
+                out.insert(k.clone(), canonicalize_json(&map[k]));
+            }
+            serde_json::Value::Object(out)
         }
-        Value::Array(arr) => Value::Array(arr.iter().map(canonicalize_json).collect()),
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(canonicalize_json).collect())
+        }
         other => other.clone(),
     }
 }
