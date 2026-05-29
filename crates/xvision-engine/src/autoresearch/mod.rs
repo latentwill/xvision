@@ -21,6 +21,7 @@
 
 pub mod blob_store;
 pub mod config;
+pub mod eval_adapter;
 pub mod content_hash;
 pub mod gate;
 pub mod lineage;
@@ -44,3 +45,4 @@ pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, Prog
 pub use seal::{build_and_sign, CycleSeal, OPERATOR_DISPLAY_LABEL};
 pub use session::{default_key_path, load_or_generate_key, SessionCommitment};
 pub use validator::{validate_mutation_diff, ValidationError};
+pub use eval_adapter::{BacktestPaperTester, PaperTestRunner, StubPaperTester};
