@@ -15,6 +15,12 @@ These reports all inform the same product surface: how xvision should reason abo
 - Recommends multi-agent decomposition with structured JSON handoffs for auditability.
 - Calls out memory hygiene, backtest/live separation, and outcome-bias prevention as non-negotiable.
 
+### XVision vs. Agentic Trading Research: Current State, Planned State, and Gap Analysis
+
+- Compares the research thesis to xvision's current implementation and the roadmap already in this repo.
+- Lists which structures are present, which are still only planned, and which are missing entirely.
+- Links the thesis to the implementation plan instead of leaving it as a standalone research memo.
+
 ### AI-Agentic Algorithmic Trading Platforms: Landscape, Comparisons, and Product Gaps
 
 - Finds no production-ready fully autonomous trading platform yet.
