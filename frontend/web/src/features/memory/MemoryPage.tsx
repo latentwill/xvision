@@ -26,7 +26,7 @@ export function MemoryPage() {
     <>
       <Topbar
         title="Memory"
-        sub="Global namespace · Operator patterns and autoresearcher observations"
+        sub="Global namespace · Operator patterns and observations from the evening run"
       />
       <MemorySurface mode="workspace" highlightPatternId={highlight} />
     </>
