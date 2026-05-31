@@ -22,9 +22,11 @@ export function DesktopThreePaneShell({
       <main className="min-w-0 max-w-[960px] w-full justify-self-center px-6 pt-7 pb-6 overflow-x-hidden">
         <Outlet />
       </main>
-      <Suspense fallback={null}>
-        <ChatRailComponent />
-      </Suspense>
+      <div className="min-w-[44px]">
+        <Suspense fallback={<div className="w-[44px]" />}>
+          <ChatRailComponent />
+        </Suspense>
+      </div>
       <CommandPalette />
       <Suspense fallback={null}>
         <StripDockSlot />
