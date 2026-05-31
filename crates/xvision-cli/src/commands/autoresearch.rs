@@ -7,6 +7,7 @@
 //! command; this file intentionally keeps the first slice offline and
 //! memory-bound.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,11 +22,17 @@ use xvision_engine::api::memory;
 use xvision_engine::autoresearch::blob_store::BlobStore;
 use xvision_engine::autoresearch::config::AutoresearchConfig;
 use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::cycle::{run_evening_cycle, CycleConfig};
+use xvision_engine::autoresearch::eval_adapter::StubPaperTester;
 use xvision_engine::autoresearch::gate::GateVerdict;
+use xvision_engine::autoresearch::judge::Judge;
 use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
 use xvision_engine::autoresearch::mutator::{MutationDiff, Mutator};
+use xvision_engine::autoresearch::parent_policy::ParentPolicy;
 use xvision_engine::autoresearch::seal::build_and_sign;
+use xvision_engine::autoresearch::scenario_synthesis::synthesize_baseline_untouched_scenario;
 use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
+use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::strategies::Strategy;
 use xvision_memory::embedder::Embedder;
 
@@ -59,6 +66,8 @@ pub enum Op {
     SessionInit(SessionInitArgs),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
+    /// Run the full evening cycle (parent selection → mutation → gate → judge → seal). Operator label: 'Evening run'.
+    EveningCycle(EveningCycleArgs),
 }
 
 #[derive(Args, Debug)]
@@ -106,6 +115,22 @@ pub struct MutateOnceArgs {
     #[arg(long)]
     pub key_path: Option<PathBuf>,
     /// Use mock LLM dispatch (for tests and offline use).
+    #[arg(long)]
+    pub mock: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct EveningCycleArgs {
+    /// Session commitment ID from xvn autoresearch session-init.
+    #[arg(long)]
+    pub session_id: String,
+    /// Path to autoresearch.toml. Defaults to ~/.xvn/autoresearch.toml.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    /// SQLite database path. Defaults to ~/.xvn/lineage/lineage.db.
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Use deterministic stub paper tester (no API keys). Safe for smoke testing.
     #[arg(long)]
     pub mock: bool,
 }
@@ -303,6 +328,7 @@ pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
         },
         Op::SessionInit(args) => run_session_init(args).await,
         Op::MutateOnce(args) => run_mutate_once(args).await,
+        Op::EveningCycle(args) => run_evening_cycle_cmd(args).await,
     }
 }
 
@@ -808,6 +834,184 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         seal_cycle(&pool, &lineage, &cycle_id, &session, &key_path).await?;
     }
     println!("Experiment complete: verdict={} cycle={}", verdict.as_str(), cycle_id);
+    Ok(())
+}
+
+// ── evening-cycle ─────────────────────────────────────────────────────────
+
+async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
+    let cfg = load_ar_config(args.config.as_deref())?;
+    let db_path = args.db.unwrap_or_else(default_db_path);
+    let pool = open_and_migrate_db(&db_path).await?;
+
+    // Operator signing key.
+    let key_path = default_key_path().map_err(CliError::upstream)?;
+    let operator_key = load_or_generate_key(&key_path)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("load operator key: {e}")))?;
+
+    // Observability blob store (unused by cycle currently but required by signature).
+    let obs_blob_root = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".xvn/lineage/obs-blobs");
+    let obs_blob_store = xvision_observability::BlobStore::new(obs_blob_root);
+
+    // Build day + baseline scenarios from config windows.
+    let day_scenario = {
+        use xvision_engine::eval::scenario::{
+            AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
+            LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
+            ReplayMode, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+        };
+        use xvision_engine::safety::VenueLabel;
+        use chrono::TimeZone;
+        use xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS;
+        use xvision_core::Capital;
+        use xvision_data::alpaca::BarGranularity;
+
+        let start = Utc.from_utc_datetime(
+            &cfg.day_window.start.and_hms_opt(0, 0, 0).expect("valid hms"),
+        );
+        let end = Utc.from_utc_datetime(
+            &cfg.day_window.end.and_hms_opt(0, 0, 0).expect("valid hms"),
+        );
+        xvision_engine::eval::scenario::Scenario {
+            id: format!("ec-day-{}", Ulid::new()),
+            parent_scenario_id: None,
+            source: ScenarioSource::Generated,
+            display_name: "Evening cycle day window".into(),
+            description: format!(
+                "Synthesized day window {} – {}",
+                cfg.day_window.start, cfg.day_window.end
+            ),
+            tags: vec![],
+            notes: None,
+            asset_class: AssetClass::Crypto,
+            quote_currency: QuoteCurrency::Usd,
+            time_window: TimeWindow { start, end },
+            granularity: BarGranularity::Hour1,
+            timezone: "UTC".into(),
+            calendar: CalendarRef::Continuous24x7,
+            data_source: DataSource::AlpacaHistorical {
+                feed: None,
+                adjustment: xvision_engine::eval::scenario::AdjustmentMode::Raw,
+            },
+            venue: VenueSettings {
+                venue: Venue::Alpaca,
+                fees: Fees { maker_bps: 10, taker_bps: 25 },
+                slippage: SlippageModel::None,
+                latency: LatencyModel { decision_to_fill_ms: 250 },
+                fill_model: FillModel {
+                    market_order_fill: MarketOrderFill::FullAtClose,
+                    limit_order_fill: LimitOrderFill::NeverFills,
+                    partial_fills: false,
+                    volume_constraints: None,
+                },
+                overrides: vec![],
+            },
+            replay_mode: ReplayMode::Continuous,
+            capital: Capital::default(),
+            bar_cache_policy: BarCachePolicy {
+                cache_key: format!("ec-day-{}-{}", cfg.day_window.start, cfg.day_window.end),
+                refresh_policy: RefreshPolicy::NeverRefresh,
+                data_fetched_at: None,
+            },
+            warmup_bars: DEFAULT_WARMUP_BARS,
+            regime_label: None,
+            volatility_label: None,
+            trend_direction: None,
+            regime_derived: false,
+            created_at: Utc::now(),
+            created_by: "xvn-cli".into(),
+            archived_at: None,
+            venue_label: VenueLabel::Paper,
+            safety_limits: None,
+        }
+    };
+
+    let baseline_scenario =
+        synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
+
+    // Build paper tester.
+    let paper_tester: Box<dyn xvision_engine::autoresearch::eval_adapter::PaperTestRunner> =
+        if args.mock {
+            Box::new(StubPaperTester {
+                metrics: MetricsSummary {
+                    sharpe: 0.9,
+                    total_return_pct: 5.0,
+                    max_drawdown_pct: 3.0,
+                    win_rate: 0.55,
+                    n_trades: 10,
+                    n_decisions: 20,
+                    inference_cost_quote_total: None,
+                    net_return_pct: None,
+                    baselines: None,
+                },
+            })
+        } else {
+            // Real path: BacktestPaperTester requires a RunStore + ToolRegistry.
+            // For now return a stub that signals "not yet wired".
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--mock is required; non-mock BacktestPaperTester is not yet wired in the CLI. \
+                 Use --mock for smoke testing."
+            )));
+        };
+
+    // Build dispatch + mutator + judge.
+    let dispatch = build_dispatch(args.mock)?;
+    let mutator = Mutator {
+        provider: cfg.mutator.provider.clone(),
+        model: cfg.mutator.model.clone(),
+        dispatch: Arc::clone(&dispatch),
+        max_retries: cfg.mutator.max_retries,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&dispatch),
+        provider: cfg.mutator.provider.clone(),
+        model: cfg.mutator.model.clone(),
+    };
+
+    let cycle_config = CycleConfig {
+        num_parents: 2,
+        mutations_per_parent: 1,
+        sabotage_seed: 42,
+        judge_provider: cfg.mutator.provider.clone(),
+        judge_model: cfg.mutator.model.clone(),
+        prompt_version: "v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies: HashMap::new(),
+    };
+
+    let parent_policy = ParentPolicy::RoundRobin;
+
+    eprintln!("Starting evening cycle...");
+    let result = run_evening_cycle(
+        &pool,
+        &obs_blob_store,
+        &cfg,
+        &cycle_config,
+        &parent_policy,
+        &mutator,
+        &judge,
+        paper_tester.as_ref(),
+        &operator_key,
+        &args.session_id,
+        |event| {
+            if let Ok(line) = serde_json::to_string(&event) {
+                println!("{}", line);
+            }
+        },
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("run_evening_cycle: {e}")))?;
+
+    println!(
+        "cycle_id={} merkle_root={}",
+        result.cycle_id,
+        result.seal.merkle_root.to_hex()
+    );
     Ok(())
 }
 
