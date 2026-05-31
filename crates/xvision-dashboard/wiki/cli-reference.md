@@ -120,7 +120,7 @@ fact.
 | `create --name <name> --strategy <id> --scenarios <id,…> [--question <text>] [--decision-budget <n>] [--json]` | Create a new experiment in the ledger; alias `new`. |
 | `ls [--json]` | List all experiments, most-recent first. |
 | `show <id> [--json]` | Show a single experiment by id; alias `get`. |
-| `update <id> [--conclusion <text>] [--next-recommendation <text>] [--bind-batch <batch-id>] [--json]` | Apply partial mutations; at least one flag is required. |
+| `update <id> [--conclusion <text>] [--next-recommendation <text>] [--bind-batch <batch-id>] [--json]` | Apply partial edits; at least one flag is required. |
 | `run --name <name> --strategy <id> [--scenarios <id,…>] [--assets <a,…> --timeframe <tf> --target-decisions <n>] [--decision-budget <n>] [--wait] [--review-with <profile>] [--compare [--markdown]] [--json]` | Full orchestration in one command: create experiment → run batch → bind → write `result_json`. Scenario selection either via explicit `--scenarios` or via the scenario selector flags. Emits `{experiment_id, strategy_ids, scenario_ids, batch_id, result: {profitable_count, best_scenario, worst_scenario, runs}, compare_markdown?}` when `--json` is set. |
 
 ---
@@ -209,10 +209,10 @@ invariant.
 | `inspect <run-id> [--json]` | Show a persisted run, its candidate table (instructions + metric values, `selected` flag), and snapshots. Exit `4` if the run id is unknown. |
 | `export-demos <snapshot-id\|demo-set> [--output <path>]` | Export a snapshot's (or demo set's) demonstrations as canonical content-addressed JSON. |
 | `import-demos <path>` | Import a demos JSON file into the content-addressed demo store. |
-| `accept-as-child-agent <snapshot-id>` | Mint a child agent from a snapshot's winning instruction; records the `agent_lineage` edge (`parent → child`) and sets the accept flag. |
+| `accept-as-child-agent <snapshot-id>` | Train a child agent from a snapshot's winning instruction; records the `agent_lineage` edge (`parent → child`) and sets the accept flag. |
 | `revert-accepted <snapshot-id>` | Clear the accept flag and the lineage edge for a previously accepted snapshot. |
 | `explain-missing-data <corpus>` | Explain why a corpus query produced no usable training data (query guidance; does not run an optimization). |
-| `memory-demos --agent <id> [--slot <name>] [--namespace <ns>\|--memory-agent <id>] [--demo-source frozen-snapshot\|fresh-recorder\|manual-csv] [--holdout-split 70/15/15] [--cohort-query <q>] [--prior-pattern <id> …] [--auto-priors] [--yes] [--json]` | Compile Observation demos and optional Pattern priors into a child-agent prompt prefix. Without `--yes`, previews the deterministic split/hash plan only. |
+| `memory-demos --agent <id> [--slot <name>] [--namespace <ns>\|--memory-agent <id>] [--demo-source frozen-snapshot\|fresh-recorder\|manual-csv] [--untouched-split 70/15/15] [--cohort-query <q>] [--prior-pattern <id> …] [--auto-priors] [--yes] [--json]` | Compile Observation examples and optional background Patterns into a child-agent prompt prefix. Without `--yes`, previews the deterministic split/hash plan only. |
 | `memory-demos-gate <optimization-id> --parent-dev-score <n> --child-dev-score <n> --baseline-untouched-score <n> --candidate-untouched-score <n> [--dev-metric <m>] [--untouched-metric <m>] [--min-improvement <n>] [--reason <text>] [--json]` | Record the dev/untouched-period gate verdict for a memory-demo optimization. |
 
 `--capability` accepts `trader`, `filter`, `decision_grader`, `intern`, or
@@ -449,4 +449,4 @@ explicitly with the `XVN_HOME` env var or the per-command `--xvn-home` flag.
 | `$XVN_HOME/config/default.toml` | Runtime config: providers, intern/trader defaults, backtest params. Override path: `XVN_CONFIG_PATH`. |
 | `$XVN_HOME/secrets/providers.toml` | Provider API keys (separate from config; checked by `xvn doctor`). |
 | `$XVN_HOME/secrets/brokers.toml` | Broker credentials (checked by `xvn doctor`). |
-| `$XVN_HOME/identity/signing.key` | Ed25519 key used by `xvn eval attest`. Auto-generated on first use. |
+| `$XVN_HOME/identity/signing.key` | Signing key used by `xvn eval attest`. Auto-generated on first use. |

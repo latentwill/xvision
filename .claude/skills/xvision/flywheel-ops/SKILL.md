@@ -28,7 +28,7 @@ xvn optimize memory-demos \
   --target-agent <agent_id> \
   --memory-agent <agent_id> \
   --demo-source frozen-snapshot \
-  --holdout-split 70/15/15 \
+  --untouched-split 70/15/15 \
   --json
 
 bash scripts/audit-memory-demos.sh --target-agent <agent_id> --memory-agent <agent_id>
