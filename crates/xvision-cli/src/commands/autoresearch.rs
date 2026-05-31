@@ -16,6 +16,8 @@ use clap::{Args, Subcommand};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use ulid::Ulid;
 
+use tokio::io::AsyncWriteExt;
+
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
 use xvision_engine::api::autoresearch::{self, AutoresearchGateRequest, AutoresearchRunRequest};
 use xvision_engine::api::memory;
@@ -124,6 +126,16 @@ pub struct MutateOnceArgs {
     /// Use mock LLM dispatch (for tests and offline use).
     #[arg(long)]
     pub mock: bool,
+    /// Unix socket path of the dashboard IPC bridge (AR-3).
+    ///
+    /// When set, each `CycleProgressEvent` is serialized as newline-delimited
+    /// JSON and sent to the dashboard listener so it appears in real time on
+    /// `GET /api/autoresearch/events`. Requires the dashboard to be started
+    /// with `--autoresearch-ipc-socket <same path>`.
+    ///
+    /// Example: --ipc-socket /tmp/xvn-events.sock
+    #[arg(long)]
+    pub ipc_socket: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -818,7 +830,37 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent_bundle_hash: {e}")))?;
     let parent = load_strategy_blob(&blobs, &parent_hash).await?;
     let dispatch = build_dispatch(args.mock)?;
+
+    // AR-3: connect to the dashboard IPC socket if requested.
+    let mut ipc_stream: Option<tokio::net::UnixStream> = None;
+    if let Some(ref socket_path) = args.ipc_socket {
+        match tokio::net::UnixStream::connect(socket_path).await {
+            Ok(s) => {
+                ipc_stream = Some(s);
+            }
+            Err(e) => {
+                eprintln!("warning: could not connect to IPC socket {}: {e}", socket_path.display());
+            }
+        }
+    }
+
+    let cycle_id = args.cycle_id.clone().unwrap_or_else(|| Ulid::new().to_string());
+
+    ipc_send_event(&mut ipc_stream, CycleProgressEvent::CycleStarted {
+        cycle_id: cycle_id.clone(),
+        parent_count: 1,
+    }).await;
+    ipc_send_event(&mut ipc_stream, CycleProgressEvent::ParentSelected {
+        cycle_id: cycle_id.clone(),
+        parent_hash: parent_hash.to_hex(),
+    }).await;
+
     eprintln!("Proposing experiment...");
+    ipc_send_event(&mut ipc_stream, CycleProgressEvent::MutationProposed {
+        cycle_id: cycle_id.clone(),
+        parent_hash: parent_hash.to_hex(),
+    }).await;
+
     let diff = propose(&parent, &cfg, &dispatch)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
@@ -838,6 +880,13 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         }
     };
     let status = if passed { LineageStatus::Active } else { LineageStatus::Rejected };
+
+    ipc_send_event(&mut ipc_stream, CycleProgressEvent::MutationGated {
+        cycle_id: cycle_id.clone(),
+        child_hash: child_hash.to_hex(),
+        passed,
+    }).await;
+
     eprintln!("Gate: {} (day Δ={:.3}, untouched Δ={:.3})",
         verdict.as_str(), cd - pd, ch - ph);
     if args.dry_run {
@@ -854,7 +903,6 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         .put_json(&child_json)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("write child blob: {e}")))?;
-    let cycle_id = args.cycle_id.unwrap_or_else(|| Ulid::new().to_string());
     let lineage = LineageStore::new(pool.clone());
     insert_lineage_node(&lineage, child_hash, parent_hash, diff_hash, verdict.clone(), status, &cycle_id).await?;
     if passed {
@@ -863,7 +911,34 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
             None => default_key_path().map_err(CliError::upstream)?,
         };
         seal_cycle(&pool, &lineage, &cycle_id, &session, &key_path).await?;
+
+        // Emit CycleSealed event after a successful seal.
+        let node_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?",
+        )
+        .bind(&cycle_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+
+        let merkle_root = lineage
+            .merkle_root_for_cycle(&cycle_id)
+            .await
+            .map(|h| h.to_hex())
+            .unwrap_or_default();
+
+        ipc_send_event(&mut ipc_stream, CycleProgressEvent::CycleSealed {
+            cycle_id: cycle_id.clone(),
+            merkle_root,
+            node_count: node_count as usize,
+        }).await;
     }
+
+    // Flush and close the IPC stream.
+    if let Some(mut s) = ipc_stream {
+        let _ = s.shutdown().await;
+    }
+
     println!("Experiment complete: verdict={} cycle={}", verdict.as_str(), cycle_id);
     Ok(())
 }
@@ -1164,6 +1239,19 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
         seal_short
     );
     Ok(())
+}
+
+/// Send a `CycleProgressEvent` as a newline-delimited JSON line to the IPC
+/// socket. Non-fatal: errors are silently discarded so a disconnected or
+/// slow socket never interrupts the evening cycle.
+async fn ipc_send_event(
+    stream: &mut Option<tokio::net::UnixStream>,
+    ev: CycleProgressEvent,
+) {
+    let Some(ref mut s) = stream else { return };
+    let Ok(mut line) = serde_json::to_string(&ev) else { return };
+    line.push('\n');
+    let _ = s.write_all(line.as_bytes()).await;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
