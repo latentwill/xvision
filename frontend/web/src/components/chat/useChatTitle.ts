@@ -144,11 +144,24 @@ export function useChatTitle({
   /** Gate: only fire once the first assistant response is complete. */
   ready: boolean;
 }): string | null {
-  const [title, setTitle] = useState<string | null>(
-    () => titleCache.get(sessionId) ?? readPersisted(sessionId),
-  );
+  const [titleEntry, setTitleEntry] = useState<{
+    id: string;
+    value: string;
+  } | null>(() => {
+    const t = titleCache.get(sessionId) ?? readPersisted(sessionId);
+    return t ? { id: sessionId, value: t } : null;
+  });
+  // Null when sessionId changed since last render — prevents stale title leaking.
+  const title = titleEntry?.id === sessionId ? titleEntry.value : null;
 
   useEffect(() => {
+    if (!title) {
+      const cached = titleCache.get(sessionId) ?? readPersisted(sessionId);
+      if (cached) {
+        setTitleEntry({ id: sessionId, value: cached });
+        return;
+      }
+    }
     if (title) return;
     if (!ready) return;
     if (!firstUser || !firstAssistant) return;
@@ -198,7 +211,7 @@ export function useChatTitle({
     promise
       .then((t) => {
         if (cancelled) return;
-        setTitle(t);
+        setTitleEntry({ id: sessionId, value: t });
       })
       .catch(() => {
         // Already logged inside the shared promise.
