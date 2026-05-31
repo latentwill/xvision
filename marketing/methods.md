@@ -99,7 +99,7 @@ config that takes a single `RunBundle` as input.
    showcasing perp vs spot trade-offs.
 3. **Strategy lineage** — overnight autoresearcher output. Show the parent
    strategy at the top, fork tree below, sealed survivors highlighted with
-   their `agent_id` NFT. "11 mutations attempted, 2 sealed. Here's why
+   their `agent_id` NFT. "11 experiments attempted, 2 sealed. Here's why
    `agent-018K…` won."
 4. **Live-build demo** — chat-driven authoring captured as a screen recording,
    then re-rendered through Remotion with the chat replay + the bundle tree

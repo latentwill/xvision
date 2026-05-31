@@ -213,7 +213,7 @@ invariant.
 | `revert-accepted <snapshot-id>` | Clear the accept flag and the lineage edge for a previously accepted snapshot. |
 | `explain-missing-data <corpus>` | Explain why a corpus query produced no usable training data (query guidance; does not run an optimization). |
 | `memory-demos --agent <id> [--slot <name>] [--namespace <ns>\|--memory-agent <id>] [--demo-source frozen-snapshot\|fresh-recorder\|manual-csv] [--holdout-split 70/15/15] [--cohort-query <q>] [--prior-pattern <id> …] [--auto-priors] [--yes] [--json]` | Compile Observation demos and optional Pattern priors into a child-agent prompt prefix. Without `--yes`, previews the deterministic split/hash plan only. |
-| `memory-demos-gate <optimization-id> --parent-dev-score <n> --child-dev-score <n> --parent-holdout-score <n> --child-holdout-score <n> [--dev-metric <m>] [--holdout-metric <m>] [--gate-epsilon <n>] [--reason <text>] [--json]` | Record the dev/holdout gate verdict for a memory-demo optimization. |
+| `memory-demos-gate <optimization-id> --parent-dev-score <n> --child-dev-score <n> --baseline-untouched-score <n> --candidate-untouched-score <n> [--dev-metric <m>] [--untouched-metric <m>] [--min-improvement <n>] [--reason <text>] [--json]` | Record the dev/untouched-period gate verdict for a memory-demo optimization. |
 
 `--capability` accepts `trader`, `filter`, `decision_grader`, `intern`, or
 `chat_authoring`. `--optimizer` accepts `mipro`, `gepa`, or `copro`.
@@ -252,12 +252,12 @@ branch on the exact reason without parsing text — see [Exit codes](#exit-codes
 ### `xvn memory …`
 
 Operator surface for V2D memory items. Reads default to Patterns because those
-are the operator-managed tier; Observations can be listed for audit.
+are the operator-managed kind; Observations can be listed for audit.
 
 | Verb | Effect |
 |---|---|
-| `ls [--tier pattern\|observation] [--namespace <ns>] [--agent <id>] [--scenario <id>] [--run <id>] [--limit <n>] [--offset <n>] [--json]` | List memory items. `--agent <id>` is shorthand for `namespace=agent:<id>`. |
-| `show <id> [--json]` | Print one item with tier, namespace, provenance, training window, and text. |
+| `ls [--kind pattern\|observation] [--namespace <ns>] [--agent <id>] [--scenario <id>] [--run <id>] [--limit <n>] [--offset <n>] [--json]` | List memory items. `--agent <id>` is shorthand for `namespace=agent:<id>`. |
+| `show <id> [--json]` | Print one item with kind, namespace, provenance, training window, and text. |
 | `add-pattern "<text>" --namespace <ns> [--training-end <date>] [--force] [--json]` | Seed an operator Pattern. `--agent <id>` may be used instead of `--namespace`. Without an embedder configured, exits non-zero unless `--force` is set. |
 | `rm <id> [--json]` | Delete one memory item by id. |
 | `forget --namespace <ns> [--json]` | Bulk-delete every item in a namespace. |
@@ -272,15 +272,15 @@ that can be recalled in every scenario.
 
 ### `xvn autoresearch …`
 
-Offline distillation surface for promoting Observation cohorts into staged or
+Offline distillation surface for activating Observation cohorts into staged or
 active Patterns. Autoresearch never runs inside a live decision cycle.
 
 | Verb | Effect |
 |---|---|
 | `run --namespace <ns> [--agent <id>] [--scenario <id>] [--min-observations <n>] [--candidate-text <text>] [--json]` | Read qualifying Observations, create an autoresearch run, and stage a candidate Pattern with source Observation ids. |
-| `inspect <run-id> [--json]` | Show one run, its source Observation ids, Pattern candidate, gate state, promotion state, and any Finding text. |
-| `promote <run-id> [--json]` | Promote a gated/staged candidate Pattern into the recall-active Pattern tier. |
-| `demote <run-id> [--reason <text>] [--json]` | Soft-demote the associated Pattern and record the demotion reason. |
+| `inspect <run-id> [--json]` | Show one run, its source Observation ids, Pattern candidate, gate state, status, and any Finding text. |
+| `activate <run-id> [--json]` | Activate a gated/staged candidate Pattern into the recall-active Pattern kind. |
+| `retire <run-id> [--reason <text>] [--json]` | Soft-retire the associated Pattern and record the retirement reason. |
 
 ### `xvn flywheel …`
 
@@ -288,8 +288,8 @@ Read-only operator telemetry for the memory/autoresearch/optimizer loop.
 
 | Verb | Effect |
 |---|---|
-| `status [--namespace <ns>] [--agent <id>] [--json]` | Summarize Observation count, active Pattern count, staged Pattern count, demoted Pattern count, autoresearch run count, and optimization count. |
-| `velocity [--namespace <ns>] [--agent <id>] [--days <n>] [--json]` | Return daily flywheel counters over a rolling window: Observations, promotions, demotions, autoresearch runs, and optimizations. |
+| `status [--namespace <ns>] [--agent <id>] [--json]` | Summarize Observation count, active Pattern count, staged Pattern count, retired Pattern count, autoresearch run count, and optimization count. |
+| `velocity [--namespace <ns>] [--agent <id>] [--days <n>] [--json]` | Return daily flywheel counters over a rolling window: Observations, activations, retirements, autoresearch runs, and optimizations. |
 | `lineage --agent <id> [--limit <n>] [--json]` | Show memory-demo optimization lineage for an agent namespace, including demo/prior Pattern ids, split hashes, and gate verdicts. |
 
 ---
