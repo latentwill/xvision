@@ -179,6 +179,31 @@ describe("MListSheet", () => {
     expect(document.activeElement).toBe(buttons[0]);
   });
 
+  it("pointerCancel after threshold drag does not dismiss and sheet remains", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <MListSheet
+        open
+        onClose={onClose}
+        filters={[makeFilter()]}
+        sort={makeSort()}
+      />,
+    );
+    const sheet = container.querySelector('[data-sheet-drag]')!
+      .parentElement as HTMLElement;
+    (sheet as unknown as { setPointerCapture: (id: number) => void }).setPointerCapture =
+      () => {};
+    fireEvent.pointerDown(
+      container.querySelector('[data-sheet-drag]')!,
+      { clientY: 100, pointerId: 1 },
+    );
+    fireEvent.pointerMove(sheet, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(sheet, { clientY: 250, pointerId: 1 });
+    fireEvent.pointerCancel(sheet, { clientY: 260, pointerId: 1 });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("swipe-down past the threshold dismisses", () => {
     const onClose = vi.fn();
     const { container } = render(

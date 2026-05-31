@@ -140,6 +140,15 @@ export function MListSheet({
     [onClose],
   );
 
+  const onPointerCancel = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (dragStateRef.current?.pointerId !== e.pointerId) return;
+      dragStateRef.current = null;
+      setDragOffset(0);
+    },
+    [],
+  );
+
   if (!open) return null;
 
   const focusSort = focus === "sort";
@@ -162,7 +171,7 @@ export function MListSheet({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
         style={sheetStyle}
         className="w-full max-h-[88%] bg-surface-card border-t border-border-strong rounded-t-[18px] flex flex-col shadow-[0_-20px_60px_rgba(0,0,0,0.6)] motion-safe:animate-[slide-up_220ms_cubic-bezier(.2,.7,.3,1)]"
       >
