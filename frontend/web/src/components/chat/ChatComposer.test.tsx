@@ -71,6 +71,12 @@ describe("ChatComposer", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("disables send button while busy with no onCancel handler", () => {
+    renderComposer({ busy: true, value: "hello" });
+
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  });
+
   it("disables controls when disabled", () => {
     const onOpenActions = vi.fn();
     renderComposer({ disabled: true, onOpenActions, value: "hello" });

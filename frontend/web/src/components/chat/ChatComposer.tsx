@@ -53,7 +53,7 @@ export function ChatComposer({
       <button
         type={busy && onCancel ? "button" : "submit"}
         onClick={busy && onCancel ? onCancel : undefined}
-        disabled={disabled || (!busy && !value.trim())}
+        disabled={disabled || (busy && !onCancel) || (!busy && !value.trim())}
         className="h-8 w-8 shrink-0 rounded-sm border border-border-soft bg-surface-2/60 text-text-2 hover:bg-surface-2 hover:text-text disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center"
         aria-label={busy && onCancel ? "Stop response" : "Send message"}
         title={busy && onCancel ? "Stop response" : "Send message"}
