@@ -78,6 +78,8 @@
       "cost_usd": 0.0123,
       "prompt_hash": "sha256:prompt_fixture",
       "response_hash": "sha256:response_fixture",
+      "prompt_text": "prompt fixture plaintext",
+      "response_text": "response fixture plaintext",
       "prompt_payload_ref": null,
       "response_payload_ref": null,
       "tool_calls_requested": "[\"tool_fixture_0\"]",

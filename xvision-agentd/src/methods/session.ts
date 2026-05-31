@@ -62,6 +62,7 @@ interface StartRunParams {
   allowed_tools?: unknown
   budget_limits?: unknown
   decision_schema?: unknown
+  decision_context?: unknown
   /** Optional — enables trajectory frame recording for this run. */
   record?: unknown
   /** Optional — slot role stamped on recorded trajectory frames. */
@@ -171,6 +172,12 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     throw new TypeError(
       "params.decision_schema must be a non-array object when allowed_tools includes submit_decision",
     )
+  const decisionContextOk =
+    typeof p.decision_context === "object" &&
+    p.decision_context !== null &&
+    !Array.isArray(p.decision_context)
+  if (p.decision_context !== undefined && !decisionContextOk)
+    throw new TypeError("params.decision_context must be a non-array object when present")
   if (p.api_key !== undefined && typeof p.api_key !== "string")
     throw new TypeError("params.api_key must be a string when present")
   if (p.base_url !== undefined && typeof p.base_url !== "string")
@@ -190,6 +197,7 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     allowed_tools: p.allowed_tools as string[],
     budget_limits: limits,
     ...(decisionSchemaOk ? { decision_schema: p.decision_schema as Record<string, unknown> } : {}),
+    ...(decisionContextOk ? { decision_context: p.decision_context as Record<string, unknown> } : {}),
     ...(typeof p.record === "boolean" ? { record: p.record } : {}),
     ...(typeof p.slot_role === "string" && p.slot_role.length > 0 ? { slot_role: p.slot_role } : {}),
   }

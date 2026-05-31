@@ -151,6 +151,7 @@ export type ModelCall = {
   cost_usd: number | null;
   prompt_hash: string;
   response_hash?: string | null;
+  prompt_text: string | null;
   prompt_payload_ref?: string | null;
   response_payload_ref?: string | null;
   response_text: string | null;

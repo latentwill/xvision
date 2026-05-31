@@ -64,6 +64,12 @@ type AgentModelEvent =
     }
   | { type: "finish"; reason: string; error?: string }
 
+type CapturedToolCall = {
+  tool_call_id?: string
+  tool_name?: string
+  input?: unknown
+}
+
 export interface AgentModel {
   stream(
     request: AgentModelRequest,
@@ -106,6 +112,8 @@ export function wrapAgentModel(
       let inputTokens = 0
       let outputTokens = 0
       let totalCost: number | undefined
+      const promptText = serializeModelPrompt(request)
+      const responseCapture = createResponseCapture()
 
       // Record the Request frame BEFORE the first downstream event so
       // replay can reconstruct the full input side of this step.
@@ -128,11 +136,17 @@ export function wrapAgentModel(
 
           if (ev.type === "text-delta" && runId) {
             const text = (ev as { text: string }).text
+            responseCapture.text += text
             emitAssistantTextDelta({
               span_id: spanId,
               run_id: runId,
               delta_len: text.length,
+              text,
             })
+          } else if (ev.type === "reasoning-delta") {
+            responseCapture.reasoning += (ev as { text: string }).text
+          } else if (ev.type === "tool-call-delta") {
+            responseCapture.tool_calls.push(compactToolCallDelta(ev))
           } else if (ev.type === "usage") {
             const u = (ev as { usage: { inputTokens?: number; outputTokens?: number; totalCost?: number } }).usage
             if (typeof u.inputTokens === "number") inputTokens += u.inputTokens
@@ -140,6 +154,9 @@ export function wrapAgentModel(
             if (typeof u.totalCost === "number") {
               totalCost = (totalCost ?? 0) + u.totalCost
             }
+          } else if (ev.type === "finish") {
+            responseCapture.finish_reason = ev.reason
+            if (ev.error !== undefined) responseCapture.error = ev.error
           }
 
           // Record the event frame BEFORE yielding so the recorder sees
@@ -166,9 +183,66 @@ export function wrapAgentModel(
             input_tokens: inputTokens,
             output_tokens: outputTokens,
             ...(totalCost !== undefined ? { total_cost: totalCost } : {}),
+            prompt: promptText,
+            response: serializeModelResponse(responseCapture),
           })
         }
       }
     },
   }
+}
+
+function serializeModelPrompt(request: AgentModelRequest): string {
+  const { signal: _signal, ...serializable } = request
+  return stableStringify(serializable)
+}
+
+function createResponseCapture(): {
+  text: string
+  reasoning: string
+  tool_calls: CapturedToolCall[]
+  finish_reason?: string
+  error?: string
+} {
+  return {
+    text: "",
+    reasoning: "",
+    tool_calls: [],
+  }
+}
+
+function compactToolCallDelta(ev: {
+  toolCallId?: string
+  toolName?: string
+  input?: unknown
+}): CapturedToolCall {
+  return {
+    ...(ev.toolCallId !== undefined ? { tool_call_id: ev.toolCallId } : {}),
+    ...(ev.toolName !== undefined ? { tool_name: ev.toolName } : {}),
+    ...(ev.input !== undefined ? { input: ev.input } : {}),
+  }
+}
+
+function serializeModelResponse(capture: {
+  text: string
+  reasoning: string
+  tool_calls: CapturedToolCall[]
+  finish_reason?: string
+  error?: string
+}): string {
+  return stableStringify({
+    text: capture.text,
+    reasoning: capture.reasoning,
+    tool_calls: capture.tool_calls,
+    ...(capture.finish_reason !== undefined ? { finish_reason: capture.finish_reason } : {}),
+    ...(capture.error !== undefined ? { error: capture.error } : {}),
+  })
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => {
+    if (typeof v === "bigint") return v.toString()
+    if (v instanceof Error) return { name: v.name, message: v.message }
+    return v
+  })
 }
