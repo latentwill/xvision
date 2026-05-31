@@ -62,10 +62,10 @@ Failed authentication returns HTTP 401:
 `POST /api/cli/jobs` runs `xvn` subcommands on the dashboard host. By default
 the allowlist is a broad read/eval/research set: all read-only verbs plus the
 scoped, hard-capped, cancellable ones (`eval run`, `eval compare/watch`,
-`experiment run`, `model bakeoff`, `bars fetch`). Unscoped writes
-(`strategy new`, `agent create`, `scenario create`, …) and categorically
-dangerous heads (`fire-trade`, `close-position`, `migrate`, `dashboard`,
-`mcp`) are denied. The authoritative list is
+`experiment run`, `model bakeoff`, `bars fetch`) and low-risk strategy draft
+creation (`strategy create` / `strategy new`). Unscoped writes
+(`agent create`, `scenario create`, …) and categorically dangerous heads
+(`fire-trade`, `close-position`, `migrate`, `dashboard`, `mcp`) are denied. The authoritative list is
 `crates/xvision-dashboard/src/cli_jobs/allowlist.rs`.
 
 To turn the policy into a **full bypass** on a trusted dev node:

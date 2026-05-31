@@ -89,6 +89,19 @@ async fn bars_fetch_allowed_argv_creates_job() {
 }
 
 #[tokio::test]
+async fn strategy_create_is_allowed_without_devmode() {
+    let _guard = devmode_off();
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/cli/jobs")
+        .json(&serde_json::json!({
+            "argv": ["strategy", "create", "--name", "remote-strategy"]
+        }))
+        .await;
+    resp.assert_status_ok();
+}
+
+#[tokio::test]
 async fn eval_run_is_allowed_without_devmode() {
     let _guard = devmode_off();
     let (server, _tmp) = boot().await;

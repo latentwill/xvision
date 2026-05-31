@@ -239,14 +239,12 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
         head: "scenario",
         path: &["set-regime"],
     },
-    DeniedNested {
-        head: "strategy",
-        path: &["new"],
-    },
-    DeniedNested {
-        head: "strategy",
-        path: &["create"],
-    },
+    // Strategy draft authoring is intentionally allowed over the trusted
+    // Tailscale remote CLI: users need to create new strategies remotely
+    // without bouncing through the dashboard UI. The mutating follow-up paths
+    // below (`add-agent`, `remove-agent`, `set-pipeline`) stay denied because
+    // they alter an existing strategy's shape in ways that are easier to do
+    // with richer local context.
     DeniedNested {
         head: "strategy",
         path: &["add-agent"],
@@ -298,10 +296,10 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
 ];
 
 /// Every real command/subcommand path the remote policy *references*
-/// (allowed heads, strict-template heads, and nested-denied paths), for
-/// the CLI-surface drift test. Excludes pseudo-flags (--help/-h/--version/-V/help)
-/// and the defensive DENYLIST (which may name commands that don't exist as
-/// xvn subcommands on purpose).
+/// (allowed heads, strict-template heads, allowed draft-authoring paths,
+/// and nested-denied paths), for the CLI-surface drift test. Excludes pseudo-flags
+/// (--help/-h/--version/-V/help) and the defensive DENYLIST (which may name
+/// commands that don't exist as xvn subcommands on purpose).
 pub fn referenced_command_paths() -> Vec<Vec<&'static str>> {
     let mut paths: Vec<Vec<&'static str>> = Vec::new();
     for t in STRICT_TEMPLATES {
@@ -313,6 +311,11 @@ pub fn referenced_command_paths() -> Vec<Vec<&'static str>> {
         }
         paths.push(vec![*s]);
     }
+    // Draft-authoring paths are intentionally allowed even though they mutate
+    // state, so keep them visible to the clap-drift test as first-class remote
+    // policy entries.
+    paths.push(vec!["strategy", "create"]);
+    paths.push(vec!["strategy", "new"]);
     for d in DENIED_NESTED_SUBCOMMANDS {
         let mut p = vec![d.head];
         p.extend_from_slice(d.path);
@@ -618,7 +621,7 @@ mod tests {
         assert_reject(&["migrate", "--dry-run"], "not allowed over remote cli");
     }
 
-    // ── agent allowlist gap: create denied, read-only paths allowed ───────
+    // ── write-path gaps we still want blocked remotely ───────────────────
 
     #[test]
     fn agent_create_is_rejected_remotely() {
@@ -626,6 +629,12 @@ mod tests {
             &["agent", "create", "--name", "remote-agent"],
             "not allowed over remote cli",
         );
+    }
+
+    #[test]
+    fn strategy_create_is_allowed_remotely() {
+        assert_allow(&["strategy", "create", "--name", "remote-strategy"]);
+        assert_allow(&["strategy", "new", "--name", "remote-strategy"]);
     }
 
     #[test]

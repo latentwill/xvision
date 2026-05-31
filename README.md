@@ -153,8 +153,10 @@ Quick summary:
 - Every job is checked against the allowlist policy before spawning. Read-only
   heads (`eval list/show/results/watch/compare`, `strategy show/validate`,
   `scenario show/select`, `doctor`, etc.) are allowed without configuration.
-  Mutating/destructive nested paths and server/live-trading heads (`dashboard`,
-  `mcp`, `fire-trade`, `close-position`, `migrate`, etc.) are rejected.
+  Low-risk draft-authoring commands (`strategy create` / `strategy new`) are
+  also allowed. Mutating/destructive nested paths and server/live-trading
+  heads (`dashboard`, `mcp`, `fire-trade`, `close-position`, `migrate`, etc.)
+  are rejected.
   Bounded eval/experiment/bakeoff jobs require their strict-template flag set
   (`--max-decisions`, `--max-wall-clock`, etc.).
 
