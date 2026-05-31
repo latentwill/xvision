@@ -151,7 +151,7 @@ export function useChatTitle({
     const t = titleCache.get(sessionId) ?? readPersisted(sessionId);
     return t ? { id: sessionId, value: t } : null;
   });
-  // Null when sessionId changed since last render — prevents stale title leaking.
+  // Null when sessionId changed since last render; prevents stale title leaking.
   const title = titleEntry?.id === sessionId ? titleEntry.value : null;
 
   useEffect(() => {
