@@ -26,13 +26,18 @@ export function MarkdownView({ text }: { text: string }) {
             <table className="border-collapse text-[12px]">{children}</table>
           </div>
         ),
-        th: ({ children }) => (
-          <th className="border border-border-soft px-1.5 py-1 text-left font-medium">
+        th: ({ children, ...props }) => (
+          <th
+            className="border border-border-soft px-1.5 py-1 font-medium"
+            {...props}
+          >
             {children}
           </th>
         ),
-        td: ({ children }) => (
-          <td className="border border-border-soft px-1.5 py-1">{children}</td>
+        td: ({ children, ...props }) => (
+          <td className="border border-border-soft px-1.5 py-1" {...props}>
+            {children}
+          </td>
         ),
         ul: ({ children }) => (
           <ul className="list-disc pl-4 my-1 space-y-0.5">{children}</ul>
