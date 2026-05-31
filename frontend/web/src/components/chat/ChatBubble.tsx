@@ -101,11 +101,11 @@ function ToolButton({ tool }: { tool: Tool }) {
   // the rail without competing with the surrounding text. The shape
   // / colour intent is unchanged; only the contrast on the outline
   // is dialled back.
-  const tone = !ok
-    ? "border-border-soft bg-danger/[0.08] text-danger"
-    : pending
-      ? "border-border-soft/70 bg-surface-2/50 text-text-2"
-      : "border-border-soft bg-success/[0.08] text-success";
+  const tone = pending
+    ? "border-border-soft/70 bg-surface-2/50 text-text-2"
+    : ok
+      ? "border-border-soft bg-success/[0.08] text-success"
+      : "border-border-soft bg-danger/[0.08] text-danger";
   return (
     <div
       className={`inline-flex items-center gap-1.5 self-start max-w-full px-2 py-1 rounded-md border text-[12px] ${tone}`}
