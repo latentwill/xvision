@@ -246,6 +246,37 @@ describe("ListCard", () => {
     });
   });
 
+  it("active chips render for filter state when no search state is provided", () => {
+    const setStatus = vi.fn();
+    render(
+      <ListCard<Row>
+        columns={COLUMNS}
+        rows={ROWS}
+        renderRow={() => <tr />}
+        toolbar={{
+          filters: [
+            {
+              def: {
+                id: "status",
+                label: "Status",
+                options: [
+                  { value: "all", label: "All" },
+                  { value: "Validated", label: "Validated" },
+                ],
+              },
+              value: "Validated",
+              setValue: setStatus,
+            },
+          ],
+          clearAll: vi.fn(),
+        }}
+      />,
+    );
+
+    const chips = screen.getByRole("region", { name: /active filters/i });
+    expect(within(chips).getByRole("button", { name: /Validated/ })).toBeInTheDocument();
+  });
+
   it("compact density hides the active-chips row and the / keyboard hint", () => {
     const state = makeState({
       search: { value: "eth", setValue: vi.fn() },
