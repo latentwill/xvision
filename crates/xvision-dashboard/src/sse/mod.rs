@@ -3,8 +3,12 @@
 //! - [`agent_run_sse`]: agent-run observability stream
 //! - [`autoresearch_labels`]: operator-facing display labels for
 //!   autoresearch `CycleProgressEvent` variants (AR-3)
+//! - [`autoresearch_sse`]: cycle progress stream for
+//!   `GET /api/autoresearch/events`.
 
 pub mod autoresearch_labels;
+
+pub mod autoresearch_sse;
 
 use std::convert::Infallible;
 use std::time::Duration;
