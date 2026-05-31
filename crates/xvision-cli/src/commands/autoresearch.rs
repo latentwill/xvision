@@ -24,6 +24,7 @@ use xvision_engine::autoresearch::content_hash::ContentHash;
 use xvision_engine::autoresearch::gate::GateVerdict;
 use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
 use xvision_engine::autoresearch::mutator::{MutationDiff, Mutator};
+use xvision_engine::autoresearch::progress::CycleProgressEvent;
 use xvision_engine::autoresearch::seal::build_and_sign;
 use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
 use xvision_engine::strategies::Strategy;
@@ -59,6 +60,8 @@ pub enum Op {
     SessionInit(SessionInitArgs),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
+    /// Replay a saved autoresearch cycle from a fixture (no API keys required).
+    Demo(DemoArgs),
 }
 
 #[derive(Args, Debug)]
@@ -108,6 +111,17 @@ pub struct MutateOnceArgs {
     /// Use mock LLM dispatch (for tests and offline use).
     #[arg(long)]
     pub mock: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DemoArgs {
+    /// Path to the replay fixture JSON file.
+    /// Defaults to data/probes/autoresearch/replay-fixture.json relative to the current directory.
+    #[arg(long)]
+    pub fixture: Option<PathBuf>,
+    /// Print full event JSON; else print one line per event.
+    #[arg(long, short)]
+    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -303,6 +317,7 @@ pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
         },
         Op::SessionInit(args) => run_session_init(args).await,
         Op::MutateOnce(args) => run_mutate_once(args).await,
+        Op::Demo(args) => run_demo_cmd(args).await,
     }
 }
 
@@ -808,6 +823,126 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         seal_cycle(&pool, &lineage, &cycle_id, &session, &key_path).await?;
     }
     println!("Experiment complete: verdict={} cycle={}", verdict.as_str(), cycle_id);
+    Ok(())
+}
+
+// ── demo ─────────────────────────────────────────────────────────────────────
+
+/// Compact in-fixture representation of a lineage node for the demo replay.
+#[derive(Debug, serde::Deserialize)]
+struct FixtureLineageNode {
+    bundle_hash: String,
+    parent_hash: Option<String>,
+    status: String,
+    gate_verdict: String,
+    cycle_id: String,
+    created_at: String,
+}
+
+/// Compact in-fixture representation of the cycle seal for the demo replay.
+#[derive(Debug, serde::Deserialize)]
+struct FixtureSeal {
+    seal_id: String,
+    cycle_id: String,
+    merkle_root: String,
+    operator_signature: String,
+    sealed_at: String,
+}
+
+/// Top-level replay fixture schema.
+#[derive(Debug, serde::Deserialize)]
+struct ReplayFixture {
+    fixture_version: String,
+    cycle_id: String,
+    events: Vec<serde_json::Value>,
+    lineage_nodes: Vec<FixtureLineageNode>,
+    seal: FixtureSeal,
+}
+
+fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
+    match event {
+        CycleProgressEvent::CycleStarted { .. } => "Cycle started",
+        CycleProgressEvent::ParentSelected { .. } => "Parent selected",
+        CycleProgressEvent::MutationProposed { .. } => "Experiment proposed",
+        CycleProgressEvent::MutationGated { .. } => "Experiment gated",
+        CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
+        CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
+        CycleProgressEvent::CycleSealed { .. } => "Evening summary signed",
+    }
+}
+
+fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
+    match event {
+        CycleProgressEvent::CycleStarted { .. } => "cycle_started",
+        CycleProgressEvent::ParentSelected { .. } => "parent_selected",
+        CycleProgressEvent::MutationProposed { .. } => "mutation_proposed",
+        CycleProgressEvent::MutationGated { .. } => "mutation_gated",
+        CycleProgressEvent::HonestyCheckRun { .. } => "honesty_check_run",
+        CycleProgressEvent::JudgeFinding { .. } => "judge_finding",
+        CycleProgressEvent::CycleSealed { .. } => "cycle_sealed",
+    }
+}
+
+async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
+    // Determine fixture path.
+    let fixture_path = match args.fixture {
+        Some(p) => p,
+        None => {
+            // Search relative to cwd first, then XDG/home fallback.
+            let default_rel = PathBuf::from("data/probes/autoresearch/replay-fixture.json");
+            if default_rel.exists() {
+                default_rel
+            } else {
+                let home = dirs::home_dir()
+                    .ok_or_else(|| CliError::upstream(anyhow::anyhow!("cannot find home directory")))?;
+                home.join(".xvn/probes/autoresearch/replay-fixture.json")
+            }
+        }
+    };
+
+    let raw = std::fs::read_to_string(&fixture_path).map_err(|e| {
+        CliError::not_found(anyhow::anyhow!(
+            "cannot read fixture {}: {e}",
+            fixture_path.display()
+        ))
+    })?;
+
+    let fixture: ReplayFixture = serde_json::from_str(&raw).map_err(|e| {
+        CliError::usage(anyhow::anyhow!(
+            "malformed fixture {}: {e}",
+            fixture_path.display()
+        ))
+    })?;
+
+    println!(
+        "demo: replaying cycle {} (fixture v{})",
+        fixture.cycle_id, fixture.fixture_version
+    );
+
+    // Replay each event.
+    for raw_event in &fixture.events {
+        let event: CycleProgressEvent =
+            serde_json::from_value(raw_event.clone()).map_err(|e| {
+                CliError::usage(anyhow::anyhow!("malformed fixture event: {e}"))
+            })?;
+        if args.verbose {
+            let json_line = serde_json::to_string(&event)
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize event: {e}")))?;
+            println!("{}", json_line);
+        } else {
+            println!("{}: {}", event_type_tag(&event), event_operator_label(&event));
+        }
+    }
+
+    // Print summary.
+    let seal_short = fixture.seal.merkle_root.get(..16).unwrap_or(&fixture.seal.merkle_root);
+    println!(
+        "demo complete: cycle_id={} nodes={} seal={}",
+        fixture.cycle_id,
+        fixture.lineage_nodes.len(),
+        seal_short
+    );
+
     Ok(())
 }
 
