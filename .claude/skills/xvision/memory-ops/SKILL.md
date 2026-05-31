@@ -32,7 +32,7 @@ For lifecycle work:
 
 ```bash
 xvn memory activate <pattern_id> --json
-xvn memory demote <pattern_id> --json
+xvn memory retire <pattern_id> --json
 xvn memory undo-forget --agent <agent_id> --json
 ```
 
@@ -52,4 +52,4 @@ or agent-assist context, not as a write path.
 - CLI transcript for list/recall/lifecycle operations.
 - Leakage-regression output after changes touching recall, query, prompt
   rendering, Pattern lifecycle, or provenance.
-- Before/after JSON when deleting, demoting, activating, or restoring rows.
+- Before/after JSON when deleting, retiring, activating, or restoring rows.
