@@ -58,10 +58,10 @@ export function MListCard<T>(props: MListCardProps<T>) {
 
   return (
     <div className={`flex flex-col h-full min-h-0 bg-bg ${className}`}>
-      {(title || count != null || subtitle || rightAction) && (
+      {(title != null || count != null || subtitle != null || rightAction != null) && (
         <div className="flex items-baseline justify-between gap-2.5 px-4 pt-4 pb-1.5">
           <div className="flex items-baseline gap-2 min-w-0">
-            {title && (
+            {title != null && (
               <h2 className="m-0 font-sans font-medium text-[26px] tracking-tight text-text truncate">
                 {title}
               </h2>
@@ -71,7 +71,7 @@ export function MListCard<T>(props: MListCardProps<T>) {
                 {count}
               </span>
             )}
-            {subtitle && (
+            {subtitle != null && (
               <span className="font-mono text-[11.5px] text-text-3 ml-1 truncate">
                 {subtitle}
               </span>
