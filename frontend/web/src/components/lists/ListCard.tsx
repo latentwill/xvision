@@ -63,12 +63,12 @@ export const ListCard = forwardRef(function ListCard<T>(
       style={style}
       className={`flex flex-col bg-surface-card border border-border rounded-card ${className}`}
     >
-      {(title || actions || count != null || subtitle) && (
+      {(title != null || actions != null || count != null || subtitle != null) && (
         <div
           className={`flex items-center justify-between gap-4 px-5 ${compact ? "pt-3 pb-2" : "pt-4 pb-2"}`}
         >
           <div className="flex items-baseline gap-2.5 min-w-0">
-            {title && (
+            {title != null && (
               <h2 className="m-0 font-sans font-medium text-[22px] tracking-tight text-text truncate">
                 {title}
               </h2>
@@ -78,13 +78,13 @@ export const ListCard = forwardRef(function ListCard<T>(
                 {count}
               </span>
             )}
-            {subtitle && (
+            {subtitle != null && (
               <span className="text-text-3 text-[12.5px] ml-1 truncate">
                 {subtitle}
               </span>
             )}
           </div>
-          {actions && (
+          {actions != null && (
             <div className="flex items-center gap-2 shrink-0">{actions}</div>
           )}
         </div>
@@ -140,7 +140,7 @@ export const ListCard = forwardRef(function ListCard<T>(
           </tbody>
         </table>
       </div>
-      {footer && (
+      {footer != null && (
         <div className="px-5 py-2.5 border-t border-border-soft text-text-3 text-[12px] flex items-center justify-between">
           {footer}
         </div>
@@ -190,7 +190,7 @@ function ListEmptyRow({
         className={`text-center text-text-3 ${compact ? "py-6 px-5" : "py-7 px-5"}`}
       >
         <div className="text-[13px]">{message}</div>
-        {action && (
+        {action != null && (
           <div className="mt-2.5 inline-flex items-center justify-center">
             {action}
           </div>
