@@ -64,6 +64,24 @@ describe("MarkdownView", () => {
     expect(screen.getByRole("cell", { name: "SPY" })).toHaveClass("border");
   });
 
+  it("preserves GFM right-column alignment on th and td", () => {
+    const { container } = render(
+      <MarkdownView
+        text={"| Name | Score |\n| ---- | ----: |\n| Alice | 100 |"}
+      />,
+    );
+
+    const headers = Array.from(container.querySelectorAll("th"));
+    const scoreHeader = headers.find((h) => h.textContent === "Score");
+    expect(scoreHeader).toBeDefined();
+    expect(scoreHeader!.style.textAlign).toBe("right");
+
+    const cells = Array.from(container.querySelectorAll("td"));
+    const scoreCell = cells.find((c) => c.textContent === "100");
+    expect(scoreCell).toBeDefined();
+    expect(scoreCell!.style.textAlign).toBe("right");
+  });
+
   it("renders paragraphs and ordered lists with expected structure", () => {
     const { container } = render(
       <MarkdownView text={"First paragraph.\n\n1. Review\n2. Ship"} />,
