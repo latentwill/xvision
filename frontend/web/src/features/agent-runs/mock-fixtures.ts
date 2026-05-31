@@ -43,10 +43,10 @@ const COMPLETED_SPANS: RunSpan[] = [
 const COMPLETED_MODEL_CALLS: ModelCall[] = [
   { model_call_id: "m1", span_id: "s3", provider: "anthropic",
     model: "claude-opus-4-7", input_tokens: 8412, output_tokens: 1204,
-    cost_usd: 0.0416, prompt_hash: "sha256:a1b2c3", response_text: null },
+    cost_usd: 0.0416, prompt_hash: "sha256:a1b2c3", prompt_text: null, response_text: null },
   { model_call_id: "m2", span_id: "s5", provider: "anthropic",
     model: "claude-opus-4-7", input_tokens: 4210, output_tokens: 612,
-    cost_usd: 0.0208, prompt_hash: "sha256:d4e5f6", response_text: null },
+    cost_usd: 0.0208, prompt_hash: "sha256:d4e5f6", prompt_text: null, response_text: null },
 ];
 
 const COMPLETED_TOOL_CALLS: ToolCall[] = [

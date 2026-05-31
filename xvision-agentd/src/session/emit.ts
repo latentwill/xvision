@@ -158,6 +158,7 @@ export function emitDecisionRecorded(params: {
   outcome: "bought" | "sold" | "closed" | "held" | "unknown"
   asset?: string | undefined
   active_positions?: unknown
+  portfolio?: unknown
   decision_json: string
 }): void {
   void emitNotification(NOTIFY.DecisionRecorded, {
@@ -167,6 +168,7 @@ export function emitDecisionRecorded(params: {
     outcome: params.outcome,
     ...(params.asset !== undefined ? { asset: params.asset } : {}),
     ...(params.active_positions !== undefined ? { active_positions: params.active_positions } : {}),
+    ...(params.portfolio !== undefined ? { portfolio: params.portfolio } : {}),
     decision_json: params.decision_json,
   })
 }

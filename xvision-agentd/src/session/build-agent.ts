@@ -64,6 +64,7 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
       buildSubmitDecisionTool(
         config.decision_schema ?? { type: "object", additionalProperties: true },
         opts.captureDecision,
+        config.decision_context,
       ),
     )
   }

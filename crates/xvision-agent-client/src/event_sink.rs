@@ -407,7 +407,14 @@ fn dispatch_inner(
             let run_id = str_field("run_id")?;
             let now = Utc::now();
             let mut payload = serde_json::Map::new();
-            for key in ["action", "outcome", "asset", "active_positions", "decision_json"] {
+            for key in [
+                "action",
+                "outcome",
+                "asset",
+                "active_positions",
+                "portfolio",
+                "decision_json",
+            ] {
                 if let Some(value) = params.get(key) {
                     payload.insert(key.to_string(), value.clone());
                 }
@@ -878,6 +885,7 @@ mod tests {
                 "outcome": "held",
                 "asset": "BTC",
                 "active_positions": [{"asset": "BTC", "qty": 0.0}],
+                "portfolio": {"cash": 1000.0},
                 "decision_json": "{\"action\":\"hold\"}",
             }),
             &fp,
@@ -888,6 +896,7 @@ mod tests {
                 assert_eq!(s.span_id, "sp-decision");
                 assert!(matches!(s.kind, SpanKind::AgentDecision));
                 assert!(s.attributes_json.as_deref().unwrap().contains("active_positions"));
+                assert!(s.attributes_json.as_deref().unwrap().contains("portfolio"));
             }
             _ => panic!("wrong variant for events[0]"),
         }
