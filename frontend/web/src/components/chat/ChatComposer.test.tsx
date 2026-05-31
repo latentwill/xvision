@@ -19,6 +19,15 @@ function renderComposer(
 }
 
 describe("ChatComposer", () => {
+  it("does not submit whitespace via Enter key", async () => {
+    const onSubmit = vi.fn();
+    renderComposer({ value: "   ", onSubmit });
+
+    await userEvent.type(screen.getByPlaceholderText("Message"), "{Enter}");
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("disables send for blank input", async () => {
     const onSubmit = vi.fn();
     renderComposer({ value: "   ", onSubmit });
