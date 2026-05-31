@@ -73,7 +73,7 @@ pub enum Op {
     SessionInit(SessionInitArgs),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
-    /// Run the full evening cycle (parent selection → mutation → gate → judge → seal). Operator label: 'Evening run'.
+    /// Run the full evening cycle (parent selection -> candidate edit -> gate -> judge -> seal). Operator label: 'Evening run'.
     EveningCycle(EveningCycleArgs),
     /// Replay a saved autoresearch cycle from a fixture (no API keys required).
     Demo(DemoArgs),
