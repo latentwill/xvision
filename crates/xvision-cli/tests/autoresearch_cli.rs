@@ -113,6 +113,7 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
     assert_eq!(listed["total"], 1);
     assert_eq!(listed["items"][0]["id"], run_id);
 
+    // Gate using new flag names
     let out = xvn(
         &[
             "autoresearch",
@@ -120,15 +121,15 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
             run_id,
             "--metric",
             "sharpe_delta",
-            "--parent-day-score",
+            "--baseline-today-score",
             "0.7",
-            "--child-day-score",
+            "--candidate-today-score",
             "0.9",
-            "--parent-holdout-score",
+            "--baseline-untouched-score",
             "1.0",
-            "--child-holdout-score",
+            "--candidate-untouched-score",
             "1.25",
-            "--gate-epsilon",
+            "--min-improvement",
             "0.1",
             "--finding-text",
             "Blind Finding: coherent risk reduction.",
@@ -155,15 +156,17 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
     assert_eq!(gated["judge_token_cost"], 21);
     assert_eq!(gated["promotion_state"], "staged");
 
-    let out = xvn(&["autoresearch", "promote", run_id, "--json"], dir.path(), &mem);
+    // Use new 'activate' verb
+    let out = xvn(&["autoresearch", "activate", run_id, "--json"], dir.path(), &mem);
     assert_ok(&out);
-    let promoted: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse promoted json");
-    assert_eq!(promoted["promotion_state"], "active");
+    let activated: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse activated json");
+    assert_eq!(activated["promotion_state"], "active");
 
-    let out = xvn(&["autoresearch", "demote", run_id, "--json"], dir.path(), &mem);
+    // Use new 'retire' verb
+    let out = xvn(&["autoresearch", "retire", run_id, "--json"], dir.path(), &mem);
     assert_ok(&out);
-    let demoted: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse demoted json");
-    assert_eq!(demoted["promotion_state"], "demoted");
+    let retired: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse retired json");
+    assert_eq!(retired["promotion_state"], "demoted");
 
     let out = xvn(&["memory", "show", pattern_id, "--json"], dir.path(), &mem);
     assert_ok(&out);

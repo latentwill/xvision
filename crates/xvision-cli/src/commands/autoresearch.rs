@@ -39,17 +39,21 @@ pub struct AutoresearchCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// Distill recent Observations into a staged Pattern.
+    /// Distill recent Observations into a candidate Pattern. The Pattern enters staged status; use `xvn autoresearch gate` to evaluate it, then `xvn autoresearch activate` to put it into use.
     Run(RunArgs),
     /// List autoresearch run ledger rows.
     Ls(ListArgs),
     /// Inspect an autoresearch run ledger row.
     Inspect(InspectArgs),
-    /// Record numeric gate and blind Finding for a staged Pattern.
+    /// Record the gate decision (Kept or Dropped) for a candidate Pattern, based on its score on today's data and on an untouched test period. The qualitative finding is recorded blind to the numeric scores.
     Gate(GateArgs),
-    /// Activate the Pattern produced by an autoresearch run.
+    /// Activate a candidate Pattern from an autoresearch run, making it available for recall during decisions.
+    Activate(InspectArgs),
+    #[command(hide = true)]
     Promote(InspectArgs),
-    /// Soft-delete the Pattern produced by an autoresearch run.
+    /// Retire a Pattern produced by an autoresearch run. Soft-delete with a grace window; restore via `xvn memory undo-forget`.
+    Retire(InspectArgs),
+    #[command(hide = true)]
     Demote(InspectArgs),
     /// Lineage graph inspection (ls / show).
     Lineage(LineageCmd),
@@ -179,24 +183,21 @@ pub struct GateArgs {
     /// Candidate score from the Pattern/child/holdout run.
     #[arg(long)]
     pub candidate_score: Option<f64>,
-    /// Minimum candidate-baseline delta required to pass.
-    #[arg(long, default_value_t = 0.0)]
+    /// Minimum improvement (Sharpe gain) required on both today's score and the untouched-period score for the gate to return Kept.
+    #[arg(long = "min-improvement", alias = "min-delta", alias = "gate-epsilon", default_value_t = 0.0)]
     pub min_delta: f64,
-    /// Parent agent score on the day/dev corpus.
-    #[arg(long)]
+    /// Baseline strategy's score on today's data.
+    #[arg(long = "baseline-today-score", alias = "parent-day-score")]
     pub parent_day_score: Option<f64>,
-    /// Child agent score on the day/dev corpus.
-    #[arg(long)]
+    /// Candidate strategy's score on today's data.
+    #[arg(long = "candidate-today-score", alias = "child-day-score")]
     pub child_day_score: Option<f64>,
-    /// Parent agent score on untouched holdout.
-    #[arg(long)]
+    /// Baseline strategy's score on the untouched test period.
+    #[arg(long = "baseline-untouched-score", alias = "parent-holdout-score")]
     pub parent_holdout_score: Option<f64>,
-    /// Child agent score on untouched holdout.
-    #[arg(long)]
+    /// Candidate strategy's score on the untouched test period.
+    #[arg(long = "candidate-untouched-score", alias = "child-holdout-score")]
     pub child_holdout_score: Option<f64>,
-    /// Minimum day and holdout delta required to pass.
-    #[arg(long)]
-    pub gate_epsilon: Option<f64>,
     /// Human-readable gate reason. Generated from deltas when omitted.
     #[arg(long)]
     pub gate_reason: Option<String>,
@@ -219,7 +220,7 @@ pub struct GateArgs {
     #[arg(long)]
     pub judge_token_cost: Option<i64>,
     /// Activate the Pattern when the numeric gate passes.
-    #[arg(long)]
+    #[arg(long = "activate-if-pass", alias = "promote-if-pass")]
     pub promote_if_pass: bool,
     #[arg(long)]
     pub json: bool,
@@ -292,8 +293,22 @@ pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
         Op::Ls(args) => run_list(args).await,
         Op::Inspect(args) => run_inspect(args).await,
         Op::Gate(args) => run_gate(args).await,
-        Op::Promote(args) => run_promote(args).await,
-        Op::Demote(args) => run_demote(args).await,
+        Op::Activate(args) => run_activate(args).await,
+        Op::Promote(args) => {
+            eprintln!(
+                "Note: `xvn autoresearch promote` is now `xvn autoresearch activate`; \
+                 the old form still works in this release and will be removed in the next."
+            );
+            run_activate(args).await
+        }
+        Op::Retire(args) => run_retire(args).await,
+        Op::Demote(args) => {
+            eprintln!(
+                "Note: `xvn autoresearch demote` is now `xvn autoresearch retire`; \
+                 the old form still works in this release and will be removed in the next."
+            );
+            run_retire(args).await
+        }
         Op::Lineage(cmd) => match cmd.op {
             LineageOp::Ls(args) => lineage_ls(args).await,
             LineageOp::Show(args) => lineage_show(args).await,
@@ -486,7 +501,7 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
             child_day_score: args.child_day_score,
             parent_holdout_score: args.parent_holdout_score,
             child_holdout_score: args.child_holdout_score,
-            gate_epsilon: args.gate_epsilon,
+            gate_epsilon: Some(args.min_delta),
             gate_reason: args.gate_reason,
             qualitative_finding_json: args.qualitative_finding_json,
             finding_blinded_metrics: Some(args.finding_blinded_metrics),
@@ -499,29 +514,30 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
     if args.json {
         crate::io::print_json(&run)?;
     } else {
+        let decision = match run.gate_verdict.as_deref().unwrap_or(
+            if run.gate_passed == Some(true) { "passed" } else { "failed" }
+        ) {
+            "passed" => "Kept",
+            "failed" => "Dropped",
+            other => other,
+        };
         println!(
-            "autoresearch run {} gate_verdict={} ({})",
+            "autoresearch run {} gate decision: {} (status: {})",
             run.id,
-            run.gate_verdict
-                .as_deref()
-                .unwrap_or(if run.gate_passed == Some(true) {
-                    "passed"
-                } else {
-                    "failed"
-                }),
+            decision,
             run.promotion_state
         );
     }
     Ok(())
 }
 
-async fn run_promote(args: InspectArgs) -> CliResult<()> {
+async fn run_activate(args: InspectArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autoresearch promote", e))?;
+        .map_err(|e| api_to_cli("autoresearch activate", e))?;
     let run = autoresearch::promote_run(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("autoresearch promote", e))?;
+        .map_err(|e| api_to_cli("autoresearch activate", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
@@ -530,17 +546,17 @@ async fn run_promote(args: InspectArgs) -> CliResult<()> {
     Ok(())
 }
 
-async fn run_demote(args: InspectArgs) -> CliResult<()> {
+async fn run_retire(args: InspectArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autoresearch demote", e))?;
+        .map_err(|e| api_to_cli("autoresearch retire", e))?;
     let run = autoresearch::demote_run(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("autoresearch demote", e))?;
+        .map_err(|e| api_to_cli("autoresearch retire", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
-        println!("autoresearch run {} demoted pattern {}", run.id, run.pattern_id);
+        println!("autoresearch run {} retired pattern {}", run.id, run.pattern_id);
     }
     Ok(())
 }

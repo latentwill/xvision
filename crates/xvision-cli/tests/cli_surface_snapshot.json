@@ -226,6 +226,19 @@
       "mutates": false,
       "path": [
         "autoresearch",
+        "activate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
         "demote"
       ]
     },
@@ -233,24 +246,23 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--activate-if-pass",
         "--baseline-score",
+        "--baseline-today-score",
+        "--baseline-untouched-score",
         "--candidate-score",
-        "--child-day-score",
-        "--child-holdout-score",
+        "--candidate-today-score",
+        "--candidate-untouched-score",
         "--finding-blinded-metrics",
         "--finding-model",
         "--finding-text",
-        "--gate-epsilon",
         "--gate-reason",
         "--help",
         "--json",
         "--judge-model",
         "--judge-token-cost",
         "--metric",
-        "--min-delta",
-        "--parent-day-score",
-        "--parent-holdout-score",
-        "--promote-if-pass",
+        "--min-improvement",
         "--qualitative-finding-json"
       ],
       "mutates": false,
@@ -267,6 +279,17 @@
       "path": [
         "autoresearch",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "activate"
       ]
     },
     {
@@ -379,6 +402,17 @@
         "autoresearch",
         "help",
         "promote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "retire"
       ]
     },
     {
@@ -577,6 +611,19 @@
       "path": [
         "autoresearch",
         "promote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "retire"
       ]
     },
     {
@@ -1939,6 +1986,17 @@
       "path": [
         "help",
         "autoresearch",
+        "activate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
         "demote"
       ]
     },
@@ -2030,6 +2088,17 @@
         "help",
         "autoresearch",
         "promote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "retire"
       ]
     },
     {
