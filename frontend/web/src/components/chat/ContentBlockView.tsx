@@ -7,6 +7,16 @@ import { ChatStrategyCard } from "@/components/chat/cards/ChatStrategyCard";
 import { runInlineAction } from "@/components/chat/cards/actions";
 import type { RichDisplayBlock } from "./types";
 
+function isSafeHref(href: string): boolean {
+  const colon = href.indexOf(":");
+  const slash = href.indexOf("/");
+  if (colon === -1 || (slash !== -1 && slash < colon)) {
+    return true;
+  }
+  const scheme = href.slice(0, colon + 1).toLowerCase();
+  return scheme === "http:" || scheme === "https:" || scheme === "mailto:";
+}
+
 export function ContentBlockView({ block }: { block: RichDisplayBlock }) {
   switch (block.type) {
     case "inline_chart":
@@ -36,7 +46,7 @@ function ChoiceChips({
         const key = `${chip.label}:${chip.href ?? chip.command ?? ""}`;
         const className =
           "rounded-full border border-border-soft px-2.5 py-1 text-[11px] text-text-2";
-        if (chip.href) {
+        if (chip.href && isSafeHref(chip.href)) {
           return (
             <a key={key} href={chip.href} className={className}>
               {chip.label}
