@@ -10,7 +10,7 @@ import {
 } from "./useServerPagination";
 
 // ---------------------------------------------------------------------------
-// useServerPagination — unit tests
+// useServerPagination - unit tests
 // ---------------------------------------------------------------------------
 
 describe("useServerPagination", () => {
@@ -49,7 +49,7 @@ describe("useServerPagination", () => {
     expect(result.current.page).toBe(4);
     expect(result.current.offset).toBe(150);
 
-    rerender({ total: 60 }); // ceil(60/50)=2 pages — page 4 is now out of range
+    rerender({ total: 60 }); // ceil(60/50)=2 pages; page 4 is now out of range
     expect(result.current.page).toBe(2);
     expect(result.current.offset).toBe(50);
   });
@@ -66,7 +66,7 @@ describe("useServerPagination", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ServerPagerStrip — rendering and interaction tests
+// ServerPagerStrip - rendering and interaction tests
 // ---------------------------------------------------------------------------
 
 const makePagerProps = () => ({
@@ -77,7 +77,7 @@ const makePagerProps = () => ({
   onPageSizeChange: vi.fn(),
 });
 
-describe("ServerPagerStrip — hide threshold", () => {
+describe("ServerPagerStrip - hide threshold", () => {
   it("is hidden when total equals the smallest page-size option", () => {
     render(<ServerPagerStrip {...makePagerProps()} total={PAGE_SIZE_OPTIONS[0]} />);
     expect(screen.queryByTestId("list-pagination")).toBeNull();
@@ -94,14 +94,14 @@ describe("ServerPagerStrip — hide threshold", () => {
   });
 });
 
-describe("ServerPagerStrip — next / previous interactions", () => {
+describe("ServerPagerStrip - next / previous interactions", () => {
   it("Previous button is disabled on page 1", () => {
     render(<ServerPagerStrip {...makePagerProps()} page={1} />);
     expect(screen.getByRole("button", { name: /previous page/i })).toBeDisabled();
   });
 
   it("Next button is disabled on the last page", () => {
-    // total=100, pageSize=50 → 2 pages; page 2 is the last
+    // total=100, pageSize=50 => 2 pages; page 2 is the last
     render(<ServerPagerStrip {...makePagerProps()} total={100} page={2} pageSize={50} />);
     expect(screen.getByRole("button", { name: /next page/i })).toBeDisabled();
   });
@@ -121,7 +121,7 @@ describe("ServerPagerStrip — next / previous interactions", () => {
   });
 });
 
-describe("ServerPagerStrip — page-size reset", () => {
+describe("ServerPagerStrip - page-size reset", () => {
   it("calls onPageSizeChange then resets to page 1 when page-size select changes", () => {
     const props = makePagerProps();
     render(
