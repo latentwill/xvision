@@ -129,6 +129,7 @@
 //  R55. GET  /api/flywheel/lineage
 //  R56. GET  /api/autoresearch
 //  R57. GET  /api/autoresearch/:id
+//  R58. GET  /api/autoresearch/events    (SSE — AR-3 live cycle progress)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -265,6 +266,11 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/flywheel/lineage", get(flywheel::lineage))
         .route("/api/autoresearch", get(flywheel::autoresearch_list))
         .route("/api/autoresearch/:id", get(flywheel::autoresearch_get))
+        // AR-3: live cycle progress stream for the dashboard autoresearch surface.
+        .route(
+            "/api/autoresearch/events",
+            get(crate::sse::autoresearch_sse::autoresearch_events_handler),
+        )
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
         .route("/api/cli/jobs/:id/output", get(cli::output))
@@ -551,7 +557,11 @@ pub fn wrap_with_auth(router: Router, auth: AuthState) -> Router {
     router.layer(axum::middleware::from_fn_with_state(auth, auth_middleware))
 }
 
-pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
+pub async fn serve(
+    addr: SocketAddr,
+    state: AppState,
+    autoresearch_ipc_socket: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     // Run dashboard-owned migrations (dashboard_sessions, auth_audit).
     state.run_dashboard_migrations().await?;
 
@@ -592,6 +602,22 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     // it terminates with the process. See
     // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
     let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
+
+    // AR-3: start the autoresearch IPC Unix socket listener when the
+    // operator passes `--autoresearch-ipc-socket`. Evening-cycle CLI
+    // clients connect and stream CycleProgressEvents; the listener
+    // broadcasts them into `state.autoresearch_tx` which feeds
+    // `GET /api/autoresearch/events` SSE.
+    if let Some(socket_path) = autoresearch_ipc_socket {
+        if let Err(e) =
+            crate::ipc::spawn_autoresearch_subscriber(socket_path, state.autoresearch_tx.clone())
+        {
+            tracing::warn!(
+                error = %e,
+                "could not start autoresearch IPC socket; continuing without it",
+            );
+        }
+    }
 
     // Non-loopback bind: print a loud warning to stderr so operators
     // are aware they're exposing the dashboard. Terminal only — no UI popup.
