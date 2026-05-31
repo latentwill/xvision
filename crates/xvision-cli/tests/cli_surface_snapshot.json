@@ -233,6 +233,20 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--fixture",
+        "--help",
+        "--verbose"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "demo"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
         "--help",
         "--json"
       ],
@@ -240,6 +254,22 @@
       "path": [
         "autoresearch",
         "demote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--config",
+        "--db",
+        "--help",
+        "--mock",
+        "--session-id"
+      ],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "evening-cycle"
       ]
     },
     {
@@ -300,7 +330,29 @@
       "path": [
         "autoresearch",
         "help",
+        "demo"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
         "demote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "autoresearch",
+        "help",
+        "evening-cycle"
       ]
     },
     {
@@ -590,6 +642,7 @@
         "--db",
         "--dry-run",
         "--help",
+        "--ipc-socket",
         "--key-path",
         "--mock",
         "--session"
@@ -915,6 +968,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--autoresearch-ipc-socket",
         "--bind",
         "--help",
         "--home"
@@ -1997,7 +2051,29 @@
       "path": [
         "help",
         "autoresearch",
+        "demo"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
         "demote"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "autoresearch",
+        "evening-cycle"
       ]
     },
     {
@@ -5108,7 +5184,6 @@
         "--cohort-query",
         "--demo-source",
         "--help",
-        "--holdout-split",
         "--json",
         "--limit",
         "--manual-csv",
@@ -5120,6 +5195,7 @@
         "--run",
         "--scenario",
         "--slot",
+        "--untouched-split",
         "--xvn-home",
         "--yes"
       ],
@@ -5133,16 +5209,16 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--baseline-untouched-score",
+        "--candidate-untouched-score",
         "--child-dev-score",
-        "--child-holdout-score",
         "--dev-metric",
-        "--gate-epsilon",
         "--help",
-        "--holdout-metric",
         "--json",
+        "--min-improvement",
         "--parent-dev-score",
-        "--parent-holdout-score",
         "--reason",
+        "--untouched-metric",
         "--xvn-home"
       ],
       "mutates": false,
