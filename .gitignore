@@ -111,6 +111,9 @@ target/
 # Frontend bundle (Vite emits into the dashboard crate; baked at compile time)
 crates/xvision-dashboard/static/*
 !crates/xvision-dashboard/static/.gitkeep
+# Handwritten static JS (SSE label registry, etc.) is tracked source, not build output
+!crates/xvision-dashboard/static/js/
+!crates/xvision-dashboard/static/js/**
 frontend/web/node_modules/
 frontend/web/dist/
 frontend/web/*.tsbuildinfo
