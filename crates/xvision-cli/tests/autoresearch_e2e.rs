@@ -1,18 +1,5 @@
 //! Autoresearcher E2E: banned operator-facing term check on CLI help output.
 //!
-//! Tests here are marked `#[ignore]` for two reasons:
-//!
-//! 1. The autoresearcher terminology rename (PRs #689–#697) has not yet landed
-//!    on main.  On origin/main, subcommand names like `promote` / `demote` and
-//!    flags like `--gate-epsilon` / `--parent-holdout-score` are still present,
-//!    so these tests would fail as written.
-//!
-//! 2. Running `--ignored` still compiles the test binary, which is the
-//!    primary CI gate: the tests must compile against origin/main even though
-//!    they are not expected to pass until the PRs merge.
-//!
-//! // Remove `#[ignore]` after PRs #689-#697 are merged to main.
-//!
 //! Banned terms are drawn from the operator-vocabulary lock doc:
 //! docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md
 
@@ -59,7 +46,10 @@ fn assert_no_banned_terms(surface: &str, text: &str) {
 
     for &term in banned {
         if lower.contains(term.to_lowercase().as_str()) {
-            failures.push(format!("  banned term {:?} found in `xvn {surface} --help`", term));
+            failures.push(format!(
+                "  banned term {:?} found in `xvn {surface} --help`",
+                term
+            ));
         }
     }
 
@@ -75,25 +65,19 @@ fn assert_no_banned_terms(surface: &str, text: &str) {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-// Remove `#[ignore]` after PRs #689-#697 are merged to main.
 #[test]
-#[ignore]
 fn autoresearch_help_contains_no_banned_terms() {
     let help = xvn_help("autoresearch");
     assert_no_banned_terms("autoresearch", &help);
 }
 
-// Remove `#[ignore]` after PRs #689-#697 are merged to main.
 #[test]
-#[ignore]
 fn memory_help_contains_no_banned_terms() {
     let help = xvn_help("memory");
     assert_no_banned_terms("memory", &help);
 }
 
-// Remove `#[ignore]` after PRs #689-#697 are merged to main.
 #[test]
-#[ignore]
 fn flywheel_help_contains_no_banned_terms() {
     let help = xvn_help("flywheel");
     assert_no_banned_terms("flywheel", &help);
@@ -119,9 +103,8 @@ fn xvn_binary_is_reachable_and_help_exits_zero() {
     );
 }
 
-/// Verify that `xvn autoresearch --help` exits 0 and lists at least the
-/// `session-init` and `mutate-once` subcommands that exist on origin/main.
-/// This always runs (no `#[ignore]`) to catch accidental removal.
+/// Verify that `xvn autoresearch --help` exits 0 and lists the core
+/// operator-facing autoresearch subcommands.
 #[test]
 fn autoresearch_help_exits_zero_and_lists_known_subcommands() {
     let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
@@ -142,5 +125,13 @@ fn autoresearch_help_exits_zero_and_lists_known_subcommands() {
     assert!(
         stdout.contains("mutate-once"),
         "autoresearch --help must list mutate-once, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("evening-cycle"),
+        "autoresearch --help must list evening-cycle, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("demo"),
+        "autoresearch --help must list demo, got:\n{stdout}"
     );
 }
