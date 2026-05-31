@@ -55,6 +55,7 @@ const ChartsOverview = lazy(() => import("./routes/charts/ChartsOverview").then(
 const ChartsCompare = lazy(() => import("./routes/charts/ChartsCompare").then((m) => ({ default: m.ChartsCompare })));
 const ChartsAnnotated = lazy(() => import("./routes/charts/ChartsAnnotated").then((m) => ({ default: m.ChartsAnnotated })));
 const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => ({ default: m.ChartsHero })));
+const AutoresearchLayout = lazy(() => import("./features/autoresearch/AutoresearchLayout").then((m) => ({ default: m.AutoresearchLayout })));
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
 const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const LeaderboardIndex = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardIndex").then((m) => ({ default: m.LeaderboardIndex })));
@@ -191,6 +192,13 @@ export const router = createBrowserRouter([
           { path: "creator/:handleOrAddr", element: page(<CreatorRoute />) },
           { path: "sell", element: page(<SellRoute />) },
           { path: "receipts/:tx", element: page(<ReceiptRoute />) },
+        ],
+      },
+      {
+        path: "autoresearch",
+        children: [
+          { index: true, element: page(<AutoresearchLayout />) },
+          { path: "diff/:hash", element: page(<AutoresearchLayout />) },
         ],
       },
       { path: "docs", element: page(<DocsRoute />) },
