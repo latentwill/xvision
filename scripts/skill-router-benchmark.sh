@@ -75,13 +75,15 @@ for i in $(seq 0 $((TOTAL - 1))); do
   fi
 
   snot_count=$(echo "$fixture" | jq '.should_not_trigger | length // 0')
-  for j in $(seq 0 $((snot_count - 1))); do
-    snot=$(echo "$fixture" | jq -r ".should_not_trigger[$j]")
-    if ! skill_known "$snot"; then
-      echo "FAIL $prefix id=${id:-?}: should_not_trigger[$j] '$snot' not in registry"
-      ok=false
-    fi
-  done
+  if [[ $snot_count -gt 0 ]]; then
+    for j in $(seq 0 $((snot_count - 1))); do
+      snot=$(echo "$fixture" | jq -r ".should_not_trigger[$j]")
+      if ! skill_known "$snot"; then
+        echo "FAIL $prefix id=${id:-?}: should_not_trigger[$j] '$snot' not in registry"
+        ok=false
+      fi
+    done
+  fi
 
   if $ok; then
     echo "PASS id=$id expected=$expected"
