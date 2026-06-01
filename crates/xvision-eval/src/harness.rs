@@ -10,13 +10,16 @@
 //! - Returns are `pnl_i / nav_initial` (Tier 1 fix #8 — constant denominator).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 use xvision_core::market::MarketSnapshot;
 use xvision_core::trading::{Regime, RiskDecision, TraderDecision};
 use xvision_execution::{ExecutionReceipt, Executor};
+use xvision_observability::{RunEvent, RunEventBus, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus};
 use xvision_risk::RiskLayer;
 
 use crate::algorithm::Algorithm;
@@ -96,6 +99,7 @@ struct ArmState {
 pub struct BacktestRunner {
     pub config: BacktestRunConfig,
     arms: Vec<ArmConfig>,
+    obs: Option<(Arc<RunEventBus>, String)>,
 }
 
 impl BacktestRunner {
@@ -108,7 +112,15 @@ impl BacktestRunner {
                 horizon: config.horizon_hours,
             });
         }
-        Ok(Self { config, arms })
+        Ok(Self { config, arms, obs: None })
+    }
+
+    /// Wire an event bus so the runner emits `risk.gate` spans.
+    /// `run_id` is the identifier used as the top-level `run_id` on every
+    /// span event published to the bus.
+    pub fn with_obs(mut self, bus: Arc<RunEventBus>, run_id: impl Into<String>) -> Self {
+        self.obs = Some((bus, run_id.into()));
+        self
     }
 
     /// Run all arms over the provided `snapshots` (decision points) and `bars`
@@ -233,7 +245,41 @@ impl BacktestRunner {
                     st.regimes.push(snapshot.regime);
 
                     let portfolio = st.exec.portfolio_snapshot();
+                    let risk_span_id = Uuid::new_v4().to_string();
+                    if let Some((bus, run_id)) = &self.obs {
+                        bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
+                            span_id: risk_span_id.clone(),
+                            run_id: run_id.clone(),
+                            parent_span_id: None,
+                            kind: SpanKind::RiskGate,
+                            name: "risk.gate".to_string(),
+                            started_at: Utc::now(),
+                            otel_trace_id: None,
+                            otel_span_id: None,
+                            attributes_json: None,
+                        }))
+                        .await;
+                    }
                     let risk_outcome = risk.evaluate(td, &portfolio);
+                    if let Some((bus, _)) = &self.obs {
+                        let (status, error_json) = match &risk_outcome {
+                            RiskDecision::Vetoed { reason, .. } => (
+                                SpanStatus::Error,
+                                Some(format!(
+                                    r#"{{"verdict":"vetoed","veto_reason":"{:?}"}}"#,
+                                    reason
+                                )),
+                            ),
+                            _ => (SpanStatus::Ok, None),
+                        };
+                        bus.publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                            span_id: risk_span_id.clone(),
+                            ended_at: Utc::now(),
+                            status,
+                            error_json,
+                        }))
+                        .await;
+                    }
                     st.risk_outcomes.push(risk_outcome.clone());
 
                     if risk_outcome.effective().is_some() {
@@ -602,6 +648,39 @@ mod tests {
             arm.regimes.len(),
             arm.decisions.len(),
             "regimes and decisions must have the same length"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // with_obs wires risk.gate spans without changing run behaviour
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn with_obs_emits_risk_gate_spans() {
+        let bars: Vec<MarketBar> = (0..3).map(|i| bar_at(i * 3600, 50_000.0)).collect();
+        let snapshots = vec![snapshot_at(0, 50_000.0)];
+        let cfg = BacktestRunConfig {
+            initial_nav_usd: 10_000.0,
+            fee_bps: 0,
+            slippage_atr_frac: 0.0,
+            step_hours: 1,
+            horizon_hours: 1,
+            n_bootstrap_resamples: 10,
+            block_size: None,
+        };
+        let arms = vec![ArmConfig {
+            name: "buy".into(),
+            strategy: Box::new(AlwaysBuy),
+        }];
+        let bus = std::sync::Arc::new(xvision_observability::RunEventBus::new(vec![]));
+        let risk = default_risk();
+        let mut runner = BacktestRunner::new(cfg, arms)
+            .expect("valid config")
+            .with_obs(bus, "test-run-obs");
+        let result = runner.run(&snapshots, &bars, &risk).await.expect("run ok");
+        assert!(
+            !result.arms["buy"].risk_outcomes.is_empty(),
+            "risk_outcomes must be populated when obs is wired"
         );
     }
 }

@@ -142,9 +142,9 @@ pub enum SpanKind {
     /// `{asset, verdict: "pass"|"reject", reason?}` in `attributes_json`.
     #[serde(rename = "filter.eval")]
     FilterEval,
-    /// Risk-gate evaluation. Emitted around each `RiskGate::evaluate` call.
-    /// Carries `{verdict: "approved"|"modified"|"vetoed", risk_level?,
-    /// modified_qty?, veto_reason?}` in `attributes_json`.
+    /// Risk-gate evaluation. Emitted by the eval harness (`BacktestRunner`)
+    /// and ObsEmitter around each `RiskLayer::evaluate` call. Carries
+    /// `{verdict: "approved"|"modified"|"vetoed", veto_reason?}`.
     #[serde(rename = "risk.gate")]
     RiskGate,
 }
