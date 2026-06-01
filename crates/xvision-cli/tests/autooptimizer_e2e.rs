@@ -1,7 +1,7 @@
-//! Autoresearcher E2E: banned operator-facing term check on CLI help output.
+//! AutoOptimizer E2E: banned operator-facing term check on CLI help output.
 //!
 //! Banned terms are drawn from the operator-vocabulary lock doc:
-//! docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md
+//! docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md
 
 use std::process::Command;
 
@@ -28,7 +28,7 @@ fn xvn_help(subcommand: &str) -> String {
 /// list is precise enough that false positives are very unlikely.
 fn assert_no_banned_terms(surface: &str, text: &str) {
     // Terms that must never appear in operator-facing CLI help.
-    // Source: docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md
+    // Source: docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md
     let banned: &[&str] = &[
         "promote",
         "demote",
@@ -57,7 +57,7 @@ fn assert_no_banned_terms(surface: &str, text: &str) {
         failures.is_empty(),
         "Banned operator-facing terms detected in `xvn {surface} --help`.\n\
          These terms must be replaced with their operator-vocabulary equivalents\n\
-         (see docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md).\n\n\
+         (see docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md).\n\n\
          Violations:\n{}",
         failures.join("\n")
     );
@@ -66,9 +66,9 @@ fn assert_no_banned_terms(surface: &str, text: &str) {
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[test]
-fn autoresearch_help_contains_no_banned_terms() {
-    let help = xvn_help("autoresearch");
-    assert_no_banned_terms("autoresearch", &help);
+fn autooptimizer_help_contains_no_banned_terms() {
+    let help = xvn_help("autooptimizer");
+    assert_no_banned_terms("autooptimizer", &help);
 }
 
 #[test]
@@ -103,35 +103,35 @@ fn xvn_binary_is_reachable_and_help_exits_zero() {
     );
 }
 
-/// Verify that `xvn autoresearch --help` exits 0 and lists the core
-/// operator-facing autoresearch subcommands.
+/// Verify that `xvn autooptimizer --help` exits 0 and lists the core
+/// operator-facing autooptimizer subcommands.
 #[test]
-fn autoresearch_help_exits_zero_and_lists_known_subcommands() {
+fn autooptimizer_help_exits_zero_and_lists_known_subcommands() {
     let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
-        .args(["autoresearch", "--help"])
+        .args(["autooptimizer", "--help"])
         .output()
-        .expect("xvn autoresearch --help must not fail to spawn");
+        .expect("xvn autooptimizer --help must not fail to spawn");
     assert!(
         out.status.success(),
-        "xvn autoresearch --help must exit 0, got {:?}\nstderr={}",
+        "xvn autooptimizer --help must exit 0, got {:?}\nstderr={}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr),
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("session-init"),
-        "autoresearch --help must list session-init, got:\n{stdout}"
+        "autooptimizer --help must list session-init, got:\n{stdout}"
     );
     assert!(
         stdout.contains("mutate-once"),
-        "autoresearch --help must list mutate-once, got:\n{stdout}"
+        "autooptimizer --help must list mutate-once, got:\n{stdout}"
     );
     assert!(
         stdout.contains("evening-cycle"),
-        "autoresearch --help must list evening-cycle, got:\n{stdout}"
+        "autooptimizer --help must list evening-cycle, got:\n{stdout}"
     );
     assert!(
         stdout.contains("demo"),
-        "autoresearch --help must list demo, got:\n{stdout}"
+        "autooptimizer --help must list demo, got:\n{stdout}"
     );
 }

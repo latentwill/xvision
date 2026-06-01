@@ -1,8 +1,8 @@
-//! `xvn autoresearch` — offline self-improvement verbs.
+//! `xvn autooptimizer` — offline self-improvement verbs.
 //!
 //! First shipped surface: `run`, a deterministic memory-distillation
 //! pass that turns an Observation cohort into a staged Pattern and
-//! records an autoresearch run ledger row. The full LLM proposer,
+//! records an autooptimizer run ledger row. The full LLM proposer,
 //! numeric gate, judge Finding, and optimizer handoff build on this
 //! command; this file intentionally keeps the first slice offline and
 //! memory-bound.
@@ -19,22 +19,22 @@ use ulid::Ulid;
 use tokio::io::AsyncWriteExt;
 
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
-use xvision_engine::api::autoresearch::{self, AutoresearchGateRequest, AutoresearchRunRequest};
+use xvision_engine::api::autooptimizer::{self, AutoOptimizerGateRequest, AutoOptimizerRunRequest};
 use xvision_engine::api::memory;
-use xvision_engine::autoresearch::blob_store::BlobStore;
-use xvision_engine::autoresearch::config::AutoresearchConfig;
-use xvision_engine::autoresearch::content_hash::ContentHash;
-use xvision_engine::autoresearch::cycle::{run_evening_cycle, CycleConfig};
-use xvision_engine::autoresearch::eval_adapter::StubPaperTester;
-use xvision_engine::autoresearch::gate::GateVerdict;
-use xvision_engine::autoresearch::judge::Judge;
-use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
-use xvision_engine::autoresearch::mutator::{MutationDiff, Mutator};
-use xvision_engine::autoresearch::parent_policy::ParentPolicy;
-use xvision_engine::autoresearch::progress::CycleProgressEvent;
-use xvision_engine::autoresearch::seal::build_and_sign;
-use xvision_engine::autoresearch::scenario_synthesis::synthesize_baseline_untouched_scenario;
-use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
+use xvision_engine::autooptimizer::blob_store::BlobStore;
+use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
+use xvision_engine::autooptimizer::content_hash::ContentHash;
+use xvision_engine::autooptimizer::cycle::{run_evening_cycle, CycleConfig};
+use xvision_engine::autooptimizer::eval_adapter::StubPaperTester;
+use xvision_engine::autooptimizer::gate::GateVerdict;
+use xvision_engine::autooptimizer::judge::Judge;
+use xvision_engine::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
+use xvision_engine::autooptimizer::mutator::{MutationDiff, Mutator};
+use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
+use xvision_engine::autooptimizer::progress::CycleProgressEvent;
+use xvision_engine::autooptimizer::seal::build_and_sign;
+use xvision_engine::autooptimizer::scenario_synthesis::synthesize_baseline_untouched_scenario;
+use xvision_engine::autooptimizer::session::{default_key_path, load_or_generate_key, SessionCommitment};
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::strategies::Strategy;
 use xvision_memory::embedder::Embedder;
@@ -42,26 +42,26 @@ use xvision_memory::embedder::Embedder;
 use crate::exit::{CliError, CliResult, XvnExit};
 
 #[derive(Args, Debug)]
-pub struct AutoresearchCmd {
+pub struct AutoOptimizerCmd {
     #[command(subcommand)]
     pub op: Op,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// Distill recent Observations into a candidate Pattern. The Pattern enters staged status; use `xvn autoresearch gate` to evaluate it, then `xvn autoresearch activate` to put it into use.
+    /// Distill recent Observations into a candidate Pattern. The Pattern enters staged status; use `xvn autooptimizer gate` to evaluate it, then `xvn autooptimizer activate` to put it into use.
     Run(RunArgs),
-    /// List autoresearch run ledger rows.
+    /// List autooptimizer run ledger rows.
     Ls(ListArgs),
-    /// Inspect an autoresearch run ledger row.
+    /// Inspect an autooptimizer run ledger row.
     Inspect(InspectArgs),
     /// Record the gate decision (Kept or Dropped) for a candidate Pattern, based on its score on today's data and on an untouched test period. The qualitative finding is recorded blind to the numeric scores.
     Gate(GateArgs),
-    /// Activate a candidate Pattern from an autoresearch run, making it available for recall during decisions.
+    /// Activate a candidate Pattern from an autooptimizer run, making it available for recall during decisions.
     Activate(InspectArgs),
     #[command(hide = true)]
     Promote(InspectArgs),
-    /// Retire a Pattern produced by an autoresearch run. Soft-delete with a grace window; restore via `xvn memory undo-forget`.
+    /// Retire a Pattern produced by an autooptimizer run. Soft-delete with a grace window; restore via `xvn memory undo-forget`.
     Retire(InspectArgs),
     #[command(hide = true)]
     Demote(InspectArgs),
@@ -75,13 +75,13 @@ pub enum Op {
     MutateOnce(MutateOnceArgs),
     /// Run the full evening cycle (parent selection -> candidate edit -> gate -> judge -> seal). Operator label: 'Evening run'.
     EveningCycle(EveningCycleArgs),
-    /// Replay a saved autoresearch cycle from a fixture (no API keys required).
+    /// Replay a saved autooptimizer cycle from a fixture (no API keys required).
     Demo(DemoArgs),
 }
 
 #[derive(Args, Debug)]
 pub struct SessionInitArgs {
-    /// Path to autoresearch.toml. Defaults to ~/.xvn/autoresearch.toml.
+    /// Path to autooptimizer.toml. Defaults to ~/.xvn/autooptimizer.toml.
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// Comma-separated parent bundle hashes (seeds for this session).
@@ -102,7 +102,7 @@ pub struct SessionInitArgs {
 pub struct MutateOnceArgs {
     /// Content hash (hex) of the parent strategy in the blob store.
     pub parent_bundle_hash: String,
-    /// AutoresearchConfig TOML path.
+    /// AutoOptimizerConfig TOML path.
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// SessionCommitment JSON path.
@@ -130,8 +130,8 @@ pub struct MutateOnceArgs {
     ///
     /// When set, each `CycleProgressEvent` is serialized as newline-delimited
     /// JSON and sent to the dashboard listener so it appears in real time on
-    /// `GET /api/autoresearch/events`. Requires the dashboard to be started
-    /// with `--autoresearch-ipc-socket <same path>`.
+    /// `GET /api/autooptimizer/events`. Requires the dashboard to be started
+    /// with `--autooptimizer-ipc-socket <same path>`.
     ///
     /// Example: --ipc-socket /tmp/xvn-events.sock
     #[arg(long)]
@@ -140,10 +140,10 @@ pub struct MutateOnceArgs {
 
 #[derive(Args, Debug)]
 pub struct EveningCycleArgs {
-    /// Session commitment ID from xvn autoresearch session-init.
+    /// Session commitment ID from xvn autooptimizer session-init.
     #[arg(long)]
     pub session_id: String,
-    /// Path to autoresearch.toml. Defaults to ~/.xvn/autoresearch.toml.
+    /// Path to autooptimizer.toml. Defaults to ~/.xvn/autooptimizer.toml.
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// SQLite database path. Defaults to ~/.xvn/lineage/lineage.db.
@@ -157,7 +157,7 @@ pub struct EveningCycleArgs {
 #[derive(Args, Debug)]
 pub struct DemoArgs {
     /// Path to the replay fixture JSON file.
-    /// Defaults to data/probes/autoresearch/replay-fixture.json relative to the current directory.
+    /// Defaults to data/probes/autooptimizer/replay-fixture.json relative to the current directory.
     #[arg(long)]
     pub fixture: Option<PathBuf>,
     /// Print full event JSON; else print one line per event.
@@ -338,7 +338,7 @@ struct LineageRow {
     gate_verdict: String,
 }
 
-pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
+pub async fn run(cmd: AutoOptimizerCmd) -> CliResult<()> {
     match cmd.op {
         Op::Run(args) => run_distill(args).await,
         Op::Ls(args) => run_list(args).await,
@@ -347,7 +347,7 @@ pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
         Op::Activate(args) => run_activate(args).await,
         Op::Promote(args) => {
             eprintln!(
-                "Note: `xvn autoresearch promote` is now `xvn autoresearch activate`; \
+                "Note: `xvn autooptimizer promote` is now `xvn autooptimizer activate`; \
                  the old form still works in this release and will be removed in the next."
             );
             run_activate(args).await
@@ -355,7 +355,7 @@ pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
         Op::Retire(args) => run_retire(args).await,
         Op::Demote(args) => {
             eprintln!(
-                "Note: `xvn autoresearch demote` is now `xvn autoresearch retire`; \
+                "Note: `xvn autooptimizer demote` is now `xvn autooptimizer retire`; \
                  the old form still works in this release and will be removed in the next."
             );
             run_retire(args).await
@@ -392,7 +392,7 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| {
                     CliError::usage(anyhow::anyhow!(
-                        "autoresearch run requires --embedding-json or OPENAI_API_KEY"
+                        "autooptimizer run requires --embedding-json or OPENAI_API_KEY"
                     ))
                 })?;
             let base_url = std::env::var("OPENAI_BASE_URL")
@@ -402,7 +402,7 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
             let embedder = xvision_engine::agent::openai_embedder::OpenAiEmbedder::new(base_url, api_key);
             let embedding = embedder.embed(&args.pattern_text).await.map_err(|e| CliError {
                 exit: XvnExit::Upstream,
-                source: anyhow::anyhow!("autoresearch run: embed Pattern text: {e}"),
+                source: anyhow::anyhow!("autooptimizer run: embed Pattern text: {e}"),
             })?;
             (embedder.id().to_string(), embedding)
         }
@@ -415,12 +415,12 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
 
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autoresearch run", e))?;
-    let run = autoresearch::run_memory_distillation(
+        .map_err(|e| api_to_cli("autooptimizer run", e))?;
+    let run = autooptimizer::run_memory_distillation(
         &store,
         &embedder_id,
         embedding,
-        AutoresearchRunRequest {
+        AutoOptimizerRunRequest {
             namespace: args.namespace,
             agent: args.agent,
             scenario_id: args.scenario,
@@ -432,13 +432,13 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
         },
     )
     .await
-    .map_err(|e| api_to_cli("autoresearch run", e))?;
+    .map_err(|e| api_to_cli("autooptimizer run", e))?;
 
     if args.json {
         crate::io::print_json(&run)?;
     } else {
         println!(
-            "autoresearch run {} created pattern {} in {} ({})",
+            "autooptimizer run {} created pattern {} in {} ({})",
             run.id, run.pattern_id, run.namespace, run.promotion_state
         );
     }
@@ -448,10 +448,10 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
 async fn run_inspect(args: InspectArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autoresearch inspect", e))?;
-    let run = autoresearch::inspect_run(&store, &args.id)
+        .map_err(|e| api_to_cli("autooptimizer inspect", e))?;
+    let run = autooptimizer::inspect_run(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("autoresearch inspect", e))?;
+        .map_err(|e| api_to_cli("autooptimizer inspect", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
@@ -487,10 +487,10 @@ async fn run_inspect(args: InspectArgs) -> CliResult<()> {
 async fn run_list(args: ListArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autoresearch ls", e))?;
-    let runs = autoresearch::list_runs(
+        .map_err(|e| api_to_cli("autooptimizer ls", e))?;
+    let runs = autooptimizer::list_runs(
         &store,
-        autoresearch::AutoresearchRunListRequest {
+        autooptimizer::AutoOptimizerRunListRequest {
             namespace: args.namespace,
             agent: args.agent,
             limit: Some(args.limit),
@@ -498,11 +498,11 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
         },
     )
     .await
-    .map_err(|e| api_to_cli("autoresearch ls", e))?;
+    .map_err(|e| api_to_cli("autooptimizer ls", e))?;
     if args.json {
         crate::io::print_json(&runs)?;
     } else if runs.items.is_empty() {
-        println!("no autoresearch runs");
+        println!("no autooptimizer runs");
     } else {
         for run in runs.items {
             println!(
@@ -538,11 +538,11 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
     }
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autoresearch gate", e))?;
-    let run = autoresearch::gate_run(
+        .map_err(|e| api_to_cli("autooptimizer gate", e))?;
+    let run = autooptimizer::gate_run(
         &store,
         &args.id,
-        AutoresearchGateRequest {
+        AutoOptimizerGateRequest {
             metric: Some(args.metric),
             baseline_score: args.baseline_score,
             candidate_score: args.candidate_score,
@@ -563,7 +563,7 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
         },
     )
     .await
-    .map_err(|e| api_to_cli("autoresearch gate", e))?;
+    .map_err(|e| api_to_cli("autooptimizer gate", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
@@ -575,7 +575,7 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
             other => other,
         };
         println!(
-            "autoresearch run {} gate decision: {} (status: {})",
+            "autooptimizer run {} gate decision: {} (status: {})",
             run.id,
             decision,
             run.promotion_state
@@ -587,14 +587,14 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
 async fn run_activate(args: InspectArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autoresearch activate", e))?;
-    let run = autoresearch::promote_run(&store, &args.id)
+        .map_err(|e| api_to_cli("autooptimizer activate", e))?;
+    let run = autooptimizer::promote_run(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("autoresearch activate", e))?;
+        .map_err(|e| api_to_cli("autooptimizer activate", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
-        println!("autoresearch run {} activated pattern {}", run.id, run.pattern_id);
+        println!("autooptimizer run {} activated pattern {}", run.id, run.pattern_id);
     }
     Ok(())
 }
@@ -602,14 +602,14 @@ async fn run_activate(args: InspectArgs) -> CliResult<()> {
 async fn run_retire(args: InspectArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autoresearch retire", e))?;
-    let run = autoresearch::demote_run(&store, &args.id)
+        .map_err(|e| api_to_cli("autooptimizer retire", e))?;
+    let run = autooptimizer::demote_run(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("autoresearch retire", e))?;
+        .map_err(|e| api_to_cli("autooptimizer retire", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
-        println!("autoresearch run {} retired pattern {}", run.id, run.pattern_id);
+        println!("autooptimizer run {} retired pattern {}", run.id, run.pattern_id);
     }
     Ok(())
 }
@@ -778,9 +778,9 @@ async fn seal_show(args: SealShowArgs) -> CliResult<()> {
 async fn run_session_init(args: SessionInitArgs) -> CliResult<()> {
     let config_path = match args.config {
         Some(p) => p,
-        None => AutoresearchConfig::default_path().map_err(CliError::upstream)?,
+        None => AutoOptimizerConfig::default_path().map_err(CliError::upstream)?,
     };
-    let cfg = AutoresearchConfig::load(&config_path).map_err(|e| {
+    let cfg = AutoOptimizerConfig::load(&config_path).map_err(|e| {
         CliError::usage(anyhow::anyhow!("{}: {}", config_path.display(), e))
     })?;
     cfg.validate().map_err(CliError::usage)?;
@@ -1039,7 +1039,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
             .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
 
     // Build paper tester.
-    let paper_tester: Box<dyn xvision_engine::autoresearch::eval_adapter::PaperTestRunner> =
+    let paper_tester: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> =
         if args.mock {
             Box::new(StubPaperTester {
                 metrics: MetricsSummary {
@@ -1185,13 +1185,13 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
         Some(p) => p,
         None => {
             // Search relative to cwd first, then XDG/home fallback.
-            let default_rel = PathBuf::from("data/probes/autoresearch/replay-fixture.json");
+            let default_rel = PathBuf::from("data/probes/autooptimizer/replay-fixture.json");
             if default_rel.exists() {
                 default_rel
             } else {
                 let home = dirs::home_dir()
                     .ok_or_else(|| CliError::upstream(anyhow::anyhow!("cannot find home directory")))?;
-                home.join(".xvn/probes/autoresearch/replay-fixture.json")
+                home.join(".xvn/probes/autooptimizer/replay-fixture.json")
             }
         }
     };
@@ -1256,11 +1256,11 @@ async fn ipc_send_event(
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn load_ar_config(path: Option<&Path>) -> CliResult<AutoresearchConfig> {
+fn load_ar_config(path: Option<&Path>) -> CliResult<AutoOptimizerConfig> {
     match path {
-        Some(p) => AutoresearchConfig::load(p)
+        Some(p) => AutoOptimizerConfig::load(p)
             .map_err(|e| CliError::usage(anyhow::anyhow!("load config: {e}"))),
-        None => Ok(AutoresearchConfig::default()),
+        None => Ok(AutoOptimizerConfig::default()),
     }
 }
 
@@ -1321,7 +1321,7 @@ fn build_dispatch(mock: bool) -> CliResult<Arc<dyn LlmDispatch + Send + Sync>> {
 
 async fn propose(
     base: &Strategy,
-    cfg: &AutoresearchConfig,
+    cfg: &AutoOptimizerConfig,
     dispatch: &Arc<dyn LlmDispatch + Send + Sync>,
 ) -> anyhow::Result<MutationDiff> {
     let mutator = Mutator {

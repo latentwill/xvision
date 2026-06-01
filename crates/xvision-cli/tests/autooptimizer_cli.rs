@@ -54,7 +54,7 @@ async fn seed_observation(memory_db: &Path, id: &str, namespace: &str, source_en
 }
 
 #[tokio::test]
-async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
+async fn autooptimizer_run_creates_staged_pattern_and_inspectable_run() {
     let (dir, mem) = paths();
     assert_ok(&xvn(&["memory", "ls", "--json"], dir.path(), &mem));
     seed_observation(&mem, "ar-obs-1", "agent:AR", "2024-01-02T00:00:00Z").await;
@@ -62,7 +62,7 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
 
     let out = xvn(
         &[
-            "autoresearch",
+            "autooptimizer",
             "run",
             "--agent",
             "AR",
@@ -97,14 +97,14 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
     );
 
     let run_id = run["id"].as_str().expect("run id");
-    let out = xvn(&["autoresearch", "inspect", run_id, "--json"], dir.path(), &mem);
+    let out = xvn(&["autooptimizer", "inspect", run_id, "--json"], dir.path(), &mem);
     assert_ok(&out);
     let inspected: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse inspected json");
     assert_eq!(inspected["id"], run_id);
     assert_eq!(inspected["pattern_id"], pattern_id);
 
     let out = xvn(
-        &["autoresearch", "ls", "--agent", "AR", "--json"],
+        &["autooptimizer", "ls", "--agent", "AR", "--json"],
         dir.path(),
         &mem,
     );
@@ -116,7 +116,7 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
     // Gate using new flag names
     let out = xvn(
         &[
-            "autoresearch",
+            "autooptimizer",
             "gate",
             run_id,
             "--metric",
@@ -157,13 +157,13 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
     assert_eq!(gated["promotion_state"], "staged");
 
     // Use new 'activate' verb
-    let out = xvn(&["autoresearch", "activate", run_id, "--json"], dir.path(), &mem);
+    let out = xvn(&["autooptimizer", "activate", run_id, "--json"], dir.path(), &mem);
     assert_ok(&out);
     let activated: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse activated json");
     assert_eq!(activated["promotion_state"], "active");
 
     // Use new 'retire' verb
-    let out = xvn(&["autoresearch", "retire", run_id, "--json"], dir.path(), &mem);
+    let out = xvn(&["autooptimizer", "retire", run_id, "--json"], dir.path(), &mem);
     assert_ok(&out);
     let retired: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse retired json");
     assert_eq!(retired["promotion_state"], "demoted");
@@ -188,8 +188,8 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
     assert_eq!(status["observations"], 2);
     assert_eq!(status["staged_patterns"], 0);
     assert_eq!(status["forgotten_patterns"], 1);
-    assert_eq!(status["autoresearch_runs"], 1);
-    assert_eq!(status["latest_autoresearch_run_id"], run_id);
+    assert_eq!(status["autooptimizer_runs"], 1);
+    assert_eq!(status["latest_autooptimizer_run_id"], run_id);
 
     let out = xvn(
         &["flywheel", "velocity", "--agent", "AR", "--days", "7", "--json"],
@@ -199,19 +199,19 @@ async fn autoresearch_run_creates_staged_pattern_and_inspectable_run() {
     assert_ok(&out);
     let velocity: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse velocity json");
     assert_eq!(velocity["namespace"], "agent:AR");
-    assert_eq!(velocity["autoresearch_runs"], 1);
+    assert_eq!(velocity["autooptimizer_runs"], 1);
     assert_eq!(velocity["patterns_demoted"], 1);
 }
 
 #[tokio::test]
-async fn autoresearch_run_rejects_one_observation_cohort() {
+async fn autooptimizer_run_rejects_one_observation_cohort() {
     let (dir, mem) = paths();
     assert_ok(&xvn(&["memory", "ls", "--json"], dir.path(), &mem));
     seed_observation(&mem, "ar-single-obs", "global", "2024-01-02T00:00:00Z").await;
 
     let out = xvn(
         &[
-            "autoresearch",
+            "autooptimizer",
             "run",
             "--namespace",
             "global",
@@ -223,7 +223,7 @@ async fn autoresearch_run_rejects_one_observation_cohort() {
         dir.path(),
         &mem,
     );
-    assert!(!out.status.success(), "single-observation autoresearch must fail");
+    assert!(!out.status.success(), "single-observation autooptimizer must fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("not enough Observations"),

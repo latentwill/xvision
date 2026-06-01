@@ -213,7 +213,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch"
+        "autooptimizer"
       ]
     },
     {
@@ -225,7 +225,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "activate"
       ]
     },
@@ -239,7 +239,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "demo"
       ]
     },
@@ -252,7 +252,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "demote"
       ]
     },
@@ -268,7 +268,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "evening-cycle"
       ]
     },
@@ -297,7 +297,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "gate"
       ]
     },
@@ -307,7 +307,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help"
       ]
     },
@@ -317,7 +317,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "activate"
       ]
@@ -328,7 +328,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "demo"
       ]
@@ -339,7 +339,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "demote"
       ]
@@ -350,7 +350,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "evening-cycle"
       ]
@@ -361,7 +361,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "gate"
       ]
@@ -372,7 +372,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "help"
       ]
@@ -383,7 +383,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "inspect"
       ]
@@ -394,7 +394,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "lineage"
       ]
@@ -405,7 +405,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "lineage",
         "ls"
@@ -417,7 +417,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "lineage",
         "show"
@@ -429,7 +429,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "ls"
       ]
@@ -440,7 +440,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "mutate-once"
       ]
@@ -451,7 +451,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "promote"
       ]
@@ -462,7 +462,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "retire"
       ]
@@ -473,7 +473,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "run"
       ]
@@ -484,7 +484,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "seal"
       ]
@@ -495,7 +495,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "seal",
         "show"
@@ -507,7 +507,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "help",
         "session-init"
       ]
@@ -521,7 +521,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "inspect"
       ]
     },
@@ -533,7 +533,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "lineage"
       ]
     },
@@ -543,7 +543,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "lineage",
         "help"
       ]
@@ -554,7 +554,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "lineage",
         "help",
         "help"
@@ -566,7 +566,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "lineage",
         "help",
         "ls"
@@ -578,7 +578,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "lineage",
         "help",
         "show"
@@ -596,7 +596,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "lineage",
         "ls"
       ]
@@ -610,7 +610,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "lineage",
         "show"
       ]
@@ -628,7 +628,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "ls"
       ]
     },
@@ -649,7 +649,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "mutate-once"
       ]
     },
@@ -662,7 +662,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "promote"
       ]
     },
@@ -675,7 +675,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "retire"
       ]
     },
@@ -697,7 +697,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "run"
       ]
     },
@@ -709,7 +709,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "seal"
       ]
     },
@@ -719,7 +719,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "seal",
         "help"
       ]
@@ -730,7 +730,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "seal",
         "help",
         "help"
@@ -742,7 +742,7 @@
       "long_flags": [],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "seal",
         "help",
         "show"
@@ -757,7 +757,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "seal",
         "show"
       ]
@@ -774,7 +774,7 @@
       ],
       "mutates": false,
       "path": [
-        "autoresearch",
+        "autooptimizer",
         "session-init"
       ]
     },
@@ -968,7 +968,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
-        "--autoresearch-ipc-socket",
+        "--autooptimizer-ipc-socket",
         "--bind",
         "--help",
         "--home"
@@ -2029,7 +2029,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch"
+        "autooptimizer"
       ]
     },
     {
@@ -2039,7 +2039,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "activate"
       ]
     },
@@ -2050,7 +2050,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "demo"
       ]
     },
@@ -2061,7 +2061,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "demote"
       ]
     },
@@ -2072,7 +2072,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "evening-cycle"
       ]
     },
@@ -2083,7 +2083,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "gate"
       ]
     },
@@ -2094,7 +2094,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "inspect"
       ]
     },
@@ -2105,7 +2105,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "lineage"
       ]
     },
@@ -2116,7 +2116,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "lineage",
         "ls"
       ]
@@ -2128,7 +2128,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "lineage",
         "show"
       ]
@@ -2140,7 +2140,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "ls"
       ]
     },
@@ -2151,7 +2151,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "mutate-once"
       ]
     },
@@ -2162,7 +2162,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "promote"
       ]
     },
@@ -2173,7 +2173,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "retire"
       ]
     },
@@ -2184,7 +2184,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "run"
       ]
     },
@@ -2195,7 +2195,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "seal"
       ]
     },
@@ -2206,7 +2206,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "seal",
         "show"
       ]
@@ -2218,7 +2218,7 @@
       "mutates": false,
       "path": [
         "help",
-        "autoresearch",
+        "autooptimizer",
         "session-init"
       ]
     },
