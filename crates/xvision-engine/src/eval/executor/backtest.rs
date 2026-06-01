@@ -69,7 +69,7 @@ use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, Metri
 use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
-use crate::strategies::Strategy;
+use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
 use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
@@ -1185,6 +1185,15 @@ impl Executor {
                 // `seed_inputs` by value; cloning here is cheap relative to
                 // the LLM dispatch and keeps the repair turn deterministic
                 // for the A/B-cache pairing acceptance criterion.
+                let parsed: TraderOutput = if strategy.decision_mode == DecisionMode::Mechanistic {
+                    if store.is_terminal(&run.id).await? {
+                        finish_decision_span_error!("eval run stopped");
+                        anyhow::bail!("eval run stopped");
+                    }
+                    let cfg = strategy.mechanistic_config.as_ref()
+                        .expect("validate_strategy ensures mechanistic_config with has_rules");
+                    mechanistic_action(cfg, book.position(asset_sym), book.entry_price(asset_sym), bar.close)
+                } else {
                 let seed_for_repair = seed.clone();
                 let outs = run_pipeline(PipelineInputs {
                     strategy,
@@ -1276,7 +1285,7 @@ impl Executor {
                     }
                 };
                 let trader_model_id = trader_model_id(agent_slots, strategy);
-                let parsed = match TraderOutput::parse_response(trader, &run.id, decision_idx) {
+                match TraderOutput::parse_response(trader, &run.id, decision_idx) {
                     Ok(p) => p,
                     Err(e) => {
                         // F-5 phase 2a (`harness-recovery-malformed-json`):
@@ -1362,7 +1371,8 @@ impl Executor {
                             return Err(err.into());
                         }
                     }
-                };
+                }
+                }; // closes if decision_mode == Mechanistic { ... } else { match ... }
 
                 if store.is_terminal(&run.id).await? {
                     finish_decision_span_error!("eval run stopped");
@@ -3177,6 +3187,48 @@ pub fn classify_aggressor_side(
     AggressorSide::Taker
 }
 
+/// Apply mechanistic close policies to produce a `TraderOutput` without any LLM
+/// call. Returns `flat` when a StopLoss or TakeProfit threshold is breached;
+/// returns `hold` when flat or no policy triggers.
+fn mechanistic_action(cfg: &MechanisticConfig, position: f64, entry_price: f64, mark_price: f64) -> TraderOutput {
+    if position.abs() < f64::EPSILON || entry_price <= 0.0 {
+        return TraderOutput {
+            action: "hold".into(),
+            conviction: 0.0,
+            justification: "mechanistic: no open position".into(),
+        };
+    }
+    let pnl_pct = if position > 0.0 {
+        (mark_price - entry_price) / entry_price * 100.0
+    } else {
+        (entry_price - mark_price) / entry_price * 100.0
+    };
+    for policy in &cfg.close_policies {
+        match policy {
+            ClosePolicy::StopLoss { pct } if pnl_pct <= -*pct => {
+                return TraderOutput {
+                    action: "flat".into(),
+                    conviction: 1.0,
+                    justification: format!("mechanistic: stop-loss ({pnl_pct:.2}% <= -{pct:.2}%)"),
+                };
+            }
+            ClosePolicy::TakeProfit { pct } if pnl_pct >= *pct => {
+                return TraderOutput {
+                    action: "flat".into(),
+                    conviction: 1.0,
+                    justification: format!("mechanistic: take-profit ({pnl_pct:.2}% >= {pct:.2}%)"),
+                };
+            }
+            _ => {}
+        }
+    }
+    TraderOutput {
+        action: "hold".into(),
+        conviction: 0.0,
+        justification: "mechanistic: no close policy triggered".into(),
+    }
+}
+
 /// Find the trader slot's repair context — system prompt, model id,
 /// max_tokens, temperature — for the F-5 phase-2a MalformedJson repair
 /// path (`harness-recovery-malformed-json`). After `LLMSlot.prompt`
@@ -3759,6 +3811,8 @@ mod tests {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         }
     }
 

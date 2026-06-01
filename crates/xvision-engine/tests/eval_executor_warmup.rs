@@ -102,6 +102,8 @@ fn build_strategy(agent_id: &str) -> Strategy {
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 
