@@ -6,6 +6,7 @@ use crate::agents::Capability;
 use crate::eval::scenario::Scenario;
 use crate::strategies::agent_ref::{canonical_role, EdgePredicate};
 use crate::strategies::{PipelineKind, Strategy};
+use xvision_filters::ActivationMode;
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -121,15 +122,43 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
         }
     }
 
-    // Phase 2 (firing-filter CLI) — fold the no-Filter soft-warning
-    // into the preflight surface so the SPA validate panel and
-    // `xvn strategy validate --json` paths see it without duplicating
-    // the check. `eval_ready` is intentionally re-derived AFTER folding
-    // so a no-Filter warning prevents the green-checkmark UI.
-    result.warnings.extend(no_filter_warnings(strategy));
+    // Fold no-filter warnings into preflight. `no_filter_warnings` (topology-
+    // based) and `every_bar_warning` (activation-mode-based) address the same
+    // operator concern; emit only one to avoid near-duplicate lines.
+    let topo_warnings = no_filter_warnings(strategy);
+    if topo_warnings.is_empty() {
+        if let Some(w) = every_bar_warning(strategy) {
+            result.warnings.push(w);
+        }
+    } else {
+        result.warnings.extend(topo_warnings);
+    }
 
     result.eval_ready = result.errors.is_empty() && result.warnings.is_empty();
     result
+}
+
+/// Creation-time warning: strategy will dispatch the LLM pipeline on every bar.
+///
+/// Fires when `activation_mode == EveryBar && !acknowledge_no_filter`. Independent
+/// of agent-graph topology — this is an activation-state check, not a wiring check.
+/// Callers that already emit a topology-based warning (see `no_filter_warnings`)
+/// should suppress this one to avoid near-duplicate lines for the same concern.
+pub fn every_bar_warning(s: &Strategy) -> Option<String> {
+    if s.acknowledge_no_filter {
+        return None;
+    }
+    if s.activation_mode == ActivationMode::EveryBar {
+        Some(format!(
+            "Strategy '{}' has no filter and will activate on every bar — it runs \
+             the LLM pipeline on every candle and burns tokens. Attach a \
+             deterministic filter so it only acts on good setups. (Pass \
+             --no-filter-warning / set acknowledge_no_filter to silence.)",
+            s.manifest.display_name
+        ))
+    } else {
+        None
+    }
 }
 
 /// Phase 2 (firing-filter CLI) — no-Filter soft-warning.
@@ -579,12 +608,78 @@ mod preflight_tests {
 
     #[test]
     fn preflight_eval_ready_true_when_no_errors_and_no_warnings() {
-        let strategy = make_strategy_with_agent("ETH/USD", 240);
+        // A strategy that acknowledges the no-filter state produces no warnings,
+        // so eval_ready is true given a matching scenario.
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.acknowledge_no_filter = true;
         let scenario = make_eth_4h_scenario();
         let result = preflight_validate(&strategy, Some(&scenario));
         assert!(result.errors.is_empty());
         assert!(result.warnings.is_empty());
         assert!(result.eval_ready);
+    }
+
+    #[test]
+    fn every_bar_warning_fires_for_every_bar_without_acknowledge() {
+        let strategy = make_strategy_with_agent("ETH/USD", 240);
+        assert!(strategy.activation_mode == xvision_filters::ActivationMode::EveryBar);
+        assert!(!strategy.acknowledge_no_filter);
+        let w = every_bar_warning(&strategy);
+        assert!(w.is_some(), "expected warning for EveryBar without acknowledge");
+        let msg = w.unwrap();
+        assert!(msg.contains("burns tokens"), "warning must mention token cost");
+        assert!(msg.contains("good setups"), "warning must mention setups");
+    }
+
+    #[test]
+    fn every_bar_warning_suppressed_when_acknowledged() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.acknowledge_no_filter = true;
+        assert!(every_bar_warning(&strategy).is_none());
+    }
+
+    #[test]
+    fn every_bar_warning_suppressed_when_filter_gated() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.activation_mode = xvision_filters::ActivationMode::FilterGated;
+        assert!(every_bar_warning(&strategy).is_none());
+    }
+
+    #[test]
+    fn preflight_every_bar_warning_appears_when_no_topo_warning() {
+        // A fresh EveryBar strategy with activates:None agents gets the
+        // activation-mode warning (topology check is silent for activates:None).
+        let strategy = make_strategy_with_agent("ETH/USD", 240);
+        let result = preflight_validate(&strategy, None);
+        assert!(
+            result.warnings.iter().any(|w| w.contains("burns tokens")),
+            "expected every_bar_warning in preflight output, got: {:?}",
+            result.warnings,
+        );
+    }
+
+    #[test]
+    fn preflight_no_duplicate_warnings_when_both_checks_fire() {
+        // A strategy with an explicit Trader (activates) and no Filter edge
+        // would fire the topology check. In that case only the topology warning
+        // should appear; the every_bar_warning is suppressed to avoid duplication.
+        use crate::agents::Capability;
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        // Set activates so no_filter_warnings fires.
+        strategy.agents[0].activates = Some(Capability::Trader);
+        let result = preflight_validate(&strategy, None);
+        // Should have exactly one warning (topo-based), not two.
+        assert_eq!(
+            result.warnings.len(),
+            1,
+            "expected exactly one warning, got: {:?}",
+            result.warnings
+        );
+        assert!(
+            result.warnings[0].contains("dispatch on every bar"),
+            "expected topology-based warning, got: {}",
+            result.warnings[0]
+        );
     }
 
     #[test]

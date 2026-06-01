@@ -3022,6 +3022,7 @@ pub type AgentChatLoop = WizardLoop;
 /// Authoring/eval verbs as `ToolDefinition`s. The schemas mirror the
 /// engine's request structs but only declare the fields a model needs;
 /// optional fields are omitted from `required`.
+#[cfg(test)]
 fn wizard_tool_defs() -> Vec<ToolDefinition> {
     agent_tool_defs(AgentProfile::StrategySetup)
 }

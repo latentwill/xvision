@@ -81,6 +81,12 @@ export function StrategyReadinessPanel({
   }
 
   const d = q.data;
+  // Normalise array fields: the API contract guarantees these are always
+  // arrays, but a stale cache hit or an unexpected response shape can
+  // deliver `undefined` at runtime — guard so we never throw during render.
+  const requiredUnmet = d.required_unmet ?? [];
+  const optimizable = d.optimizable ?? [];
+  const perAgent = d.per_agent ?? [];
 
   return (
     <div
@@ -101,18 +107,18 @@ export function StrategyReadinessPanel({
           <span className="text-[13px] text-text-2">
             {d.launchable
               ? "Every required capability in this strategy's pipeline is satisfied."
-              : `${d.required_unmet.length} required capabilit${
-                  d.required_unmet.length === 1 ? "y is" : "ies are"
+              : `${requiredUnmet.length} required capabilit${
+                  requiredUnmet.length === 1 ? "y is" : "ies are"
                 } unmet — resolve them before launching.`}
           </span>
         </div>
 
-        {d.required_unmet.length > 0 ? (
+        {requiredUnmet.length > 0 ? (
           <ul
             className="mt-3 flex flex-col gap-2 m-0 p-0 list-none"
             data-testid="strategy-unmet"
           >
-            {d.required_unmet.map((u, i) => (
+            {requiredUnmet.map((u, i) => (
               <li
                 key={`${u.role}-${u.capability}-${i}`}
                 className="rounded border border-danger/30 bg-danger/5 dark:bg-danger/10 px-3 py-2"
@@ -135,15 +141,15 @@ export function StrategyReadinessPanel({
           </ul>
         ) : null}
 
-        {d.optimizable.length > 0 ? (
+        {optimizable.length > 0 ? (
           <div className="mt-3 text-[12px] text-text-3">
             Optimizable now:{" "}
-            <span className="text-text-2">{d.optimizable.join(", ")}</span>.
+            <span className="text-text-2">{optimizable.join(", ")}</span>.
           </div>
         ) : null}
       </Card>
 
-      {d.per_agent.map((a, i) => (
+      {perAgent.map((a, i) => (
         <AgentReadinessCard
           key={`${a.role}-${a.agent_id}-${i}`}
           agent={a}

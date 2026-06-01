@@ -101,6 +101,7 @@ fn main() {
          \n\
          /// `(slug, last_reviewed)` for every page. Dates are ISO-8601\n\
          /// (`YYYY-MM-DD`) and are validated in `build.rs`.\n\
+         #[cfg(test)]\n\
          pub(super) const LAST_REVIEWED: &[(&str, &str)] = &[\n{review_rows}];\n"
     );
 

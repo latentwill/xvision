@@ -32,6 +32,21 @@ function OutputBlock({ text }: { text: string }) {
 
 export function StrategyDiffRow({ row, onApprove }: ToolRowProps) {
   const verb = row.toolName === "update_manifest" ? "Update" : "Create";
+
+  let warnings: string[] = [];
+  if (row.status === "finished") {
+    try {
+      const parsed = JSON.parse(row.output) as { warnings?: unknown };
+      if (Array.isArray(parsed?.warnings)) {
+        warnings = parsed.warnings.filter(
+          (w): w is string => typeof w === "string",
+        );
+      }
+    } catch (_e) {
+      // best-effort: ignore non-JSON output
+    }
+  }
+
   return (
     <RowShell
       row={row}
@@ -47,6 +62,15 @@ export function StrategyDiffRow({ row, onApprove }: ToolRowProps) {
           </Field>
         ) : null}
       </div>
+      {warnings.map((w, i) => (
+        <div
+          key={i}
+          className="mt-1.5 flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300"
+        >
+          <span aria-hidden="true">⚠</span>
+          <span>{w}</span>
+        </div>
+      ))}
       <OutputBlock text={row.output} />
     </RowShell>
   );

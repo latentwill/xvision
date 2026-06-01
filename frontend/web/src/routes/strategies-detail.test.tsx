@@ -39,6 +39,24 @@ function buildFetchMock(state: { manifest: ManifestState }) {
     const url = typeof input === "string" ? input : input.toString();
     const method = init?.method ?? "GET";
 
+    if (url.includes("/diagnostics") && method === "GET") {
+      // StrategyReadinessPanel fetches /api/strategy/:id/diagnostics.
+      // Return a minimal launchable diagnostics payload so the panel renders
+      // without crashing. The color-picker tests don't assert on readiness
+      // content — they only need the panel to mount successfully.
+      const diagnostics = {
+        strategy_id: state.manifest.id,
+        per_agent: [],
+        required_capabilities: [],
+        required_unmet: [],
+        optimizable: [],
+        launchable: true,
+      };
+      return new Response(JSON.stringify(diagnostics), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (url.startsWith("/api/strategy/") && method === "GET") {
       return new Response(JSON.stringify(state), {
         status: 200,

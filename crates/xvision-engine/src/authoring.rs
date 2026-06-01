@@ -19,7 +19,7 @@ use crate::strategies::{
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
-    validate::{no_filter_warnings, validate_strategy},
+    validate::{every_bar_warning, no_filter_warnings, validate_strategy},
     AgentRef, PipelineDef, PipelineKind, Strategy,
 };
 use xvision_filters::{parse_json, validate as validate_filter_dsl, ActivationMode, Filter};
@@ -60,6 +60,11 @@ pub struct CreateStrategyReq {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateStrategyOut {
     pub id: String,
+    /// Informational warnings about the created strategy (e.g. no filter / every-bar
+    /// token cost). Non-empty does not block creation; suppress with
+    /// `acknowledge_no_filter`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,8 +291,9 @@ pub async fn create_blank_strategy(
         filter: None,
         acknowledge_no_filter: false,
     };
+    let warnings = every_bar_warning(&draft).map(|w| vec![w]).unwrap_or_default();
     store.save(&draft).await?;
-    Ok(CreateStrategyOut { id })
+    Ok(CreateStrategyOut { id, warnings })
 }
 
 pub async fn get_strategy(store: &dyn StrategyStore, id: &str) -> anyhow::Result<Strategy> {
@@ -851,6 +857,29 @@ mod tests {
         .expect_err("legacy template field must be rejected");
         assert!(err.to_string().contains("unknown field"));
         assert!(err.to_string().contains("template"));
+    }
+
+    #[tokio::test]
+    async fn create_strategy_warns_for_default_every_bar_draft() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "warn-test".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !out.warnings.is_empty(),
+            "default blank draft (EveryBar) must produce a creation warning"
+        );
+        assert!(
+            out.warnings[0].contains("burns tokens"),
+            "warning must mention token cost, got: {}",
+            out.warnings[0]
+        );
     }
 
     #[tokio::test]

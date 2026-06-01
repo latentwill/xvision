@@ -20,7 +20,9 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{
     strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore,
 };
-use xvision_engine::strategies::validate::{no_filter_warnings, preflight_validate, validate_strategy};
+use xvision_engine::strategies::validate::{
+    every_bar_warning, no_filter_warnings, preflight_validate, validate_strategy,
+};
 use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::{AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
@@ -763,6 +765,9 @@ async fn new(
             });
             crate::io::print_json(&out)?;
         } else {
+            if let Some(warn) = every_bar_warning(&strategy) {
+                eprintln!("warning: {warn}");
+            }
             println!("{id}");
         }
         return Ok(());
@@ -975,6 +980,9 @@ async fn new_atomic(
         let out = build_atomic_create_output(&strategy_id, &agent_id, &provider, &model, warnings);
         crate::io::print_json(&out)?;
     } else {
+        if let Some(warn) = every_bar_warning(&strategy) {
+            eprintln!("warning: {warn}");
+        }
         println!("{strategy_id}");
     }
     Ok(())
@@ -2235,7 +2243,7 @@ fn slot_to_agent_slot(
         name: "main".to_string(),
         provider,
         model,
-        system_prompt: String::new(),
+        system_prompt: migrated_slot_system_prompt(slot),
         skill_ids,
         // Auto-resolved from the model's metadata at dispatch time
         // (q15 §1). Old auto-create paths can let this stay `None` so
@@ -2251,6 +2259,22 @@ fn slot_to_agent_slot(
         capabilities: xvision_engine::agents::default_capabilities(),
         delta_briefing: None,
     }
+}
+
+fn migrated_slot_system_prompt(slot: &LLMSlot) -> String {
+    let role = slot.role.trim();
+    let role = if role.is_empty() { "strategy" } else { role };
+    let mut tools = slot.allowed_tools.clone();
+    tools.sort();
+    tools.dedup();
+    let tools = if tools.is_empty() {
+        "the configured runtime context".to_string()
+    } else {
+        tools.join(", ")
+    };
+    format!(
+        "You are the {role} agent migrated from a legacy strategy slot. Use {tools} and the supplied market context to produce a disciplined trading response for the strategy."
+    )
 }
 
 /// Resolve the `(provider, model)` pair to seed onto an auto-created
@@ -2507,6 +2531,12 @@ mod tests {
         let agent_slot = slot_to_agent_slot(&slot, Some("openrouter"), Some("deepseek/deepseek-chat"));
         assert_eq!(agent_slot.provider, "openrouter");
         assert_eq!(agent_slot.model, "deepseek/deepseek-chat");
+        assert!(
+            agent_slot
+                .system_prompt
+                .contains("migrated from a legacy strategy slot"),
+            "migrated agent slots must be saveable with a non-empty prompt"
+        );
     }
 }
 

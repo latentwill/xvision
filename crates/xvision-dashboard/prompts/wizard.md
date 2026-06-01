@@ -112,6 +112,12 @@ surface the seeded content.
   conversation.
 - When the strategy is ready to evaluate, say so explicitly and stop.
 
+## Tool calling
+
+Always call tools using the built-in tool-use mechanism your API provides. Never output raw
+XML like `<tool_call>`, `<function_calls>`, or `<parameter>` tags in your response text —
+those are not parsed and the tool will silently not execute.
+
 ## Hard rules
 
 - Never invent tools that aren't in the list above.

@@ -422,7 +422,7 @@ mod tests {
         // ApiContext::open already seeded canonical scenarios into this
         // pool; pick the first one for the run's FK + the resolver
         // tests (which need a body_json that parses as a real Scenario).
-        let scenario_id = xvision_engine::eval::canonical_scenarios()
+        let scenario_id = xvision_engine::eval::scenario_seed::canonical_seed_rows()
             .into_iter()
             .next()
             .expect("at least one canonical scenario")

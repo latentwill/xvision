@@ -75,21 +75,18 @@ function markers(payload: RunChartPayload): V2Marker[] {
     time: m.time,
     price: m.price,
     decision_index: m.decision_index,
-    text: m.justification ?? undefined,
   }));
   const vetoes: V2Marker[] = payload.markers.vetoes.map((m) => ({
     kind: "veto",
     time: m.time,
     price: m.price,
     decision_index: m.decision_index,
-    text: m.reason,
   }));
   const holds: V2Marker[] = payload.markers.holds.map((m) => ({
     kind: "hold",
     time: m.time,
     price: m.price,
     decision_index: m.decision_index,
-    text: m.conviction == null ? undefined : `conviction ${m.conviction.toFixed(2)}`,
   }));
   return [...trades, ...vetoes, ...holds].sort((a, b) => a.time - b.time);
 }
