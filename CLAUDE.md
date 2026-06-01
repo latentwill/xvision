@@ -98,7 +98,7 @@ verb form.
 
 ### Operator-facing names (autooptimizer subsurface)
 
-**Top-level name (locked 2026-06-01, autoresearcher → optimizer rename).**
+**Top-level name (locked 2026-06-01, autoresearcher → optimizer rename; landed in PR #706).**
 The subsystem formerly called the "autoresearcher" has two names:
 
 | Surface | Name |
