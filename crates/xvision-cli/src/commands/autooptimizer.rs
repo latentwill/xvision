@@ -1036,6 +1036,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
                 println!("{}", line);
             }
         },
+        None,
     )
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("run_evening_cycle: {e}")))?;
@@ -1064,6 +1065,7 @@ fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::MutationGated { .. } => "Experiment gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
         CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
+        CycleProgressEvent::CycleSealed { .. } => "Evening summary signed",
     }
 }
 
@@ -1075,6 +1077,7 @@ fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::MutationGated { .. } => "mutation_gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "honesty_check_run",
         CycleProgressEvent::JudgeFinding { .. } => "judge_finding",
+        CycleProgressEvent::CycleSealed { .. } => "cycle_sealed",
     }
 }
 
@@ -1252,7 +1255,7 @@ async fn propose(
         dispatch: Arc::clone(dispatch),
         max_retries: 2,
     };
-    mutator.propose(base, cfg).await
+    mutator.propose(base, cfg, None).await
 }
 
 fn apply_mutation_diff(mut strategy: Strategy, diff: &MutationDiff) -> Strategy {
