@@ -154,6 +154,33 @@ review branches, or Claude worktrees.
   leaving the task. Keep `/Users/edkennedy/Code/xvision/target` only when the
   user is actively preparing a local build/deploy image.
 
+### Disk hygiene (shared cargo target — check & self-clean)
+
+The shared cargo target dir has no garbage collection: `target/debug/deps`
+accumulates artifacts from every branch/profile ever built across all the
+concurrent agents and grows tens of GB until the volume fills and unrelated
+builds fail with `No space left on device`.
+
+Two guards keep it bounded:
+
+- **`incremental = false`** in `.cargo/config.toml` — stops the
+  `target/debug/incremental` dir (which has spiked to 30+ GB) from forming.
+- **`scripts/cargo-disk-guard.sh`** — checks free space and, when below the
+  threshold (`XVISION_DISK_MIN_GB`, default 12), self-cleans in tiers:
+  incremental → `cargo-sweep` artifacts >7 days old → full deps/build drop as a
+  last resort. Run it any time; it's a no-op when space is fine.
+
+**Build through the wrapper, not bare cargo**, so the guard runs first:
+
+```bash
+scripts/cargo build --workspace      # guards, then execs real cargo
+scripts/cargo test  -p xvision-engine
+scripts/cargo-disk-guard.sh --check  # report free space (exit 3 if low)
+```
+
+The `pre-commit` hook also prints a non-blocking low-space warning. None of this
+nukes source — only rebuildable artifacts.
+
 ## Docker
 
 Slim runtime image of the `xvn` CLI lives at `ghcr.io/latentwill/xvision`.

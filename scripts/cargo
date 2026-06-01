@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#
+# Disk-guarded cargo. Use this instead of bare `cargo` for builds/tests in this
+# workspace so a full target dir can't tip the disk over:
+#
+#     scripts/cargo build --workspace
+#     scripts/cargo test  -p xvision-engine
+#
+# It runs the disk guard first (frees space in tiers if low), then execs the
+# real cargo. The guard never blocks the build — if it errors, the build still
+# runs.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$here/cargo-disk-guard.sh" || true
+
+# Resolve the real cargo (avoid recursing into this wrapper if scripts/ is on PATH).
+real_cargo="${CARGO:-$HOME/.cargo/bin/cargo}"
+[ -x "$real_cargo" ] || real_cargo="$(PATH="${PATH#*$here:}" command -v cargo)"
+exec "$real_cargo" "$@"
