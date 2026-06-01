@@ -141,9 +141,9 @@ async fn ensure_phase1_columns(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn ensure_autoresearch_runs_table(pool: &SqlitePool) -> anyhow::Result<()> {
+async fn ensure_autooptimizer_runs_table(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS autoresearch_runs (\
+        "CREATE TABLE IF NOT EXISTS autooptimizer_runs (\
          id TEXT PRIMARY KEY,\
          namespace TEXT NOT NULL,\
          observation_ids_json TEXT NOT NULL,\
@@ -182,94 +182,94 @@ async fn ensure_autoresearch_runs_table(pool: &SqlitePool) -> anyhow::Result<()>
     for (name, ddl) in [
         (
             "gate_metric",
-            "ALTER TABLE autoresearch_runs ADD COLUMN gate_metric TEXT",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN gate_metric TEXT",
         ),
         (
             "baseline_score",
-            "ALTER TABLE autoresearch_runs ADD COLUMN baseline_score REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN baseline_score REAL",
         ),
         (
             "candidate_score",
-            "ALTER TABLE autoresearch_runs ADD COLUMN candidate_score REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN candidate_score REAL",
         ),
         (
             "gate_threshold",
-            "ALTER TABLE autoresearch_runs ADD COLUMN gate_threshold REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN gate_threshold REAL",
         ),
         (
             "gate_passed",
-            "ALTER TABLE autoresearch_runs ADD COLUMN gate_passed INTEGER",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN gate_passed INTEGER",
         ),
         (
             "gated_at",
-            "ALTER TABLE autoresearch_runs ADD COLUMN gated_at TEXT",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN gated_at TEXT",
         ),
         (
             "finding_text",
-            "ALTER TABLE autoresearch_runs ADD COLUMN finding_text TEXT",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN finding_text TEXT",
         ),
         (
             "finding_model",
-            "ALTER TABLE autoresearch_runs ADD COLUMN finding_model TEXT",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN finding_model TEXT",
         ),
         (
             "finding_blind",
-            "ALTER TABLE autoresearch_runs ADD COLUMN finding_blind INTEGER",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN finding_blind INTEGER",
         ),
         (
             "parent_day_score",
-            "ALTER TABLE autoresearch_runs ADD COLUMN parent_day_score REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN parent_day_score REAL",
         ),
         (
             "child_day_score",
-            "ALTER TABLE autoresearch_runs ADD COLUMN child_day_score REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN child_day_score REAL",
         ),
         (
             "parent_holdout_score",
-            "ALTER TABLE autoresearch_runs ADD COLUMN parent_holdout_score REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN parent_holdout_score REAL",
         ),
         (
             "child_holdout_score",
-            "ALTER TABLE autoresearch_runs ADD COLUMN child_holdout_score REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN child_holdout_score REAL",
         ),
         (
             "gate_epsilon",
-            "ALTER TABLE autoresearch_runs ADD COLUMN gate_epsilon REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN gate_epsilon REAL",
         ),
         (
             "delta_day",
-            "ALTER TABLE autoresearch_runs ADD COLUMN delta_day REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN delta_day REAL",
         ),
         (
             "delta_holdout",
-            "ALTER TABLE autoresearch_runs ADD COLUMN delta_holdout REAL",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN delta_holdout REAL",
         ),
         (
             "gate_verdict",
-            "ALTER TABLE autoresearch_runs ADD COLUMN gate_verdict TEXT",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN gate_verdict TEXT",
         ),
         (
             "gate_reason",
-            "ALTER TABLE autoresearch_runs ADD COLUMN gate_reason TEXT",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN gate_reason TEXT",
         ),
         (
             "qualitative_finding_json",
-            "ALTER TABLE autoresearch_runs ADD COLUMN qualitative_finding_json TEXT",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN qualitative_finding_json TEXT",
         ),
         (
             "finding_blinded_metrics",
-            "ALTER TABLE autoresearch_runs ADD COLUMN finding_blinded_metrics INTEGER",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN finding_blinded_metrics INTEGER",
         ),
         (
             "judge_model",
-            "ALTER TABLE autoresearch_runs ADD COLUMN judge_model TEXT",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN judge_model TEXT",
         ),
         (
             "judge_token_cost",
-            "ALTER TABLE autoresearch_runs ADD COLUMN judge_token_cost INTEGER",
+            "ALTER TABLE autooptimizer_runs ADD COLUMN judge_token_cost INTEGER",
         ),
     ] {
-        let exists = sqlx::query("SELECT 1 FROM pragma_table_info('autoresearch_runs') WHERE name = ?")
+        let exists = sqlx::query("SELECT 1 FROM pragma_table_info('autooptimizer_runs') WHERE name = ?")
             .bind(name)
             .fetch_optional(pool)
             .await?
@@ -279,26 +279,26 @@ async fn ensure_autoresearch_runs_table(pool: &SqlitePool) -> anyhow::Result<()>
         }
     }
     sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_namespace_created \
-         ON autoresearch_runs(namespace, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_autooptimizer_runs_namespace_created \
+         ON autooptimizer_runs(namespace, created_at)",
     )
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_pattern_id \
-         ON autoresearch_runs(pattern_id)",
+        "CREATE INDEX IF NOT EXISTS idx_autooptimizer_runs_pattern_id \
+         ON autooptimizer_runs(pattern_id)",
     )
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_gate_passed \
-         ON autoresearch_runs(gate_passed)",
+        "CREATE INDEX IF NOT EXISTS idx_autooptimizer_runs_gate_passed \
+         ON autooptimizer_runs(gate_passed)",
     )
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_gate_verdict \
-         ON autoresearch_runs(gate_verdict)",
+        "CREATE INDEX IF NOT EXISTS idx_autooptimizer_runs_gate_verdict \
+         ON autooptimizer_runs(gate_verdict)",
     )
     .execute(pool)
     .await?;
@@ -326,9 +326,9 @@ impl MemoryStore {
         ensure_phase1_columns(&pool)
             .await
             .context("memory: ensure phase1 provenance columns")?;
-        ensure_autoresearch_runs_table(&pool)
+        ensure_autooptimizer_runs_table(&pool)
             .await
-            .context("memory: ensure autoresearch runs table")?;
+            .context("memory: ensure autooptimizer runs table")?;
         Ok(Self { pool })
     }
 
@@ -343,7 +343,7 @@ impl MemoryStore {
         sqlx::migrate!("./migrations").run(&pool).await?;
         ensure_forgotten_at_column(&pool).await?;
         ensure_phase1_columns(&pool).await?;
-        ensure_autoresearch_runs_table(&pool).await?;
+        ensure_autooptimizer_runs_table(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -383,7 +383,7 @@ impl MemoryStore {
     /// Asserts:
     /// - `tier == Pattern`
     /// - `run_id`, `scenario_id`, `cycle_idx` are all `None`
-    /// - `training_window_end` may be `Some(date)` (autoresearcher)
+    /// - `training_window_end` may be `Some(date)` (autooptimizer)
     ///   or `None` (operator wisdom)
     pub async fn upsert_pattern(&self, item: &MemoryItem, embedder_id: &str) -> anyhow::Result<()> {
         if item.tier != Tier::Pattern {
@@ -398,7 +398,7 @@ impl MemoryStore {
         self.insert_item(item, embedder_id).await
     }
 
-    /// Autoresearcher Pattern retirement. Demotion is a soft-delete so
+    /// AutoOptimizer Pattern retirement. Demotion is a soft-delete so
     /// the grace-window janitor and `undo_forget` path can still restore
     /// the Pattern when an operator explicitly reverses the decision.
     pub async fn demote_pattern(&self, id: &str) -> anyhow::Result<u64> {

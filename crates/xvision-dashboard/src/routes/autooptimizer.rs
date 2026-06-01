@@ -1,4 +1,4 @@
-//! `/api/autoresearch/*` — read-only REST endpoints for the autoresearch
+//! `/api/autooptimizer/*` — read-only REST endpoints for the autooptimizer
 //! substrate (AR-3 backend).
 //!
 //! These handlers expose the lineage graph, cycle seals, mutator ladder,
@@ -8,13 +8,13 @@
 //!
 //! ## Endpoint inventory
 //!
-//! - `GET /api/autoresearch/lineage[?status=active|rejected&cycle_id=&limit=&offset=]`
-//! - `GET /api/autoresearch/lineage/:hash`
-//! - `GET /api/autoresearch/seals[?limit=&offset=]`
-//! - `GET /api/autoresearch/seals/:cycle_id`
-//! - `GET /api/autoresearch/ladder[?since=<rfc3339>]`
-//! - `GET /api/autoresearch/diversity[?cycle_id=&limit=]`
-//! - `GET /api/autoresearch/findings/:bundle_hash`
+//! - `GET /api/autooptimizer/lineage[?status=active|rejected&cycle_id=&limit=&offset=]`
+//! - `GET /api/autooptimizer/lineage/:hash`
+//! - `GET /api/autooptimizer/seals[?limit=&offset=]`
+//! - `GET /api/autooptimizer/seals/:cycle_id`
+//! - `GET /api/autooptimizer/ladder[?since=<rfc3339>]`
+//! - `GET /api/autooptimizer/diversity[?cycle_id=&limit=]`
+//! - `GET /api/autooptimizer/findings/:bundle_hash`
 //!
 //! ## Notes on `findings`
 //!
@@ -32,7 +32,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use xvision_engine::autoresearch::{
+use xvision_engine::autooptimizer::{
     judge::Finding,
     lineage::{LineageNode, LineageStatus, LineageStore},
     mutator_ladder::{compute_ladder, MutatorScore},
@@ -98,7 +98,7 @@ pub struct DiversityRow {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/autoresearch/lineage
+// GET /api/autooptimizer/lineage
 // ---------------------------------------------------------------------------
 
 pub async fn list_lineage(
@@ -172,14 +172,14 @@ pub async fn list_lineage(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/autoresearch/lineage/:hash
+// GET /api/autooptimizer/lineage/:hash
 // ---------------------------------------------------------------------------
 
 pub async fn get_lineage_node(
     Path(hash): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<LineageNode>, DashboardError> {
-    let content_hash = xvision_engine::autoresearch::ContentHash::from_hex(&hash)
+    let content_hash = xvision_engine::autooptimizer::ContentHash::from_hex(&hash)
         .map_err(|e| DashboardError::Validation {
             field: "hash".into(),
             msg: format!("invalid content hash: {e}"),
@@ -198,7 +198,7 @@ pub async fn get_lineage_node(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/autoresearch/seals
+// GET /api/autooptimizer/seals
 // ---------------------------------------------------------------------------
 
 pub async fn list_seals(
@@ -225,7 +225,7 @@ pub async fn list_seals(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/autoresearch/seals/:cycle_id
+// GET /api/autooptimizer/seals/:cycle_id
 // ---------------------------------------------------------------------------
 
 pub async fn get_seal_by_cycle(
@@ -251,7 +251,7 @@ pub async fn get_seal_by_cycle(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/autoresearch/ladder
+// GET /api/autooptimizer/ladder
 // ---------------------------------------------------------------------------
 
 pub async fn get_ladder(
@@ -278,7 +278,7 @@ pub async fn get_ladder(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/autoresearch/diversity
+// GET /api/autooptimizer/diversity
 // ---------------------------------------------------------------------------
 
 pub async fn list_diversity(
@@ -341,7 +341,7 @@ pub async fn list_diversity(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/autoresearch/findings/:bundle_hash
+// GET /api/autooptimizer/findings/:bundle_hash
 //
 // Judge Findings are produced at LLM-evaluation time and surfaced as SSE
 // progress events. They are not currently persisted to the DB or blob store.
@@ -385,7 +385,7 @@ fn row_to_lineage_node(
     row: sqlx::sqlite::SqliteRow,
 ) -> Result<LineageNode, DashboardError> {
     use sqlx::Row;
-    use xvision_engine::autoresearch::{gate::GateVerdict, ContentHash};
+    use xvision_engine::autooptimizer::{gate::GateVerdict, ContentHash};
 
     let bundle_hex: String = row
         .try_get("bundle_hash")

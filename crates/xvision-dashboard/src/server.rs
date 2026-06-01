@@ -61,12 +61,12 @@
 // 50. POST   /api/chat-rail/sessions                  chat_rail::create_session
 // 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
-// 53. POST   /api/autoresearch/run                    flywheel::autoresearch_run
+// 53. POST   /api/autooptimizer/run                    flywheel::autooptimizer_run
 // 54. POST   /api/memory/:id/activate                 memory::activate_pattern
 // 55. POST   /api/memory/:id/demote                   memory::demote_pattern
-// 56. POST   /api/autoresearch/:id/gate               flywheel::autoresearch_gate
-// 57. POST   /api/autoresearch/:id/promote            flywheel::autoresearch_promote
-// 58. POST   /api/autoresearch/:id/demote             flywheel::autoresearch_demote
+// 56. POST   /api/autooptimizer/:id/gate               flywheel::autooptimizer_gate
+// 57. POST   /api/autooptimizer/:id/promote            flywheel::autooptimizer_promote
+// 58. POST   /api/autooptimizer/:id/demote             flywheel::autooptimizer_demote
 // 59. POST   /api/optimize/memory-demos               flywheel::optimize_memory_demos
 // 60. POST   /api/optimize/memory-demos/:id/gate      flywheel::optimize_memory_demos_gate
 //
@@ -127,9 +127,9 @@
 //  R53. GET  /api/flywheel/status
 //  R54. GET  /api/flywheel/velocity
 //  R55. GET  /api/flywheel/lineage
-//  R56. GET  /api/autoresearch
-//  R57. GET  /api/autoresearch/:id
-//  R58. GET  /api/autoresearch/events    (SSE — AR-3 live cycle progress)
+//  R56. GET  /api/autooptimizer
+//  R57. GET  /api/autooptimizer/:id
+//  R58. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -154,7 +154,7 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, autoresearch as autoresearch_route, bars, charts_annotated,
+    agent_runs, agents, autooptimizer as autooptimizer_route, bars, charts_annotated,
     charts_dashboards, charts_market_context, chat_rail,
     checkpoints as checkpoints_route, cli, diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
@@ -265,47 +265,47 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/flywheel/status", get(flywheel::status))
         .route("/api/flywheel/velocity", get(flywheel::velocity))
         .route("/api/flywheel/lineage", get(flywheel::lineage))
-        .route("/api/autoresearch", get(flywheel::autoresearch_list))
+        .route("/api/autooptimizer", get(flywheel::autooptimizer_list))
         // AR-3 backend: lineage graph, cycle seals, mutator ladder, diversity, findings.
         // IMPORTANT: these static-segment routes must be registered BEFORE
-        // /api/autoresearch/:id (the flywheel memory-distillation detail route)
+        // /api/autooptimizer/:id (the flywheel memory-distillation detail route)
         // so axum's router resolves them correctly — static segments take
         // priority over parameter segments at the same path depth, but we
         // register them explicitly ahead of the catch-all to be safe.
         .route(
-            "/api/autoresearch/lineage",
-            get(autoresearch_route::list_lineage),
+            "/api/autooptimizer/lineage",
+            get(autooptimizer_route::list_lineage),
         )
         .route(
-            "/api/autoresearch/lineage/:hash",
-            get(autoresearch_route::get_lineage_node),
+            "/api/autooptimizer/lineage/:hash",
+            get(autooptimizer_route::get_lineage_node),
         )
         .route(
-            "/api/autoresearch/seals",
-            get(autoresearch_route::list_seals),
+            "/api/autooptimizer/seals",
+            get(autooptimizer_route::list_seals),
         )
         .route(
-            "/api/autoresearch/seals/:cycle_id",
-            get(autoresearch_route::get_seal_by_cycle),
+            "/api/autooptimizer/seals/:cycle_id",
+            get(autooptimizer_route::get_seal_by_cycle),
         )
         .route(
-            "/api/autoresearch/ladder",
-            get(autoresearch_route::get_ladder),
+            "/api/autooptimizer/ladder",
+            get(autooptimizer_route::get_ladder),
         )
         .route(
-            "/api/autoresearch/diversity",
-            get(autoresearch_route::list_diversity),
+            "/api/autooptimizer/diversity",
+            get(autooptimizer_route::list_diversity),
         )
         .route(
-            "/api/autoresearch/findings/:bundle_hash",
-            get(autoresearch_route::get_findings),
+            "/api/autooptimizer/findings/:bundle_hash",
+            get(autooptimizer_route::get_findings),
         )
         // Flywheel memory-distillation detail — catch-all after static AR-3 routes.
-        .route("/api/autoresearch/:id", get(flywheel::autoresearch_get))
-        // AR-3: live cycle progress stream for the dashboard autoresearch surface.
+        .route("/api/autooptimizer/:id", get(flywheel::autooptimizer_get))
+        // AR-3: live cycle progress stream for the dashboard autooptimizer surface.
         .route(
-            "/api/autoresearch/events",
-            get(crate::sse::autoresearch_sse::autoresearch_events_handler),
+            "/api/autooptimizer/events",
+            get(crate::sse::autooptimizer_sse::autooptimizer_events_handler),
         )
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
@@ -418,18 +418,18 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/memory/:id/demote", post(memory_route::demote_pattern))
         .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── Flywheel / offline self-improvement ─────────────────────────
-        .route("/api/autoresearch/run", post(flywheel::autoresearch_run))
+        .route("/api/autooptimizer/run", post(flywheel::autooptimizer_run))
         .route(
-            "/api/autoresearch/:id/gate",
-            post(flywheel::autoresearch_gate),
+            "/api/autooptimizer/:id/gate",
+            post(flywheel::autooptimizer_gate),
         )
         .route(
-            "/api/autoresearch/:id/promote",
-            post(flywheel::autoresearch_promote),
+            "/api/autooptimizer/:id/promote",
+            post(flywheel::autooptimizer_promote),
         )
         .route(
-            "/api/autoresearch/:id/demote",
-            post(flywheel::autoresearch_demote),
+            "/api/autooptimizer/:id/demote",
+            post(flywheel::autooptimizer_demote),
         )
         .route(
             "/api/optimize/memory-demos",
@@ -596,7 +596,7 @@ pub fn wrap_with_auth(router: Router, auth: AuthState) -> Router {
 pub async fn serve(
     addr: SocketAddr,
     state: AppState,
-    autoresearch_ipc_socket: Option<std::path::PathBuf>,
+    autooptimizer_ipc_socket: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     // Run dashboard-owned migrations (dashboard_sessions, auth_audit).
     state.run_dashboard_migrations().await?;
@@ -639,18 +639,18 @@ pub async fn serve(
     // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
     let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
 
-    // AR-3: start the autoresearch IPC Unix socket listener when the
-    // operator passes `--autoresearch-ipc-socket`. Evening-cycle CLI
+    // AR-3: start the autooptimizer IPC Unix socket listener when the
+    // operator passes `--autooptimizer-ipc-socket`. Evening-cycle CLI
     // clients connect and stream CycleProgressEvents; the listener
-    // broadcasts them into `state.autoresearch_tx` which feeds
-    // `GET /api/autoresearch/events` SSE.
-    if let Some(socket_path) = autoresearch_ipc_socket {
+    // broadcasts them into `state.autooptimizer_tx` which feeds
+    // `GET /api/autooptimizer/events` SSE.
+    if let Some(socket_path) = autooptimizer_ipc_socket {
         if let Err(e) =
-            crate::ipc::spawn_autoresearch_subscriber(socket_path, state.autoresearch_tx.clone())
+            crate::ipc::spawn_autooptimizer_subscriber(socket_path, state.autooptimizer_tx.clone())
         {
             tracing::warn!(
                 error = %e,
-                "could not start autoresearch IPC socket; continuing without it",
+                "could not start autooptimizer IPC socket; continuing without it",
             );
         }
     }

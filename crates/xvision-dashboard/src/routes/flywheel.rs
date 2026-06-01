@@ -12,9 +12,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::{
-    autoresearch::{
-        self, AutoresearchGateRequest, AutoresearchRunDto, AutoresearchRunListRequest,
-        AutoresearchRunListResponse, AutoresearchRunRequest,
+    autooptimizer::{
+        self, AutoOptimizerGateRequest, AutoOptimizerRunDto, AutoOptimizerRunListRequest,
+        AutoOptimizerRunListResponse, AutoOptimizerRunRequest,
     },
     flywheel::{
         self, FlywheelLineageDto, FlywheelLineageRequest, FlywheelStatusDto, FlywheelStatusRequest,
@@ -50,15 +50,15 @@ pub struct FlywheelLineageQuery {
 }
 
 #[derive(Deserialize, Default)]
-pub struct AutoresearchRunListQuery {
+pub struct AutoOptimizerRunListQuery {
     pub namespace: Option<String>,
     pub agent: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
 
-impl From<AutoresearchRunListQuery> for AutoresearchRunListRequest {
-    fn from(q: AutoresearchRunListQuery) -> Self {
+impl From<AutoOptimizerRunListQuery> for AutoOptimizerRunListRequest {
+    fn from(q: AutoOptimizerRunListQuery) -> Self {
         Self {
             namespace: q.namespace,
             agent: q.agent,
@@ -99,7 +99,7 @@ impl From<FlywheelLineageQuery> for FlywheelLineageRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AutoresearchRunHttpRequest {
+pub struct AutoOptimizerRunHttpRequest {
     #[serde(default)]
     pub namespace: Option<String>,
     #[serde(default)]
@@ -127,8 +127,8 @@ fn default_dashboard_embedder_id() -> String {
     "dashboard:provided".to_string()
 }
 
-impl From<AutoresearchRunHttpRequest> for AutoresearchRunRequest {
-    fn from(req: AutoresearchRunHttpRequest) -> Self {
+impl From<AutoOptimizerRunHttpRequest> for AutoOptimizerRunRequest {
+    fn from(req: AutoOptimizerRunHttpRequest) -> Self {
         Self {
             namespace: req.namespace,
             agent: req.agent,
@@ -170,61 +170,61 @@ pub async fn lineage(
     Ok(Json(resp))
 }
 
-pub async fn autoresearch_run(
+pub async fn autooptimizer_run(
     State(_state): State<AppState>,
-    Json(body): Json<AutoresearchRunHttpRequest>,
-) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+    Json(body): Json<AutoOptimizerRunHttpRequest>,
+) -> Result<Json<AutoOptimizerRunDto>, DashboardError> {
     let store = memory_route::resolve_store().await?;
     let embedder_id = body.embedder_id.clone();
     let embedding = body.embedding.clone();
     let req = body.into();
-    let resp = autoresearch::run_memory_distillation(&store, &embedder_id, embedding, req).await?;
+    let resp = autooptimizer::run_memory_distillation(&store, &embedder_id, embedding, req).await?;
     Ok(Json(resp))
 }
 
-pub async fn autoresearch_get(
+pub async fn autooptimizer_get(
     Path(id): Path<String>,
     State(_state): State<AppState>,
-) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+) -> Result<Json<AutoOptimizerRunDto>, DashboardError> {
     let store = memory_route::resolve_store().await?;
-    let resp = autoresearch::inspect_run(&store, &id).await?;
+    let resp = autooptimizer::inspect_run(&store, &id).await?;
     Ok(Json(resp))
 }
 
-pub async fn autoresearch_list(
-    Query(q): Query<AutoresearchRunListQuery>,
+pub async fn autooptimizer_list(
+    Query(q): Query<AutoOptimizerRunListQuery>,
     State(_state): State<AppState>,
-) -> Result<Json<AutoresearchRunListResponse>, DashboardError> {
+) -> Result<Json<AutoOptimizerRunListResponse>, DashboardError> {
     let store = memory_route::resolve_store().await?;
-    let resp = autoresearch::list_runs(&store, q.into()).await?;
+    let resp = autooptimizer::list_runs(&store, q.into()).await?;
     Ok(Json(resp))
 }
 
-pub async fn autoresearch_promote(
+pub async fn autooptimizer_promote(
     Path(id): Path<String>,
     State(_state): State<AppState>,
-) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+) -> Result<Json<AutoOptimizerRunDto>, DashboardError> {
     let store = memory_route::resolve_store().await?;
-    let resp = autoresearch::promote_run(&store, &id).await?;
+    let resp = autooptimizer::promote_run(&store, &id).await?;
     Ok(Json(resp))
 }
 
-pub async fn autoresearch_gate(
+pub async fn autooptimizer_gate(
     Path(id): Path<String>,
     State(_state): State<AppState>,
-    Json(body): Json<AutoresearchGateRequest>,
-) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+    Json(body): Json<AutoOptimizerGateRequest>,
+) -> Result<Json<AutoOptimizerRunDto>, DashboardError> {
     let store = memory_route::resolve_store().await?;
-    let resp = autoresearch::gate_run(&store, &id, body).await?;
+    let resp = autooptimizer::gate_run(&store, &id, body).await?;
     Ok(Json(resp))
 }
 
-pub async fn autoresearch_demote(
+pub async fn autooptimizer_demote(
     Path(id): Path<String>,
     State(_state): State<AppState>,
-) -> Result<Json<AutoresearchRunDto>, DashboardError> {
+) -> Result<Json<AutoOptimizerRunDto>, DashboardError> {
     let store = memory_route::resolve_store().await?;
-    let resp = autoresearch::demote_run(&store, &id).await?;
+    let resp = autooptimizer::demote_run(&store, &id).await?;
     Ok(Json(resp))
 }
 
