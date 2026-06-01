@@ -123,13 +123,6 @@ function DiffInspectorContent({ hash }: { hash: string }) {
               </MetaRow>
             )}
 
-            {node.diff_hash && (
-              <MetaRow label="Diff hash">
-                <span className="font-mono text-[12px] text-text break-all">
-                  {node.diff_hash}
-                </span>
-              </MetaRow>
-            )}
           </div>
         </div>
       </Card>

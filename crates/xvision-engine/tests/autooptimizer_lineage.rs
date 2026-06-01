@@ -14,13 +14,11 @@ async fn fresh_store() -> LineageStore {
         "CREATE TABLE lineage_nodes (
             bundle_hash TEXT PRIMARY KEY,
             parent_hash TEXT REFERENCES lineage_nodes(bundle_hash),
-            diff_hash TEXT,
-            metrics_day_hash TEXT,
-            metrics_untouched_hash TEXT,
             gate_verdict TEXT NOT NULL,
             status TEXT NOT NULL,
             cycle_id TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            diversity_score REAL
         )",
     )
     .execute(&pool)
@@ -33,13 +31,11 @@ fn make_node(seed: &[u8], parent: Option<ContentHash>, status: LineageStatus, cy
     LineageNode {
         bundle_hash: ContentHash::of_bytes(seed),
         parent_hash: parent,
-        diff_hash: None,
-        metrics_day_hash: None,
-        metrics_untouched_hash: None,
         gate_verdict: GateVerdict::Pass,
         status,
         cycle_id: Some(cycle.to_string()),
         created_at: Utc.with_ymd_and_hms(2026, 5, 29, 12, 0, 0).unwrap(),
+        diversity_score: None,
     }
 }
 
@@ -49,23 +45,18 @@ async fn insert_get_round_trip() {
     let node = LineageNode {
         bundle_hash: ContentHash::of_bytes(b"node-a"),
         parent_hash: None,
-        diff_hash: Some(ContentHash::of_bytes(b"diff")),
-        metrics_day_hash: Some(ContentHash::of_bytes(b"mday")),
-        metrics_untouched_hash: Some(ContentHash::of_bytes(b"muntouched")),
         gate_verdict: GateVerdict::Fail {
             reason: "test rejection".into(),
         },
         status: LineageStatus::Rejected,
         cycle_id: Some("cycle-x".into()),
         created_at: Utc.with_ymd_and_hms(2026, 5, 29, 10, 0, 0).unwrap(),
+        diversity_score: None,
     };
     store.insert(&node).await.unwrap();
     let back = store.get(&node.bundle_hash).await.unwrap().unwrap();
     assert_eq!(back.bundle_hash, node.bundle_hash);
     assert_eq!(back.parent_hash, None);
-    assert_eq!(back.diff_hash, node.diff_hash);
-    assert_eq!(back.metrics_day_hash, node.metrics_day_hash);
-    assert_eq!(back.metrics_untouched_hash, node.metrics_untouched_hash);
     assert!(matches!(back.gate_verdict, GateVerdict::Fail { .. }));
     assert_eq!(back.status, LineageStatus::Rejected);
     assert_eq!(back.cycle_id.as_deref(), Some("cycle-x"));
@@ -109,7 +100,6 @@ async fn active_leaves_excludes_nodes_with_active_descendant() {
     assert_eq!(leaves.len(), 1);
     assert_eq!(leaves[0].bundle_hash, c.bundle_hash);
 
-    // Replace c with a rejected version; b becomes the leaf.
     let c_rejected = LineageNode {
         status: LineageStatus::Rejected,
         ..c
@@ -118,49 +108,6 @@ async fn active_leaves_excludes_nodes_with_active_descendant() {
     let leaves2 = store.active_leaves().await.unwrap();
     assert_eq!(leaves2.len(), 1);
     assert_eq!(leaves2[0].bundle_hash, b.bundle_hash);
-}
-
-#[tokio::test]
-async fn merkle_root_is_deterministic_across_insert_order() {
-    let cycle = "det-cycle";
-    let nodes = [
-        make_node(b"n1", None, LineageStatus::Active, cycle),
-        make_node(b"n2", None, LineageStatus::Active, cycle),
-        make_node(b"n3", None, LineageStatus::Active, cycle),
-    ];
-
-    let store_a = fresh_store().await;
-    store_a.insert(&nodes[0]).await.unwrap();
-    store_a.insert(&nodes[1]).await.unwrap();
-    store_a.insert(&nodes[2]).await.unwrap();
-
-    let store_b = fresh_store().await;
-    store_b.insert(&nodes[2]).await.unwrap();
-    store_b.insert(&nodes[0]).await.unwrap();
-    store_b.insert(&nodes[1]).await.unwrap();
-
-    let root_a = store_a.merkle_root_for_cycle(cycle).await.unwrap();
-    let root_b = store_b.merkle_root_for_cycle(cycle).await.unwrap();
-    assert_eq!(root_a, root_b, "merkle root must be independent of insert order");
-}
-
-#[tokio::test]
-async fn merkle_root_changes_when_node_content_changes() {
-    let store = fresh_store().await;
-    let cycle = "change-cycle";
-    let node = make_node(b"mutable", None, LineageStatus::Active, cycle);
-    store.insert(&node).await.unwrap();
-    let root1 = store.merkle_root_for_cycle(cycle).await.unwrap();
-
-    let modified = LineageNode {
-        gate_verdict: GateVerdict::Fail {
-            reason: "changed verdict".into(),
-        },
-        ..node
-    };
-    store.insert(&modified).await.unwrap();
-    let root2 = store.merkle_root_for_cycle(cycle).await.unwrap();
-    assert_ne!(root1, root2, "changing gate_verdict must change the merkle root");
 }
 
 #[tokio::test]
@@ -196,28 +143,4 @@ async fn active_leaves_excludes_all_rejected_nodes() {
     store.insert(&r2).await.unwrap();
     let leaves = store.active_leaves().await.unwrap();
     assert!(leaves.is_empty(), "all-rejected store must have no active leaves");
-}
-
-#[tokio::test]
-async fn merkle_root_for_empty_cycle_returns_hash_of_empty_bytes() {
-    let store = fresh_store().await;
-    let expected = xvision_engine::autooptimizer::content_hash::ContentHash::of_bytes(b"");
-    let root = store.merkle_root_for_cycle("no-such-cycle").await.unwrap();
-    assert_eq!(root, expected, "empty cycle must return hash of empty bytes");
-}
-
-#[tokio::test]
-async fn merkle_root_single_node_equals_leaf_hash() {
-    let store = fresh_store().await;
-    let cycle = "single-node";
-    let node = make_node(b"only", None, LineageStatus::Active, cycle);
-    store.insert(&node).await.unwrap();
-    let root = store.merkle_root_for_cycle(cycle).await.unwrap();
-    // Root of a single-node tree equals the leaf hash (no interior hashing).
-    // Fetch back the node and recompute the leaf hash to verify.
-    let back = store.get(&node.bundle_hash).await.unwrap().unwrap();
-    assert_eq!(back.bundle_hash, node.bundle_hash);
-    // The root must be deterministic and stable (a second call returns the same value).
-    let root2 = store.merkle_root_for_cycle(cycle).await.unwrap();
-    assert_eq!(root, root2, "single-node root must be stable across calls");
 }

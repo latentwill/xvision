@@ -332,7 +332,6 @@ mod tests {
             flywheel_cycle_id: None,
             decision_id,
             namespace: ns.to_string(),
-            flywheel_cycle_id: None,
             items: ids
                 .iter()
                 .map(|id| MemoryRecallItem {

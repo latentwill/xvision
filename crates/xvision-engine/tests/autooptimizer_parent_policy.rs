@@ -15,13 +15,11 @@ async fn fresh_store() -> LineageStore {
         "CREATE TABLE lineage_nodes (
             bundle_hash TEXT PRIMARY KEY,
             parent_hash TEXT,
-            diff_hash TEXT,
-            metrics_day_hash TEXT,
-            metrics_untouched_hash TEXT,
             gate_verdict TEXT NOT NULL,
             status TEXT NOT NULL,
             cycle_id TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            diversity_score REAL
         )",
     )
     .execute(&pool)
@@ -34,13 +32,11 @@ fn make_active_node_at(seed: &[u8], minute: u32) -> LineageNode {
     LineageNode {
         bundle_hash: ContentHash::of_bytes(seed),
         parent_hash: None,
-        diff_hash: None,
-        metrics_day_hash: None,
-        metrics_untouched_hash: None,
         gate_verdict: GateVerdict::Pass,
         status: LineageStatus::Active,
         cycle_id: Some("test-cycle".to_string()),
         created_at: Utc.with_ymd_and_hms(2026, 5, 29, 12, minute, 0).unwrap(),
+        diversity_score: None,
     }
 }
 
