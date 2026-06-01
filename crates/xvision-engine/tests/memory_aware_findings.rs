@@ -73,6 +73,7 @@ fn recall_event(
 ) -> MemoryRecallEvent {
     MemoryRecallEvent {
         run_id: run_id.to_string(),
+        flywheel_cycle_id: None,
         decision_id,
         namespace: namespace.to_string(),
         items: items

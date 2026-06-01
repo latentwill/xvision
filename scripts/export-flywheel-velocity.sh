@@ -46,7 +46,7 @@ print(f"- since: `{d['since']}`")
 print(f"- observations captured: `{d['observations_captured']}`")
 print(f"- patterns promoted: `{d['patterns_promoted']}`")
 print(f"- patterns demoted: `{d['patterns_demoted']}`")
-print(f"- autoresearch runs: `{d['autoresearch_runs']}`")
+print(f"- autooptimizer runs: `{d['autooptimizer_runs']}`")
 print(f"- optimized child agents: `{d['optimized_child_agents']}`")
 print(f"- average lineage depth: `{d['average_lineage_depth']:.2f}`")
 if d.get("latest_activity_at"):

@@ -96,15 +96,15 @@ The `xvn strategy` CLI verb manages strategy bundles and is NOT renamed.
 The `xvn setup` CLI verb (config init) is NOT renamed — it remains the
 verb form.
 
-### Operator-facing names (autoresearcher subsurface)
+### Operator-facing names (autooptimizer subsurface)
 
-The autoresearcher, memory, and flywheel surfaces follow a two-name
+The autooptimizer, memory, and flywheel surfaces follow a two-name
 convention: developer-surface names (in Rust types, SQLite columns,
 spec docs, API field names) stay precise and technical, while
 operator-surface names (in CLI flags and help text, UI labels, SSE
 display labels, MANUAL.md, dashboard wiki) are plain-language. The
 two-name pairs are locked at
-`docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`.
+`docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`.
 
 Examples: `Mutation` → "Experiment"; `Mutator` → "Experiment writer";
 `LineageStatus::Ghost` → "Rejected"; `LineageStatus::Quarantined` →

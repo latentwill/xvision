@@ -4,8 +4,8 @@ set -euo pipefail
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  scripts/smoke-autoresearch-distill.sh --agent <id> --pattern-text <text> --embedding-json '[1.0,0.0]' [options]
-  scripts/smoke-autoresearch-distill.sh --namespace <ns> --pattern-text <text> --embedding-json '[1.0,0.0]' [options]
+  scripts/smoke-autooptimizer-distill.sh --agent <id> --pattern-text <text> --embedding-json '[1.0,0.0]' [options]
+  scripts/smoke-autooptimizer-distill.sh --namespace <ns> --pattern-text <text> --embedding-json '[1.0,0.0]' [options]
 
 Options:
   --scenario <id>          Filter source Observations by scenario_id.
@@ -15,8 +15,8 @@ Options:
   --active                 Create an immediately recall-active Pattern.
   --output <path>          Write the smoke report to this path.
 
-Runs `xvn autoresearch run --json`, reads the run back with
-`xvn autoresearch inspect --json`, then records namespace-level flywheel
+Runs `xvn autooptimizer run --json`, reads the run back with
+`xvn autooptimizer inspect --json`, then records namespace-level flywheel
 status with `xvn flywheel status --json`.
 USAGE
 }
@@ -76,7 +76,7 @@ if [[ ${#scope_args[@]} -ne 2 || -z "$pattern_text" || -z "$embedding_json" ]]; 
   exit 2
 fi
 
-run_json="$(xvn autoresearch run "${run_args[@]}" \
+run_json="$(xvn autooptimizer run "${run_args[@]}" \
   --pattern-text "$pattern_text" \
   --embedding-json "$embedding_json" \
   --json)"
@@ -89,7 +89,7 @@ print(json.loads(os.environ["JSON"])["id"])
 PY
 )"
 
-inspect_json="$(xvn autoresearch inspect "$run_id" --json)"
+inspect_json="$(xvn autooptimizer inspect "$run_id" --json)"
 status_json="$(xvn flywheel status "${scope_args[@]}" --json)"
 
 report="$(
@@ -102,7 +102,7 @@ inspect = json.loads(os.environ["INSPECT_JSON"])
 status = json.loads(os.environ["STATUS_JSON"])
 obs = inspect.get("observation_ids") or []
 
-print("# Autoresearch Distill Smoke")
+print("# AutoOptimizer Distill Smoke")
 print()
 print(f"- run: `{inspect['id']}`")
 print(f"- namespace: `{inspect['namespace']}`")
@@ -117,9 +117,9 @@ print()
 print(f"- observations: `{status['observations']}`")
 print(f"- active patterns: `{status['active_patterns']}`")
 print(f"- staged patterns: `{status['staged_patterns']}`")
-print(f"- autoresearch runs: `{status['autoresearch_runs']}`")
-if status.get("latest_autoresearch_run_id"):
-    print(f"- latest autoresearch run: `{status['latest_autoresearch_run_id']}`")
+print(f"- autooptimizer runs: `{status['autooptimizer_runs']}`")
+if status.get("latest_autooptimizer_run_id"):
+    print(f"- latest autooptimizer run: `{status['latest_autooptimizer_run_id']}`")
 if run.get("error"):
     print()
     print("## Error")

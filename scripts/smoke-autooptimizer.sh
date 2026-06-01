@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# smoke-autoresearch.sh — end-to-end autoresearcher smoke test
+# smoke-autooptimizer.sh — end-to-end autooptimizer smoke test
 #
 # Verifies: session-init -> evening-cycle --mock -> demo replay ->
-#           banned-term grep on autoresearch/memory/flywheel --help output.
+#           banned-term grep on autooptimizer/memory/flywheel --help output.
 #
 # Requires: compiled xvn binary in PATH or $XVN_BIN
-# Usage:    ./scripts/smoke-autoresearch.sh [--xvn-bin <path>]
+# Usage:    ./scripts/smoke-autooptimizer.sh [--xvn-bin <path>]
 #
 # Exit codes: 0 = all checks passed, 1 = at least one check failed.
 set -euo pipefail
@@ -37,7 +37,7 @@ done
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "=== Autoresearcher smoke test ==="
+echo "=== AutoOptimizer smoke test ==="
 echo "Using binary: $XVN"
 echo "Working dir:  $WORK"
 echo ""
@@ -50,7 +50,7 @@ check_banned_terms() {
   local surface="$1"
   local help_text="$2"
   local failed=0
-  # Banned operator-surface terms (see docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md)
+  # Banned operator-surface terms (see docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md)
   local banned=(promote demote epsilon holdout mutation mutator ghost quarantined merkle)
   for term in "${banned[@]}"; do
     if echo "$help_text" | grep -qiw "$term"; then
@@ -61,9 +61,9 @@ check_banned_terms() {
   return $failed
 }
 
-# ── write autoresearch.toml ───────────────────────────────────────────────────
+# ── write autooptimizer.toml ───────────────────────────────────────────────────
 
-CONFIG="$WORK/autoresearch.toml"
+CONFIG="$WORK/autooptimizer.toml"
 cat > "$CONFIG" <<'TOML'
 min_improvement = 0.1
 
@@ -83,11 +83,11 @@ TOML
 
 # ── 1. session-init ───────────────────────────────────────────────────────────
 
-echo "--- xvn autoresearch session-init ---"
+echo "--- xvn autooptimizer session-init ---"
 SESSION_JSON="$WORK/session.json"
 KEY_PATH="$WORK/operator.ed25519"
 
-"$XVN" autoresearch session-init \
+"$XVN" autooptimizer session-init \
   --config "$CONFIG" \
   --out    "$SESSION_JSON" \
   --key-path "$KEY_PATH"
@@ -101,8 +101,8 @@ echo "session_id: $SESSION_ID"
 
 DB="$WORK/lineage.db"
 
-echo "--- xvn autoresearch evening-cycle --mock ---"
-"$XVN" autoresearch evening-cycle \
+echo "--- xvn autooptimizer evening-cycle --mock ---"
+"$XVN" autooptimizer evening-cycle \
   --session-id "$SESSION_ID" \
   --config "$CONFIG" \
   --db "$DB" \
@@ -129,20 +129,20 @@ echo "Cycle seals (evening summaries) in DB: $CYCLE_SEAL_COUNT"
 
 # ── 4. demo replay ───────────────────────────────────────────────────────────
 
-echo "--- xvn autoresearch demo ---"
-"$XVN" autoresearch demo \
-  --fixture "$REPO_ROOT/data/probes/autoresearch/replay-fixture.json" \
+echo "--- xvn autooptimizer demo ---"
+"$XVN" autooptimizer demo \
+  --fixture "$REPO_ROOT/data/probes/autooptimizer/replay-fixture.json" \
   >/dev/null
 
 # ── 5. Banned-term grep on CLI help ──────────────────────────────────────────
 
-echo "--- Banned-term check (autoresearch/memory/flywheel --help) ---"
+echo "--- Banned-term check (autooptimizer/memory/flywheel --help) ---"
 
 OVERALL_BANNED_FAIL=0
 set +e
 
-AR_HELP="$("$XVN" autoresearch --help 2>&1; true)"
-check_banned_terms "autoresearch" "$AR_HELP" || OVERALL_BANNED_FAIL=1
+AR_HELP="$("$XVN" autooptimizer --help 2>&1; true)"
+check_banned_terms "autooptimizer" "$AR_HELP" || OVERALL_BANNED_FAIL=1
 
 MEM_HELP="$("$XVN" memory --help 2>&1; true)"
 check_banned_terms "memory" "$MEM_HELP" || OVERALL_BANNED_FAIL=1

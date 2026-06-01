@@ -14,7 +14,7 @@ and fork lineage as first-class on-chain artifacts.
 
 The hackathon claim is narrower than the long-term thesis. We are not yet
 claiming the loom can self-improve indefinitely (that's the deferred
-Karpathy autoresearch direction). The hackathon claim is:
+Karpathy autooptimizer direction). The hackathon claim is:
 
 > On a fixed set of trading setups, a population of N strategies (classical
 > TA + onchain + LLM-driven) evaluated through the loom produces an
@@ -396,7 +396,7 @@ The on-chain artifacts are hashes, commitments, and the tiny per-trade strategy 
 
 ## 9. Eval framework
 
-The eval framework is the most important non-obvious piece of this project. Without it, strategy comparisons cannot be measured and the Karpathy autoresearch loop has nothing to learn from.
+The eval framework is the most important non-obvious piece of this project. Without it, strategy comparisons cannot be measured and the Karpathy autooptimizer loop has nothing to learn from.
 
 ### 9.1 Backtest harness
 
@@ -563,7 +563,7 @@ The workspace structure makes the contract layer load-bearing: each crate's publ
 
 Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 
-- Karpathy autoresearch loop (LLM-proposed strategy mutations from per-strategy trade ledgers)
+- Karpathy autooptimizer loop (LLM-proposed strategy mutations from per-strategy trade ledgers)
 - **Capital bridge** (`@mantleio/sdk` ETH↔Mantle): explicitly out of scope. Funds are pre-positioned on Mantle by the user; the agent only ever sees on-Mantle balances and never executes a bridge transaction itself.
 - Options Greeks, derivatives strategy
 - Multi-model evaluation tournament
@@ -595,7 +595,7 @@ For the record, the following were debated and decided:
 | Backtest or forward paper? | **Backtest first** for population statistics; forward paper for deployment validation. |
 | Telemetry backend (v2)? | **Self-hosted Langfuse** as primary, OpenTelemetry GenAI conventions throughout. **v1 ships SQLite flight recorder + `tracing` console only**; full OTel/Langfuse deferred to v2. |
 | On-chain executor? | **Orderly Network on Mantle** remains the accepted live-perps direction in ADR 0006, and `xvision-execution::OrderlyExecutor` exists. The default eval/operator loop is currently backtest or Alpaca paper; Orderly broker-surface UX and ERC-8004 posting stay follow-on wiring. |
-| Anti-overfit gate? | **Reportable, not blocking, in v1.** v1 surfaces a named verdict (PassesBothRegimes / SingleRegimeEvidence / Fails) in the report. The gate re-tightens to blocking when any automated optimizer over strategies ships (Karpathy autoresearch v2). |
+| Anti-overfit gate? | **Reportable, not blocking, in v1.** v1 surfaces a named verdict (PassesBothRegimes / SingleRegimeEvidence / Fails) in the report. The gate re-tightens to blocking when any automated optimizer over strategies ships (Karpathy autooptimizer v2). |
 
 ---
 

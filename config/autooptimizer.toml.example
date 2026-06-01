@@ -1,5 +1,5 @@
-# Autoresearch configuration for xvn.
-# Copy to ~/.xvn/autoresearch.toml and edit before running `xvn autoresearch run`.
+# AutoOptimizer configuration for xvn.
+# Copy to ~/.xvn/autooptimizer.toml and edit before running `xvn autooptimizer run`.
 # All settings are locked in at session start — changes take effect on the next run.
 
 # Minimum improvement a candidate must beat the baseline by to be accepted.
