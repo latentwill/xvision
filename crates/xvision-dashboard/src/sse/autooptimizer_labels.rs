@@ -27,7 +27,6 @@ pub fn display_label(event: &CycleProgressEvent) -> &'static str {
         MutationGated { passed: false, .. } => "Experiment dropped",
         HonestyCheckRun { .. } => "Honesty check result",
         JudgeFinding { .. } => "Reviewer finished notes",
-        CycleSealed { .. } => "Evening summary signed",
     }
 }
 
@@ -45,7 +44,6 @@ pub fn event_kind(event: &CycleProgressEvent) -> &'static str {
         MutationGated { passed: false, .. } => "mutation_gated_dropped",
         HonestyCheckRun { .. } => "honesty_check_run",
         JudgeFinding { .. } => "judge_finding",
-        CycleSealed { .. } => "cycle_sealed",
     }
 }
 

@@ -40,11 +40,6 @@ pub enum AutoOptimizerEvent {
         cycle_id: String,
         value: f64,
     },
-    CycleSealed {
-        cycle_id: String,
-        seal_blob_hash: String,
-        merkle_root: String,
-    },
 }
 
 /// Per-cycle orchestrator progress events. Operator-surface labels follow the
@@ -72,11 +67,5 @@ pub enum CycleProgressEvent {
         child_hash: String,
         severity: String,
         code: String,
-    },
-    /// Fired once the evening summary is signed. Operator label: "Evening summary signed".
-    CycleSealed {
-        cycle_id: String,
-        merkle_root: String,
-        node_count: usize,
     },
 }
