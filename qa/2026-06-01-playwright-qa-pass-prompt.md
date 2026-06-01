@@ -103,7 +103,7 @@ prompt was written.
 | 4 | **Scenarios** | `/scenarios`, `/scenarios/new`, `/scenarios/:id` |
 | 5 | **Eval & agent runs** | `/eval-runs`, `/eval-runs/:runId`, `/eval-runs/compare`, `/agent-runs/:runId` |
 | 6 | **Marketplace** | `/marketplace`, `/marketplace/leaderboard`, `/marketplace/leaderboard/:sliceId`, `/marketplace/lineage/:name`, `/marketplace/creator/:handleOrAddr`, `/marketplace/sell`, `/marketplace/receipts/:tx` |
-| 7 | **Autoresearch** | `/autoresearch`, `/autoresearch/diff/:hash` |
+| 7 | **Optimizer** | `/autooptimizer`, `/autooptimizer/diff/:hash` |
 | 8 | **Settings & docs** | `/settings/general`, `/settings/providers`, `/settings/brokers`, `/settings/danger`, `/docs` |
 | 9 | **Charts (production)** | `/charts/overview`, `/charts/compare`, `/charts/annotated`, `/charts/hero` |
 | 10 | **Chart-lab (devtool — lower priority)** | `/chart-lab/*` (overview, primitives, surfaces, tokens, dashboards/*) |

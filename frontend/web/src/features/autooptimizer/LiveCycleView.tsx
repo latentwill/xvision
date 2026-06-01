@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { type CycleProgressEvent, formatEventLabel } from "./api";
+import { getStoredJudgeModel, getStoredMutatorModel } from "./preferences";
 
 type EventRow = CycleProgressEvent & { _row_id: number };
 
@@ -23,11 +24,10 @@ function LaunchStrip() {
     setIsRunning(true);
     setLaunchError(null);
     const mutatorModel =
-      localStorage.getItem("ar_mutator_model") ?? "claude-haiku-4-5-20251001";
-    const judgeModel =
-      localStorage.getItem("ar_judge_model") ?? "claude-sonnet-4-6";
+      getStoredMutatorModel() ?? "claude-haiku-4-5-20251001";
+    const judgeModel = getStoredJudgeModel() ?? "claude-sonnet-4-6";
     try {
-      const resp = await fetch("/api/autoresearch/evening-cycle", {
+      const resp = await fetch("/api/autooptimizer/evening-cycle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
