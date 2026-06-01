@@ -2,7 +2,7 @@
 //
 // Scope: `namespace = "global"`. This is the operator's primary entry
 // point for seeding cross-agent operator wisdom (Patterns) and
-// reviewing autoresearcher-emitted global Observations.
+// reviewing autooptimizer-emitted global Observations.
 //
 // Sibling-page to `/agents/<id>` Memory tab: the per-agent tab is the
 // only place to manage `agent:<id>` namespaces; this page is the only

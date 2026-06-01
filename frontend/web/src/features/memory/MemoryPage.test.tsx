@@ -49,13 +49,13 @@ vi.mock("@/api/flywheel", async () => {
     getFlywheelStatus: vi.fn(),
     getFlywheelVelocity: vi.fn(),
     getFlywheelLineage: vi.fn(),
-    listAutoresearchRuns: vi.fn(),
-    runAutoresearch: vi.fn(),
-    getAutoresearchRun: vi.fn(),
-    gateAutoresearchRun: vi.fn(),
+    listAutoOptimizerRuns: vi.fn(),
+    runAutoOptimizer: vi.fn(),
+    getAutoOptimizerRun: vi.fn(),
+    gateAutoOptimizerRun: vi.fn(),
     gateOptimization: vi.fn(),
-    promoteAutoresearchRun: vi.fn(),
-    demoteAutoresearchRun: vi.fn(),
+    promoteAutoOptimizerRun: vi.fn(),
+    demoteAutoOptimizerRun: vi.fn(),
     optimizeMemoryDemos: vi.fn(),
   };
 });
@@ -120,9 +120,9 @@ beforeEach(() => {
     active_patterns: 1,
     staged_patterns: 0,
     forgotten_patterns: 0,
-    autoresearch_runs: 1,
-    latest_autoresearch_run_id: "ar-1",
-    latest_autoresearch_created_at: "2026-05-21T12:00:00Z",
+    autooptimizer_runs: 1,
+    latest_autooptimizer_run_id: "ar-1",
+    latest_autooptimizer_created_at: "2026-05-21T12:00:00Z",
   });
   vi.mocked(flywheelApi.getFlywheelVelocity).mockResolvedValue({
     namespace: "global",
@@ -131,7 +131,7 @@ beforeEach(() => {
     observations_captured: 2,
     patterns_promoted: 1,
     patterns_demoted: 0,
-    autoresearch_runs: 1,
+    autooptimizer_runs: 1,
     optimized_child_agents: 0,
     average_lineage_depth: 0,
     latest_activity_at: "2026-05-21T12:00:00Z",
@@ -164,7 +164,7 @@ beforeEach(() => {
       },
     ],
   });
-  vi.mocked(flywheelApi.runAutoresearch).mockResolvedValue({
+  vi.mocked(flywheelApi.runAutoOptimizer).mockResolvedValue({
     id: "ar-new",
     namespace: "global",
     observation_ids: ["obs-1", "obs-2"],
@@ -175,7 +175,7 @@ beforeEach(() => {
     created_at: "2026-05-21T12:00:00Z",
     status: "completed",
   });
-  vi.mocked(flywheelApi.listAutoresearchRuns).mockResolvedValue({
+  vi.mocked(flywheelApi.listAutoOptimizerRuns).mockResolvedValue({
     items: [
       {
         id: "ar-1",
@@ -193,7 +193,7 @@ beforeEach(() => {
     ],
     total: 1,
   });
-  vi.mocked(flywheelApi.promoteAutoresearchRun).mockResolvedValue({
+  vi.mocked(flywheelApi.promoteAutoOptimizerRun).mockResolvedValue({
     id: "ar-1",
     namespace: "global",
     observation_ids: ["obs-1", "obs-2"],
@@ -204,7 +204,7 @@ beforeEach(() => {
     created_at: "2026-05-21T12:00:00Z",
     status: "completed",
   });
-  vi.mocked(flywheelApi.gateAutoresearchRun).mockResolvedValue({
+  vi.mocked(flywheelApi.gateAutoOptimizerRun).mockResolvedValue({
     id: "ar-1",
     namespace: "global",
     observation_ids: ["obs-1", "obs-2"],
@@ -231,7 +231,7 @@ beforeEach(() => {
     gate_reason: "global gate",
     gated_at: "2026-05-21T12:10:00Z",
   });
-  vi.mocked(flywheelApi.demoteAutoresearchRun).mockResolvedValue({
+  vi.mocked(flywheelApi.demoteAutoOptimizerRun).mockResolvedValue({
     id: "ar-1",
     namespace: "global",
     observation_ids: ["obs-1", "obs-2"],
@@ -355,7 +355,7 @@ describe("MemoryPage — empty state", () => {
 });
 
 describe("MemoryPage — Flywheel panel", () => {
-  it("stages an autoresearch pattern for global memory", async () => {
+  it("stages an autooptimizer pattern for global memory", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -366,7 +366,7 @@ describe("MemoryPage — Flywheel panel", () => {
     await user.click(screen.getByRole("button", { name: /Stage Pattern/i }));
 
     await waitFor(() => {
-      expect(flywheelApi.runAutoresearch).toHaveBeenCalledWith({
+      expect(flywheelApi.runAutoOptimizer).toHaveBeenCalledWith({
         namespace: "global",
         pattern_text: "Reduce risk.",
         embedding: [1, 0],
@@ -375,13 +375,13 @@ describe("MemoryPage — Flywheel panel", () => {
     });
   });
 
-  it("promotes and demotes recent autoresearch runs", async () => {
+  it("promotes and demotes recent autooptimizer runs", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByText("Recent Autoresearch Runs")).toBeInTheDocument();
+    expect(await screen.findByText("Recent AutoOptimizer Runs")).toBeInTheDocument();
     await waitFor(() => {
-      expect(flywheelApi.listAutoresearchRuns).toHaveBeenCalledWith({
+      expect(flywheelApi.listAutoOptimizerRuns).toHaveBeenCalledWith({
         namespace: "global",
         limit: 5,
       });
@@ -389,12 +389,12 @@ describe("MemoryPage — Flywheel panel", () => {
 
     await user.click(screen.getByRole("button", { name: /^Activate$/i }));
     await waitFor(() => {
-      expect(flywheelApi.promoteAutoresearchRun).toHaveBeenCalledWith("ar-1");
+      expect(flywheelApi.promoteAutoOptimizerRun).toHaveBeenCalledWith("ar-1");
     });
 
     await user.click(screen.getByRole("button", { name: /^Retire$/i }));
     await waitFor(() => {
-      expect(flywheelApi.demoteAutoresearchRun).toHaveBeenCalledWith("ar-1");
+      expect(flywheelApi.demoteAutoOptimizerRun).toHaveBeenCalledWith("ar-1");
     });
   });
 });
@@ -446,7 +446,7 @@ describe("MemoryPage — Add Pattern defaults to global", () => {
 describe("MemoryPage — Pattern lifecycle controls", () => {
   it("filters staged patterns and activates or demotes by pattern id", async () => {
     const user = userEvent.setup();
-    vi.mocked(flywheelApi.listAutoresearchRuns).mockResolvedValue({
+    vi.mocked(flywheelApi.listAutoOptimizerRuns).mockResolvedValue({
       items: [],
       total: 0,
     });

@@ -1,5 +1,5 @@
 // DiffInspector — shows details for a single mutation/experiment node.
-// Accepts :hash param from the /autoresearch/diff/:hash route.
+// Accepts :hash param from the /autooptimizer/diff/:hash route.
 // Displays node metadata; diff content itself requires a blob-store
 // endpoint that lands in a follow-up PR.
 
@@ -36,7 +36,7 @@ function DiffInspectorContent({ hash }: { hash: string }) {
       <div className="text-[13px] text-red-500 py-4">
         Experiment not found.{" "}
         <Link
-          to="/autoresearch"
+          to="/autooptimizer"
           className="underline text-text-3 hover:text-text"
         >
           Back to genealogy
@@ -58,7 +58,7 @@ function DiffInspectorContent({ hash }: { hash: string }) {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Link
-          to="/autoresearch"
+          to="/autooptimizer"
           className="text-[12px] text-text-3 hover:text-text transition-colors"
         >
           ← Genealogy
@@ -83,7 +83,7 @@ function DiffInspectorContent({ hash }: { hash: string }) {
             {node.parent_hash && (
               <MetaRow label="Parent hash">
                 <Link
-                  to={`/autoresearch/diff/${encodeURIComponent(node.parent_hash)}`}
+                  to={`/autooptimizer/diff/${encodeURIComponent(node.parent_hash)}`}
                   className="font-mono text-[12px] text-text hover:underline break-all"
                 >
                   {node.parent_hash}
@@ -142,7 +142,7 @@ function DiffInspectorContent({ hash }: { hash: string }) {
             Diff content loads from the blob store. Available in the follow-up
             PR that wires{" "}
             <code className="font-mono text-[12px]">
-              GET /api/autoresearch/blobs/:hash
+              GET /api/autooptimizer/blobs/:hash
             </code>
             .
           </div>

@@ -1,4 +1,4 @@
-// LiveCycleView — subscribes to GET /api/autoresearch/events (SSE) and
+// LiveCycleView — subscribes to GET /api/autooptimizer/events (SSE) and
 // renders incoming CycleProgressEvent items with operator-facing labels.
 //
 // Operator labels follow the two-name convention from the terminology lock:
@@ -19,7 +19,7 @@ export function LiveCycleView() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const source = new EventSource("/api/autoresearch/events");
+    const source = new EventSource("/api/autooptimizer/events");
 
     source.addEventListener("open", () => {
       setConnected(true);

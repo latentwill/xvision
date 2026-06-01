@@ -1,6 +1,6 @@
 // ExperimentWriterLadder — mutator performance scoreboard.
 // Operator-facing name: "Experiment writer ladder" (Mutator → "Experiment writer",
-// per the terminology lock at docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md).
+// per the terminology lock at docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md).
 //
 // Columns: Model | Proposals | Accepted | Rejected | Acceptance Rate | Avg ΔSharpe
 // Sorted by acceptance_rate descending.
