@@ -98,6 +98,22 @@ verb form.
 
 ### Operator-facing names (autooptimizer subsurface)
 
+**Top-level name (locked 2026-06-01, autoresearcher → optimizer rename).**
+The subsystem formerly called the "autoresearcher" has two names:
+
+| Surface | Name |
+|---|---|
+| Developer-surface (Rust module `autooptimizer/`, types `AutoOptimizer*`, SQLite tables `autooptimizer_*`, HTTP routes `/api/autooptimizer/*`, frontend `features/autooptimizer/`, MCP types, internal field names) | `autooptimizer` / `AutoOptimizer` |
+| Operator-surface (dashboard nav/menu + page titles, CLI verb `xvn optimizer`, SSE display labels, MANUAL.md, dashboard wiki) | **Optimizer** |
+
+The codename is deliberately `autooptimizer` (NOT `optimizer`) to stay
+distinct from the **pre-existing, unrelated DSPy prompt-optimizer**
+(`xvision-dspy`, the engine `optimization/` module, `optimization_*`
+tables, the `xvn optimize` verb, `Optimizer`/`OptimizerKind`/`OptimizerModel`/
+`OptimizerResult`). Never rename DSPy `optimize`/`optimization`/`Optimizer*`
+tokens, and never let the autooptimizer codename collapse into bare
+`optimizer` in code.
+
 The autooptimizer, memory, and flywheel surfaces follow a two-name
 convention: developer-surface names (in Rust types, SQLite columns,
 spec docs, API field names) stay precise and technical, while

@@ -1,5 +1,20 @@
 # AutoOptimizer terminology lock — 2026-05-27
 
+> **Amendment 2026-06-01 — autoresearcher → optimizer rename.** The
+> subsystem this doc calls the "autoresearcher" was renamed. Its
+> **developer-surface codename** is now `autooptimizer` / `AutoOptimizer`
+> (Rust module `autooptimizer/`, types `AutoOptimizer*`, tables
+> `autooptimizer_*`, routes `/api/autooptimizer/*`, frontend
+> `features/autooptimizer/`). Its **operator-surface name** is now
+> **"Optimizer"** (dashboard nav + titles, CLI verb `xvn optimizer`,
+> SSE display labels, MANUAL.md, wiki). Wherever this doc's rows show a
+> developer name of `autoresearch*`/`Autoresearch*`, read `autooptimizer*`/
+> `AutoOptimizer*`; wherever an operator name was "Autoresearcher", read
+> "Optimizer". The codename is deliberately `autooptimizer` (not bare
+> `optimizer`) to stay distinct from the unrelated DSPy prompt-optimizer
+> (`xvn optimize`, `optimization_*`, `xvision-dspy::Optimizer`), which is
+> NOT renamed.
+
 > Status: locked 2026-05-27; amended same day (memory verb structure —
 > see "Amendments" section at the bottom)
 > Operator approval for both the initial lock and the amendment

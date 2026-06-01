@@ -721,7 +721,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
 
         <div className="border border-border rounded-sm overflow-hidden">
           <div className="px-3 py-2 border-b border-border text-[11px] uppercase tracking-wide text-text-3">
-            {props.fullHistory ? "AutoOptimizer History" : "Recent AutoOptimizer Runs"}
+            {props.fullHistory ? "Optimizer History" : "Recent Optimizer Runs"}
           </div>
           {runsQuery.isPending ? (
             <div className="px-3 py-3 text-[12.5px] text-text-3">

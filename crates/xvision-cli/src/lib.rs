@@ -289,9 +289,10 @@ pub enum Command {
     /// over the operator memory store (`$XVN_MEMORY_DB` or
     /// `~/.xvn/memory.db`).
     Memory(commands::memory::MemoryCmd),
-    /// Offline autooptimizer operations over memory Observations.
+    /// Offline Optimizer operations over memory Observations.
+    #[command(name = "optimizer")]
     AutoOptimizer(commands::autooptimizer::AutoOptimizerCmd),
-    /// Flywheel observability over memory + autooptimizer activity.
+    /// Flywheel observability over memory + Optimizer activity.
     Flywheel(commands::flywheel::FlywheelCmd),
     /// Bounded (strategy × model) bakeoff verb. See
     /// `team/contracts/cli-model-bakeoff.md`.

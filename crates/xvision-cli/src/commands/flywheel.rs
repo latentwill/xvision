@@ -19,7 +19,7 @@ pub struct FlywheelCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// Summarize Observation, Pattern, and autooptimizer run counts.
+    /// Summarize Observation, Pattern, and optimizer run counts.
     Status(StatusArgs),
     /// Show flywheel movement over a recent lookback window.
     Velocity(VelocityArgs),

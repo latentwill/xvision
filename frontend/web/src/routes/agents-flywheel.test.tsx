@@ -199,7 +199,7 @@ describe("AgentsFlywheelRoute", () => {
       limit: 25,
     });
     expect(await screen.findByText("Training run history")).toBeInTheDocument();
-    expect(screen.getByText("AutoOptimizer History")).toBeInTheDocument();
+    expect(screen.getByText("Optimizer History")).toBeInTheDocument();
     expect(screen.getAllByText(/opt-2/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/opt-1/).length).toBeGreaterThan(0);
   });

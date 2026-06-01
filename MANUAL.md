@@ -499,7 +499,7 @@ Three things break here:
 - **Storage:** SQLite write throughput hits its ceiling around hundreds of
   concurrent writes/sec. Reservations + audit-log + ledger all serialize. WAL
   mode helps to ~thousands; beyond that, evaluate Postgres.
-- **AutoOptimizer cost:** at N=100 with each agent generating 100 experiment
+- **Optimizer cost:** at N=100 with each agent generating 100 experiment
   variants/night × 50K-token briefings × Sonnet-class evaluation, the LLM bill
   is ~$15K/month. **Migrate to:** subscription tier or hosted-runtime line
   (research Theme G).
@@ -521,7 +521,7 @@ Three things break here:
 
 - N=1 → N=10 ops break: research Run 8 (operator daily journal — daily review
   becomes full-time at N=10).
-- N=10 → N=100 storage + autooptimizer cost: research Run 11 (scaling tree).
+- N=10 → N=100 storage + Optimizer cost: research Run 11 (scaling tree).
 - N=100 → N=1000 distribution: research Run 11 + Run 4 (experiment-loop cost).
 
 ### Default cadence

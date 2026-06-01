@@ -1,8 +1,8 @@
-//! `xvn autooptimizer` — offline self-improvement verbs.
+//! `xvn optimizer` — offline self-improvement verbs.
 //!
 //! First shipped surface: `run`, a deterministic memory-distillation
 //! pass that turns an Observation cohort into a staged Pattern and
-//! records an autooptimizer run ledger row. The full LLM proposer,
+//! records an optimizer run ledger row. The full LLM proposer,
 //! numeric gate, judge Finding, and optimizer handoff build on this
 //! command; this file intentionally keeps the first slice offline and
 //! memory-bound.
@@ -49,19 +49,19 @@ pub struct AutoOptimizerCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// Distill recent Observations into a candidate Pattern. The Pattern enters staged status; use `xvn autooptimizer gate` to evaluate it, then `xvn autooptimizer activate` to put it into use.
+    /// Distill recent Observations into a candidate Pattern. The Pattern enters staged status; use `xvn optimizer gate` to evaluate it, then `xvn optimizer activate` to put it into use.
     Run(RunArgs),
-    /// List autooptimizer run ledger rows.
+    /// List optimizer run ledger rows.
     Ls(ListArgs),
-    /// Inspect an autooptimizer run ledger row.
+    /// Inspect an optimizer run ledger row.
     Inspect(InspectArgs),
     /// Record the gate decision (Kept or Dropped) for a candidate Pattern, based on its score on today's data and on an untouched test period. The qualitative finding is recorded blind to the numeric scores.
     Gate(GateArgs),
-    /// Activate a candidate Pattern from an autooptimizer run, making it available for recall during decisions.
+    /// Activate a candidate Pattern from an optimizer run, making it available for recall during decisions.
     Activate(InspectArgs),
     #[command(hide = true)]
     Promote(InspectArgs),
-    /// Retire a Pattern produced by an autooptimizer run. Soft-delete with a grace window; restore via `xvn memory undo-forget`.
+    /// Retire a Pattern produced by an optimizer run. Soft-delete with a grace window; restore via `xvn memory undo-forget`.
     Retire(InspectArgs),
     #[command(hide = true)]
     Demote(InspectArgs),
@@ -75,7 +75,7 @@ pub enum Op {
     MutateOnce(MutateOnceArgs),
     /// Run the full evening cycle (parent selection -> candidate edit -> gate -> judge -> seal). Operator label: 'Evening run'.
     EveningCycle(EveningCycleArgs),
-    /// Replay a saved autooptimizer cycle from a fixture (no API keys required).
+    /// Replay a saved optimizer cycle from a fixture (no API keys required).
     Demo(DemoArgs),
 }
 
@@ -140,7 +140,7 @@ pub struct MutateOnceArgs {
 
 #[derive(Args, Debug)]
 pub struct EveningCycleArgs {
-    /// Session commitment ID from xvn autooptimizer session-init.
+    /// Session commitment ID from xvn optimizer session-init.
     #[arg(long)]
     pub session_id: String,
     /// Path to autooptimizer.toml. Defaults to ~/.xvn/autooptimizer.toml.
@@ -347,7 +347,7 @@ pub async fn run(cmd: AutoOptimizerCmd) -> CliResult<()> {
         Op::Activate(args) => run_activate(args).await,
         Op::Promote(args) => {
             eprintln!(
-                "Note: `xvn autooptimizer promote` is now `xvn autooptimizer activate`; \
+                "Note: `xvn optimizer promote` is now `xvn optimizer activate`; \
                  the old form still works in this release and will be removed in the next."
             );
             run_activate(args).await
@@ -355,7 +355,7 @@ pub async fn run(cmd: AutoOptimizerCmd) -> CliResult<()> {
         Op::Retire(args) => run_retire(args).await,
         Op::Demote(args) => {
             eprintln!(
-                "Note: `xvn autooptimizer demote` is now `xvn autooptimizer retire`; \
+                "Note: `xvn optimizer demote` is now `xvn optimizer retire`; \
                  the old form still works in this release and will be removed in the next."
             );
             run_retire(args).await
@@ -392,7 +392,7 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| {
                     CliError::usage(anyhow::anyhow!(
-                        "autooptimizer run requires --embedding-json or OPENAI_API_KEY"
+                        "optimizer run requires --embedding-json or OPENAI_API_KEY"
                     ))
                 })?;
             let base_url = std::env::var("OPENAI_BASE_URL")
@@ -402,7 +402,7 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
             let embedder = xvision_engine::agent::openai_embedder::OpenAiEmbedder::new(base_url, api_key);
             let embedding = embedder.embed(&args.pattern_text).await.map_err(|e| CliError {
                 exit: XvnExit::Upstream,
-                source: anyhow::anyhow!("autooptimizer run: embed Pattern text: {e}"),
+                source: anyhow::anyhow!("optimizer run: embed Pattern text: {e}"),
             })?;
             (embedder.id().to_string(), embedding)
         }
@@ -415,7 +415,7 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
 
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autooptimizer run", e))?;
+        .map_err(|e| api_to_cli("optimizer run", e))?;
     let run = autooptimizer::run_memory_distillation(
         &store,
         &embedder_id,
@@ -432,13 +432,13 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
         },
     )
     .await
-    .map_err(|e| api_to_cli("autooptimizer run", e))?;
+    .map_err(|e| api_to_cli("optimizer run", e))?;
 
     if args.json {
         crate::io::print_json(&run)?;
     } else {
         println!(
-            "autooptimizer run {} created pattern {} in {} ({})",
+            "optimizer run {} created pattern {} in {} ({})",
             run.id, run.pattern_id, run.namespace, run.promotion_state
         );
     }
@@ -448,10 +448,10 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
 async fn run_inspect(args: InspectArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autooptimizer inspect", e))?;
+        .map_err(|e| api_to_cli("optimizer inspect", e))?;
     let run = autooptimizer::inspect_run(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("autooptimizer inspect", e))?;
+        .map_err(|e| api_to_cli("optimizer inspect", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
@@ -487,7 +487,7 @@ async fn run_inspect(args: InspectArgs) -> CliResult<()> {
 async fn run_list(args: ListArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autooptimizer ls", e))?;
+        .map_err(|e| api_to_cli("optimizer ls", e))?;
     let runs = autooptimizer::list_runs(
         &store,
         autooptimizer::AutoOptimizerRunListRequest {
@@ -498,11 +498,11 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
         },
     )
     .await
-    .map_err(|e| api_to_cli("autooptimizer ls", e))?;
+    .map_err(|e| api_to_cli("optimizer ls", e))?;
     if args.json {
         crate::io::print_json(&runs)?;
     } else if runs.items.is_empty() {
-        println!("no autooptimizer runs");
+        println!("no optimizer runs");
     } else {
         for run in runs.items {
             println!(
@@ -538,7 +538,7 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
     }
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autooptimizer gate", e))?;
+        .map_err(|e| api_to_cli("optimizer gate", e))?;
     let run = autooptimizer::gate_run(
         &store,
         &args.id,
@@ -563,7 +563,7 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
         },
     )
     .await
-    .map_err(|e| api_to_cli("autooptimizer gate", e))?;
+    .map_err(|e| api_to_cli("optimizer gate", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
@@ -575,7 +575,7 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
             other => other,
         };
         println!(
-            "autooptimizer run {} gate decision: {} (status: {})",
+            "optimizer run {} gate decision: {} (status: {})",
             run.id,
             decision,
             run.promotion_state
@@ -587,14 +587,14 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
 async fn run_activate(args: InspectArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autooptimizer activate", e))?;
+        .map_err(|e| api_to_cli("optimizer activate", e))?;
     let run = autooptimizer::promote_run(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("autooptimizer activate", e))?;
+        .map_err(|e| api_to_cli("optimizer activate", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
-        println!("autooptimizer run {} activated pattern {}", run.id, run.pattern_id);
+        println!("optimizer run {} activated pattern {}", run.id, run.pattern_id);
     }
     Ok(())
 }
@@ -602,14 +602,14 @@ async fn run_activate(args: InspectArgs) -> CliResult<()> {
 async fn run_retire(args: InspectArgs) -> CliResult<()> {
     let store = memory::open_default_store()
         .await
-        .map_err(|e| api_to_cli("autooptimizer retire", e))?;
+        .map_err(|e| api_to_cli("optimizer retire", e))?;
     let run = autooptimizer::demote_run(&store, &args.id)
         .await
-        .map_err(|e| api_to_cli("autooptimizer retire", e))?;
+        .map_err(|e| api_to_cli("optimizer retire", e))?;
     if args.json {
         crate::io::print_json(&run)?;
     } else {
-        println!("autooptimizer run {} retired pattern {}", run.id, run.pattern_id);
+        println!("optimizer run {} retired pattern {}", run.id, run.pattern_id);
     }
     Ok(())
 }

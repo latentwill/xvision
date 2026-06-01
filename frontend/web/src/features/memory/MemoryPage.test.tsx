@@ -379,7 +379,7 @@ describe("MemoryPage — Flywheel panel", () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByText("Recent AutoOptimizer Runs")).toBeInTheDocument();
+    expect(await screen.findByText("Recent Optimizer Runs")).toBeInTheDocument();
     await waitFor(() => {
       expect(flywheelApi.listAutoOptimizerRuns).toHaveBeenCalledWith({
         namespace: "global",

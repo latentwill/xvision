@@ -79,7 +79,7 @@ export function AutoOptimizerLayout() {
   return (
     <>
       <Topbar
-        title="AutoOptimizer"
+        title="Optimizer"
         sub="Live experiments, genealogy, and experiment-writer performance"
       />
 
@@ -87,7 +87,7 @@ export function AutoOptimizerLayout() {
         {/* Tab bar */}
         <div
           role="tablist"
-          aria-label="AutoOptimizer views"
+          aria-label="Optimizer views"
           className="flex gap-4 border-b border-border"
         >
           {TABS.map(([t, label]) => (
