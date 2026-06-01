@@ -23,6 +23,12 @@ import { GenealogyTree } from "./GenealogyTree";
 import { DiffInspector } from "./DiffInspector";
 import { ExperimentWriterLadder } from "./ExperimentWriterLadder";
 import { LadderWithProvenance } from "./LadderWithProvenance";
+import {
+  getStoredJudgeModel,
+  getStoredMutatorModel,
+  setStoredJudgeModel,
+  setStoredMutatorModel,
+} from "./preferences";
 
 const FALLBACK_MODELS = [
   "claude-haiku-4-5-20251001",
@@ -35,10 +41,10 @@ const FALLBACK_MODELS = [
 function ModelSelectRow() {
   const [models, setModels] = useState<string[]>(FALLBACK_MODELS);
   const [mutatorModel, setMutatorModel] = useState<string>(
-    () => localStorage.getItem("ar_mutator_model") ?? "claude-haiku-4-5-20251001",
+    () => getStoredMutatorModel() ?? "claude-haiku-4-5-20251001",
   );
   const [judgeModel, setJudgeModel] = useState<string>(
-    () => localStorage.getItem("ar_judge_model") ?? "claude-sonnet-4-6",
+    () => getStoredJudgeModel() ?? "claude-sonnet-4-6",
   );
 
   useEffect(() => {
@@ -60,7 +66,7 @@ function ModelSelectRow() {
         value={mutatorModel}
         onChange={(e) => {
           setMutatorModel(e.target.value);
-          localStorage.setItem("ar_mutator_model", e.target.value);
+          setStoredMutatorModel(e.target.value);
         }}
         className={sel}
       >
@@ -75,7 +81,7 @@ function ModelSelectRow() {
         value={judgeModel}
         onChange={(e) => {
           setJudgeModel(e.target.value);
-          localStorage.setItem("ar_judge_model", e.target.value);
+          setStoredJudgeModel(e.target.value);
         }}
         className={sel}
       >
