@@ -274,6 +274,30 @@ impl AgentRunRecorder for SqliteRecorder {
                 .bind(capability)
                 .execute(&self.pool)
                 .await?;
+                if e.prompt_text.is_some() || e.response_text.is_some() {
+                    if let Some(run_id) = self.resolve_run(&e.span_id).await {
+                        let payload_json = serde_json::json!({
+                            "provider": e.provider,
+                            "model": e.model,
+                            "prompt": e.prompt_text,
+                            "response": e.response_text,
+                        })
+                        .to_string();
+                        let id = format!("model_payload_{}", uuid::Uuid::new_v4());
+                        sqlx::query(
+                            "INSERT INTO events (\
+                                id, run_id, span_id, kind, payload_json, created_at) \
+                             VALUES (?, ?, ?, 'model_call_payload', ?, ?)",
+                        )
+                        .bind(id)
+                        .bind(run_id)
+                        .bind(&e.span_id)
+                        .bind(payload_json)
+                        .bind(ts(&Utc::now()))
+                        .execute(&self.pool)
+                        .await?;
+                    }
+                }
             }
 
             RunEvent::ToolCallStarted(e) => {
