@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use tempfile::tempdir;
-use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autooptimizer::content_hash::ContentHash;
 
 fn xvn(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_xvn"))
@@ -20,7 +20,7 @@ fn parent_strategy_json() -> serde_json::Value {
         "manifest": {
             "id": "01HTEST00AAAAAAAAAAAAAAAA",
             "display_name": "AR1 Test Strategy",
-            "plain_summary": "Autoresearcher AR-1 smoke test",
+            "plain_summary": "AutoOptimizer AR-1 smoke test",
             "creator": "@test",
             "template": "custom",
             "regime_fit": [],
@@ -56,7 +56,7 @@ fn write_parent_blob(blob_dir: &Path) -> String {
 }
 
 fn write_config(dir: &Path, min_improvement: f64) -> std::path::PathBuf {
-    let config_path = dir.join("autoresearch.toml");
+    let config_path = dir.join("autooptimizer.toml");
     std::fs::write(
         &config_path,
         format!(
@@ -85,7 +85,7 @@ max_retries = 2
 fn write_session(dir: &Path, config_path: &Path, key_path: &Path) -> std::path::PathBuf {
     let session_path = dir.join("session.json");
     let out = xvn(&[
-        "autoresearch",
+        "autooptimizer",
         "session-init",
         "--config",
         config_path.to_str().unwrap(),
@@ -114,7 +114,7 @@ fn mutate_once_cmd<'a>(
     extra: &[&'a str],
 ) -> Vec<&'a str> {
     let mut args = vec![
-        "autoresearch",
+        "autooptimizer",
         "mutate-once",
         hash,
         "--config",

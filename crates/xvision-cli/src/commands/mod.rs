@@ -1,7 +1,7 @@
 pub mod ab_compare;
 pub mod agent;
 pub mod asset;
-pub mod autoresearch;
+pub mod autooptimizer;
 pub mod bars;
 pub mod dashboard;
 pub mod doctor;

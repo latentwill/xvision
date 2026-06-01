@@ -19,7 +19,7 @@ pub struct FlywheelCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// Summarize Observation, Pattern, and autoresearch run counts.
+    /// Summarize Observation, Pattern, and autooptimizer run counts.
     Status(StatusArgs),
     /// Show flywheel movement over a recent lookback window.
     Velocity(VelocityArgs),
@@ -109,9 +109,9 @@ async fn run_status(args: StatusArgs) -> CliResult<()> {
         println!("active_patterns: {}", status.active_patterns);
         println!("staged_patterns: {}", status.staged_patterns);
         println!("forgotten_patterns: {}", status.forgotten_patterns);
-        println!("autoresearch_runs: {}", status.autoresearch_runs);
-        if let Some(id) = status.latest_autoresearch_run_id {
-            println!("latest_autoresearch_run_id: {id}");
+        println!("autooptimizer_runs: {}", status.autooptimizer_runs);
+        if let Some(id) = status.latest_autooptimizer_run_id {
+            println!("latest_autooptimizer_run_id: {id}");
         }
     }
     Ok(())
@@ -149,7 +149,7 @@ async fn run_velocity(args: VelocityArgs) -> CliResult<()> {
         println!("observations_captured: {}", velocity.observations_captured);
         println!("patterns_activated: {}", velocity.patterns_promoted);
         println!("patterns_retired: {}", velocity.patterns_demoted);
-        println!("autoresearch_runs: {}", velocity.autoresearch_runs);
+        println!("autooptimizer_runs: {}", velocity.autooptimizer_runs);
         println!("new_versions_trained: {}", velocity.optimized_child_agents);
         println!("average_generations_deep: {:.2}", velocity.average_lineage_depth);
         if let Some(ts) = velocity.latest_activity_at {
