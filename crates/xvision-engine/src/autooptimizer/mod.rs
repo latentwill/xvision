@@ -1,6 +1,8 @@
 //! AutoOptimizer module — implements AR-1's mutator + lineage + numeric
-//! gate + CycleSeal substrate per
+//! gate per
 //! `docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md`.
+//! (The cryptographic-provenance seal layer was removed 2026-06-01 — see
+//! `docs/superpowers/specs/2026-06-01-remove-autooptimizer-crypto-provenance-design.md`.)
 //!
 //! This is the scaffold landed by AR-1 Task 1. Each submodule is a
 //! placeholder filled in by a later AR-1 task (see the plan's task
