@@ -33,8 +33,6 @@ use xvision_engine::autooptimizer::mutator::{MutationDiff, Mutator};
 use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 use xvision_engine::autooptimizer::scenario_synthesis::synthesize_baseline_untouched_scenario;
-use xvision_engine::autooptimizer::seal::build_and_sign;
-use xvision_engine::autooptimizer::session::{default_key_path, load_or_generate_key, SessionCommitment};
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
@@ -68,35 +66,12 @@ pub enum Op {
     Demote(InspectArgs),
     /// Lineage graph inspection (ls / show).
     Lineage(LineageCmd),
-    /// Cycle seal inspection.
-    Seal(SealCmd),
-    /// Write a signed pre-commitment before any experiment cycles run.
-    SessionInit(SessionInitArgs),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
-    /// Run the full evening cycle (parent selection -> candidate edit -> gate -> judge -> seal). Operator label: 'Evening run'.
+    /// Run the full evening cycle (parent selection -> candidate edit -> gate -> judge). Operator label: 'Evening run'.
     EveningCycle(EveningCycleArgs),
     /// Replay a saved optimizer cycle from a fixture (no API keys required).
     Demo(DemoArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct SessionInitArgs {
-    /// Path to autooptimizer.toml. Defaults to ~/.xvn/autooptimizer.toml.
-    #[arg(long)]
-    pub config: Option<PathBuf>,
-    /// Comma-separated parent bundle hashes (seeds for this session).
-    /// Omit for a fresh seed-only run with no parent strategies.
-    #[arg(long)]
-    pub parents: Option<String>,
-    /// Output path for the pre-commitment JSON.
-    /// Defaults to ~/.xvn/lineage/sessions/session-<session-id>.json.
-    #[arg(long)]
-    pub out: Option<PathBuf>,
-    /// Override the operator signing key path.
-    /// Defaults to ~/.xvn/keys/operator.ed25519. Primarily for testing.
-    #[arg(long, hide = true)]
-    pub key_path: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -106,9 +81,6 @@ pub struct MutateOnceArgs {
     /// AutoOptimizerConfig TOML path.
     #[arg(long)]
     pub config: Option<PathBuf>,
-    /// SessionCommitment JSON path.
-    #[arg(long)]
-    pub session: Option<PathBuf>,
     /// Cycle ID to tag the lineage node (generated if absent).
     #[arg(long)]
     pub cycle_id: Option<String>,
@@ -121,9 +93,6 @@ pub struct MutateOnceArgs {
     /// Blob storage directory.
     #[arg(long)]
     pub blob_dir: Option<PathBuf>,
-    /// Ed25519 operator key path.
-    #[arg(long)]
-    pub key_path: Option<PathBuf>,
     /// Use mock LLM dispatch (for tests and offline use).
     #[arg(long)]
     pub mock: bool,
@@ -141,9 +110,6 @@ pub struct MutateOnceArgs {
 
 #[derive(Args, Debug)]
 pub struct EveningCycleArgs {
-    /// Session commitment ID from xvn optimizer session-init.
-    #[arg(long)]
-    pub session_id: String,
     /// Path to autooptimizer.toml. Defaults to ~/.xvn/autooptimizer.toml.
     #[arg(long)]
     pub config: Option<PathBuf>,
@@ -322,25 +288,6 @@ pub struct LineageShowArgs {
     pub db: String,
 }
 
-#[derive(Args, Debug)]
-pub struct SealCmd {
-    #[command(subcommand)]
-    pub op: SealOp,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum SealOp {
-    /// Pretty-print an evening summary (cycle seal).
-    Show(SealShowArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct SealShowArgs {
-    pub seal_id: String,
-    #[arg(long)]
-    pub db: String,
-}
-
 struct LineageRow {
     bundle_hash: String,
     parent_hash: Option<String>,
@@ -376,10 +323,6 @@ pub async fn run(cmd: AutoOptimizerCmd) -> CliResult<()> {
             LineageOp::Ls(args) => lineage_ls(args).await,
             LineageOp::Show(args) => lineage_show(args).await,
         },
-        Op::Seal(cmd) => match cmd.op {
-            SealOp::Show(args) => seal_show(args).await,
-        },
-        Op::SessionInit(args) => run_session_init(args).await,
         Op::MutateOnce(args) => run_mutate_once(args).await,
         Op::EveningCycle(args) => run_evening_cycle_cmd(args).await,
         Op::Demo(args) => run_demo_cmd(args).await,
@@ -780,100 +723,11 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
     Ok(())
 }
 
-async fn seal_show(args: SealShowArgs) -> CliResult<()> {
-    let pool = open_lineage_db(&args.db).await?;
-    let row = sqlx::query(
-        "SELECT cycle_id, merkle_root, operator_signature, sealed_at \
-         FROM cycle_seals WHERE seal_id = ?",
-    )
-    .bind(&args.seal_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("query cycle_seals: {e}")))?
-    .ok_or_else(|| CliError::not_found(anyhow::anyhow!("seal {} not found", args.seal_id)))?;
-    let cycle_id: String = row
-        .try_get("cycle_id")
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
-    let merkle_root: String = row
-        .try_get("merkle_root")
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
-    let op_sig: String = row
-        .try_get("operator_signature")
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
-    let sealed_at: String = row
-        .try_get("sealed_at")
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
-    let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?")
-        .bind(&cycle_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("count nodes: {e}")))?;
-    let sig_short = op_sig.get(..8).unwrap_or(&op_sig);
-    println!("Evening summary");
-    println!("seal_id:      {}", args.seal_id);
-    println!("cycle_id:     {}", cycle_id);
-    println!("sealed_at:    {}", sealed_at);
-    println!("node_count:   {}", node_count);
-    println!("cycle_proof:  {}", merkle_root);
-    println!("signature:    {}…", sig_short);
-    Ok(())
-}
-
-// ── session-init ──────────────────────────────────────────────────────────────
-
-async fn run_session_init(args: SessionInitArgs) -> CliResult<()> {
-    let config_path = match args.config {
-        Some(p) => p,
-        None => AutoOptimizerConfig::default_path().map_err(CliError::upstream)?,
-    };
-    let cfg = AutoOptimizerConfig::load(&config_path)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("{}: {}", config_path.display(), e)))?;
-    cfg.validate().map_err(CliError::usage)?;
-
-    let parents = parse_parent_hashes(args.parents.as_deref().unwrap_or(""))?;
-    let key_path = match args.key_path {
-        Some(p) => p,
-        None => default_key_path().map_err(CliError::upstream)?,
-    };
-    let key = load_or_generate_key(&key_path)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("{}: {}", key_path.display(), e)))?;
-    let session = SessionCommitment::new_signed(Ulid::new(), &cfg, parents, &key)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("sign session: {e}")))?;
-
-    let out_path = match args.out {
-        Some(p) => p,
-        None => {
-            let home = dirs::home_dir()
-                .ok_or_else(|| CliError::upstream(anyhow::anyhow!("no home directory found")))?;
-            home.join(".xvn")
-                .join("lineage")
-                .join("sessions")
-                .join(format!("session-{}.json", session.session_id))
-        }
-    };
-
-    if let Some(parent) = out_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("create output dir: {e}")))?;
-    }
-    let json = serde_json::to_string_pretty(&session)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize session: {e}")))?;
-    std::fs::write(&out_path, json.as_bytes())
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("write session: {e}")))?;
-    println!(
-        "Session {} committed → {}",
-        session.session_id,
-        out_path.display()
-    );
-    Ok(())
-}
-
 // ── mutate-once ───────────────────────────────────────────────────────────────
 
 async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let cfg = load_ar_config(args.config.as_deref())?;
-    let session = load_ar_session(args.session.as_deref())?;
-    let blob_dir = args.blob_dir.unwrap_or_else(|| default_blob_dir());
+    let blob_dir = args.blob_dir.unwrap_or_else(default_blob_dir);
     let blobs = BlobStore::new(blob_dir);
     let parent_hash = ContentHash::from_hex(&args.parent_bundle_hash)
         .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent_bundle_hash: {e}")))?;
@@ -932,8 +786,6 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let child_json = serde_json::to_value(&child)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize child: {e}")))?;
     let child_hash = ContentHash::of_json(&child_json);
-    let diff_json = serde_json::to_value(&diff)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize diff: {e}")))?;
     let (pd, ph, cd, ch) = paper_test_sharpes(args.mock);
     let passed = gate_passes(pd, cd, ph, ch, cfg.min_improvement);
     let verdict = if passed {
@@ -971,55 +823,20 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     }
     let db_path = args.db.unwrap_or_else(default_db_path);
     let pool = open_and_migrate_db(&db_path).await?;
-    let diff_hash = blobs
-        .put_json(&diff_json)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("write diff blob: {e}")))?;
     blobs
         .put_json(&child_json)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("write child blob: {e}")))?;
-    let lineage = LineageStore::new(pool.clone());
+    let lineage = LineageStore::new(pool);
     insert_lineage_node(
         &lineage,
         child_hash,
         parent_hash,
-        diff_hash,
         verdict.clone(),
         status,
         &cycle_id,
     )
     .await?;
-    if passed {
-        let key_path = match args.key_path {
-            Some(p) => p,
-            None => default_key_path().map_err(CliError::upstream)?,
-        };
-        seal_cycle(&pool, &lineage, &cycle_id, &session, &key_path).await?;
-
-        // Emit CycleSealed event after a successful seal.
-        let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?")
-            .bind(&cycle_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
-
-        let merkle_root = lineage
-            .merkle_root_for_cycle(&cycle_id)
-            .await
-            .map(|h| h.to_hex())
-            .unwrap_or_default();
-
-        ipc_send_event(
-            &mut ipc_stream,
-            CycleProgressEvent::CycleSealed {
-                cycle_id: cycle_id.clone(),
-                merkle_root,
-                node_count: node_count as usize,
-            },
-        )
-        .await;
-    }
 
     // Flush and close the IPC stream.
     if let Some(mut s) = ipc_stream {
@@ -1051,12 +868,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
 
-    // Operator signing key.
-    let key_path = default_key_path().map_err(CliError::upstream)?;
-    let operator_key = load_or_generate_key(&key_path)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("load operator key: {e}")))?;
-
-    // Observability blob store (unused by cycle currently but required by signature).
+    // Observability blob store (required by run_evening_cycle signature).
     let obs_blob_root = xvn_home.join("lineage").join("obs-blobs");
     let obs_blob_store = xvision_observability::BlobStore::new(obs_blob_root);
 
@@ -1154,8 +966,6 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
             },
         })
     } else {
-        // Real path: BacktestPaperTester requires a RunStore + ToolRegistry.
-        // For now return a stub that signals "not yet wired".
         return Err(CliError::usage(anyhow::anyhow!(
             "--mock is required; non-mock BacktestPaperTester is not yet wired in the CLI. \
                  Use --mock for smoke testing."
@@ -1221,8 +1031,6 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
         &mutator,
         &judge,
         paper_tester.as_ref(),
-        &operator_key,
-        &args.session_id,
         |event| {
             if let Ok(line) = serde_json::to_string(&event) {
                 println!("{}", line);
@@ -1232,37 +1040,12 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("run_evening_cycle: {e}")))?;
 
-    println!(
-        "cycle_id={} merkle_root={}",
-        result.cycle_id,
-        result.seal.merkle_root.to_hex()
-    );
+    println!("cycle_id={}", result.cycle_id);
 
     Ok(())
 }
 
 // ── demo ─────────────────────────────────────────────────────────────────────
-
-/// Compact in-fixture representation of a lineage node for the demo replay.
-#[derive(Debug, serde::Deserialize)]
-struct FixtureLineageNode {
-    bundle_hash: String,
-    parent_hash: Option<String>,
-    status: String,
-    gate_verdict: String,
-    cycle_id: String,
-    created_at: String,
-}
-
-/// Compact in-fixture representation of the cycle seal for the demo replay.
-#[derive(Debug, serde::Deserialize)]
-struct FixtureSeal {
-    seal_id: String,
-    cycle_id: String,
-    merkle_root: String,
-    operator_signature: String,
-    sealed_at: String,
-}
 
 /// Top-level replay fixture schema.
 #[derive(Debug, serde::Deserialize)]
@@ -1270,8 +1053,7 @@ struct ReplayFixture {
     fixture_version: String,
     cycle_id: String,
     events: Vec<serde_json::Value>,
-    lineage_nodes: Vec<FixtureLineageNode>,
-    seal: FixtureSeal,
+    lineage_nodes: Vec<serde_json::Value>,
 }
 
 fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
@@ -1282,7 +1064,6 @@ fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::MutationGated { .. } => "Experiment gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
         CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
-        CycleProgressEvent::CycleSealed { .. } => "Evening summary signed",
     }
 }
 
@@ -1294,16 +1075,13 @@ fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::MutationGated { .. } => "mutation_gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "honesty_check_run",
         CycleProgressEvent::JudgeFinding { .. } => "judge_finding",
-        CycleProgressEvent::CycleSealed { .. } => "cycle_sealed",
     }
 }
 
 async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
-    // Determine fixture path.
     let fixture_path = match args.fixture {
         Some(p) => p,
         None => {
-            // Search relative to cwd first, then XDG/home fallback.
             let default_rel = PathBuf::from("data/probes/autooptimizer/replay-fixture.json");
             if default_rel.exists() {
                 default_rel
@@ -1334,7 +1112,6 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
         fixture.cycle_id, fixture.fixture_version
     );
 
-    // Replay each event.
     for raw_event in &fixture.events {
         let event: CycleProgressEvent = serde_json::from_value(raw_event.clone())
             .map_err(|e| CliError::usage(anyhow::anyhow!("malformed fixture event: {e}")))?;
@@ -1347,17 +1124,10 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
         }
     }
 
-    // Print summary.
-    let seal_short = fixture
-        .seal
-        .merkle_root
-        .get(..16)
-        .unwrap_or(&fixture.seal.merkle_root);
     println!(
-        "demo complete: cycle_id={} nodes={} seal={}",
+        "demo complete: cycle_id={} nodes={}",
         fixture.cycle_id,
         fixture.lineage_nodes.len(),
-        seal_short
     );
     Ok(())
 }
@@ -1383,32 +1153,6 @@ fn load_ar_config(path: Option<&Path>) -> CliResult<AutoOptimizerConfig> {
         }
         None => Ok(AutoOptimizerConfig::default()),
     }
-}
-
-fn load_ar_session(path: Option<&Path>) -> CliResult<SessionCommitment> {
-    let p = path.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "--session is required (no default session search yet)"
-        ))
-    })?;
-    SessionCommitment::load_from(p).map_err(|e| CliError::upstream(anyhow::anyhow!("load session: {e}")))
-}
-
-fn parse_parent_hashes(raw: &str) -> CliResult<Vec<ContentHash>> {
-    if raw.is_empty() {
-        return Ok(vec![]);
-    }
-    let mut out = Vec::new();
-    for token in raw.split(',') {
-        let token = token.trim();
-        if token.is_empty() {
-            continue;
-        }
-        let hash = ContentHash::from_hex(token)
-            .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent hash {token:?}: {e}")))?;
-        out.push(hash);
-    }
-    Ok(out)
 }
 
 async fn load_strategy_blob(blobs: &BlobStore, hash: &ContentHash) -> CliResult<Strategy> {
@@ -1462,13 +1206,11 @@ async fn load_strategy_parent(
             let root_node = LineageNode {
                 bundle_hash,
                 parent_hash: None,
-                diff_hash: None,
-                metrics_day_hash: None,
-                metrics_untouched_hash: None,
                 gate_verdict: GateVerdict::Pass,
                 status: LineageStatus::Active,
                 cycle_id: None,
                 created_at: Utc::now(),
+                diversity_score: None,
             };
             lineage
                 .insert(&root_node)
@@ -1556,7 +1298,7 @@ fn paper_test_sharpes(mock: bool) -> (f64, f64, f64, f64) {
         (1.0, 1.0, 1.2, 1.2) // (parent_day, parent_holdout, child_day, child_holdout)
     } else {
         eprintln!("Paper-testing parent on day window...");
-        let pd = 1.0_f64; // AR-1 stub; AR-2 wires BacktestExecutor
+        let pd = 1.0_f64;
         eprintln!("Paper-testing parent on untouched window...");
         let ph = 1.0_f64;
         eprintln!("Paper-testing experiment on day window...");
@@ -1576,30 +1318,36 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
         "CREATE TABLE IF NOT EXISTS lineage_nodes (
             bundle_hash TEXT PRIMARY KEY,
             parent_hash TEXT,
-            diff_hash TEXT,
-            metrics_day_hash TEXT,
-            metrics_untouched_hash TEXT,
             gate_verdict TEXT NOT NULL,
             status TEXT NOT NULL,
             cycle_id TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            diversity_score REAL
         )",
     )
     .execute(&pool)
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage_nodes: {e}")))?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS cycle_seals (
-            seal_id TEXT PRIMARY KEY,
-            cycle_id TEXT NOT NULL,
-            merkle_root TEXT NOT NULL,
-            operator_signature TEXT NOT NULL,
-            sealed_at TEXT NOT NULL
+        "CREATE TABLE IF NOT EXISTS mutator_attribution (
+            bundle_hash TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            proposed_at TEXT NOT NULL,
+            delta_sharpe REAL
         )",
     )
     .execute(&pool)
     .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("create cycle_seals: {e}")))?;
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create mutator_attribution: {e}")))?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_attr_provider_model
+            ON mutator_attribution(provider, model)",
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create mutator_attribution index: {e}")))?;
     Ok(pool)
 }
 
@@ -1607,7 +1355,6 @@ async fn insert_lineage_node(
     lineage: &LineageStore,
     child_hash: ContentHash,
     parent_hash: ContentHash,
-    diff_hash: ContentHash,
     verdict: GateVerdict,
     status: LineageStatus,
     cycle_id: &str,
@@ -1615,51 +1362,16 @@ async fn insert_lineage_node(
     let node = LineageNode {
         bundle_hash: child_hash,
         parent_hash: Some(parent_hash),
-        diff_hash: Some(diff_hash),
-        metrics_day_hash: None,
-        metrics_untouched_hash: None,
         gate_verdict: verdict,
         status,
         cycle_id: Some(cycle_id.to_owned()),
         created_at: Utc::now(),
+        diversity_score: None,
     };
     lineage
         .insert(&node)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("insert lineage node: {e}")))
-}
-
-async fn seal_cycle(
-    pool: &SqlitePool,
-    lineage: &LineageStore,
-    cycle_id: &str,
-    session: &SessionCommitment,
-    key_path: &Path,
-) -> CliResult<()> {
-    let merkle_root = lineage
-        .merkle_root_for_cycle(cycle_id)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("merkle root: {e}")))?;
-    let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?")
-        .bind(cycle_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("count nodes: {e}")))?;
-    let key = load_or_generate_key(key_path)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("load operator key: {e}")))?;
-    let seal = build_and_sign(
-        cycle_id,
-        &session.session_id.to_string(),
-        merkle_root,
-        node_count as usize,
-        &key,
-    )
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("build seal: {e}")))?;
-    seal.persist(pool)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("persist seal: {e}")))?;
-    eprintln!("Evening summary: cycle={} seal={}", cycle_id, seal.seal_id);
-    Ok(())
 }
 
 fn default_blob_dir() -> PathBuf {

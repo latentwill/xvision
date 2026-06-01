@@ -4,8 +4,6 @@
 // Routes:
 //   GET  /api/autooptimizer/lineage           → LineageNode[]
 //   GET  /api/autooptimizer/lineage/:hash     → LineageNode
-//   GET  /api/autooptimizer/seals             → CycleSeal[]
-//   GET  /api/autooptimizer/seals/:cycle_id   → CycleSeal
 //   GET  /api/autooptimizer/ladder            → MutatorScore[]
 //   GET  /api/autooptimizer/diversity?...     → DiversityEntry[]
 //   GET  /api/autooptimizer/events            → SSE stream of CycleProgressEvent
@@ -13,7 +11,6 @@
 // Operator-facing names (per terminology lock):
 //   LineageNode    → "Experiment" / genealogy node
 //   Mutator        → "Experiment writer"
-//   CycleSeal      → "Evening summary"
 //   gate_verdict   displayed as "Accepted" / "Rejected" / "Suspect"
 
 import { useQuery } from "@tanstack/react-query";
@@ -28,21 +25,11 @@ export type LineageStatus = "active" | "rejected" | "quarantined";
 export type LineageNode = {
   bundle_hash: string;
   parent_hash?: string | null;
-  diff_hash?: string | null;
   gate_verdict?: string | null;
   status: LineageStatus;
   cycle_id?: string | null;
   created_at: string;
   diversity_score?: number | null;
-};
-
-/** Evening summary — sealed record of a completed cycle. */
-export type CycleSeal = {
-  seal_id: string;
-  cycle_id: string;
-  merkle_root: string;
-  operator_signature: string;
-  sealed_at: string;
 };
 
 /** Experiment-writer performance record. */
@@ -101,14 +88,6 @@ export async function getLineageNode(hash: string): Promise<LineageNode> {
   return apiFetch<LineageNode>(`/api/autooptimizer/lineage/${encodeURIComponent(hash)}`);
 }
 
-export async function listSeals(): Promise<CycleSeal[]> {
-  return apiFetch<CycleSeal[]>("/api/autooptimizer/seals");
-}
-
-export async function getSeal(cycleId: string): Promise<CycleSeal> {
-  return apiFetch<CycleSeal>(`/api/autooptimizer/seals/${encodeURIComponent(cycleId)}`);
-}
-
 export async function getLadder(): Promise<MutatorScore[]> {
   return apiFetch<MutatorScore[]>("/api/autooptimizer/ladder");
 }
@@ -123,8 +102,6 @@ export const autooptimizerKeys = {
   all: ["autooptimizer"] as const,
   lineage: () => [...autooptimizerKeys.all, "lineage"] as const,
   lineageNode: (hash: string) => [...autooptimizerKeys.all, "lineage", hash] as const,
-  seals: () => [...autooptimizerKeys.all, "seals"] as const,
-  seal: (cycleId: string) => [...autooptimizerKeys.all, "seals", cycleId] as const,
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   diversity: (q?: DiversityQuery) =>
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
@@ -145,14 +122,6 @@ export function useLineageNode(hash: string) {
     queryKey: autooptimizerKeys.lineageNode(hash),
     queryFn: () => getLineageNode(hash),
     enabled: !!hash,
-    staleTime: 60_000,
-  });
-}
-
-export function useSeals() {
-  return useQuery({
-    queryKey: autooptimizerKeys.seals(),
-    queryFn: listSeals,
     staleTime: 60_000,
   });
 }
@@ -214,8 +183,7 @@ export function formatEventLabel(event: CycleProgressEvent): string {
     case "cycle_started":
       return "Cycle started";
     case "cycle_finished":
-    case "cycle_sealed":
-      return "Evening summary written";
+      return "Evening run finished";
     case "mutation_proposed":
       return "Experiment proposed";
     case "mutation_accepted":

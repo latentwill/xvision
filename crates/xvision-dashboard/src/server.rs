@@ -266,7 +266,7 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/flywheel/velocity", get(flywheel::velocity))
         .route("/api/flywheel/lineage", get(flywheel::lineage))
         .route("/api/autooptimizer", get(flywheel::autooptimizer_list))
-        // AR-3 backend: lineage graph, cycle seals, mutator ladder, diversity, findings.
+        // AR-3 backend: lineage graph, mutator ladder, diversity, findings.
         // IMPORTANT: these static-segment routes must be registered BEFORE
         // /api/autooptimizer/:id (the flywheel memory-distillation detail route)
         // so axum's router resolves them correctly — static segments take
@@ -279,14 +279,6 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/lineage/:hash",
             get(autooptimizer_route::get_lineage_node),
-        )
-        .route(
-            "/api/autooptimizer/seals",
-            get(autooptimizer_route::list_seals),
-        )
-        .route(
-            "/api/autooptimizer/seals/:cycle_id",
-            get(autooptimizer_route::get_seal_by_cycle),
         )
         .route(
             "/api/autooptimizer/ladder",

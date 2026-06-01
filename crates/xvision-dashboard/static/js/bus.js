@@ -31,7 +31,6 @@ const DISPLAY_LABELS = {
   mutation_gated_dropped: "Experiment dropped",
   honesty_check_run:      "Honesty check result",
   judge_finding:          "Reviewer finished notes",
-  cycle_sealed:           "Evening summary signed",
 };
 
 /**

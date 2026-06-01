@@ -124,13 +124,11 @@ two-name pairs are locked at
 
 Examples: `Mutation` → "Experiment"; `Mutator` → "Experiment writer";
 `LineageStatus::Ghost` → "Rejected"; `LineageStatus::Quarantined` →
-"Suspect"; `CycleSeal` → "Evening summary"; `Merkle root` → "Cycle
-proof"; `--gate-epsilon` → `--min-improvement`; `--parent-holdout-score`
+"Suspect"; `--gate-epsilon` → `--min-improvement`; `--parent-holdout-score`
 → `--baseline-untouched-score`; null-result canary → "honesty check".
 
 Any new operator-facing concept on these surfaces requires a row in
-the lock doc. Cryptographic primitives (BLAKE3, Ed25519, "merkle,"
-canonical JSON) must never appear on an operator surface.
+the lock doc.
 
 **Migration notes:**
 - DB migration `0002_rename_setup_to_cycle.sql` renamed the `setups` table to

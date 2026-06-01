@@ -30,13 +30,11 @@ fn make_node(seed: &[u8], cycle: &str, status: LineageStatus) -> LineageNode {
     LineageNode {
         bundle_hash: ContentHash::of_bytes(seed),
         parent_hash: None,
-        diff_hash: None,
-        metrics_day_hash: None,
-        metrics_untouched_hash: None,
         gate_verdict: GateVerdict::Pass,
         status,
         cycle_id: Some(cycle.to_string()),
         created_at: Utc::now(),
+        diversity_score: None,
     }
 }
 

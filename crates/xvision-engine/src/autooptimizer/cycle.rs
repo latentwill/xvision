@@ -1,14 +1,9 @@
 //! Evening-cycle orchestrator — AR-2 Task 9.
-//!
-//! Ties together: parent selection, mutation proposal, paper-testing,
-//! inversion-pair noise filtering, numeric gate, honesty check, judge
-//! dispatch, Merkle root, and CycleSeal signing.
 
 use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 use chrono::Utc;
-use ed25519_dalek::SigningKey;
 use sqlx::SqlitePool;
 use ulid::Ulid;
 use xvision_observability::BlobStore;
@@ -27,13 +22,11 @@ use crate::autooptimizer::mutator::{MutationDiff, Mutator};
 use crate::autooptimizer::mutator_ladder::{record_outcome, record_proposal};
 use crate::autooptimizer::parent_policy::{select_parents, ParentPolicy};
 use crate::autooptimizer::progress::CycleProgressEvent;
-use crate::autooptimizer::seal::{build_and_sign, CycleSeal};
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
 
-/// Per-cycle configuration. Fields beyond the six required add scenario and
-/// scheduling context that `run_evening_cycle` cannot derive on its own.
+/// Per-cycle configuration.
 pub struct CycleConfig {
     pub num_parents: usize,
     pub mutations_per_parent: usize,
@@ -49,8 +42,7 @@ pub struct CycleConfig {
     pub baseline_scenario: Scenario,
     /// bundle_hash hex → Strategy for seed parents selected this cycle.
     pub parent_strategies: HashMap<String, Strategy>,
-    /// Optional explicit parent bundle hashes. When present, the cycle uses
-    /// these lineage nodes instead of selecting active leaves by policy.
+    /// Optional explicit parent bundle hashes.
     pub explicit_parent_hashes: Vec<ContentHash>,
 }
 
@@ -60,7 +52,6 @@ pub struct CycleResult {
     pub rejected_nodes: Vec<LineageNode>,
     pub honesty_check: HonestyCheckResult,
     pub diversity_score: f64,
-    pub seal: CycleSeal,
     pub findings_by_node: HashMap<ContentHash, Vec<Finding>>,
 }
 
@@ -68,9 +59,6 @@ struct MutationOutcome {
     child: Strategy,
     diff: MutationDiff,
     child_hash: ContentHash,
-    diff_hash: ContentHash,
-    day_hash: ContentHash,
-    untouched_hash: ContentHash,
     verdict: GateVerdict,
     status: LineageStatus,
     delta_sharpe: f64,
@@ -85,8 +73,6 @@ pub async fn run_evening_cycle(
     mutator: &Mutator,
     judge: &Judge,
     paper_tester: &dyn PaperTestRunner,
-    operator_key: &SigningKey,
-    session_id: &str,
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
 ) -> Result<CycleResult> {
     let cycle_id = Ulid::new().to_string();
@@ -165,22 +151,12 @@ pub async fn run_evening_cycle(
     )
     .await?;
     let diversity_score = diversity_decay_for_cycle(pool, &cycle_id).await.unwrap_or(0.0);
-    let merkle_root = lineage_store.merkle_root_for_cycle(&cycle_id).await?;
-    let node_count = active_nodes.len() + rejected_nodes.len();
-    let seal = build_and_sign(&cycle_id, session_id, merkle_root, node_count, operator_key)?;
-    seal.persist(pool).await?;
-    progress(CycleProgressEvent::CycleSealed {
-        cycle_id: cycle_id.clone(),
-        merkle_root: seal.merkle_root.to_hex(),
-        node_count,
-    });
     Ok(CycleResult {
         cycle_id,
         active_nodes,
         rejected_nodes,
         honesty_check,
         diversity_score,
-        seal,
         findings_by_node,
     })
 }
@@ -341,9 +317,6 @@ async fn gate_and_classify(
         min_improvement,
     );
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
-    let diff_hash = ContentHash::of_json(&serde_json::to_value(&diff)?);
-    let day_hash = ContentHash::of_json(&serde_json::to_value(&child_day)?);
-    let untouched_hash = ContentHash::of_json(&serde_json::to_value(&child_untouched)?);
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
 
     let (verdict, status) = if matches!(raw_verdict, GateVerdict::Pass) {
@@ -373,9 +346,6 @@ async fn gate_and_classify(
         child,
         diff,
         child_hash,
-        diff_hash,
-        day_hash,
-        untouched_hash,
         verdict,
         status,
         delta_sharpe,
@@ -391,13 +361,11 @@ async fn build_and_insert_node(
     let node = LineageNode {
         bundle_hash: outcome.child_hash,
         parent_hash: Some(parent_node.bundle_hash),
-        diff_hash: Some(outcome.diff_hash),
-        metrics_day_hash: Some(outcome.day_hash),
-        metrics_untouched_hash: Some(outcome.untouched_hash),
         gate_verdict: outcome.verdict.clone(),
         status: outcome.status.clone(),
         cycle_id: Some(cycle_id.to_string()),
         created_at: Utc::now(),
+        diversity_score: None,
     };
     LineageStore::new(pool.clone()).insert(&node).await?;
     Ok(node)
