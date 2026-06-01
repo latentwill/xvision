@@ -45,8 +45,14 @@ pub enum ActivationDecision {
 }
 
 impl ActivationDecision {
-    /// True only for `Active` decisions — the gate the engine consults
-    /// to decide whether to invoke the agent pipeline.
+    /// True for any `Active` decision (Trip OR Hold) — i.e. the
+    /// condition tree evaluated `true` on this bar without being
+    /// suppressed by cooldown / cap / position gating. NOT the engine's
+    /// wakeup gate: the engine fires an LLM dispatch only on Trip (see
+    /// [`Self::is_trip`] and `FilterEventV1.triggered`). Use this for
+    /// "is the filter currently in its active region?" — e.g. the
+    /// agent-graph DSL bridge that maps active/holding into a single
+    /// predicate boolean.
     pub fn is_active(&self) -> bool {
         matches!(self, ActivationDecision::Active { .. })
     }

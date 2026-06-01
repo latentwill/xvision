@@ -64,8 +64,16 @@ impl CheckpointKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CapturedArtifact {
     /// A filesystem Strategy JSON. Restored verbatim to
-    /// `$xvn_home/strategies/<id>.json`.
-    Strategy { id: String, blob_hash: String },
+    /// `$xvn_home/strategies/<id>.json`. `was_absent` records that the
+    /// file did not exist at snapshot time (a CREATE-like pre-state):
+    /// the blob is empty and restore deletes the file rather than
+    /// writing it back.
+    Strategy {
+        id: String,
+        blob_hash: String,
+        #[serde(default)]
+        was_absent: bool,
+    },
     /// An agent's full `Vec<AgentSlot>`, captured as JSON. Restored via
     /// `AgentStore::update` (full slot replace, validated, non-destructive).
     AgentSlots { agent_id: String, blob_hash: String },
@@ -245,22 +253,54 @@ impl Checkpointer {
 
         if let Some(strategy_id) = &request.strategy_id {
             let store = FilesystemStore::new(self.strategies_dir());
-            let strategy = store
-                .load(strategy_id)
+            // Resolve the path up front so an invalid id (path traversal, NUL,
+            // etc.) surfaces as the existing `checkpoint_restore_failed`
+            // signature — preserving the prior behaviour where bad ids
+            // failed inside `store.load`.
+            let path = store
+                .path_for(strategy_id)
+                .map_err(|e| CheckpointError::Restore {
+                    checkpoint_id: String::new(),
+                    artifact: "strategy",
+                    source: anyhow::anyhow!(e),
+                })?;
+            let exists = tokio::fs::try_exists(&path)
                 .await
                 .map_err(|e| CheckpointError::Restore {
                     checkpoint_id: String::new(),
                     artifact: "strategy",
-                    source: e,
+                    source: anyhow::Error::from(e),
                 })?;
-            // Capture the EXACT bytes the store persists (to_vec_pretty), so a
-            // byte-compare of the restored file against the original is identical.
-            let bytes = serde_json::to_vec_pretty(&strategy).map_err(|e| CheckpointError::Other(e.into()))?;
-            let blob = self.blobs.write(&bytes)?;
-            artifacts.push(CapturedArtifact::Strategy {
-                id: strategy_id.clone(),
-                blob_hash: blob.as_str().to_string(),
-            });
+            if !exists {
+                // CREATE-like pre-state: the strategy file does not exist yet.
+                // Capture an empty blob with `was_absent: true` so restore can
+                // rewind back to the absent state by deleting the file.
+                let blob = self.blobs.write(&[])?;
+                artifacts.push(CapturedArtifact::Strategy {
+                    id: strategy_id.clone(),
+                    blob_hash: blob.as_str().to_string(),
+                    was_absent: true,
+                });
+            } else {
+                let strategy = store
+                    .load(strategy_id)
+                    .await
+                    .map_err(|e| CheckpointError::Restore {
+                        checkpoint_id: String::new(),
+                        artifact: "strategy",
+                        source: e,
+                    })?;
+                // Capture the EXACT bytes the store persists (to_vec_pretty), so a
+                // byte-compare of the restored file against the original is identical.
+                let bytes =
+                    serde_json::to_vec_pretty(&strategy).map_err(|e| CheckpointError::Other(e.into()))?;
+                let blob = self.blobs.write(&bytes)?;
+                artifacts.push(CapturedArtifact::Strategy {
+                    id: strategy_id.clone(),
+                    blob_hash: blob.as_str().to_string(),
+                    was_absent: false,
+                });
+            }
         }
 
         if let Some(agent_id) = &request.agent_id {
@@ -413,24 +453,51 @@ impl Checkpointer {
         let mut restored = Vec::new();
         for artifact in &checkpoint.artifacts {
             match artifact {
-                CapturedArtifact::Strategy { id, blob_hash } => {
-                    let bytes = self.blobs.read(&BlobRef(blob_hash.clone()))?;
-                    let strategy: Strategy =
-                        serde_json::from_slice(&bytes).map_err(|e| CheckpointError::Restore {
+                CapturedArtifact::Strategy {
+                    id,
+                    blob_hash,
+                    was_absent,
+                } => {
+                    if *was_absent {
+                        // Pre-state was "no file". Rewind by deleting the
+                        // file the CREATE op wrote. Idempotent: a NotFound
+                        // here means we're already in the target state.
+                        let store = FilesystemStore::new(self.strategies_dir());
+                        let path = store.path_for(id).map_err(|e| CheckpointError::Restore {
                             checkpoint_id: checkpoint_id.to_string(),
                             artifact: "strategy",
-                            source: e.into(),
+                            source: anyhow::anyhow!(e),
                         })?;
-                    let store = FilesystemStore::new(self.strategies_dir());
-                    store
-                        .save(&strategy)
-                        .await
-                        .map_err(|e| CheckpointError::Restore {
-                            checkpoint_id: checkpoint_id.to_string(),
-                            artifact: "strategy",
-                            source: e,
-                        })?;
-                    let _ = id;
+                        match tokio::fs::remove_file(&path).await {
+                            Ok(()) => {}
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(e) => {
+                                return Err(CheckpointError::Restore {
+                                    checkpoint_id: checkpoint_id.to_string(),
+                                    artifact: "strategy",
+                                    source: anyhow::Error::from(e),
+                                });
+                            }
+                        }
+                    } else {
+                        let bytes = self.blobs.read(&BlobRef(blob_hash.clone()))?;
+                        let strategy: Strategy =
+                            serde_json::from_slice(&bytes).map_err(|e| CheckpointError::Restore {
+                                checkpoint_id: checkpoint_id.to_string(),
+                                artifact: "strategy",
+                                source: e.into(),
+                            })?;
+                        let store = FilesystemStore::new(self.strategies_dir());
+                        store
+                            .save(&strategy)
+                            .await
+                            .map_err(|e| CheckpointError::Restore {
+                                checkpoint_id: checkpoint_id.to_string(),
+                                artifact: "strategy",
+                                source: e,
+                            })?;
+                        let _ = id;
+                    }
                     restored.push("strategy".to_string());
                 }
                 CapturedArtifact::AgentSlots { agent_id, blob_hash } => {
@@ -916,5 +983,178 @@ mod tests {
             rail.tool_policy_json.as_deref(),
             Some(r#"{"create_strategy":"needs_approval"}"#)
         );
+    }
+
+    #[tokio::test]
+    async fn snapshot_of_absent_strategy_records_was_absent() {
+        let tmp = TempDir::new().unwrap();
+        let pool = open_ctx(tmp.path()).await;
+        let session_id = make_session(&pool).await;
+
+        // No strategy file on disk — this is the CREATE pre-state.
+        let strategy_id = "01HZSTRATEGYABSENT00000001";
+        let store = FilesystemStore::new(strategy_store_dir(tmp.path()));
+        assert!(!tokio::fs::try_exists(&store.path_for(strategy_id).unwrap())
+            .await
+            .unwrap());
+
+        let ckpt = Checkpointer::new(pool.clone(), tmp.path());
+        let snapshot = ckpt
+            .snapshot(
+                &session_id,
+                CheckpointKind::PreTool,
+                SnapshotRequest {
+                    strategy_id: Some(strategy_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("snapshotting an absent strategy must succeed (empty pre-state)");
+        assert_eq!(snapshot.artifacts.len(), 1);
+        match &snapshot.artifacts[0] {
+            CapturedArtifact::Strategy { id, was_absent, .. } => {
+                assert_eq!(id, strategy_id);
+                assert!(*was_absent, "absent file must capture was_absent: true");
+            }
+            other => panic!("expected Strategy artifact, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_of_create_pre_state_deletes_the_created_file() {
+        let tmp = TempDir::new().unwrap();
+        let pool = open_ctx(tmp.path()).await;
+        let session_id = make_session(&pool).await;
+
+        // Pre-state: file does not exist.
+        let strategy_id = "01HZSTRATEGYCREATE00000002";
+        let store = FilesystemStore::new(strategy_store_dir(tmp.path()));
+        let path = store.path_for(strategy_id).unwrap();
+        assert!(!tokio::fs::try_exists(&path).await.unwrap());
+
+        let ckpt = Checkpointer::new(pool.clone(), tmp.path());
+        let snapshot = ckpt
+            .snapshot(
+                &session_id,
+                CheckpointKind::PreTool,
+                SnapshotRequest {
+                    strategy_id: Some(strategy_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // Simulate the CREATE: write the strategy after the snapshot.
+        store.save(&sample_strategy(strategy_id)).await.unwrap();
+        assert!(tokio::fs::try_exists(&path).await.unwrap());
+
+        // RESTORE rewinds to the absent state by deleting the file.
+        let outcome = ckpt.restore(&snapshot.checkpoint_id).await.unwrap();
+        assert_eq!(outcome.restored, vec!["strategy".to_string()]);
+        assert!(
+            !tokio::fs::try_exists(&path).await.unwrap(),
+            "restore of a was_absent snapshot must delete the created file"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_of_create_pre_state_is_idempotent_when_file_already_gone() {
+        let tmp = TempDir::new().unwrap();
+        let pool = open_ctx(tmp.path()).await;
+        let session_id = make_session(&pool).await;
+
+        let strategy_id = "01HZSTRATEGYCREATE00000003";
+        let store = FilesystemStore::new(strategy_store_dir(tmp.path()));
+        let path = store.path_for(strategy_id).unwrap();
+
+        let ckpt = Checkpointer::new(pool.clone(), tmp.path());
+        let snapshot = ckpt
+            .snapshot(
+                &session_id,
+                CheckpointKind::PreTool,
+                SnapshotRequest {
+                    strategy_id: Some(strategy_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // CREATE op never produced a file (e.g. it failed). Restore must still
+        // succeed and leave us in the absent state.
+        assert!(!tokio::fs::try_exists(&path).await.unwrap());
+        let outcome = ckpt.restore(&snapshot.checkpoint_id).await.unwrap();
+        assert_eq!(outcome.restored, vec!["strategy".to_string()]);
+        assert!(!tokio::fs::try_exists(&path).await.unwrap());
+    }
+
+    /// Backward-compat: rows written before this fix have no `was_absent`
+    /// field in their captured_json. `#[serde(default)]` on the variant must
+    /// keep them deserializing as `was_absent: false` so legacy snapshots
+    /// continue to round-trip through the write-back path, never the
+    /// delete-on-restore path.
+    #[test]
+    fn legacy_manifest_without_was_absent_field_deserializes_as_false() {
+        let legacy_json = r#"{
+            "artifacts": [
+                {
+                    "kind": "strategy",
+                    "id": "01HZLEGACY0000000000000000",
+                    "blob_hash": "deadbeefcafebabe"
+                }
+            ]
+        }"#;
+        let manifest: CapturedManifest =
+            serde_json::from_str(legacy_json).expect("legacy manifest must deserialize");
+        assert_eq!(manifest.artifacts.len(), 1);
+        match &manifest.artifacts[0] {
+            CapturedArtifact::Strategy {
+                id,
+                blob_hash,
+                was_absent,
+            } => {
+                assert_eq!(id, "01HZLEGACY0000000000000000");
+                assert_eq!(blob_hash, "deadbeefcafebabe");
+                assert!(
+                    !*was_absent,
+                    "legacy snapshot (no field) must default to was_absent: false \
+                     so restore still writes the blob back instead of deleting"
+                );
+            }
+            other => panic!("expected Strategy variant, got {other:?}"),
+        }
+    }
+
+    /// The fix moved strategy-id validation from `store.load` (in the
+    /// file-exists branch) to an unconditional `store.path_for` call up
+    /// front, so the absent branch can use it too. An invalid id must still
+    /// surface as `CheckpointError::Restore` (code `checkpoint_restore_failed`)
+    /// — same machine code the rail already handles, not a silent success or
+    /// a new error class.
+    #[tokio::test]
+    async fn snapshot_with_invalid_strategy_id_surfaces_checkpoint_restore_failed() {
+        let tmp = TempDir::new().unwrap();
+        let pool = open_ctx(tmp.path()).await;
+        let session_id = make_session(&pool).await;
+
+        let ckpt = Checkpointer::new(pool.clone(), tmp.path());
+        // Path traversal — rejected by validate_strategy_id_for_path.
+        let err = ckpt
+            .snapshot(
+                &session_id,
+                CheckpointKind::PreTool,
+                SnapshotRequest {
+                    strategy_id: Some("../etc/passwd".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        match &err {
+            CheckpointError::Restore { artifact, .. } => assert_eq!(*artifact, "strategy"),
+            other => panic!("expected Restore, got {other:?}"),
+        }
+        assert_eq!(err.code(), "checkpoint_restore_failed");
     }
 }

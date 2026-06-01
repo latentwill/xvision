@@ -25,9 +25,13 @@
 //! operator-safety P1 #12 safe-eval verbs from
 //! `team/intake/2026-05-20-cli-operator-safety-and-model-bakeoff.md`.
 //!
-//! The policy is intentionally an operator command allowlist, not a dev-mode
-//! bypass. Normal read/eval/research commands work on live nodes without setting
-//! `XVN_DASHBOARD_CLI_DEVMODE`; categorically dangerous heads stay denied.
+//! By default the policy is an operator command allowlist: normal
+//! read/eval/research commands work on live nodes with no flag, and
+//! categorically dangerous heads stay denied. Setting `XVN_DASHBOARD_CLI_DEVMODE`
+//! (`1`/`true`) turns the policy into a FULL bypass — every argv is accepted,
+//! including live-trade and host-admin verbs. That flag is an explicit per-node
+//! opt-in for a trusted dev tailnet with no live broker credentials; it does
+//! not replace the (pending) dashboard auth gate. See [`check_argv_with_env`].
 
 /// Verdict from a single allowlist check. The string is shown verbatim
 /// in the dashboard's HTTP error so the operator can diagnose why a
@@ -235,14 +239,12 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
         head: "scenario",
         path: &["set-regime"],
     },
-    DeniedNested {
-        head: "strategy",
-        path: &["new"],
-    },
-    DeniedNested {
-        head: "strategy",
-        path: &["create"],
-    },
+    // Strategy draft authoring is intentionally allowed over the trusted
+    // Tailscale remote CLI: users need to create new strategies remotely
+    // without bouncing through the dashboard UI. The mutating follow-up paths
+    // below (`add-agent`, `remove-agent`, `set-pipeline`) stay denied because
+    // they alter an existing strategy's shape in ways that are easier to do
+    // with richer local context.
     DeniedNested {
         head: "strategy",
         path: &["add-agent"],
@@ -294,10 +296,10 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
 ];
 
 /// Every real command/subcommand path the remote policy *references*
-/// (allowed heads, strict-template heads, and nested-denied paths), for
-/// the CLI-surface drift test. Excludes pseudo-flags (--help/-h/--version/-V/help)
-/// and the defensive DENYLIST (which may name commands that don't exist as
-/// xvn subcommands on purpose).
+/// (allowed heads, strict-template heads, allowed draft-authoring paths,
+/// and nested-denied paths), for the CLI-surface drift test. Excludes pseudo-flags
+/// (--help/-h/--version/-V/help) and the defensive DENYLIST (which may name
+/// commands that don't exist as xvn subcommands on purpose).
 pub fn referenced_command_paths() -> Vec<Vec<&'static str>> {
     let mut paths: Vec<Vec<&'static str>> = Vec::new();
     for t in STRICT_TEMPLATES {
@@ -309,6 +311,11 @@ pub fn referenced_command_paths() -> Vec<Vec<&'static str>> {
         }
         paths.push(vec![*s]);
     }
+    // Draft-authoring paths are intentionally allowed even though they mutate
+    // state, so keep them visible to the clap-drift test as first-class remote
+    // policy entries.
+    paths.push(vec!["strategy", "create"]);
+    paths.push(vec!["strategy", "new"]);
     for d in DENIED_NESTED_SUBCOMMANDS {
         let mut p = vec![d.head];
         p.extend_from_slice(d.path);
@@ -350,6 +357,39 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
     }
 
     AllowlistDecision::Allow
+}
+
+/// Env var that opts a node into the remote CLI full-bypass dev mode.
+pub const DEVMODE_ENV: &str = "XVN_DASHBOARD_CLI_DEVMODE";
+
+/// Whether the full-bypass dev mode is enabled on this node. Off unless the
+/// env var is `1` or (case-insensitively) `true`.
+pub fn devmode_enabled() -> bool {
+    std::env::var(DEVMODE_ENV)
+        .map(|v| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true")
+        })
+        .unwrap_or(false)
+}
+
+/// Policy entry point for the HTTP route.
+///
+/// With dev mode **off** (the default, and the only safe posture for any node
+/// reachable beyond a trusted tailnet) this is exactly [`check_argv`]: the
+/// allowlist + denylist apply.
+///
+/// With dev mode **on** it is a FULL bypass — every non-empty argv is allowed,
+/// including the live-trade (`fire-trade`, `close-position`) and host-admin
+/// (`migrate`, `dashboard`, `mcp`) verbs that [`check_argv`] denies. This is an
+/// explicit per-node opt-in (set [`DEVMODE_ENV`] only on a trusted dev node
+/// with no live broker credentials); it does NOT replace the (pending) auth
+/// gate.
+pub fn check_argv_with_env(argv: &[String]) -> AllowlistDecision {
+    if devmode_enabled() && !argv.is_empty() {
+        return AllowlistDecision::Allow;
+    }
+    check_argv(argv)
 }
 
 fn denied_nested_subcommand(argv: &[String]) -> Option<String> {
@@ -581,7 +621,7 @@ mod tests {
         assert_reject(&["migrate", "--dry-run"], "not allowed over remote cli");
     }
 
-    // ── agent allowlist gap: create denied, read-only paths allowed ───────
+    // ── write-path gaps we still want blocked remotely ───────────────────
 
     #[test]
     fn agent_create_is_rejected_remotely() {
@@ -589,6 +629,12 @@ mod tests {
             &["agent", "create", "--name", "remote-agent"],
             "not allowed over remote cli",
         );
+    }
+
+    #[test]
+    fn strategy_create_is_allowed_remotely() {
+        assert_allow(&["strategy", "create", "--name", "remote-strategy"]);
+        assert_allow(&["strategy", "new", "--name", "remote-strategy"]);
     }
 
     #[test]

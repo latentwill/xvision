@@ -83,7 +83,7 @@ export function ChartLabDashboardAnnotated() {
         <code className="text-text-2">annotations.json</code> fixture. Mirrors
         the backend stub at <code>/api/v2/charts/annotated/:run_id</code>.
       </div>
-      <AIAnnotationDashboard payload={payload} />
+      <AIAnnotationDashboard payload={payload} initialAnnotationMode={true} />
     </div>
   );
 }

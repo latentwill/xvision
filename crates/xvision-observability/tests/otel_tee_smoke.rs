@@ -169,6 +169,8 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
         cost_usd: Some(0.02),
         prompt_hash: "sha256:deadbeef".to_string(),
         response_hash: Some("sha256:cafef00d".to_string()),
+        prompt_text: None,
+        response_text: None,
         prompt_payload_ref: None,
         response_payload_ref: None,
         // `tool_calls_requested` could be unbounded JSON. Stash a

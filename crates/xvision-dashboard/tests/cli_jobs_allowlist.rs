@@ -1,7 +1,9 @@
 //! End-to-end tests for remote CLI policy over `POST /api/cli/jobs`.
-//! The remote surface should support normal operator/eval commands without
-//! requiring a dev-mode bypass, while still rejecting categorically dangerous
-//! subcommands.
+//! The remote surface supports normal operator/eval commands by default while
+//! rejecting categorically dangerous subcommands. The opt-in
+//! `XVN_DASHBOARD_CLI_DEVMODE` flag (off by default) turns the policy into a
+//! FULL bypass for trusted dev nodes — every argv is accepted, including
+//! live-trade and host-admin verbs. These tests pin both modes.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -87,6 +89,19 @@ async fn bars_fetch_allowed_argv_creates_job() {
 }
 
 #[tokio::test]
+async fn strategy_create_is_allowed_without_devmode() {
+    let _guard = devmode_off();
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/cli/jobs")
+        .json(&serde_json::json!({
+            "argv": ["strategy", "create", "--name", "remote-strategy"]
+        }))
+        .await;
+    resp.assert_status_ok();
+}
+
+#[tokio::test]
 async fn eval_run_is_allowed_without_devmode() {
     let _guard = devmode_off();
     let (server, _tmp) = boot().await;
@@ -129,36 +144,46 @@ async fn unknown_subcommand_is_rejected_with_400() {
 }
 
 #[tokio::test]
-async fn devmode_env_does_not_bypass_policy() {
+async fn devmode_bypass_allows_otherwise_unsupported_argv() {
     let _guard = devmode_on();
     let (server, _tmp) = boot().await;
+    // Unsupported heads are rejected by default; the full devmode bypass lets
+    // them through (the job still shells out to the real `xvn`, which validates).
     let resp = server
         .post("/api/cli/jobs")
         .json(&serde_json::json!({ "argv": ["not-a-command"] }))
         .await;
-    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    resp.assert_status_ok();
 }
 
 #[tokio::test]
-async fn dashboard_subcommand_is_rejected_even_in_devmode() {
+async fn devmode_bypass_allows_dashboard_subcommand() {
     let _guard = devmode_on();
     let (server, _tmp) = boot().await;
     let resp = server
         .post("/api/cli/jobs")
         .json(&serde_json::json!({ "argv": ["dashboard", "serve"] }))
         .await;
-    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    resp.assert_status_ok();
 }
 
 #[tokio::test]
-async fn devmode_allows_non_allowlisted_non_denied_argv() {
+async fn devmode_bypass_allows_mutating_and_admin_nested_subcommands() {
     let _guard = devmode_on();
     let (server, _tmp) = boot().await;
-    let resp = server
-        .post("/api/cli/jobs")
-        .json(&serde_json::json!({ "argv": ["eval", "run", "--strategy", "x"] }))
-        .await;
-    resp.assert_status_ok();
+    for argv in [
+        serde_json::json!(["strategy", "new", "--name", "remote-test"]),
+        serde_json::json!(["agent", "create", "--name", "remote-agent"]),
+        serde_json::json!(["scenario", "create", "--name", "remote-test"]),
+        serde_json::json!(["store", "migrate"]),
+        serde_json::json!(["migrate", "--dry-run"]),
+    ] {
+        let resp = server
+            .post("/api/cli/jobs")
+            .json(&serde_json::json!({ "argv": argv }))
+            .await;
+        resp.assert_status_ok();
+    }
 }
 
 #[tokio::test]
@@ -199,14 +224,14 @@ async fn mutating_nested_subcommands_are_rejected() {
 }
 
 #[tokio::test]
-async fn fire_trade_is_rejected_even_in_devmode() {
+async fn fire_trade_is_allowed_in_devmode() {
     let _guard = devmode_on();
     let (server, _tmp) = boot().await;
+    // The whole point of full devmode: even live-trade verbs are reachable on
+    // a trusted dev node. NEVER set the env on a node with live broker creds.
     let resp = server
         .post("/api/cli/jobs")
         .json(&serde_json::json!({ "argv": ["fire-trade", "--whatever"] }))
         .await;
-    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
-    let body = resp.text();
-    assert!(body.contains("not allowed over remote cli") || body.contains("fire-trade"));
+    resp.assert_status_ok();
 }

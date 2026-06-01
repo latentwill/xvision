@@ -274,6 +274,10 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
     if (promptHash) span.hash = promptHash;
     const responseHash = asNullableString(raw.response_hash);
     if (responseHash) span.response_hash = responseHash;
+    const promptText = asNullableString(raw.prompt_text);
+    if (promptText) span.prompt = promptText;
+    const responseText = asNullableString(raw.response_text);
+    if (responseText) span.response = responseText;
     const promptRef = asNullableString(raw.prompt_payload_ref);
     if (promptRef) span.prompt_payload_ref = promptRef;
     const responseRef = asNullableString(raw.response_payload_ref);
@@ -319,6 +323,7 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
       cost_usd: typeof row.cost_usd === "number" ? row.cost_usd : null,
       prompt_hash: asString(row.prompt_hash),
       response_hash: asNullableString(row.response_hash),
+      prompt_text: asNullableString(row.prompt_text),
       prompt_payload_ref: asNullableString(row.prompt_payload_ref),
       response_payload_ref: asNullableString(row.response_payload_ref),
       response_text: asNullableString(row.response_text),

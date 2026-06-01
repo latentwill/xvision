@@ -90,6 +90,10 @@ const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// Cap on tool-use → tool-result iterations per `next_event` call. Prevents
 /// a misbehaving model from looping forever; v1 wizards never need more
 /// than 3-4 round trips per user turn.
+///
+/// Keep enough headroom for legitimate multi-step authoring turns while
+/// relying on the repeated same-tool/same-error streak guard below to stop
+/// noisy failure loops early.
 const MAX_TOOL_LOOP_ITERATIONS: usize = 12;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -969,6 +973,30 @@ impl WizardLoop {
                 .collect();
 
             if tool_uses.is_empty() {
+                // The model signaled it intended to call a tool
+                // (`stop_reason == ToolUse`) but emitted no tool_use
+                // block. Without this branch the loop bails as Done
+                // after the first malformed text-only turn, cutting
+                // off any planned follow-up steps. Persist a synthetic
+                // user-role nudge so the next iteration re-prompts the
+                // model with explicit guidance; MAX_TOOL_LOOP_ITERATIONS
+                // is the safety net for tight loops.
+                if matches!(resp.stop_reason, StopReason::ToolUse) {
+                    let nudge_blocks: Vec<serde_json::Value> = vec![serde_json::json!({
+                        "type": "text",
+                        "text": "Your previous turn signaled `tool_use` but contained no \
+                                 tool_use block. Either call the tool you intended to call, \
+                                 or finish the turn cleanly with a final text response."
+                    })];
+                    ChatSessionStore::append(
+                        &self.pool,
+                        &self.session_id,
+                        "user",
+                        &nudge_blocks,
+                    )
+                    .await?;
+                    continue;
+                }
                 self.is_done = true;
                 self.pending.push(WizardEvent::Done {
                     draft_id: self.last_draft_id.clone(),
@@ -1051,6 +1079,44 @@ impl WizardLoop {
                     "tool_use_id": id,
                     "content": result_value.to_string(),
                 }));
+                // QA31: check the streak guard PER TOOL within the turn,
+                // not just at the end of the turn. Previously a multi-tool
+                // turn like [create_scenario → fail, set_filter → ok]
+                // ended with `tool_failure_streak = 0` (the success
+                // cleared it), so the outer guard never saw the
+                // create_scenario failure. Moving the probe inside lets
+                // us catch a same-tool repeat as soon as it happens.
+                if self.tool_failure_streak >= MAX_TOOL_FAILURE_STREAK {
+                    // Persist the partial tool_results we've already
+                    // collected (the prior tool_uses in this turn) so
+                    // the chat history doesn't lose them when we bail
+                    // early.
+                    ChatSessionStore::append(
+                        &self.pool,
+                        &self.session_id,
+                        "user",
+                        &tool_result_blocks,
+                    )
+                    .await?;
+                    if !rich_blocks.is_empty() {
+                        ChatSessionStore::append(
+                            &self.pool,
+                            &self.session_id,
+                            "assistant",
+                            &rich_blocks,
+                        )
+                        .await?;
+                        for block in std::mem::take(&mut rich_blocks) {
+                            self.pending.push(WizardEvent::ContentBlock { block });
+                        }
+                    }
+                    self.emit_tool_loop_break().await?;
+                    self.is_done = true;
+                    self.pending.push(WizardEvent::Done {
+                        draft_id: self.last_draft_id.clone(),
+                    });
+                    return Ok(());
+                }
             }
             ChatSessionStore::append(&self.pool, &self.session_id, "user", &tool_result_blocks).await?;
             if !rich_blocks.is_empty() {
@@ -2199,12 +2265,7 @@ impl WizardLoop {
             .description
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                format!(
-                    "Auto-created for strategy {} as role `{role}`.",
-                    strategy.manifest.id
-                )
-            });
+            .unwrap_or_else(|| derive_strategy_agent_description(&strategy, &role));
         let agent = api_agents::create(
             &self.api_context,
             api_agents::CreateAgentRequest {
@@ -2367,6 +2428,30 @@ fn default_strategy_agent_prompt(strategy: &xvision_engine::strategies::Strategy
          decision required by the runtime; do not invent unavailable data.",
         strategy.manifest.display_name
     )
+}
+
+/// Derive a one-line, operator-facing description for an agent created by
+/// the chat-rail wizard when the LLM didn't supply one via the
+/// `description` tool argument. Prefers strategy `display_name` over the
+/// raw ULID so the Agents list shows a meaningful label; folds in
+/// `plain_summary` when the strategy author has filled one in.
+fn derive_strategy_agent_description(
+    strategy: &xvision_engine::strategies::Strategy,
+    role: &str,
+) -> String {
+    let role = role.trim();
+    let name = strategy.manifest.display_name.trim();
+    let display = if name.is_empty() {
+        strategy.manifest.id.as_str()
+    } else {
+        name
+    };
+    let summary = strategy.manifest.plain_summary.trim();
+    if summary.is_empty() {
+        format!("{role} agent for strategy '{display}'.")
+    } else {
+        format!("{role} agent for strategy '{display}' — {summary}")
+    }
 }
 
 fn strategy_resolution_json(strategy: &api_strategy::StrategySummary) -> serde_json::Value {
@@ -3003,10 +3088,15 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "parent_scenario_id": {"type": ["string", "null"]},
                     "source": {"type": "string"}
                 },
+                // QA31: `venue` removed from required. `CreateScenarioRequest`
+                // now `#[serde(default)]`s the field to a sensible Alpaca
+                // preset, so chat agents (Gemini Flash, etc.) that don't
+                // know the inner shape don't get stuck in the 12-iteration
+                // retry loop on `missing field venue`.
                 "required": [
                     "display_name", "description", "asset_class",
                     "quote_currency", "time_window", "capital", "granularity",
-                    "timezone", "calendar", "venue", "data_source",
+                    "timezone", "calendar", "data_source",
                     "replay_mode", "tags", "source"
                 ]
             }),
@@ -3511,6 +3601,78 @@ mod tests {
         }
         assert!(matches!(&events[2], WizardEvent::Token { text } if text.contains("strategies")));
         assert!(matches!(&events[3], WizardEvent::Done { .. }));
+    }
+
+    /// Regression: a model turn that signals `stop_reason == ToolUse`
+    /// but emits no `tool_use` block (text-only / malformed content)
+    /// USED to bail as Done after the first response, cutting off any
+    /// planned follow-up tool calls. The loop must instead nudge the
+    /// model and iterate so multi-step plans complete.
+    #[tokio::test]
+    async fn malformed_tool_use_stop_reason_continues_loop() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            // Turn 1: malformed — stop_reason=ToolUse with text only.
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Let me check.".into(),
+                }],
+                stop_reason: StopReason::ToolUse,
+                input_tokens: 5,
+                output_tokens: 5,
+            },
+            // Turn 2: model recovers and emits a proper tool_use.
+            MockDispatch::tool_use("tu_late", "list_strategies", serde_json::json!({})),
+            // Turn 3: final wrap-up text.
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Here you go.".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "list strategies", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, WizardEvent::ToolCall { tool, .. } if tool == "list_strategies")),
+            "expected a late ToolCall after the malformed turn; got {events:?}"
+        );
+        assert!(
+            matches!(events.last(), Some(WizardEvent::Done { .. })),
+            "expected Done as last event; got {events:?}"
+        );
+    }
+
+    /// Safety net: if the model never recovers and keeps emitting
+    /// malformed `stop_reason == ToolUse` turns with no tool_use block,
+    /// the `continue` branch must NOT spin forever — the bounded
+    /// `MAX_TOOL_LOOP_ITERATIONS` for-loop is responsible for bailing
+    /// with an Error event. `MockDispatch::sequence` clones the last
+    /// queued response once the queue drains to one entry, so a single
+    /// malformed canned response is enough to exercise this.
+    #[tokio::test]
+    async fn malformed_tool_use_stop_reason_eventually_bails() {
+        let mock = Arc::new(MockDispatch::sequence(vec![LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: "thinking…".into(),
+            }],
+            stop_reason: StopReason::ToolUse,
+            input_tokens: 1,
+            output_tokens: 1,
+        }]));
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "list strategies", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, WizardEvent::Error { message } if message.contains("exceeded"))),
+            "expected an Error event with 'exceeded' in the message; got {events:?}"
+        );
     }
 
     /// V2F foundation: wizard exposes `list_strategies_folder` and

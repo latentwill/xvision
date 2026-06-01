@@ -313,7 +313,15 @@ function ProviderRowView({
   return (
     <>
       <tr className="border-t border-border-soft align-middle">
-        <td className="py-2 pr-3">
+        {/*
+          QA31: header cells get `paddingLeft: 20` on the first column
+          via ListCard.tsx, but the row cells had no matching `pl-` so
+          the provider names rendered flush against the card's left
+          edge while their header label was indented 20px. Aligning the
+          first cell with `pl-5` (20px) so the column reads as a
+          proper column.
+        */}
+        <td className="py-2 pl-5 pr-3">
           <div className="flex items-center gap-2">
             <code className="font-mono text-[13px] text-text">{row.name}</code>
           </div>
@@ -390,7 +398,7 @@ function ProviderRowView({
       </tr>
       {test.data || test.isError ? (
         <tr className="border-t border-border-soft/40">
-          <td colSpan={5} className="py-1.5 pr-0 text-[12px]">
+          <td colSpan={5} className="py-1.5 pl-5 pr-5 text-[12px]">
             <ConnectionResult
               data={test.data ?? null}
               error={test.isError ? test.error : null}
@@ -400,21 +408,21 @@ function ProviderRowView({
       ) : null}
       {editing ? (
         <tr className="border-t border-border-soft/40 bg-surface-elev/20">
-          <td colSpan={5} className="py-3 pr-0">
+          <td colSpan={5} className="py-3 pl-5 pr-5">
             <EditProviderForm row={row} onClose={() => setEditing(false)} />
           </td>
         </tr>
       ) : null}
       {managing ? (
         <tr className="border-t border-border-soft/40 bg-surface-elev/20">
-          <td colSpan={5} className="py-3 pr-0">
+          <td colSpan={5} className="py-3 pl-5 pr-5">
             <ModelManager row={row} onClose={() => setManaging(false)} />
           </td>
         </tr>
       ) : null}
       {removeError ? (
         <tr className="border-t border-border-soft/40">
-          <td colSpan={5} className="py-2 pr-0 text-[12px] text-danger">
+          <td colSpan={5} className="py-2 pl-5 pr-5 text-[12px] text-danger">
             {removeError}
           </td>
         </tr>

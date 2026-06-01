@@ -758,11 +758,11 @@ async fn optimize_memory_demos_mints_child_agent_prompt() {
             "0.7",
             "--child-dev-score",
             "0.95",
-            "--parent-holdout-score",
+            "--baseline-untouched-score",
             "1.0",
-            "--child-holdout-score",
+            "--candidate-untouched-score",
             "1.2",
-            "--gate-epsilon",
+            "--min-improvement",
             "0.1",
             "--reason",
             "child beat parent on dev and holdout",
@@ -809,9 +809,9 @@ async fn optimize_memory_demos_mints_child_agent_prompt() {
     );
     assert_ok(&out);
     let lineage_text = String::from_utf8_lossy(&out.stdout);
-    assert!(lineage_text.contains("gate verdict=passed"));
-    assert!(lineage_text.contains("delta_dev=0.250000"));
-    assert!(lineage_text.contains("delta_holdout=0.200000"));
+    assert!(lineage_text.contains("gate decision: Kept"));
+    assert!(lineage_text.contains("validation improvement: 0.250000"));
+    assert!(lineage_text.contains("untouched improvement: 0.200000"));
 
     let out = xvn_with_memory(&["agent", "get", child_id], dir.path(), &mem);
     assert_ok(&out);

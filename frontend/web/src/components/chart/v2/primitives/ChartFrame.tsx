@@ -7,8 +7,6 @@ export type RangePreset =
   | "12h"
   | "1d"
   | "1w"
-  | "1m"
-  | "3m"
   | "All";
 
 const RANGE_PRESETS: RangePreset[] = [
@@ -18,8 +16,6 @@ const RANGE_PRESETS: RangePreset[] = [
   "12h",
   "1d",
   "1w",
-  "1m",
-  "3m",
   "All",
 ];
 
@@ -31,11 +27,17 @@ type Props = {
   range: RangePreset;
   onRange: (r: RangePreset) => void;
   /**
-   * When `false`, the range preset buttons (1d/1w/1m/3m/All) are not rendered.
+   * When `false`, the range preset buttons are not rendered.
    * Fallback for surfaces where a finite visible window can't be supported.
    * Defaults to `true`.
    */
   rangeEnabled?: boolean;
+  /**
+   * Override the visible preset list. Surfaces with known candle granularity
+   * pass a filtered subset so presets shorter than the bar interval (which
+   * all collapse to a single visible candle) aren't shown.
+   */
+  presets?: RangePreset[];
   layersPanel?: ReactNode;
   dataTable?: ReactNode;
   children: ReactNode;
@@ -46,6 +48,7 @@ export function ChartFrame({
   range,
   onRange,
   rangeEnabled = true,
+  presets,
   layersPanel,
   dataTable,
   children,
@@ -63,7 +66,7 @@ export function ChartFrame({
 
         {/* Range toggles */}
         {rangeEnabled &&
-          RANGE_PRESETS.map((r) => (
+          (presets ?? RANGE_PRESETS).map((r) => (
             <button
               key={r}
               type="button"

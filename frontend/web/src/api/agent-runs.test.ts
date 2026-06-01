@@ -150,6 +150,7 @@ describe("validateAgentRunDetail", () => {
     expect(detail.spans[0]?.attributes).toEqual({ phase: "root" });
     expect(detail.model_calls[0]?.input_tokens).toBe(10);
     expect(detail.model_calls[0]?.response_hash).toBe("sha256:def");
+    expect(detail.model_calls[0]?.prompt_text).toBeNull();
     expect(detail.model_calls[0]?.response_text).toBeNull();
   });
 
@@ -163,6 +164,24 @@ describe("validateAgentRunDetail", () => {
     expect(modelSpan?.cost).toBeCloseTo(0.001);
     expect(modelSpan?.hash).toBe("sha256:abc");
     expect(modelSpan?.response_hash).toBe("sha256:def");
+  });
+
+  test("projects plaintext model prompt and response onto the matching span", () => {
+    const detail = validateAgentRunDetail({
+      ...EXPORT_PAYLOAD,
+      model_calls: [
+        {
+          ...EXPORT_PAYLOAD.model_calls[0],
+          prompt_text: "decide whether to trade BTC",
+          response_text: "{\"action\":\"hold\"}",
+        },
+      ],
+    });
+    const modelSpan = detail.spans.find((s) => s.span_id === "span_model");
+    expect(modelSpan?.prompt).toBe("decide whether to trade BTC");
+    expect(modelSpan?.response).toBe("{\"action\":\"hold\"}");
+    expect(detail.model_calls[0]?.prompt_text).toBe("decide whether to trade BTC");
+    expect(detail.model_calls[0]?.response_text).toBe("{\"action\":\"hold\"}");
   });
 
   test("surfaces payload refs when retention preserves them", () => {

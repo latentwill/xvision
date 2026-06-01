@@ -99,6 +99,21 @@ describe("budget.armWallTimer", () => {
       vi.useRealTimers()
     }
   })
+
+  it("does not arm timers above Node's setTimeout ceiling", () => {
+    const schedule = vi.fn()
+    const cancel = vi.fn()
+    const timer = armWallTimer(2_147_483_648, {
+      schedule: schedule as unknown as typeof setTimeout,
+      cancel: cancel as unknown as typeof clearTimeout,
+    })
+
+    expect(schedule).not.toHaveBeenCalled()
+    expect(timer.signal.aborted).toBe(false)
+    expect(timer.fired()).toBe(false)
+    timer.clear()
+    expect(cancel).not.toHaveBeenCalled()
+  })
 })
 
 describe("budget.emptyUsage", () => {

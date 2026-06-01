@@ -52,8 +52,8 @@ forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.0.2
 Remappings are declared in `foundry.toml`. The code targets **OpenZeppelin v5**
 (`Ownable(initialOwner)`, ERC-1155 `_update` hook, namespaced upgradeable
 storage). The exact tags above are intentional: newer OZ v5 releases may use
-Cancun-only builtins such as `mcopy`, while this tree currently compiles for the
-conservative `paris` EVM target.
+Cancun-only builtins such as `mcopy`. v5.0.2 is pre-`mcopy`, so it compiles
+cleanly under the `shanghai` EVM target this tree uses.
 
 ## Build & test
 
@@ -73,10 +73,12 @@ The locally-runnable upgrade-safety test is `test/integration/Upgrade.t.sol`.
 
 ### EVM target
 
-`evm_version = "paris"` in `foundry.toml` — conservative, avoids PUSH0
-(shanghai) and transient-storage (cancun) opcodes that Mantle has historically
-lagged on. Bump to `shanghai`/`cancun` only after confirming opcode support on
-Mantle Sepolia (chain 5003).
+`evm_version = "shanghai"` in `foundry.toml`. Mantle mainnet (5000) and Sepolia
+(5003) have supported Shanghai (incl. PUSH0) for well over a year, so `shanghai`
+is safe and reclaims PUSH0's gas savings on constant loads. Not `cancun`: this
+tree uses no transient storage / `mcopy` (and OZ is pinned to v5.0.2, pre-`mcopy`).
+Confirm PUSH0 acceptance with a smoke deploy to chain 5003 before relying on it
+for mainnet.
 
 ### Upgrade safety
 

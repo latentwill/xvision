@@ -429,7 +429,7 @@ export function EvalRunsRoute() {
             badge={row.status}
             badgeColor={badgeColorFor(row.status)}
             subtitle={displayScenarioName(row.scenario_id, scenarios)}
-            meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}${row.auto_fire_review ? " · auto review" : ""}`}
+            meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}`}
             rightTop={fmtPct(row.total_return_pct)}
             rightSub={fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
             rightTone={signedTone(row.total_return_pct)}
@@ -592,11 +592,6 @@ function DesktopRow({
         </div>
         <div className="mt-0.5 text-[11px] text-text-2">
           {evalRunDisambiguator(row, allRows)}
-          {row.auto_fire_review ? (
-            <span className="ml-2 inline-flex rounded border border-gold/40 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-gold">
-              auto review
-            </span>
-          ) : null}
         </div>
         <div
           className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all"

@@ -857,18 +857,43 @@ impl Executor {
 
             // track-plan-touches: per-bar filter evaluation. `None` means
             // EveryBar strategy (no gating). The filter is a STRATEGY-level
-            // gate, evaluated once per timestamp on the first active
-            // asset's bar; when not `Active` it skips ALL assets' decisions
-            // this timestamp. `in_position` is true when any leg is open.
+            // gate, evaluated once per timestamp; when not `Active` it skips
+            // ALL assets' decisions this timestamp. `in_position` is true
+            // when any leg is open.
+            //
+            // QA31 (filter-bypass on staggered multi-asset data): previously
+            // this hard-coded `asset_sym` (the FIRST active asset, captured
+            // outside the timestamp loop). If that first asset had a data
+            // gap at this timestamp — common in multi-asset backtests with
+            // different trading hours or holidays — the entire filter
+            // evaluation was SKIPPED, leaving `filter_gated = false`. The
+            // 6-fires/day cap and the cooldown were silently bypassed for
+            // every other asset at that timestamp, and operators saw the
+            // strategy fire every bar despite a strict filter being set.
+            //
+            // Fix: evaluate on ANY asset that has a bar at this timestamp.
+            // `assets_at_ts` is exactly that set (its keys are the assets
+            // with present bars), so picking the first entry from the
+            // BTreeMap gives a deterministic representative bar. The
+            // strategy filter is a STRATEGY-level signal — it doesn't care
+            // which asset's bar it sees, only that the timestamp has one.
+            //
+            // The wakeup gate is `is_trip()` — Trip is the bar an LLM
+            // dispatch fires, matching `FilterEventV1.triggered` semantics
+            // and the dashboard's `FilterSummary.wakeups` /
+            // `llm_calls_saved` math. `Active { Hold }` (sustained true
+            // after cooldown expires) is NOT a wakeup; treating it as one
+            // re-introduces the "fires every bar" bug whenever the
+            // condition tree stays true for multiple bars.
             let mut filter_gated = false;
             if let Some(hook) = filter_hook.as_mut() {
-                if let Some(&first_idx) = assets_at_ts.get(&asset_sym) {
-                    let gate_bar = &asset_bars[&asset_sym][first_idx];
+                if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
+                    let gate_bar = &asset_bars[&gate_asset_sym][gate_idx];
                     let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
                     let evaluation = hook.evaluate(gate_bar, in_position);
                     hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
                         .await?;
-                    if !evaluation.outcome.decision.is_active() {
+                    if !evaluation.outcome.decision.is_trip() {
                         filter_gated = true;
                     }
                 }

@@ -322,7 +322,7 @@ describe("MemoryTab — empty state", () => {
         agent: "agent-1",
         limit: 1,
       });
-      expect(screen.getByText("Children / 7d")).toBeInTheDocument();
+      expect(screen.getByText("New versions / 7d")).toBeInTheDocument();
       expect(screen.getByText("Latest Lineage")).toBeInTheDocument();
     });
   });
@@ -337,8 +337,8 @@ describe("MemoryTab — Flywheel panel", () => {
       await screen.findByLabelText(/Child Agent Name/i),
       "Agent child",
     );
-    await user.click(screen.getByLabelText(/Use recalled Pattern priors/i));
-    await user.click(screen.getByRole("button", { name: /Mint Child/i }));
+    await user.click(screen.getByLabelText(/Include patterns I've already learned/i));
+    await user.click(screen.getByRole("button", { name: /Train new version/i }));
 
     await waitFor(() => {
       expect(flywheelApi.optimizeMemoryDemos).toHaveBeenCalledWith({
@@ -351,28 +351,28 @@ describe("MemoryTab — Flywheel panel", () => {
         child_name: "Agent child",
       });
     });
-    expect(await screen.findByText("Demo Patterns")).toBeInTheDocument();
-    expect(screen.getByText("Prior Patterns")).toBeInTheDocument();
-    expect(screen.getByText(/gate passed/)).toBeInTheDocument();
-    expect(screen.getByText(/holdout 0.300/)).toBeInTheDocument();
+    expect(await screen.findByText("Example patterns")).toBeInTheDocument();
+    expect(screen.getByText("Background patterns")).toBeInTheDocument();
+    expect(screen.getAllByText(/Decision: Kept/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/untouched test 0.300/)).toBeInTheDocument();
   });
 
   it("records the day and holdout gate for a staged autoresearch run", async () => {
     const user = userEvent.setup();
     renderTab();
 
-    await user.type(await screen.findByLabelText(/Parent day score ar-1/i), "1");
-    await user.type(screen.getByLabelText(/Child day score ar-1/i), "1.25");
-    await user.type(screen.getByLabelText(/Parent holdout score ar-1/i), "0.8");
-    await user.type(screen.getByLabelText(/Child holdout score ar-1/i), "0.95");
-    await user.clear(screen.getByLabelText(/Gate epsilon ar-1/i));
-    await user.type(screen.getByLabelText(/Gate epsilon ar-1/i), "0.01");
+    await user.type(await screen.findByLabelText(/Baseline today's score ar-1/i), "1");
+    await user.type(screen.getByLabelText(/Candidate today's score ar-1/i), "1.25");
+    await user.type(screen.getByLabelText(/Baseline untouched-period score ar-1/i), "0.8");
+    await user.type(screen.getByLabelText(/Candidate untouched-period score ar-1/i), "0.95");
+    await user.clear(screen.getByLabelText(/Min improvement ar-1/i));
+    await user.type(screen.getByLabelText(/Min improvement ar-1/i), "0.01");
     await user.type(
       screen.getByLabelText(/Gate reason ar-1/i),
       "day and holdout improved",
     );
     await user.click(
-      screen.getByRole("button", { name: /Record Gate ar-1/i }),
+      screen.getByRole("button", { name: /Record gate decision/i }),
     );
 
     await waitFor(() => {
@@ -420,23 +420,23 @@ describe("MemoryTab — Flywheel panel", () => {
     renderTab();
 
     await user.type(
-      await screen.findByLabelText(/Parent dev score opt-agent/i),
+      await screen.findByLabelText(/Baseline validation score opt-agent/i),
       "1",
     );
-    await user.type(screen.getByLabelText(/Child dev score opt-agent/i), "1.2");
+    await user.type(screen.getByLabelText(/Candidate validation score opt-agent/i), "1.2");
     await user.type(
-      screen.getByLabelText(/Parent optimization holdout score opt-agent/i),
+      screen.getByLabelText(/Baseline untouched-period score opt-agent/i),
       "0.8",
     );
     await user.type(
-      screen.getByLabelText(/Child optimization holdout score opt-agent/i),
+      screen.getByLabelText(/Candidate untouched-period score opt-agent/i),
       "1.1",
     );
     await user.clear(
-      screen.getByLabelText(/Optimization gate epsilon opt-agent/i),
+      screen.getByLabelText(/Min improvement opt-agent/i),
     );
     await user.type(
-      screen.getByLabelText(/Optimization gate epsilon opt-agent/i),
+      screen.getByLabelText(/Min improvement opt-agent/i),
       "0.01",
     );
     await user.type(
@@ -445,7 +445,7 @@ describe("MemoryTab — Flywheel panel", () => {
     );
     await user.click(
       screen.getByRole("button", {
-        name: /Record Optimization Gate opt-agent/i,
+        name: /Record gate decision for opt-agent/i,
       }),
     );
 

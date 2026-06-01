@@ -1,6 +1,36 @@
 import type { RangePreset } from "./ChartFrame";
 
 /**
+ * Filter the preset list to ones meaningfully larger than the chart's bar
+ * interval. A preset whose window is shorter than ~2 bars collapses to a
+ * single visible candle, making adjacent presets (e.g. 1h/4h/6h on daily
+ * data) indistinguishable — drop those so every visible button produces a
+ * distinct view. "All" is always retained.
+ */
+export function usablePresets(
+  allPresets: RangePreset[],
+  intervalSec: number,
+): RangePreset[] {
+  if (!Number.isFinite(intervalSec) || intervalSec <= 0) return allPresets;
+  const minWindow = intervalSec * 2;
+  return allPresets.filter((p) => {
+    const win = rangeWindowSeconds(p);
+    return win == null || win >= minWindow;
+  });
+}
+
+/**
+ * Derive the candle interval (seconds) from a sorted-ascending time array,
+ * using the spacing between the last two points. Returns `null` when fewer
+ * than two candles are available.
+ */
+export function candleIntervalSeconds(time: number[]): number | null {
+  if (time.length < 2) return null;
+  const dt = time[time.length - 1] - time[time.length - 2];
+  return dt > 0 ? dt : null;
+}
+
+/**
  * Visible-window duration (in seconds) for a range preset, or `null` for the
  * "All" preset which means "show the full dataset extent".
  */
@@ -18,10 +48,6 @@ export function rangeWindowSeconds(preset: RangePreset): number | null {
       return 86_400;
     case "1w":
       return 7 * 86_400;
-    case "1m":
-      return 30 * 86_400;
-    case "3m":
-      return 90 * 86_400;
     case "All":
       return null;
   }

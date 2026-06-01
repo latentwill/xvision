@@ -27,11 +27,18 @@ import { agentKeys, listAgents } from "@/api/agents";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { formatCostUsdPrecise, formatSpendUsd } from "@/lib/format";
 import { drawdownMetricTone } from "@/lib/metric-tone";
-import type { DecisionRowDto, RunDetail, RunSummary } from "@/api/types.gen";
+import type {
+  DecisionRowDto,
+  FilterSummary,
+  RunDetail,
+  RunSummary,
+} from "@/api/types.gen";
 import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
 import { MetaChip } from "@/components/eval-detail/MetaChip";
 import { DecisionsTable } from "@/components/eval-detail/DecisionsTable";
 import { toTimelineDecisions } from "@/components/eval-detail/decision-view";
+import { FilterSummaryPanel } from "@/features/eval-runs/FilterSummaryPanel";
+import { FilterEventTimeline } from "@/features/eval-runs/FilterEventTimeline";
 import {
   MobileEvalRunDetail,
   MobileEvalRunDetailError,
@@ -153,6 +160,21 @@ export function EvalRunDetailRoute() {
       }
     };
   }, [traceRun]);
+
+  // Push the eval-side cost into the trace-dock so the floating capsule
+  // renders the same number as the meta strip / SummaryCard. Without this
+  // the capsule would read only the agent-run's `total_cost_usd`, which
+  // can be 0/null when pricing was rolled up on the eval side only —
+  // leaving the capsule showing "$0.00" while the meta strip shows the
+  // real cost.
+  useEffect(() => {
+    if (!q.data) return;
+    const cost = displayCost(
+      q.data.summary,
+      linkedAgentRun.data?.summary.total_cost_usd ?? null,
+    );
+    useTraceDock.getState().setCostOverrideUsd(cost);
+  }, [q.data, linkedAgentRun.data?.summary.total_cost_usd]);
 
   if (q.isPending) {
     if (isPhone) return <MobileEvalRunDetailLoading id={id} />;
@@ -327,7 +349,23 @@ export function EvalRunDetailRoute() {
 
             {/* Multi-asset: per-asset decision rollup above the decisions list. */}
             <AssetRollupPanel decisions={detail.decisions} />
-            <DecisionsCard rows={detail.decisions} />
+
+            {/*
+              Filter v1 read-only panels. Both return `null` when their input is
+              empty, so EveryBar runs render nothing. Originally added in #493
+              and dropped during the Signal redesign (624feb59); remounted here
+              so FilterGated runs surface their suppression stats again.
+            */}
+            <FilterSummaryPanel summaries={detail.filter_summaries ?? []} />
+            <FilterEventTimeline
+              events={detail.filter_events ?? []}
+              title="Filter timeline"
+            />
+
+            <DecisionsCard
+              rows={detail.decisions}
+              filterSummaries={detail.filter_summaries ?? []}
+            />
 
             {/*
               `key={detail.summary.id}` resets ReviewPanel local state when
@@ -353,6 +391,12 @@ type LiveRunEvent =
   | { event: "decision"; data: DecisionRowDto }
   | { event: "status"; data: { phase: string; message: string | null } };
 
+// Trailing-edge debounce window for refetching server-derived fields
+// (`filter_events`, `filter_summaries`, `summary.error`) off the back of
+// SSE traffic. The SSE stream only carries `decision` and `status`, so
+// per-bar filter ticks would otherwise wait on the 2s adaptive poll.
+const RUN_REFETCH_DEBOUNCE_MS = 250;
+
 function useLiveRunStream(
   runId: string,
   detail: RunDetail | undefined,
@@ -369,6 +413,18 @@ function useLiveRunStream(
         if (!current) return current;
         return updater(current);
       });
+    };
+
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRunRefetch = () => {
+      if (refetchTimer !== null) return;
+      refetchTimer = setTimeout(() => {
+        refetchTimer = null;
+        queryClient.invalidateQueries({
+          queryKey: evalKeys.run(runId),
+          refetchType: "active",
+        });
+      }, RUN_REFETCH_DEBOUNCE_MS);
     };
 
     const onDecision = (ev: Event) => {
@@ -397,6 +453,7 @@ function useLiveRunStream(
           ),
         };
       });
+      scheduleRunRefetch();
     };
 
     const onStatus = (ev: Event) => {
@@ -417,7 +474,9 @@ function useLiveRunStream(
         es.close();
         queryClient.invalidateQueries({ queryKey: evalKeys.run(runId) });
         queryClient.invalidateQueries({ queryKey: chartKeys.run(runId) });
+        return;
       }
+      scheduleRunRefetch();
     };
 
     es.addEventListener("decision", onDecision);
@@ -430,6 +489,7 @@ function useLiveRunStream(
     return () => {
       es.removeEventListener("decision", onDecision);
       es.removeEventListener("status", onStatus);
+      if (refetchTimer !== null) clearTimeout(refetchTimer);
       es.close();
     };
   }, [runId, shouldStream, queryClient]);
@@ -697,7 +757,13 @@ function Stat({
   );
 }
 
-function DecisionsCard({ rows }: { rows: DecisionRowDto[] }) {
+function DecisionsCard({
+  rows,
+  filterSummaries,
+}: {
+  rows: DecisionRowDto[];
+  filterSummaries: FilterSummary[];
+}) {
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const decisions = useMemo(() => toTimelineDecisions(rows), [rows]);
 
@@ -722,7 +788,12 @@ function DecisionsCard({ rows }: { rows: DecisionRowDto[] }) {
   const onJump = (i: number) => setFocusedIdx((cur) => (cur === i ? null : i));
 
   return (
-    <DecisionsTable decisions={decisions} focusedIdx={focusedIdx} onJump={onJump} />
+    <DecisionsTable
+      decisions={decisions}
+      focusedIdx={focusedIdx}
+      onJump={onJump}
+      filterSummaries={filterSummaries}
+    />
   );
 }
 

@@ -25,6 +25,13 @@ export interface StartRunConfig {
    */
   decision_schema?: Record<string, unknown>
   /**
+   * Runtime context that should be attached to the final decision span, such as
+   * active positions and portfolio state observed before the prompt was sent.
+   * The decision payload may still override these fields when it includes a
+   * fresher snapshot.
+   */
+  decision_context?: Record<string, unknown>
+  /**
    * When true, the model-wrapper tap records a `Request` frame + one frame per
    * `AgentModelEvent`, and tool-shim records a `ToolResult` frame for every
    * tool execution. Frames are emitted via `emitFrame` (non-droppable) so the

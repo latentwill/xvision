@@ -1,15 +1,15 @@
 ---
 name: xvision-autoresearch-ops
-description: Operate xvision autoresearcher distillation: stage Patterns from Observation cohorts, apply numeric gates and blind Findings, promote/demote Patterns, and preserve lineage evidence.
+description: Operate the xvision autoresearcher: distill Observations into candidate Patterns, run the gate against today and the untouched test period, record blind findings, activate or retire Patterns, and preserve the lineage evidence for audit.
 ---
 
 # xvision autoresearch ops
 
-Use this skill for offline memory distillation and Pattern promotion work.
-Autoresearcher commands are offline-only; do not run them inside a live trading
+Use this skill for offline Pattern distillation work. Autoresearcher
+commands are offline-only; do not run them inside a live trading
 decision process.
 
-## Standard Flow
+## Standard flow
 
 ```bash
 xvn autoresearch run \
@@ -20,30 +20,32 @@ xvn autoresearch run \
 
 xvn autoresearch gate <run_id> \
   --metric sharpe \
-  --parent-day-score <n> \
-  --child-day-score <n> \
-  --parent-holdout-score <n> \
-  --child-holdout-score <n> \
-  --gate-epsilon <n> \
-  --finding-text "<blind qualitative finding>" \
+  --baseline-today-score <n> \
+  --candidate-today-score <n> \
+  --baseline-untouched-score <n> \
+  --candidate-untouched-score <n> \
+  --min-improvement <n> \
+  --finding-text "<finding written blind to the numeric scores>" \
   --json
 
-xvn autoresearch promote <run_id> --json
+xvn autoresearch activate <run_id> --json
 ```
 
 ## Invariants
 
-- Never promote from a single Observation cohort.
-- Numeric gate must pass independently before promotion.
-- The Finding is qualitative context, not the verdict.
-- Pattern `training_window_end` must come from the latest source Observation
-  bar timestamp, not wall clock time.
-- Demotion is soft-delete first; hard delete requires explicit operator
+- Never activate from a single Observation cohort.
+- The gate's numeric decision (Kept / Dropped) must pass independently
+  before activation.
+- The finding is qualitative context, not the verdict.
+- A Pattern's training cutoff must come from the latest source
+  Observation's bar timestamp, not wall clock time.
+- Retiring is soft-delete first; hard delete requires explicit operator
   confirmation through the memory janitor path.
 
-## Evidence To Capture
+## Evidence to capture
 
 - `xvn autoresearch inspect <run_id> --json`
-- Gate input/output JSON, including blind Finding fields.
-- Promoted Pattern row and contributing Observation ids.
-- Leakage-regression output before declaring a promotion path change done.
+- Gate input/output JSON, including the blind finding fields.
+- Activated Pattern row and contributing Observation ids.
+- Look-ahead-protection regression output before declaring an
+  activation path change done.

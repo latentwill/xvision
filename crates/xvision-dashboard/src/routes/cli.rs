@@ -4,7 +4,7 @@ use axum::extract::{Json, Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use serde::{Deserialize, Serialize};
 
-use crate::cli_jobs::allowlist::{check_argv, AllowlistDecision};
+use crate::cli_jobs::allowlist::{check_argv_with_env, AllowlistDecision};
 use crate::cli_jobs::runner::{CliJobEvent, DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS};
 use crate::cli_jobs::store::CliJobStore;
 use crate::error::DashboardError;
@@ -229,8 +229,10 @@ fn validate_create_body(body: &CreateCliJobReq) -> Result<(), DashboardError> {
 
     // Remote CLI policy: typed argv only, an explicit supported-command list,
     // and a small hard denylist for server/live-trading commands. Normal
-    // operator/eval commands must not require a dev-mode bypass on live nodes.
-    if let AllowlistDecision::Reject(msg) = check_argv(&body.argv) {
+    // operator/eval commands work without any dev-mode flag. Setting
+    // XVN_DASHBOARD_CLI_DEVMODE turns this into a full bypass (trusted dev
+    // nodes only — see allowlist::check_argv_with_env).
+    if let AllowlistDecision::Reject(msg) = check_argv_with_env(&body.argv) {
         return Err(DashboardError::Validation {
             field: "argv".into(),
             msg,

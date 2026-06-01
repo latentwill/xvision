@@ -2,7 +2,6 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ReactNode } from "react";
 import type { ChatRailProps } from "@/components/shell/ChatRail";
 import { DesktopThreePaneShell } from "./DesktopThreePaneShell";
 
@@ -71,7 +70,7 @@ describe("DesktopThreePaneShell", () => {
 
   it("keeps the third grid cell mounted while the chat rail is suspended", () => {
     const neverResolves = new Promise<void>(() => {});
-    function SuspendingRail(_: ChatRailProps): ReactNode {
+    function SuspendingRail(_: ChatRailProps): JSX.Element {
       throw neverResolves;
     }
 

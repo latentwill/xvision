@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   CacheStatusBadge,
   ChartFrame,
@@ -13,10 +13,16 @@ import {
   UplotOscillatorPane,
   type RangePreset,
 } from "../primitives";
+import {
+  candleIntervalSeconds,
+  usablePresets,
+} from "../primitives/range-window";
 import { useChart2Layers } from "../hooks/useChart2Layers";
 import { useChart2Sync } from "../hooks/useChart2Sync";
 import { useChart2Theme } from "../hooks/useChart2Theme";
 import type { RunChartV2Payload } from "../types";
+
+const ALL_PRESETS: RangePreset[] = ["1h", "4h", "6h", "12h", "1d", "1w", "All"];
 
 type Props = {
   payload: RunChartV2Payload;
@@ -27,10 +33,20 @@ type Props = {
    * call sites so a follow-up sweep can remove the references.
    */
   showMarkerDock?: boolean;
+  /**
+   * When `false`, candle annotations (trade markers, veto/hold pins, position
+   * bands) and the layers/data-table chrome are hidden. Used by the home
+   * dashboard preview, which wants a clean overview chart.
+   */
+  showAnnotations?: boolean;
 };
 
-export function RunChartV2({ payload }: Props) {
+export function RunChartV2({ payload, showAnnotations = true }: Props) {
   const [range, setRange] = useState<RangePreset>("All");
+  const presets = useMemo(() => {
+    const interval = candleIntervalSeconds(payload.candles.time);
+    return interval == null ? ALL_PRESETS : usablePresets(ALL_PRESETS, interval);
+  }, [payload.candles.time]);
   const { layers, toggle } = useChart2Layers("run");
   const syncKey = useChart2Sync("run");
   const theme = useChart2Theme();
@@ -96,64 +112,69 @@ export function RunChartV2({ payload }: Props) {
         title={`Run · ${payload.asset} · ${payload.granularity}`}
         range={range}
         onRange={setRange}
+        presets={presets}
         layersPanel={
-          <LayerPanel
-            groups={[
-              {
-                title: "Overlays",
-                items: [
-                  { key: "sma20", label: "SMA 20", on: layers.sma20 },
-                  { key: "sma30", label: "SMA 30", on: layers.sma30 },
-                  { key: "sma50", label: "SMA 50", on: layers.sma50 },
-                  { key: "sma60", label: "SMA 60", on: layers.sma60 },
-                  { key: "sma90", label: "SMA 90", on: layers.sma90 },
-                  { key: "sma200", label: "SMA 200", on: layers.sma200 },
-                  { key: "ema20", label: "EMA 20", on: layers.ema20 },
-                  { key: "ema30", label: "EMA 30", on: layers.ema30 },
-                  { key: "ema50", label: "EMA 50", on: layers.ema50 },
-                  { key: "ema60", label: "EMA 60", on: layers.ema60 },
-                  { key: "ema90", label: "EMA 90", on: layers.ema90 },
-                  { key: "ema200", label: "EMA 200", on: layers.ema200 },
-                  { key: "bollinger", label: "Bollinger", on: layers.bollinger },
-                  { key: "donchian", label: "Donchian", on: layers.donchian },
-                ],
-              },
-              {
-                title: "Markers",
-                items: [
-                  { key: "markerBuy", label: "Buy", on: layers.markerBuy },
-                  { key: "markerSell", label: "Sell", on: layers.markerSell },
-                  { key: "markerVeto", label: "Veto", on: layers.markerVeto },
-                  { key: "markerHold", label: "Hold", on: layers.markerHold },
-                ],
-              },
-              {
-                title: "Panes",
-                items: [
-                  { key: "rsi", label: "RSI", on: layers.rsi },
-                  { key: "macd", label: "MACD", on: layers.macd },
-                  { key: "atr", label: "ATR", on: layers.atr },
-                  { key: "equity", label: "Equity", on: layers.equity },
-                  { key: "drawdown", label: "Drawdown", on: layers.drawdown },
-                  { key: "volume", label: "Volume", on: layers.volume },
-                ],
-              },
-            ]}
-            onToggle={(k) => toggle(k as Parameters<typeof toggle>[0])}
-          />
+          showAnnotations ? (
+            <LayerPanel
+              groups={[
+                {
+                  title: "Overlays",
+                  items: [
+                    { key: "sma20", label: "SMA 20", on: layers.sma20 },
+                    { key: "sma30", label: "SMA 30", on: layers.sma30 },
+                    { key: "sma50", label: "SMA 50", on: layers.sma50 },
+                    { key: "sma60", label: "SMA 60", on: layers.sma60 },
+                    { key: "sma90", label: "SMA 90", on: layers.sma90 },
+                    { key: "sma200", label: "SMA 200", on: layers.sma200 },
+                    { key: "ema20", label: "EMA 20", on: layers.ema20 },
+                    { key: "ema30", label: "EMA 30", on: layers.ema30 },
+                    { key: "ema50", label: "EMA 50", on: layers.ema50 },
+                    { key: "ema60", label: "EMA 60", on: layers.ema60 },
+                    { key: "ema90", label: "EMA 90", on: layers.ema90 },
+                    { key: "ema200", label: "EMA 200", on: layers.ema200 },
+                    { key: "bollinger", label: "Bollinger", on: layers.bollinger },
+                    { key: "donchian", label: "Donchian", on: layers.donchian },
+                  ],
+                },
+                {
+                  title: "Markers",
+                  items: [
+                    { key: "markerBuy", label: "Buy", on: layers.markerBuy },
+                    { key: "markerSell", label: "Sell", on: layers.markerSell },
+                    { key: "markerVeto", label: "Veto", on: layers.markerVeto },
+                    { key: "markerHold", label: "Hold", on: layers.markerHold },
+                  ],
+                },
+                {
+                  title: "Panes",
+                  items: [
+                    { key: "rsi", label: "RSI", on: layers.rsi },
+                    { key: "macd", label: "MACD", on: layers.macd },
+                    { key: "atr", label: "ATR", on: layers.atr },
+                    { key: "equity", label: "Equity", on: layers.equity },
+                    { key: "drawdown", label: "Drawdown", on: layers.drawdown },
+                    { key: "volume", label: "Volume", on: layers.volume },
+                  ],
+                },
+              ]}
+              onToggle={(k) => toggle(k as Parameters<typeof toggle>[0])}
+            />
+          ) : undefined
         }
         dataTable={
-          <DataTable
-            columns={[
-              { key: "time", header: "Time" },
-              { key: "open", header: "O", align: "right" },
-              { key: "high", header: "H", align: "right" },
-              { key: "low", header: "L", align: "right" },
-              { key: "close", header: "C", align: "right" },
-              { key: "volume", header: "Vol", align: "right" },
-            ]}
-            rows={dataTableRows}
-          />
+          showAnnotations ? (
+            <DataTable
+              columns={[
+                { key: "time", header: "Time" },
+                { key: "open", header: "O", align: "right" },
+                { key: "high", header: "H", align: "right" },
+                { key: "low", header: "L", align: "right" },
+                { key: "close", header: "C", align: "right" },
+                { key: "volume", header: "Vol", align: "right" },
+              ]}
+              rows={dataTableRows}
+            />
+          ) : undefined
         }
       >
         <PaneStack syncKey={syncKey}>
@@ -161,8 +182,12 @@ export function RunChartV2({ payload }: Props) {
             <KlineCandlePane
               candles={payload.candles}
               overlays={overlays}
-              markers={markers}
-              positions={layers.positionBand ? payload.positions : undefined}
+              markers={showAnnotations ? markers : undefined}
+              positions={
+                showAnnotations && layers.positionBand
+                  ? payload.positions
+                  : undefined
+              }
             />
           ) : null}
           {layers.rsi && payload.indicators.rsi ? (
@@ -195,10 +220,12 @@ export function RunChartV2({ payload }: Props) {
           {layers.drawdown ? <UplotDrawdownPane points={payload.drawdown} height={80} /> : null}
           {layers.volume ? <UplotHistogramPane candles={payload.candles} height={70} /> : null}
         </PaneStack>
-        <div className="px-3 py-2 border-t border-border flex items-center gap-3">
-          <Legend items={legendItems} />
-          <div className="ml-auto"><CacheStatusBadge state="fresh" /></div>
-        </div>
+        {showAnnotations ? (
+          <div className="px-3 py-2 border-t border-border flex items-center gap-3">
+            <Legend items={legendItems} />
+            <div className="ml-auto"><CacheStatusBadge state="fresh" /></div>
+          </div>
+        ) : null}
       </ChartFrame>
     </div>
   );

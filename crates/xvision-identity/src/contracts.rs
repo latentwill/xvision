@@ -142,7 +142,7 @@ sol! {
             uint96  sellerProceeds,
             uint96  protocolProceeds,
             uint256 licenseTokenId,
-            uint8   payerKind,
+            uint16  payerKind,  // v1 placeholder (mirrors purchasePath); see Marketplace.sol
             uint8   purchasePath
         );
     }

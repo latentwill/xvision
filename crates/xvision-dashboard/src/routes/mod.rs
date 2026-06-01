@@ -1,5 +1,6 @@
 pub mod agent_runs;
 pub mod agents;
+pub mod autoresearch;
 pub mod bars;
 pub mod charts_annotated;
 pub mod charts_dashboards;

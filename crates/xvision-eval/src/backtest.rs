@@ -973,4 +973,48 @@ mod tests {
             "equity drop {equity_drop:.6} should ≈ expected fee {expected_fee:.6}"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Scenario 8: No-trade init carries zero per-asset PnL / cost
+    // -----------------------------------------------------------------------
+
+    /// Regression guard: a freshly constructed `BacktestExecutor` must report
+    /// equity exactly equal to `initial_equity_usd` with zero realized PnL,
+    /// no open positions, and no fills logged. No entry-leg fee or
+    /// half-spread may be charged at t=0 before any `submit()` has been
+    /// called. This locks in the invariant that per-asset PnL/cost begins
+    /// at $0.00 for every asset until an actual fill lands.
+    #[tokio::test]
+    async fn init_state_has_zero_per_asset_pnl_and_cost() {
+        let exec = default_exec(50_000.0);
+        let pf = exec.portfolio_snapshot();
+
+        assert_eq!(
+            pf.equity_usd, 100_000.0,
+            "init: equity must equal initial_equity_usd; no cost may be charged before any fill"
+        );
+        assert_eq!(
+            pf.realized_pnl_today_usd, 0.0,
+            "init: realized PnL today must start at 0.0"
+        );
+        assert!(
+            pf.is_flat(),
+            "init: portfolio must carry no open positions for any asset"
+        );
+        assert!(
+            pf.open_positions.is_empty(),
+            "init: per-asset position map must be empty"
+        );
+        assert!(
+            exec.fills_log().is_empty(),
+            "init: fills_log must be empty before any submit()"
+        );
+
+        for asset in [AssetSymbol::Btc, AssetSymbol::Eth] {
+            assert!(
+                pf.open_positions.get(&asset).is_none(),
+                "init: asset {asset:?} must have no open position (per-asset cost must start at $0)"
+            );
+        }
+    }
 }

@@ -198,7 +198,7 @@ describe("AgentsFlywheelRoute", () => {
       agent: "agent-1",
       limit: 25,
     });
-    expect(await screen.findByText("Optimization History")).toBeInTheDocument();
+    expect(await screen.findByText("Training run history")).toBeInTheDocument();
     expect(screen.getByText("Autoresearch History")).toBeInTheDocument();
     expect(screen.getAllByText(/opt-2/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/opt-1/).length).toBeGreaterThan(0);
@@ -208,7 +208,7 @@ describe("AgentsFlywheelRoute", () => {
     const user = userEvent.setup();
     renderRoute();
 
-    await user.click(await screen.findByRole("button", { name: /Mint Child/i }));
+    await user.click(await screen.findByRole("button", { name: /Train new version/i }));
 
     await waitFor(() =>
       expect(flywheelApi.optimizeMemoryDemos).toHaveBeenCalledWith(

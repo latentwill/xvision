@@ -10,6 +10,7 @@ pub mod cli_jobs;
 pub mod embed;
 pub mod error;
 pub mod hooks;
+pub mod ipc;
 pub mod llm_dispatch;
 pub mod redact;
 pub mod routes;

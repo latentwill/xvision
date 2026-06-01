@@ -34,7 +34,7 @@ type Sale @entity {
   priceUSDC: BigInt!
   sellerProceeds: BigInt!
   protocolProceeds: BigInt!
-  payerKind: Int! # 0 = human, 1 = agent
+  payerKind: Int! # v1 PLACEHOLDER — mirrors purchasePath; DO NOT derive analytics from this field (refinement tracked in program plan §7.1)
   purchasePath: Int! # 0 = direct, 1 = x402
   blockTimestamp: BigInt!
 }

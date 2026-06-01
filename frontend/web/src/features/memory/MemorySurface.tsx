@@ -62,6 +62,7 @@ import {
   type PatternCreateBody,
 } from "@/api/memory";
 import { Card, CardHeader } from "@/components/primitives/Card";
+import { formatVerdict, formatPromotionState } from "./labels";
 
 type SubTab = "patterns" | "observations";
 type GateDraft = {
@@ -406,19 +407,19 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
               value={velocityQuery.data.observations_captured}
             />
             <Metric
-              label="Promoted / 7d"
+              label="Activated / 7d"
               value={velocityQuery.data.patterns_promoted}
             />
             <Metric
-              label="Demoted / 7d"
+              label="Retired / 7d"
               value={velocityQuery.data.patterns_demoted}
             />
             <Metric
-              label="Children / 7d"
+              label="New versions / 7d"
               value={velocityQuery.data.optimized_child_agents}
             />
             <Metric
-              label="Lineage Depth"
+              label="Generations deep"
               value={Number(velocityQuery.data.average_lineage_depth.toFixed(2))}
             />
           </div>
@@ -427,7 +428,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
         {lineageItems.length > 0 ? (
           <div className="border border-border rounded-sm px-3 py-2 text-[12px] text-text-2">
             <div className="text-[10.5px] uppercase tracking-wide text-text-3">
-              {props.fullHistory ? "Optimization History" : "Latest Lineage"}
+              {props.fullHistory ? "Training run history" : "Latest Lineage"}
             </div>
             <div className="mt-1 divide-y divide-border">
               {lineageItems.map((item) => {
@@ -444,21 +445,21 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                       child {item.child_agent_id ?? "none"}
                     </div>
                     <div className="mt-1 text-text-3">
-                      demos {item.train_observation_count}/
+                      examples {item.train_observation_count}/
                       {item.dev_observation_count}/
                       {item.holdout_observation_count} · patterns{" "}
-                      {item.demo_source_pattern_ids.length} · priors{" "}
+                      {item.demo_source_pattern_ids.length} · background patterns{" "}
                       {item.prior_pattern_ids.length} · {item.status}
                     </div>
                     <div className="mt-1 font-mono text-[11px] text-text-3 truncate">
-                      holdout {shortHash(item.holdout_hash)} · train{" "}
-                      {shortHash(item.train_hash)} · dev{" "}
+                      untouched test {shortHash(item.holdout_hash)} · training{" "}
+                      {shortHash(item.train_hash)} · validation{" "}
                       {shortHash(item.dev_hash)}
                     </div>
                     {item.gate_verdict ? (
                       <div className="mt-1 text-[11px] text-text-3">
-                        gate {item.gate_verdict} · dev{" "}
-                        {formatDelta(item.delta_dev)} · holdout{" "}
+                        Decision: {formatVerdict(item.gate_verdict)} · validation{" "}
+                        {formatDelta(item.delta_dev)} · untouched test{" "}
                         {formatDelta(item.delta_holdout)}
                         {item.gate_reason ? ` · ${item.gate_reason}` : ""}
                       </div>
@@ -466,10 +467,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                       <div className="mt-2 grid gap-2 md:grid-cols-6 md:items-end">
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Parent Dev
+                            Baseline validation score
                           </span>
                           <input
-                            aria-label={`Parent dev score ${item.optimization_id}`}
+                            aria-label={`Baseline validation score ${item.optimization_id}`}
                             type="number"
                             step="any"
                             value={gateDraft.parentDevScore}
@@ -486,10 +487,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         </label>
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Child Dev
+                            Candidate validation score
                           </span>
                           <input
-                            aria-label={`Child dev score ${item.optimization_id}`}
+                            aria-label={`Candidate validation score ${item.optimization_id}`}
                             type="number"
                             step="any"
                             value={gateDraft.childDevScore}
@@ -506,10 +507,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         </label>
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Parent Holdout
+                            Baseline untouched-period score
                           </span>
                           <input
-                            aria-label={`Parent optimization holdout score ${item.optimization_id}`}
+                            aria-label={`Baseline untouched-period score ${item.optimization_id}`}
                             type="number"
                             step="any"
                             value={gateDraft.parentHoldoutScore}
@@ -526,10 +527,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         </label>
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Child Holdout
+                            Candidate untouched-period score
                           </span>
                           <input
-                            aria-label={`Child optimization holdout score ${item.optimization_id}`}
+                            aria-label={`Candidate untouched-period score ${item.optimization_id}`}
                             type="number"
                             step="any"
                             value={gateDraft.childHoldoutScore}
@@ -546,10 +547,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         </label>
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Epsilon
+                            Min improvement
                           </span>
                           <input
-                            aria-label={`Optimization gate epsilon ${item.optimization_id}`}
+                            aria-label={`Min improvement ${item.optimization_id}`}
                             type="number"
                             step="any"
                             value={gateDraft.gateEpsilon}
@@ -592,7 +593,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                           >
                             {optimizationGateMutation.isPending
                               ? "Recording..."
-                              : `Record Optimization Gate ${item.optimization_id}`}
+                              : `Record gate decision for ${item.optimization_id}`}
                           </button>
                         </div>
                       </div>
@@ -659,8 +660,8 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                 onChange={(e) => setDemoSource(e.target.value)}
                 className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text focus:outline-none focus:border-gold/40"
               >
-                <option value="frozen-snapshot">Frozen</option>
-                <option value="fresh-recorder">Fresh</option>
+                <option value="frozen-snapshot">Use saved examples</option>
+                <option value="fresh-recorder">Capture new examples</option>
               </select>
             </label>
             <label className="block">
@@ -681,7 +682,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                 onChange={(e) => setAutoPriors(e.target.checked)}
                 className="h-4 w-4 rounded-sm border-border bg-surface-panel"
               />
-              Use recalled Pattern priors
+              Include patterns I've already learned
             </label>
             <button
               type="button"
@@ -689,7 +690,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
               disabled={optimizeMutation.isPending}
               className="inline-flex justify-center px-3 py-2 rounded text-[12.5px] font-medium border border-border text-text hover:border-border-strong disabled:opacity-50"
             >
-              {optimizeMutation.isPending ? "Minting..." : "Mint Child"}
+              {optimizeMutation.isPending ? "Training..." : "Train new version"}
             </button>
           </div>
         ) : null}
@@ -697,22 +698,22 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
         {optimizeResult ? (
           <div className="grid gap-2 md:grid-cols-4">
             <Metric
-              label="Demo Patterns"
+              label="Example patterns"
               value={optimizeResult.pattern_demo_source_count ?? 0}
             />
             <Metric
-              label="Prior Patterns"
+              label="Background patterns"
               value={optimizeResult.pattern_prior_count ?? 0}
             />
             <Metric
-              label="Train Demos"
+              label="Training examples"
               value={
                 optimizeResult.train_observation_ids?.length ??
                 optimizeResult.demo_count
               }
             />
             <Metric
-              label="Holdout Demos"
+              label="Untouched test examples"
               value={optimizeResult.holdout_observation_ids?.length ?? 0}
             />
           </div>
@@ -751,13 +752,13 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                   gateVerdict == null
                     ? null
                     : [
-                        `Gate ${gateVerdict}`,
+                        `Decision: ${formatVerdict(gateVerdict)}`,
                         run.gate_metric,
                         run.delta_day != null
                           ? `day ${run.delta_day.toFixed(3)}`
                           : null,
                         run.delta_holdout != null
-                          ? `holdout ${run.delta_holdout.toFixed(3)}`
+                          ? `untouched test ${run.delta_holdout.toFixed(3)}`
                           : null,
                         run.gate_reason ?? run.finding_text,
                       ]
@@ -782,7 +783,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                       ) : null}
                     </div>
                     <span className="text-[11px] uppercase tracking-wide text-text-3">
-                      {run.promotion_state}
+                      {formatPromotionState(run.promotion_state)}
                     </span>
                     <div className="flex gap-2 md:justify-end">
                       <button
@@ -800,7 +801,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         }
                         className="px-2 py-1 rounded text-[11.5px] border border-border text-text-2 hover:text-text hover:border-border-strong disabled:opacity-40"
                       >
-                        Promote
+                        Activate
                       </button>
                       <button
                         type="button"
@@ -813,17 +814,17 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         disabled={isDemoted || lifecycleMutation.isPending}
                         className="px-2 py-1 rounded text-[11.5px] border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40"
                       >
-                        Demote
+                        Retire
                       </button>
                     </div>
                     {isStaged ? (
                       <div className="grid gap-2 md:col-span-3 md:grid-cols-6 md:items-end">
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Parent Day
+                            Baseline today's score
                           </span>
                           <input
-                            aria-label={`Parent day score ${run.id}`}
+                            aria-label={`Baseline today's score ${run.id}`}
                             type="number"
                             step="any"
                             value={gateDraft.parentDayScore}
@@ -837,10 +838,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         </label>
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Child Day
+                            Candidate today's score
                           </span>
                           <input
-                            aria-label={`Child day score ${run.id}`}
+                            aria-label={`Candidate today's score ${run.id}`}
                             type="number"
                             step="any"
                             value={gateDraft.childDayScore}
@@ -854,10 +855,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         </label>
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Parent Holdout
+                            Baseline untouched-period score
                           </span>
                           <input
-                            aria-label={`Parent holdout score ${run.id}`}
+                            aria-label={`Baseline untouched-period score ${run.id}`}
                             type="number"
                             step="any"
                             value={gateDraft.parentHoldoutScore}
@@ -871,10 +872,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         </label>
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Child Holdout
+                            Candidate untouched-period score
                           </span>
                           <input
-                            aria-label={`Child holdout score ${run.id}`}
+                            aria-label={`Candidate untouched-period score ${run.id}`}
                             type="number"
                             step="any"
                             value={gateDraft.childHoldoutScore}
@@ -888,10 +889,10 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                         </label>
                         <label className="block">
                           <span className="block text-[10.5px] uppercase tracking-wide text-text-3 mb-1">
-                            Epsilon
+                            Min improvement
                           </span>
                           <input
-                            aria-label={`Gate epsilon ${run.id}`}
+                            aria-label={`Min improvement ${run.id}`}
                             type="number"
                             step="any"
                             value={gateDraft.gateEpsilon}
@@ -928,7 +929,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                           >
                             {gateMutation.isPending
                               ? "Recording..."
-                              : `Record Gate ${run.id}`}
+                              : "Record gate decision"}
                           </button>
                         </div>
                       </div>
@@ -1224,7 +1225,7 @@ function PatternList({
             <div className="mt-1 flex items-center gap-2 text-[10.5px] text-text-3 font-mono">
               <span>{it.namespace}</span>
               <span>·</span>
-              <span>{isForgotten ? "forgotten" : state}</span>
+              <span>{formatPromotionState(isForgotten ? "forgotten" : state)}</span>
               <span>·</span>
               <span>{it.created_at.slice(0, 10)}</span>
             </div>
@@ -1336,10 +1337,10 @@ function AddPatternDialog(props: AddPatternDialogProps) {
 
           <div
             role="note"
-            aria-label="Embedder requirement"
+            aria-label="Embedding provider requirement"
             className="px-3 py-2 rounded-sm border border-amber-500/40 bg-amber-500/5 text-[11.5px] text-amber-900 dark:text-amber-200 leading-snug"
           >
-            <strong className="font-medium">Requires an embedder.</strong>{" "}
+            Requires an embedding provider.{" "}
             Patterns are matched to decision context via vector similarity, so
             an agent's provider (or a configured default) must support
             embeddings. Without one, this Pattern is stored but never recalled —

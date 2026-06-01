@@ -411,6 +411,7 @@ function ControlChartCard({
         <RunChartV2
           payload={runChartPayloadToV2(chart)}
           showMarkerDock={false}
+          showAnnotations={false}
         />
       ) : null}
     </Card>
