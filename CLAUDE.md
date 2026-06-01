@@ -169,6 +169,38 @@ docker compose run --rm xvn --version
 
 See `docker/README.md` for env vars and mounts.
 
+## Worktree isolation (enforced)
+
+This clone is shared by multiple concurrent agents (claude, codex, 100x runs,
+human). **Never do branch/feature work in the main checkout
+(`/Users/edkennedy/Code/xvision`).** Checking out a branch there while another
+agent is working causes HEAD/branch collisions, surprise force-pushes, and
+tangled auto-commits. The main checkout stays on `main` for pulling/inspection
+only.
+
+All branch work — including overnight agents and `100x run` — must happen in an
+isolated worktree:
+
+```bash
+git worktree add .worktrees/<name> -b <branch>     # or agent-conductor (worktreeRoot=.worktrees)
+cd .worktrees/<name>
+export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision"   # avoid duplicate target/ trees
+```
+
+This is enforced by a tracked `pre-commit` hook (`.githooks/pre-commit`) that
+blocks commits on non-`main` branches in the primary checkout. Activate it once
+per clone (the setting is shared across all worktrees):
+
+```bash
+scripts/setup-hooks.sh        # sets core.hooksPath=.githooks
+```
+
+Deliberate, rare main-checkout commits: `XVISION_ALLOW_MAIN_COMMIT=1 git commit …`.
+
+Also: `100x run` auto-commits/pushes and can trigger an auto-PR+merge, and it
+sweeps any uncommitted WIP into its commit — run it from a clean worktree, never
+the main checkout with live WIP.
+
 ## Team coordination
 
 Parallel agent/worker coordination lives under `team/`. Start with:
