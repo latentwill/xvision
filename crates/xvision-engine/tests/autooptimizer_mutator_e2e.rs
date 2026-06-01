@@ -2,9 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::json;
-use xvision_engine::agent::llm::{
-    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason,
-};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::mutator::Mutator;
 use xvision_engine::strategies::Strategy;
@@ -16,7 +14,10 @@ struct SpyDispatch {
 
 impl SpyDispatch {
     fn new(responses: Vec<LlmResponse>) -> Self {
-        assert!(!responses.is_empty(), "SpyDispatch requires at least one response");
+        assert!(
+            !responses.is_empty(),
+            "SpyDispatch requires at least one response"
+        );
         Self {
             responses: Mutex::new(responses),
             captured: Mutex::new(Vec::new()),
@@ -105,9 +106,9 @@ fn default_config() -> AutoOptimizerConfig {
 #[tokio::test]
 async fn propose_returns_ok_on_first_valid_response() {
     let base = make_strategy();
-    let spy = Arc::new(SpyDispatch::new(vec![
-        SpyDispatch::text_response(valid_diff_json()),
-    ]));
+    let spy = Arc::new(SpyDispatch::new(vec![SpyDispatch::text_response(
+        valid_diff_json(),
+    )]));
     let mutator = Mutator {
         provider: "test".into(),
         model: "test-model".into(),
@@ -138,7 +139,11 @@ async fn propose_retries_on_invalid_response_succeeds_on_retry() {
 
     let result = mutator.propose(&base, &default_config()).await;
 
-    assert!(result.is_ok(), "expected Ok on second attempt but got: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "expected Ok on second attempt but got: {:?}",
+        result
+    );
     let captured = spy.captured.lock().unwrap();
     assert_eq!(captured.len(), 2, "should have made exactly two dispatch calls");
 }
@@ -146,9 +151,9 @@ async fn propose_retries_on_invalid_response_succeeds_on_retry() {
 #[tokio::test]
 async fn propose_returns_err_after_max_retries() {
     let base = make_strategy();
-    let spy = Arc::new(SpyDispatch::new(vec![
-        SpyDispatch::text_response(invalid_diff_json()),
-    ]));
+    let spy = Arc::new(SpyDispatch::new(vec![SpyDispatch::text_response(
+        invalid_diff_json(),
+    )]));
     let mutator = Mutator {
         provider: "test".into(),
         model: "test-model".into(),
@@ -165,7 +170,11 @@ async fn propose_returns_err_after_max_retries() {
         "error should contain the validation error code; got: {err_msg}"
     );
     let captured = spy.captured.lock().unwrap();
-    assert_eq!(captured.len(), 3, "should have made 3 attempts (1 initial + 2 retries)");
+    assert_eq!(
+        captured.len(),
+        3,
+        "should have made 3 attempts (1 initial + 2 retries)"
+    );
 }
 
 #[tokio::test]

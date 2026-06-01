@@ -12,13 +12,13 @@ decision process.
 ## Standard flow
 
 ```bash
-xvn autooptimizer run \
+xvn optimizer run \
   --agent <agent_id> \
   --pattern-text "<candidate Pattern>" \
   --embedding-json '[...]' \
   --json
 
-xvn autooptimizer gate <run_id> \
+xvn optimizer gate <run_id> \
   --metric sharpe \
   --baseline-today-score <n> \
   --candidate-today-score <n> \
@@ -28,7 +28,7 @@ xvn autooptimizer gate <run_id> \
   --finding-text "<finding written blind to the numeric scores>" \
   --json
 
-xvn autooptimizer activate <run_id> --json
+xvn optimizer activate <run_id> --json
 ```
 
 ## Invariants
@@ -44,7 +44,7 @@ xvn autooptimizer activate <run_id> --json
 
 ## Evidence to capture
 
-- `xvn autooptimizer inspect <run_id> --json`
+- `xvn optimizer inspect <run_id> --json`
 - Gate input/output JSON, including the blind finding fields.
 - Activated Pattern row and contributing Observation ids.
 - Look-ahead-protection regression output before declaring an

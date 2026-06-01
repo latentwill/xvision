@@ -18,8 +18,7 @@ pub fn default_key_path() -> Result<PathBuf> {
 
 pub fn load_or_generate_key(path: &Path) -> Result<SigningKey> {
     if path.exists() {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("reading key from {}", path.display()))?;
+        let bytes = std::fs::read(path).with_context(|| format!("reading key from {}", path.display()))?;
         let arr: [u8; 32] = bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("key file must be exactly 32 bytes"))?;

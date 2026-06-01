@@ -126,11 +126,7 @@ async fn diversity_decay_for_cycle_is_deterministic() {
     let cycle = "cycle-det";
 
     // Three mutually orthogonal embeddings — maximum pairwise diversity.
-    let embeddings: [&[f32]; 3] = [
-        &[1.0, 0.0, 0.0],
-        &[0.0, 1.0, 0.0],
-        &[0.0, 0.0, 1.0],
-    ];
+    let embeddings: [&[f32]; 3] = [&[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0], &[0.0, 0.0, 1.0]];
     for (i, emb) in embeddings.iter().enumerate() {
         let seed = format!("det-node-{i}");
         let node = make_node(seed.as_bytes(), cycle, LineageStatus::Active);

@@ -62,7 +62,10 @@ fn fixture_diff() -> MutationDiff {
 }
 
 fn metrics(sharpe: f64) -> MetricsSummary {
-    MetricsSummary { sharpe, ..MetricsSummary::default() }
+    MetricsSummary {
+        sharpe,
+        ..MetricsSummary::default()
+    }
 }
 
 fn fixture_scenarios() -> (Scenario, Scenario) {
@@ -126,7 +129,10 @@ async fn run_inversion_pair_symmetric_noise_true() {
         .await
         .expect("run_inversion_pair must not fail");
 
-    assert!(result.symmetric_noise, "near-equal Sharpe must flag symmetric_noise");
+    assert!(
+        result.symmetric_noise,
+        "near-equal Sharpe must flag symmetric_noise"
+    );
 }
 
 #[tokio::test]
@@ -142,5 +148,8 @@ async fn run_inversion_pair_asymmetric_signal_false() {
         .await
         .expect("run_inversion_pair must not fail");
 
-    assert!(!result.symmetric_noise, "large Sharpe gap must not flag symmetric_noise");
+    assert!(
+        !result.symmetric_noise,
+        "large Sharpe gap must not flag symmetric_noise"
+    );
 }

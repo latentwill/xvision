@@ -83,11 +83,11 @@ TOML
 
 # ── 1. session-init ───────────────────────────────────────────────────────────
 
-echo "--- xvn autooptimizer session-init ---"
+echo "--- xvn optimizer session-init ---"
 SESSION_JSON="$WORK/session.json"
 KEY_PATH="$WORK/operator.ed25519"
 
-"$XVN" autooptimizer session-init \
+"$XVN" optimizer session-init \
   --config "$CONFIG" \
   --out    "$SESSION_JSON" \
   --key-path "$KEY_PATH"
@@ -101,8 +101,8 @@ echo "session_id: $SESSION_ID"
 
 DB="$WORK/lineage.db"
 
-echo "--- xvn autooptimizer evening-cycle --mock ---"
-"$XVN" autooptimizer evening-cycle \
+echo "--- xvn optimizer evening-cycle --mock ---"
+"$XVN" optimizer evening-cycle \
   --session-id "$SESSION_ID" \
   --config "$CONFIG" \
   --db "$DB" \
@@ -129,8 +129,8 @@ echo "Cycle seals (evening summaries) in DB: $CYCLE_SEAL_COUNT"
 
 # ── 4. demo replay ───────────────────────────────────────────────────────────
 
-echo "--- xvn autooptimizer demo ---"
-"$XVN" autooptimizer demo \
+echo "--- xvn optimizer demo ---"
+"$XVN" optimizer demo \
   --fixture "$REPO_ROOT/data/probes/autooptimizer/replay-fixture.json" \
   >/dev/null
 
@@ -141,7 +141,7 @@ echo "--- Banned-term check (autooptimizer/memory/flywheel --help) ---"
 OVERALL_BANNED_FAIL=0
 set +e
 
-AR_HELP="$("$XVN" autooptimizer --help 2>&1; true)"
+AR_HELP="$("$XVN" optimizer --help 2>&1; true)"
 check_banned_terms "autooptimizer" "$AR_HELP" || OVERALL_BANNED_FAIL=1
 
 MEM_HELP="$("$XVN" memory --help 2>&1; true)"

@@ -67,8 +67,8 @@ fn assert_no_banned_terms(surface: &str, text: &str) {
 
 #[test]
 fn autooptimizer_help_contains_no_banned_terms() {
-    let help = xvn_help("autooptimizer");
-    assert_no_banned_terms("autooptimizer", &help);
+    let help = xvn_help("optimizer");
+    assert_no_banned_terms("optimizer", &help);
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn xvn_binary_is_reachable_and_help_exits_zero() {
 #[test]
 fn autooptimizer_help_exits_zero_and_lists_known_subcommands() {
     let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
-        .args(["autooptimizer", "--help"])
+        .args(["optimizer", "--help"])
         .output()
         .expect("xvn autooptimizer --help must not fail to spawn");
     assert!(

@@ -110,7 +110,10 @@ async fn active_leaves_excludes_nodes_with_active_descendant() {
     assert_eq!(leaves[0].bundle_hash, c.bundle_hash);
 
     // Replace c with a rejected version; b becomes the leaf.
-    let c_rejected = LineageNode { status: LineageStatus::Rejected, ..c };
+    let c_rejected = LineageNode {
+        status: LineageStatus::Rejected,
+        ..c
+    };
     store.insert(&c_rejected).await.unwrap();
     let leaves2 = store.active_leaves().await.unwrap();
     assert_eq!(leaves2.len(), 1);

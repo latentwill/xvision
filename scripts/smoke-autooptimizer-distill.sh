@@ -15,8 +15,8 @@ Options:
   --active                 Create an immediately recall-active Pattern.
   --output <path>          Write the smoke report to this path.
 
-Runs `xvn autooptimizer run --json`, reads the run back with
-`xvn autooptimizer inspect --json`, then records namespace-level flywheel
+Runs `xvn optimizer run --json`, reads the run back with
+`xvn optimizer inspect --json`, then records namespace-level flywheel
 status with `xvn flywheel status --json`.
 USAGE
 }
@@ -76,7 +76,7 @@ if [[ ${#scope_args[@]} -ne 2 || -z "$pattern_text" || -z "$embedding_json" ]]; 
   exit 2
 fi
 
-run_json="$(xvn autooptimizer run "${run_args[@]}" \
+run_json="$(xvn optimizer run "${run_args[@]}" \
   --pattern-text "$pattern_text" \
   --embedding-json "$embedding_json" \
   --json)"
@@ -89,7 +89,7 @@ print(json.loads(os.environ["JSON"])["id"])
 PY
 )"
 
-inspect_json="$(xvn autooptimizer inspect "$run_id" --json)"
+inspect_json="$(xvn optimizer inspect "$run_id" --json)"
 status_json="$(xvn flywheel status "${scope_args[@]}" --json)"
 
 report="$(

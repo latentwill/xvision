@@ -192,8 +192,7 @@ async fn ar1_workspace_check() {
 
     // Step 7 — CycleSeal: build, sign, persist, load, verify
     let key = fixture_key();
-    let seal = build_and_sign(CYCLE_ID, SESSION_ID, root_a, 1, &key)
-        .expect("build_and_sign must succeed");
+    let seal = build_and_sign(CYCLE_ID, SESSION_ID, root_a, 1, &key).expect("build_and_sign must succeed");
 
     assert_eq!(seal.cycle_id, CYCLE_ID);
     assert_eq!(seal.node_count, 1);

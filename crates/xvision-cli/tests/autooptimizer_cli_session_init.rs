@@ -46,7 +46,7 @@ max_retries = 2
 
     let out = xvn(
         &[
-            "autooptimizer",
+            "optimizer",
             "session-init",
             "--config",
             config_path.to_str().unwrap(),
@@ -68,12 +68,14 @@ max_retries = 2
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Session "), "expected 'Session' in: {stdout}");
-    assert!(stdout.contains(" committed →"), "expected 'committed →' in: {stdout}");
+    assert!(
+        stdout.contains(" committed →"),
+        "expected 'committed →' in: {stdout}"
+    );
 
     assert!(out_path.exists(), "output file must exist");
     let commitment: SessionCommitment =
-        serde_json::from_reader(std::fs::File::open(&out_path).unwrap())
-            .expect("deserialize commitment");
+        serde_json::from_reader(std::fs::File::open(&out_path).unwrap()).expect("deserialize commitment");
     assert!(!commitment.session_id.to_string().is_empty());
 }
 
@@ -82,7 +84,7 @@ fn session_init_missing_config_returns_usage() {
     let dir = tempdir().unwrap();
     let out = xvn(
         &[
-            "autooptimizer",
+            "optimizer",
             "session-init",
             "--config",
             "/nonexistent/path/autooptimizer.toml",
@@ -123,7 +125,7 @@ max_retries = 2
 
     let out = xvn(
         &[
-            "autooptimizer",
+            "optimizer",
             "session-init",
             "--config",
             config_path.to_str().unwrap(),
@@ -151,13 +153,11 @@ fn key_file_generated_with_0600_perms() {
     let dir = tempdir().unwrap();
     let key_path = dir.path().join("operator.ed25519");
 
-    xvision_engine::autooptimizer::session::load_or_generate_key(&key_path)
-        .expect("generate key");
+    xvision_engine::autooptimizer::session::load_or_generate_key(&key_path).expect("generate key");
     let perms = std::fs::metadata(&key_path).unwrap().permissions();
     assert_eq!(perms.mode() & 0o777, 0o600, "generated key must be 0o600");
 
-    xvision_engine::autooptimizer::session::load_or_generate_key(&key_path)
-        .expect("reload key");
+    xvision_engine::autooptimizer::session::load_or_generate_key(&key_path).expect("reload key");
     let perms2 = std::fs::metadata(&key_path).unwrap().permissions();
     assert_eq!(perms2.mode() & 0o777, 0o600, "reloaded key must remain 0o600");
 }

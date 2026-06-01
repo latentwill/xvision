@@ -14,7 +14,10 @@ struct SpyDispatch {
 
 impl SpyDispatch {
     fn new(responses: Vec<LlmResponse>) -> Self {
-        assert!(!responses.is_empty(), "SpyDispatch requires at least one response");
+        assert!(
+            !responses.is_empty(),
+            "SpyDispatch requires at least one response"
+        );
         Self {
             responses: Mutex::new(responses),
             captured: Mutex::new(Vec::new()),
@@ -111,16 +114,23 @@ async fn run_judge_prompt_does_not_contain_metric_values() {
     let strategy = make_strategy();
     let diff: MutationDiff = empty_mutation();
 
-    let spy = Arc::new(SpyDispatch::new(vec![
-        SpyDispatch::text_response(two_findings_json()),
-    ]));
+    let spy = Arc::new(SpyDispatch::new(vec![SpyDispatch::text_response(
+        two_findings_json(),
+    )]));
     let judge = Judge {
         dispatch: spy.clone() as Arc<dyn LlmDispatch + Send + Sync>,
         provider: "test".into(),
         model: "test-model".into(),
     };
 
-    let result = run_judge(&judge, &strategy, &strategy, &diff, "2 longs, 1 short, all closed").await;
+    let result = run_judge(
+        &judge,
+        &strategy,
+        &strategy,
+        &diff,
+        "2 longs, 1 short, all closed",
+    )
+    .await;
     assert!(result.is_ok(), "expected Ok: {:?}", result);
 
     let captured = spy.captured.lock().unwrap();

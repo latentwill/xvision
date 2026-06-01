@@ -62,7 +62,7 @@ async fn autooptimizer_run_creates_staged_pattern_and_inspectable_run() {
 
     let out = xvn(
         &[
-            "autooptimizer",
+            "optimizer",
             "run",
             "--agent",
             "AR",
@@ -97,17 +97,13 @@ async fn autooptimizer_run_creates_staged_pattern_and_inspectable_run() {
     );
 
     let run_id = run["id"].as_str().expect("run id");
-    let out = xvn(&["autooptimizer", "inspect", run_id, "--json"], dir.path(), &mem);
+    let out = xvn(&["optimizer", "inspect", run_id, "--json"], dir.path(), &mem);
     assert_ok(&out);
     let inspected: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse inspected json");
     assert_eq!(inspected["id"], run_id);
     assert_eq!(inspected["pattern_id"], pattern_id);
 
-    let out = xvn(
-        &["autooptimizer", "ls", "--agent", "AR", "--json"],
-        dir.path(),
-        &mem,
-    );
+    let out = xvn(&["optimizer", "ls", "--agent", "AR", "--json"], dir.path(), &mem);
     assert_ok(&out);
     let listed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse listed json");
     assert_eq!(listed["total"], 1);
@@ -116,7 +112,7 @@ async fn autooptimizer_run_creates_staged_pattern_and_inspectable_run() {
     // Gate using new flag names
     let out = xvn(
         &[
-            "autooptimizer",
+            "optimizer",
             "gate",
             run_id,
             "--metric",
@@ -157,13 +153,13 @@ async fn autooptimizer_run_creates_staged_pattern_and_inspectable_run() {
     assert_eq!(gated["promotion_state"], "staged");
 
     // Use new 'activate' verb
-    let out = xvn(&["autooptimizer", "activate", run_id, "--json"], dir.path(), &mem);
+    let out = xvn(&["optimizer", "activate", run_id, "--json"], dir.path(), &mem);
     assert_ok(&out);
     let activated: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse activated json");
     assert_eq!(activated["promotion_state"], "active");
 
     // Use new 'retire' verb
-    let out = xvn(&["autooptimizer", "retire", run_id, "--json"], dir.path(), &mem);
+    let out = xvn(&["optimizer", "retire", run_id, "--json"], dir.path(), &mem);
     assert_ok(&out);
     let retired: serde_json::Value = serde_json::from_slice(&out.stdout).expect("parse retired json");
     assert_eq!(retired["promotion_state"], "demoted");
@@ -211,7 +207,7 @@ async fn autooptimizer_run_rejects_one_observation_cohort() {
 
     let out = xvn(
         &[
-            "autooptimizer",
+            "optimizer",
             "run",
             "--namespace",
             "global",
@@ -223,7 +219,10 @@ async fn autooptimizer_run_rejects_one_observation_cohort() {
         dir.path(),
         &mem,
     );
-    assert!(!out.status.success(), "single-observation autooptimizer must fail");
+    assert!(
+        !out.status.success(),
+        "single-observation autooptimizer must fail"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("not enough Observations"),

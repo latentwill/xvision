@@ -41,7 +41,10 @@ async fn build_and_sign_verify_round_trip() {
     assert_eq!(seal.cycle_id, "cycle-1");
     assert_eq!(seal.session_id, "session-1");
     assert_eq!(seal.node_count, 5);
-    assert!(seal.verify(&verifying_key).is_ok(), "verify must succeed with matching pubkey");
+    assert!(
+        seal.verify(&verifying_key).is_ok(),
+        "verify must succeed with matching pubkey"
+    );
 }
 
 #[tokio::test]
@@ -49,8 +52,14 @@ async fn verify_fails_on_tampered_cycle_id() {
     let key = test_key();
     let verifying_key = key.verifying_key();
     let seal = build_and_sign("cycle-orig", "session-1", test_merkle(), 3, &key).unwrap();
-    let tampered = CycleSeal { cycle_id: "cycle-tampered".into(), ..seal };
-    assert!(tampered.verify(&verifying_key).is_err(), "tampered cycle_id must fail verify");
+    let tampered = CycleSeal {
+        cycle_id: "cycle-tampered".into(),
+        ..seal
+    };
+    assert!(
+        tampered.verify(&verifying_key).is_err(),
+        "tampered cycle_id must fail verify"
+    );
 }
 
 #[tokio::test]
@@ -62,7 +71,10 @@ async fn verify_fails_on_tampered_merkle_root() {
         merkle_root: ContentHash::of_bytes(b"different"),
         ..seal
     };
-    assert!(tampered.verify(&verifying_key).is_err(), "tampered merkle_root must fail verify");
+    assert!(
+        tampered.verify(&verifying_key).is_err(),
+        "tampered merkle_root must fail verify"
+    );
 }
 
 #[tokio::test]
@@ -70,8 +82,14 @@ async fn verify_fails_on_tampered_node_count() {
     let key = test_key();
     let verifying_key = key.verifying_key();
     let seal = build_and_sign("cycle-1", "session-1", test_merkle(), 4, &key).unwrap();
-    let tampered = CycleSeal { node_count: 999, ..seal };
-    assert!(tampered.verify(&verifying_key).is_err(), "tampered node_count must fail verify");
+    let tampered = CycleSeal {
+        node_count: 999,
+        ..seal
+    };
+    assert!(
+        tampered.verify(&verifying_key).is_err(),
+        "tampered node_count must fail verify"
+    );
 }
 
 #[tokio::test]
@@ -79,8 +97,14 @@ async fn verify_fails_on_tampered_session_id() {
     let key = test_key();
     let verifying_key = key.verifying_key();
     let seal = build_and_sign("cycle-1", "session-orig", test_merkle(), 2, &key).unwrap();
-    let tampered = CycleSeal { session_id: "session-tampered".into(), ..seal };
-    assert!(tampered.verify(&verifying_key).is_err(), "tampered session_id must fail verify");
+    let tampered = CycleSeal {
+        session_id: "session-tampered".into(),
+        ..seal
+    };
+    assert!(
+        tampered.verify(&verifying_key).is_err(),
+        "tampered session_id must fail verify"
+    );
 }
 
 #[tokio::test]
@@ -92,7 +116,10 @@ async fn verify_fails_on_tampered_sealed_at() {
         sealed_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
         ..seal
     };
-    assert!(tampered.verify(&verifying_key).is_err(), "tampered sealed_at must fail verify");
+    assert!(
+        tampered.verify(&verifying_key).is_err(),
+        "tampered sealed_at must fail verify"
+    );
 }
 
 #[tokio::test]
@@ -101,7 +128,10 @@ async fn verify_fails_with_wrong_verifying_key() {
     let seal = build_and_sign("cycle-1", "session-1", test_merkle(), 3, &key).unwrap();
     let wrong_key = SigningKey::from_bytes(&[99u8; 32]);
     let wrong_verifying = wrong_key.verifying_key();
-    assert!(seal.verify(&wrong_verifying).is_err(), "wrong verifying key must fail verify");
+    assert!(
+        seal.verify(&wrong_verifying).is_err(),
+        "wrong verifying key must fail verify"
+    );
 }
 
 #[tokio::test]
@@ -124,10 +154,7 @@ async fn persist_load_round_trip_preserves_all_fields() {
     assert_eq!(loaded.operator_signature, original.operator_signature);
     assert_eq!(loaded.session_id, original.session_id);
     // chrono rfc3339 round-trip truncates sub-second precision; compare at second resolution.
-    assert_eq!(
-        loaded.sealed_at.timestamp(),
-        original.sealed_at.timestamp()
-    );
+    assert_eq!(loaded.sealed_at.timestamp(), original.sealed_at.timestamp());
     assert!(
         loaded.verify(&verifying_key).is_ok(),
         "loaded seal must pass verify"
@@ -146,8 +173,7 @@ async fn load_returns_none_for_absent_seal() {
 #[test]
 fn operator_display_label_is_evening_summary() {
     assert_eq!(
-        OPERATOR_DISPLAY_LABEL,
-        "Evening summary",
+        OPERATOR_DISPLAY_LABEL, "Evening summary",
         "terminology lock: CycleSeal must display as 'Evening summary' on operator surfaces"
     );
 }

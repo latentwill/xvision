@@ -56,16 +56,10 @@ pub fn assert_metrics_blind(text: &str) {
     }
 }
 
-fn build_user_body(
-    parent: &Strategy,
-    child: &Strategy,
-    diff: &MutationDiff,
-    tape: &str,
-) -> String {
+fn build_user_body(parent: &Strategy, child: &Strategy, diff: &MutationDiff, tape: &str) -> String {
     let parent_md = to_markdown(parent);
     let child_md = to_markdown(child);
-    let diff_json =
-        serde_json::to_string_pretty(diff).unwrap_or_else(|_| String::from("{}"));
+    let diff_json = serde_json::to_string_pretty(diff).unwrap_or_else(|_| String::from("{}"));
 
     format!(
         "## Parent experiment\n\n{parent_md}\n\n\

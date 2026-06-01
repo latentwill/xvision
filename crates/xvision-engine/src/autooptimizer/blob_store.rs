@@ -27,8 +27,7 @@ impl BlobStore {
 
     /// Return the default root path (`~/.xvn/lineage/blobs`) without opening it.
     pub fn default_root() -> anyhow::Result<PathBuf> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("could not resolve home dir"))?;
+        let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not resolve home dir"))?;
         Ok(home.join(".xvn/lineage/blobs"))
     }
 

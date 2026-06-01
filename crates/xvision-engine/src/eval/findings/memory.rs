@@ -332,6 +332,7 @@ mod tests {
             flywheel_cycle_id: None,
             decision_id,
             namespace: ns.to_string(),
+            flywheel_cycle_id: None,
             items: ids
                 .iter()
                 .map(|id| MemoryRecallItem {
@@ -354,8 +355,7 @@ mod tests {
         let decisions = vec![decision("run-a", 3, Some(-12.5))];
         let recalls = vec![recall("run-a", 3, "agent:alpha", &["mem-1", "mem-2"])];
 
-        let findings =
-            detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
+        let findings = detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
 
         assert_eq!(findings.len(), 1);
         let f = &findings[0];
@@ -384,8 +384,7 @@ mod tests {
         let decisions = vec![decision("run-b", 1, Some(8.0))];
         let recalls = vec![recall("run-b", 1, "global", &["mem-x"])];
 
-        let findings =
-            detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
+        let findings = detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
         assert!(
             findings.is_empty(),
             "good outcomes must not emit by default, got: {:?}",
@@ -440,8 +439,7 @@ mod tests {
     fn decision_without_recall_emits_nothing() {
         let decisions = vec![decision("run-e", 1, Some(-5.0))];
         // No recall events at all.
-        let findings =
-            detect_memory_aware_findings(&decisions, &[], MemoryFindingOptions::default());
+        let findings = detect_memory_aware_findings(&decisions, &[], MemoryFindingOptions::default());
         assert!(findings.is_empty());
     }
 
@@ -455,8 +453,7 @@ mod tests {
             recall("run-f", 5, "agent:trader", &["a1", "a2"]),
             recall("run-f", 5, "global", &["g1", "a2"]), // a2 dup
         ];
-        let findings =
-            detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
+        let findings = detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
         assert_eq!(findings.len(), 1);
         let ids = findings[0]
             .evidence
@@ -475,8 +472,7 @@ mod tests {
         // attribute.
         let decisions = vec![decision("run-g", 1, Some(-1.0))];
         let recalls = vec![recall("run-g", 1, "agent:a", &[])];
-        let findings =
-            detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
+        let findings = detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
         assert!(findings.is_empty());
     }
 
@@ -492,8 +488,7 @@ mod tests {
             recall("run-h", 2, "agent:a", &["m2"]),
             recall("run-h", 5, "agent:a", &["m5"]),
         ];
-        let findings =
-            detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
+        let findings = detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
         assert_eq!(findings.len(), 3);
         // Summaries should mention decisions in ascending order: 2, 5, 7.
         assert!(findings[0].summary.contains("Decision 2"));

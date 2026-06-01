@@ -111,14 +111,8 @@ async fn ladder_since_filter_excludes_old() {
     let hash_old = ContentHash::of_bytes(b"bundle-old");
     let hash_new = ContentHash::of_bytes(b"bundle-new");
 
-    let old_time = Utc
-        .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
-        .unwrap()
-        .to_rfc3339();
-    let new_time = Utc
-        .with_ymd_and_hms(2026, 5, 29, 12, 0, 0)
-        .unwrap()
-        .to_rfc3339();
+    let old_time = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap().to_rfc3339();
+    let new_time = Utc.with_ymd_and_hms(2026, 5, 29, 12, 0, 0).unwrap().to_rfc3339();
     let since = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap();
 
     sqlx::query(

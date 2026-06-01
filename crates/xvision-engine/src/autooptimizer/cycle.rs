@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use chrono::Utc;
 use ed25519_dalek::SigningKey;
 use sqlx::SqlitePool;
@@ -49,6 +49,9 @@ pub struct CycleConfig {
     pub baseline_scenario: Scenario,
     /// bundle_hash hex → Strategy for seed parents selected this cycle.
     pub parent_strategies: HashMap<String, Strategy>,
+    /// Optional explicit parent bundle hashes. When present, the cycle uses
+    /// these lineage nodes instead of selecting active leaves by policy.
+    pub explicit_parent_hashes: Vec<ContentHash>,
 }
 
 pub struct CycleResult {
@@ -93,13 +96,27 @@ pub async fn run_evening_cycle(
             .effective_min_improvement;
 
     let lineage_store = LineageStore::new(pool.clone());
-    let parents = select_parents(
-        parent_policy,
-        &lineage_store,
-        cycle_config.num_parents,
-        cycle_config.sabotage_seed,
-    )
-    .await?;
+    let parents = if cycle_config.explicit_parent_hashes.is_empty() {
+        select_parents(
+            parent_policy,
+            &lineage_store,
+            cycle_config.num_parents,
+            cycle_config.sabotage_seed,
+        )
+        .await?
+    } else {
+        let mut explicit = Vec::with_capacity(cycle_config.explicit_parent_hashes.len());
+        for hash in &cycle_config.explicit_parent_hashes {
+            let Some(node) = lineage_store.get(hash).await? else {
+                bail!("explicit parent {} not found in lineage", hash.to_hex());
+            };
+            if node.status != LineageStatus::Active {
+                bail!("explicit parent {} is not active", hash.to_hex());
+            }
+            explicit.push(node);
+        }
+        explicit
+    };
     progress(CycleProgressEvent::CycleStarted {
         cycle_id: cycle_id.clone(),
         parent_count: parents.len(),

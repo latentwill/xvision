@@ -1,11 +1,9 @@
 use chrono::{TimeZone, Utc};
-use xvision_engine::autooptimizer::{
-    synthesize_baseline_untouched_scenario, BaselineUntouchedWindow,
-};
+use xvision_engine::autooptimizer::{synthesize_baseline_untouched_scenario, BaselineUntouchedWindow};
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, Capital, DataSource,
-    Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
-    ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, Capital, DataSource, Fees,
+    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
+    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use xvision_engine::safety::VenueLabel;
 
@@ -41,9 +39,14 @@ fn make_day_scenario() -> Scenario {
         },
         venue: VenueSettings {
             venue: Venue::Alpaca,
-            fees: Fees { maker_bps: 10, taker_bps: 25 },
+            fees: Fees {
+                maker_bps: 10,
+                taker_bps: 25,
+            },
             slippage: SlippageModel::Linear { bps: 5 },
-            latency: LatencyModel { decision_to_fill_ms: 250 },
+            latency: LatencyModel {
+                decision_to_fill_ms: 250,
+            },
             fill_model: FillModel {
                 market_order_fill: MarketOrderFill::NextBarOpen,
                 limit_order_fill: LimitOrderFill::NeverFills,
@@ -87,7 +90,10 @@ fn valid_non_overlapping_window_produces_correct_scenario() {
     assert_eq!(result.time_window.end, dt(2024, 10, 1));
     assert!(matches!(result.source, ScenarioSource::Generated));
     assert_eq!(result.bar_cache_policy.data_fetched_at, None);
-    assert!(matches!(result.bar_cache_policy.refresh_policy, RefreshPolicy::NeverRefresh));
+    assert!(matches!(
+        result.bar_cache_policy.refresh_policy,
+        RefreshPolicy::NeverRefresh
+    ));
 }
 
 #[test]
@@ -136,10 +142,7 @@ fn empty_window_returns_error() {
     let err = synthesize_baseline_untouched_scenario(&day, &window)
         .unwrap_err()
         .to_string();
-    assert!(
-        err.contains("empty"),
-        "expected 'empty' in error, got: {err}"
-    );
+    assert!(err.contains("empty"), "expected 'empty' in error, got: {err}");
 }
 
 #[test]

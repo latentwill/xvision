@@ -24,6 +24,71 @@ import { DiffInspector } from "./DiffInspector";
 import { ExperimentWriterLadder } from "./ExperimentWriterLadder";
 import { LadderWithProvenance } from "./LadderWithProvenance";
 
+const FALLBACK_MODELS = [
+  "claude-haiku-4-5-20251001",
+  "claude-sonnet-4-6",
+  "claude-opus-4-8",
+  "gpt-4o",
+  "gpt-4o-mini",
+];
+
+function ModelSelectRow() {
+  const [models, setModels] = useState<string[]>(FALLBACK_MODELS);
+  const [mutatorModel, setMutatorModel] = useState<string>(
+    () => localStorage.getItem("ar_mutator_model") ?? "claude-haiku-4-5-20251001",
+  );
+  const [judgeModel, setJudgeModel] = useState<string>(
+    () => localStorage.getItem("ar_judge_model") ?? "claude-sonnet-4-6",
+  );
+
+  useEffect(() => {
+    fetch("/api/providers/models")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: unknown) => {
+        if (Array.isArray(data) && data.length > 0) setModels(data as string[]);
+      })
+      .catch(() => {});
+  }, []);
+
+  const sel =
+    "bg-surface border border-border rounded text-text text-[13px] px-2 py-1";
+
+  return (
+    <div className="flex items-center gap-4 flex-wrap text-[13px]">
+      <span className="text-text-2 whitespace-nowrap">Experiment writer model</span>
+      <select
+        value={mutatorModel}
+        onChange={(e) => {
+          setMutatorModel(e.target.value);
+          localStorage.setItem("ar_mutator_model", e.target.value);
+        }}
+        className={sel}
+      >
+        {models.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+      <span className="text-text-2 whitespace-nowrap">Reviewer model</span>
+      <select
+        value={judgeModel}
+        onChange={(e) => {
+          setJudgeModel(e.target.value);
+          localStorage.setItem("ar_judge_model", e.target.value);
+        }}
+        className={sel}
+      >
+        {models.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 type Tab = "live" | "genealogy" | "diff" | "ladder" | "provenance";
 
 const TABS: [Tab, string][] = [
@@ -84,6 +149,9 @@ export function AutoOptimizerLayout() {
       />
 
       <div className="space-y-5">
+        {/* Model select row */}
+        <ModelSelectRow />
+
         {/* Tab bar */}
         <div
           role="tablist"

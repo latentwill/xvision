@@ -1,7 +1,7 @@
 use xvision_engine::{
     autooptimizer::program_view::{from_markdown, round_trip_invariant_ok, to_markdown},
     strategies::{
-        manifest::PublicManifest, risk::RiskPreset, AgentRef, ActivationMode, PipelineDef, Strategy,
+        manifest::PublicManifest, risk::RiskPreset, ActivationMode, AgentRef, PipelineDef, Strategy,
     },
 };
 
@@ -50,7 +50,10 @@ fn to_markdown_produces_all_section_headers() {
     assert!(md.contains("# Strategy "), "missing H1: {md}");
     assert!(md.contains("## Manifest"), "missing Manifest: {md}");
     assert!(md.contains("## Agents"), "missing Agents: {md}");
-    assert!(md.contains("## Mechanical params"), "missing Mechanical params: {md}");
+    assert!(
+        md.contains("## Mechanical params"),
+        "missing Mechanical params: {md}"
+    );
     assert!(md.contains("## Risk config"), "missing Risk config: {md}");
 }
 
@@ -62,7 +65,9 @@ fn round_trip_preserves_fixture_strategy_bit_for_bit() {
 #[test]
 fn from_markdown_rejects_missing_required_section() {
     let md = to_markdown(&fixture_strategy());
-    let cut = md.find("\n## Risk config").expect("Risk config must be present in to_markdown output");
+    let cut = md
+        .find("\n## Risk config")
+        .expect("Risk config must be present in to_markdown output");
     let stripped = &md[..cut];
     let result = from_markdown(stripped, &fixture_strategy());
     assert!(result.is_err(), "expected error for missing section");

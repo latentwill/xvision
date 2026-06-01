@@ -6,7 +6,7 @@ usage() {
 Usage:
   scripts/export-pattern-lineage.sh <autooptimizer_run_id> [--output path]
 
-Reads `xvn autooptimizer inspect --json` and the produced Pattern row via
+Reads `xvn optimizer inspect --json` and the produced Pattern row via
 `xvn memory show --json`, then emits a small Markdown lineage report.
 USAGE
 }
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-run_json="$(xvn autooptimizer inspect "$run_id" --json)"
+run_json="$(xvn optimizer inspect "$run_id" --json)"
 pattern_id="$(
   JSON="$run_json" python3 - <<'PY'
 import json

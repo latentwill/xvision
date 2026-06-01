@@ -1,6 +1,6 @@
 //! Unix socket IPC bridge for autooptimizer cycle progress events (AR-3).
 //!
-//! The dashboard listens on a Unix domain socket; `xvn autooptimizer
+//! The dashboard listens on a Unix domain socket; `xvn optimizer
 //! mutate-once --ipc-socket <path>` connects and streams newline-delimited
 //! JSON `CycleProgressEvent` messages. Each line is deserialized and
 //! broadcast into the `AppState::autooptimizer_tx` channel, which feeds the
@@ -13,7 +13,7 @@
 //! xvn dashboard serve --autooptimizer-ipc-socket /tmp/xvn-events.sock
 //!
 //! # Terminal 2 — evening cycle (events stream to connected browser tabs)
-//! xvn autooptimizer mutate-once <parent_hash> --ipc-socket /tmp/xvn-events.sock
+//! xvn optimizer mutate-once <parent_hash> --ipc-socket /tmp/xvn-events.sock
 //! ```
 //!
 //! Multiple clients may connect simultaneously; each connection is handled
@@ -76,10 +76,7 @@ pub fn spawn_autooptimizer_subscriber(
 
 /// Read newline-delimited JSON `CycleProgressEvent` from one connected client
 /// and broadcast each event into `tx`. Returns when the client disconnects.
-async fn handle_ipc_client(
-    stream: tokio::net::UnixStream,
-    tx: Sender<CycleProgressEvent>,
-) {
+async fn handle_ipc_client(stream: tokio::net::UnixStream, tx: Sender<CycleProgressEvent>) {
     let reader = BufReader::new(stream);
     let mut lines = reader.lines();
 

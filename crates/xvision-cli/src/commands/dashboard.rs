@@ -29,7 +29,7 @@ pub struct ServeArgs {
     /// Unix socket path for the autooptimizer IPC bridge (AR-3).
     ///
     /// When set, the dashboard listens on this socket for newline-delimited
-    /// JSON `CycleProgressEvent` messages from `xvn autooptimizer mutate-once
+    /// JSON `CycleProgressEvent` messages from `xvn optimizer mutate-once
     /// --ipc-socket <path>` and streams them to connected browser clients via
     /// `GET /api/autooptimizer/events` (SSE).
     ///

@@ -22,7 +22,10 @@ pub fn to_markdown(strategy: &Strategy) -> String {
     let mut out = format!("# Strategy {}\n\n", strategy.manifest.display_name);
     out.push_str(&render_json_section("Manifest", &strategy.manifest));
     out.push_str(&render_agents_section(&strategy.agents));
-    out.push_str(&render_json_section("Mechanical params", &strategy.mechanical_params));
+    out.push_str(&render_json_section(
+        "Mechanical params",
+        &strategy.mechanical_params,
+    ));
     out.push_str(&render_json_section("Risk config", &strategy.risk));
     out
 }
@@ -116,8 +119,7 @@ fn extract_json_block<T: DeserializeOwned>(content: &str, section: &str) -> Resu
         .find("```")
         .ok_or_else(|| ProgramViewError::MissingJsonBlock(section.to_owned()))?;
     let json_str = after_fence[..fence_end].trim();
-    serde_json::from_str(json_str)
-        .map_err(|e| ProgramViewError::ParseFailed(section.to_owned(), e).into())
+    serde_json::from_str(json_str).map_err(|e| ProgramViewError::ParseFailed(section.to_owned(), e).into())
 }
 
 fn parse_agents_section(content: &str) -> Result<Vec<AgentRef>> {

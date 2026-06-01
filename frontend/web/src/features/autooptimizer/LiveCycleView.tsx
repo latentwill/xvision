@@ -13,6 +13,83 @@ type EventRow = CycleProgressEvent & { _row_id: number };
 
 let nextRowId = 1;
 
+function LaunchStrip() {
+  const [strategyId, setStrategyId] = useState("");
+  const [budget, setBudget] = useState("");
+  const [isRunning, setIsRunning] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+
+  const handleLaunch = async () => {
+    setIsRunning(true);
+    setLaunchError(null);
+    const mutatorModel =
+      localStorage.getItem("ar_mutator_model") ?? "claude-haiku-4-5-20251001";
+    const judgeModel =
+      localStorage.getItem("ar_judge_model") ?? "claude-sonnet-4-6";
+    try {
+      const resp = await fetch("/api/autoresearch/evening-cycle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          strategy_id: strategyId || undefined,
+          budget_usd: budget ? parseFloat(budget) : undefined,
+          mutator_model: mutatorModel,
+          judge_model: judgeModel,
+        }),
+      });
+      if (resp.status === 404 || resp.status === 501) {
+        setLaunchError("Not yet available on this server");
+      } else if (!resp.ok) {
+        const text = await resp.text();
+        setLaunchError(text || `Error ${resp.status}`);
+      }
+    } catch (e) {
+      setLaunchError(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const inp =
+    "bg-surface border border-border rounded text-text text-[13px] px-2 py-1";
+
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      <input
+        type="text"
+        placeholder="Strategy ID"
+        value={strategyId}
+        onChange={(e) => setStrategyId(e.target.value)}
+        disabled={isRunning}
+        className={`${inp} w-[180px]`}
+      />
+      <input
+        type="number"
+        placeholder="5.00"
+        value={budget}
+        onChange={(e) => setBudget(e.target.value)}
+        disabled={isRunning}
+        step="0.01"
+        min="0"
+        className={`${inp} w-[80px]`}
+      />
+      <button
+        type="button"
+        onClick={() => {
+          void handleLaunch();
+        }}
+        disabled={isRunning}
+        className="rounded bg-accent px-3 py-1 text-[13px] font-medium text-on-accent hover:opacity-90 disabled:opacity-50"
+      >
+        {isRunning ? "Running…" : "Start evening run"}
+      </button>
+      {launchError !== null && (
+        <span className="text-[13px] text-danger">{launchError}</span>
+      )}
+    </div>
+  );
+}
+
 export function LiveCycleView() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [connected, setConnected] = useState(false);
@@ -60,6 +137,8 @@ export function LiveCycleView() {
 
   return (
     <div className="space-y-4">
+      <LaunchStrip />
+
       <div className="flex items-center gap-3">
         <span
           className={[

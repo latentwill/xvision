@@ -9,14 +9,42 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AutoOptimizerEvent {
-    MutationProposed { cycle_id: String, parent_hash: String },
-    MutationEvaluating { cycle_id: String, child_hash: String },
-    MutationCommitted { cycle_id: String, child_hash: String, status: String },
-    MutationRejected { cycle_id: String, child_hash: String, reason: String },
-    LineageForked { cycle_id: String, parent_hash: String, child_hash: String },
-    CanaryOutcome { cycle_id: String, accepted: bool },
-    DiversityUpdated { cycle_id: String, value: f64 },
-    CycleSealed { cycle_id: String, seal_blob_hash: String, merkle_root: String },
+    MutationProposed {
+        cycle_id: String,
+        parent_hash: String,
+    },
+    MutationEvaluating {
+        cycle_id: String,
+        child_hash: String,
+    },
+    MutationCommitted {
+        cycle_id: String,
+        child_hash: String,
+        status: String,
+    },
+    MutationRejected {
+        cycle_id: String,
+        child_hash: String,
+        reason: String,
+    },
+    LineageForked {
+        cycle_id: String,
+        parent_hash: String,
+        child_hash: String,
+    },
+    CanaryOutcome {
+        cycle_id: String,
+        accepted: bool,
+    },
+    DiversityUpdated {
+        cycle_id: String,
+        value: f64,
+    },
+    CycleSealed {
+        cycle_id: String,
+        seal_blob_hash: String,
+        merkle_root: String,
+    },
 }
 
 /// Per-cycle orchestrator progress events. Operator-surface labels follow the
@@ -31,11 +59,24 @@ pub enum CycleProgressEvent {
     /// Fired when a mutation is proposed for a parent. Operator label: "Experiment proposed".
     MutationProposed { cycle_id: String, parent_hash: String },
     /// Fired after the numeric gate evaluates a child mutation.
-    MutationGated { cycle_id: String, child_hash: String, passed: bool },
+    MutationGated {
+        cycle_id: String,
+        child_hash: String,
+        passed: bool,
+    },
     /// Fired after the honesty check runs. Operator label: "Honesty check run".
     HonestyCheckRun { cycle_id: String, passed: bool },
     /// Fired for each judge finding on an active child. Operator label: "Judge finding".
-    JudgeFinding { cycle_id: String, child_hash: String, severity: String, code: String },
+    JudgeFinding {
+        cycle_id: String,
+        child_hash: String,
+        severity: String,
+        code: String,
+    },
     /// Fired once the evening summary is signed. Operator label: "Evening summary signed".
-    CycleSealed { cycle_id: String, merkle_root: String, node_count: usize },
+    CycleSealed {
+        cycle_id: String,
+        merkle_root: String,
+        node_count: usize,
+    },
 }

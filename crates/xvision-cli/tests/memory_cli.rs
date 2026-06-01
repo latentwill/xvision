@@ -691,15 +691,24 @@ async fn distill_human_output_says_distilled() {
 
     let out = xvn(
         &[
-            "memory", "distill", "--ids", "obs-distill-h", "--text", "human check",
-            "--embedding-json", "[1.0]",
+            "memory",
+            "distill",
+            "--ids",
+            "obs-distill-h",
+            "--text",
+            "human check",
+            "--embedding-json",
+            "[1.0]",
         ],
         dir.path(),
         &mem,
     );
     assert_ok(&out);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("distilled pattern"), "expected 'distilled pattern': {stdout}");
+    assert!(
+        stdout.contains("distilled pattern"),
+        "expected 'distilled pattern': {stdout}"
+    );
 }
 
 #[tokio::test]
@@ -710,8 +719,15 @@ async fn promote_alias_emits_deprecation_notice_and_succeeds() {
 
     let out = xvn(
         &[
-            "memory", "promote", "--ids", "obs-compat-1", "--text", "compat",
-            "--embedding-json", "[1.0]", "--json",
+            "memory",
+            "promote",
+            "--ids",
+            "obs-compat-1",
+            "--text",
+            "compat",
+            "--embedding-json",
+            "[1.0]",
+            "--json",
         ],
         dir.path(),
         &mem,
@@ -731,8 +747,14 @@ fn retire_verb_soft_deletes_pattern() {
     let (dir, mem) = paths();
     let create = xvn(
         &[
-            "memory", "add-pattern", "retire me", "--namespace", "global",
-            "--training-end", "2024-01-01", "--json",
+            "memory",
+            "add-pattern",
+            "retire me",
+            "--namespace",
+            "global",
+            "--training-end",
+            "2024-01-01",
+            "--json",
         ],
         dir.path(),
         &mem,
@@ -744,7 +766,10 @@ fn retire_verb_soft_deletes_pattern() {
     let out = xvn(&["memory", "retire", id, "--json"], dir.path(), &mem);
     assert_ok(&out);
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(body["forgotten_at"].as_str().is_some(), "retire must set forgotten_at: {body:?}");
+    assert!(
+        body["forgotten_at"].as_str().is_some(),
+        "retire must set forgotten_at: {body:?}"
+    );
 }
 
 #[test]
@@ -752,8 +777,14 @@ fn retire_human_output_says_retired() {
     let (dir, mem) = paths();
     let create = xvn(
         &[
-            "memory", "add-pattern", "retire-human", "--namespace", "global",
-            "--training-end", "2024-01-01", "--json",
+            "memory",
+            "add-pattern",
+            "retire-human",
+            "--namespace",
+            "global",
+            "--training-end",
+            "2024-01-01",
+            "--json",
         ],
         dir.path(),
         &mem,
@@ -767,7 +798,10 @@ fn retire_human_output_says_retired() {
     let out = xvn(&["memory", "retire", &id], dir.path(), &mem);
     assert_ok(&out);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("retired pattern"), "expected 'retired pattern': {stdout}");
+    assert!(
+        stdout.contains("retired pattern"),
+        "expected 'retired pattern': {stdout}"
+    );
 }
 
 #[test]
@@ -775,8 +809,14 @@ fn demote_alias_emits_deprecation_notice_and_succeeds() {
     let (dir, mem) = paths();
     let create = xvn(
         &[
-            "memory", "add-pattern", "demote-compat", "--namespace", "global",
-            "--training-end", "2024-01-01", "--json",
+            "memory",
+            "add-pattern",
+            "demote-compat",
+            "--namespace",
+            "global",
+            "--training-end",
+            "2024-01-01",
+            "--json",
         ],
         dir.path(),
         &mem,
@@ -803,18 +843,32 @@ fn kind_flag_filters_observations() {
     let (dir, mem) = paths();
     let create = xvn(
         &[
-            "memory", "add-pattern", "p1", "--namespace", "global",
-            "--training-end", "2024-01-01", "--json",
+            "memory",
+            "add-pattern",
+            "p1",
+            "--namespace",
+            "global",
+            "--training-end",
+            "2024-01-01",
+            "--json",
         ],
         dir.path(),
         &mem,
     );
     assert_ok(&create);
 
-    let out = xvn(&["memory", "ls", "--kind", "observation", "--json"], dir.path(), &mem);
+    let out = xvn(
+        &["memory", "ls", "--kind", "observation", "--json"],
+        dir.path(),
+        &mem,
+    );
     assert_ok(&out);
     let items: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(items.as_array().unwrap().len(), 0, "--kind observation must show 0 patterns");
+    assert_eq!(
+        items.as_array().unwrap().len(),
+        0,
+        "--kind observation must show 0 patterns"
+    );
 
     let out2 = xvn(&["memory", "ls", "--kind", "pattern", "--json"], dir.path(), &mem);
     assert_ok(&out2);
@@ -862,15 +916,25 @@ fn confirm_no_cutoff_flag_accepted_as_canonical_name() {
     let (dir, mem) = paths();
     let out = xvn(
         &[
-            "memory", "add-pattern", "timeless via new flag", "--namespace", "global",
-            "--confirm-no-cutoff", "--operator-initials", "QA", "--json",
+            "memory",
+            "add-pattern",
+            "timeless via new flag",
+            "--namespace",
+            "global",
+            "--confirm-no-cutoff",
+            "--operator-initials",
+            "QA",
+            "--json",
         ],
         dir.path(),
         &mem,
     );
     assert_ok(&out);
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(body["attestation_id"].as_str().is_some(), "--confirm-no-cutoff must create attestation");
+    assert!(
+        body["attestation_id"].as_str().is_some(),
+        "--confirm-no-cutoff must create attestation"
+    );
 }
 
 #[test]
@@ -878,15 +942,25 @@ fn attest_null_window_alias_still_accepted() {
     let (dir, mem) = paths();
     let out = xvn(
         &[
-            "memory", "add-pattern", "timeless via old flag", "--namespace", "global",
-            "--attest-null-window", "--operator-initials", "QA", "--json",
+            "memory",
+            "add-pattern",
+            "timeless via old flag",
+            "--namespace",
+            "global",
+            "--attest-null-window",
+            "--operator-initials",
+            "QA",
+            "--json",
         ],
         dir.path(),
         &mem,
     );
     assert_ok(&out);
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(body["attestation_id"].as_str().is_some(), "--attest-null-window alias must still work");
+    assert!(
+        body["attestation_id"].as_str().is_some(),
+        "--attest-null-window alias must still work"
+    );
 }
 
 #[test]
@@ -894,8 +968,13 @@ fn ls_table_header_uses_kind_column() {
     let (dir, mem) = paths();
     let create = xvn(
         &[
-            "memory", "add-pattern", "header check", "--namespace", "global",
-            "--training-end", "2024-01-01",
+            "memory",
+            "add-pattern",
+            "header check",
+            "--namespace",
+            "global",
+            "--training-end",
+            "2024-01-01",
         ],
         dir.path(),
         &mem,
@@ -905,5 +984,8 @@ fn ls_table_header_uses_kind_column() {
     assert_ok(&out);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("kind"), "table header must say 'kind': {stdout}");
-    assert!(!stdout.contains("tier"), "table header must not say 'tier': {stdout}");
+    assert!(
+        !stdout.contains("tier"),
+        "table header must not say 'tier': {stdout}"
+    );
 }

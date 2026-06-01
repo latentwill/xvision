@@ -55,15 +55,13 @@ fn arrays_of_objects_sorted_recursively() {
 
 #[test]
 fn known_blake3_vector_empty() {
-    const EXPECTED: &str =
-        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
+    const EXPECTED: &str = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
     assert_eq!(hash_bytes(b"").to_hex(), EXPECTED);
 }
 
 #[test]
 fn known_blake3_vector_abc() {
-    const EXPECTED: &str =
-        "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
+    const EXPECTED: &str = "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
     assert_eq!(hash_bytes(b"abc").to_hex(), EXPECTED);
 }
 

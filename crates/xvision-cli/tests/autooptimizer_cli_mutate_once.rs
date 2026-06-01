@@ -85,7 +85,7 @@ max_retries = 2
 fn write_session(dir: &Path, config_path: &Path, key_path: &Path) -> std::path::PathBuf {
     let session_path = dir.join("session.json");
     let out = xvn(&[
-        "autooptimizer",
+        "optimizer",
         "session-init",
         "--config",
         config_path.to_str().unwrap(),
@@ -114,7 +114,7 @@ fn mutate_once_cmd<'a>(
     extra: &[&'a str],
 ) -> Vec<&'a str> {
     let mut args = vec![
-        "autooptimizer",
+        "optimizer",
         "mutate-once",
         hash,
         "--config",
@@ -146,7 +146,14 @@ fn mutate_once_gate_pass_creates_active_node_and_seal() {
     let db = dir.path().join("lineage.db");
 
     let out = xvn(&mutate_once_cmd(
-        &hash, &config, &session, &db, &blob_dir, &key_path, "cycle-pass-01", &[],
+        &hash,
+        &config,
+        &session,
+        &db,
+        &blob_dir,
+        &key_path,
+        "cycle-pass-01",
+        &[],
     ));
     assert_eq!(
         exit_code(&out),
@@ -164,21 +171,22 @@ fn mutate_once_gate_pass_creates_active_node_and_seal() {
         let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display()))
             .await
             .unwrap();
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM lineage_nodes WHERE cycle_id = ?")
-                .bind("cycle-pass-01")
-                .fetch_one(&pool)
-                .await
-                .expect("lineage node must exist");
+        let status: String = sqlx::query_scalar("SELECT status FROM lineage_nodes WHERE cycle_id = ?")
+            .bind("cycle-pass-01")
+            .fetch_one(&pool)
+            .await
+            .expect("lineage node must exist");
         assert_eq!(status, "active", "gate-pass must produce active node");
 
-        let seal_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM cycle_seals WHERE cycle_id = ?")
-                .bind("cycle-pass-01")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(seal_count, 1, "gate-pass must produce a cycle seal (evening summary)");
+        let seal_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cycle_seals WHERE cycle_id = ?")
+            .bind("cycle-pass-01")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            seal_count, 1,
+            "gate-pass must produce a cycle seal (evening summary)"
+        );
     });
 }
 
@@ -193,7 +201,14 @@ fn mutate_once_gate_fail_creates_rejected_node_no_seal() {
     let db = dir.path().join("lineage.db");
 
     let out = xvn(&mutate_once_cmd(
-        &hash, &config, &session, &db, &blob_dir, &key_path, "cycle-fail-01", &[],
+        &hash,
+        &config,
+        &session,
+        &db,
+        &blob_dir,
+        &key_path,
+        "cycle-fail-01",
+        &[],
     ));
     assert_eq!(
         exit_code(&out),
@@ -211,20 +226,18 @@ fn mutate_once_gate_fail_creates_rejected_node_no_seal() {
         let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display()))
             .await
             .unwrap();
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM lineage_nodes WHERE cycle_id = ?")
-                .bind("cycle-fail-01")
-                .fetch_one(&pool)
-                .await
-                .expect("lineage node must exist on gate fail");
+        let status: String = sqlx::query_scalar("SELECT status FROM lineage_nodes WHERE cycle_id = ?")
+            .bind("cycle-fail-01")
+            .fetch_one(&pool)
+            .await
+            .expect("lineage node must exist on gate fail");
         assert_eq!(status, "rejected", "gate-fail must produce rejected node");
 
-        let seal_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM cycle_seals WHERE cycle_id = ?")
-                .bind("cycle-fail-01")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let seal_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cycle_seals WHERE cycle_id = ?")
+            .bind("cycle-fail-01")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(seal_count, 0, "gate-fail must not produce a cycle seal");
     });
 }
@@ -277,7 +290,14 @@ fn mutate_once_unknown_hash_returns_not_found() {
     let unknown = "a".repeat(64);
 
     let out = xvn(&mutate_once_cmd(
-        &unknown, &config, &session, &db, &blob_dir, &key_path, "cycle-nf-01", &[],
+        &unknown,
+        &config,
+        &session,
+        &db,
+        &blob_dir,
+        &key_path,
+        "cycle-nf-01",
+        &[],
     ));
     assert_eq!(exit_code(&out), 4, "unknown hash must exit NotFound(4)");
 }
@@ -293,7 +313,14 @@ fn mutate_once_child_hash_is_deterministic() {
     let db = dir.path().join("lineage.db");
 
     let run1 = xvn(&mutate_once_cmd(
-        &hash, &config, &session, &db, &blob_dir, &key_path, "cycle-det-01", &[],
+        &hash,
+        &config,
+        &session,
+        &db,
+        &blob_dir,
+        &key_path,
+        "cycle-det-01",
+        &[],
     ));
     assert_eq!(
         exit_code(&run1),
@@ -303,7 +330,14 @@ fn mutate_once_child_hash_is_deterministic() {
     );
 
     let run2 = xvn(&mutate_once_cmd(
-        &hash, &config, &session, &db, &blob_dir, &key_path, "cycle-det-01", &[],
+        &hash,
+        &config,
+        &session,
+        &db,
+        &blob_dir,
+        &key_path,
+        "cycle-det-01",
+        &[],
     ));
     assert_eq!(
         exit_code(&run2),
