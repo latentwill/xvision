@@ -9,6 +9,10 @@ pub struct LooseningSchedule {
     pub day_n_thresholds: Vec<f64>,
 }
 
+fn default_dspy_pattern_cohort_threshold() -> usize {
+    5
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoOptimizerConfig {
     pub min_improvement: f64,
@@ -21,6 +25,14 @@ pub struct AutoOptimizerConfig {
     pub allowed_mutation_kinds: Vec<String>,
     #[serde(default)]
     pub lineage_root: Option<PathBuf>,
+    /// Enable DSPy flywheel: write judge findings as Observations and
+    /// compile compiled DSRs into Patterns after each evening cycle.
+    #[serde(default)]
+    pub dspy_enabled: bool,
+    /// Minimum number of Observations in the namespace before a DSPy
+    /// compilation pass is triggered. Default 5.
+    #[serde(default = "default_dspy_pattern_cohort_threshold")]
+    pub dspy_pattern_cohort_threshold: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +78,8 @@ impl Default for AutoOptimizerConfig {
             },
             allowed_mutation_kinds: default_allowed_mutation_kinds(),
             lineage_root: None,
+            dspy_enabled: false,
+            dspy_pattern_cohort_threshold: default_dspy_pattern_cohort_threshold(),
         }
     }
 }
