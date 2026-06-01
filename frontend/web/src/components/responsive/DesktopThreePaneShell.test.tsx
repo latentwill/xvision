@@ -70,7 +70,7 @@ describe("DesktopThreePaneShell", () => {
 
   it("keeps the third grid cell mounted while the chat rail is suspended", () => {
     const neverResolves = new Promise<void>(() => {});
-    function SuspendingRail(_: ChatRailProps) {
+    function SuspendingRail(_: ChatRailProps): JSX.Element {
       throw neverResolves;
     }
 
