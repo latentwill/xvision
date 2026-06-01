@@ -13,6 +13,7 @@
 //! - `GET /api/autooptimizer/ladder[?since=<rfc3339>]`
 //! - `GET /api/autooptimizer/diversity[?cycle_id=&limit=]`
 //! - `GET /api/autooptimizer/findings/:bundle_hash`
+//! - `GET /api/autooptimizer/blob/:hash`
 //!
 //! ## Notes on `findings`
 //!
@@ -286,6 +287,35 @@ pub async fn get_findings(
 // ---------------------------------------------------------------------------
 // Private row-mapping helper
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// GET /api/autooptimizer/blob/:hash
+// ---------------------------------------------------------------------------
+
+pub async fn get_blob(
+    Path(hash): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, DashboardError> {
+    use xvision_engine::autooptimizer::{blob_store::BlobStore, ContentHash};
+
+    let content_hash = ContentHash::from_hex(&hash).map_err(|e| DashboardError::Validation {
+        field: "hash".into(),
+        msg: format!("invalid content hash: {e}"),
+    })?;
+
+    let blob_root = state.xvn_home.join("lineage").join("blobs");
+    let store = BlobStore::new(blob_root);
+
+    if !store.exists(&content_hash) {
+        return Err(DashboardError::NotFound(format!("blob '{hash}' not found")));
+    }
+
+    let value = store
+        .get_json(&content_hash)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(value))
+}
 
 fn row_to_lineage_node(
     row: sqlx::sqlite::SqliteRow,

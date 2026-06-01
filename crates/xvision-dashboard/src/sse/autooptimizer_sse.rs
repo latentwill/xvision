@@ -2,8 +2,8 @@
 //!
 //! Wire format for `GET /api/autooptimizer/events`:
 //!
-//! - Events: `event: <kind>\ndata: {"kind":<kind>,"display_label":<label>,"data":<CycleProgressEvent JSON>}\n\n`
-//! - On lag: `event: lagged\ndata: {"dropped":<n>}\n\n` — client should reconnect.
+//! - Events: `data: {"kind":<kind>,"display_label":<label>,"data":<CycleProgressEvent JSON>}\n\n`
+//! - On lag: `data: {"dropped":<n>}\n\n` — client should reconnect.
 //! - On channel closed: stream terminates gracefully.
 //! - KeepAlive: comment every 15 s so reverse proxies don't time out.
 //!
@@ -43,7 +43,7 @@ pub async fn autooptimizer_events_handler(
                     });
                     match serde_json::to_string(&payload) {
                         Ok(json) => {
-                            yield Ok::<Event, Infallible>(Event::default().event(kind).data(json));
+                            yield Ok::<Event, Infallible>(Event::default().data(json));
                         }
                         Err(_) => {
                             // Serialization of a well-formed CycleProgressEvent should not
@@ -54,7 +54,7 @@ pub async fn autooptimizer_events_handler(
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     let body = serde_json::json!({ "dropped": n }).to_string();
-                    yield Ok(Event::default().event("lagged").data(body));
+                    yield Ok(Event::default().data(body));
                     // Keep going — the client may reconnect, but the channel is still live.
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
