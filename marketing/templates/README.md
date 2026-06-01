@@ -13,7 +13,7 @@ the ranked build order.
 |---|---|---|---|---|
 | `run-summary.tsx` | 🟡 planned (Phase 0) | `BacktestResult` JSON via `/api/eval/runs/:id` | 60–90s | 1920×1080 60fps mp4 |
 | `compare-runs.tsx` | ⚪ deferred | pair of `BacktestResult` JSON | 90–120s | 1920×1080 60fps mp4 |
-| `strategy-lineage.tsx` | ⚪ deferred | autooptimizer genealogy tree | 90–120s | 1920×1080 60fps mp4 |
+| `strategy-lineage.tsx` | ⚪ deferred | Optimizer genealogy tree | 90–120s | 1920×1080 60fps mp4 |
 | `live-build-demo.tsx` | ⚪ deferred | chat-rail transcript + bundle-patch event stream | 180–300s | 1920×1080 60fps mp4 |
 | `verdict-trace.tsx` | ⚪ deferred | `cycle_id` audit-log slice | 60–90s | 1920×1080 60fps mp4 |
 

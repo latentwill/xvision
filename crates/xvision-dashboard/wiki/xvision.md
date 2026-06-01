@@ -28,9 +28,9 @@ These reports all inform the same product surface: how xvision should reason abo
 - Highlights the lack of trustworthy backtesting for agentic behavior as a major product gap.
 - Frames that gap as an opportunity for xvision.
 
-### Using AutoOptimizer to Its Fullest for Agentic Trading and PnL-Focused Research
+### Using Optimizer to Its Fullest for Agentic Trading and PnL-Focused Research
 
-- Treats AutoOptimizer as a research engine for hypothesis formalization and PnL attribution.
+- Treats Optimizer as a research engine for hypothesis formalization and PnL attribution.
 - Stresses source tiering, critique loops, and reproducible research workflows.
 - Pushes for a clean path from hypothesis → backtest → attribution → roadmap.
 
