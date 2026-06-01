@@ -36,6 +36,7 @@ use xvision_engine::autoresearch::scenario_synthesis::synthesize_baseline_untouc
 use xvision_engine::autoresearch::seal::build_and_sign;
 use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
 use xvision_engine::eval::run::MetricsSummary;
+use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
 use xvision_memory::embedder::Embedder;
 
@@ -1036,9 +1037,19 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
 // ── evening-cycle ─────────────────────────────────────────────────────────
 
 async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
+    if let Some(budget) = args.budget {
+        validate_budget_usd(budget)?;
+    }
+
+    let xvn_home = crate::commands::home::resolve_xvn_home(None)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
     let cfg = load_ar_config(args.config.as_deref())?;
-    let db_path = args.db.unwrap_or_else(default_db_path);
+    let db_path = args
+        .db
+        .unwrap_or_else(|| xvn_home.join("lineage").join("lineage.db"));
     let pool = open_and_migrate_db(&db_path).await?;
+    let lineage_store = LineageStore::new(pool.clone());
+    let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
 
     // Operator signing key.
     let key_path = default_key_path().map_err(CliError::upstream)?;
@@ -1046,9 +1057,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
         .map_err(|e| CliError::upstream(anyhow::anyhow!("load operator key: {e}")))?;
 
     // Observability blob store (unused by cycle currently but required by signature).
-    let obs_blob_root = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".xvn/lineage/obs-blobs");
+    let obs_blob_root = xvn_home.join("lineage").join("obs-blobs");
     let obs_blob_store = xvision_observability::BlobStore::new(obs_blob_root);
 
     // Build day + baseline scenarios from config windows.
@@ -1167,8 +1176,21 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
         model: cfg.mutator.model.clone(),
     };
 
+    let mut parent_strategies = HashMap::new();
+    let mut explicit_parent_hashes = Vec::new();
+    if let Some(ref strategy_id) = args.strategy {
+        let (bundle_hash, strategy) =
+            load_strategy_parent(strategy_id, &xvn_home, &lineage_store, &strategy_blob_store).await?;
+        parent_strategies.insert(bundle_hash.to_hex(), strategy);
+        explicit_parent_hashes.push(bundle_hash);
+    }
+
     let cycle_config = CycleConfig {
-        num_parents: 2,
+        num_parents: if explicit_parent_hashes.is_empty() {
+            2
+        } else {
+            explicit_parent_hashes.len()
+        },
         mutations_per_parent: 1,
         sabotage_seed: 42,
         judge_provider: cfg.mutator.provider.clone(),
@@ -1177,7 +1199,8 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
         sustained_no_pass_cycles: 0,
         day_scenario,
         baseline_scenario,
-        parent_strategies: HashMap::new(),
+        parent_strategies,
+        explicit_parent_hashes,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -1397,6 +1420,73 @@ async fn load_strategy_blob(blobs: &BlobStore, hash: &ContentHash) -> CliResult<
         }
     })?;
     serde_json::from_value(v).map_err(|e| CliError::upstream(anyhow::anyhow!("deserialize strategy: {e}")))
+}
+
+async fn load_strategy_parent(
+    strategy_id: &str,
+    xvn_home: &Path,
+    lineage: &LineageStore,
+    blobs: &BlobStore,
+) -> CliResult<(ContentHash, Strategy)> {
+    let store = FilesystemStore::new(strategy_store_dir(xvn_home));
+    store
+        .path_for(strategy_id)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("invalid strategy id {strategy_id}: {e}")))?;
+    let strategy = store.load(strategy_id).await.map_err(|e| {
+        if e.to_string().contains("reading ") {
+            CliError::not_found(anyhow::anyhow!("strategy {strategy_id} not found"))
+        } else {
+            CliError::upstream(anyhow::anyhow!("load strategy {strategy_id}: {e}"))
+        }
+    })?;
+    let strategy_json = serde_json::to_value(&strategy)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize strategy {strategy_id}: {e}")))?;
+    let bundle_hash = blobs
+        .put_json(&strategy_json)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("write strategy blob {strategy_id}: {e}")))?;
+
+    match lineage
+        .get(&bundle_hash)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("read lineage parent {strategy_id}: {e}")))?
+    {
+        Some(node) if node.status != LineageStatus::Active => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "strategy {strategy_id} resolves to lineage parent {} but that parent is not active",
+                bundle_hash.to_hex()
+            )));
+        }
+        Some(_) => {}
+        None => {
+            let root_node = LineageNode {
+                bundle_hash,
+                parent_hash: None,
+                diff_hash: None,
+                metrics_day_hash: None,
+                metrics_untouched_hash: None,
+                gate_verdict: GateVerdict::Pass,
+                status: LineageStatus::Active,
+                cycle_id: None,
+                created_at: Utc::now(),
+            };
+            lineage
+                .insert(&root_node)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("seed lineage parent {strategy_id}: {e}")))?;
+        }
+    }
+
+    Ok((bundle_hash, strategy))
+}
+
+fn validate_budget_usd(budget: f64) -> CliResult<()> {
+    if !budget.is_finite() || budget <= 0.0 {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--budget must be a finite positive USD value"
+        )));
+    }
+    Ok(())
 }
 
 fn build_dispatch(mock: bool) -> CliResult<Arc<dyn LlmDispatch + Send + Sync>> {

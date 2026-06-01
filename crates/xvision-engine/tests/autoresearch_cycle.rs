@@ -377,6 +377,7 @@ async fn run_evening_cycle_smoke() {
         day_scenario,
         baseline_scenario,
         parent_strategies,
+        explicit_parent_hashes: Vec::new(),
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
