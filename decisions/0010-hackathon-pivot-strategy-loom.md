@@ -9,7 +9,7 @@
 > **2026-05-07 partial supersession (ADR 0011):** the `--features control-vectors`
 > cargo gate described below is obsolete — CV substrate moved to xvision-play
 > entirely. TraderArm survives without `VectorConfig`. Strategy Loom +
-> ERC-8004 Marketplace + Karpathy autoresearch framing are otherwise
+> ERC-8004 Marketplace + Karpathy autooptimizer framing are otherwise
 > unchanged. Body preserved as historical record.
 
 ## Context
@@ -68,7 +68,7 @@ feature.**
 
 Multi-strategy evaluation engine. Day cycle runs N strategies through Mantle
 DEX flow (Merchant Moe / Agni / Fluxion). Evening cycle runs a Karpathy-style
-autoresearch loop: `xvision-intern` reads each strategy's `program.md` plus
+autooptimizer loop: `xvision-intern` reads each strategy's `program.md` plus
 the day's trade ledger, proposes a mutation, paper-tests it on the day's data
 plus a held-out window, commits the new variant only if it improves. Variants
 that diverge meaningfully fork into new lineages — producing a public genealogy.
@@ -176,4 +176,4 @@ Restated for the record:
 - `LatentWill/Xvision/pivot1-strategyloom.md` (long-form rationale)
 - Turing Test Hackathon 2026 announcement (Chainwire, 2026-04-23)
 - ERC-8004 EIP (eips.ethereum.org/EIPS/eip-8004; mainnet live 2026-01-29)
-- Karpathy autoresearch (github.com/karpathy/autoresearch, March 2026)
+- Karpathy autooptimizer (github.com/karpathy/autooptimizer, March 2026)

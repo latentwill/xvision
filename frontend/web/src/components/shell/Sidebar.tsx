@@ -17,7 +17,7 @@ const PRIMARY: Item[] = [
   { to: "/charts", label: "Charts", icon: "chartPie" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
   { to: "/marketplace", label: "Marketplace", icon: "bag" },
-  { to: "/autoresearch", label: "Autoresearch", icon: "pulse" },
+  { to: "/autooptimizer", label: "Optimizer", icon: "pulse" },
   { to: "/docs", label: "Docs", icon: "book" },
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];

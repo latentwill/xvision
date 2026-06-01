@@ -21,7 +21,7 @@ use xvision_data::alpaca::AlpacaBarsFetcher;
 
 pub mod agents;
 pub mod audit;
-pub mod autoresearch;
+pub mod autooptimizer;
 /// `xvn model bakeoff` orchestrator. File lives at
 /// `api/eval/bakeoff.rs` per contract `cli-model-bakeoff`; routed here
 /// with `#[path]` so the public module path stays `api::bakeoff`

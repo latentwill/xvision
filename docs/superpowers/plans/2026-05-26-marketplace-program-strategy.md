@@ -104,7 +104,7 @@ Data-Contract spec** must unify them into one canonical schema:
 
 - **IPFS metadata behind `agentURI`**: plugin `LineageManifest` (6 fields:
   `lineage_id`, `initial_bundle_hash`, `parent_lineage_id`, `born_at`,
-  `operator_signature`, `autoresearch_session_id`) **vs.** direction §6.2 Tier 1
+  `operator_signature`, `autooptimizer_session_id`) **vs.** direction §6.2 Tier 1
   (name, description, perf summary with on-chain hash commit, asset/model/style
   tags, equity-curve file, **required-ingredients list**, license terms, rating
   receipts). → unify.
@@ -253,7 +253,7 @@ normalized.
 ### — V2 EXIT GATE —
 
 ### Phase 8 — V3 + V4 prep (parallel) · ongoing
-- **V3 (autoresearcher):** the mutation→lineage→gate→seal loop; chain-free core,
+- **V3 (autooptimizer):** the mutation→lineage→gate→seal loop; chain-free core,
   marketplace plugin reads its `CycleSeal` artifacts.
 - **V4 (real money):** engage audit firm (4–8 wk lead — start day V2 ships);
   pick 2-of-3 multisig signers (D1); implement **timelock + multisig** (now,

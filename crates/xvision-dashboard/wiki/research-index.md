@@ -4,7 +4,7 @@ This page is the landing zone for the 2026-05-29 research drop under `/opt/olymp
 
 ## Categories
 
-- [XVision / Agentic Trading](/docs?slug=xvision) — trading strategy, platform landscape, AutoResearcher, DSPy, Cline SDK, and Rust infrastructure.
+- [XVision / Agentic Trading](/docs?slug=xvision) — trading strategy, platform landscape, Optimizer, DSPy, Cline SDK, and Rust infrastructure.
 - [Growth / Marketing](/docs?slug=growth-marketing) — SaaS growth, architecture-firm GTM, Meta Ads for agencies, and Meta Ads for info products.
 - [AI Courses](/docs?slug=ai-courses) — OpenClaw / Hermes / Claude Code course positioning and curriculum opportunity.
 - [Frontier Image Model Training](/docs?slug=frontier-image-training) — training and fine-tuning playbook for SDXL / Flux / SD3.

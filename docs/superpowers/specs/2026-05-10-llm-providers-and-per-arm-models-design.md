@@ -435,7 +435,7 @@ Within the hackathon timeline (deadline 2026-06-15), the work fits in one focuse
 | D5 | UI design lock merged into `docs/design/ui-elements.md`: `/settings → Providers` revised section, Inspector slot Provider+Model dropdowns, `Fork with different model →` action, lineage-cue variant. |
 | D6–D7 | Buffer for review feedback + a real-world smoke test running 3 actual models on a 1-day setup population. |
 
-Total estimate: ~5 person-days of work + 2 days slack. Fits comfortably within the autoresearch / marketplace plugin parallel tracks.
+Total estimate: ~5 person-days of work + 2 days slack. Fits comfortably within the autooptimizer / marketplace plugin parallel tracks.
 
 ---
 

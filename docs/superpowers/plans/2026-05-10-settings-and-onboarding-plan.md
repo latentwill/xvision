@@ -12,7 +12,7 @@
 
 **Out of scope (deferred):**
 - Marketplace settings sub-page (§18) — ships with Plan 5 (blockchain integration). v1 shows a placeholder card.
-- Autoresearch settings sub-page (§17) — ships with the autoresearcher plan series. v1 shows a placeholder card.
+- AutoOptimizer settings sub-page (§17) — ships with the autooptimizer plan series. v1 shows a placeholder card.
 - Multi-workspace switcher in Account section — v1 is single workspace per `XVN_HOME`.
 - Telemetry rollups beyond a "● Connected / ○ Offline" daemon heartbeat. Real telemetry lands when the eval engine plan ships its tracing surface.
 - Live Identity (ERC-8004) editing — read-only display in v1; on-chain mint/edit flows live in Plan 5.
@@ -271,7 +271,7 @@ Per `gptprompts.md` §17 layout: 220px sidebar nav + content flex. Active row ge
     <div class="text-xs uppercase text-secondary mb-2">Config</div>
     <a href="/settings/providers" class="settings-row {{ 'active' if section == 'providers' else '' }}">Providers</a>
     <a href="/settings/brokers" class="settings-row {{ 'active' if section == 'brokers' else '' }}">Brokers</a>
-    <a href="/settings/autoresearch" class="settings-row {{ 'active' if section == 'autoresearch' else '' }}">Autoresearch <span class="pill text-xs ml-2">soon</span></a>
+    <a href="/settings/autooptimizer" class="settings-row {{ 'active' if section == 'autooptimizer' else '' }}">AutoOptimizer <span class="pill text-xs ml-2">soon</span></a>
     <a href="/settings/marketplace" class="settings-row {{ 'active' if section == 'marketplace' else '' }}">Marketplace <span class="pill text-xs ml-2">soon</span></a>
     <a href="/settings/identity" class="settings-row pl-6 {{ 'active' if section == 'identity' else '' }}">└ Identity</a>
     <hr class="my-3 border-soft">
@@ -345,14 +345,14 @@ pub struct SettingsBase {
 .route("/settings/daemon", get(settings_daemon::page))
 .route("/settings/identity", get(settings_identity::page))
 .route("/settings/danger", get(settings_danger::page))
-.route("/settings/autoresearch", get(settings::placeholder_autoresearch))
+.route("/settings/autooptimizer", get(settings::placeholder_autooptimizer))
 .route("/settings/marketplace", get(settings::placeholder_marketplace))
 .route("/settings/account", get(settings::placeholder_account))
 .route("/settings/appearance", get(settings::placeholder_appearance))
 .route("/settings/telemetry", get(settings::placeholder_telemetry))
 ```
 
-The placeholder handlers render `settings_base.html` with a body of "Ships with Plan 5" / "Ships with autoresearch plan" — see Task 9 for exact copy.
+The placeholder handlers render `settings_base.html` with a body of "Ships with Plan 5" / "Ships with autooptimizer plan" — see Task 9 for exact copy.
 
 - [ ] **Step 4: Smoke test**
 
@@ -1145,7 +1145,7 @@ git commit -am "feat(dashboard): /settings/{daemon,identity,danger} pages + dang
 **Files:**
 - Modify: `crates/xvision-dashboard/src/routes/settings.rs`
 
-Five placeholders needed: `/settings/account`, `/settings/appearance`, `/settings/autoresearch`, `/settings/marketplace`, `/settings/telemetry`. Each renders `settings_base.html` with a body of one card explaining the deferral.
+Five placeholders needed: `/settings/account`, `/settings/appearance`, `/settings/autooptimizer`, `/settings/marketplace`, `/settings/telemetry`. Each renders `settings_base.html` with a body of one card explaining the deferral.
 
 - [ ] **Step 1: Body copy**
 
@@ -1153,7 +1153,7 @@ Five placeholders needed: `/settings/account`, `/settings/appearance`, `/setting
 |---|---|---|
 | `/settings/account` | `Account` | `Single-workspace v1 — account management ships when multi-workspace lands.` |
 | `/settings/appearance` | `Appearance` | `Dark theme only in v1. Theme pilot deferred — see `themes.md`.` |
-| `/settings/autoresearch` | `Autoresearch` | `Configures the evening cycle (ε, hold-out window, parent policy, models). Ships with the autoresearcher plan series — see `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md`.` |
+| `/settings/autooptimizer` | `AutoOptimizer` | `Configures the evening cycle (ε, hold-out window, parent policy, models). Ships with the autooptimizer plan series — see `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md`.` |
 | `/settings/marketplace` | `Marketplace` | `On-chain reputation via ERC-8004 on Mantle. Ships with Plan 5 (blockchain integration) — see `docs/superpowers/specs/2026-05-09-non-custodial-agent-wallets-design.md`.` |
 | `/settings/telemetry` | `Telemetry` | `Tracing + token-usage rollups ship with the eval engine plan.` |
 
@@ -1253,12 +1253,12 @@ Commit `chore: settings & onboarding smoke verified`.
 - [x] ui-elements.md §13.5 Danger zone — Task 8
 - [x] ui-elements.md §3.3 First-run / no-LLM-key state — Task 6
 - [x] ui-elements.md §1.2 LLM status pill — Task 10
-- [x] gptprompts.md §17 Settings · Autoresearch — Task 9 placeholder (defers to autoresearch plan)
+- [x] gptprompts.md §17 Settings · AutoOptimizer — Task 9 placeholder (defers to autooptimizer plan)
 - [x] gptprompts.md §18 Settings · Marketplace — Task 9 placeholder (defers to Plan 5)
 - [x] LLM-providers spec §7.1 — Tasks 3–5 implement the design lock
 
 **Out of scope as planned:**
-- [ ] Autoresearch sub-page form — picked up by autoresearcher plan
+- [ ] AutoOptimizer sub-page form — picked up by autooptimizer plan
 - [ ] Marketplace wallet-connect flow — Plan 5
 - [ ] Live identity mint/edit — Plan 5
 - [ ] Light theme toggle — defer with theme pilot
@@ -1271,4 +1271,4 @@ Commit `chore: settings & onboarding smoke verified`.
 
 ## What's next
 
-Once this ships, `/settings/providers` is the canonical surface for the LLM-providers spec's UI design lock. Plan 5 (blockchain integration) picks up the marketplace + identity sub-pages. The autoresearcher plan series fills in `/settings/autoresearch`. Theme pilot remains deferred (intentionally).
+Once this ships, `/settings/providers` is the canonical surface for the LLM-providers spec's UI design lock. Plan 5 (blockchain integration) picks up the marketplace + identity sub-pages. The autooptimizer plan series fills in `/settings/autooptimizer`. Theme pilot remains deferred (intentionally).

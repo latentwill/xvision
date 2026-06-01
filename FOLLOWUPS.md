@@ -10,7 +10,7 @@ The active V2-V4 execution plan lives in
 | V2A | Ease of use sweep: in-app docs, tutorials, onboarding | onboarding/settings, command palette, agent/CLI discoverability |
 | V2B | Security hardening for dashboard, remote CLI, broker, wallet | F37, remote CLI specs |
 | V2C | Blockchain testnet: mint, buy, sell, delegate/license, marketplace, reputation, validation receipts | F5, SLF2–SLF5, SLF8, F34 |
-| V3 | Autoresearcher and final UI/UX | SLF9, SLF13, F29, F31, F33, autoresearcher plans |
+| V3 | AutoOptimizer and final UI/UX | SLF9, SLF13, F29, F31, F33, autooptimizer plans |
 | V4 | Smart contract go-live off testnet | ADR 0008, smart contract, wallet, and marketplace specs |
 
 ---
@@ -99,7 +99,7 @@ The hackathon sprint queue. Branch: `hackathon/turing`. Submission deadline:
 ### SLF8. Strategy genealogy — `program.md` versioning + parent hash on chain
 
 - **Trigger:** SLF3 done.
-- **Scope:** each strategy variant has a `program.md` (Karpathy autoresearch unit-of-work). Mutations append to a content-addressed log with `(version, parent_hash, mutation_diff)`. The Identity Registry's `agentURI` for a forked strategy points to a manifest containing its `program.md` hash + parent `agent_id`, so the genealogy tree is reconstructable from on-chain state alone.
+- **Scope:** each strategy variant has a `program.md` (Karpathy autooptimizer unit-of-work). Mutations append to a content-addressed log with `(version, parent_hash, mutation_diff)`. The Identity Registry's `agentURI` for a forked strategy points to a manifest containing its `program.md` hash + parent `agent_id`, so the genealogy tree is reconstructable from on-chain state alone.
 - **Blocking:** YES for SLF10 genealogy view.
 
 ### SLF9. Evening Karpathy loop — wrapper around `xvision-intern`
@@ -245,14 +245,14 @@ Infrastructure used by both tracks. Lives on `main`.
 ### F27 [Shared]. Install customizer — interactive module selection on install / upgrade
 
 - **Trigger:** F28 (plugin architecture) lands. F28 is post-hackathon, so this is also post-hackathon.
-- **Scope:** `xvn install` / `xvn install --customize` TUI wizard + non-interactive flags + `~/.xvn/install.toml` manifest, per [install-customizer design spec](docs/superpowers/specs/2026-05-11-install-customizer-design.md). Re-entrant add/remove/reconfigure. Generates `.cargo/xvn-features` and `docker-compose.override.yml`. Initial registered modules: marketplace, memory (cortex sidecar), autoresearcher. Future plugins auto-appear via the F28 registry — no customizer code change required.
+- **Scope:** `xvn install` / `xvn install --customize` TUI wizard + non-interactive flags + `~/.xvn/install.toml` manifest, per [install-customizer design spec](docs/superpowers/specs/2026-05-11-install-customizer-design.md). Re-entrant add/remove/reconfigure. Generates `.cargo/xvn-features` and `docker-compose.override.yml`. Initial registered modules: marketplace, memory (cortex sidecar), autooptimizer. Future plugins auto-appear via the F28 registry — no customizer code change required.
 - **Blocking:** non-blocking; prerequisite for future plugin marketplace.
 
 ### F28 [Shared]. Plugin architecture for xvn — make optional modules pluggable
 
 - **Post-hackathon.** Do not open contracts for this before the hackathon submits.
 - **Trigger:** post-v1-test, before the marketplace plugin acquires any third-party participants and before F27 (install customizer) starts.
-- **Scope:** define a first-class plugin contract for xvn so optional capabilities (marketplace, memory, autoresearcher, and future modules) plug into the engine through a uniform surface instead of ad-hoc cargo features + bespoke wiring. Likely shape: `PluginManifest` (declarative metadata), `Plugin` trait family (lifecycle hooks), `PluginRegistry` (discovery, conflict resolution, dependency ordering). Migration of existing optional code: marketplace, memory (`xvision-memory` crate), autoresearcher. Plugin distribution: v1 in-tree under `crates/xvision-plugin-*/`; v2 remote discovery.
+- **Scope:** define a first-class plugin contract for xvn so optional capabilities (marketplace, memory, autooptimizer, and future modules) plug into the engine through a uniform surface instead of ad-hoc cargo features + bespoke wiring. Likely shape: `PluginManifest` (declarative metadata), `Plugin` trait family (lifecycle hooks), `PluginRegistry` (discovery, conflict resolution, dependency ordering). Migration of existing optional code: marketplace, memory (`xvision-memory` crate), autooptimizer. Plugin distribution: v1 in-tree under `crates/xvision-plugin-*/`; v2 remote discovery.
 - **Open extension:** plugins distributed via the marketplace plugin itself with monetisation envelopes (monthly subscription, streamed payment via Superfluid/Sablier on Mantle, one-time mint-to-unlock, per-cycle metered usage). Plugin manifest should carry optional `monetisation` field from v1.
 - **Blocking:** YES for F27. Non-blocking otherwise.
 

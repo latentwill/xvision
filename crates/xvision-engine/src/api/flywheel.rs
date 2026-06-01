@@ -1,4 +1,4 @@
-//! Flywheel observability over the memory/autoresearch substrate.
+//! Flywheel observability over the memory/autooptimizer substrate.
 
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -76,11 +76,11 @@ pub struct FlywheelStatusDto {
     pub active_patterns: u64,
     pub staged_patterns: u64,
     pub forgotten_patterns: u64,
-    pub autoresearch_runs: u64,
+    pub autooptimizer_runs: u64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub latest_autoresearch_run_id: Option<String>,
+    pub latest_autooptimizer_run_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub latest_autoresearch_created_at: Option<String>,
+    pub latest_autooptimizer_created_at: Option<String>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -96,7 +96,7 @@ pub struct FlywheelVelocityDto {
     pub observations_captured: u64,
     pub patterns_promoted: u64,
     pub patterns_demoted: u64,
-    pub autoresearch_runs: u64,
+    pub autooptimizer_runs: u64,
     pub optimized_child_agents: u64,
     pub average_lineage_depth: f64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -251,20 +251,20 @@ pub async fn status(store: &MemoryStore, req: FlywheelStatusRequest) -> ApiResul
         &namespace,
     )
     .await?;
-    let autoresearch_runs = count(
+    let autooptimizer_runs = count(
         pool,
-        "SELECT COUNT(*) FROM autoresearch_runs WHERE namespace = ?",
+        "SELECT COUNT(*) FROM autooptimizer_runs WHERE namespace = ?",
         &namespace,
     )
     .await?;
     let latest = sqlx::query(
-        "SELECT id, created_at FROM autoresearch_runs \
+        "SELECT id, created_at FROM autooptimizer_runs \
          WHERE namespace = ? ORDER BY created_at DESC LIMIT 1",
     )
     .bind(&namespace)
     .fetch_optional(pool)
     .await?;
-    let (latest_autoresearch_run_id, latest_autoresearch_created_at) = match latest {
+    let (latest_autooptimizer_run_id, latest_autooptimizer_created_at) = match latest {
         Some(row) => (
             Some(
                 row.try_get("id")
@@ -284,9 +284,9 @@ pub async fn status(store: &MemoryStore, req: FlywheelStatusRequest) -> ApiResul
         active_patterns,
         staged_patterns,
         forgotten_patterns,
-        autoresearch_runs,
-        latest_autoresearch_run_id,
-        latest_autoresearch_created_at,
+        autooptimizer_runs,
+        latest_autooptimizer_run_id,
+        latest_autooptimizer_created_at,
     })
 }
 
@@ -325,9 +325,9 @@ pub async fn velocity(
         &since,
     )
     .await?;
-    let autoresearch_runs = count_since(
+    let autooptimizer_runs = count_since(
         pool,
-        "SELECT COUNT(*) FROM autoresearch_runs WHERE namespace = ? AND created_at >= ?",
+        "SELECT COUNT(*) FROM autooptimizer_runs WHERE namespace = ? AND created_at >= ?",
         &namespace,
         &since,
     )
@@ -344,7 +344,7 @@ pub async fn velocity(
         observations_captured,
         patterns_promoted,
         patterns_demoted,
-        autoresearch_runs,
+        autooptimizer_runs,
         optimized_child_agents,
         average_lineage_depth,
         latest_activity_at,
@@ -560,7 +560,7 @@ async fn latest_activity_at(
            SELECT forgotten_at AS ts FROM memory_items \
             WHERE namespace = ? AND forgotten_at IS NOT NULL AND forgotten_at >= ? \
            UNION ALL \
-           SELECT created_at AS ts FROM autoresearch_runs \
+           SELECT created_at AS ts FROM autooptimizer_runs \
             WHERE namespace = ? AND created_at >= ? \
          )",
     )
@@ -589,7 +589,7 @@ mod tests {
     use xvision_memory::types::{MemoryItem, Tier};
 
     #[tokio::test]
-    async fn status_counts_memory_and_autoresearch_rows_by_namespace() {
+    async fn status_counts_memory_and_autooptimizer_rows_by_namespace() {
         let store = MemoryStore::open_in_memory().await.expect("open");
         let ts = Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap();
         let observation = MemoryItem {
@@ -639,7 +639,7 @@ mod tests {
         };
         store.upsert_pattern(&active, "test").await.expect("active");
         sqlx::query(
-            "INSERT INTO autoresearch_runs \
+            "INSERT INTO autooptimizer_runs \
              (id, namespace, observation_ids_json, pattern_id, pattern_text, promotion_state, \
               min_observations, created_at, status, error) \
              VALUES ('ar-1', 'agent:A', '[\"obs-1\"]', 'pat-staged', 'staged', 'staged', 2, \
@@ -663,8 +663,8 @@ mod tests {
         assert_eq!(status.observations, 1);
         assert_eq!(status.active_patterns, 1);
         assert_eq!(status.staged_patterns, 1);
-        assert_eq!(status.autoresearch_runs, 1);
-        assert_eq!(status.latest_autoresearch_run_id.as_deref(), Some("ar-1"));
+        assert_eq!(status.autooptimizer_runs, 1);
+        assert_eq!(status.latest_autooptimizer_run_id.as_deref(), Some("ar-1"));
     }
 
     #[tokio::test]
@@ -725,7 +725,7 @@ mod tests {
             .await
             .expect("demote");
         sqlx::query(
-            "INSERT INTO autoresearch_runs \
+            "INSERT INTO autooptimizer_runs \
              (id, namespace, observation_ids_json, pattern_id, pattern_text, promotion_state, \
               min_observations, created_at, status, error) \
              VALUES ('ar-velocity', 'agent:A', '[\"obs-velocity\"]', 'pat-active-velocity', \
@@ -781,7 +781,7 @@ mod tests {
         assert_eq!(out.observations_captured, 1);
         assert_eq!(out.patterns_promoted, 1);
         assert_eq!(out.patterns_demoted, 1);
-        assert_eq!(out.autoresearch_runs, 1);
+        assert_eq!(out.autooptimizer_runs, 1);
         assert_eq!(out.optimized_child_agents, 2);
         assert_eq!(out.average_lineage_depth, 1.5);
         assert!(out.latest_activity_at.is_some());

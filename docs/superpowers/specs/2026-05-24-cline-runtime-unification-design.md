@@ -16,7 +16,7 @@ deterministic and byte-for-byte identical in behavior to live runs. The raw
 `LlmDispatch` HTTP path retires. A parallel cleanup stream purges the
 license-incompatible **ACPX** surface. This is foundational work landing
 *before* the skills & capabilities rework, and upstream of the eventual
-GEPA/optimizer foundation and V3 autoresearcher.
+GEPA/optimizer foundation and V3 autooptimizer.
 
 ## Motivation — why now
 
@@ -40,7 +40,7 @@ GEPA/optimizer foundation and V3 autoresearcher.
 3. **A single faithful runtime is the foundation everything downstream needs.**
    If live runs an agentic Cline loop while backtests run single-shot HTTP, the
    backtest is not testing what live does — which silently corrupts the eval
-   substrate the optimizer/autoresearcher will later depend on. Unifying with
+   substrate the optimizer/autooptimizer will later depend on. Unifying with
    record/replay yields **backtest == live** *and* determinism.
 
 ## Current state (verified 2026-05-24)
@@ -299,7 +299,7 @@ accepted.
 ## Out of scope
 
 - Skills & capabilities rework (lands after this).
-- GEPA/DSRs optimizer foundation and V3 autoresearcher (downstream; orthogonal
+- GEPA/DSRs optimizer foundation and V3 autooptimizer (downstream; orthogonal
   via the `system_prompt` seam).
 - Multi-run *live* concurrency (only the record-pass throughput is addressed,
   Stage 4).
@@ -331,7 +331,7 @@ multi-asset (in flight)
   → Cline runtime unification (THIS spec)
   → skills & capabilities rework
   → DSRs/GEPA optimizer foundation        (downstream, but real and coming)
-  → V3 autoresearcher (consumes the optimizer)
+  → V3 autooptimizer (consumes the optimizer)
 ```
 
 DSRs is **downstream, not dropped** — the optimizer foundation is the next

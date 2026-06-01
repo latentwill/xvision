@@ -21,7 +21,7 @@ A single vertical slice: **author a strategy → backtest it → paper-trade it 
 - Comparison: `xvn eval compare` + the `/eval/compare` route.
 - Operator chrome: settings, chat rail, command palette, README/MANUAL.
 
-No live daemon, no chain, no autoresearcher in this slice.
+No live daemon, no chain, no autooptimizer in this slice.
 
 ---
 
@@ -60,7 +60,7 @@ Removed from v1 scope. The design handoff produces one final visual treatment fo
 | ERC-8004 / Mantle / Orderly live | Phases 6.5, 11.5 in `v1-build-steps.md`; wallet plan | Chain surface deferred to Plan 5. |
 | Marketplace publish / browse / install | [Plan 5 (blockchain)](docs/superpowers/plans/2026-05-10-blockchain-1-non-custodial-wallets-plan.md) + [smart-contract spec](docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md) | Eval writes attestations to local SQLite only; on-chain push waits. |
 | Non-custodial trading-key store | [wallet plan + amendments](docs/superpowers/plans/2026-05-10-blockchain-1-non-custodial-wallets-amendments.md) | Bound to Plan 5; Alpaca paper doesn't need it. |
-| Autoresearcher (mutator / judge / lineage seal) | [AR-1](docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md) / [AR-2](docs/superpowers/plans/2026-05-09-autoresearcher-2-cycle-judge-evals.md) / [AR-3](docs/superpowers/plans/2026-05-09-autoresearcher-3-dashboard.md) | Separate program; no overlap with v1 test. |
+| AutoOptimizer (mutator / judge / lineage seal) | [AR-1](docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md) / [AR-2](docs/superpowers/plans/2026-05-09-autooptimizer-2-cycle-judge-evals.md) / [AR-3](docs/superpowers/plans/2026-05-09-autooptimizer-3-dashboard.md) | Separate program; no overlap with v1 test. |
 | Lab Notebook (`/journal`) | [lab-notebook plan](docs/superpowers/plans/2026-05-10-lab-notebook-plan.md) | Marked DEFERRED at the top of its plan file. |
 | Deferred archetypes (Pass-Ribbon, Lineage tree, Slot Machine, Spreadsheet, Power Notebook, Canvas) | [deferred-archetypes-roadmap](docs/superpowers/plans/2026-05-10-deferred-archetypes-roadmap.md) | All post-v1; trigger conditions documented per archetype. |
 | `xvn eod` cron registration; runtime agent rename | Leverage items E.2, G | E.2 needs Plan 2c; G needs the wallet-plan `strategies` table. The CLI for E.1 still ships. |
@@ -133,8 +133,8 @@ Single owner: `xvision-engine/migrations/`. Every plan that touches `xvn.db` cla
 | `004_search_index.sql` | Command Palette (#12) | `search_artifacts` (FTS5 virtual table) | ✅ |
 | `005_journal.sql` | Lab Notebook (deferred) | `journal_entries` | ⛔ deferred |
 | `006_scheduler.sql` | xvn-scheduling-and-agent-cli (deferred) | `schedules`, `schedule_fires` | ⛔ deferred |
-| `007_autoresearch.sql` | AR-1 (deferred) | autoresearch core tables | ⛔ deferred |
-| `008_autoresearch_evals.sql` | AR-2 (deferred) | `canary_runs`, `mutator_ladder_snapshots`, `diversity_samples` | ⛔ deferred |
+| `007_autooptimizer.sql` | AR-1 (deferred) | autooptimizer core tables | ⛔ deferred |
+| `008_autooptimizer_evals.sql` | AR-2 (deferred) | `canary_runs`, `mutator_ladder_snapshots`, `diversity_samples` | ⛔ deferred |
 | `038_eval_runs_live_config.sql` | Live Alpaca v1 | `eval_runs.live_config_json`, nullable `eval_runs.scenario_id` for `mode=Live` | ✅ |
 
 Notes:
@@ -142,7 +142,7 @@ Notes:
   Historical reservations here are kept for v1 context; new claims must update
   both files.
 - xvn-scheduling-and-agent-cli's `api_audit` was originally numbered 002; ownership of `api_audit` has moved to the new Engine API Foundation plan at 001. The scheduler tables stay reserved at 006.
-- AR-1's original `003_autoresearch.sql` and AR-2's `004_autoresearch_evals.sql` need renumbering when those plans are picked up — call this table out in the plan files at pickup time.
+- AR-1's original `003_autooptimizer.sql` and AR-2's `004_autooptimizer_evals.sql` need renumbering when those plans are picked up — call this table out in the plan files at pickup time.
 - Chat Rail and Command Palette plans currently reference inline rusqlite schemas; convert to numbered `.sql` migrations during integration so the registry stays authoritative.
 - Settings & Onboarding has **no** SQLite migration (rewrites `config/default.toml` via `toml_edit` only).
 - Plan 2c §Task 7 (BrokerSurface, item #4) has no migration — it's a trait + impls in `xvision-execution`.

@@ -16,11 +16,11 @@ vi.mock("@/api/flywheel", async () => {
     getFlywheelStatus: vi.fn(),
     getFlywheelVelocity: vi.fn(),
     getFlywheelLineage: vi.fn(),
-    listAutoresearchRuns: vi.fn(),
-    runAutoresearch: vi.fn(),
-    promoteAutoresearchRun: vi.fn(),
-    demoteAutoresearchRun: vi.fn(),
-    gateAutoresearchRun: vi.fn(),
+    listAutoOptimizerRuns: vi.fn(),
+    runAutoOptimizer: vi.fn(),
+    promoteAutoOptimizerRun: vi.fn(),
+    demoteAutoOptimizerRun: vi.fn(),
+    gateAutoOptimizerRun: vi.fn(),
     gateOptimization: vi.fn(),
     optimizeMemoryDemos: vi.fn(),
   };
@@ -52,9 +52,9 @@ beforeEach(() => {
     active_patterns: 1,
     staged_patterns: 0,
     forgotten_patterns: 0,
-    autoresearch_runs: 1,
-    latest_autoresearch_run_id: "ar-1",
-    latest_autoresearch_created_at: "2026-05-21T12:00:00Z",
+    autooptimizer_runs: 1,
+    latest_autooptimizer_run_id: "ar-1",
+    latest_autooptimizer_created_at: "2026-05-21T12:00:00Z",
   });
   vi.mocked(flywheelApi.getFlywheelVelocity).mockResolvedValue({
     namespace: "agent:agent-1",
@@ -63,7 +63,7 @@ beforeEach(() => {
     observations_captured: 2,
     patterns_promoted: 1,
     patterns_demoted: 0,
-    autoresearch_runs: 1,
+    autooptimizer_runs: 1,
     optimized_child_agents: 0,
     average_lineage_depth: 0,
     latest_activity_at: "2026-05-21T12:00:00Z",
@@ -118,7 +118,7 @@ beforeEach(() => {
       },
     ],
   });
-  vi.mocked(flywheelApi.listAutoresearchRuns).mockResolvedValue({
+  vi.mocked(flywheelApi.listAutoOptimizerRuns).mockResolvedValue({
     items: [
       {
         id: "ar-1",
@@ -194,12 +194,12 @@ describe("AgentsFlywheelRoute", () => {
       agent: "agent-1",
       limit: 20,
     });
-    expect(flywheelApi.listAutoresearchRuns).toHaveBeenCalledWith({
+    expect(flywheelApi.listAutoOptimizerRuns).toHaveBeenCalledWith({
       agent: "agent-1",
       limit: 25,
     });
     expect(await screen.findByText("Training run history")).toBeInTheDocument();
-    expect(screen.getByText("Autoresearch History")).toBeInTheDocument();
+    expect(screen.getByText("Optimizer History")).toBeInTheDocument();
     expect(screen.getAllByText(/opt-2/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/opt-1/).length).toBeGreaterThan(0);
   });

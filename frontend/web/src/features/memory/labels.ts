@@ -4,7 +4,7 @@ export function formatVerdict(v: string | null | undefined): string {
   return v ?? "";
 }
 
-// Handles both pattern states ("active","staged","forgotten") and autoresearch
+// Handles both pattern states ("active","staged","forgotten") and autooptimizer
 // run states ("promoted","demoted") — the value sets are non-overlapping.
 export function formatPromotionState(s: string | null | undefined): string {
   switch (s) {

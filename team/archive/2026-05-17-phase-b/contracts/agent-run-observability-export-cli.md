@@ -65,7 +65,7 @@ acceptance:
 
 Read-side surface for the canonical agent-run SQLite ledger. The CLI verb
 and the three HTTP routes together produce the deliverables the operator
-attaches to PRs and the autoresearcher ingests downstream.
+attaches to PRs and the autooptimizer ingests downstream.
 
 Schema-version discipline (`xvn.agent_run.v1`) is the load-bearing rule
 here — see plan risk #5. Any future shape change must bump
@@ -76,7 +76,7 @@ here — see plan risk #5. Any future shape change must bump
 - IPC emission — `agent-run-observability-ipc-emission`.
 - OTel — `agent-run-observability-otel-bridge`.
 - UI — `agent-run-observability-ui` (consumes these routes).
-- Autoresearcher ingestion contract — deferred (per plan §Out of scope).
+- AutoOptimizer ingestion contract — deferred (per plan §Out of scope).
 - Migration 018 — already merged.
 - Write path of any kind on `agent_runs` / `spans` / detail tables.
 

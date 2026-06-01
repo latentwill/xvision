@@ -97,7 +97,7 @@ The plugin's `LineageManifest`, adopted as-is with explicit fields:
   "parent_lineage_id": "<ulid|null>",     // clone provenance (A10)
   "born_at": "<iso8601>",
   "operator_signature": "ed25519:…",
-  "autoresearch_session_id": "<ulid>",
+  "autooptimizer_session_id": "<ulid>",
   "creator": { "address": "0x…", "handle": "@ed", "ens": "ed.xvn" }  // A8: address canonical, handle/ens optional display
 }
 ```

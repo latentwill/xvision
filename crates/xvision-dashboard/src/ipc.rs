@@ -1,19 +1,19 @@
-//! Unix socket IPC bridge for autoresearch cycle progress events (AR-3).
+//! Unix socket IPC bridge for autooptimizer cycle progress events (AR-3).
 //!
-//! The dashboard listens on a Unix domain socket; `xvn autoresearch
+//! The dashboard listens on a Unix domain socket; `xvn optimizer
 //! mutate-once --ipc-socket <path>` connects and streams newline-delimited
 //! JSON `CycleProgressEvent` messages. Each line is deserialized and
-//! broadcast into the `AppState::autoresearch_tx` channel, which feeds the
-//! `GET /api/autoresearch/events` SSE endpoint in real time.
+//! broadcast into the `AppState::autooptimizer_tx` channel, which feeds the
+//! `GET /api/autooptimizer/events` SSE endpoint in real time.
 //!
 //! # Usage
 //!
 //! ```text
 //! # Terminal 1 — dashboard (socket path set via ServeOpts)
-//! xvn dashboard serve --autoresearch-ipc-socket /tmp/xvn-events.sock
+//! xvn dashboard serve --autooptimizer-ipc-socket /tmp/xvn-events.sock
 //!
 //! # Terminal 2 — evening cycle (events stream to connected browser tabs)
-//! xvn autoresearch mutate-once <parent_hash> --ipc-socket /tmp/xvn-events.sock
+//! xvn optimizer mutate-once <parent_hash> --ipc-socket /tmp/xvn-events.sock
 //! ```
 //!
 //! Multiple clients may connect simultaneously; each connection is handled
@@ -25,7 +25,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::broadcast::Sender;
 
-use xvision_engine::autoresearch::progress::CycleProgressEvent;
+use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 
 /// Spawn a background task that listens on `socket_path` for incoming
 /// newline-delimited JSON `CycleProgressEvent` messages and broadcasts them
@@ -36,7 +36,7 @@ use xvision_engine::autoresearch::progress::CycleProgressEvent;
 ///
 /// If the socket file already exists (e.g. after an unclean shutdown)
 /// it is removed before binding so `bind` does not fail.
-pub fn spawn_autoresearch_subscriber(
+pub fn spawn_autooptimizer_subscriber(
     socket_path: PathBuf,
     tx: Sender<CycleProgressEvent>,
 ) -> anyhow::Result<()> {
@@ -48,7 +48,7 @@ pub fn spawn_autoresearch_subscriber(
     let listener = UnixListener::bind(&socket_path)?;
     tracing::info!(
         path = %socket_path.display(),
-        "autoresearch IPC socket listening",
+        "autooptimizer IPC socket listening",
     );
 
     tokio::spawn(async move {
@@ -63,7 +63,7 @@ pub fn spawn_autoresearch_subscriber(
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
-                        "autoresearch IPC: accept error; listener closing",
+                        "autooptimizer IPC: accept error; listener closing",
                     );
                     break;
                 }
@@ -76,10 +76,7 @@ pub fn spawn_autoresearch_subscriber(
 
 /// Read newline-delimited JSON `CycleProgressEvent` from one connected client
 /// and broadcast each event into `tx`. Returns when the client disconnects.
-async fn handle_ipc_client(
-    stream: tokio::net::UnixStream,
-    tx: Sender<CycleProgressEvent>,
-) {
+async fn handle_ipc_client(stream: tokio::net::UnixStream, tx: Sender<CycleProgressEvent>) {
     let reader = BufReader::new(stream);
     let mut lines = reader.lines();
 
@@ -100,7 +97,7 @@ async fn handle_ipc_client(
                         tracing::warn!(
                             error = %e,
                             line_prefix = &line[..line.len().min(80)],
-                            "autoresearch IPC: could not deserialize CycleProgressEvent; skipping line",
+                            "autooptimizer IPC: could not deserialize CycleProgressEvent; skipping line",
                         );
                     }
                 }
@@ -110,7 +107,7 @@ async fn handle_ipc_client(
                 break;
             }
             Err(e) => {
-                tracing::warn!(error = %e, "autoresearch IPC: read error; dropping client");
+                tracing::warn!(error = %e, "autooptimizer IPC: read error; dropping client");
                 break;
             }
         }

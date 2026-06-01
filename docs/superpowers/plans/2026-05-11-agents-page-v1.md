@@ -28,10 +28,10 @@ library page kept as a nav item for future expansion**.
   CRUD; multi-slot agents inside a strategy are opt-in.
 - **`/agents` page** is the library. It lists every agent that exists in
   the workspace — whether created inline-in-a-strategy or standalone.
-  It's also an escape valve for power users / autoresearcher to manage
+  It's also an escape valve for power users / autooptimizer to manage
   shared definitions without entering a strategy. Empty-state by default
   for first-time users; populates as they create agents.
-- **Name kept as "Agents"** for future expansion: autoresearcher
+- **Name kept as "Agents"** for future expansion: autooptimizer
   mutations (SLF9), ERC-8004 attestations (SLF3), marketplace listings
   (Plan 5), reputation leaderboards (F34) all need a stable workspace
   surface; the Agents page becomes that home as features arrive.
@@ -67,7 +67,7 @@ Each is an explicit non-goal:
 - **Temperature / top_p / sampling controls** — operator decision: too confusing before user has shipped one agent. Re-introduce post-v1 as an "Advanced" expander.
 - **Lineage view, fork-with-diff** — needs versioned bundle storage. Until then, "fork" is a copy with no parent linkage.
 - **Sealed state + ERC-8004 attestation** — depends on SLF3 (NFT mint on `ab_compare` startup). Out of v1.
-- **Autoresearcher mutation review surface** — depends on SLF9 (evening Karpathy loop). Out of v1.
+- **AutoOptimizer mutation review surface** — depends on SLF9 (evening Karpathy loop). Out of v1.
 - **Live cycle / forward-paper / kill switch UX** — depends on the live daemon (Plan 2c). Out of v1.
 - **Variance scan, adversarial probe, replay** — Tier-2 features per research artifact. Out of v1.
 - **Skill marketplace** — Tier-3, depends on the marketplace contract.
@@ -140,7 +140,7 @@ Any          -> Archived    : explicit archive action
 
 States not in v1: Testing, Sealed, Forward-paper, Live, Halted, Retired,
 Mutated. These re-enter when their dependencies (live daemon, ERC-8004
-mint, autoresearcher loop) ship.
+mint, autooptimizer loop) ship.
 
 ### Skills (what they are in v1)
 

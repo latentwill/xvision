@@ -36,17 +36,17 @@ import {
 
 import { ApiError } from "@/api/client";
 import {
-  demoteAutoresearchRun,
+  demoteAutoOptimizerRun,
   flywheelKeys,
   gateOptimization,
-  gateAutoresearchRun,
+  gateAutoOptimizerRun,
   getFlywheelLineage,
   getFlywheelStatus,
   getFlywheelVelocity,
-  listAutoresearchRuns,
+  listAutoOptimizerRuns,
   optimizeMemoryDemos,
-  promoteAutoresearchRun,
-  runAutoresearch,
+  promoteAutoOptimizerRun,
+  runAutoOptimizer,
   type MemoryDemoOptimizeResult,
 } from "@/api/flywheel";
 import {
@@ -218,8 +218,8 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
       ? { agent: props.agentId, limit: runLimit }
       : { namespace, limit: runLimit };
   const runsQuery = useQuery({
-    queryKey: flywheelKeys.autoresearchList(runsQueryArgs),
-    queryFn: () => listAutoresearchRuns(runsQueryArgs),
+    queryKey: flywheelKeys.autooptimizerList(runsQueryArgs),
+    queryFn: () => listAutoOptimizerRuns(runsQueryArgs),
   });
 
   const [patternText, setPatternText] = useState("");
@@ -241,12 +241,12 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
     qc.invalidateQueries({ queryKey: memoryKeys.all });
   };
 
-  const autoresearchMutation = useMutation({
+  const autooptimizerMutation = useMutation({
     mutationFn: () => {
       if (!patternText.trim()) {
         throw new Error("Pattern text is required.");
       }
-      return runAutoresearch({
+      return runAutoOptimizer({
         ...(props.mode === "agent"
           ? { agent: props.agentId }
           : { namespace: "global" }),
@@ -289,8 +289,8 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
   const lifecycleMutation = useMutation({
     mutationFn: ({ id, action }: { id: string; action: "promote" | "demote" }) =>
       action === "promote"
-        ? promoteAutoresearchRun(id)
-        : demoteAutoresearchRun(id),
+        ? promoteAutoOptimizerRun(id)
+        : demoteAutoOptimizerRun(id),
     onSuccess: () => {
       setError(null);
       refresh();
@@ -299,7 +299,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
   });
   const gateMutation = useMutation({
     mutationFn: ({ id, draft }: { id: string; draft: GateDraft }) =>
-      gateAutoresearchRun(id, {
+      gateAutoOptimizerRun(id, {
         parent_day_score: parseScore("parent day score", draft.parentDayScore),
         child_day_score: parseScore("child day score", draft.childDayScore),
         parent_holdout_score: parseScore(
@@ -396,7 +396,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
             <Metric label="Active" value={status?.active_patterns} />
             <Metric label="Staged" value={status?.staged_patterns} />
             <Metric label="Forgotten" value={status?.forgotten_patterns} />
-            <Metric label="Runs" value={status?.autoresearch_runs} />
+            <Metric label="Runs" value={status?.autooptimizer_runs} />
           </div>
         )}
 
@@ -630,11 +630,11 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
           </label>
           <button
             type="button"
-            onClick={() => autoresearchMutation.mutate()}
-            disabled={autoresearchMutation.isPending}
+            onClick={() => autooptimizerMutation.mutate()}
+            disabled={autooptimizerMutation.isPending}
             className="inline-flex justify-center px-3 py-2 rounded text-[12.5px] font-medium border border-border text-text hover:border-border-strong disabled:opacity-50"
           >
-            {autoresearchMutation.isPending ? "Staging..." : "Stage Pattern"}
+            {autooptimizerMutation.isPending ? "Staging..." : "Stage Pattern"}
           </button>
         </div>
 
@@ -721,7 +721,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
 
         <div className="border border-border rounded-sm overflow-hidden">
           <div className="px-3 py-2 border-b border-border text-[11px] uppercase tracking-wide text-text-3">
-            {props.fullHistory ? "Autoresearch History" : "Recent Autoresearch Runs"}
+            {props.fullHistory ? "Optimizer History" : "Recent Optimizer Runs"}
           </div>
           {runsQuery.isPending ? (
             <div className="px-3 py-3 text-[12.5px] text-text-3">
@@ -733,7 +733,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
             </div>
           ) : runs.length === 0 ? (
             <div className="px-3 py-3 text-[12.5px] text-text-3">
-              No autoresearch runs yet.
+              No autooptimizer runs yet.
             </div>
           ) : (
             <div className="divide-y divide-border">

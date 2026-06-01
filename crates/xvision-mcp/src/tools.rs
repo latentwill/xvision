@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use xvision_data as xvn;
 use xvision_engine::agents::AgentSlot;
-use xvision_engine::api::autoresearch as api_autoresearch;
+use xvision_engine::api::autooptimizer as api_autooptimizer;
 use xvision_engine::api::eval::{
     self as api_eval, BatchDetail, CompareRunsRequest, CreateBatchRequest, EvalRunRequest, ListRunsRequest,
 };
@@ -338,7 +338,7 @@ pub struct OptimizeMemoryDemosMcpReq {
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct AutoresearchListMcpReq {
+pub struct AutoOptimizerListMcpReq {
     /// Exact namespace, e.g. `global` or `agent:<id>`.
     #[serde(default)]
     pub namespace: Option<String>,
@@ -352,8 +352,8 @@ pub struct AutoresearchListMcpReq {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AutoresearchRunIdMcpReq {
-    /// Autoresearch run id.
+pub struct AutoOptimizerRunIdMcpReq {
+    /// AutoOptimizer run id.
     pub id: String,
 }
 
@@ -917,7 +917,7 @@ impl XvisionTools {
     // --- eval browse / compare verbs (Phase 3.D Task 12) -------------------
     //
     // These wrap the existing `engine::api::eval::*` surface so MCP clients
-    // (the dashboard's chat rail, the autoresearcher) can browse runs +
+    // (the dashboard's chat rail, the autooptimizer) can browse runs +
     // compare without going through the CLI. Each call opens a fresh
     // `ApiContext` against `$XVN_HOME/store.db` so the sqlite handle is
     // scoped to the call (no long-lived pool, matching the rest of the
@@ -971,7 +971,7 @@ impl XvisionTools {
 
     /// Get just the `MetricsSummary` for a completed run. Convenience
     /// wrapper for callers that only want the headline numbers (the
-    /// dashboard's run cards, the autoresearcher's lineage gate).
+    /// dashboard's run cards, the autooptimizer's lineage gate).
     /// Returns `null` when the run hasn't computed metrics yet
     /// (still queued / running / failed).
     #[tool(
@@ -1245,17 +1245,17 @@ impl XvisionTools {
         json_or_err(&resp)
     }
 
-    /// List offline autoresearch runs. Read-only companion to the CLI and
+    /// List offline autooptimizer runs. Read-only companion to the CLI and
     /// dashboard run-history surfaces.
-    #[tool(description = "List offline autoresearch run ledger rows by namespace or agent.")]
-    async fn xvn_autoresearch_list(
+    #[tool(description = "List offline autooptimizer run ledger rows by namespace or agent.")]
+    async fn xvn_autooptimizer_list(
         &self,
-        Parameters(req): Parameters<AutoresearchListMcpReq>,
+        Parameters(req): Parameters<AutoOptimizerListMcpReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let store = self.memory_store().await?;
-        let resp = api_autoresearch::list_runs(
+        let resp = api_autooptimizer::list_runs(
             &store,
-            api_autoresearch::AutoresearchRunListRequest {
+            api_autooptimizer::AutoOptimizerRunListRequest {
                 namespace: req.namespace,
                 agent: req.agent,
                 limit: req.limit,
@@ -1267,30 +1267,30 @@ impl XvisionTools {
         json_or_err(&resp)
     }
 
-    /// Inspect one autoresearch run, including contributing Observation ids,
+    /// Inspect one autooptimizer run, including contributing Observation ids,
     /// Pattern id, numeric gate fields, and blind Finding provenance.
-    #[tool(description = "Inspect one autoresearch run ledger row by id.")]
-    async fn xvn_autoresearch_inspect(
+    #[tool(description = "Inspect one autooptimizer run ledger row by id.")]
+    async fn xvn_autooptimizer_inspect(
         &self,
-        Parameters(req): Parameters<AutoresearchRunIdMcpReq>,
+        Parameters(req): Parameters<AutoOptimizerRunIdMcpReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let store = self.memory_store().await?;
-        let run = api_autoresearch::inspect_run(&store, &req.id)
+        let run = api_autooptimizer::inspect_run(&store, &req.id)
             .await
             .map_err(api_err_to_mcp)?;
         json_or_err(&run)
     }
 
     /// Return just the qualitative Finding and gate provenance for one
-    /// autoresearch run. This keeps chat-rail callers from having to parse the
+    /// autooptimizer run. This keeps chat-rail callers from having to parse the
     /// full run object when they only need the judge context.
-    #[tool(description = "Return qualitative Finding and numeric gate provenance for one autoresearch run.")]
-    async fn xvn_autoresearch_findings(
+    #[tool(description = "Return qualitative Finding and numeric gate provenance for one autooptimizer run.")]
+    async fn xvn_autooptimizer_findings(
         &self,
-        Parameters(req): Parameters<AutoresearchRunIdMcpReq>,
+        Parameters(req): Parameters<AutoOptimizerRunIdMcpReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let store = self.memory_store().await?;
-        let run = api_autoresearch::inspect_run(&store, &req.id)
+        let run = api_autooptimizer::inspect_run(&store, &req.id)
             .await
             .map_err(api_err_to_mcp)?;
         json_or_err(&serde_json::json!({
@@ -2520,11 +2520,11 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let run = api_autoresearch::run_memory_distillation(
+        let run = api_autooptimizer::run_memory_distillation(
             &store,
             "test",
             vec![1.0],
-            api_autoresearch::AutoresearchRunRequest {
+            api_autooptimizer::AutoOptimizerRunRequest {
                 namespace: Some(namespace.clone()),
                 agent: None,
                 scenario_id: None,
@@ -2658,7 +2658,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_autoresearch_read_tools_return_run_and_findings() {
+    async fn mcp_autooptimizer_read_tools_return_run_and_findings() {
         let (tools, _td) = tools_with_tmp();
         let store = tools.memory_store().await.unwrap();
         let namespace = api_memory::agent_namespace("mcp-auto");
@@ -2676,16 +2676,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let run = api_autoresearch::run_memory_distillation(
+        let run = api_autooptimizer::run_memory_distillation(
             &store,
             "test",
             vec![1.0],
-            api_autoresearch::AutoresearchRunRequest {
+            api_autooptimizer::AutoOptimizerRunRequest {
                 namespace: None,
                 agent: Some("mcp-auto".into()),
                 scenario_id: None,
                 run_id: None,
-                pattern_text: "MCP autoresearch Pattern".into(),
+                pattern_text: "MCP autooptimizer Pattern".into(),
                 active: false,
                 limit: Some(10),
                 min_observations: Some(2),
@@ -2693,10 +2693,10 @@ mod tests {
         )
         .await
         .unwrap();
-        api_autoresearch::gate_run(
+        api_autooptimizer::gate_run(
             &store,
             &run.id,
-            api_autoresearch::AutoresearchGateRequest {
+            api_autooptimizer::AutoOptimizerGateRequest {
                 metric: Some("sharpe".into()),
                 parent_day_score: Some(1.0),
                 child_day_score: Some(1.2),
@@ -2714,7 +2714,7 @@ mod tests {
         .unwrap();
 
         let listed = tools
-            .xvn_autoresearch_list(Parameters(AutoresearchListMcpReq {
+            .xvn_autooptimizer_list(Parameters(AutoOptimizerListMcpReq {
                 namespace: None,
                 agent: Some("mcp-auto".into()),
                 limit: Some(10),
@@ -2727,7 +2727,7 @@ mod tests {
         assert_eq!(listed["items"][0]["id"], run.id);
 
         let inspected = tools
-            .xvn_autoresearch_inspect(Parameters(AutoresearchRunIdMcpReq { id: run.id.clone() }))
+            .xvn_autooptimizer_inspect(Parameters(AutoOptimizerRunIdMcpReq { id: run.id.clone() }))
             .await
             .unwrap();
         let inspected = parsed(&inspected);
@@ -2736,7 +2736,7 @@ mod tests {
         assert_eq!(inspected["judge_model"], "test-judge");
 
         let findings = tools
-            .xvn_autoresearch_findings(Parameters(AutoresearchRunIdMcpReq { id: run.id.clone() }))
+            .xvn_autooptimizer_findings(Parameters(AutoOptimizerRunIdMcpReq { id: run.id.clone() }))
             .await
             .unwrap();
         let findings = parsed(&findings);

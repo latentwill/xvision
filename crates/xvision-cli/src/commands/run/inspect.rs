@@ -3,7 +3,7 @@
 //!
 //! Writes `xvn_run.json` (schema `xvn.agent_run.v1`) + `xvn_report.md`
 //! into `--out <dir>` (default: cwd). `--out -` writes JSON to stdout,
-//! which is the form the autoresearcher ingests. `--format` controls
+//! which is the form the autooptimizer ingests. `--format` controls
 //! which deliverables get materialized; both are emitted by default
 //! because the two are paired everywhere downstream.
 //!

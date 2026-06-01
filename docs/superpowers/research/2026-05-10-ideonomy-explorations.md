@@ -2,7 +2,7 @@
 
 > **Date:** 2026-05-10 (autonomous overnight run)
 > **Method:** 12 invocations of `ideonomy-plain`, one per question, each with a fresh random tuple drawn from the operators × organons × dimensions catalog.
-> **Trigger:** post-spec, post-plan, post-adversarial-review of the non-custodial wallets work; user requested broad first-principles exploration of clients, agents, profits, autoresearcher, marketplace, ERC-8004, and adjacent angles before bed.
+> **Trigger:** post-spec, post-plan, post-adversarial-review of the non-custodial wallets work; user requested broad first-principles exploration of clients, agents, profits, autooptimizer, marketplace, ERC-8004, and adjacent angles before bed.
 > **Output convention:** each section is the artifact of one run, with intrinsic headers (no `Phase A` / `Operator: X` leakage); a footer lists the tuple drawn so future readers can trace the brainstorming machinery.
 
 ---
@@ -12,7 +12,7 @@
 1. [Who actually deposits money to xvision?](#run-1--who-actually-deposits-money-to-xvision)
 2. [What is an "agent" really, in this system?](#run-2--what-is-an-agent-really-in-this-system)
 3. [Where does platform revenue come from?](#run-3--where-does-platform-revenue-come-from)
-4. [What are the failure modes of the autoresearcher's mutation loop?](#run-4--what-are-the-failure-modes-of-the-autoresearchers-mutation-loop)
+4. [What are the failure modes of the autooptimizer's mutation loop?](#run-4--what-are-the-failure-modes-of-the-autooptimizers-mutation-loop)
 5. [Why would strategy creators bring work to xvision vs. Numerai/Composer/eToro?](#run-5--why-would-strategy-creators-bring-work-to-xvision-vs-numericomposeretoro)
 6. [Is on-chain reputation (ERC-8004) actually valuable, or a checkbox?](#run-6--is-on-chain-reputation-erc-8004-actually-valuable-or-a-checkbox)
 7. [What's the worst-case "first big loss" story?](#run-7--whats-the-worst-case-first-big-loss-story)
@@ -190,7 +190,7 @@ not surfaced:     "the depositor as a population, not a single person" — atlas
   - persona = the *voice* / prompt style (cosmetic)
   - agent = the *registered identity* (NFT-bound)
   - strategy = the *pipeline configuration* (functional)
-  - A single agent has one strategy at any moment; an agent's strategy can change (mutation by the autoresearcher) but the agent identity persists.
+  - A single agent has one strategy at any moment; an agent's strategy can change (mutation by the autooptimizer) but the agent identity persists.
 - **decision vs trade vs order vs position** — four terms for the same trade life-cycle phase:
   - decision = the trader's output (intent)
   - trade = the intent + the executor's submission (action)
@@ -200,8 +200,8 @@ not surfaced:     "the depositor as a population, not a single person" — atlas
 
 #### Dimensions surfaced by writing the dictionary
 
-- **Symmetry** — agency is asymmetric in xvision (system acts for user; user does not act for system). A symmetric variant: a user could *judge briefings* and the system would learn; a user could *grade trades* and the system would update the trader's prompt. Currently nothing closes that loop. **The Karpathy autoresearcher (autoresearcher-1 plan) is the asymmetry-breaker** — it's the loop that makes the system jointly self-modifying.
-- **Source** — agents in xvision arrive from three sources today: (1) hand-authored templates, (2) marketplace purchase, (3) autoresearcher mutation. A fourth source would be **environmental selection in the wild** — agents that survive paying users keep running, others get auto-decommissioned. Currently this is not modeled.
+- **Symmetry** — agency is asymmetric in xvision (system acts for user; user does not act for system). A symmetric variant: a user could *judge briefings* and the system would learn; a user could *grade trades* and the system would update the trader's prompt. Currently nothing closes that loop. **The Karpathy autooptimizer (autooptimizer-1 plan) is the asymmetry-breaker** — it's the loop that makes the system jointly self-modifying.
+- **Source** — agents in xvision arrive from three sources today: (1) hand-authored templates, (2) marketplace purchase, (3) autooptimizer mutation. A fourth source would be **environmental selection in the wild** — agents that survive paying users keep running, others get auto-decommissioned. Currently this is not modeled.
 - **Autonomy** — strategies in xvision are *mostly-autonomous*: the trader produces a decision freely; the risk engine can only veto. A *fully-autonomous* variant: no risk engine, the trader controls its own caps. A *mostly-controlled* variant: every trade requires operator confirm. The hybrid quota model in the wallet spec puts xvision exactly in the "mostly-autonomous" sweet spot, with operator-tunable autonomy via budgets.
 
 #### The terminology slippage and what it costs
@@ -263,7 +263,7 @@ not surfaced:     "agent" in *political-economy* (workers as agents of capital);
 
 #### What lies *below* current position (the unattractive future to avoid)
 
-- **0% (pure OSS, no revenue):** xvision becomes a hobby project. Karpathy's autoresearcher concept needs ongoing LLM compute funded by *someone*; without revenue, that someone is the operator, indefinitely.
+- **0% (pure OSS, no revenue):** xvision becomes a hobby project. Karpathy's autooptimizer concept needs ongoing LLM compute funded by *someone*; without revenue, that someone is the operator, indefinitely.
 - **1% data-resale:** the data product (decisions / briefings / regime classifications) is genuinely valuable to other quants — but selling it without consent from the strategy creators is a fast trust-collapse.
 
 #### What lies *above* current position (the slippery slope)
@@ -320,7 +320,7 @@ Platform monetization (root)
 
 - **Purpose** — what's the revenue *for*?
   - Survival: keep the lights on, pay LLM bills, fund the operator's time.
-  - Mission: fund the autoresearcher, ERC-8004 deployment, future plans.
+  - Mission: fund the autooptimizer, ERC-8004 deployment, future plans.
   - Extraction: returns to the operator / future investors.
   - **Spec is silent on this.** Worth declaring: is xvision a non-profit-spirited public good with revenue floor for survival, or a startup with revenue ceiling unbounded? Different revenue-mix optimal for each.
 
@@ -349,11 +349,11 @@ not surfaced:     "non-monetary revenue" — reputation, attention, recruiting l
 
 ---
 
-## Run 4 — What are the failure modes of the autoresearcher's mutation loop?
+## Run 4 — What are the failure modes of the autooptimizer's mutation loop?
 
 ### Lifted shape
 
-xvision's autoresearcher is concretely: an LLM-driven mutator that perturbs strategy parameters, runs candidates through an eval engine, and promotes survivors based on a fitness score (Δ-Sharpe). Strip the surface:
+xvision's autooptimizer is concretely: an LLM-driven mutator that perturbs strategy parameters, runs candidates through an eval engine, and promotes survivors based on a fitness score (Δ-Sharpe). Strip the surface:
 
 > *A guided search over a high-dimensional configuration space, with a noisy and possibly misleading fitness signal, where each evaluation is expensive and each generation depends on the last.*
 
@@ -410,7 +410,7 @@ Model-version drift            X (audit       X (eval       X (mutations    -   
                                 hash change)  at boundary)  is visible)                     regression)
 ```
 
-**Reading the chart:** the audit-log + lineage-graph columns are the most-information-dense — they catch 7 of the 11 failure modes early. **Plan #2 (autoresearcher) MUST include lineage-graph storage as a first-class artifact**, not an afterthought. The audit-log ties to the wallet plan's `decisions` table — same primitive serves both surfaces.
+**Reading the chart:** the audit-log + lineage-graph columns are the most-information-dense — they catch 7 of the 11 failure modes early. **Plan #2 (autooptimizer) MUST include lineage-graph storage as a first-class artifact**, not an afterthought. The audit-log ties to the wallet plan's `decisions` table — same primitive serves both surfaces.
 
 ### Cross-domain re-instantiations of the abstract failure pattern
 
@@ -418,7 +418,7 @@ Each domain has already worked out countermeasures for the shape. Borrow them:
 
 #### Drug discovery (compound mutation + assay)
 - **Counter to reward hacking:** orthogonal assays — measure the *same* strategy on a *different* eval (Sharpe AND Sortino AND CAGR; in-sample AND walk-forward; multiple market regimes). If a winner only wins on one metric, suspect hacking.
-- **Counter to overfitting:** held-out validation set never seen during mutation. xvision analog: an eval-window the autoresearcher *cannot* run against, used only at promotion time.
+- **Counter to overfitting:** held-out validation set never seen during mutation. xvision analog: an eval-window the autooptimizer *cannot* run against, used only at promotion time.
 
 #### Evolutionary biology (genetic algorithms)
 - **Counter to mode collapse:** speciation pressure — penalize candidates that are too similar to existing surviving strategies (cosine-distance on prompt embeddings).
@@ -435,7 +435,7 @@ Each domain has already worked out countermeasures for the shape. Borrow them:
 #### Cultural evolution of memes
 - **Counter to adversarial briefing exploit:** the meme that survives is the one optimized for *transmission*, not for *truth*. Analog: a strategy that wins because it looks good in the briefing format may be optimized for the briefing's quirks. **Periodic briefing-format randomization** (small permutations to field order, label phrasing) breaks brittle strategies.
 
-### Substitution: what if the autoresearcher were OPPOSITE on each dimension?
+### Substitution: what if the autooptimizer were OPPOSITE on each dimension?
 
 - **Hierarchicalness** — currently flat (one population). Substitute *hierarchical*: tiered league with promotion / relegation. Junior strategies prove themselves in a low-stakes pool before being promoted to a high-stakes pool. Many failures (mode collapse, overfitting, survivorship bias) are reduced because the promotion gate is harder than the survival gate.
 - **Intentionality** — currently fully automated mutation. Substitute *deliberately designed*: every mutation comes from a human-written hypothesis ("I think this strategy will work better if it weights funding-rate more heavily"). Slower, but every winner is interpretable and the lineage graph becomes a *research notebook* rather than a *forest*.
@@ -443,10 +443,10 @@ Each domain has already worked out countermeasures for the shape. Borrow them:
 
 ### What the chart + lifts together reveal
 
-- **The lineage graph is load-bearing.** It catches 7/11 failure modes alone. Build it first, robustly. The autoresearcher-1 plan should treat the lineage-graph as a first-class output artifact, not telemetry.
+- **The lineage graph is load-bearing.** It catches 7/11 failure modes alone. Build it first, robustly. The autooptimizer-1 plan should treat the lineage-graph as a first-class output artifact, not telemetry.
 - **The killed strategies are the underexploited asset.** Every domain that has lived through this loop says: keep the dead. xvision currently has no plan for storing eliminated strategies long-term.
-- **Multi-objective evaluation almost certainly belongs in v1 of autoresearcher.** Single-scalar fitness invites reward hacking and mismatch. The eval engine spec already mentions Δ-Sharpe; pair it with at least one drawdown metric and one turnover metric.
-- **Briefing-format randomization is a 1-day implementation that prevents an entire class of failures.** Add to autoresearcher plan.
+- **Multi-objective evaluation almost certainly belongs in v1 of autooptimizer.** Single-scalar fitness invites reward hacking and mismatch. The eval engine spec already mentions Δ-Sharpe; pair it with at least one drawdown metric and one turnover metric.
+- **Briefing-format randomization is a 1-day implementation that prevents an entire class of failures.** Add to autooptimizer plan.
 
 #### Tuple footer
 
@@ -454,10 +454,10 @@ Each domain has already worked out countermeasures for the shape. Borrow them:
 operators:        substitution · abstraction-lift
 organon:          chart (11 failure modes × 5 detection columns) + 5 cross-domain mitigation lists
 dim prompts:      side-effect · intentionality · hierarchicalness
-not surfaced:     "what does the autoresearcher OPTIMIZE FOR?" — assumed Δ-Sharpe; the prior
+not surfaced:     "what does the autooptimizer OPTIMIZE FOR?" — assumed Δ-Sharpe; the prior
                   question (which loss function?) deserves its own tuple. Also unsurfaced:
                   the politics of mutation — who has the right to delete a strategy? if the
-                  marketplace creator's strategy gets killed by the autoresearcher, what's
+                  marketplace creator's strategy gets killed by the autooptimizer, what's
                   the relationship-management story?
 ```
 
@@ -531,7 +531,7 @@ Cross "what creators want" (the master list) with "what's actually a moat" for t
 - **Composite:** "build your reputation here; carry it anywhere." If a creator builds an ERC-8004-attested track record on xvision, that record is theirs forever — they can take it to a CEX, a fund, another DEX. **This is the only positioning where being early on xvision is *better* than being later somewhere bigger.** Lean in.
 
 #### Mutation loop × composability
-- **Composite:** "submit a strategy seed; the autoresearcher evolves it; you keep ownership." Most creators don't have an autoresearcher. Numerai trains models on user submissions — but the submitter doesn't get the trained model back. xvision could let creators *retain ownership* of all evolved descendants of their seed. That's a unique value prop.
+- **Composite:** "submit a strategy seed; the autooptimizer evolves it; you keep ownership." Most creators don't have an autooptimizer. Numerai trains models on user submissions — but the submitter doesn't get the trained model back. xvision could let creators *retain ownership* of all evolved descendants of their seed. That's a unique value prop.
 
 #### Backtest infra × edge interpretability
 - **Composite:** "free backtest of your hypothesis, with full audit log of why every trade fired." Other platforms either give you the score (Numerai) or the trade (eToro). xvision can give you the *reasoning chain* (intern briefing → trader decision → risk eval). For a quant evaluating their own edge, this is gold.
@@ -690,7 +690,7 @@ If xvision wants reputation to do more than be a checkbox:
 1. **Gate on minimum reputation for marketplace listings.** A strategy with reputation < threshold can't be sold. Forces creators to backtest before publishing.
 2. **Tier marketplace fees by reputation.** Top-decile reputation gets a 97/3 split instead of 95/5. Bottom-decile pays 90/10. **Rewards quality, finances bad-actor handling.**
 3. **Reputation-weighted quota allocation.** When a user runs many strategies, xvision's quota_factor (wallet spec §3.4) could be weighted by reputation: high-rep strategies get more of the cap, low-rep less. **This is the cleanest integration with the wallet plan.**
-4. **Reputation-required for autoresearcher seeding.** Strategies entering the autoresearcher's mutation pool must have minimum reputation. Prevents the loop from polluting itself.
+4. **Reputation-required for autooptimizer seeding.** Strategies entering the autooptimizer's mutation pool must have minimum reputation. Prevents the loop from polluting itself.
 5. **Reputation as collateral.** A creator stakes their NFT as collateral against future losses; if their strategy loses > X%, the NFT is slashed (transferred to a community pool, locked, etc.). **This pushes reputation to the 95% end of the spectrum.** Hard to design right — slashing rules are notoriously gameable — but real teeth.
 
 None of these are in the current spec. **Without at least 2-3 of them, ERC-8004 in xvision is at the 3% checkbox end of the spectrum.**
@@ -721,7 +721,7 @@ P4         Reputation-as-collateral / slashing                      4+ weeks   4
                                                                                 significantly)
 ```
 
-P0 is essentially free (one config link from `quota_factor` to a reputation read). It would be a meaningful win for the same engineering effort as a typo fix. **P0 should be added to the wallet plan or the autoresearcher plan immediately.**
+P0 is essentially free (one config link from `quota_factor` to a reputation read). It would be a meaningful win for the same engineering effort as a typo fix. **P0 should be added to the wallet plan or the autooptimizer plan immediately.**
 
 #### Tuple footer
 
@@ -755,7 +755,7 @@ Top of the lattice = "trust-bearing platform crisis." Each scenario participates
                 |          |        |
             Scenarios populate the lattice; many sit at multiple intersections:
 
-S1  Autoresearcher-mutated strategy loses 50% on one trade
+S1  AutoOptimizer-mutated strategy loses 50% on one trade
     cause: strategic + operational  | visibility: high  | blast: per-user (bounded by hard cap)
     | recoverability: low (creator + platform credibility) | requires: transparency + reform
 
@@ -795,7 +795,7 @@ S10 Regulatory action: jx-specific account freeze
     cause: external                 | visibility: very high | blast: jx-specific users
     | recoverability: variable      | requires: legal + transparency
 
-S11 Mass mutation drift: autoresearcher converges on an exploit briefing format
+S11 Mass mutation drift: autooptimizer converges on an exploit briefing format
     cause: strategic + operational  | visibility: medium | blast: many strategies
     | recoverability: medium        | requires: kill-switch + reform of mutation loop
 
@@ -817,7 +817,7 @@ The lattice maps the structure; the response-playbook comes from domains that al
 #### Lloyd's "London Spiral" (1980s) — the un-survivable response
 - **Story:** Lloyd's syndicate Names took on hidden interconnected reinsurance exposure; asbestos and pollution claims compounded; many Names lost their houses.
 - **Lloyd's response:** initially obscured the depth of the problem, dragged out compensation. Litigation lasted 15+ years. Lloyd's brand permanently degraded as "not what your grandfather's Lloyd's was."
-- **xvision parallel for S2/S3/S11:** if cross-margin contagion or autoresearcher convergence creates *interconnected hidden exposures*, the failure mode is exactly Lloyd's — one bad strategy reveals the whole house was exposed. The response of choice is the OPPOSITE of Lloyd's: name the exposure publicly *before* it triggers.
+- **xvision parallel for S2/S3/S11:** if cross-margin contagion or autooptimizer convergence creates *interconnected hidden exposures*, the failure mode is exactly Lloyd's — one bad strategy reveals the whole house was exposed. The response of choice is the OPPOSITE of Lloyd's: name the exposure publicly *before* it triggers.
 - **Lesson:** hidden interconnections compound; un-hide them as the platform's daily discipline.
 
 #### FTX collapse (2022) — the catastrophic comingling
@@ -829,7 +829,7 @@ The lattice maps the structure; the response-playbook comes from domains that al
 #### Boeing 737 MAX (2018-2019) — the slow strategic-error reveal
 - **Story:** MCAS system was added to compensate for engine placement; pilots weren't trained on it; two crashes killed 346.
 - **Boeing response:** initial deflection ("pilot error") → grounded fleet → multi-year fix → loss of trust still reverberating.
-- **xvision parallel for S1/S11:** when the autoresearcher produces a strategy that wins eval but fails live, the temptation is to blame "pilot error" (the user picked a bad strategy). The right response is to acknowledge the system-level failure (the eval didn't catch it) and structurally reform.
+- **xvision parallel for S1/S11:** when the autooptimizer produces a strategy that wins eval but fails live, the temptation is to blame "pilot error" (the user picked a bad strategy). The right response is to acknowledge the system-level failure (the eval didn't catch it) and structurally reform.
 - **Lesson:** if the system was designed to abstract away a complexity, the system owns the failures arising from that abstraction.
 
 #### Knight Capital (2012) — the operational-error 30-minute extinction
@@ -858,7 +858,7 @@ The lattice maps the structure; the response-playbook comes from domains that al
 - **One-shot loss (single trade blowup):** trust-rebuildable; users accept that one bad day happens.
 - **Periodic small losses (every week, slight underperformance):** users tolerate if benchmarked appropriately.
 - **Continuous degradation (slow drift):** users barely notice but the long-tail effect is brand erosion.
-- **The dangerous combination:** *one-shot loss after a long stretch of looking-good-but-actually-drifting*. This is the autoresearcher-mode-collapse scenario (Run 4). Looks fine for months; then the regime changes; everything blows up at once because everything was correlated.
+- **The dangerous combination:** *one-shot loss after a long stretch of looking-good-but-actually-drifting*. This is the autooptimizer-mode-collapse scenario (Run 4). Looks fine for months; then the regime changes; everything blows up at once because everything was correlated.
 - **Move:** correlation-of-failure is itself a metric; track it; surface it; accept lower aggregate alpha for lower correlation.
 
 #### Age (era-substitution)
@@ -872,7 +872,7 @@ The lattice maps the structure; the response-playbook comes from domains that al
 
 #### The five scenarios that would end the project
 
-S2 (cross-margin contagion), S3 (high-rep strategy mass loss), S9 (creator exit-scam), S11 (autoresearcher convergence on exploit), S12 (reputation gaming collusion). Each requires *pre-event structural defense*, not post-event apology.
+S2 (cross-margin contagion), S3 (high-rep strategy mass loss), S9 (creator exit-scam), S11 (autooptimizer convergence on exploit), S12 (reputation gaming collusion). Each requires *pre-event structural defense*, not post-event apology.
 
 #### The four scenarios that are survivable with transparency
 
@@ -926,7 +926,7 @@ not surfaced:     "the *positive* first big event" — what's the failure scenar
        - watch for: simulation-rejection rate, frequency-cap hits, approval requests
 
 11:00  First lull; non-trading work
-       - review autoresearcher overnight runs (mutated strategies, eval results)
+       - review autooptimizer overnight runs (mutated strategies, eval results)
        - decide which mutations to promote / retire / archive
        - commit policy_changes for any budget edits
 
@@ -963,7 +963,7 @@ Mon  - reset weekly counters; review prior-week PnL by strategy
 Tue  - eval engine batch run on prior week's decisions
      - publish weekly performance report (informally to Twitter / Telegram)
 
-Wed  - autoresearcher mutation generation review (deeper than daily)
+Wed  - autooptimizer mutation generation review (deeper than daily)
      - decide on any architecture-level changes (slot swaps, prompt rewrites)
 
 Thu  - marketplace activity review (if any sales / new listings)
@@ -974,14 +974,14 @@ Fri  - end-of-week recon: full ledger vs Orderly diff
      - plan next week's experiments
 
 Sat  - rest day; only critical alerts
-Sun  - archive day; no live trading; backup DB; review autoresearcher
+Sun  - archive day; no live trading; backup DB; review autooptimizer
 ```
 
 ### Monthly cadence
 
 - Run forensic audit on any incidents (the audit log is the source-of-truth)
 - Reputation report: which agents accrued reputation events; which lost it
-- LLM cost audit (the autoresearcher dominates this; budget caps live here)
+- LLM cost audit (the autooptimizer dominates this; budget caps live here)
 - Regulatory landscape check (sanctions list updates, new jx restrictions)
 - Marketplace governance: any creator disputes, fraud signals, listings to moderate
 
@@ -1058,7 +1058,7 @@ User count     Operator role                        Daily hours    Critical skil
 
 - **Fully synthetic:** the operator role is itself an LLM agent. xvision already has the building blocks (Claude can read the audit log, decide on kill switches, etc.). **A "Claude-as-on-call" agent is plausibly a v2 feature.** It would handle the 80% of operator tasks that are routine, escalating only the 20% that need human judgment.
 - **Fully manual (no automation):** the system requires 1 operator-second per trade. Doesn't scale past 10 trades/day. Approximates "Karpathy doing it himself."
-- **Current hybrid:** automation handles dispatch; human handles judgment. Probably the right balance for v1, but the autoresearcher could shift more decisions to the human (which mutations to keep) just as it removes others (no manual mutation).
+- **Current hybrid:** automation handles dispatch; human handles judgment. Probably the right balance for v1, but the autooptimizer could shift more decisions to the human (which mutations to keep) just as it removes others (no manual mutation).
 
 ### Substitute polarity — operator role's dark version
 
@@ -1135,8 +1135,8 @@ Reconciliation         manual              periodic 15-min job          + drift 
                        (current)
 Eval engine            none                Δ-Sharpe + bootstrap CI      + walk-forward             + multi-objective           + adversarial backtest
                        (current)            (Plan 3 partial)               (held-out window)          Pareto fronts               (regime perturbation)
-Lineage / mutation     none                none                         autoresearcher-1           autoresearcher-2/3          self-modifying
-(autoresearcher)       (current)                                          (mutator+lineage)          (cycle, judge, evals)       meta-mutator
+Lineage / mutation     none                none                         autooptimizer-1           autooptimizer-2/3          self-modifying
+(autooptimizer)       (current)                                          (mutator+lineage)          (cycle, judge, evals)       meta-mutator
 Marketplace            spec only           none in code                 listing + license sale     + bundle products            + secondary market
                        (current)                                          (Plan 5 partial)            (Spotify-playlist)         + lending against NFTs
 Reputation             ERC-8004 spec       NFT mint per agent SLF3      + reputation feedback      + multi-attestor reads      + reputation-weighted quota,
@@ -1216,16 +1216,16 @@ Marketplace 95/5 fee split                  MEDIUM          can change going-for
 ```
 Component                   Can ship without:                              Cannot ship without:
 -------------------------   --------------------------------------------   ------------------------------------
-Risk engine                 marketplace, reputation, autoresearcher,       core trading pipeline
+Risk engine                 marketplace, reputation, autooptimizer,       core trading pipeline
                             dashboard
 Audit log                   marketplace, reputation, dashboard             core trading pipeline + ledger
 Marketplace                 risk engine (marketplace can list strategies   ERC-8004 NFT identity (for listings),
                             of any quality), reputation                    settlement wallet
-Reputation (ERC-8004)       marketplace, autoresearcher                    on-chain deployment of registries,
+Reputation (ERC-8004)       marketplace, autooptimizer                    on-chain deployment of registries,
                                                                            agent NFT mint
-Autoresearcher              marketplace, reputation                        eval engine, audit log
-Eval engine                 marketplace, reputation, autoresearcher        ledger (positions table)
-Wallet management           marketplace, reputation, autoresearcher        core trading pipeline
+AutoOptimizer              marketplace, reputation                        eval engine, audit log
+Eval engine                 marketplace, reputation, autooptimizer        ledger (positions table)
+Wallet management           marketplace, reputation, autooptimizer        core trading pipeline
 Dashboard                   anything (UI lives separately)                 something to display
 ```
 
@@ -1268,7 +1268,7 @@ The irreducible v0 is roughly Phase 0 + half of Phase 1 + selected pieces of Pha
 ### What v0 implies for the hackathon submission
 
 - **Demo what's there; defer what isn't.** The pitch is: "non-custodial wallet design + audit log + kill switches + one marketplace transaction." Not: "comprehensive risk + dynamic quota + reconciliation + UI."
-- **The autoresearcher might be the more important hackathon demo.** Per Run 4, it's the loop that makes xvision novel. If forced to choose between fully-shipping wallets and shipping autoresearcher, the latter is the differentiator.
+- **The autooptimizer might be the more important hackathon demo.** Per Run 4, it's the loop that makes xvision novel. If forced to choose between fully-shipping wallets and shipping autooptimizer, the latter is the differentiator.
 - **The wallet plan's Phase 0 (validation gates G1, G2) is non-negotiable** — without G1 the security model is broken. With G1, even the partial v0 is a real demonstration of non-custodial trading.
 
 ### Substitution exercises on the v0
@@ -1527,11 +1527,11 @@ Scaling failure (root)
 |   |   +-- N=100                                           = $500/day = $15k/mo
 |   |   +-- N=1000                                          = $150k/mo
 |   |
-|   +-- Autoresearcher mutation cost
+|   +-- AutoOptimizer mutation cost
 |   |   +-- N=1     = ~$10/day mutation budget
-|   |   +-- N=100   = same (autoresearcher is platform-level cost, not per-user)
+|   |   +-- N=100   = same (autooptimizer is platform-level cost, not per-user)
 |   |   +-- N=1000  = same, but the mutation pool gets exponentially more diverse
-|   |   +-- breaks at N>=10000: autoresearcher must produce strategies faster than
+|   |   +-- breaks at N>=10000: autooptimizer must produce strategies faster than
 |   |       users discard them; throughput, not cost, becomes the binding constraint
 |
 +-- Database scaling (SQLite single-file)
@@ -1683,9 +1683,9 @@ Database             SQLite WAL        SQLite WAL        SQLite WAL +      Postg
 - **N=100 (~$15k/mo LLM cost):** subscription fees become *mandatory*; without them, operator personally subsidizes every user. This forces a business-model decision earlier than "when we have 100 users" suggests.
 - **N=1000 (regulatory):** crosses the threshold where regulators in many jurisdictions consider the platform an exchange. Either prepare licensing OR position to stay below the threshold (intentional throttle).
 
-#### The autoresearcher economics scale differently
+#### The autooptimizer economics scale differently
 
-The autoresearcher's cost is *per platform*, not per user. At N=1000 users with one autoresearcher, the autoresearcher cost is the same as at N=1. **This means the autoresearcher's per-user cost goes down with scale** — a strong argument for ramping it up early.
+The autooptimizer's cost is *per platform*, not per user. At N=1000 users with one autooptimizer, the autooptimizer cost is the same as at N=1. **This means the autooptimizer's per-user cost goes down with scale** — a strong argument for ramping it up early.
 
 #### What should change in the wallet plan based on this run
 
@@ -1839,7 +1839,7 @@ Recruiting leverage                            indefinite              public vi
 #### Three things to NOT optimize
 
 1. **Polish at the cost of substance.** Judges who are technical (Mantle DevRel, Orderly engineers) prefer a working ugly demo to a slick mocked one. **Prioritize functional > pretty.**
-2. **Feature-count over feature-depth.** The autoresearcher + the wallet plan together cover too much. Pick one as the demo's load-bearing feature; mention the other in passing. **Recommendation: lead with the autoresearcher demo (per Run 4 + Run 9), use the wallet design as the trust story.**
+2. **Feature-count over feature-depth.** The autooptimizer + the wallet plan together cover too much. Pick one as the demo's load-bearing feature; mention the other in passing. **Recommendation: lead with the autooptimizer demo (per Run 4 + Run 9), use the wallet design as the trust story.**
 3. **Twitter buzz over user signups.** Buzz decays in weeks; users compound. If forced to choose, optimize for the post-demo "how do I try this?" funnel.
 
 #### What the wallet plan contributes to the win
@@ -1858,7 +1858,7 @@ Recruiting leverage                            indefinite              public vi
 If forced to write a single sentence post-hackathon describing what was won, what does xvision want it to say?
 
 - **Bad:** "xvision won the Mantle hackathon trading prize."
-- **Better:** "xvision demonstrated the first non-custodial autoresearcher-mutated trading-strategy marketplace on Mantle, with N users live-trading at the time of judging."
+- **Better:** "xvision demonstrated the first non-custodial autooptimizer-mutated trading-strategy marketplace on Mantle, with N users live-trading at the time of judging."
 - **Best:** "xvision proved that LLM-driven strategy creation, evaluation, and on-chain reputation can produce a trading platform users trust enough to deposit real money to."
 
 The third version is the long-game win. **All hackathon decisions should optimize for this sentence.**
@@ -1879,17 +1879,17 @@ not surfaced:     "the gracious-loser path" — what if xvision doesn't win? The
 
 ## Cross-Run Synthesis
 
-12 runs across clients, agents, profits, autoresearcher, marketplace, ERC-8004, trust/safety, operator role, irreducible MVP, infrastructure, scaling, and hackathon-victory. Same operators (combination, negation, substitution, cross-domain re-instantiation, abstraction-lift, dimension-identification, tree-finding, organon-construction) drew different organons (atlas, dictionary, scale, chart, list, spectrum, lattice, timeline, periodic-grid, state-machine, tree, graph) — **the picker did its job**: no two artifacts share a shape, and the framework moves I'd default to (always-bullet-lists) appeared in only two of twelve runs.
+12 runs across clients, agents, profits, autooptimizer, marketplace, ERC-8004, trust/safety, operator role, irreducible MVP, infrastructure, scaling, and hackathon-victory. Same operators (combination, negation, substitution, cross-domain re-instantiation, abstraction-lift, dimension-identification, tree-finding, organon-construction) drew different organons (atlas, dictionary, scale, chart, list, spectrum, lattice, timeline, periodic-grid, state-machine, tree, graph) — **the picker did its job**: no two artifacts share a shape, and the framework moves I'd default to (always-bullet-lists) appeared in only two of twelve runs.
 
 ### Themes that appeared across multiple runs
 
 #### Theme A — The wallet plan is necessary infrastructure, NOT the differentiator
 
-- **Run 4** (autoresearcher) — the mutation loop is the only entirely-novel thing xvision does
-- **Run 9** (irreducible v0) — the v0 demonstration is autoresearcher + minimum wallet, not full wallet plan
-- **Run 12** (hackathon) — recommended demo lead is the autoresearcher; wallet design is the trust story
+- **Run 4** (autooptimizer) — the mutation loop is the only entirely-novel thing xvision does
+- **Run 9** (irreducible v0) — the v0 demonstration is autooptimizer + minimum wallet, not full wallet plan
+- **Run 12** (hackathon) — recommended demo lead is the autooptimizer; wallet design is the trust story
 
-**Implication:** the hackathon submission's narrative should be "autoresearcher + non-custodial trust" — not "comprehensive wallet management." Invest the last two weeks pre-deadline in the autoresearcher; treat the wallet plan as necessary scaffolding that earns the right to be trusted.
+**Implication:** the hackathon submission's narrative should be "autooptimizer + non-custodial trust" — not "comprehensive wallet management." Invest the last two weeks pre-deadline in the autooptimizer; treat the wallet plan as necessary scaffolding that earns the right to be trusted.
 
 #### Theme B — Distribution / scale will hit harder than the spec assumes
 
@@ -1903,7 +1903,7 @@ not surfaced:     "the gracious-loser path" — what if xvision doesn't win? The
 
 - **Run 5** (creator pitch) — reputation portability is xvision's distinctive creator value prop
 - **Run 6** (ERC-8004 spectrum) — without something gating on reputation, it's at the 3% checkbox end
-- **Run 4** (autoresearcher) — reputation-weighted quota allocation would solve multiple mutation-loop problems at once
+- **Run 4** (autooptimizer) — reputation-weighted quota allocation would solve multiple mutation-loop problems at once
 
 **Convergent recommendation: reputation-weighted quota in the wallet engine.** ~2 days of work. Routes the reputation signal into the only place users actually feel it (their strategy's available capital). Promotes ERC-8004 from spec section to active feature. **Add to the wallet plan as P0.5 (insert after Phase 6 dynamic quota).**
 
@@ -1974,7 +1974,7 @@ Reputation-weighted quota (P0)                  Runs 4, 6                massive
 1-pager narrative for hackathon                 Run 12                   touches everyone (audience,
                                                                           judges, sponsors, users)
 OFAC sanctions screening on onboarding          Runs 1, 7, 11            removes day-1 legal liability
-Briefing-format randomization in autoresearcher Run 4                    blocks adversarial-briefing
+Briefing-format randomization in autooptimizer Run 4                    blocks adversarial-briefing
                                                                           exploits
 End-of-day operator report (xvn eod)            Run 8                    saves 30 min/day immediately
 Public disclosure SLA commitment                Runs 7, 11               transforms incident response
@@ -1989,7 +1989,7 @@ README that bridges code to first-users         Run 12                   convert
 
 - **Run 9 (defer) vs Run 11 (scale-prepare):** "ship narrow for hackathon" vs "the breaks happen at N=10." **Resolution:** ship narrow, but document the scaling response per-component so the post-hackathon path is pre-planned. The MANUAL.md "what changes at N=10/100/1000" addendum is the right artifact.
 - **Run 5 (lead with reputation portability) vs Run 6 (reputation has no teeth):** marketing portability without delivery is a lie. **Resolution:** ship reputation-weighted quota (Theme C) so the marketing claim is true.
-- **Run 4 (autoresearcher needs guardrails) vs Run 12 (lead demo with autoresearcher):** showcase the dangerous thing. **Resolution:** make the safety guardrails LOUDLY visible in the demo. The audit log + kill switch + lineage graph all need on-stage moments.
+- **Run 4 (autooptimizer needs guardrails) vs Run 12 (lead demo with autooptimizer):** showcase the dangerous thing. **Resolution:** make the safety guardrails LOUDLY visible in the demo. The audit log + kill switch + lineage graph all need on-stage moments.
 
 ### One-sentence answer to each run's question
 
@@ -2000,10 +2000,10 @@ Run 2   What is "agent"?           A polysemous word that conflates NFT identity
                                    per-run instance. Pick one meaning per usage.
 Run 3   Where does revenue come?   Currently the 5% marketplace cut. Eventually a hybrid that
                                    includes hosted-runtime subscription (mandatory at N>=100).
-Run 4   Autoresearcher failures?   Reward hacking, mode collapse, drift, prompt injection,
+Run 4   AutoOptimizer failures?   Reward hacking, mode collapse, drift, prompt injection,
                                    model-version drift — all detectable via lineage graph + audit log.
 Run 5   Why creators?              Reputation portability + composable slot architecture +
-                                   autoresearcher-evolves-your-seed (you keep the lineage NFT).
+                                   autooptimizer-evolves-your-seed (you keep the lineage NFT).
 Run 6   ERC-8004 valuable?         Currently 3% (checkbox). Becomes 15-25% if reputation-weighted
                                    quota ships in the wallet engine.
 Run 7   First big loss?            Cross-margin contagion is existential; transparent-disclosure-SLA
@@ -2017,7 +2017,7 @@ Run 10  Why Mantle + Orderly?      Forced by constraints (perp + on-chain settle
                                    gas + hackathon partner) — good for now, revisit at month 18.
 Run 11  Scale to 1000?             Three architectural breaks happen at N=10 (custody, ops, OFAC),
                                    not N=1000. Spec is silent on which growth tier is targeted.
-Run 12  Win the hackathon?         Lead with autoresearcher + non-custodial trust narrative.
+Run 12  Win the hackathon?         Lead with autooptimizer + non-custodial trust narrative.
                                    Sponsor relationships before judges. Make first-users the
                                    long-game win.
 ```
@@ -2032,7 +2032,7 @@ P0         Reputation-weighted quota in wallet engine      Theme C       1-2 day
 P0         1-pager narrative for hackathon submission      Theme A,H,I   1 day
 P0         Pre-position non-custodial trust story in       Theme H       0.5 day
            every marketing surface
-P0.5       Briefing-format randomization in autoresearcher Theme B       1 day
+P0.5       Briefing-format randomization in autooptimizer Theme B       1 day
 P0.5       End-of-day xvn report command                   Theme E       1 day
 P1         README rewrite for first-user conversion        Theme A       1 day
 P1         MANUAL.md scale-tier addendum (what changes     Theme E,F     1-2 days
@@ -2051,7 +2051,7 @@ The "not surfaced" footers across the 12 runs collectively suggest at least thes
 
 1. **Run 1's depositor populations** — model the *transitions between* archetypes (tinkerer → quant; hobbyist → HNW), not just the static archetypes.
 2. **Run 2's political-economy + game-theory senses of "agent"** — surface fiduciary duty articulation (currently absent in spec).
-3. **Run 4's "what does the autoresearcher OPTIMIZE FOR"** — the loss-function choice question.
+3. **Run 4's "what does the autooptimizer OPTIMIZE FOR"** — the loss-function choice question.
 4. **Run 5's "why DON'T creators come"** — friction-side analysis (Rust requirement, Mantle-only, Orderly account requirement).
 5. **Run 6's "reputation as a story"** — UX of trust narratives in the marketplace.
 6. **Run 7's "the *positive* first big event"** — windfall/FOMO management.
@@ -2065,4 +2065,4 @@ Each is a different angle on the same project. Recommend running 4-6 more before
 
 ---
 
-*End of document. 12 runs, ~22,000 words. Spec, plan, adversarial review, and these explorations together form the four artifacts the wallet/marketplace/autoresearcher track has produced this week.*
+*End of document. 12 runs, ~22,000 words. Spec, plan, adversarial review, and these explorations together form the four artifacts the wallet/marketplace/autooptimizer track has produced this week.*

@@ -6,7 +6,7 @@ _Started 2026-05-10 03:38 UTC_
 
 ## User
 
-Attached is the codebase for xvision (xvn) design a web3/tradfi agent trading strategy evaluation and testing platform. Use the ui/ux v1 plan in the code base for the design (we dont need marketplace, autoresearch, etc at this stage). Just the eval and strategy in v1.
+Attached is the codebase for xvision (xvn) design a web3/tradfi agent trading strategy evaluation and testing platform. Use the ui/ux v1 plan in the code base for the design (we dont need marketplace, autooptimizer, etc at this stage). Just the eval and strategy in v1.
 
 ## Assistant
 
@@ -75,7 +75,7 @@ Built v1 of xvn — Folio dark theme, 6 artboards on a design canvas:
 - **Eval runs** — leaderboard with filters, status, sharpe/return/dd/win-rate
 - **Run detail** — KPI tiles, equity vs buy & hold curve, findings list with "Draft variant from this →", trade ledger
 
-Cormorant Garamond italic for display, Inter for UI, JetBrains Mono for numerics, amber-gold (#D4A547) accent on warm-black surfaces — matching the reference exactly. Marketplace, autoresearch, and journal are deferred per the v1 cut.
+Cormorant Garamond italic for display, Inter for UI, JetBrains Mono for numerics, amber-gold (#D4A547) accent on warm-black surfaces — matching the reference exactly. Marketplace, autooptimizer, and journal are deferred per the v1 cut.
 
 ## User
 

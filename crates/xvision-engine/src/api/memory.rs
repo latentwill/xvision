@@ -849,7 +849,7 @@ pub async fn activate_pattern(store: &MemoryStore, id: &str) -> ApiResult<Memory
     if res.rows_affected() == 0 {
         return Err(ApiError::NotFound(format!("pattern {id}")));
     }
-    sqlx::query("UPDATE autoresearch_runs SET promotion_state = 'active' WHERE pattern_id = ?")
+    sqlx::query("UPDATE autooptimizer_runs SET promotion_state = 'active' WHERE pattern_id = ?")
         .bind(id)
         .execute(store.pool())
         .await?;
@@ -874,7 +874,7 @@ pub async fn demote_pattern(store: &MemoryStore, id: &str) -> ApiResult<MemoryIt
     if affected == 0 {
         return Err(ApiError::NotFound(format!("pattern {id}")));
     }
-    sqlx::query("UPDATE autoresearch_runs SET promotion_state = 'demoted' WHERE pattern_id = ?")
+    sqlx::query("UPDATE autooptimizer_runs SET promotion_state = 'demoted' WHERE pattern_id = ?")
         .bind(id)
         .execute(store.pool())
         .await?;
@@ -1026,7 +1026,7 @@ pub async fn undo_forget(store: &MemoryStore, req: UndoForgetRequest) -> ApiResu
     if restored > 0 && !pattern_states.is_empty() {
         for (pattern_id, state) in pattern_states {
             sqlx::query(
-                "UPDATE autoresearch_runs SET promotion_state = ? \
+                "UPDATE autooptimizer_runs SET promotion_state = ? \
                  WHERE pattern_id = ? AND promotion_state = 'demoted'",
             )
             .bind(state)
@@ -1643,11 +1643,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn undo_forget_reconciles_demoted_autoresearch_run_state() {
+    async fn undo_forget_reconciles_demoted_autooptimizer_run_state() {
         let store = MemoryStore::open_in_memory().await.expect("open");
         let pattern = seed_pattern(&store, "agent:A", "demote then restore").await;
         sqlx::query(
-            "INSERT INTO autoresearch_runs \
+            "INSERT INTO autooptimizer_runs \
              (id, namespace, observation_ids_json, pattern_id, pattern_text, promotion_state, \
               min_observations, created_at, status, error) \
              VALUES ('run-ar', 'agent:A', '[]', ?, 'demote then restore', 'demoted', \
@@ -1656,7 +1656,7 @@ mod tests {
         .bind(&pattern)
         .execute(store.pool())
         .await
-        .expect("insert autoresearch run");
+        .expect("insert autooptimizer run");
 
         demote_pattern(&store, &pattern).await.expect("demote");
         let demoted = get(&store, &pattern).await.expect("get demoted");
@@ -1675,7 +1675,7 @@ mod tests {
         assert_eq!(restored.restored, 1);
 
         let run_state: String =
-            sqlx::query_scalar("SELECT promotion_state FROM autoresearch_runs WHERE id = 'run-ar'")
+            sqlx::query_scalar("SELECT promotion_state FROM autooptimizer_runs WHERE id = 'run-ar'")
                 .fetch_one(store.pool())
                 .await
                 .expect("read run state");

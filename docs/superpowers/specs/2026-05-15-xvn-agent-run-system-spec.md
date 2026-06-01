@@ -81,7 +81,7 @@ the existing agent loop where possible.
 4. Real trading remains blocked in this system until a later safety design
    explicitly permits it.
 5. Run artifacts should be local-first, durable, and easy to ingest by
-   autoresearcher-style consumers.
+   autooptimizer-style consumers.
 
 ## Core Architecture
 
@@ -132,7 +132,7 @@ That recommendation is provisional:
 - the spec must be compared against existing xvision architecture
 - the harness may need to adapt to current agent and CLI surfaces
 - the final choice must account for tracing, report export, and downstream
-  autoresearcher ingestion
+  autooptimizer ingestion
 
 ## Main Data Model
 
@@ -332,7 +332,7 @@ FinalArtifact {
 }
 ```
 
-This artifact is the bridge into autoresearcher-style ingestion.
+This artifact is the bridge into autooptimizer-style ingestion.
 
 ## Export Artifacts
 
@@ -363,7 +363,7 @@ This is the machine-readable canonical artifact.
 }
 ```
 
-It should be stable enough for autoresearcher and follow-on automation to
+It should be stable enough for autooptimizer and follow-on automation to
 ingest directly.
 
 ### `xvn_report.md`
@@ -438,7 +438,7 @@ Agent Run Detail
 └─ Export
    ├─ Download xvn_run.json
    ├─ Download xvn_report.md
-   └─ Send to autoresearcher
+   └─ Send to autooptimizer
 ```
 
 The UI should render the run artifact first and treat the trace as a drill-down
@@ -467,13 +467,13 @@ Subsequent follow-up items, after the trace/report layer exists, should cover:
 - harness adapter interface
 - tool registry normalization
 - approval/sandbox policy wiring
-- autoresearcher ingestion contract
+- autooptimizer ingestion contract
 
 ## Risks
 
 1. If the trace schema is tied too tightly to one harness, the system will be
    hard to replace later.
-2. If the report format is not canonical, autoresearcher ingestion will drift
+2. If the report format is not canonical, autooptimizer ingestion will drift
    from the UI representation.
 3. If financial evaluation is allowed to live inside the harness, the agent
    loop will become the source of truth by accident.

@@ -116,7 +116,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 2.6 [HIGH] `ReservationManager` per-strategy locks leak forever
 - **Location:** plan Task 2.3 — `locks: Mutex<HashMap<String, Arc<Mutex<()>>>>` — `lock_for(agent_id)` does `or_insert_with(|| Arc::new(Mutex::new(())))`.
-- **Issue:** Every agent_id ever passed creates an entry. After a long-running daemon serves many ephemeral test agent_ids (e.g. during integration tests, or during the autoresearcher's mutator producing N variants/night), the HashMap grows unbounded. Not catastrophic for v1 single-operator, but the pattern is wrong.
+- **Issue:** Every agent_id ever passed creates an entry. After a long-running daemon serves many ephemeral test agent_ids (e.g. during integration tests, or during the autooptimizer's mutator producing N variants/night), the HashMap grows unbounded. Not catastrophic for v1 single-operator, but the pattern is wrong.
 - **Fix:** Use a `dashmap` or a periodic sweep; or weak-arc + drop-when-zero-refs; or accept it for v1 and add a TODO. At minimum, document the leak.
 
 ### 2.7 [HIGH] `Reservation::release` is best-effort but `submit_order` failure path doesn't release
@@ -201,7 +201,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 3.8 [MEDIUM] No connection-pool sizing or WAL mode for SQLite under concurrent reservations
 - **Location:** Phase 1 + Phase 2 throughout — `SqlitePoolOptions::new().max_connections(1)` in tests.
-- **Issue:** SQLite with default settings serializes all writes through a single writer. Under concurrent reservations from the dispatcher (Phase 2 Task 2.3 is explicitly tested with concurrent writes), this works but each write blocks. For a single-operator hackathon load this is fine. For autoresearcher-mutator-spawned strategies (potentially N variants firing simultaneously), reservation throughput is bounded by SQLite's serialized-write rate (~hundreds/sec, fine; but document).
+- **Issue:** SQLite with default settings serializes all writes through a single writer. Under concurrent reservations from the dispatcher (Phase 2 Task 2.3 is explicitly tested with concurrent writes), this works but each write blocks. For a single-operator hackathon load this is fine. For autooptimizer-mutator-spawned strategies (potentially N variants firing simultaneously), reservation throughput is bounded by SQLite's serialized-write rate (~hundreds/sec, fine; but document).
 - **Fix:** Enable WAL mode at pool init: `PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;` Add a comment that for v1 single-operator load, this is more than enough. For multi-tenant v2, evaluate Postgres.
 
 ### 3.9 [MEDIUM] Pre-trade simulation depends on a static OrderbookSnapshot in tests but the prod variant is "~30 lines, mechanical wrapping"
@@ -276,12 +276,12 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
   - Phase 8: 4–6 days (UI integration with another team's dashboard or fallback crate)
   - Phase 9: 2 days (e2e test against testnet, runbook)
   - **Subtotal: 30–41 working days = 6–8 calendar weeks** for a single contributor with no parallelization.
-- **Issue compounded:** This plan is one of *several* hackathon plans (autoresearcher, marketplace contracts, dashboard, scheduler, ERC-8004 deployment, demo polish). The operator cannot dedicate 6–8 weeks to wallets alone.
+- **Issue compounded:** This plan is one of *several* hackathon plans (autooptimizer, marketplace contracts, dashboard, scheduler, ERC-8004 deployment, demo polish). The operator cannot dedicate 6–8 weeks to wallets alone.
 - **Fix (recommended minimum-viable subset for hackathon demo):**
   - **Ship:** Phase 0 (probes), Phase 1 (schema + ledger + audit), Phase 2 (per-strategy rules + reservations), Phase 3 (dispatcher with bps→USDC notional + simulation), Phase 4 Tasks 4.2 + 4.4 + 4.7 + 4.10 (kill, emergency-close, key issue, reconcile CLI), Phase 6 (quota), Phase 9 (e2e + runbook).
   - **Defer:** Phase 4 Tasks 4.5 (approval gate), 4.8 (`budget set` UI sub-flow keeping `budget show` only as TOML printout), 4.9 (audit CLI — operators can SQL the DB), 4.11 (CLI reference doc); Phase 5 (margin guard — accept manual operator vigilance for hackathon); Phase 7 reconciler in cron mode (run `xvn reconcile` manually every few hours); all of Phase 8 (UI — hackathon demo can show the spreadsheet via a CLI table).
   - **Cut entirely from v1 demo, add to FOLLOWUPS:** funding attribution (§1.1) — accept it as a known v2 gap; trading-keys migration table (§1.2) — single-key env-var path holds for single-operator demo; phishing-resistant browser flow (§1.4) — operator does the registration manually once.
-  - This subset is ~3–4 weeks, leaving buffer for the autoresearcher and demo polish.
+  - This subset is ~3–4 weeks, leaving buffer for the autooptimizer and demo polish.
 
 ### 5.2 [HIGH] Phase 8 hard-couples to Plan 2d shipping — a separate plan with its own slippage risk
 - **Location:** plan Phase 8 preamble.

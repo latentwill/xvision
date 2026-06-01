@@ -329,6 +329,7 @@ mod tests {
     fn recall(run_id: &str, decision_id: i64, ns: &str, ids: &[&str]) -> MemoryRecallEvent {
         MemoryRecallEvent {
             run_id: run_id.to_string(),
+            flywheel_cycle_id: None,
             decision_id,
             namespace: ns.to_string(),
             flywheel_cycle_id: None,

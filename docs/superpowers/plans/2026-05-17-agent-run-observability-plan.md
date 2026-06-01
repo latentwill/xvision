@@ -8,7 +8,7 @@ sidecar design)
 
 **Intake:** `team/intake/2026-05-17-agent-run-observability.md`
 **Scope:** trace/report layer only (spec follow-up #1). Harness adapter,
-autoresearcher ingestion contract, and approval/sandbox policy wiring are
+autooptimizer ingestion contract, and approval/sandbox policy wiring are
 deferred to later waves per the spec's own follow-up sequence.
 
 ## Dependency on the Cline SDK migration
@@ -141,7 +141,7 @@ Next migration number: **018**.
 │  • /api/agent-runs/:id   →  Run Detail UI timeline + streaming    │
 │                              text from event.assistant_text_delta │
 │  • xvn run inspect <id>  →  xvn_run.json + xvn_report.md          │
-│  • Autoresearcher (later wave) → xvn_run.json ingestion           │
+│  • AutoOptimizer (later wave) → xvn_run.json ingestion           │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -717,7 +717,7 @@ parallel with Step 8.
 
 - Harness adapter beyond the trace boundary — full Cline SDK feature surface
   (approvals UI, sandbox lifecycle management) is a later wave.
-- Autoresearcher ingestion contract — depends on `xvn_run.json` schema
+- AutoOptimizer ingestion contract — depends on `xvn_run.json` schema
   stabilizing. Re-open after the schema has survived a few runs unchanged.
 - Cross-run lineage / "strategies forked from me" (SLF8) — observability
   produces the data; presentation is a separate UI track.
@@ -745,7 +745,7 @@ parallel with Step 8.
    janitor — useful work that lands first and shortens Phase B once the
    sidecar is ready.
 5. **Schema churn.** v1 = `xvn.agent_run.v1`. The export schema MUST bump
-   `schema_version` on breaking changes. Autoresearcher ingestion lives or
+   `schema_version` on breaking changes. AutoOptimizer ingestion lives or
    dies on this discipline. Cline migration Step 9's MCP-config decision
    (per-strategy DB row vs `xvision-agentd` config) drops a column either
    way; pin the export `mcp_servers` shape to the **run-time snapshot**

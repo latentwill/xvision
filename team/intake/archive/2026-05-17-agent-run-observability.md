@@ -22,7 +22,7 @@ a Run Detail UI with an agent timeline. Spec snippet:
 > - harness adapter interface
 > - tool registry normalization
 > - approval/sandbox policy wiring
-> - autoresearcher ingestion contract
+> - autooptimizer ingestion contract
 
 ## Current fit
 
@@ -91,7 +91,7 @@ foundational planning — once the plan exists, the conductor decomposes leaves.
 
 - The full harness adapter / tool registry normalization / approval+sandbox
   policy wiring — defer until the trace/report layer ships.
-- Autoresearcher ingestion contract — depends on `xvn_run.json` schema
+- AutoOptimizer ingestion contract — depends on `xvn_run.json` schema
   stabilizing first.
 
 ## Decision: parallel with V2A?

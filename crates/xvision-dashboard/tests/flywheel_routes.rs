@@ -92,14 +92,14 @@ async fn seed_pattern(memory_db: &std::path::Path, id: &str, namespace: &str) {
     .expect("seed pattern");
 }
 
-async fn seed_autoresearch_run(memory_db: &std::path::Path, id: &str, namespace: &str, pattern_id: &str) {
+async fn seed_autooptimizer_run(memory_db: &std::path::Path, id: &str, namespace: &str, pattern_id: &str) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect(&format!("sqlite://{}", memory_db.display()))
         .await
         .expect("open memory db");
     sqlx::query(
-        "INSERT INTO autoresearch_runs \
+        "INSERT INTO autooptimizer_runs \
          (id, namespace, observation_ids_json, pattern_id, pattern_text, promotion_state, \
           min_observations, created_at, status, error) \
          VALUES (?, ?, ?, ?, 'Dashboard demo-source Pattern', 'active', 2, \
@@ -111,11 +111,11 @@ async fn seed_autoresearch_run(memory_db: &std::path::Path, id: &str, namespace:
     .bind(pattern_id)
     .execute(&pool)
     .await
-    .expect("seed autoresearch run");
+    .expect("seed autooptimizer run");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn flywheel_routes_cover_status_autoresearch_and_memory_demo_optimize() {
+async fn flywheel_routes_cover_status_autooptimizer_and_memory_demo_optimize() {
     let (server, _tmp, state, _guard, memory_db) = server_with_memory_db().await;
     let mut slot = Agent::single_slot_default("unused", "target", "mock", "mock")
         .slots
@@ -157,7 +157,7 @@ async fn flywheel_routes_cover_status_autoresearch_and_memory_demo_optimize() {
     assert_eq!(body["observations"], 3);
 
     let run = server
-        .post("/api/autoresearch/run")
+        .post("/api/autooptimizer/run")
         .json(&serde_json::json!({
             "agent": agent.agent_id,
             "pattern_text": "When this dashboard cohort appears, reduce risk.",
@@ -188,13 +188,13 @@ async fn flywheel_routes_cover_status_autoresearch_and_memory_demo_optimize() {
     let activated_pattern_body: serde_json::Value = activated_pattern.json();
     assert_eq!(activated_pattern_body["promotion_state"], "active");
 
-    let inspected = server.get(&format!("/api/autoresearch/{run_id}")).await;
+    let inspected = server.get(&format!("/api/autooptimizer/{run_id}")).await;
     inspected.assert_status_ok();
     let inspected_body: serde_json::Value = inspected.json();
     assert_eq!(inspected_body["id"], run_id);
 
     let listed = server
-        .get(&format!("/api/autoresearch?agent={}", agent.agent_id))
+        .get(&format!("/api/autooptimizer?agent={}", agent.agent_id))
         .await;
     listed.assert_status_ok();
     let listed_body: serde_json::Value = listed.json();
@@ -202,7 +202,7 @@ async fn flywheel_routes_cover_status_autoresearch_and_memory_demo_optimize() {
     assert_eq!(listed_body["items"][0]["id"], run_id);
 
     let gated = server
-        .post(&format!("/api/autoresearch/{run_id}/gate"))
+        .post(&format!("/api/autooptimizer/{run_id}/gate"))
         .json(&serde_json::json!({
             "metric": "sharpe_delta",
             "parent_day_score": 0.7,
@@ -227,12 +227,12 @@ async fn flywheel_routes_cover_status_autoresearch_and_memory_demo_optimize() {
     assert_eq!(gated_body["finding_blinded_metrics"], true);
     assert_eq!(gated_body["judge_model"], "dashboard-test-judge");
 
-    let promoted = server.post(&format!("/api/autoresearch/{run_id}/promote")).await;
+    let promoted = server.post(&format!("/api/autooptimizer/{run_id}/promote")).await;
     promoted.assert_status_ok();
     let promoted_body: serde_json::Value = promoted.json();
     assert_eq!(promoted_body["promotion_state"], "active");
 
-    let demoted = server.post(&format!("/api/autoresearch/{run_id}/demote")).await;
+    let demoted = server.post(&format!("/api/autooptimizer/{run_id}/demote")).await;
     demoted.assert_status_ok();
     let demoted_body: serde_json::Value = demoted.json();
     assert_eq!(demoted_body["promotion_state"], "demoted");
@@ -259,7 +259,7 @@ async fn flywheel_routes_cover_status_autoresearch_and_memory_demo_optimize() {
     assert_eq!(forgotten_body["total"], 1);
 
     seed_pattern(&memory_db, "dash-demo-pattern-1", &namespace).await;
-    seed_autoresearch_run(&memory_db, "dash-demo-run-1", &namespace, "dash-demo-pattern-1").await;
+    seed_autooptimizer_run(&memory_db, "dash-demo-run-1", &namespace, "dash-demo-pattern-1").await;
 
     let optimized = server
         .post("/api/optimize/memory-demos")
@@ -361,7 +361,7 @@ async fn flywheel_routes_cover_status_autoresearch_and_memory_demo_optimize() {
     assert_eq!(velocity_body["namespace"], namespace);
     assert_eq!(velocity_body["observations_captured"], 0);
     assert_eq!(velocity_body["optimized_child_agents"], 1);
-    assert_eq!(velocity_body["autoresearch_runs"], 1);
+    assert_eq!(velocity_body["autooptimizer_runs"], 1);
 
     let lineage = server
         .get(&format!("/api/flywheel/lineage?agent={}&limit=5", agent.agent_id))

@@ -49,9 +49,9 @@ Per `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`:
   look-ahead leakage problem in the single-tier shape: backtest
   replays could recall prior decisions made on the same cycle. Plan
   extended with **Phase 1.5** (Resources/Skills cortex tier split)
-  and **Phase 6** (operator docs). V3 autoresearcher item gains
+  and **Phase 6** (operator docs). V3 autooptimizer item gains
   sub-entry **11a** on `team/board-v2.md` noting that the
-  autoresearcher *is* the distillation pass (needs Skills-tier write
+  autooptimizer *is* the distillation pass (needs Skills-tier write
   access via `upsert_skill` / `demote_skill`). Design note at
   `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`.
   Next: implement Phase 1.5 + 6, then re-verify and flip the PR.

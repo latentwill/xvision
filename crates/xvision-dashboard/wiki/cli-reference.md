@@ -270,26 +270,26 @@ that can be recalled in every scenario.
 
 ---
 
-### `xvn autoresearch …`
+### `xvn optimizer …`
 
 Offline distillation surface for activating Observation cohorts into staged or
-active Patterns. Autoresearch never runs inside a live decision cycle.
+active Patterns. Optimizer never runs inside a live decision cycle.
 
 | Verb | Effect |
 |---|---|
-| `run --namespace <ns> [--agent <id>] [--scenario <id>] [--min-observations <n>] [--candidate-text <text>] [--json]` | Read qualifying Observations, create an autoresearch run, and stage a candidate Pattern with source Observation ids. |
+| `run --namespace <ns> [--agent <id>] [--scenario <id>] [--min-observations <n>] [--candidate-text <text>] [--json]` | Read qualifying Observations, create an optimizer run, and stage a candidate Pattern with source Observation ids. |
 | `inspect <run-id> [--json]` | Show one run, its source Observation ids, Pattern candidate, gate state, status, and any Finding text. |
 | `activate <run-id> [--json]` | Activate a gated/staged candidate Pattern into the recall-active Pattern kind. |
 | `retire <run-id> [--reason <text>] [--json]` | Soft-retire the associated Pattern and record the retirement reason. |
 
 ### `xvn flywheel …`
 
-Read-only operator telemetry for the memory/autoresearch/optimizer loop.
+Read-only operator telemetry for the memory + Optimizer + DSPy-optimizer loop.
 
 | Verb | Effect |
 |---|---|
-| `status [--namespace <ns>] [--agent <id>] [--json]` | Summarize Observation count, active Pattern count, staged Pattern count, retired Pattern count, autoresearch run count, and optimization count. |
-| `velocity [--namespace <ns>] [--agent <id>] [--days <n>] [--json]` | Return daily flywheel counters over a rolling window: Observations, activations, retirements, autoresearch runs, and optimizations. |
+| `status [--namespace <ns>] [--agent <id>] [--json]` | Summarize Observation count, active Pattern count, staged Pattern count, retired Pattern count, optimizer run count, and optimization count. |
+| `velocity [--namespace <ns>] [--agent <id>] [--days <n>] [--json]` | Return daily flywheel counters over a rolling window: Observations, activations, retirements, optimizer runs, and optimizations. |
 | `lineage --agent <id> [--limit <n>] [--json]` | Show memory-demo optimization lineage for an agent namespace, including demo/prior Pattern ids, split hashes, and gate verdicts. |
 
 ---
