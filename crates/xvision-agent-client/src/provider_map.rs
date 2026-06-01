@@ -89,6 +89,14 @@ pub fn map_provider(entry: &ProviderEntry, model_id: &str) -> Result<ClineProvid
             cline_openai_compat_provider_id(&entry.base_url).to_string(),
             Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
         ),
+        ProviderKind::Ollama => (
+            "ollama".to_string(),
+            Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
+        ),
+        ProviderKind::LlamaCpp => (
+            CLINE_PROVIDER_LITELLM.to_string(),
+            Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
+        ),
         ProviderKind::LocalCandle => {
             return Err(ProviderMapError::Unsupported {
                 name: entry.name.clone(),

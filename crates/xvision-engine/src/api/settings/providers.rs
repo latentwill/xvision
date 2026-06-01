@@ -21,6 +21,7 @@ use crate::api::{
     audit::{self, Outcome},
     ApiContext, ApiError, ApiResult,
 };
+use crate::providers::fetcher::openai_compat_models_url;
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -619,7 +620,11 @@ async fn fetch_models_inner(config_path: &Path, name: &str) -> ApiResult<Provide
             ))
         })?
     };
-    if api_key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+    let no_auth_kind = matches!(
+        entry.kind,
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+    );
+    if api_key.is_empty() && !no_auth_kind {
         return Err(ApiError::Validation(format!(
             "provider `{}` has no API key set",
             entry.name
@@ -644,6 +649,8 @@ async fn fetch_models_inner(config_path: &Path, name: &str) -> ApiResult<Provide
     let models = match kind {
         ProviderKind::Anthropic => fetch_anthropic_models(&client, &api_key).await?,
         ProviderKind::OpenaiCompat => fetch_openai_compat_models(&client, &base_url, &api_key).await?,
+        ProviderKind::Ollama => fetch_ollama_provider_models(&client, &base_url, &api_key).await?,
+        ProviderKind::LlamaCpp => fetch_openai_compat_models(&client, &base_url, &api_key).await?,
         ProviderKind::LocalCandle => {
             return Err(ApiError::Validation(
                 "local-candle providers don't expose a catalog endpoint".into(),
@@ -652,6 +659,52 @@ async fn fetch_models_inner(config_path: &Path, name: &str) -> ApiResult<Provide
     };
 
     Ok(ProviderModelsReport { models })
+}
+
+async fn fetch_ollama_provider_models(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+) -> ApiResult<Vec<ProviderModelEntry>> {
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+    let mut req = client.get(&url);
+    if !api_key.is_empty() {
+        req = req.header("authorization", format!("Bearer {api_key}"));
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(format!("GET {url}: {e}")))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ApiError::Validation(format!("GET {url} {status}: {body}")));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ApiError::Internal(format!("parse {url}: {e}")))?;
+    let arr = v["models"].as_array().cloned().unwrap_or_default();
+    let mut out = Vec::with_capacity(arr.len());
+    for m in arr {
+        let id = m["name"].as_str().unwrap_or_default();
+        if id.is_empty() {
+            continue;
+        }
+        let family = m["details"]["family"].as_str().map(str::to_string);
+        let param_size = m["details"]["parameter_size"].as_str().map(str::to_string);
+        let display_name = match (family.as_deref(), param_size.as_deref()) {
+            (Some(f), Some(p)) => Some(format!("{f} {p}")),
+            _ => None,
+        };
+        out.push(ProviderModelEntry {
+            id: id.to_string(),
+            display_name,
+            owned_by: None,
+            context_length: None,
+        });
+    }
+    Ok(out)
 }
 
 async fn fetch_anthropic_models(
@@ -698,7 +751,7 @@ async fn fetch_openai_compat_models(
     base_url: &str,
     api_key: &str,
 ) -> ApiResult<Vec<ProviderModelEntry>> {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let url = openai_compat_models_url(base_url);
     let mut req = client.get(&url);
     if !api_key.is_empty() {
         req = req.header("authorization", format!("Bearer {api_key}"));
@@ -854,7 +907,11 @@ async fn add_inner(config_path: &Path, xvn_home: &Path, req: AddProviderRequest)
     // command ran). Without this guard the route silently persisted
     // a row that surfaced in Settings → Providers as "missing key".
     let trimmed_key = api_key.as_deref().map(str::trim).unwrap_or("");
-    if trimmed_key.is_empty() && parsed_kind != ProviderKind::LocalCandle {
+    let needs_api_key = !matches!(
+        parsed_kind,
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+    );
+    if trimmed_key.is_empty() && needs_api_key {
         // Compute the env var we'd use for this provider so the env
         // pre-set check matches what the daemon will read.
         let env_var = if api_key_env.trim().is_empty() {
@@ -992,7 +1049,11 @@ async fn update_inner(
         )));
     }
     let trimmed_env = req.api_key_env.trim().to_string();
-    if trimmed_env.is_empty() && parsed_kind != ProviderKind::LocalCandle {
+    let requires_env = !matches!(
+        parsed_kind,
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+    );
+    if trimmed_env.is_empty() && requires_env {
         return Err(ApiError::Validation(
             "api_key_env is required for auth-bearing providers".into(),
         ));
@@ -1256,8 +1317,10 @@ fn entry_has_key(entry: &ProviderEntry, secrets: &ProvidersSecretsFile) -> bool 
         // No-auth kind — always "has key" for launchability purposes.
         return true;
     }
+    // Ollama and LlamaCpp treat an empty api_key_env as no-auth (optional key).
+    let optional_auth = matches!(entry.kind, ProviderKind::Ollama | ProviderKind::LlamaCpp);
     if entry.api_key_env.is_empty() {
-        return false;
+        return optional_auth;
     }
     secrets.provider.contains_key(&entry.name)
         || std::env::var(&entry.api_key_env)
@@ -1416,7 +1479,7 @@ fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
         ProviderKind::OpenaiCompat => {
             format!("XVN_PROVIDER_{}_KEY", name.to_ascii_uppercase().replace('-', "_"))
         }
-        ProviderKind::LocalCandle => String::new(),
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp => String::new(),
     }
 }
 
@@ -1435,15 +1498,16 @@ fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str
             "openai" => Some("gpt-4o-mini"),
             _ => None,
         },
-        ProviderKind::LocalCandle => None,
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp => None,
     }
 }
 
-fn default_base_url_for(kind: ProviderKind, name: &str) -> &'static str {
+fn default_base_url_for(kind: ProviderKind, _name: &str) -> &'static str {
     match kind {
         ProviderKind::Anthropic => "https://api.anthropic.com",
-        ProviderKind::OpenaiCompat if name == "openai" => "https://api.openai.com/v1",
-        ProviderKind::OpenaiCompat => "http://localhost:11434/v1",
+        ProviderKind::OpenaiCompat => "https://api.openai.com/v1",
+        ProviderKind::Ollama => "http://localhost:11434",
+        ProviderKind::LlamaCpp => "http://localhost:8080",
         ProviderKind::LocalCandle => "",
     }
 }
@@ -1539,6 +1603,8 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::Anthropic => "anthropic",
         ProviderKind::OpenaiCompat => "openai-compat",
         ProviderKind::LocalCandle => "local-candle",
+        ProviderKind::Ollama => "ollama",
+        ProviderKind::LlamaCpp => "llama-cpp",
     }
 }
 
@@ -1547,8 +1613,10 @@ fn parse_kind(s: &str) -> ApiResult<ProviderKind> {
         "anthropic" => Ok(ProviderKind::Anthropic),
         "openai-compat" => Ok(ProviderKind::OpenaiCompat),
         "local-candle" => Ok(ProviderKind::LocalCandle),
+        "ollama" => Ok(ProviderKind::Ollama),
+        "llama-cpp" => Ok(ProviderKind::LlamaCpp),
         other => Err(ApiError::Validation(format!(
-            "invalid kind `{other}`; must be one of: anthropic | openai-compat | local-candle"
+            "invalid kind `{other}`; must be one of: anthropic | openai-compat | local-candle | ollama | llama-cpp"
         ))),
     }
 }

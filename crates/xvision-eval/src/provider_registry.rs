@@ -62,6 +62,11 @@ impl ProviderRegistry {
                 &resolved.model,
                 &row.api_key_env,
             )?),
+            ProviderKind::Ollama | ProviderKind::LlamaCpp => Arc::new(OpenAICompatIntern::from_env(
+                row.base_url.clone(),
+                &resolved.model,
+                &row.api_key_env,
+            )?),
             ProviderKind::LocalCandle => {
                 return Err(anyhow!(
                     "provider `{}` kind=local-candle is not yet supported as an Intern slot",
@@ -92,6 +97,11 @@ impl ProviderRegistry {
         let row = self.find_provider(&resolved.provider, "trader")?;
         let backend: Arc<dyn TraderBackend> = match row.kind {
             ProviderKind::OpenaiCompat => Arc::new(OpenAiCompatBackend::from_env(
+                row.base_url.clone(),
+                &resolved.model,
+                &row.api_key_env,
+            )?),
+            ProviderKind::Ollama | ProviderKind::LlamaCpp => Arc::new(OpenAiCompatBackend::from_env(
                 row.base_url.clone(),
                 &resolved.model,
                 &row.api_key_env,
