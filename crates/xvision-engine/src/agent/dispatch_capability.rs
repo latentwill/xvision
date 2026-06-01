@@ -368,13 +368,27 @@ async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
         });
     }
 
-    match crate::agent::filter_dispatch::run_llm_filter(input).await {
-        Ok(result) => Ok(DispatchOutcome {
-            output: AgentOutput::Filter(result.signal),
-            input_tokens: result.input_tokens,
-            output_tokens: result.output_tokens,
-            raw_response: None,
-        }),
+    // filter.eval span: wrap the LLM call so the trace dock can show
+    // per-filter verdict without parsing model.call plaintext.
+    let span_id = crate::agent::observability::fresh_span_id();
+    let obs_clone = input.obs.clone();
+    if let Some(obs) = obs_clone.as_ref() {
+        obs.emit_filter_eval_started(&span_id, None, &input.scenario_id).await;
+    }
+    let result = crate::agent::filter_dispatch::run_llm_filter(input).await;
+    match result {
+        Ok(result) => {
+            let verdict = if result.signal.payload.is_null() { "reject" } else { "pass" };
+            if let Some(obs) = obs_clone.as_ref() {
+                obs.emit_filter_eval_finished(&span_id, verdict, None).await;
+            }
+            Ok(DispatchOutcome {
+                output: AgentOutput::Filter(result.signal),
+                input_tokens: result.input_tokens,
+                output_tokens: result.output_tokens,
+                raw_response: None,
+            })
+        }
         Err(crate::agent::filter_dispatch::FilterDispatchError::Parse(_)) => {
             // Parse error already emitted as `filter_parse_error`
             // (filter_dispatch::run_llm_filter). Surface a `null`

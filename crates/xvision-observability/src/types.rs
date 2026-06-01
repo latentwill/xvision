@@ -137,6 +137,16 @@ pub enum SpanKind {
     /// trace dock only had run-level spans.
     #[serde(rename = "agent.decision")]
     AgentDecision,
+    /// LLM filter-capability agent invocation. Emitted by the engine's
+    /// dispatch_capability path around each `run_llm_filter` call. Carries
+    /// `{asset, verdict: "pass"|"reject", reason?}` in `attributes_json`.
+    #[serde(rename = "filter.eval")]
+    FilterEval,
+    /// Risk-gate evaluation. Emitted around each `RiskGate::evaluate` call.
+    /// Carries `{verdict: "approved"|"modified"|"vetoed", risk_level?,
+    /// modified_qty?, veto_reason?}` in `attributes_json`.
+    #[serde(rename = "risk.gate")]
+    RiskGate,
 }
 
 impl SpanKind {
@@ -160,6 +170,8 @@ impl SpanKind {
             Self::RecoveryAttempt => "recovery.attempt",
             Self::StateTransition => "state.transition",
             Self::AgentDecision => "agent.decision",
+            Self::FilterEval => "filter.eval",
+            Self::RiskGate => "risk.gate",
         }
     }
 }

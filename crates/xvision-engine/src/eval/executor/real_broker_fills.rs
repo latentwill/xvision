@@ -43,18 +43,31 @@ use xvision_execution::broker_surface::{
     classify_broker_error_message, BrokerErrorClass, BrokerSurface, OrderRequest, Side,
 };
 
+use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::eval::executor::traits::{FillRecord, FillRequest, FillSink};
 use crate::eval::orders::OrderState;
 use crate::eval::scenario::FillProvenance;
+use xvision_observability::BrokerCallOutcome;
 
 /// Live [`FillSink`] backed by an `Arc<dyn BrokerSurface>`.
+///
+/// Optionally carries an [`ObsEmitter`] so live fills emit
+/// `broker.call` spans on the trace dock — matching the coverage
+/// already present on the backtest (simulated fill) path.
 pub struct RealBrokerFills {
     broker: Arc<dyn BrokerSurface>,
+    obs: Option<ObsEmitter>,
 }
 
 impl RealBrokerFills {
     pub fn new(broker: Arc<dyn BrokerSurface>) -> Self {
-        Self { broker }
+        Self { broker, obs: None }
+    }
+
+    /// Attach an [`ObsEmitter`] so live fills are traced.
+    pub fn with_obs(mut self, obs: ObsEmitter) -> Self {
+        self.obs = Some(obs);
+        self
     }
 }
 
@@ -131,6 +144,28 @@ impl FillSink for RealBrokerFills {
         };
 
         // 3. Submit + translate the outcome.
+        // Emit broker.call span if an ObsEmitter is attached, matching
+        // the coverage already present on the simulated-fill path.
+        let broker_span_id = fresh_span_id();
+        if let Some(obs) = self.obs.as_ref() {
+            let broker_side = if trade_long {
+                xvision_observability::BrokerSide::Buy
+            } else {
+                xvision_observability::BrokerSide::Sell
+            };
+            obs.emit_broker_call_started(
+                &broker_span_id,
+                None,
+                broker_side,
+                req.asset.as_str(),
+                size,
+                Some(req.next_open),
+                "market",
+                "live",
+                Some(format!("live-{}-{}", req.asset, req.bar_ts.timestamp())),
+            )
+            .await;
+        }
         match self.broker.submit_order(order).await {
             Ok(conf) => {
                 // 4a. Successful fill — translate the confirmation
@@ -176,6 +211,20 @@ impl FillSink for RealBrokerFills {
                     volume_share: 0.0,
                     volume_cap_bound: false,
                 };
+                if let Some(obs) = self.obs.as_ref() {
+                    obs.emit_broker_call_finished(
+                        &broker_span_id,
+                        BrokerCallOutcome::Filled,
+                        Some(fill_price),
+                        Some(fill_size),
+                        Some(fee),
+                        Some(conf.broker_order_id.clone()),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                }
                 FillRecord {
                     new_pos,
                     new_entry,
@@ -203,6 +252,20 @@ impl FillSink for RealBrokerFills {
                 //     routes through `classify_run_failure`.
                 let msg = format!("{e:#}");
                 let class = classify_broker_error_message(&msg);
+                if let Some(obs) = self.obs.as_ref() {
+                    obs.emit_broker_call_finished(
+                        &broker_span_id,
+                        BrokerCallOutcome::Rejected,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(class.as_tag().to_string()),
+                        Some(msg.clone()),
+                        Some("warn"),
+                    )
+                    .await;
+                }
                 tracing::error!(
                     target: "xvision_engine::real_broker_fills",
                     asset = %req.asset,
