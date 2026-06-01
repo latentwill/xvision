@@ -132,6 +132,8 @@ Watch for:
 - model/provider resolution mismatches
 - runs queuing successfully and then failing on the first decision
 - invalid JSON from the trader slot
+- an eval launched before the safe agent path was exercised:
+  provider readiness → `strategy diagnostics` → `eval validate` → `eval run`
 - empty `filter_events` / `filter_summaries` on a run that was supposed to test the XVN filter subsystem
 - conclusions drawn from synthesized rows (`noop_skip`, graph-gated trader skips, early-stop inheritance) without separating them from direct model decisions
 - `EvalRunExport` JSON not byte-identical between `GET /export` and
@@ -171,6 +173,13 @@ Watch for:
 - `fire.context` indicators missing from trace attrs or trader briefing
 - catalog JSON missing new tokens such as `rvol_tod_<period>`,
   `volume_zscore_<period>`, and `opening_range_high_<minutes>`
+- **Filter-gated agent** behavior being mislabeled as rules-only merely
+  because many candles are skipped; if the filter passes, a configured
+  agent/model must still be callable
+- **Rules-only mechanical** behavior being reported as broken missing-agent
+  state when the strategy intentionally avoids model calls
+- **Agent-direct** behavior being presented as filtered because prompt wording
+  mentions a filter, while no saved filter artifact exists
 
 ### Experiment ledger
 - `POST /api/experiments`
@@ -209,6 +218,9 @@ CLI surfaces (no dedicated HTTP endpoint exercised here):
 Watch for:
 - a strategy reported `launchable: true` while a required capability is missing
   a prompt / model / tool — diagnostics must NOT pass an incomplete strategy
+- a **Rules-only mechanical** strategy being confused with an incomplete
+  agent-backed strategy; no-agent mechanical execution should be explicit in
+  the strategy/reporting surface, not inferred from missing model config
 - exit code drift: not-launchable must be **14**, not 2; unknown id must be **4**
 - typed `status.kind` not matching the unmet reason
   (`missing_tool` / `missing_prompt` / `missing_model_binding` / `unsupported`)
@@ -309,6 +321,9 @@ Watch for:
 - `eval batch` reports success but one of the underlying runs is in `failed`
 - `strategy diagnostics` reports `launchable: true` for an incomplete strategy,
   or returns exit 2/0 instead of 14 when not launchable
+- a no-agent rules-only strategy is presented as a broken/missing-agent eval,
+  or a broken/missing-agent strategy is excused as rules-only without an
+  explicit mechanical-mode declaration
 - `xvn optimize accept-as-child-agent` succeeds on a train-only snapshot (no
   holdout) or mutates the parent agent
 - `xvn optimize` exit code does not match the failure class (e.g. unknown
@@ -347,5 +362,5 @@ See `references/xvision-api-quirks.md` for the concrete endpoint quirks, payload
 *Skills owner: any track that adds or changes an `/api/*` route, the
 corresponding `xvn` verb, Filter DSL contract, or a QA-critical operator
 workflow is responsible for updating this file in the same PR. Last
-refresh: 2026-05-24 (chat-rail safety, `xvn optimize`, capability
-diagnostics QA).*
+refresh: 2026-06-01 (safe agent eval path, execution-mode QA labels,
+no-agent mechanical distinction).*

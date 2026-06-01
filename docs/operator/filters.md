@@ -7,6 +7,23 @@ Without a saved filter, the strategy runs on every candle. With a saved
 filter, XVN checks the filter first. If the filter passes, the strategy can
 call its model. If the filter does not pass, the strategy skips that candle.
 
+## Execution labels
+
+- **Default: Filter-gated agent** — the saved deterministic filter decides
+  whether the configured agent/model is called. A skipped candle is expected;
+  a passed filter still requires a launchable agent capability.
+- **Advanced: Rules-only mechanical** — deterministic rules decide without a
+  model call. This is intentional no-agent execution, not a broken or missing
+  agent, and should be described explicitly in the strategy/report.
+- **Legacy/discouraged: Agent-direct** — the model is called without a saved
+  filter gate. Prompt wording that says "filter" is not enough; only a saved
+  filter artifact makes the strategy filter-gated.
+
+Before launching an eval for a filter-gated agent, use the safe CLI path:
+provider readiness (`xvn doctor`, `xvn provider list`, `xvn provider check`,
+`xvn provider models`) → `xvn strategy diagnostics` → `xvn eval validate` →
+`xvn eval run`.
+
 ## Where to edit
 
 Open the strategy page at `/strategies/:id`, then use the **Filter** card.

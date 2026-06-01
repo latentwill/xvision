@@ -1500,12 +1500,34 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("eval validate scenario", e))?;
 
+    let diag = xvision_engine::diagnostics::capability_diagnostics(&ctx, &args.strategy)
+        .await
+        .map_err(|e| api_to_cli("eval validate diagnostics", e))?;
+    if let Err(e) = xvision_engine::diagnostics::assert_launchable(&diag) {
+        let error = e.to_string();
+        if args.json {
+            let body = serde_json::json!({
+                "ok": false,
+                "strategy": args.strategy,
+                "scenario": args.scenario,
+                "mode": mode.as_str(),
+                "errors": [error],
+            });
+            crate::io::print_json(&body)?;
+        }
+        return Err(CliError {
+            exit: XvnExit::OptValidation,
+            source: anyhow::anyhow!("eval validate: {error}"),
+        });
+    }
+
     if args.json {
         let body = serde_json::json!({
             "ok": true,
             "strategy": args.strategy,
             "scenario": args.scenario,
             "mode": mode.as_str(),
+            "errors": [],
         });
         crate::io::print_json(&body)?;
     } else {

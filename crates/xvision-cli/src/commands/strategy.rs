@@ -1009,6 +1009,16 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     // still grep for "ok".
     if scenario_id.is_none() && !json {
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+        let ctx = open_ctx().await?;
+        let diag = diagnostics::capability_diagnostics(&ctx, id)
+            .await
+            .map_err(|e| api_to_cli("strategy validate diagnostics", e))?;
+        if let Err(e) = assert_launchable(&diag) {
+            return Err(CliError {
+                exit: XvnExit::OptValidation,
+                source: anyhow::anyhow!("{}", render_diagnostics_error(&e)),
+            });
+        }
         for warning in no_filter_warnings(&strategy) {
             println!("warning: {warning}");
         }
@@ -1026,6 +1036,14 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     // `manifest.template` field is now a free-text label and no
     // longer validated against a binary registry.
 
+    let ctx = open_ctx().await?;
+    let diag = diagnostics::capability_diagnostics(&ctx, id)
+        .await
+        .map_err(|e| api_to_cli("strategy validate diagnostics", e))?;
+    if let Err(e) = assert_launchable(&diag) {
+        errors.push(render_diagnostics_error(&e));
+    }
+
     let Some(scenario_id) = scenario_id else {
         warnings.push("no --scenario supplied; run shape-only check only".to_string());
         let report = PreflightReport {
@@ -1040,8 +1058,6 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
         };
         return emit_preflight_report(&report, json);
     };
-
-    let ctx = open_ctx().await?;
 
     let provider_list = load_provider_names(&ctx).await;
     let mut has_trader = strategy.trader_slot.is_some();

@@ -2,8 +2,8 @@
 
 **Non-custodial AI trading agents.** xvision runs LLM-driven trading strategies
 against your own broker account, with explicit scope enforcement so xvision
-itself never holds your funds. An overnight Optimizer generates and
-evaluates new strategy experiments automatically.
+itself never holds your funds. An overnight autoresearcher mutates and
+evaluates new strategy variants automatically.
 
 > ⚠️ **This is alpha software. Use at your own risk.** xvision executes real
 > trades against real money on whatever broker account you connect. The
@@ -15,14 +15,14 @@ evaluates new strategy experiments automatically.
 
 - Runs trading strategies as LLM-driven decision pipelines (briefing → trader →
   risk gate → execution).
-- Holds an Orderly trading-only signing key per user that can place orders but
+- Holds an Orderly trading-only Ed25519 key per user that can place orders but
   cannot withdraw, transfer, or mint.
 - Enforces per-strategy hard-cap × dynamic-quota budgets via a race-free
   reservation pattern; no strategy can exceed its cap even under burst load.
 - Logs every order's full lifecycle (emit → risk → simulate → sign → submit →
   fill → close) to an append-only audit log; positions can be reconstructed
   from the log alone.
-- Runs an overnight Optimizer that generates strategy experiments, evaluates
+- Runs an overnight autoresearcher that mutates seed strategies, evaluates
   variants on held-out backtests, and seals survivors as immutable lineage
   artifacts.
 
@@ -47,6 +47,13 @@ If you are an external or embedded agent using this repo, start here:
 6. For a shell-free remote CLI helper, use `scripts/xvn-remote.py`.
 7. For inline strategy filters, use `docs/operator/filter-dsl-catalog.md`
    for the exact indicator/operator DSL accepted by `xvn strategy set-filter`.
+8. Before launching an agent-backed eval, follow the safe path: provider
+   readiness (`doctor`, `provider list`, `provider check`, `provider models`)
+   → `strategy diagnostics` → `eval validate` → `eval run`.
+9. Use precise execution labels: **Filter-gated agent** is the default
+   filtered LLM path, **Rules-only mechanical** is intentional no-agent
+   deterministic execution, and **Agent-direct** is legacy/discouraged
+   model-without-filter execution.
 
 Hard deployment rules for agents:
 
@@ -71,17 +78,21 @@ cargo build --release
 # 2. Initialize xvision config/state
 ./target/release/xvn migrate
 
-# 3. Check provider config
+# 3. Check provider config/readiness
 ./target/release/xvn doctor --json
 ./target/release/xvn provider list
+./target/release/xvn provider check --name <provider>
+./target/release/xvn provider models --name <provider>
 
 # 4. Configure a strategy from a template
 ./target/release/xvn strategy templates
 ./target/release/xvn strategy templates --json
 STRATEGY_ID=$(./target/release/xvn strategy create --template mean_reversion --name my-first-agent)
 
-# 5. Run or inspect evals
+# 5. Diagnose and validate before launching evals
+./target/release/xvn strategy diagnostics "$STRATEGY_ID" --json
 ./target/release/xvn eval scenarios
+./target/release/xvn eval validate --strategy "$STRATEGY_ID" --scenario crypto-bull-q1-2025 --mode backtest
 ./target/release/xvn eval run --strategy "$STRATEGY_ID" --scenario crypto-bull-q1-2025 --mode backtest
 
 # 6. Inspect stored runs
@@ -153,10 +164,8 @@ Quick summary:
 - Every job is checked against the allowlist policy before spawning. Read-only
   heads (`eval list/show/results/watch/compare`, `strategy show/validate`,
   `scenario show/select`, `doctor`, etc.) are allowed without configuration.
-  Low-risk draft-authoring commands (`strategy create` / `strategy new`) are
-  also allowed. Mutating/destructive nested paths and server/live-trading
-  heads (`dashboard`, `mcp`, `fire-trade`, `close-position`, `migrate`, etc.)
-  are rejected.
+  Mutating/destructive nested paths and server/live-trading heads (`dashboard`,
+  `mcp`, `fire-trade`, `close-position`, `migrate`, etc.) are rejected.
   Bounded eval/experiment/bakeoff jobs require their strict-template flag set
   (`--max-decisions`, `--max-wall-clock`, etc.).
 
@@ -174,9 +183,9 @@ Current operator commands:
 The non-custodial design closes one failure mode (xvision can't drain you) but
 opens others:
 - A buggy strategy can lose its hard-cap allocation. Set caps small at first.
-- The Optimizer can produce a variant that overfits the judge. Lineage
+- The autoresearcher can produce a variant that overfits the judge. Lineage
   attestations are explicit about which strategies are sealed (auditable) vs
-  which are still evolving (use-with-care).
+  which are still mutating (use-with-care).
 - Cross-margin contagion: if Orderly applies losses across the whole account,
   one strategy's drawdown can trigger another's stop-loss. v1 either uses
   isolated margin (if available) or fails-closed on aggregate utilization > 85%.

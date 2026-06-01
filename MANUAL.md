@@ -360,14 +360,33 @@ this same saved `Strategy` artifact shape.
 The shipped eval surface is available through both the dashboard and the CLI:
 
 ```bash
-xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn doctor --json
+xvn provider list
+xvn provider check --name <provider>
+xvn provider models --name <provider>
+xvn strategy diagnostics <id> --json
 xvn eval validate --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
 xvn eval list [--json]
 xvn eval get <run_id> [--json]
 xvn eval watch <run_id> [--once] [--json]
 xvn eval results <run_id> [--json]
 xvn eval compare <run_id_a> <run_id_b>
 ```
+
+For agent-facing operation, use that order: provider readiness, then strategy
+diagnostics, then eval validation, then eval launch. `strategy diagnostics`
+checks whether required capabilities are launchable; `eval validate` checks the
+specific strategy/scenario/mode without enqueueing a run.
+
+Execution labels:
+
+- **Filter-gated agent** is the default filtered LLM path: a saved filter
+  artifact gates whether the configured agent/model is called.
+- **Rules-only mechanical** is advanced deterministic execution with no model
+  call. This is intentional no-agent mode, not a broken missing-agent state.
+- **Agent-direct** is legacy/discouraged model execution without a saved filter
+  gate. Use only for explicit comparisons or old-run interpretation.
 
 Add `--auto-fire-review` to `xvn eval run` when a completed run should
 immediately write a deterministic review and chart annotations. Optional
@@ -499,7 +518,7 @@ Three things break here:
 - **Storage:** SQLite write throughput hits its ceiling around hundreds of
   concurrent writes/sec. Reservations + audit-log + ledger all serialize. WAL
   mode helps to ~thousands; beyond that, evaluate Postgres.
-- **Optimizer cost:** at N=100 with each agent generating 100 experiment
+- **Autoresearcher cost:** at N=100 with each agent generating 100 mutator
   variants/night × 50K-token briefings × Sonnet-class evaluation, the LLM bill
   is ~$15K/month. **Migrate to:** subscription tier or hosted-runtime line
   (research Theme G).
@@ -521,8 +540,8 @@ Three things break here:
 
 - N=1 → N=10 ops break: research Run 8 (operator daily journal — daily review
   becomes full-time at N=10).
-- N=10 → N=100 storage + Optimizer cost: research Run 11 (scaling tree).
-- N=100 → N=1000 distribution: research Run 11 + Run 4 (experiment-loop cost).
+- N=10 → N=100 storage + autoresearcher cost: research Run 11 (scaling tree).
+- N=100 → N=1000 distribution: research Run 11 + Run 4 (mutation-loop cost).
 
 ### Default cadence
 
