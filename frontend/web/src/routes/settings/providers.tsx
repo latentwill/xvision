@@ -37,7 +37,7 @@ import { logInfo, safeUrlHost } from "@/lib/logger";
 type KindOption = {
   value: string;
   label: string;
-  wireKind: "anthropic" | "openai-compat";
+  wireKind: "anthropic" | "openai-compat" | "ollama" | "llama-cpp";
   defaultName: string;
   defaultBaseUrl: string;
   isCustom: boolean;
@@ -93,18 +93,36 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
     keyHelp: "Starts with sk-or-…",
   },
   {
+    value: "ollama",
+    label: "Ollama (local)",
+    wireKind: "ollama",
+    defaultName: "ollama",
+    defaultBaseUrl: "http://localhost:11434",
+    isCustom: false,
+    keyHelp: "Optional — leave blank for local Ollama.",
+  },
+  {
+    value: "llama-cpp",
+    label: "llama.cpp server",
+    wireKind: "llama-cpp",
+    defaultName: "llama-cpp",
+    defaultBaseUrl: "http://localhost:8080",
+    isCustom: false,
+    keyHelp: "Optional — leave blank for local llama-server.",
+  },
+  {
     value: "custom",
-    label: "Custom (Ollama, Together, vLLM, self-hosted, …)",
+    label: "Custom (Together, vLLM, self-hosted, …)",
     wireKind: "openai-compat",
     defaultName: "",
     defaultBaseUrl: "",
     isCustom: true,
-    keyHelp: "Leave blank for no-auth endpoints (local Ollama).",
+    keyHelp: "Leave blank for no-auth endpoints.",
   },
 ];
 
-// Local-Ollama style endpoints don't need a key. Anything else does.
 function keyRequired(meta: KindOption, baseUrl: string): boolean {
+  if (meta.value === "ollama" || meta.value === "llama-cpp") return false;
   if (meta.value === "custom" && /localhost|127\.0\.0\.1/.test(baseUrl)) {
     return false;
   }
@@ -127,6 +145,8 @@ const PROVIDER_KIND_FILTER: FilterDef = {
     { value: "all", label: "All kinds" },
     { value: "anthropic", label: "Anthropic" },
     { value: "openai-compat", label: "OpenAI-compat" },
+    { value: "ollama", label: "Ollama" },
+    { value: "llama-cpp", label: "llama.cpp" },
   ],
 };
 
@@ -533,6 +553,8 @@ function EditProviderForm({
             <option value="anthropic">anthropic</option>
             <option value="openai-compat">openai-compat</option>
             <option value="local-candle">local-candle</option>
+            <option value="ollama">ollama</option>
+            <option value="llama-cpp">llama-cpp</option>
           </select>
         </Field>
         <Field label="Base URL">

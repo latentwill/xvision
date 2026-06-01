@@ -1915,7 +1915,8 @@ async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmD
             ))
         })?
     };
-    if api_key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+    let no_auth_eval = matches!(entry.kind, ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp);
+    if api_key.is_empty() && !no_auth_eval {
         return Err(ApiError::Validation(format!(
             "provider `{}` has no API key set. Paste one in Settings → Providers.",
             entry.name
@@ -1924,6 +1925,10 @@ async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmD
     match entry.kind {
         ProviderKind::Anthropic => Ok(Arc::new(AnthropicDispatch::new(api_key))),
         ProviderKind::OpenaiCompat => Ok(Arc::new(OpenaiCompatDispatch::new(
+            entry.base_url.clone(),
+            api_key,
+        ))),
+        ProviderKind::Ollama | ProviderKind::LlamaCpp => Ok(Arc::new(OpenaiCompatDispatch::new(
             entry.base_url.clone(),
             api_key,
         ))),

@@ -323,7 +323,9 @@ async fn build_arm_dispatch(
     };
     let dispatch: Arc<dyn LlmDispatch> = match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
+        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp => {
+            Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
+        }
         ProviderKind::LocalCandle => Arc::new(MockDispatch::echo(
             r#"{"action":"hold","conviction":0.0,"justification":"local-candle hold"}"#,
         )),

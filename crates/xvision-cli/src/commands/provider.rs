@@ -81,7 +81,7 @@ enum ProviderAction {
     Add {
         #[arg(long)]
         name: String,
-        /// `anthropic` | `openai-compat` | `local-candle`.
+        /// `anthropic` | `openai-compat` | `local-candle` | `ollama` | `llama-cpp`.
         #[arg(long)]
         kind: String,
         #[arg(long)]
@@ -319,11 +319,7 @@ async fn check(ctx: &ApiContext, config_path: &std::path::Path, name: &str, prob
 
     if probe {
         let client = reqwest::Client::new();
-        let probe_url = if row.base_url.ends_with('/') {
-            format!("{}models", row.base_url)
-        } else {
-            format!("{}/models", row.base_url)
-        };
+        let probe_url = provider_catalog_probe_url(&row.kind, &row.base_url);
         let mut req = client.get(&probe_url);
         if !row.api_key_env.is_empty() {
             if let Ok(key) = std::env::var(&row.api_key_env) {
@@ -336,6 +332,17 @@ async fn check(ctx: &ApiContext, config_path: &std::path::Path, name: &str, prob
         }
     }
     Ok(())
+}
+
+fn provider_catalog_probe_url(kind: &str, base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if kind == "ollama" {
+        format!("{trimmed}/api/tags")
+    } else if trimmed.ends_with("/v1") {
+        format!("{trimmed}/models")
+    } else {
+        format!("{trimmed}/v1/models")
+    }
 }
 
 struct MinimalUrl {
@@ -627,6 +634,30 @@ api_key_env = "K"
     #[test]
     fn url_parse_rejects_no_scheme() {
         assert!(url_parse_minimal("api.openai.com/v1").is_err());
+    }
+
+    #[test]
+    fn provider_catalog_probe_url_preserves_v1_bases() {
+        assert_eq!(
+            provider_catalog_probe_url("openai-compat", "https://api.openai.com/v1"),
+            "https://api.openai.com/v1/models"
+        );
+        assert_eq!(
+            provider_catalog_probe_url("openai-compat", "https://openrouter.ai/api/v1/"),
+            "https://openrouter.ai/api/v1/models"
+        );
+    }
+
+    #[test]
+    fn provider_catalog_probe_url_targets_local_provider_shapes() {
+        assert_eq!(
+            provider_catalog_probe_url("ollama", "http://localhost:11434/"),
+            "http://localhost:11434/api/tags"
+        );
+        assert_eq!(
+            provider_catalog_probe_url("llama-cpp", "http://localhost:8080"),
+            "http://localhost:8080/v1/models"
+        );
     }
 
     const MIN_CONFIG: &str = r#"

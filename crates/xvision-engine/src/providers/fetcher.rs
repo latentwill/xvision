@@ -89,6 +89,16 @@ pub fn fetcher_for(provider: &ProviderEntry, api_key: String) -> Result<Box<dyn 
                 )))
             }
         }
+        ProviderKind::Ollama => Ok(Box::new(OllamaFetcher::new(
+            provider.name.clone(),
+            provider.base_url.clone(),
+            api_key,
+        ))),
+        ProviderKind::LlamaCpp => Ok(Box::new(LlamaCppFetcher::new(
+            provider.name.clone(),
+            provider.base_url.clone(),
+            api_key,
+        ))),
         ProviderKind::LocalCandle => Err(anyhow!(
             "provider `{}` kind=local-candle has no remote catalog \
              (models are baked into the binary at build time)",
@@ -389,12 +399,7 @@ pub struct OpenAiCompatFetcher {
 
 impl OpenAiCompatFetcher {
     pub fn new(provider: String, base_url: String, api_key: String) -> Self {
-        let trimmed = base_url.trim_end_matches('/');
-        let url = if trimmed.ends_with("/v1") {
-            format!("{}/models", trimmed)
-        } else {
-            format!("{}/v1/models", trimmed)
-        };
+        let url = openai_compat_models_url(&base_url);
         Self {
             provider,
             url,
@@ -478,6 +483,170 @@ fn openai_compat_base_url(configured: &str) -> String {
         "https://api.openai.com".to_string()
     } else {
         configured.to_string()
+    }
+}
+
+pub(crate) fn openai_compat_models_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        format!("{}/models", trimmed)
+    } else {
+        format!("{}/v1/models", trimmed)
+    }
+}
+
+// --- Ollama -----------------------------------------------------------
+
+pub struct OllamaFetcher {
+    provider: String,
+    url: String,
+    api_key: String,
+}
+
+impl OllamaFetcher {
+    pub fn new(provider: String, base_url: String, api_key: String) -> Self {
+        let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+        Self {
+            provider,
+            url,
+            api_key,
+        }
+    }
+}
+
+#[async_trait]
+impl CatalogFetcher for OllamaFetcher {
+    fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    fn source_url(&self) -> &str {
+        &self.url
+    }
+
+    async fn fetch(&self, http: &reqwest::Client) -> Result<Catalog> {
+        let mut req = http.get(&self.url);
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("GET {} failed", self.url))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .with_context(|| format!("read body from {}", self.url))?;
+        if !status.is_success() {
+            bail!(
+                "{} returned {} — check Ollama is running. Body: {}",
+                self.url,
+                status,
+                truncate(&body, 200)
+            );
+        }
+        let json: Value = serde_json::from_str(&body)
+            .with_context(|| format!("Ollama /api/tags returned non-JSON: {}", truncate(&body, 200)))?;
+        let models = parse_ollama_models(&json)?;
+        Ok(Catalog::new(self.provider.clone(), self.url.clone(), models))
+    }
+}
+
+pub(crate) fn parse_ollama_models(json: &Value) -> Result<Vec<ModelEntry>> {
+    let arr = json
+        .get("models")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow!("Ollama /api/tags: missing or non-array `models` field"))?;
+    let mut out = Vec::with_capacity(arr.len());
+    for row in arr {
+        let id = row
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Ollama /api/tags: row missing `name`: {row}"))?
+            .to_string();
+        let family = row
+            .get("details")
+            .and_then(|d| d.get("family"))
+            .and_then(|v| v.as_str());
+        let param_size = row
+            .get("details")
+            .and_then(|d| d.get("parameter_size"))
+            .and_then(|v| v.as_str());
+        let display_name = match (family, param_size) {
+            (Some(f), Some(p)) => Some(format!("{f} {p}")),
+            _ => None,
+        };
+        out.push(ModelEntry {
+            id,
+            display_name,
+            context_window: None,
+            max_output_tokens: None,
+            supports_reasoning: None,
+            supports_tools: None,
+            pricing_per_million_input_usd: None,
+            pricing_per_million_output_usd: None,
+            raw: row.clone(),
+        });
+    }
+    Ok(out)
+}
+
+// --- llama.cpp --------------------------------------------------------
+
+pub struct LlamaCppFetcher {
+    provider: String,
+    url: String,
+    api_key: String,
+}
+
+impl LlamaCppFetcher {
+    pub fn new(provider: String, base_url: String, api_key: String) -> Self {
+        let url = openai_compat_models_url(&base_url);
+        Self {
+            provider,
+            url,
+            api_key,
+        }
+    }
+}
+
+#[async_trait]
+impl CatalogFetcher for LlamaCppFetcher {
+    fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    fn source_url(&self) -> &str {
+        &self.url
+    }
+
+    async fn fetch(&self, http: &reqwest::Client) -> Result<Catalog> {
+        let mut req = http.get(&self.url);
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("GET {} failed", self.url))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .with_context(|| format!("read body from {}", self.url))?;
+        if !status.is_success() {
+            bail!(
+                "{} returned {} — check llama-server is running. Body: {}",
+                self.url,
+                status,
+                truncate(&body, 200)
+            );
+        }
+        let json: Value = serde_json::from_str(&body)
+            .with_context(|| format!("{} returned non-JSON: {}", self.url, truncate(&body, 200)))?;
+        let models = parse_openai_compat_models(&json)?;
+        Ok(Catalog::new(self.provider.clone(), self.url.clone(), models))
     }
 }
 
