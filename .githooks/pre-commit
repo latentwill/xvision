@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# Worktree-isolation guard.
+#
+# Forbids committing branch/feature work in the PRIMARY (main) checkout.
+# This repo runs multiple concurrent agents (claude, codex, 100x, human) in
+# the same clone; branch work in the shared main checkout causes HEAD/branch
+# collisions (an agent checks out its branch under another's feet, force-pushes,
+# etc.). All branch work must happen in an isolated `git worktree`.
+#
+# Activated by `core.hooksPath=.githooks` (run `scripts/setup-hooks.sh` once;
+# the setting lives in the shared config and covers every worktree of the clone).
+# See CLAUDE.md → "Worktree isolation (enforced)".
+set -euo pipefail
+
+# Deliberate escape hatch for the rare, intentional main-checkout commit
+# (e.g. a hotfix straight to main, or fixing this hook itself).
+if [ "${XVISION_ALLOW_MAIN_COMMIT:-}" = "1" ]; then
+  exit 0
+fi
+
+# Identify the primary worktree: in a linked worktree `--git-dir` resolves to
+# `<common>/worktrees/<name>` while `--git-common-dir` is `<common>`; in the
+# primary worktree the two resolve to the same directory.
+git_dir="$(cd "$(git rev-parse --git-dir)" && pwd -P)"
+common_dir="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+if [ "$git_dir" != "$common_dir" ]; then
+  exit 0   # linked worktree — allowed
+fi
+
+branch="$(git symbolic-ref --short -q HEAD || echo DETACHED)"
+
+# Commits to these refs in the primary checkout are allowed (release/sync work).
+case "$branch" in
+  main|master) exit 0 ;;
+esac
+
+toplevel="$(git rev-parse --show-toplevel)"
+cat >&2 <<EOF
+
+  ✗ blocked: commit on branch '$branch' in the MAIN checkout
+    $toplevel
+
+  Branch work must run in an isolated worktree so concurrent agents
+  (claude / codex / 100x) don't collide in one working copy:
+
+      git worktree add .worktrees/<name> -b <branch>
+      cd .worktrees/<name>
+      # remember: export CARGO_TARGET_DIR=\$HOME/.cargo-target/xvision
+
+  (agent-conductor already provisions these: worktreeRoot=.worktrees,
+   branch prefix 'agent/'.)
+
+  Deliberate override:  XVISION_ALLOW_MAIN_COMMIT=1 git commit ...
+
+EOF
+exit 1
