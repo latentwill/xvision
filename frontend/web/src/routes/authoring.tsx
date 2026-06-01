@@ -12,11 +12,16 @@ import {
   patchStrategyMetadata,
   renameStrategyAgentRole,
   removeStrategyAgent,
+  setMechanisticConfig,
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
   validateDraft,
   type AgentRef,
+  type ClosePolicy,
+  type DecisionMode,
+  type EntryDirection,
+  type EntryRule,
   type PipelineDef,
   type PipelineKind,
   type RiskConfig,
@@ -137,13 +142,19 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
 }
 
 function StrategyEditor({ strategy }: { strategy: Strategy }) {
+  const isMechanistic = strategy.decision_mode === "mechanistic";
   return (
     <>
       <ValidationCard strategy={strategy} />
       <DecisionModeCard strategy={strategy} />
       <ManifestCard strategy={strategy} />
       <FilterCard strategy={strategy} />
-      <AgentsCard strategy={strategy} />
+      <DecisionModeCard strategy={strategy} />
+      {isMechanistic ? (
+        <MechanisticConfigCard strategy={strategy} />
+      ) : (
+        <AgentsCard strategy={strategy} />
+      )}
       <RiskCard strategy={strategy} />
     </>
   );
@@ -1006,6 +1017,303 @@ export function AttachedAgentRow({
   );
 }
 
+function DecisionModeCard({ strategy }: { strategy: Strategy }) {
+  const qc = useQueryClient();
+  const current = strategy.decision_mode ?? "agentic";
+  const [mode, setMode] = useState<DecisionMode>(current);
+  const dirty = mode !== current;
+
+  useEffect(() => {
+    setMode(strategy.decision_mode ?? "agentic");
+  }, [strategy.decision_mode]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      setMechanisticConfig(strategy.manifest.id, {
+        decision_mode: mode,
+        mechanistic_config:
+          mode === "mechanistic"
+            ? (strategy.mechanistic_config ?? { entry_rules: [], close_policies: [] })
+            : null,
+      }),
+    onSuccess: (updated) => {
+      qc.setQueryData(strategyKeys.detail(strategy.manifest.id), updated);
+      qc.invalidateQueries({ queryKey: strategyKeys.validate(strategy.manifest.id) });
+    },
+  });
+
+  return (
+    <Card>
+      <SectionHeader
+        label="Decision mode"
+        hint="Agentic uses LLM agents; Mechanistic uses deterministic entry/exit rules."
+      />
+      <div className="px-5 pt-4 pb-5 space-y-4">
+        <div className="flex items-center gap-3" role="group" aria-label="Decision mode">
+          {(["agentic", "mechanistic"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={mode === m}
+              onClick={() => setMode(m)}
+              className={`px-3 py-1.5 rounded text-[13px] border capitalize ${
+                mode === m
+                  ? "border-gold text-gold bg-gold/10"
+                  : "border-border text-text-2 hover:border-text-3"
+              }`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => save.mutate()}
+            disabled={!dirty || save.isPending}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 transition-colors"
+          >
+            {save.isPending ? "Saving..." : "Save mode"}
+          </button>
+          {save.isError ? (
+            <span className="text-[12px] text-danger">{errorMessage(save.error)}</span>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function EntryRulesEditor({
+  rules,
+  onChange,
+}: {
+  rules: EntryRule[];
+  onChange: (r: EntryRule[]) => void;
+}) {
+  function addRule() {
+    onChange([...rules, { signal_name: "", direction: "long" }]);
+  }
+  function removeRule(i: number) {
+    onChange(rules.filter((_, idx) => idx !== i));
+  }
+  function updateRule(i: number, patch: Partial<EntryRule>) {
+    onChange(rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+  return (
+    <div className="space-y-2">
+      <div className="text-[12px] text-text-2 font-medium">Entry rules</div>
+      {rules.length === 0 && (
+        <p className="text-[12px] text-text-3">No entry rules configured.</p>
+      )}
+      {rules.map((rule, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-2 border border-border-soft rounded px-3 py-2"
+        >
+          <input
+            className="flex-1 bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text font-mono"
+            value={rule.signal_name}
+            onChange={(e) => updateRule(i, { signal_name: e.target.value })}
+            placeholder="signal_name"
+            aria-label={`Entry rule ${i + 1} signal name`}
+          />
+          <select
+            className="bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text font-mono"
+            value={rule.direction}
+            onChange={(e) =>
+              updateRule(i, { direction: e.target.value as EntryDirection })
+            }
+            aria-label={`Entry rule ${i + 1} direction`}
+          >
+            <option value="long">Long</option>
+            <option value="short">Short</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => removeRule(i)}
+            aria-label={`Remove entry rule ${i + 1}`}
+            className="text-[12px] text-danger hover:opacity-70"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={addRule}
+        className="px-3 py-1 rounded text-[12px] border border-border text-text-2 hover:border-text-3"
+      >
+        + Add rule
+      </button>
+    </div>
+  );
+}
+
+function policyValue(p: ClosePolicy): number {
+  if (p.kind === "time_exit") return p.bars;
+  if (p.kind === "target_pnl") return p.usd;
+  return p.pct;
+}
+
+const POLICY_DEFAULTS: Record<ClosePolicy["kind"], ClosePolicy> = {
+  stop_loss: { kind: "stop_loss", pct: 2.0 },
+  take_profit: { kind: "take_profit", pct: 5.0 },
+  trailing_stop: { kind: "trailing_stop", pct: 1.5 },
+  time_exit: { kind: "time_exit", bars: 20 },
+  target_pnl: { kind: "target_pnl", usd: 100 },
+};
+
+function policyWithValue(p: ClosePolicy, n: number): ClosePolicy {
+  if (p.kind === "time_exit") return { kind: "time_exit", bars: Math.round(n) };
+  if (p.kind === "target_pnl") return { kind: "target_pnl", usd: n };
+  if (p.kind === "stop_loss") return { kind: "stop_loss", pct: n };
+  if (p.kind === "take_profit") return { kind: "take_profit", pct: n };
+  return { kind: "trailing_stop", pct: n };
+}
+
+function ClosePoliciesEditor({
+  policies,
+  onChange,
+}: {
+  policies: ClosePolicy[];
+  onChange: (p: ClosePolicy[]) => void;
+}) {
+  function addPolicy() {
+    onChange([...policies, { kind: "stop_loss", pct: 2.0 }]);
+  }
+  function removePolicy(i: number) {
+    onChange(policies.filter((_, idx) => idx !== i));
+  }
+  function updateKind(i: number, kind: ClosePolicy["kind"]) {
+    onChange(policies.map((p, idx) => (idx === i ? POLICY_DEFAULTS[kind] : p)));
+  }
+  function updateValue(i: number, raw: string) {
+    const p = policies[i];
+    if (!p) return;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) return;
+    onChange(policies.map((x, idx) => (idx === i ? policyWithValue(p, n) : x)));
+  }
+  return (
+    <div className="space-y-2">
+      <div className="text-[12px] text-text-2 font-medium">Close policies</div>
+      {policies.length === 0 && (
+        <p className="text-[12px] text-text-3">No close policies configured.</p>
+      )}
+      {policies.map((p, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-2 border border-border-soft rounded px-3 py-2"
+        >
+          <select
+            className="bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text font-mono"
+            value={p.kind}
+            onChange={(e) => updateKind(i, e.target.value as ClosePolicy["kind"])}
+            aria-label={`Close policy ${i + 1} kind`}
+          >
+            <option value="stop_loss">Stop Loss (%)</option>
+            <option value="take_profit">Take Profit (%)</option>
+            <option value="trailing_stop">Trailing Stop (%)</option>
+            <option value="time_exit">Time Exit (bars)</option>
+            <option value="target_pnl">Target PnL ($)</option>
+          </select>
+          <input
+            type="number"
+            className="w-24 bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text font-mono"
+            value={policyValue(p)}
+            onChange={(e) => updateValue(i, e.target.value)}
+            min={0}
+            step={p.kind === "time_exit" ? 1 : 0.1}
+            aria-label={`Close policy ${i + 1} value`}
+          />
+          <button
+            type="button"
+            onClick={() => removePolicy(i)}
+            aria-label={`Remove close policy ${i + 1}`}
+            className="text-[12px] text-danger hover:opacity-70"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={addPolicy}
+        className="px-3 py-1 rounded text-[12px] border border-border text-text-2 hover:border-text-3"
+      >
+        + Add policy
+      </button>
+    </div>
+  );
+}
+
+function MechanisticConfigCard({ strategy }: { strategy: Strategy }) {
+  const qc = useQueryClient();
+  const initial = strategy.mechanistic_config ?? {
+    entry_rules: [],
+    close_policies: [],
+  };
+  const [rules, setRules] = useState<EntryRule[]>(initial.entry_rules);
+  const [policies, setPolicies] = useState<ClosePolicy[]>(
+    initial.close_policies,
+  );
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  useEffect(() => {
+    const cfg = strategy.mechanistic_config ?? {
+      entry_rules: [],
+      close_policies: [],
+    };
+    setRules(cfg.entry_rules);
+    setPolicies(cfg.close_policies);
+  }, [strategy.mechanistic_config]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      setMechanisticConfig(strategy.manifest.id, {
+        decision_mode: "mechanistic",
+        mechanistic_config: { entry_rules: rules, close_policies: policies },
+      }),
+    onSuccess: (updated) => {
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1800);
+      qc.setQueryData(strategyKeys.detail(strategy.manifest.id), updated);
+      qc.invalidateQueries({ queryKey: strategyKeys.validate(strategy.manifest.id) });
+    },
+  });
+
+  return (
+    <Card id="strategy-mechanistic">
+      <SectionHeader
+        label="Mechanistic config"
+        hint="Deterministic entry rules and close policies — no LLM agents required."
+      />
+      <div className="px-5 pt-4 pb-5 space-y-5">
+        <EntryRulesEditor rules={rules} onChange={setRules} />
+        <ClosePoliciesEditor policies={policies} onChange={setPolicies} />
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => save.mutate()}
+            disabled={save.isPending}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 transition-colors"
+          >
+            {save.isPending ? "Saving..." : "Save config"}
+          </button>
+          {savedFlash ? (
+            <span className="text-[12px] text-success">Saved.</span>
+          ) : save.isError ? (
+            <span className="text-[12px] text-danger">
+              {errorMessage(save.error)}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function ManifestCard({ strategy }: { strategy: Strategy }) {
   const qc = useQueryClient();
   const m = strategy.manifest;
@@ -1478,6 +1786,7 @@ function InspectorActions({
 }
 
 function hasAttachedAgents(strategy: Strategy | null): boolean {
+  if (strategy?.decision_mode === "mechanistic") return true;
   return (strategy?.agents ?? []).length > 0;
 }
 

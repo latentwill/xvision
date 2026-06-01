@@ -146,6 +146,12 @@ export type Strategy = {
   /// `Filtered` — the engine evaluates the DSL each bar.
   activation_mode?: ActivationMode;
   filter?: Filter | null;
+  /// Whether the strategy uses LLM agents (default) or deterministic
+  /// mechanistic rules. Absent from wire for agentic strategies.
+  decision_mode?: DecisionMode;
+  /// Rule-based entry/exit config. Required when decision_mode is
+  /// "mechanistic"; absent for agentic strategies.
+  mechanistic_config?: MechanisticConfig | null;
 };
 
 export type SetFilterBody = {
@@ -214,6 +220,39 @@ export type StrategyMetadataPatch = {
   asset_universe?: string[];
   decision_cadence_minutes?: number;
   color?: string;
+};
+
+export type DecisionMode = "agentic" | "mechanistic";
+export type EntryDirection = "long" | "short";
+
+export type EntryRule = {
+  signal_name: string;
+  direction: EntryDirection;
+};
+
+export type ClosePolicy =
+  | { kind: "stop_loss"; pct: number }
+  | { kind: "take_profit"; pct: number }
+  | { kind: "trailing_stop"; pct: number }
+  | { kind: "time_exit"; bars: number }
+  | { kind: "target_pnl"; usd: number };
+
+export type ExitReason =
+  | "stop_loss"
+  | "take_profit"
+  | "trailing_stop"
+  | "time_expiry"
+  | "signal"
+  | "manual";
+
+export type MechanisticConfig = {
+  entry_rules: EntryRule[];
+  close_policies: ClosePolicy[];
+};
+
+export type SetMechanisticBody = {
+  decision_mode: DecisionMode;
+  mechanistic_config?: MechanisticConfig | null;
 };
 
 export const strategyKeys = {
@@ -475,6 +514,19 @@ export function cloneStrategy(
       });
       throw err;
     });
+}
+
+export function setMechanisticConfig(
+  id: string,
+  body: SetMechanisticBody,
+): Promise<Strategy> {
+  return apiFetch<Strategy>(
+    `/api/strategy/${encodeURIComponent(id)}/mechanistic`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 export function deleteStrategy(id: string): Promise<void> {

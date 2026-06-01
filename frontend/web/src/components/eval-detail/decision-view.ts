@@ -50,6 +50,9 @@ export type TimelineDecision = {
   pnl?: number | null;
   /** asset symbol — kept for search hay + tooltip context. */
   asset: string;
+  /** Exit reason for mechanistic strategy decisions. Present when the
+   *  backend populates `exit_reason` on the `DecisionRowDto`. */
+  exit_reason?: string | null;
 };
 
 const SYNTHETIC_MARKERS = [
@@ -198,6 +201,8 @@ export function stepOrdinalsByDecision(rows: TimelineDecision[]): Map<number, nu
   return out;
 }
 
+type DecisionRowDtoExt = DecisionRowDto & { exit_reason?: string | null };
+
 /**
  * Project the real decision rows into the Signal table/timeline view model,
  * computing `phase` and the direction-aware action verb per row.
@@ -205,6 +210,7 @@ export function stepOrdinalsByDecision(rows: TimelineDecision[]): Map<number, nu
 export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] {
   const priorSide = derivePriorSideByDecision(rows);
   return rows.map((row) => {
+    const rowExt = row as DecisionRowDtoExt;
     const phase = derivePhase(row);
     if (phase === "filtered") {
       return { i: row.decision_index, t: row.timestamp, phase, asset: row.asset };
@@ -219,6 +225,7 @@ export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] 
       just: justificationText(row) || undefined,
       pnl: row.pnl_realized,
       asset: row.asset,
+      exit_reason: rowExt.exit_reason ?? null,
     };
   });
 }
