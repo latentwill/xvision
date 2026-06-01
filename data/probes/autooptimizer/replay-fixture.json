@@ -34,12 +34,6 @@
       "child_hash": "f9e8d7c6b5a4938271605f4e3d2c1b0af9e8d7c6b5a4938271605f4e3d2c1b0",
       "severity": "info",
       "code": "improvement"
-    },
-    {
-      "type": "cycle_sealed",
-      "cycle_id": "01HWQR7V5Z8XKPNM3J4FSDB6CT",
-      "merkle_root": "0011223344556677889900aabbccddeeff0011223344556677889900aabbccdd",
-      "node_count": 1
     }
   ],
   "lineage_nodes": [
@@ -59,12 +53,5 @@
       "cycle_id": "01HWQR7V5Z8XKPNM3J4FSDB6CT",
       "created_at": "2026-05-28T00:01:00Z"
     }
-  ],
-  "seal": {
-    "seal_id": "01HWQR8B3NTYVWZ5D9P2REQMC7",
-    "cycle_id": "01HWQR7V5Z8XKPNM3J4FSDB6CT",
-    "merkle_root": "0011223344556677889900aabbccddeeff0011223344556677889900aabbccdd",
-    "operator_signature": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
-    "sealed_at": "2026-05-28T00:02:00Z"
-  }
+  ]
 }

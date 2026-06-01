@@ -1328,6 +1328,26 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     .execute(&pool)
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage_nodes: {e}")))?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS mutator_attribution (
+            bundle_hash TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            proposed_at TEXT NOT NULL,
+            delta_sharpe REAL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create mutator_attribution: {e}")))?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_attr_provider_model
+            ON mutator_attribution(provider, model)",
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create mutator_attribution index: {e}")))?;
     Ok(pool)
 }
 
@@ -1394,4 +1414,3 @@ fn api_to_cli(op: &str, e: xvision_engine::api::ApiError) -> CliError {
         },
     }
 }
-

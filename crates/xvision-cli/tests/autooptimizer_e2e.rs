@@ -119,10 +119,6 @@ fn autooptimizer_help_exits_zero_and_lists_known_subcommands() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("session-init"),
-        "autooptimizer --help must list session-init, got:\n{stdout}"
-    );
-    assert!(
         stdout.contains("mutate-once"),
         "autooptimizer --help must list mutate-once, got:\n{stdout}"
     );

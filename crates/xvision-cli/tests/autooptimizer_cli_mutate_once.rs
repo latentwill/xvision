@@ -82,34 +82,11 @@ max_retries = 2
     config_path
 }
 
-fn write_session(dir: &Path, config_path: &Path, key_path: &Path) -> std::path::PathBuf {
-    let session_path = dir.join("session.json");
-    let out = xvn(&[
-        "optimizer",
-        "session-init",
-        "--config",
-        config_path.to_str().unwrap(),
-        "--out",
-        session_path.to_str().unwrap(),
-        "--key-path",
-        key_path.to_str().unwrap(),
-    ]);
-    assert_eq!(
-        exit_code(&out),
-        0,
-        "session-init failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    session_path
-}
-
 fn mutate_once_cmd<'a>(
     hash: &'a str,
     config: &'a Path,
-    session: &'a Path,
     db: &'a Path,
     blob_dir: &'a Path,
-    key: &'a Path,
     cycle_id: &'a str,
     extra: &[&'a str],
 ) -> Vec<&'a str> {
@@ -119,14 +96,10 @@ fn mutate_once_cmd<'a>(
         hash,
         "--config",
         config.to_str().unwrap(),
-        "--session",
-        session.to_str().unwrap(),
         "--db",
         db.to_str().unwrap(),
         "--blob-dir",
         blob_dir.to_str().unwrap(),
-        "--key-path",
-        key.to_str().unwrap(),
         "--cycle-id",
         cycle_id,
         "--mock",
@@ -136,22 +109,18 @@ fn mutate_once_cmd<'a>(
 }
 
 #[test]
-fn mutate_once_gate_pass_creates_active_node_and_seal() {
+fn mutate_once_gate_pass_creates_active_node_without_provenance_table() {
     let dir = tempdir().unwrap();
     let blob_dir = dir.path().join("blobs");
     let hash = write_parent_blob(&blob_dir);
     let config = write_config(dir.path(), 0.1); // mock delta=0.2 > 0.1 → PASS
-    let key_path = dir.path().join("op.ed25519");
-    let session = write_session(dir.path(), &config, &key_path);
     let db = dir.path().join("lineage.db");
 
     let out = xvn(&mutate_once_cmd(
         &hash,
         &config,
-        &session,
         &db,
         &blob_dir,
-        &key_path,
         "cycle-pass-01",
         &[],
     ));
@@ -178,35 +147,29 @@ fn mutate_once_gate_pass_creates_active_node_and_seal() {
             .expect("lineage node must exist");
         assert_eq!(status, "active", "gate-pass must produce active node");
 
-        let seal_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cycle_seals WHERE cycle_id = ?")
-            .bind("cycle-pass-01")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            seal_count, 1,
-            "gate-pass must produce a cycle seal (evening summary)"
-        );
+        let seal_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'cycle_seals'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(seal_tables, 0, "provenance removal must not create cycle_seals");
     });
 }
 
 #[test]
-fn mutate_once_gate_fail_creates_rejected_node_no_seal() {
+fn mutate_once_gate_fail_creates_rejected_node_without_provenance_table() {
     let dir = tempdir().unwrap();
     let blob_dir = dir.path().join("blobs");
     let hash = write_parent_blob(&blob_dir);
     let config = write_config(dir.path(), 0.5); // mock delta=0.2 < 0.5 → FAIL
-    let key_path = dir.path().join("op.ed25519");
-    let session = write_session(dir.path(), &config, &key_path);
     let db = dir.path().join("lineage.db");
 
     let out = xvn(&mutate_once_cmd(
         &hash,
         &config,
-        &session,
         &db,
         &blob_dir,
-        &key_path,
         "cycle-fail-01",
         &[],
     ));
@@ -233,12 +196,13 @@ fn mutate_once_gate_fail_creates_rejected_node_no_seal() {
             .expect("lineage node must exist on gate fail");
         assert_eq!(status, "rejected", "gate-fail must produce rejected node");
 
-        let seal_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cycle_seals WHERE cycle_id = ?")
-            .bind("cycle-fail-01")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(seal_count, 0, "gate-fail must not produce a cycle seal");
+        let seal_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'cycle_seals'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(seal_tables, 0, "provenance removal must not create cycle_seals");
     });
 }
 
@@ -248,17 +212,13 @@ fn mutate_once_dry_run_no_db_writes() {
     let blob_dir = dir.path().join("blobs");
     let hash = write_parent_blob(&blob_dir);
     let config = write_config(dir.path(), 0.1);
-    let key_path = dir.path().join("op.ed25519");
-    let session = write_session(dir.path(), &config, &key_path);
     let db = dir.path().join("lineage.db");
 
     let out = xvn(&mutate_once_cmd(
         &hash,
         &config,
-        &session,
         &db,
         &blob_dir,
-        &key_path,
         "cycle-dry-01",
         &["--dry-run"],
     ));
@@ -284,18 +244,14 @@ fn mutate_once_unknown_hash_returns_not_found() {
     let blob_dir = dir.path().join("blobs");
     std::fs::create_dir_all(&blob_dir).unwrap();
     let config = write_config(dir.path(), 0.1);
-    let key_path = dir.path().join("op.ed25519");
-    let session = write_session(dir.path(), &config, &key_path);
     let db = dir.path().join("lineage.db");
     let unknown = "a".repeat(64);
 
     let out = xvn(&mutate_once_cmd(
         &unknown,
         &config,
-        &session,
         &db,
         &blob_dir,
-        &key_path,
         "cycle-nf-01",
         &[],
     ));
@@ -308,17 +264,13 @@ fn mutate_once_child_hash_is_deterministic() {
     let blob_dir = dir.path().join("blobs");
     let hash = write_parent_blob(&blob_dir);
     let config = write_config(dir.path(), 0.1);
-    let key_path = dir.path().join("op.ed25519");
-    let session = write_session(dir.path(), &config, &key_path);
     let db = dir.path().join("lineage.db");
 
     let run1 = xvn(&mutate_once_cmd(
         &hash,
         &config,
-        &session,
         &db,
         &blob_dir,
-        &key_path,
         "cycle-det-01",
         &[],
     ));
@@ -332,10 +284,8 @@ fn mutate_once_child_hash_is_deterministic() {
     let run2 = xvn(&mutate_once_cmd(
         &hash,
         &config,
-        &session,
         &db,
         &blob_dir,
-        &key_path,
         "cycle-det-01",
         &[],
     ));

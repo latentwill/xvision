@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # smoke-autooptimizer.sh — end-to-end autooptimizer smoke test
 #
-# Verifies: session-init -> evening-cycle --mock -> demo replay ->
+# Verifies: evening-cycle --mock -> demo replay ->
 #           banned-term grep on autooptimizer/memory/flywheel --help output.
 #
 # Requires: compiled xvn binary in PATH or $XVN_BIN
@@ -36,10 +36,12 @@ done
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+export XVN_HOME="$WORK/xvn-home"
 
 echo "=== AutoOptimizer smoke test ==="
 echo "Using binary: $XVN"
 echo "Working dir:  $WORK"
+echo "XVN_HOME:      $XVN_HOME"
 echo ""
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -51,7 +53,7 @@ check_banned_terms() {
   local help_text="$2"
   local failed=0
   # Banned operator-surface terms (see docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md)
-  local banned=(promote demote epsilon holdout mutation mutator ghost quarantined merkle)
+  local banned=(promote demote epsilon holdout mutation mutator ghost quarantined)
   for term in "${banned[@]}"; do
     if echo "$help_text" | grep -qiw "$term"; then
       echo "  FAIL: banned term '$term' found in '$surface --help'" >&2
@@ -81,34 +83,49 @@ model      = "test-model"
 max_retries = 2
 TOML
 
-# ── 1. session-init ───────────────────────────────────────────────────────────
+# ── seed parent strategy ──────────────────────────────────────────────────────
 
-echo "--- xvn optimizer session-init ---"
-SESSION_JSON="$WORK/session.json"
-KEY_PATH="$WORK/operator.ed25519"
+STRATEGY_ID="01HTEST00AAAAAAAAAAAAAAAA"
+mkdir -p "$XVN_HOME/strategies"
+cat > "$XVN_HOME/strategies/$STRATEGY_ID.json" <<'JSON'
+{
+  "manifest": {
+    "id": "01HTEST00AAAAAAAAAAAAAAAA",
+    "display_name": "AutoOptimizer Smoke Strategy",
+    "plain_summary": "Temporary smoke-test parent",
+    "creator": "@smoke",
+    "template": "custom",
+    "regime_fit": [],
+    "asset_universe": ["BTC/USD"],
+    "decision_cadence_minutes": 60,
+    "attested_with": [],
+    "required_tools": [],
+    "risk_preset_or_config": "balanced",
+    "published_at": null
+  },
+  "risk": {
+    "risk_pct_per_trade": 0.015,
+    "max_concurrent_positions": 2,
+    "max_leverage": 3.0,
+    "stop_loss_atr_multiple": 2.0,
+    "daily_loss_kill_pct": 0.05
+  },
+  "mechanical_params": {"rsi_period": 14}
+}
+JSON
 
-"$XVN" optimizer session-init \
-  --config "$CONFIG" \
-  --out    "$SESSION_JSON" \
-  --key-path "$KEY_PATH"
-
-[[ -f "$SESSION_JSON" ]] || fail "session.json not created"
-SESSION_ID="$(python3 -c "import json,sys; print(json.load(open('$SESSION_JSON'))['session_id'])" 2>/dev/null \
-           || grep -o '"session_id":"[^"]*"' "$SESSION_JSON" | cut -d'"' -f4)"
-echo "session_id: $SESSION_ID"
-
-# ── 2. evening-cycle (--mock) ─────────────────────────────────────────────────
+# ── 1. evening-cycle (--mock) ─────────────────────────────────────────────────
 
 DB="$WORK/lineage.db"
 
 echo "--- xvn optimizer evening-cycle --mock ---"
 "$XVN" optimizer evening-cycle \
-  --session-id "$SESSION_ID" \
   --config "$CONFIG" \
   --db "$DB" \
+  --strategy "$STRATEGY_ID" \
   --mock
 
-# 3. Seal check.
+# 2. Persistence check.
 echo "--- cycle persistence check ---"
 NODE_COUNT="$(python3 -c "
 import sqlite3, sys
@@ -117,24 +134,25 @@ cur = conn.execute('SELECT COUNT(*) FROM lineage_nodes')
 print(cur.fetchone()[0])
 " 2>/dev/null || echo 0)"
 echo "Lineage nodes in DB: $NODE_COUNT"
+[[ "$NODE_COUNT" -ge 1 ]] || fail "expected >= 1 lineage node, got $NODE_COUNT"
 
-CYCLE_SEAL_COUNT="$(python3 -c "
+CYCLE_SEAL_TABLES="$(python3 -c "
 import sqlite3, sys
 conn = sqlite3.connect('$DB')
-cur = conn.execute('SELECT COUNT(*) FROM cycle_seals')
+cur = conn.execute(\"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'cycle_seals'\")
 print(cur.fetchone()[0])
 " 2>/dev/null || echo 0)"
-echo "Cycle seals (evening summaries) in DB: $CYCLE_SEAL_COUNT"
-[[ "$CYCLE_SEAL_COUNT" -ge 1 ]] || fail "expected >= 1 cycle seal, got $CYCLE_SEAL_COUNT"
+echo "Cycle seal tables in DB: $CYCLE_SEAL_TABLES"
+[[ "$CYCLE_SEAL_TABLES" -eq 0 ]] || fail "cycle_seals table should not exist"
 
-# ── 4. demo replay ───────────────────────────────────────────────────────────
+# ── 3. demo replay ───────────────────────────────────────────────────────────
 
 echo "--- xvn optimizer demo ---"
 "$XVN" optimizer demo \
   --fixture "$REPO_ROOT/data/probes/autooptimizer/replay-fixture.json" \
   >/dev/null
 
-# ── 5. Banned-term grep on CLI help ──────────────────────────────────────────
+# ── 4. Banned-term grep on CLI help ──────────────────────────────────────────
 
 echo "--- Banned-term check (autooptimizer/memory/flywheel --help) ---"
 
@@ -162,7 +180,6 @@ fi
 
 echo ""
 echo "=== SMOKE TEST COMPLETE ==="
-echo "    session-init:   PASS"
 echo "    evening-cycle:  PASS"
 echo "    demo:           PASS"
 echo "    banned-terms:   PASS"
