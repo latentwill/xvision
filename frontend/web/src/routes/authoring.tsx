@@ -146,6 +146,7 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
       <ValidationCard strategy={strategy} />
+      <DecisionModeCard strategy={strategy} />
       <ManifestCard strategy={strategy} />
       <FilterCard strategy={strategy} />
       <DecisionModeCard strategy={strategy} />
@@ -156,6 +157,69 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
       )}
       <RiskCard strategy={strategy} />
     </>
+  );
+}
+
+function decisionModeInfo(strategy: Strategy): {
+  label: string;
+  tone: "success" | "warning" | "danger";
+  detail: string;
+} {
+  const mode = strategy.activation_mode ?? (strategy.filter ? "filter_gated" : "every_bar");
+  const agentCount = strategy.agents?.length ?? 0;
+  if (mode === "compiled_rules") {
+    return {
+      label: "Rules-only mechanical",
+      tone: "warning",
+      detail:
+        agentCount === 0
+          ? "Compiled rules decide directly. No trader agent is required in this mode."
+          : "Compiled rules decide directly; attached agents are not expected to produce trade decisions.",
+    };
+  }
+  if (mode === "filter_gated") {
+    return {
+      label: "Filter-gated agent",
+      tone: agentCount > 0 ? "success" : "danger",
+      detail:
+        agentCount > 0
+          ? "Default path: the saved filter checks each bar and wakes the trader agent only on valid setups."
+          : "Agent required: filter-gated mode cannot run until a complete trader agent is attached.",
+    };
+  }
+  return {
+    label: "Agent-direct",
+    tone: "warning",
+    detail:
+      agentCount > 0
+        ? "Legacy/discouraged path: the trader agent runs every bar without a saved deterministic prefilter."
+        : "Broken state: agent-direct mode needs a trader agent, or the strategy must explicitly switch to rules-only mechanical.",
+  };
+}
+
+function DecisionModeCard({ strategy }: { strategy: Strategy }) {
+  const info = decisionModeInfo(strategy);
+  const tone =
+    info.tone === "success"
+      ? "border-success/40 bg-success/[0.08] text-success"
+      : info.tone === "danger"
+        ? "border-danger/40 bg-danger/[0.08] text-danger"
+        : "border-warn/40 bg-warn/[0.08] text-warn";
+  return (
+    <Card>
+      <SectionHeader
+        label="Decision mode"
+        hint="Who makes trade decisions, and whether a missing agent is valid."
+      />
+      <div className="px-5 pt-4 pb-5">
+        <div className={`inline-flex rounded-sm border px-2 py-1 text-[12px] font-medium ${tone}`}>
+          {info.label}
+        </div>
+        <p className="mt-2 mb-0 text-[13px] leading-relaxed text-text-2">
+          {info.detail}
+        </p>
+      </div>
+    </Card>
   );
 }
 
