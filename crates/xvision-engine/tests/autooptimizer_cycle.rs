@@ -470,3 +470,235 @@ async fn run_evening_cycle_smoke() {
         );
     }
 }
+
+// ── Tournament-enabled path tests ─────────────────────────────────────────────
+
+fn make_llm_response(text: &str) -> xvision_engine::agent::llm::LlmResponse {
+    xvision_engine::agent::llm::LlmResponse {
+        content: vec![xvision_engine::agent::llm::ContentBlock::Text {
+            text: text.to_string(),
+        }],
+        stop_reason: xvision_engine::agent::llm::StopReason::EndTurn,
+        input_tokens: 1,
+        output_tokens: 1,
+    }
+}
+
+/// When tournament_enabled=true and all judges rank the incumbent first, the
+/// mutation slot is skipped — no lineage nodes are committed.
+#[tokio::test]
+async fn tournament_incumbent_wins_skips_mutation_slot() {
+    let pool = fresh_pool().await;
+    let strategy = make_strategy();
+    let bundle_hash =
+        ContentHash::of_json(&serde_json::to_value(&strategy).expect("serialize strategy"));
+    let root_node = LineageNode {
+        bundle_hash,
+        parent_hash: None,
+        diff_hash: None,
+        metrics_day_hash: None,
+        metrics_untouched_hash: None,
+        gate_verdict: GateVerdict::Pass,
+        status: LineageStatus::Active,
+        cycle_id: None,
+        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+    };
+    LineageStore::new(pool.clone())
+        .insert(&root_node)
+        .await
+        .expect("insert root lineage node");
+
+    let blob_dir = TempDir::new().expect("temp blob dir");
+    let blob_store = BlobStore::new(blob_dir.path().join("blobs"));
+
+    // 2 diff responses for adv+syn proposals; 3 judge responses ranking
+    // incumbent first → incumbent_wins=true → mutation slot skipped.
+    let judge_incumbent_first = r#"{"ranking": [0, 1, 2]}"#;
+    let dispatch = Arc::new(MockDispatch::sequence(vec![
+        make_llm_response(&valid_diff_json()),
+        make_llm_response(&valid_diff_json()),
+        make_llm_response(judge_incumbent_first),
+        make_llm_response(judge_incumbent_first),
+        make_llm_response(judge_incumbent_first),
+    ]));
+
+    let mutator = Mutator {
+        provider: "mock".into(),
+        model: "mock-model".into(),
+        dispatch: Arc::clone(&dispatch)
+            as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        max_retries: 0,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&dispatch)
+            as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        provider: "mock".into(),
+        model: "mock-model".into(),
+    };
+    let paper_tester = StubPaperTester { metrics: metrics_stub(0.9) };
+
+    let ar_config = AutoresearchConfig {
+        tournament_enabled: true,
+        ..AutoresearchConfig::default()
+    };
+    let day_scenario = make_scenario("day-incumbent", 2024, 2025);
+    let baseline_scenario = make_scenario("baseline-incumbent", 2025, 2026);
+    let mut parent_strategies = HashMap::new();
+    parent_strategies.insert(bundle_hash.to_hex(), strategy);
+
+    let cycle_config = CycleConfig {
+        num_parents: 1,
+        mutations_per_parent: 1,
+        sabotage_seed: 42,
+        judge_provider: "mock".into(),
+        judge_model: "mock-model".into(),
+        prompt_version: "v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+        explicit_parent_hashes: Vec::new(),
+    };
+
+    let operator_key = SigningKey::from_bytes(&[8u8; 32]);
+    let session_id = Ulid::new().to_string();
+
+    let result = run_evening_cycle(
+        &pool,
+        &blob_store,
+        &ar_config,
+        &cycle_config,
+        &ParentPolicy::RoundRobin,
+        &mutator,
+        &judge,
+        &paper_tester,
+        &operator_key,
+        &session_id,
+        |_| {},
+    )
+    .await
+    .expect("run_evening_cycle must succeed with tournament incumbent win");
+
+    assert_eq!(
+        result.active_nodes.len() + result.rejected_nodes.len(),
+        0,
+        "incumbent win must skip the slot; got active={} rejected={}",
+        result.active_nodes.len(),
+        result.rejected_nodes.len()
+    );
+    assert!(!result.cycle_id.is_empty());
+    assert_eq!(result.seal.merkle_root.to_hex().len(), 64);
+}
+
+/// When tournament_enabled=true and judges rank a challenger first, the
+/// winner diff flows into the normal gate path. With a stub paper tester
+/// returning equal Sharpe for all runs, the gate fails (Δ=0 < min_improvement)
+/// and the child is Rejected.
+#[tokio::test]
+async fn tournament_challenger_wins_runs_gate() {
+    let pool = fresh_pool().await;
+    let strategy = make_strategy();
+    let bundle_hash =
+        ContentHash::of_json(&serde_json::to_value(&strategy).expect("serialize strategy"));
+    let root_node = LineageNode {
+        bundle_hash,
+        parent_hash: None,
+        diff_hash: None,
+        metrics_day_hash: None,
+        metrics_untouched_hash: None,
+        gate_verdict: GateVerdict::Pass,
+        status: LineageStatus::Active,
+        cycle_id: None,
+        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+    };
+    LineageStore::new(pool.clone())
+        .insert(&root_node)
+        .await
+        .expect("insert root lineage node");
+
+    let blob_dir = TempDir::new().expect("temp blob dir");
+    let blob_store = BlobStore::new(blob_dir.path().join("blobs"));
+
+    // Judge ranking [1, 0, 2] → adversarial (index 1) wins with 6 pts.
+    // The winner diff flows into gate_and_classify. StubPaperTester returns
+    // identical Sharpe for every call → Δ=0 → gate Fail → child Rejected.
+    let judge_challenger_first = r#"{"ranking": [1, 0, 2]}"#;
+    let dispatch = Arc::new(MockDispatch::sequence(vec![
+        make_llm_response(&valid_diff_json()),
+        make_llm_response(&valid_diff_json()),
+        make_llm_response(judge_challenger_first),
+        make_llm_response(judge_challenger_first),
+        make_llm_response(judge_challenger_first),
+    ]));
+
+    let mutator = Mutator {
+        provider: "mock".into(),
+        model: "mock-model".into(),
+        dispatch: Arc::clone(&dispatch)
+            as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        max_retries: 0,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&dispatch)
+            as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        provider: "mock".into(),
+        model: "mock-model".into(),
+    };
+    let paper_tester = StubPaperTester { metrics: metrics_stub(0.9) };
+
+    let ar_config = AutoresearchConfig {
+        tournament_enabled: true,
+        ..AutoresearchConfig::default()
+    };
+    let day_scenario = make_scenario("day-challenger", 2024, 2025);
+    let baseline_scenario = make_scenario("baseline-challenger", 2025, 2026);
+    let mut parent_strategies = HashMap::new();
+    parent_strategies.insert(bundle_hash.to_hex(), strategy);
+
+    let cycle_config = CycleConfig {
+        num_parents: 1,
+        mutations_per_parent: 1,
+        sabotage_seed: 42,
+        judge_provider: "mock".into(),
+        judge_model: "mock-model".into(),
+        prompt_version: "v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+        explicit_parent_hashes: Vec::new(),
+    };
+
+    let operator_key = SigningKey::from_bytes(&[9u8; 32]);
+    let session_id = Ulid::new().to_string();
+
+    let result = run_evening_cycle(
+        &pool,
+        &blob_store,
+        &ar_config,
+        &cycle_config,
+        &ParentPolicy::RoundRobin,
+        &mutator,
+        &judge,
+        &paper_tester,
+        &operator_key,
+        &session_id,
+        |_| {},
+    )
+    .await
+    .expect("run_evening_cycle must succeed with tournament challenger win");
+
+    // Challenger won → diff flowed into gate → gate failed (Δ=0) → Rejected.
+    assert_eq!(
+        result.active_nodes.len(),
+        0,
+        "no active nodes expected; gate must fail with equal Sharpe"
+    );
+    assert_eq!(
+        result.rejected_nodes.len(),
+        1,
+        "exactly one rejected node expected; got {}",
+        result.rejected_nodes.len()
+    );
+    assert!(!result.cycle_id.is_empty());
+}
