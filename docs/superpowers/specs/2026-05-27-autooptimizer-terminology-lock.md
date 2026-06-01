@@ -71,21 +71,14 @@ serve both audiences and was deliberately kept.
 
 ## Section 2 — Cryptographic provenance
 
-Operators must never see BLAKE3, Ed25519, "merkle," "canonical
-JSON," or any cryptographic primitive name. Any appearance on an
-operator surface is a defect.
+> **[REMOVED 2026-06-01]** The provenance layer described in this section
+> has been deleted. See
+> `docs/superpowers/specs/2026-06-01-remove-autooptimizer-crypto-provenance-design.md`.
+> The operator-surface rename pairs in the remaining sections remain in force.
 
 | dev | ops |
 |---|---|
-| BLAKE3 | — (never user-facing) |
 | `ContentHash`, `bundle_hash` (64-hex) | Strategy fingerprint (short ID + copy-on-click) |
-| Merkle root | Cycle proof |
-| `CycleSeal` | Evening summary |
-| `SessionCommitment` | Session ground rules |
-| Operator signature | Operator sign-off |
-| Operator key (Ed25519) | — (never user-facing); if needed in CLI output: "your signing key" |
-| Canonical JSON | — (never user-facing) |
-| `sealed_at` | Signed at |
 
 ## Section 3 — Gate / decision
 
