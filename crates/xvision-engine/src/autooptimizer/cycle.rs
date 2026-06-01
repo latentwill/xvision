@@ -1,40 +1,33 @@
 //! Evening-cycle orchestrator — AR-2 Task 9.
-//!
-//! Ties together: parent selection, mutation proposal, paper-testing,
-//! inversion-pair noise filtering, numeric gate, honesty check, judge
-//! dispatch, Merkle root, and CycleSeal signing.
 
 use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 use chrono::Utc;
-use ed25519_dalek::SigningKey;
 use sqlx::SqlitePool;
 use ulid::Ulid;
 use xvision_observability::BlobStore;
 
-use crate::autoresearch::canary::{run_honesty_check, HonestyCheckResult};
-use crate::autoresearch::config::AutoresearchConfig;
-use crate::autoresearch::content_hash::ContentHash;
-use crate::autoresearch::cycle_loosen::effective_min_improvement_for_cycle;
-use crate::autoresearch::diversity::diversity_decay_for_cycle;
-use crate::autoresearch::eval_adapter::PaperTestRunner;
-use crate::autoresearch::gate::{evaluate, GateInput, GateVerdict};
-use crate::autoresearch::inversion::run_inversion_pair;
-use crate::autoresearch::judge::{run_judge, Finding, Judge};
-use crate::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
-use crate::autoresearch::mutator::{MutationDiff, Mutator};
-use crate::autoresearch::tournament::TournamentRunner;
-use crate::autoresearch::mutator_ladder::{record_outcome, record_proposal};
-use crate::autoresearch::parent_policy::{select_parents, ParentPolicy};
-use crate::autoresearch::progress::CycleProgressEvent;
-use crate::autoresearch::seal::{build_and_sign, CycleSeal};
+use crate::autooptimizer::canary::{run_honesty_check, HonestyCheckResult};
+use crate::autooptimizer::config::AutoOptimizerConfig;
+use crate::autooptimizer::content_hash::ContentHash;
+use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
+use crate::autooptimizer::diversity::diversity_decay_for_cycle;
+use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
+use crate::autooptimizer::eval_adapter::PaperTestRunner;
+use crate::autooptimizer::gate::{evaluate, GateInput, GateVerdict};
+use crate::autooptimizer::inversion::run_inversion_pair;
+use crate::autooptimizer::judge::{run_judge, Finding, Judge};
+use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
+use crate::autooptimizer::mutator::{MutationDiff, Mutator};
+use crate::autooptimizer::mutator_ladder::{record_outcome, record_proposal};
+use crate::autooptimizer::parent_policy::{select_parents, ParentPolicy};
+use crate::autooptimizer::progress::CycleProgressEvent;
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
 
-/// Per-cycle configuration. Fields beyond the six required add scenario and
-/// scheduling context that `run_evening_cycle` cannot derive on its own.
+/// Per-cycle configuration.
 pub struct CycleConfig {
     pub num_parents: usize,
     pub mutations_per_parent: usize,
@@ -50,8 +43,7 @@ pub struct CycleConfig {
     pub baseline_scenario: Scenario,
     /// bundle_hash hex → Strategy for seed parents selected this cycle.
     pub parent_strategies: HashMap<String, Strategy>,
-    /// Optional explicit parent bundle hashes. When present, the cycle uses
-    /// these lineage nodes instead of selecting active leaves by policy.
+    /// Optional explicit parent bundle hashes.
     pub explicit_parent_hashes: Vec<ContentHash>,
 }
 
@@ -61,7 +53,6 @@ pub struct CycleResult {
     pub rejected_nodes: Vec<LineageNode>,
     pub honesty_check: HonestyCheckResult,
     pub diversity_score: f64,
-    pub seal: CycleSeal,
     pub findings_by_node: HashMap<ContentHash, Vec<Finding>>,
 }
 
@@ -69,9 +60,6 @@ struct MutationOutcome {
     child: Strategy,
     diff: MutationDiff,
     child_hash: ContentHash,
-    diff_hash: ContentHash,
-    day_hash: ContentHash,
-    untouched_hash: ContentHash,
     verdict: GateVerdict,
     status: LineageStatus,
     delta_sharpe: f64,
@@ -80,21 +68,27 @@ struct MutationOutcome {
 pub async fn run_evening_cycle(
     pool: &SqlitePool,
     _blob_store: &BlobStore,
-    config: &AutoresearchConfig,
+    config: &AutoOptimizerConfig,
     cycle_config: &CycleConfig,
     parent_policy: &ParentPolicy,
     mutator: &Mutator,
     judge: &Judge,
     paper_tester: &dyn PaperTestRunner,
-    operator_key: &SigningKey,
-    session_id: &str,
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
+    dspy_ctx: Option<&DspyContext>,
 ) -> Result<CycleResult> {
     let cycle_id = Ulid::new().to_string();
     let min_improvement =
         effective_min_improvement_for_cycle(pool, config, 0, cycle_config.sustained_no_pass_cycles)
             .await?
             .effective_min_improvement;
+
+    let dsr_prefix: Option<String> = match dspy_ctx {
+        Some(ctx) if config.dspy_enabled => {
+            query_dsr_prefix(&ctx.store, &ctx.namespace).await?
+        }
+        _ => None,
+    };
 
     let lineage_store = LineageStore::new(pool.clone());
     let parents = if cycle_config.explicit_parent_hashes.is_empty() {
@@ -147,6 +141,8 @@ pub async fn run_evening_cycle(
                 paper_tester,
                 &progress,
                 &mut findings_by_node,
+                dsr_prefix.as_deref(),
+                dspy_ctx,
             )
             .await?;
             active_nodes.extend(active);
@@ -166,22 +162,12 @@ pub async fn run_evening_cycle(
     )
     .await?;
     let diversity_score = diversity_decay_for_cycle(pool, &cycle_id).await.unwrap_or(0.0);
-    let merkle_root = lineage_store.merkle_root_for_cycle(&cycle_id).await?;
-    let node_count = active_nodes.len() + rejected_nodes.len();
-    let seal = build_and_sign(&cycle_id, session_id, merkle_root, node_count, operator_key)?;
-    seal.persist(pool).await?;
-    progress(CycleProgressEvent::CycleSealed {
-        cycle_id: cycle_id.clone(),
-        merkle_root: seal.merkle_root.to_hex(),
-        node_count,
-    });
     Ok(CycleResult {
         cycle_id,
         active_nodes,
         rejected_nodes,
         honesty_check,
         diversity_score,
-        seal,
         findings_by_node,
     })
 }
@@ -189,7 +175,7 @@ pub async fn run_evening_cycle(
 async fn run_cycle_canary<F>(
     parents: &[LineageNode],
     cycle_config: &CycleConfig,
-    config: &AutoresearchConfig,
+    config: &AutoOptimizerConfig,
     mutator: &Mutator,
     paper_tester: &dyn PaperTestRunner,
     min_improvement: f64,
@@ -239,26 +225,6 @@ where
     Ok(check)
 }
 
-/// Returns a diff for one mutation slot. Returns `None` on error, on incumbent
-/// win (tournament path), or when the proposal is skipped; the caller continues
-/// to the next slot in either case.
-async fn propose_or_tournament(
-    mutator: &Mutator,
-    parent: &Strategy,
-    config: &AutoresearchConfig,
-    runner: Option<&TournamentRunner>,
-) -> Option<MutationDiff> {
-    if let Some(r) = runner {
-        match r.run_tournament(parent, config).await {
-            Ok(result) if result.incumbent_wins => None,
-            Ok(result) => Some(result.winner_diff),
-            Err(_) => None,
-        }
-    } else {
-        mutator.propose(parent, config).await.ok()
-    }
-}
-
 async fn process_parent_mutations<F>(
     pool: &SqlitePool,
     parent_node: &LineageNode,
@@ -266,12 +232,14 @@ async fn process_parent_mutations<F>(
     cycle_id: &str,
     min_improvement: f64,
     cycle_config: &CycleConfig,
-    config: &AutoresearchConfig,
+    config: &AutoOptimizerConfig,
     mutator: &Mutator,
     judge: &Judge,
     paper_tester: &dyn PaperTestRunner,
     progress: &F,
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
+    dsr_prefix: Option<&str>,
+    dspy_ctx: Option<&DspyContext>,
 ) -> Result<(Vec<LineageNode>, Vec<LineageNode>)>
 where
     F: Fn(CycleProgressEvent),
@@ -288,16 +256,23 @@ where
     let parent_untouched = paper_tester
         .run(parent_strategy, &cycle_config.baseline_scenario)
         .await?;
-    let tournament_runner = config
-        .tournament_enabled
-        .then(|| TournamentRunner::from_mutator(mutator));
 
     for _ in 0..cycle_config.mutations_per_parent {
-        let Some(diff) =
-            propose_or_tournament(mutator, parent_strategy, config, tournament_runner.as_ref())
-                .await
-        else {
-            continue;
+        // When tournament_enabled, run the 3-candidate Borda-count tournament
+        // instead of a direct propose call. Incumbent win skips this iteration.
+        let diff = if config.tournament_enabled {
+            use crate::autooptimizer::tournament::TournamentRunner;
+            let runner = TournamentRunner::from_mutator(mutator);
+            match runner.run_tournament(parent_strategy, config).await {
+                Ok(r) if r.incumbent_wins => continue,
+                Ok(r) => r.winner_diff,
+                Err(_) => continue,
+            }
+        } else {
+            match mutator.propose(parent_strategy, config, dsr_prefix).await {
+                Ok(d) => d,
+                Err(_) => continue,
+            }
         };
         progress(CycleProgressEvent::MutationProposed {
             cycle_id: cycle_id.to_string(),
@@ -338,6 +313,7 @@ where
                     code: f.code.clone(),
                 });
             }
+            handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await?;
             findings_by_node.insert(outcome.child_hash, findings);
             active.push(node);
         } else {
@@ -367,9 +343,6 @@ async fn gate_and_classify(
         min_improvement,
     );
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
-    let diff_hash = ContentHash::of_json(&serde_json::to_value(&diff)?);
-    let day_hash = ContentHash::of_json(&serde_json::to_value(&child_day)?);
-    let untouched_hash = ContentHash::of_json(&serde_json::to_value(&child_untouched)?);
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
 
     let (verdict, status) = if matches!(raw_verdict, GateVerdict::Pass) {
@@ -399,9 +372,6 @@ async fn gate_and_classify(
         child,
         diff,
         child_hash,
-        diff_hash,
-        day_hash,
-        untouched_hash,
         verdict,
         status,
         delta_sharpe,
@@ -417,13 +387,11 @@ async fn build_and_insert_node(
     let node = LineageNode {
         bundle_hash: outcome.child_hash,
         parent_hash: Some(parent_node.bundle_hash),
-        diff_hash: Some(outcome.diff_hash),
-        metrics_day_hash: Some(outcome.day_hash),
-        metrics_untouched_hash: Some(outcome.untouched_hash),
         gate_verdict: outcome.verdict.clone(),
         status: outcome.status.clone(),
         cycle_id: Some(cycle_id.to_string()),
         created_at: Utc::now(),
+        diversity_score: None,
     };
     LineageStore::new(pool.clone()).insert(&node).await?;
     Ok(node)

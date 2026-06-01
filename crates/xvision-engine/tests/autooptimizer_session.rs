@@ -1,13 +1,13 @@
 use tempfile::TempDir;
 use ulid::Ulid;
-use xvision_engine::autoresearch::{
-    config::{AutoresearchConfig, BaselineUntouchedWindow, DayWindow, MutatorConfig},
+use xvision_engine::autooptimizer::{
+    config::{AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, MutatorConfig},
     content_hash::ContentHash,
     session::{load_or_generate_key, SessionCommitment},
 };
 
-fn test_config() -> AutoresearchConfig {
-    AutoresearchConfig {
+fn test_config() -> AutoOptimizerConfig {
+    AutoOptimizerConfig {
         min_improvement: 0.05,
         baseline_untouched_window: BaselineUntouchedWindow {
             start: "2026-01-01".parse().unwrap(),
@@ -25,6 +25,8 @@ fn test_config() -> AutoresearchConfig {
         },
         allowed_mutation_kinds: vec!["prose".into(), "param".into(), "tool".into()],
         lineage_root: None,
+        dspy_enabled: false,
+        dspy_pattern_cohort_threshold: 5,
         tournament_enabled: false,
     }
 }

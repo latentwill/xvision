@@ -35,7 +35,7 @@ pub struct AutoOptimizerConfig {
     pub dspy_pattern_cohort_threshold: usize,
     /// When true, each mutation proposal runs through the three-candidate
     /// Borda-count tournament instead of a single `mutator.propose()` call.
-    /// Defaults to false; set in autoresearch.toml to opt in.
+    /// Defaults to false; set in autooptimizer.toml to opt in.
     #[serde(default)]
     pub tournament_enabled: bool,
 }

@@ -10,18 +10,18 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
-use crate::autoresearch::config::AutoresearchConfig;
-use crate::autoresearch::mutator::{empty_mutation, MutationDiff, Mutator};
-use crate::autoresearch::program_view;
-use crate::autoresearch::validator::{validate_mutation_diff, ValidationError};
+use crate::autooptimizer::config::AutoOptimizerConfig;
+use crate::autooptimizer::mutator::{empty_mutation, MutationDiff, Mutator};
+use crate::autooptimizer::program_view;
+use crate::autooptimizer::validator::{validate_mutation_diff, ValidationError};
 use crate::strategies::Strategy;
 
 const ADVERSARIAL_PROMPT: &str =
-    include_str!("../../prompts/autoresearch/tournament-adversarial-v1.md");
+    include_str!("../../prompts/autooptimizer/tournament-adversarial-v1.md");
 const SYNTHESIS_PROMPT: &str =
-    include_str!("../../prompts/autoresearch/tournament-synthesis-v1.md");
+    include_str!("../../prompts/autooptimizer/tournament-synthesis-v1.md");
 const JUDGE_PROMPT: &str =
-    include_str!("../../prompts/autoresearch/tournament-judge-v1.md");
+    include_str!("../../prompts/autooptimizer/tournament-judge-v1.md");
 
 pub const CANDIDATE_COUNT: usize = 3;
 const JUDGE_COUNT: usize = 3;
@@ -77,7 +77,7 @@ impl TournamentRunner {
     pub async fn generate_candidates(
         &self,
         parent: &Strategy,
-        config: &AutoresearchConfig,
+        config: &AutoOptimizerConfig,
     ) -> Result<Vec<TournamentCandidate>> {
         let incumbent = TournamentCandidate {
             kind: CandidateKind::Incumbent,
@@ -102,7 +102,7 @@ impl TournamentRunner {
     async fn propose_diff(
         &self,
         parent: &Strategy,
-        config: &AutoresearchConfig,
+        config: &AutoOptimizerConfig,
         system_prompt: &str,
     ) -> Result<MutationDiff> {
         let program_md = program_view::to_markdown(parent);
@@ -184,7 +184,7 @@ impl TournamentRunner {
     pub async fn run_tournament(
         &self,
         parent: &Strategy,
-        config: &AutoresearchConfig,
+        config: &AutoOptimizerConfig,
     ) -> Result<TournamentResult> {
         let candidates = self.generate_candidates(parent, config).await?;
         assert_eq!(candidates.len(), CANDIDATE_COUNT);
@@ -319,7 +319,7 @@ fn fmt_errors(errors: &[ValidationError]) -> String {
 mod tests {
     use super::*;
     use crate::agent::llm::MockDispatch;
-    use crate::autoresearch::config::AutoresearchConfig;
+    use crate::autooptimizer::config::AutoOptimizerConfig;
     use crate::strategies::Strategy;
 
     fn stub_strategy() -> Strategy {
@@ -351,14 +351,14 @@ mod tests {
 
     fn valid_diff_json() -> String {
         serde_json::to_string(&MutationDiff {
-            kind: crate::autoresearch::mutator::MutationKind::Prose,
-            prose: vec![crate::autoresearch::mutator::ProseEdit {
+            kind: crate::autooptimizer::mutator::MutationKind::Prose,
+            prose: vec![crate::autooptimizer::mutator::ProseEdit {
                 agent_role: "trader".into(),
                 before: "analyze market".into(),
                 after: "analyze market trends carefully".into(),
             }],
             params: vec![],
-            tools: crate::autoresearch::mutator::ToolDiff { added: vec![], removed: vec![] },
+            tools: crate::autooptimizer::mutator::ToolDiff { added: vec![], removed: vec![] },
             rationale: "test rationale".into(),
         })
         .unwrap()
@@ -415,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn tournament_produces_3_candidates() {
-        let config = AutoresearchConfig::default();
+        let config = AutoOptimizerConfig::default();
         let adv_json = valid_diff_json();
         let syn_json = valid_diff_json();
         let judge_json = r#"{"ranking": [0, 1, 2]}"#;
@@ -451,7 +451,7 @@ mod tests {
 
     #[tokio::test]
     async fn incumbent_wins_when_ranked_first_by_all_judges() {
-        let config = AutoresearchConfig::default();
+        let config = AutoOptimizerConfig::default();
         let adv_json = valid_diff_json();
         let syn_json = valid_diff_json();
         let incumbent_first = r#"{"ranking": [0, 1, 2]}"#;
