@@ -184,10 +184,7 @@ max_retries = 3
 "#;
     let f = write_temp(empty_model);
     let cfg = AutoresearchConfig::from_path(f.path()).expect("should parse");
-    assert!(
-        cfg.validate().is_err(),
-        "empty model should be rejected",
-    );
+    assert!(cfg.validate().is_err(), "empty model should be rejected",);
 
     let empty_provider = r#"
 min_improvement = 0.05
@@ -207,10 +204,7 @@ max_retries = 3
 "#;
     let f2 = write_temp(empty_provider);
     let cfg2 = AutoresearchConfig::from_path(f2.path()).expect("should parse");
-    assert!(
-        cfg2.validate().is_err(),
-        "empty provider should be rejected",
-    );
+    assert!(cfg2.validate().is_err(), "empty provider should be rejected",);
 }
 
 #[test]

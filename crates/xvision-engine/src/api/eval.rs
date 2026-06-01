@@ -1915,7 +1915,10 @@ async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmD
             ))
         })?
     };
-    let no_auth_eval = matches!(entry.kind, ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp);
+    let no_auth_eval = matches!(
+        entry.kind,
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+    );
     if api_key.is_empty() && !no_auth_eval {
         return Err(ApiError::Validation(format!(
             "provider `{}` has no API key set. Paste one in Settings → Providers.",

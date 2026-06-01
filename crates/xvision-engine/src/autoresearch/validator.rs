@@ -13,18 +13,23 @@ pub struct ValidationError {
 
 impl ValidationError {
     fn new(code: &str, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into(), path: None }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            path: None,
+        }
     }
 
     fn with_path(code: &str, message: impl Into<String>, path: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into(), path: Some(path.into()) }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            path: Some(path.into()),
+        }
     }
 }
 
-pub fn validate_mutation_diff(
-    diff: &MutationDiff,
-    base: &Strategy,
-) -> Result<(), Vec<ValidationError>> {
+pub fn validate_mutation_diff(diff: &MutationDiff, base: &Strategy) -> Result<(), Vec<ValidationError>> {
     if diff.is_empty() {
         return Err(vec![ValidationError::new(
             "empty_mutation",
@@ -35,7 +40,11 @@ pub fn validate_mutation_diff(
     validate_prose_edits(&diff.prose, base, &mut errors);
     validate_param_changes(&diff.params, base, &mut errors);
     validate_tools(&diff.tools.removed, &diff.tools.added, base, &mut errors);
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<ValidationError>) {
@@ -44,7 +53,10 @@ fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<V
         if !known_roles.contains(&canonical_role(&edit.agent_role)) {
             errors.push(ValidationError::with_path(
                 "unknown_agent_role",
-                format!("Experiment writer referenced unknown agent role '{}'.", edit.agent_role),
+                format!(
+                    "Experiment writer referenced unknown agent role '{}'.",
+                    edit.agent_role
+                ),
                 format!("prose[{i}].agent_role"),
             ));
         }
@@ -61,11 +73,7 @@ fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<V
     }
 }
 
-fn validate_param_changes(
-    params: &[ParamChange],
-    base: &Strategy,
-    errors: &mut Vec<ValidationError>,
-) {
+fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut Vec<ValidationError>) {
     let Some(mp) = base.mechanical_params.as_object() else {
         for (i, change) in params.iter().enumerate() {
             errors.push(ValidationError::with_path(
@@ -89,7 +97,10 @@ fn validate_param_changes(
         if current_val.is_object() || current_val.is_array() {
             errors.push(ValidationError::with_path(
                 "param_not_mutable",
-                format!("Param '{}' is a composite value and cannot be directly mutated.", change.key),
+                format!(
+                    "Param '{}' is a composite value and cannot be directly mutated.",
+                    change.key
+                ),
                 path_key,
             ));
             continue;
@@ -97,7 +108,10 @@ fn validate_param_changes(
         if &change.before != current_val {
             errors.push(ValidationError::with_path(
                 "stale_param_baseline",
-                format!("Param '{}' baseline is stale: 'before' must match the current value.", change.key),
+                format!(
+                    "Param '{}' baseline is stale: 'before' must match the current value.",
+                    change.key
+                ),
                 format!("params[{i}].before"),
             ));
         }
@@ -107,10 +121,18 @@ fn validate_param_changes(
 
 fn is_integer_param_key(key: &str) -> bool {
     let k = key.to_ascii_lowercase();
-    k.contains("period") || k.contains("lookback") || k.contains("window")
-        || k.ends_with("_bars") || k.ends_with("_minutes") || k.ends_with("_trades")
-        || k.contains("cadence") || k.starts_with("ema_") || k.starts_with("sma_")
-        || k.starts_with("macd_") || k.starts_with("atr_") || k.starts_with("adx_")
+    k.contains("period")
+        || k.contains("lookback")
+        || k.contains("window")
+        || k.ends_with("_bars")
+        || k.ends_with("_minutes")
+        || k.ends_with("_trades")
+        || k.contains("cadence")
+        || k.starts_with("ema_")
+        || k.starts_with("sma_")
+        || k.starts_with("macd_")
+        || k.starts_with("atr_")
+        || k.starts_with("adx_")
 }
 
 fn validate_param_after_value(
@@ -140,19 +162,11 @@ fn validate_param_after_value(
 }
 
 fn is_valid_tool_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    !name.is_empty() && name.len() <= 64 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-fn validate_tools(
-    removed: &[String],
-    added: &[String],
-    base: &Strategy,
-    errors: &mut Vec<ValidationError>,
-) {
-    let current: HashSet<&str> =
-        base.manifest.required_tools.iter().map(String::as_str).collect();
+fn validate_tools(removed: &[String], added: &[String], base: &Strategy, errors: &mut Vec<ValidationError>) {
+    let current: HashSet<&str> = base.manifest.required_tools.iter().map(String::as_str).collect();
     for name in removed.iter() {
         if !current.contains(name.as_str()) {
             errors.push(ValidationError::with_path(

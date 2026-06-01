@@ -131,8 +131,7 @@ impl LineageStore {
     }
 }
 
-const SELECT_COLS: &str =
-    "SELECT bundle_hash, parent_hash, diff_hash, metrics_day_hash, \
+const SELECT_COLS: &str = "SELECT bundle_hash, parent_hash, diff_hash, metrics_day_hash, \
      metrics_untouched_hash, gate_verdict, status, cycle_id, created_at \
      FROM lineage_nodes WHERE bundle_hash = ?";
 
@@ -141,7 +140,9 @@ fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
     let parent_hex: Option<String> = row.try_get("parent_hash").context("parent_hash")?;
     let diff_hex: Option<String> = row.try_get("diff_hash").context("diff_hash")?;
     let day_hex: Option<String> = row.try_get("metrics_day_hash").context("metrics_day_hash")?;
-    let untouched_hex: Option<String> = row.try_get("metrics_untouched_hash").context("metrics_untouched_hash")?;
+    let untouched_hex: Option<String> = row
+        .try_get("metrics_untouched_hash")
+        .context("metrics_untouched_hash")?;
     let gate_str: String = row.try_get("gate_verdict").context("gate_verdict")?;
     let status_str: String = row.try_get("status").context("status")?;
     let cycle_id: Option<String> = row.try_get("cycle_id").context("cycle_id")?;
@@ -149,14 +150,28 @@ fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
 
     Ok(LineageNode {
         bundle_hash: ContentHash::from_hex(&bundle_hex).context("bundle_hash hex")?,
-        parent_hash: parent_hex.map(|h| ContentHash::from_hex(&h)).transpose().context("parent_hash hex")?,
-        diff_hash: diff_hex.map(|h| ContentHash::from_hex(&h)).transpose().context("diff_hash hex")?,
-        metrics_day_hash: day_hex.map(|h| ContentHash::from_hex(&h)).transpose().context("metrics_day_hash hex")?,
-        metrics_untouched_hash: untouched_hex.map(|h| ContentHash::from_hex(&h)).transpose().context("metrics_untouched_hash hex")?,
+        parent_hash: parent_hex
+            .map(|h| ContentHash::from_hex(&h))
+            .transpose()
+            .context("parent_hash hex")?,
+        diff_hash: diff_hex
+            .map(|h| ContentHash::from_hex(&h))
+            .transpose()
+            .context("diff_hash hex")?,
+        metrics_day_hash: day_hex
+            .map(|h| ContentHash::from_hex(&h))
+            .transpose()
+            .context("metrics_day_hash hex")?,
+        metrics_untouched_hash: untouched_hex
+            .map(|h| ContentHash::from_hex(&h))
+            .transpose()
+            .context("metrics_untouched_hash hex")?,
         gate_verdict: GateVerdict::from_str(&gate_str)?,
         status: LineageStatus::from_str(&status_str)?,
         cycle_id,
-        created_at: DateTime::parse_from_rfc3339(&created_str).context("created_at parse")?.with_timezone(&Utc),
+        created_at: DateTime::parse_from_rfc3339(&created_str)
+            .context("created_at parse")?
+            .with_timezone(&Utc),
     })
 }
 
@@ -186,7 +201,11 @@ fn compute_merkle_root(nodes: &[LineageNode]) -> Result<ContentHash> {
         let mut i = 0;
         while i < leaves.len() {
             let left = leaves[i];
-            let right = if i + 1 < leaves.len() { leaves[i + 1] } else { leaves[i] };
+            let right = if i + 1 < leaves.len() {
+                leaves[i + 1]
+            } else {
+                leaves[i]
+            };
             let mut combined = [0u8; 64];
             combined[..32].copy_from_slice(left.as_bytes());
             combined[32..].copy_from_slice(right.as_bytes());

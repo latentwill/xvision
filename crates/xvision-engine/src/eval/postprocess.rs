@@ -61,9 +61,7 @@ pub fn findings_model_for_provider(entry: &ProviderEntry) -> String {
                     .unwrap_or_else(|| DEFAULT_FINDINGS_MODEL.to_string())
             }
         }
-        ProviderKind::Ollama
-        | ProviderKind::LlamaCpp
-        | ProviderKind::LocalCandle => entry
+        ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::LocalCandle => entry
             .enabled_models
             .first()
             .cloned()

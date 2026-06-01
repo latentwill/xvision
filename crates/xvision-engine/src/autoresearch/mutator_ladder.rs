@@ -51,19 +51,13 @@ pub async fn record_proposal(
 
 /// Records the Δ-Sharpe outcome for a bundle that passed the numeric gate.
 /// Called post-gate so compute_ladder can include it in avg_delta_sharpe.
-pub async fn record_outcome(
-    pool: &SqlitePool,
-    bundle_hash: &ContentHash,
-    delta_sharpe: f64,
-) -> Result<()> {
-    sqlx::query(
-        "UPDATE mutator_attribution SET delta_sharpe = ? WHERE bundle_hash = ?",
-    )
-    .bind(delta_sharpe)
-    .bind(bundle_hash.to_hex())
-    .execute(pool)
-    .await
-    .context("record_outcome update")?;
+pub async fn record_outcome(pool: &SqlitePool, bundle_hash: &ContentHash, delta_sharpe: f64) -> Result<()> {
+    sqlx::query("UPDATE mutator_attribution SET delta_sharpe = ? WHERE bundle_hash = ?")
+        .bind(delta_sharpe)
+        .bind(bundle_hash.to_hex())
+        .execute(pool)
+        .await
+        .context("record_outcome update")?;
     Ok(())
 }
 
@@ -83,10 +77,7 @@ const LADDER_SQL: &str = "
     ORDER BY avg_delta_sharpe DESC
 ";
 
-pub async fn compute_ladder(
-    pool: &SqlitePool,
-    since: DateTime<Utc>,
-) -> Result<Vec<MutatorScore>> {
+pub async fn compute_ladder(pool: &SqlitePool, since: DateTime<Utc>) -> Result<Vec<MutatorScore>> {
     let rows = sqlx::query(LADDER_SQL)
         .bind(since.to_rfc3339())
         .fetch_all(pool)
@@ -103,9 +94,7 @@ pub async fn compute_ladder(
                 rejected_overfit: row
                     .try_get::<i64, _>("rejected_overfit")
                     .context("rejected_overfit")? as u32,
-                avg_delta_sharpe: row
-                    .try_get("avg_delta_sharpe")
-                    .context("avg_delta_sharpe")?,
+                avg_delta_sharpe: row.try_get("avg_delta_sharpe").context("avg_delta_sharpe")?,
             })
         })
         .collect()

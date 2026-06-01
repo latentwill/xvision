@@ -9,10 +9,8 @@ pub fn synthesize_baseline_untouched_scenario(
     day_scenario: &Scenario,
     baseline_untouched_window: &BaselineUntouchedWindow,
 ) -> Result<Scenario> {
-    let win_start = Utc
-        .from_utc_datetime(&baseline_untouched_window.start.and_hms_opt(0, 0, 0).unwrap());
-    let win_end = Utc
-        .from_utc_datetime(&baseline_untouched_window.end.and_hms_opt(0, 0, 0).unwrap());
+    let win_start = Utc.from_utc_datetime(&baseline_untouched_window.start.and_hms_opt(0, 0, 0).unwrap());
+    let win_end = Utc.from_utc_datetime(&baseline_untouched_window.end.and_hms_opt(0, 0, 0).unwrap());
 
     if win_start >= win_end {
         bail!("baseline-untouched window is empty");
@@ -43,7 +41,10 @@ pub fn synthesize_baseline_untouched_scenario(
         day_scenario.display_name
     );
     synthesized.notes = None;
-    synthesized.time_window = TimeWindow { start: win_start, end: win_end };
+    synthesized.time_window = TimeWindow {
+        start: win_start,
+        end: win_end,
+    };
     synthesized.bar_cache_policy = BarCachePolicy {
         cache_key,
         refresh_policy: RefreshPolicy::NeverRefresh,

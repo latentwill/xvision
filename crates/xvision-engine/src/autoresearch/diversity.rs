@@ -61,8 +61,7 @@ pub async fn compute_diversity_score(
         None => return Ok(1.0),
     };
     let cycle_id = fetch_cycle_id(pool, bundle_hash).await?;
-    let others =
-        load_cycle_embeddings(pool, blob_store, cycle_id.as_deref(), bundle_hash).await?;
+    let others = load_cycle_embeddings(pool, blob_store, cycle_id.as_deref(), bundle_hash).await?;
     let score = if others.is_empty() {
         1.0
     } else {
@@ -132,13 +131,11 @@ async fn load_embedding(
     blob_store: &BlobStore,
     bundle_hash: &ContentHash,
 ) -> Result<Option<Vec<f32>>> {
-    let row = sqlx::query(
-        "SELECT embedding_blob_hash FROM lineage_embeddings WHERE bundle_hash = ?",
-    )
-    .bind(bundle_hash.to_hex())
-    .fetch_optional(pool)
-    .await
-    .context("fetch embedding row")?;
+    let row = sqlx::query("SELECT embedding_blob_hash FROM lineage_embeddings WHERE bundle_hash = ?")
+        .bind(bundle_hash.to_hex())
+        .fetch_optional(pool)
+        .await
+        .context("fetch embedding row")?;
     let Some(r) = row else { return Ok(None) };
     let blob_hash: String = r.try_get("embedding_blob_hash").context("embedding_blob_hash")?;
     let bytes = blob_store
@@ -148,10 +145,7 @@ async fn load_embedding(
     Ok(Some(vec))
 }
 
-async fn fetch_cycle_id(
-    pool: &SqlitePool,
-    bundle_hash: &ContentHash,
-) -> Result<Option<String>> {
+async fn fetch_cycle_id(pool: &SqlitePool, bundle_hash: &ContentHash) -> Result<Option<String>> {
     let row = sqlx::query("SELECT cycle_id FROM lineage_nodes WHERE bundle_hash = ?")
         .bind(bundle_hash.to_hex())
         .fetch_optional(pool)
@@ -195,11 +189,7 @@ async fn load_cycle_embeddings(
     Ok(out)
 }
 
-async fn persist_diversity_score(
-    pool: &SqlitePool,
-    bundle_hash: &ContentHash,
-    score: f64,
-) -> Result<()> {
+async fn persist_diversity_score(pool: &SqlitePool, bundle_hash: &ContentHash, score: f64) -> Result<()> {
     sqlx::query("UPDATE lineage_nodes SET diversity_score = ? WHERE bundle_hash = ?")
         .bind(score)
         .bind(bundle_hash.to_hex())

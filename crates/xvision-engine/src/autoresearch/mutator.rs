@@ -9,8 +9,7 @@ use crate::autoresearch::program_view;
 use crate::autoresearch::validator::{validate_mutation_diff, ValidationError};
 use crate::strategies::Strategy;
 
-const PROMPT_TEMPLATE: &str =
-    include_str!("../../prompts/autoresearch/mutator-v1.md");
+const PROMPT_TEMPLATE: &str = include_str!("../../prompts/autoresearch/mutator-v1.md");
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,7 +53,10 @@ pub fn empty_mutation() -> MutationDiff {
         kind: MutationKind::Prose,
         prose: Vec::new(),
         params: Vec::new(),
-        tools: ToolDiff { added: Vec::new(), removed: Vec::new() },
+        tools: ToolDiff {
+            added: Vec::new(),
+            removed: Vec::new(),
+        },
         rationale: String::new(),
     }
 }
@@ -88,7 +90,11 @@ impl Mutator {
         assert!(max_attempts >= 1, "max_attempts must be at least 1");
 
         for attempt in 0..max_attempts {
-            let user_text = build_user_payload(&program_md, &config.allowed_mutation_kinds, last_errors.as_deref());
+            let user_text = build_user_payload(
+                &program_md,
+                &config.allowed_mutation_kinds,
+                last_errors.as_deref(),
+            );
             let req = LlmRequest {
                 model: self.model.clone(),
                 system_prompt: system_prompt_text(),
@@ -100,7 +106,10 @@ impl Mutator {
                 cache_control: None,
             };
 
-            let resp = self.dispatch.complete(req).await
+            let resp = self
+                .dispatch
+                .complete(req)
+                .await
                 .with_context(|| format!("mutator dispatch failed on attempt {attempt}"))?;
             let raw_text = resp.text();
 
@@ -128,11 +137,7 @@ impl Mutator {
             .map(format_validation_errors)
             .unwrap_or_else(|| "unknown error".into());
 
-        anyhow::bail!(
-            "mutator failed after {} attempt(s): {}",
-            max_attempts,
-            error_text
-        )
+        anyhow::bail!("mutator failed after {} attempt(s): {}", max_attempts, error_text)
     }
 }
 
@@ -168,8 +173,7 @@ fn build_user_payload(
 
 fn extract_and_parse(text: &str) -> anyhow::Result<MutationDiff> {
     let json_str = extract_json_from_response(text);
-    serde_json::from_str::<MutationDiff>(json_str)
-        .context("failed to parse MutationDiff from LLM response")
+    serde_json::from_str::<MutationDiff>(json_str).context("failed to parse MutationDiff from LLM response")
 }
 
 fn extract_json_from_response(text: &str) -> &str {
@@ -184,7 +188,10 @@ fn extract_json_from_response(text: &str) -> &str {
 }
 
 fn format_validation_errors(errors: &[ValidationError]) -> String {
-    assert!(!errors.is_empty(), "format_validation_errors called with empty slice");
+    assert!(
+        !errors.is_empty(),
+        "format_validation_errors called with empty slice"
+    );
     errors
         .iter()
         .map(|e| {

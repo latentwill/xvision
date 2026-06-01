@@ -66,8 +66,7 @@ pub fn hash_bytes(bytes: &[u8]) -> ContentHash {
 }
 
 pub fn canonical_json(value: &serde_json::Value) -> String {
-    serde_json::to_string(&canonicalize_json(value))
-        .expect("canonical JSON serialization is infallible")
+    serde_json::to_string(&canonicalize_json(value)).expect("canonical JSON serialization is infallible")
 }
 
 pub fn hash_canonical_json(value: &serde_json::Value) -> ContentHash {

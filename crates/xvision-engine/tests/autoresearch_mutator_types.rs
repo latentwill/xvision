@@ -53,7 +53,10 @@ fn is_empty_reflects_content() {
             after: "b".into(),
         }],
         params: Vec::new(),
-        tools: ToolDiff { added: Vec::new(), removed: Vec::new() },
+        tools: ToolDiff {
+            added: Vec::new(),
+            removed: Vec::new(),
+        },
         rationale: String::new(),
     };
     assert!(!with_prose.is_empty());
@@ -66,7 +69,10 @@ fn is_empty_reflects_content() {
             before: serde_json::json!(1),
             after: serde_json::json!(2),
         }],
-        tools: ToolDiff { added: Vec::new(), removed: Vec::new() },
+        tools: ToolDiff {
+            added: Vec::new(),
+            removed: Vec::new(),
+        },
         rationale: String::new(),
     };
     assert!(!with_params.is_empty());
@@ -75,7 +81,10 @@ fn is_empty_reflects_content() {
         kind: MutationKind::Tool,
         prose: Vec::new(),
         params: Vec::new(),
-        tools: ToolDiff { added: vec!["new_tool".into()], removed: Vec::new() },
+        tools: ToolDiff {
+            added: vec!["new_tool".into()],
+            removed: Vec::new(),
+        },
         rationale: String::new(),
     };
     assert!(!with_tools_added.is_empty());
@@ -84,7 +93,10 @@ fn is_empty_reflects_content() {
         kind: MutationKind::Tool,
         prose: Vec::new(),
         params: Vec::new(),
-        tools: ToolDiff { added: Vec::new(), removed: vec!["old_tool".into()] },
+        tools: ToolDiff {
+            added: Vec::new(),
+            removed: vec!["old_tool".into()],
+        },
         rationale: String::new(),
     };
     assert!(!with_tools_removed.is_empty());
@@ -98,16 +110,7 @@ fn empty_mutation_kind_discriminant() {
 
 #[test]
 fn mutation_kind_serializes_as_snake_case() {
-    assert_eq!(
-        serde_json::to_string(&MutationKind::Prose).unwrap(),
-        "\"prose\""
-    );
-    assert_eq!(
-        serde_json::to_string(&MutationKind::Param).unwrap(),
-        "\"param\""
-    );
-    assert_eq!(
-        serde_json::to_string(&MutationKind::Tool).unwrap(),
-        "\"tool\""
-    );
+    assert_eq!(serde_json::to_string(&MutationKind::Prose).unwrap(), "\"prose\"");
+    assert_eq!(serde_json::to_string(&MutationKind::Param).unwrap(), "\"param\"");
+    assert_eq!(serde_json::to_string(&MutationKind::Tool).unwrap(), "\"tool\"");
 }

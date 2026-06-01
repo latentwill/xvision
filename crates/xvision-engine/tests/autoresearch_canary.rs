@@ -10,10 +10,9 @@ use xvision_engine::autoresearch::eval_adapter::PaperTestRunner;
 use xvision_engine::autoresearch::gate::{GateInput, GateVerdict};
 use xvision_engine::autoresearch::mutator::Mutator;
 use xvision_engine::eval::{
-    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
-    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, MetricsSummary, QuoteCurrency,
-    RefreshPolicy, ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue,
-    VenueSettings,
+    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees, FillModel,
+    LatencyModel, LimitOrderFill, MarketOrderFill, MetricsSummary, QuoteCurrency, RefreshPolicy, ReplayMode,
+    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use xvision_engine::safety::VenueLabel;
 use xvision_engine::strategies::Strategy;
@@ -70,9 +69,14 @@ fn make_scenario() -> Scenario {
         },
         venue: VenueSettings {
             venue: Venue::Alpaca,
-            fees: Fees { maker_bps: 10, taker_bps: 25 },
+            fees: Fees {
+                maker_bps: 10,
+                taker_bps: 25,
+            },
             slippage: SlippageModel::None,
-            latency: LatencyModel { decision_to_fill_ms: 0 },
+            latency: LatencyModel {
+                decision_to_fill_ms: 0,
+            },
             fill_model: FillModel {
                 market_order_fill: MarketOrderFill::FullAtClose,
                 limit_order_fill: LimitOrderFill::NeverFills,
@@ -130,12 +134,11 @@ struct ConstMetricsTester {
 
 #[async_trait]
 impl PaperTestRunner for ConstMetricsTester {
-    async fn run(
-        &self,
-        _strategy: &Strategy,
-        _scenario: &Scenario,
-    ) -> anyhow::Result<MetricsSummary> {
-        Ok(MetricsSummary { sharpe: self.sharpe, ..MetricsSummary::default() })
+    async fn run(&self, _strategy: &Strategy, _scenario: &Scenario) -> anyhow::Result<MetricsSummary> {
+        Ok(MetricsSummary {
+            sharpe: self.sharpe,
+            ..MetricsSummary::default()
+        })
     }
 }
 

@@ -18,8 +18,8 @@
 use chrono::Utc;
 
 use xvision_engine::eval::findings::memory::{
-    detect_memory_aware_findings, MemoryFindingOptions, KIND_MEMORY_BAD_OUTCOME,
-    KIND_MEMORY_GOOD_OUTCOME, PRODUCED_BY_MEMORY,
+    detect_memory_aware_findings, MemoryFindingOptions, KIND_MEMORY_BAD_OUTCOME, KIND_MEMORY_GOOD_OUTCOME,
+    PRODUCED_BY_MEMORY,
 };
 use xvision_engine::eval::findings::Severity;
 use xvision_engine::eval::store::DecisionRow;
@@ -34,9 +34,7 @@ fn bad_decision(run_id: &str, idx: u32) -> DecisionRow {
         // Bad outcome scenario: agent went long, position closed at a loss.
         action: "long_open".to_string(),
         conviction: Some(0.78),
-        justification: Some(
-            "Prior pattern says RSI cross at this level usually fades.".to_string(),
-        ),
+        justification: Some("Prior pattern says RSI cross at this level usually fades.".to_string()),
         reasoning: None,
         order_size: Some(1.0),
         fill_price: Some(50_000.0),
@@ -73,6 +71,7 @@ fn recall_event(
 ) -> MemoryRecallEvent {
     MemoryRecallEvent {
         run_id: run_id.to_string(),
+        flywheel_cycle_id: None,
         decision_id,
         namespace: namespace.to_string(),
         items: items
@@ -104,11 +103,7 @@ fn bad_outcome_with_stale_recall_emits_one_warning_naming_item_id() {
         )],
     )];
 
-    let findings = detect_memory_aware_findings(
-        &decisions,
-        &recalls,
-        MemoryFindingOptions::default(),
-    );
+    let findings = detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
 
     assert_eq!(
         findings.len(),
@@ -162,11 +157,7 @@ fn good_outcome_driven_by_memory_emits_nothing_when_opt_in_is_off() {
     )];
 
     // Default options — emit_good_outcomes is false. Expect zero findings.
-    let findings = detect_memory_aware_findings(
-        &decisions,
-        &recalls,
-        MemoryFindingOptions::default(),
-    );
+    let findings = detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
     assert!(
         findings.is_empty(),
         "good outcomes must not emit findings under default options, got: {:?}",
@@ -217,8 +208,7 @@ fn run_with_bad_outcome_but_no_recall_emits_nothing() {
     // any pattern. Finding must NOT fire.
     let run_id = "run-no-recall";
     let decisions = vec![bad_decision(run_id, 1)];
-    let findings =
-        detect_memory_aware_findings(&decisions, &[], MemoryFindingOptions::default());
+    let findings = detect_memory_aware_findings(&decisions, &[], MemoryFindingOptions::default());
     assert!(
         findings.is_empty(),
         "no recall events means nothing to attribute, got: {:?}",
@@ -258,11 +248,7 @@ fn mixed_run_emits_only_for_bad_outcomes_when_opt_in_off() {
         recall_event(run_id, 3, "agent:t", &[("inconclusive-C", "noop")]),
     ];
 
-    let findings = detect_memory_aware_findings(
-        &decisions,
-        &recalls,
-        MemoryFindingOptions::default(),
-    );
+    let findings = detect_memory_aware_findings(&decisions, &recalls, MemoryFindingOptions::default());
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].kind, KIND_MEMORY_BAD_OUTCOME);
     assert!(findings[0].summary.contains("stale-A"));

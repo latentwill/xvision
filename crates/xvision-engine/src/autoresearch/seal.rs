@@ -74,8 +74,7 @@ impl CycleSeal {
             self.node_count,
             &self.sealed_at,
         );
-        let sig_bytes = hex::decode(&self.operator_signature)
-            .context("decode operator_signature hex")?;
+        let sig_bytes = hex::decode(&self.operator_signature).context("decode operator_signature hex")?;
         anyhow::ensure!(
             sig_bytes.len() == 64,
             "expected 64-byte signature, got {}",

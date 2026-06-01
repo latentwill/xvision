@@ -112,7 +112,13 @@ async fn lineage_ls_empty_store() {
     setup_lineage_db(&db_path).await;
 
     let out = xvn(
-        &["autoresearch", "lineage", "ls", "--db", &db_path.to_string_lossy()],
+        &[
+            "autoresearch",
+            "lineage",
+            "ls",
+            "--db",
+            &db_path.to_string_lossy(),
+        ],
         dir.path(),
     );
     assert_ok(&out);
@@ -136,9 +142,13 @@ async fn lineage_ls_status_filter() {
 
     let out = xvn(
         &[
-            "autoresearch", "lineage", "ls",
-            "--db", &db_path.to_string_lossy(),
-            "--status", "rejected",
+            "autoresearch",
+            "lineage",
+            "ls",
+            "--db",
+            &db_path.to_string_lossy(),
+            "--status",
+            "rejected",
         ],
         dir.path(),
     );
@@ -164,7 +174,14 @@ async fn lineage_show_known_hash() {
     seed_lineage_node(&pool, &hash, None, "active", "passed", Some("cycle-1")).await;
 
     let out = xvn(
-        &["autoresearch", "lineage", "show", &hash, "--db", &db_path.to_string_lossy()],
+        &[
+            "autoresearch",
+            "lineage",
+            "show",
+            &hash,
+            "--db",
+            &db_path.to_string_lossy(),
+        ],
         dir.path(),
     );
     assert_ok(&out);
@@ -175,13 +192,17 @@ async fn lineage_show_known_hash() {
 
     let bad_hash = "dd".repeat(32);
     let out = xvn(
-        &["autoresearch", "lineage", "show", &bad_hash, "--db", &db_path.to_string_lossy()],
+        &[
+            "autoresearch",
+            "lineage",
+            "show",
+            &bad_hash,
+            "--db",
+            &db_path.to_string_lossy(),
+        ],
         dir.path(),
     );
-    assert!(
-        !out.status.success(),
-        "nonexistent hash should exit non-zero"
-    );
+    assert!(!out.status.success(), "nonexistent hash should exit non-zero");
 }
 
 #[tokio::test]
@@ -198,7 +219,14 @@ async fn seal_show_known_seal_id() {
     seed_cycle_seal(&pool, "seal-01", "cycle-test", &merkle, &sig).await;
 
     let out = xvn(
-        &["autoresearch", "seal", "show", "seal-01", "--db", &db_path.to_string_lossy()],
+        &[
+            "autoresearch",
+            "seal",
+            "show",
+            "seal-01",
+            "--db",
+            &db_path.to_string_lossy(),
+        ],
         dir.path(),
     );
     assert_ok(&out);

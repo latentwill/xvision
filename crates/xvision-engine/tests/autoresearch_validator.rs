@@ -57,8 +57,16 @@ fn codes(errs: &[xvision_engine::autoresearch::validator::ValidationError]) -> V
 fn happy_path_ok() {
     let base = make_strategy();
     let diff = make_diff(
-        vec![ProseEdit { agent_role: "trader".into(), before: "analyze market".into(), after: "analyze trends".into() }],
-        vec![ParamChange { key: "ema_fast".into(), before: json!(12), after: json!(26) }],
+        vec![ProseEdit {
+            agent_role: "trader".into(),
+            before: "analyze market".into(),
+            after: "analyze trends".into(),
+        }],
+        vec![ParamChange {
+            key: "ema_fast".into(),
+            before: json!(12),
+            after: json!(26),
+        }],
         vec!["news_feed".into()],
         vec!["price_feed".into()],
     );
@@ -78,8 +86,14 @@ fn empty_mutation_returns_single_error() {
 fn unknown_agent_role() {
     let base = make_strategy();
     let diff = make_diff(
-        vec![ProseEdit { agent_role: "intern".into(), before: "x".into(), after: "y".into() }],
-        vec![], vec![], vec![],
+        vec![ProseEdit {
+            agent_role: "intern".into(),
+            before: "x".into(),
+            after: "y".into(),
+        }],
+        vec![],
+        vec![],
+        vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"unknown_agent_role"), "{errs:?}");
@@ -89,8 +103,14 @@ fn unknown_agent_role() {
 fn stale_prose_baseline_empty_before() {
     let base = make_strategy();
     let diff = make_diff(
-        vec![ProseEdit { agent_role: "trader".into(), before: "".into(), after: "new prompt".into() }],
-        vec![], vec![], vec![],
+        vec![ProseEdit {
+            agent_role: "trader".into(),
+            before: "".into(),
+            after: "new prompt".into(),
+        }],
+        vec![],
+        vec![],
+        vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"stale_prose_baseline"), "{errs:?}");
@@ -101,8 +121,13 @@ fn unknown_param_not_in_mechanical_params() {
     let base = make_strategy();
     let diff = make_diff(
         vec![],
-        vec![ParamChange { key: "max_drawdown".into(), before: json!(0.1), after: json!(0.2) }],
-        vec![], vec![],
+        vec![ParamChange {
+            key: "max_drawdown".into(),
+            before: json!(0.1),
+            after: json!(0.2),
+        }],
+        vec![],
+        vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"unknown_param"), "{errs:?}");
@@ -113,8 +138,13 @@ fn param_not_mutable_composite_value() {
     let base = make_strategy();
     let diff = make_diff(
         vec![],
-        vec![ParamChange { key: "nested_obj".into(), before: json!({"inner": 5}), after: json!({"inner": 10}) }],
-        vec![], vec![],
+        vec![ParamChange {
+            key: "nested_obj".into(),
+            before: json!({"inner": 5}),
+            after: json!({"inner": 10}),
+        }],
+        vec![],
+        vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"param_not_mutable"), "{errs:?}");
@@ -125,8 +155,13 @@ fn stale_param_baseline_wrong_before() {
     let base = make_strategy();
     let diff = make_diff(
         vec![],
-        vec![ParamChange { key: "ema_fast".into(), before: json!(99), after: json!(26) }],
-        vec![], vec![],
+        vec![ParamChange {
+            key: "ema_fast".into(),
+            before: json!(99),
+            after: json!(26),
+        }],
+        vec![],
+        vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"stale_param_baseline"), "{errs:?}");
@@ -137,8 +172,13 @@ fn invalid_param_value_zero_period() {
     let base = make_strategy();
     let diff = make_diff(
         vec![],
-        vec![ParamChange { key: "ema_fast".into(), before: json!(12), after: json!(0) }],
-        vec![], vec![],
+        vec![ParamChange {
+            key: "ema_fast".into(),
+            before: json!(12),
+            after: json!(0),
+        }],
+        vec![],
+        vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"invalid_param_value"), "{errs:?}");
@@ -172,15 +212,25 @@ fn invalid_tool_name_rejected() {
 fn errors_aggregate_no_short_circuit() {
     let base = make_strategy();
     let diff = make_diff(
-        vec![ProseEdit { agent_role: "intern".into(), before: "x".into(), after: "y".into() }],
+        vec![ProseEdit {
+            agent_role: "intern".into(),
+            before: "x".into(),
+            after: "y".into(),
+        }],
         vec![],
         vec![],
         vec!["nonexistent_tool".into()],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     let c = codes(&errs);
-    assert!(c.contains(&"unknown_agent_role"), "missing unknown_agent_role in {errs:?}");
-    assert!(c.contains(&"tool_not_present"), "missing tool_not_present in {errs:?}");
+    assert!(
+        c.contains(&"unknown_agent_role"),
+        "missing unknown_agent_role in {errs:?}"
+    );
+    assert!(
+        c.contains(&"tool_not_present"),
+        "missing tool_not_present in {errs:?}"
+    );
     assert!(errs.len() >= 2, "expected ≥2 errors, got {}", errs.len());
 }
 
@@ -206,8 +256,13 @@ fn invalid_param_value_null_after() {
     let base = make_strategy();
     let diff = make_diff(
         vec![],
-        vec![ParamChange { key: "ema_fast".into(), before: json!(12), after: json!(null) }],
-        vec![], vec![],
+        vec![ParamChange {
+            key: "ema_fast".into(),
+            before: json!(12),
+            after: json!(null),
+        }],
+        vec![],
+        vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"invalid_param_value"), "{errs:?}");
@@ -241,8 +296,13 @@ fn mechanical_params_not_object_reports_unknown_param() {
     let base: Strategy = serde_json::from_value(v).expect("fixture deserializes");
     let diff = make_diff(
         vec![],
-        vec![ParamChange { key: "ema_fast".into(), before: json!(12), after: json!(26) }],
-        vec![], vec![],
+        vec![ParamChange {
+            key: "ema_fast".into(),
+            before: json!(12),
+            after: json!(26),
+        }],
+        vec![],
+        vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"unknown_param"), "{errs:?}");
