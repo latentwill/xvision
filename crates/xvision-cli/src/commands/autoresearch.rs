@@ -32,8 +32,8 @@ use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageS
 use xvision_engine::autoresearch::mutator::{MutationDiff, Mutator};
 use xvision_engine::autoresearch::parent_policy::ParentPolicy;
 use xvision_engine::autoresearch::progress::CycleProgressEvent;
-use xvision_engine::autoresearch::seal::build_and_sign;
 use xvision_engine::autoresearch::scenario_synthesis::synthesize_baseline_untouched_scenario;
+use xvision_engine::autoresearch::seal::build_and_sign;
 use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::strategies::Strategy;
@@ -152,6 +152,12 @@ pub struct EveningCycleArgs {
     /// Use deterministic stub paper tester (no API keys). Safe for smoke testing.
     #[arg(long)]
     pub mock: bool,
+    /// Strategy ID to use as the root parent for this cycle.
+    #[arg(long, help = "Strategy ID to use as the root parent for this cycle")]
+    pub strategy: Option<String>,
+    /// Token budget in USD for this cycle (overrides config).
+    #[arg(long, help = "Token budget in USD for this cycle (overrides config)")]
+    pub budget: Option<f64>,
 }
 
 #[derive(Args, Debug)]
@@ -235,7 +241,12 @@ pub struct GateArgs {
     #[arg(long)]
     pub candidate_score: Option<f64>,
     /// Minimum improvement (Sharpe gain) required on both today's score and the untouched-period score for the gate to return Kept.
-    #[arg(long = "min-improvement", alias = "min-delta", alias = "gate-epsilon", default_value_t = 0.0)]
+    #[arg(
+        long = "min-improvement",
+        alias = "min-delta",
+        alias = "gate-epsilon",
+        default_value_t = 0.0
+    )]
     pub min_delta: f64,
     /// Baseline strategy's score on today's data.
     #[arg(long = "baseline-today-score", alias = "parent-day-score")]
@@ -567,18 +578,21 @@ async fn run_gate(args: GateArgs) -> CliResult<()> {
     if args.json {
         crate::io::print_json(&run)?;
     } else {
-        let decision = match run.gate_verdict.as_deref().unwrap_or(
-            if run.gate_passed == Some(true) { "passed" } else { "failed" }
-        ) {
+        let decision = match run
+            .gate_verdict
+            .as_deref()
+            .unwrap_or(if run.gate_passed == Some(true) {
+                "passed"
+            } else {
+                "failed"
+            }) {
             "passed" => "Kept",
             "failed" => "Dropped",
             other => other,
         };
         println!(
             "autoresearch run {} gate decision: {} (status: {})",
-            run.id,
-            decision,
-            run.promotion_state
+            run.id, decision, run.promotion_state
         );
     }
     Ok(())
@@ -637,22 +651,41 @@ async fn fetch_lineage_rows(
     status: &str,
     limit: usize,
 ) -> CliResult<Vec<LineageRow>> {
-    const SEL: &str = "SELECT bundle_hash, parent_hash, status, cycle_id, created_at, gate_verdict FROM lineage_nodes";
+    const SEL: &str =
+        "SELECT bundle_hash, parent_hash, status, cycle_id, created_at, gate_verdict FROM lineage_nodes";
     let lim = limit as i64;
     let raw = if status == "all" {
         if let Some(c) = cycle {
-            sqlx::query(&format!("{SEL} WHERE cycle_id = ? ORDER BY created_at DESC LIMIT ?"))
-                .bind(c).bind(lim).fetch_all(pool).await
+            sqlx::query(&format!(
+                "{SEL} WHERE cycle_id = ? ORDER BY created_at DESC LIMIT ?"
+            ))
+            .bind(c)
+            .bind(lim)
+            .fetch_all(pool)
+            .await
         } else {
             sqlx::query(&format!("{SEL} ORDER BY created_at DESC LIMIT ?"))
-                .bind(lim).fetch_all(pool).await
+                .bind(lim)
+                .fetch_all(pool)
+                .await
         }
     } else if let Some(c) = cycle {
-        sqlx::query(&format!("{SEL} WHERE cycle_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"))
-            .bind(c).bind(status).bind(lim).fetch_all(pool).await
+        sqlx::query(&format!(
+            "{SEL} WHERE cycle_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"
+        ))
+        .bind(c)
+        .bind(status)
+        .bind(lim)
+        .fetch_all(pool)
+        .await
     } else {
-        sqlx::query(&format!("{SEL} WHERE status = ? ORDER BY created_at DESC LIMIT ?"))
-            .bind(status).bind(lim).fetch_all(pool).await
+        sqlx::query(&format!(
+            "{SEL} WHERE status = ? ORDER BY created_at DESC LIMIT ?"
+        ))
+        .bind(status)
+        .bind(lim)
+        .fetch_all(pool)
+        .await
     }
     .map_err(|e| CliError::upstream(anyhow::anyhow!("query lineage_nodes: {e}")))?;
     raw.into_iter()
@@ -722,8 +755,14 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
             break;
         };
         match store.get(&ph).await {
-            Err(e) => { println!("  [error: {e}]"); break; }
-            Ok(None) => { println!("  [parent {ph} not in store]"); break; }
+            Err(e) => {
+                println!("  [error: {e}]");
+                break;
+            }
+            Ok(None) => {
+                println!("  [parent {ph} not in store]");
+                break;
+            }
             Ok(Some(anc)) => {
                 let s = match anc.status {
                     LineageStatus::Active => "active",
@@ -751,17 +790,23 @@ async fn seal_show(args: SealShowArgs) -> CliResult<()> {
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("query cycle_seals: {e}")))?
     .ok_or_else(|| CliError::not_found(anyhow::anyhow!("seal {} not found", args.seal_id)))?;
-    let cycle_id: String = row.try_get("cycle_id").map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
-    let merkle_root: String = row.try_get("merkle_root").map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
-    let op_sig: String = row.try_get("operator_signature").map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
-    let sealed_at: String = row.try_get("sealed_at").map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
-    let node_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?",
-    )
-    .bind(&cycle_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("count nodes: {e}")))?;
+    let cycle_id: String = row
+        .try_get("cycle_id")
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
+    let merkle_root: String = row
+        .try_get("merkle_root")
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
+    let op_sig: String = row
+        .try_get("operator_signature")
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
+    let sealed_at: String = row
+        .try_get("sealed_at")
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
+    let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?")
+        .bind(&cycle_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("count nodes: {e}")))?;
     let sig_short = op_sig.get(..8).unwrap_or(&op_sig);
     println!("Evening summary");
     println!("seal_id:      {}", args.seal_id);
@@ -780,9 +825,8 @@ async fn run_session_init(args: SessionInitArgs) -> CliResult<()> {
         Some(p) => p,
         None => AutoresearchConfig::default_path().map_err(CliError::upstream)?,
     };
-    let cfg = AutoresearchConfig::load(&config_path).map_err(|e| {
-        CliError::usage(anyhow::anyhow!("{}: {}", config_path.display(), e))
-    })?;
+    let cfg = AutoresearchConfig::load(&config_path)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("{}: {}", config_path.display(), e)))?;
     cfg.validate().map_err(CliError::usage)?;
 
     let parents = parse_parent_hashes(args.parents.as_deref().unwrap_or(""))?;
@@ -815,7 +859,11 @@ async fn run_session_init(args: SessionInitArgs) -> CliResult<()> {
         .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize session: {e}")))?;
     std::fs::write(&out_path, json.as_bytes())
         .map_err(|e| CliError::upstream(anyhow::anyhow!("write session: {e}")))?;
-    println!("Session {} committed → {}", session.session_id, out_path.display());
+    println!(
+        "Session {} committed → {}",
+        session.session_id,
+        out_path.display()
+    );
     Ok(())
 }
 
@@ -839,27 +887,42 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
                 ipc_stream = Some(s);
             }
             Err(e) => {
-                eprintln!("warning: could not connect to IPC socket {}: {e}", socket_path.display());
+                eprintln!(
+                    "warning: could not connect to IPC socket {}: {e}",
+                    socket_path.display()
+                );
             }
         }
     }
 
     let cycle_id = args.cycle_id.clone().unwrap_or_else(|| Ulid::new().to_string());
 
-    ipc_send_event(&mut ipc_stream, CycleProgressEvent::CycleStarted {
-        cycle_id: cycle_id.clone(),
-        parent_count: 1,
-    }).await;
-    ipc_send_event(&mut ipc_stream, CycleProgressEvent::ParentSelected {
-        cycle_id: cycle_id.clone(),
-        parent_hash: parent_hash.to_hex(),
-    }).await;
+    ipc_send_event(
+        &mut ipc_stream,
+        CycleProgressEvent::CycleStarted {
+            cycle_id: cycle_id.clone(),
+            parent_count: 1,
+        },
+    )
+    .await;
+    ipc_send_event(
+        &mut ipc_stream,
+        CycleProgressEvent::ParentSelected {
+            cycle_id: cycle_id.clone(),
+            parent_hash: parent_hash.to_hex(),
+        },
+    )
+    .await;
 
     eprintln!("Proposing experiment...");
-    ipc_send_event(&mut ipc_stream, CycleProgressEvent::MutationProposed {
-        cycle_id: cycle_id.clone(),
-        parent_hash: parent_hash.to_hex(),
-    }).await;
+    ipc_send_event(
+        &mut ipc_stream,
+        CycleProgressEvent::MutationProposed {
+            cycle_id: cycle_id.clone(),
+            parent_hash: parent_hash.to_hex(),
+        },
+    )
+    .await;
 
     let diff = propose(&parent, &cfg, &dispatch)
         .await
@@ -879,16 +942,28 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
             reason: "minimum-improvement threshold not met".into(),
         }
     };
-    let status = if passed { LineageStatus::Active } else { LineageStatus::Rejected };
+    let status = if passed {
+        LineageStatus::Active
+    } else {
+        LineageStatus::Rejected
+    };
 
-    ipc_send_event(&mut ipc_stream, CycleProgressEvent::MutationGated {
-        cycle_id: cycle_id.clone(),
-        child_hash: child_hash.to_hex(),
-        passed,
-    }).await;
+    ipc_send_event(
+        &mut ipc_stream,
+        CycleProgressEvent::MutationGated {
+            cycle_id: cycle_id.clone(),
+            child_hash: child_hash.to_hex(),
+            passed,
+        },
+    )
+    .await;
 
-    eprintln!("Gate: {} (day Δ={:.3}, untouched Δ={:.3})",
-        verdict.as_str(), cd - pd, ch - ph);
+    eprintln!(
+        "Gate: {} (day Δ={:.3}, untouched Δ={:.3})",
+        verdict.as_str(),
+        cd - pd,
+        ch - ph
+    );
     if args.dry_run {
         println!("verdict: {}", verdict.as_str());
         return Ok(());
@@ -904,7 +979,16 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("write child blob: {e}")))?;
     let lineage = LineageStore::new(pool.clone());
-    insert_lineage_node(&lineage, child_hash, parent_hash, diff_hash, verdict.clone(), status, &cycle_id).await?;
+    insert_lineage_node(
+        &lineage,
+        child_hash,
+        parent_hash,
+        diff_hash,
+        verdict.clone(),
+        status,
+        &cycle_id,
+    )
+    .await?;
     if passed {
         let key_path = match args.key_path {
             Some(p) => p,
@@ -913,13 +997,11 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         seal_cycle(&pool, &lineage, &cycle_id, &session, &key_path).await?;
 
         // Emit CycleSealed event after a successful seal.
-        let node_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?",
-        )
-        .bind(&cycle_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(0);
+        let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?")
+            .bind(&cycle_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
 
         let merkle_root = lineage
             .merkle_root_for_cycle(&cycle_id)
@@ -927,11 +1009,15 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
             .map(|h| h.to_hex())
             .unwrap_or_default();
 
-        ipc_send_event(&mut ipc_stream, CycleProgressEvent::CycleSealed {
-            cycle_id: cycle_id.clone(),
-            merkle_root,
-            node_count: node_count as usize,
-        }).await;
+        ipc_send_event(
+            &mut ipc_stream,
+            CycleProgressEvent::CycleSealed {
+                cycle_id: cycle_id.clone(),
+                merkle_root,
+                node_count: node_count as usize,
+            },
+        )
+        .await;
     }
 
     // Flush and close the IPC stream.
@@ -939,7 +1025,11 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         let _ = s.shutdown().await;
     }
 
-    println!("Experiment complete: verdict={} cycle={}", verdict.as_str(), cycle_id);
+    println!(
+        "Experiment complete: verdict={} cycle={}",
+        verdict.as_str(),
+        cycle_id
+    );
     Ok(())
 }
 
@@ -963,23 +1053,19 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
 
     // Build day + baseline scenarios from config windows.
     let day_scenario = {
-        use xvision_engine::eval::scenario::{
-            AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
-            LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
-            ReplayMode, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
-        };
-        use xvision_engine::safety::VenueLabel;
         use chrono::TimeZone;
-        use xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS;
         use xvision_core::Capital;
         use xvision_data::alpaca::BarGranularity;
+        use xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS;
+        use xvision_engine::eval::scenario::{
+            AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
+            LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, ScenarioSource,
+            SlippageModel, TimeWindow, Venue, VenueSettings,
+        };
+        use xvision_engine::safety::VenueLabel;
 
-        let start = Utc.from_utc_datetime(
-            &cfg.day_window.start.and_hms_opt(0, 0, 0).expect("valid hms"),
-        );
-        let end = Utc.from_utc_datetime(
-            &cfg.day_window.end.and_hms_opt(0, 0, 0).expect("valid hms"),
-        );
+        let start = Utc.from_utc_datetime(&cfg.day_window.start.and_hms_opt(0, 0, 0).expect("valid hms"));
+        let end = Utc.from_utc_datetime(&cfg.day_window.end.and_hms_opt(0, 0, 0).expect("valid hms"));
         xvision_engine::eval::scenario::Scenario {
             id: format!("ec-day-{}", Ulid::new()),
             parent_scenario_id: None,
@@ -1003,9 +1089,14 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
             },
             venue: VenueSettings {
                 venue: Venue::Alpaca,
-                fees: Fees { maker_bps: 10, taker_bps: 25 },
+                fees: Fees {
+                    maker_bps: 10,
+                    taker_bps: 25,
+                },
                 slippage: SlippageModel::None,
-                latency: LatencyModel { decision_to_fill_ms: 250 },
+                latency: LatencyModel {
+                    decision_to_fill_ms: 250,
+                },
                 fill_model: FillModel {
                     market_order_fill: MarketOrderFill::FullAtClose,
                     limit_order_fill: LimitOrderFill::NeverFills,
@@ -1039,29 +1130,28 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
             .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
 
     // Build paper tester.
-    let paper_tester: Box<dyn xvision_engine::autoresearch::eval_adapter::PaperTestRunner> =
-        if args.mock {
-            Box::new(StubPaperTester {
-                metrics: MetricsSummary {
-                    sharpe: 0.9,
-                    total_return_pct: 5.0,
-                    max_drawdown_pct: 3.0,
-                    win_rate: 0.55,
-                    n_trades: 10,
-                    n_decisions: 20,
-                    inference_cost_quote_total: None,
-                    net_return_pct: None,
-                    baselines: None,
-                },
-            })
-        } else {
-            // Real path: BacktestPaperTester requires a RunStore + ToolRegistry.
-            // For now return a stub that signals "not yet wired".
-            return Err(CliError::usage(anyhow::anyhow!(
-                "--mock is required; non-mock BacktestPaperTester is not yet wired in the CLI. \
+    let paper_tester: Box<dyn xvision_engine::autoresearch::eval_adapter::PaperTestRunner> = if args.mock {
+        Box::new(StubPaperTester {
+            metrics: MetricsSummary {
+                sharpe: 0.9,
+                total_return_pct: 5.0,
+                max_drawdown_pct: 3.0,
+                win_rate: 0.55,
+                n_trades: 10,
+                n_decisions: 20,
+                inference_cost_quote_total: None,
+                net_return_pct: None,
+                baselines: None,
+            },
+        })
+    } else {
+        // Real path: BacktestPaperTester requires a RunStore + ToolRegistry.
+        // For now return a stub that signals "not yet wired".
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--mock is required; non-mock BacktestPaperTester is not yet wired in the CLI. \
                  Use --mock for smoke testing."
-            )));
-        };
+        )));
+    };
 
     // Build dispatch + mutator + judge.
     let dispatch = build_dispatch(args.mock)?;
@@ -1093,6 +1183,12 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
     let parent_policy = ParentPolicy::RoundRobin;
 
     eprintln!("Starting evening cycle...");
+    if let Some(ref s) = args.strategy {
+        eprintln!("strategy: {s}");
+    }
+    if let Some(b) = args.budget {
+        eprintln!("budget: {b} USD");
+    }
     let result = run_evening_cycle(
         &pool,
         &obs_blob_store,
@@ -1217,10 +1313,8 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
 
     // Replay each event.
     for raw_event in &fixture.events {
-        let event: CycleProgressEvent =
-            serde_json::from_value(raw_event.clone()).map_err(|e| {
-                CliError::usage(anyhow::anyhow!("malformed fixture event: {e}"))
-            })?;
+        let event: CycleProgressEvent = serde_json::from_value(raw_event.clone())
+            .map_err(|e| CliError::usage(anyhow::anyhow!("malformed fixture event: {e}")))?;
         if args.verbose {
             let json_line = serde_json::to_string(&event)
                 .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize event: {e}")))?;
@@ -1231,7 +1325,11 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
     }
 
     // Print summary.
-    let seal_short = fixture.seal.merkle_root.get(..16).unwrap_or(&fixture.seal.merkle_root);
+    let seal_short = fixture
+        .seal
+        .merkle_root
+        .get(..16)
+        .unwrap_or(&fixture.seal.merkle_root);
     println!(
         "demo complete: cycle_id={} nodes={} seal={}",
         fixture.cycle_id,
@@ -1244,12 +1342,11 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
 /// Send a `CycleProgressEvent` as a newline-delimited JSON line to the IPC
 /// socket. Non-fatal: errors are silently discarded so a disconnected or
 /// slow socket never interrupts the evening cycle.
-async fn ipc_send_event(
-    stream: &mut Option<tokio::net::UnixStream>,
-    ev: CycleProgressEvent,
-) {
+async fn ipc_send_event(stream: &mut Option<tokio::net::UnixStream>, ev: CycleProgressEvent) {
     let Some(ref mut s) = stream else { return };
-    let Ok(mut line) = serde_json::to_string(&ev) else { return };
+    let Ok(mut line) = serde_json::to_string(&ev) else {
+        return;
+    };
     line.push('\n');
     let _ = s.write_all(line.as_bytes()).await;
 }
@@ -1258,8 +1355,9 @@ async fn ipc_send_event(
 
 fn load_ar_config(path: Option<&Path>) -> CliResult<AutoresearchConfig> {
     match path {
-        Some(p) => AutoresearchConfig::load(p)
-            .map_err(|e| CliError::usage(anyhow::anyhow!("load config: {e}"))),
+        Some(p) => {
+            AutoresearchConfig::load(p).map_err(|e| CliError::usage(anyhow::anyhow!("load config: {e}")))
+        }
         None => Ok(AutoresearchConfig::default()),
     }
 }
@@ -1270,8 +1368,7 @@ fn load_ar_session(path: Option<&Path>) -> CliResult<SessionCommitment> {
             "--session is required (no default session search yet)"
         ))
     })?;
-    SessionCommitment::load_from(p)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("load session: {e}")))
+    SessionCommitment::load_from(p).map_err(|e| CliError::upstream(anyhow::anyhow!("load session: {e}")))
 }
 
 fn parse_parent_hashes(raw: &str) -> CliResult<Vec<ContentHash>> {
@@ -1292,21 +1389,14 @@ fn parse_parent_hashes(raw: &str) -> CliResult<Vec<ContentHash>> {
 }
 
 async fn load_strategy_blob(blobs: &BlobStore, hash: &ContentHash) -> CliResult<Strategy> {
-    let v = blobs
-        .get_json(hash)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("not found") {
-                CliError::not_found(anyhow::anyhow!(
-                    "parent bundle {} not found",
-                    hash.to_hex()
-                ))
-            } else {
-                CliError::upstream(anyhow::anyhow!("read blob: {e}"))
-            }
-        })?;
-    serde_json::from_value(v)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("deserialize strategy: {e}")))
+    let v = blobs.get_json(hash).await.map_err(|e| {
+        if e.to_string().contains("not found") {
+            CliError::not_found(anyhow::anyhow!("parent bundle {} not found", hash.to_hex()))
+        } else {
+            CliError::upstream(anyhow::anyhow!("read blob: {e}"))
+        }
+    })?;
+    serde_json::from_value(v).map_err(|e| CliError::upstream(anyhow::anyhow!("deserialize strategy: {e}")))
 }
 
 fn build_dispatch(mock: bool) -> CliResult<Arc<dyn LlmDispatch + Send + Sync>> {
@@ -1373,10 +1463,10 @@ fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool
 
 fn paper_test_sharpes(mock: bool) -> (f64, f64, f64, f64) {
     if mock {
-        (1.0, 1.0, 1.2, 1.2)  // (parent_day, parent_holdout, child_day, child_holdout)
+        (1.0, 1.0, 1.2, 1.2) // (parent_day, parent_holdout, child_day, child_holdout)
     } else {
         eprintln!("Paper-testing parent on day window...");
-        let pd = 1.0_f64;  // AR-1 stub; AR-2 wires BacktestExecutor
+        let pd = 1.0_f64; // AR-1 stub; AR-2 wires BacktestExecutor
         eprintln!("Paper-testing parent on untouched window...");
         let ph = 1.0_f64;
         eprintln!("Paper-testing experiment on day window...");
@@ -1460,12 +1550,11 @@ async fn seal_cycle(
         .merkle_root_for_cycle(cycle_id)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("merkle root: {e}")))?;
-    let node_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?")
-            .bind(cycle_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("count nodes: {e}")))?;
+    let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lineage_nodes WHERE cycle_id = ?")
+        .bind(cycle_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("count nodes: {e}")))?;
     let key = load_or_generate_key(key_path)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("load operator key: {e}")))?;
     let seal = build_and_sign(

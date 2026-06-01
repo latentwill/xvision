@@ -42,9 +42,7 @@
 
 use std::{str::FromStr, time::Duration};
 
-use sqlx::sqlite::{
-    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
-};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 

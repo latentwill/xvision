@@ -19,25 +19,25 @@ use ulid::Ulid;
 
 use xvision_engine::agent::llm::MockDispatch;
 use xvision_engine::autoresearch::config::AutoresearchConfig;
+use xvision_engine::autoresearch::content_hash::ContentHash;
 use xvision_engine::autoresearch::cycle::{run_evening_cycle, CycleConfig};
 use xvision_engine::autoresearch::eval_adapter::StubPaperTester;
+use xvision_engine::autoresearch::gate::GateVerdict;
 use xvision_engine::autoresearch::judge::Judge;
 use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
 use xvision_engine::autoresearch::mutator::Mutator;
 use xvision_engine::autoresearch::parent_policy::ParentPolicy;
 use xvision_engine::autoresearch::progress::CycleProgressEvent;
-use xvision_engine::autoresearch::content_hash::ContentHash;
-use xvision_observability::BlobStore;
-use xvision_engine::autoresearch::gate::GateVerdict;
 use xvision_engine::eval::run::MetricsSummary;
-use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, FillModel,
-    Fees, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
-    ReplayMode, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
-};
 use xvision_engine::eval::scenario::Scenario;
+use xvision_engine::eval::scenario::{
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, ScenarioSource, SlippageModel,
+    TimeWindow, Venue, VenueSettings,
+};
 use xvision_engine::safety::VenueLabel;
 use xvision_engine::strategies::Strategy;
+use xvision_observability::BlobStore;
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -106,10 +106,7 @@ async fn fresh_pool() -> sqlx::SqlitePool {
     ];
 
     for sql in migrations {
-        sqlx::query(sql)
-            .execute(&pool)
-            .await
-            .expect("apply migration");
+        sqlx::query(sql).execute(&pool).await.expect("apply migration");
     }
 
     pool
@@ -173,9 +170,14 @@ fn make_scenario(id: &str, year_start: i32, year_end: i32) -> Scenario {
         },
         venue: VenueSettings {
             venue: Venue::Alpaca,
-            fees: Fees { maker_bps: 10, taker_bps: 25 },
+            fees: Fees {
+                maker_bps: 10,
+                taker_bps: 25,
+            },
             slippage: SlippageModel::None,
-            latency: LatencyModel { decision_to_fill_ms: 0 },
+            latency: LatencyModel {
+                decision_to_fill_ms: 0,
+            },
             fill_model: FillModel {
                 market_order_fill: MarketOrderFill::FullAtClose,
                 limit_order_fill: LimitOrderFill::NeverFills,
@@ -257,9 +259,8 @@ async fn run_evening_cycle_smoke() {
 
     // ── 2. Seed a root lineage node so select_parents returns a parent ────────
     let strategy = make_strategy();
-    let bundle_hash = ContentHash::of_json(
-        &serde_json::to_value(&strategy).expect("strategy must serialise"),
-    );
+    let bundle_hash =
+        ContentHash::of_json(&serde_json::to_value(&strategy).expect("strategy must serialise"));
     let root_node = LineageNode {
         bundle_hash,
         parent_hash: None,
@@ -430,18 +431,31 @@ async fn run_evening_cycle_smoke() {
     let collected = events.lock().unwrap().clone();
 
     // CycleStarted must be present
-    let has_started = collected.iter().any(|e| matches!(e, CycleProgressEvent::CycleStarted { .. }));
-    assert!(has_started, "CycleStarted event must appear in progress events; got: {collected:?}");
+    let has_started = collected
+        .iter()
+        .any(|e| matches!(e, CycleProgressEvent::CycleStarted { .. }));
+    assert!(
+        has_started,
+        "CycleStarted event must appear in progress events; got: {collected:?}"
+    );
 
     // CycleSealed must be present
-    let has_sealed = collected.iter().any(|e| matches!(e, CycleProgressEvent::CycleSealed { .. }));
-    assert!(has_sealed, "CycleSealed event must appear in progress events; got: {collected:?}");
+    let has_sealed = collected
+        .iter()
+        .any(|e| matches!(e, CycleProgressEvent::CycleSealed { .. }));
+    assert!(
+        has_sealed,
+        "CycleSealed event must appear in progress events; got: {collected:?}"
+    );
 
     // HonestyCheckRun must be present (canary always runs)
     let has_honesty = collected
         .iter()
         .any(|e| matches!(e, CycleProgressEvent::HonestyCheckRun { .. }));
-    assert!(has_honesty, "HonestyCheckRun event must appear in progress events; got: {collected:?}");
+    assert!(
+        has_honesty,
+        "HonestyCheckRun event must appear in progress events; got: {collected:?}"
+    );
 
     // CycleSealed event cycle_id must match result.cycle_id
     if let Some(CycleProgressEvent::CycleSealed { cycle_id, .. }) = collected

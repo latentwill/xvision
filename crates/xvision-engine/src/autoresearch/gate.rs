@@ -62,11 +62,13 @@ impl GateVerdict {
 ///
 /// Pure function — same inputs always yield the same verdict.
 pub fn evaluate(input: &GateInput) -> GateVerdict {
-    debug_assert!(input.min_improvement.is_finite(), "min_improvement must be finite");
+    debug_assert!(
+        input.min_improvement.is_finite(),
+        "min_improvement must be finite"
+    );
 
     let delta_day = input.child_day_metrics.sharpe - input.parent_day_metrics.sharpe;
-    let delta_untouched =
-        input.child_untouched_metrics.sharpe - input.parent_untouched_metrics.sharpe;
+    let delta_untouched = input.child_untouched_metrics.sharpe - input.parent_untouched_metrics.sharpe;
 
     if delta_day < input.min_improvement - CMP_EPS {
         return GateVerdict::Fail {

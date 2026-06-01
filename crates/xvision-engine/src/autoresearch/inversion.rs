@@ -22,7 +22,10 @@ pub fn invert_mutation(diff: &MutationDiff) -> MutationDiff {
     assert!(diff.prose.len() <= MAX_PROSE, "prose count exceeds bound");
     assert!(diff.params.len() <= MAX_PARAMS, "params count exceeds bound");
     assert!(diff.tools.added.len() <= MAX_TOOLS, "tools.added exceeds bound");
-    assert!(diff.tools.removed.len() <= MAX_TOOLS, "tools.removed exceeds bound");
+    assert!(
+        diff.tools.removed.len() <= MAX_TOOLS,
+        "tools.removed exceeds bound"
+    );
 
     let prose = diff
         .prose
