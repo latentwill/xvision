@@ -67,28 +67,45 @@ fn xvn(args: &[&str], home: &std::path::Path) -> std::process::Output {
 }
 
 /// Construct a complete Strategy on disk and return its JSON file path.
-/// Mirrors the shape the pre-removal `mean_reversion` template produced
-/// so the existing test assertions (template label, regime/trader slot
-/// presence, mechanical_params keys) keep their meaning.
 fn write_strategy_file(home: &std::path::Path, id: &str, name: &str) -> std::path::PathBuf {
-    let strategy = build_mean_reversion(id, name);
+    let strategy = build_test_strategy(id, name);
     let path = home.join("seed-strategy.json");
     std::fs::write(&path, serde_json::to_vec_pretty(&strategy).unwrap()).unwrap();
     path
 }
 
-fn build_mean_reversion(id: &str, name: &str) -> Strategy {
+fn trader_slot() -> LLMSlot {
+    LLMSlot {
+        role: "trader".into(),
+        attested_with: "test.model".into(),
+        allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
+        provider: None,
+        model: None,
+    }
+}
+
+fn regime_slot() -> LLMSlot {
+    LLMSlot {
+        role: "regime".into(),
+        attested_with: "test.model".into(),
+        allowed_tools: vec!["indicator_panel".into()],
+        provider: None,
+        model: None,
+    }
+}
+
+fn build_test_strategy(id: &str, name: &str) -> Strategy {
     Strategy {
         manifest: PublicManifest {
             id: id.into(),
             display_name: name.into(),
-            plain_summary: "Buys oversold ETH dips. Tests sideways markets.".into(),
+            plain_summary: "Test CLI strategy.".into(),
             creator: "@strategy-cli-test".into(),
-            template: "mean_reversion".into(),
+            template: "custom".into(),
             regime_fit: vec![RegimeFit::RangeBound, RegimeFit::LowVol],
             asset_universe: vec!["ETH/USD".into()],
             decision_cadence_minutes: 60,
-            attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
+            attested_with: vec!["test.model".into()],
             required_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -100,33 +117,22 @@ fn build_mean_reversion(id: &str, name: &str) -> Strategy {
         hypothesis: None,
         agents: Vec::new(),
         pipeline: PipelineDef::default(),
-        regime_slot: Some(LLMSlot {
-            role: "regime".into(),
-            attested_with: "anthropic.claude-sonnet-4.6".into(),
-            allowed_tools: vec!["indicator_panel".into()],
-            provider: None,
-            model: None,
-        }),
+        regime_slot: None,
         intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            attested_with: "anthropic.claude-sonnet-4.6".into(),
-            allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
-            provider: None,
-            model: None,
-        }),
+        trader_slot: Some(trader_slot()),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({
-            "rsi_oversold": 30,
-            "rsi_overbought": 70,
-            "bollinger_period": 20,
-            "bollinger_sigma": 2.0,
-            "atr_period": 14
-        }),
+        mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
     }
+}
+
+fn build_legacy_slot_strategy(id: &str, name: &str) -> Strategy {
+    let mut strategy = build_test_strategy(id, name);
+    strategy.regime_slot = Some(regime_slot());
+    strategy.trader_slot = Some(trader_slot());
+    strategy
 }
 
 fn create_agent(home: &std::path::Path, name: &str) -> String {
@@ -176,7 +182,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
 }
 
 fn create_legacy_strategy(home: &std::path::Path, id: &str, name: &str) {
-    let strategy = build_mean_reversion(id, name);
+    let strategy = build_legacy_slot_strategy(id, name);
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -188,7 +194,7 @@ fn create_legacy_strategy(home: &std::path::Path, id: &str, name: &str) {
 }
 
 fn create_agent_strategy(home: &std::path::Path, id: &str, name: &str, agent_id: &str) {
-    let mut strategy = build_mean_reversion(id, name);
+    let mut strategy = build_test_strategy(id, name);
     strategy.agents = vec![AgentRef {
         agent_id: agent_id.into(),
         role: "trader".into(),
@@ -239,8 +245,7 @@ fn write_provider_config(home: &std::path::Path) {
 #[test]
 fn from_file_validate_ls_show_roundtrip() {
     let dir = tempdir().unwrap();
-    // Pre-2026-05-21 this used `--template mean_reversion --name test1`;
-    // the template_registry is gone, so we scaffold via --from-file.
+    // The template_registry is gone, so this uses an explicit strategy file.
     let id = "01H8N7ZCLIROUNDTRIPFIXED01";
     let path = write_strategy_file(dir.path(), id, "test1");
 
@@ -265,11 +270,10 @@ fn from_file_validate_ls_show_roundtrip() {
 
     let out = xvn(&["strategy", "show", id], dir.path());
     assert!(out.status.success());
-    let json = String::from_utf8(out.stdout).unwrap();
-    assert!(json.contains("\"template\""));
-    assert!(json.contains("mean_reversion"));
-    assert!(json.contains("\"regime_slot\""));
-    assert!(json.contains("\"trader_slot\""));
+    let strategy: serde_json::Value = serde_json::from_slice(&out.stdout).expect("strategy JSON");
+    assert_eq!(strategy["manifest"]["id"], id);
+    assert_eq!(strategy["manifest"]["display_name"], "test1");
+    assert_eq!(strategy["manifest"]["template"], "custom");
 }
 
 #[test]
@@ -595,7 +599,7 @@ fn migrate_agents_converts_legacy_slots_to_agent_refs() {
 fn run_inline_with_mock_dispatch_seeds_real_ohlcv_and_reports_usage() {
     let dir = tempdir().unwrap();
     let id = "01H8N7ZCLIRUNREALDATA00001";
-    let mut strategy = build_mean_reversion(id, "real-data");
+    let mut strategy = build_test_strategy(id, "real-data");
     strategy.manifest.asset_universe = vec!["BTC/USD".into()];
     let path = dir.path().join("seed-strategy-btc.json");
     std::fs::write(&path, serde_json::to_vec_pretty(&strategy).unwrap()).unwrap();
@@ -736,5 +740,61 @@ fn strategy_new_assets_populates_universe() {
         universe_strs,
         ["BTC/USD", "ETH/USD", "SOL/USD"],
         "asset_universe must be venue-pair normalized: {universe_strs:?}"
+    );
+}
+
+#[test]
+fn create_from_file_plain_emits_every_bar_warning_to_stderr() {
+    let dir = tempdir().unwrap();
+    let id = "01H8N7ZCLIWARNTEST0000001A";
+    let path = write_strategy_file(dir.path(), id, "warn-test");
+
+    // Plain (non --json) create: stdout = bare id, stderr = every-bar warning.
+    let out = xvn(
+        &["strategy", "create", "--from-file", path.to_str().unwrap()],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        stdout.trim(),
+        id,
+        "stdout must be the bare strategy id with no warning text"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("every bar") || stderr.contains("burns tokens"),
+        "stderr must contain the every-bar warning; got: {stderr}"
+    );
+
+    // --no-filter-warning suppresses the stderr warning.
+    let dir2 = tempdir().unwrap();
+    let id2 = "01H8N7ZCLIWARNSUPPRESS001A";
+    let path2 = write_strategy_file(dir2.path(), id2, "warn-suppressed");
+    let out2 = xvn(
+        &[
+            "strategy",
+            "create",
+            "--from-file",
+            path2.to_str().unwrap(),
+            "--no-filter-warning",
+        ],
+        dir2.path(),
+    );
+    assert!(
+        out2.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    let stdout2 = String::from_utf8(out2.stdout).unwrap();
+    assert_eq!(stdout2.trim(), id2, "stdout must be the bare strategy id");
+    let stderr2 = String::from_utf8(out2.stderr).unwrap();
+    assert!(
+        !stderr2.contains("every bar") && !stderr2.contains("burns tokens"),
+        "--no-filter-warning must suppress the warning; got: {stderr2}"
     );
 }
