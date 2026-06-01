@@ -6,7 +6,7 @@ pub mod agent;
 pub mod agents;
 pub mod api;
 pub mod authoring;
-pub mod autoresearch;
+pub mod autooptimizer;
 pub mod baselines;
 pub mod chat_session;
 pub mod checkpoint;
