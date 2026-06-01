@@ -14,11 +14,11 @@ self-improvement flywheels for trading agents.
 It is a sibling to `2026-05-24-chat-rail-and-strategy-agents-evaluation.md`
 and must not contradict it. Where that document specifies operator surfaces
 and DSRs adoption, this one specifies the memory substrate underneath, the
-autoresearcher distillation pass on top, and the leakage-safe closure between
+autooptimizer distillation pass on top, and the leakage-safe closure between
 them.
 
 It is also a follow-on to `2026-05-21-cortex-memory-integration-plan.md`
-and `2026-05-09-karpathy-autoresearcher-design.md`. Those documents define
+and `2026-05-09-karpathy-autooptimizer-design.md`. Those documents define
 the data model and the distillation loop respectively. This document defines
 how those two surfaces connect to the new ClineSDK runtime and the DSRs
 optimizer, and adds the proof gates the earlier specs lack.
@@ -46,7 +46,7 @@ memory:
   gambletan/cortex as the memory subsystem and links to the upstream
   repo.
 - **Memory-touching docs**: every spec or plan that discusses memory
-  (this doc, the V2D plan, the leakage notes, the autoresearcher
+  (this doc, the V2D plan, the leakage notes, the autooptimizer
   design) carries an inline attribution at first mention.
 - **Release notes**: the release that lands cortex-core adoption
   names the dependency, the version, and the upstream maintainer.
@@ -73,7 +73,7 @@ Diverging from these names should require a written rationale.
 | Deferred sidecar integration | `cortex-http` sidecar | gambletan/cortex's HTTP crate (axum, local-only). 2026-05-21 V2D Decision 1 explicitly defers this to v2. Until then, xvision-memory is self-contained. |
 | The recall-time prompt wrapper | "case-law framing" | "A prior decision noted: ... Consider whether this situation matches the present cycle." |
 | The three-layer leakage protection | "F+L+T" | F = structural (tier split), L = rhetorical (case-law framing), T = temporal (training_window_end gate). |
-| The distillation pass that promotes Observations -> Patterns | "autoresearcher" | Per `2026-05-09-karpathy-autoresearcher-design.md`. |
+| The distillation pass that promotes Observations -> Patterns | "autooptimizer" | Per `2026-05-09-karpathy-autooptimizer-design.md`. |
 | One full closed loop | "flywheel cycle" | capture -> observe -> score -> distill -> optimize -> mint -> promote -> recall -> demote. |
 
 ## Existing work to preserve
@@ -94,7 +94,7 @@ Do not rediscover these. Fold them into implementation.
   as `Off`.
 - `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` -
   the F+L+T leakage contract. This is hard physics, not negotiable.
-- `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md` -
+- `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md` -
   the mutation loop, Finding/gate model, demote-on-failure semantics.
 - `docs/superpowers/research/2026-05-11-autoimproving-memory-survey.md` -
   the research foundation for outcome-conditioned memory.
@@ -137,7 +137,7 @@ Do not rediscover these. Fold them into implementation.
    the recorder. The store enforces this at the function boundary.
 3. F+L+T is non-negotiable. Adding a new recall path requires a written
    amendment to `2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`.
-4. Patterns produced by autoresearcher must carry `training_window_end`
+4. Patterns produced by autooptimizer must carry `training_window_end`
    equal to the latest `source_window_end` across contributing
    Observations. Operator-seeded Patterns may set
    `training_window_end = NULL` only when a first-class
@@ -150,7 +150,7 @@ Do not rediscover these. Fold them into implementation.
 6. The DSRs optimizer reads Observations and Patterns as inputs but never
    writes to them. Optimizer output is written to `AgentSlot.system_prompt`
    (or a child agent) and to `agent_slot_optimizations`. Memory writes
-   from optimization happen only via autoresearcher Pattern promotion,
+   from optimization happen only via autooptimizer Pattern promotion,
    never directly from the optimizer.
 7. Demote-on-failure is soft-delete (`forgotten_at` set), with a grace
    window (default 14 days) before janitor hard-deletes. Hard-deletes
@@ -163,11 +163,11 @@ Do not rediscover these. Fold them into implementation.
 9. Memory-mode upgrades on an existing agent require a new child agent
    mint, not an in-place edit, when the change crosses `Off -> on` or
    `AgentScoped -> Global`. The lineage chain records the transition.
-10. Autoresearcher writes never run inside a live decision cycle. Like
-    DSRs, autoresearcher is offline-only. The `xvn autoresearch run`
+10. AutoOptimizer writes never run inside a live decision cycle. Like
+    DSRs, autooptimizer is offline-only. The `xvn autooptimizer run`
     verb is the only entry point.
 11. Raw cortex APIs are private to `xvision-memory`. No engine,
-    dashboard, CLI, MCP, optimizer, or autoresearcher code imports
+    dashboard, CLI, MCP, optimizer, or autooptimizer code imports
     `cortex_core::*` directly. CI fails on direct imports outside the
     adapter crate.
 12. Memory-mode upgrades are enforced server-side, not only in UI copy.
@@ -235,7 +235,7 @@ Agents implementing this plan must not:
 - Recall Patterns into a prompt while the dashboard is showing the
   operator a different prompt. The prompt the agent sees and the prompt
   the operator sees must be identical at the byte level.
-- Run the autoresearcher inside a live trading process. The verb is
+- Run the autooptimizer inside a live trading process. The verb is
   offline; the writer is offline; the audit trail is signed offline.
 - Treat `MemoryMode::Off` as "memory not configured." It is "operator
   opted out." Surfacing this distinction matters for evidence.
@@ -262,7 +262,7 @@ docs/superpowers/evidence/2026-05-24-cortex-flywheels/
   record/
     provenance-fixture.json
     observation-rows.json
-  autoresearcher/
+  autooptimizer/
     distill-run-baseline.json
     distill-run-candidate.json
     finding-blind-to-metric.txt
@@ -290,17 +290,17 @@ which is manual, and which live-provider proof is intentionally opt-in.
 Each user-visible capability appears in every applicable surface. If a
 surface is not applicable, record why in the evidence ledger.
 
-| Surface | Memory layer | Autoresearcher | DSRs x Memory | Flywheel observability |
+| Surface | Memory layer | AutoOptimizer | DSRs x Memory | Flywheel observability |
 |---|---|---|---|---|
-| Dashboard UI | Extend existing `/agents/memory`, per-agent Memory tab, and eval-run MemoryPanel with recall preview, exact prompt link, forget UI, lineage view | Autoresearch run history, Pattern provenance, mutation diff, judge Finding view | Optimizer demo-source selector (live vs frozen Observations), holdout split control | Flywheel velocity chart, Pattern lifecycle ribbon, leakage-regression dashboard |
-| CLI | Existing verbs remain canonical: `xvn memory ls`, `show`, `add-pattern`, `rm`, `forget`, `undo-forget`. Add aliases only with compatibility tests. No `observe` write verb unless it is explicitly marked fixture-only and cannot hit production DBs. | `xvn autoresearch run`, `xvn autoresearch inspect`, `xvn autoresearch promote`, `xvn autoresearch demote` | `xvn optimize --use-memory-demos`, `--demo-source`, `--holdout-split` | `xvn flywheel status`, `xvn flywheel velocity` |
-| Dashboard API | Extend existing `/api/memory` list/get/create/delete/forget/undo-forget routes; add recall-preview and namespace listing through adapter methods, not raw table SQL | autoresearch CRUD, finding endpoints, promotion/demotion endpoints | optimizer demo-source endpoints | flywheel telemetry endpoints |
-| MCP | `memory.recall`, `memory.list`, `memory.context` read-only by default; `memory.forget` and all cortex write tools are xvision-wrapped writes requiring server-side policy + audit | `autoresearch.run`, `autoresearch.inspect`, `autoresearch.findings` | none (offline only, no MCP) | `flywheel.status`, `flywheel.velocity` |
+| Dashboard UI | Extend existing `/agents/memory`, per-agent Memory tab, and eval-run MemoryPanel with recall preview, exact prompt link, forget UI, lineage view | AutoOptimizer run history, Pattern provenance, mutation diff, judge Finding view | Optimizer demo-source selector (live vs frozen Observations), holdout split control | Flywheel velocity chart, Pattern lifecycle ribbon, leakage-regression dashboard |
+| CLI | Existing verbs remain canonical: `xvn memory ls`, `show`, `add-pattern`, `rm`, `forget`, `undo-forget`. Add aliases only with compatibility tests. No `observe` write verb unless it is explicitly marked fixture-only and cannot hit production DBs. | `xvn autooptimizer run`, `xvn autooptimizer inspect`, `xvn autooptimizer promote`, `xvn autooptimizer demote` | `xvn optimize --use-memory-demos`, `--demo-source`, `--holdout-split` | `xvn flywheel status`, `xvn flywheel velocity` |
+| Dashboard API | Extend existing `/api/memory` list/get/create/delete/forget/undo-forget routes; add recall-preview and namespace listing through adapter methods, not raw table SQL | autooptimizer CRUD, finding endpoints, promotion/demotion endpoints | optimizer demo-source endpoints | flywheel telemetry endpoints |
+| MCP | `memory.recall`, `memory.list`, `memory.context` read-only by default; `memory.forget` and all cortex write tools are xvision-wrapped writes requiring server-side policy + audit | `autooptimizer.run`, `autooptimizer.inspect`, `autooptimizer.findings` | none (offline only, no MCP) | `flywheel.status`, `flywheel.velocity` |
 | Scripts | leakage-regression script, recall determinism script | distillation smoke script, pattern-lineage export | memory-demo audit script | flywheel velocity export |
-| Docs | operator memory overview, MANUAL.md memory section | autoresearcher operator guide, judge prompt provenance docs | optimizer x memory docs | flywheel operator guide |
-| Skills | `.claude/skills/xvision/memory-ops` | `.claude/skills/xvision/autoresearch-ops` | extended optimizer skill | `.claude/skills/xvision/flywheel-ops` |
-| Tests | recall/record unit tests, leakage probes, migration tests | autoresearcher integration tests, finding-blind tests, promotion gate tests | optimizer-with-memory integration tests, holdout tests | end-to-end flywheel test |
-| Observability | `memory_recall`, `memory_write`, `memory_forget` events | `autoresearch_started`, `autoresearch_finished`, `pattern_promoted`, `pattern_demoted` events | optimization events tagged with demo source | flywheel cycle ID threaded through every event |
+| Docs | operator memory overview, MANUAL.md memory section | autooptimizer operator guide, judge prompt provenance docs | optimizer x memory docs | flywheel operator guide |
+| Skills | `.claude/skills/xvision/memory-ops` | `.claude/skills/xvision/autooptimizer-ops` | extended optimizer skill | `.claude/skills/xvision/flywheel-ops` |
+| Tests | recall/record unit tests, leakage probes, migration tests | autooptimizer integration tests, finding-blind tests, promotion gate tests | optimizer-with-memory integration tests, holdout tests | end-to-end flywheel test |
+| Observability | `memory_recall`, `memory_write`, `memory_forget` events | `autooptimizer_started`, `autooptimizer_finished`, `pattern_promoted`, `pattern_demoted` events | optimization events tagged with demo source | flywheel cycle ID threaded through every event |
 
 ## The flywheel - canonical loop
 
@@ -326,7 +326,7 @@ evidence record.
    profit factor. Each cycle's outcome is attached to its Observation
    via `cycle_id`. This binding is the link that makes memory outcome-
    conditioned.
-4. **Distill (autoresearcher, V3 offline verb).** `xvn autoresearch run`
+4. **Distill (autooptimizer, V3 offline verb).** `xvn autooptimizer run`
    reads Observations for a target slot or capability, clusters by
    regime / asset / outcome, asks an LLM to propose Patterns ("when in
    high-vol regime with negative funding, smaller size, tighter stop"),
@@ -429,7 +429,7 @@ Tasks:
    and the storage adapter so Observations carry
    `source_window_start`/`source_window_end`. Backtest/eval must pass
    the scenario-cycle briefing window; live/paper must pass the latest
-   market-data timestamp used in the briefing. Autoresearcher may not
+   market-data timestamp used in the briefing. AutoOptimizer may not
    run until this field is populated for its cohort.
 4. **Operator attestation table.** Add `operator_attestations` with
    operator id/initials, surface (`cli`, `dashboard`, `chat-rail`),
@@ -494,7 +494,7 @@ thin trading-safety adapter over `cortex_core::Cortex`. It is gating for
 Pattern-aware Phase 2 work because the optimizer's demo selection benefits
    from cortex's multi-signal retrieval, and gating for cortex-backed Phase 3
    consolidation because cortex's consolidation engine overlaps part of what
-   the autoresearcher does. Phase 2A may still use Observation-only demo
+   the autooptimizer does. Phase 2A may still use Observation-only demo
    pools after Phase 1 if the adapter spike is delayed.
 
 The adapter rewrite is small (~150 SLOC target) but the migration of
@@ -536,7 +536,7 @@ Tasks:
    - **Consolidation hook** intercepts cortex's Episodic->Semantic
      promotion. Promotion path emits candidates with
      `promotion_state='staged'` and is rerouted through
-     autoresearcher's numeric gate before any candidate becomes active
+     autooptimizer's numeric gate before any candidate becomes active
      (Phase 3 dependency).
    - **Forget hook** preserves the grace-window semantics
      (`forgotten_at` timestamp, janitor sweep).
@@ -553,7 +553,7 @@ Tasks:
    - xvision `tier='pattern'` -> cortex Semantic
    - `(run_id, scenario_id, cycle_idx)` -> cortex episode metadata
    - Observation `source_window_start` / `source_window_end` -> cortex
-     episode metadata used by autoresearcher
+     episode metadata used by autooptimizer
    - Pattern `training_window_end`, `promotion_state`, and
      `attestation_id` -> cortex metadata + F+L+T plugin state
    - `forgotten_at` -> cortex's decay state with explicit forgotten
@@ -648,14 +648,14 @@ Patterns; holdout metric reported; demo set hash verifiable; no
 Observation in the demo/dev set has `source_window_end` or outcome
 window overlapping the holdout scenario window.
 
-## Phase 3 - Autoresearcher distillation
+## Phase 3 - AutoOptimizer distillation
 
-Implements `2026-05-09-karpathy-autoresearcher-design.md` as a concrete
+Implements `2026-05-09-karpathy-autooptimizer-design.md` as a concrete
 verb wired into the rest of the system.
 
 Tasks:
 
-1. **`xvn autoresearch run`.** Reads Observations for the target
+1. **`xvn autooptimizer run`.** Reads Observations for the target
    slot/capability over a configurable window. Clusters by regime,
    asset, outcome buckets. For each cluster, calls an LLM (offline
    model, not the live trader's model) to propose 1-N candidate
@@ -682,12 +682,12 @@ Tasks:
    default 30 cycles), `forgotten_at` is set and `pattern_demoted`
    fires. Operator can `xvn memory undo-forget` during grace.
 6. **Mutator-skill ladder (deferred from V3).** Per-capability optimizer
-   metrics on the autoresearcher itself. Tracks: candidates proposed,
+   metrics on the autooptimizer itself. Tracks: candidates proposed,
    gate pass rate, promotion durability (how long promoted Patterns
    survive before demotion), diversity score. Recorded in
-   `autoresearch_runs` table.
+   `autooptimizer_runs` table.
 
-Exit criteria: A single `xvn autoresearch run` produces at least one
+Exit criteria: A single `xvn autooptimizer run` produces at least one
 promoted Pattern visible in the dashboard, recall-active on the next
 backtest cycle, with full lineage from contributing Observations through
 the LLM judge Finding to the numeric gate result. The same Pattern can be
@@ -718,11 +718,11 @@ Tasks:
    normal; NULL-window manual seeds require an explicit attestation flag
    plus stored attestation evidence.
 5. **Chat-rail integration.** The chat rail's `act` mode (per companion
-   plan A.1 item 3) exposes `optimize_slot` and `autoresearch_slot` as
+   plan A.1 item 3) exposes `optimize_slot` and `autooptimizer_slot` as
    write-tools. Both are ask-mode by default per the three-state tool
    policy.
 6. **Skills.** `.claude/skills/xvision/memory-ops`,
-   `xvision/autoresearch-ops`, `xvision/flywheel-ops`. Each carries
+   `xvision/autooptimizer-ops`, `xvision/flywheel-ops`. Each carries
    operator runbook, safety checklist, common-failure-mode guide.
 
 Exit criteria: An operator can drive a complete flywheel cycle from the
@@ -741,7 +741,7 @@ Tasks:
    the optimizer emits a warning and requires operator override. Logged
    to lineage.
 2. **Survivor bias counter.** Demoted Patterns are not deleted from the
-   audit log (only soft-deleted from recall). Autoresearcher input
+   audit log (only soft-deleted from recall). AutoOptimizer input
    cohorts include a configurable fraction of demoted-Pattern
    Observations to prevent the corpus from drifting toward
    success-only.
@@ -753,7 +753,7 @@ Tasks:
    `pattern_promoted` events, recompute `training_window_end` from
    source Observations, fail audit if any drift.
 5. **Judge calibration drift.** The LLM judge model and prompt are
-   pinned per autoresearch run. Recorded in `autoresearch_runs.judge_model_hash`.
+   pinned per autooptimizer run. Recorded in `autooptimizer_runs.judge_model_hash`.
    Operator must explicitly migrate to a new judge; Findings from
    different judges are not directly comparable.
 6. **Flywheel velocity report.** Weekly export
@@ -762,7 +762,7 @@ Tasks:
    with numeric gate. Operator reads this to spot regressions.
 
 Exit criteria: System runs unattended for two weeks across paper
-trading + scheduled autoresearch + scheduled optimize, with no manual
+trading + scheduled autooptimizer + scheduled optimize, with no manual
 intervention, leakage probes green, velocity report produced, no
 single Pattern recalled in >80% of cycles, demote ratio plausible
 (some positive demote rate is healthy; zero means the gate is too
@@ -848,23 +848,23 @@ opt-in per namespace.
 
 Cortex's consolidation engine runs as a background cycle that does
 Episodic->Semantic promotion, decay, pattern extraction. xvision's
-autoresearcher is an offline verb. These overlap; the right
+autooptimizer is an offline verb. These overlap; the right
 relationship is:
 
 - Cortex's consolidation handles the cheap stuff: stale-decay,
   obvious-duplicate-merge, frequency-based promotion candidates.
-- The autoresearcher (Phase 3) handles the expensive stuff: LLM
+- The autooptimizer (Phase 3) handles the expensive stuff: LLM
   proposal of new Patterns, numeric gate, judge Finding.
-- Cortex's consolidation flags candidates; autoresearcher decides.
+- Cortex's consolidation flags candidates; autooptimizer decides.
 
-Tasks: register the autoresearcher's gate as cortex's promotion
+Tasks: register the autooptimizer's gate as cortex's promotion
 hook (Phase 1.5 task 3 already establishes the seam); decide the
 background cadence (default: hourly during paper trading, on
 demand during backtest); surface consolidation activity in the
 flywheel velocity dashboard.
 
 Evidence: log of consolidation cycle output, verification that
-no promotion bypasses the autoresearcher gate, dashboard
+no promotion bypasses the autooptimizer gate, dashboard
 screenshot of cycle activity.
 
 ### 6.5 - Token-budgeted context injection
@@ -964,7 +964,7 @@ Catalog of failure modes the design must resist.
    same as optimizing on real future returns. Mitigation: mandatory
    holdout (Phase 2 task 2), demote-on-live-failure (Phase 3 task 5),
    compounding-bias guard (Phase 5 task 1).
-2. **Pattern monoculture.** Autoresearcher converges on Patterns that
+2. **Pattern monoculture.** AutoOptimizer converges on Patterns that
    are easy to extract rather than Patterns that are useful. Mitigation:
    diversity metric in the mutator-skill ladder (Phase 3 task 6),
    memory-poisoning detection (Phase 5 task 3).
@@ -1065,7 +1065,7 @@ Phase 0 (preflight)
    ---> Phase 1 (recorder hardening)
    ---> Phase 1.4 (cortex dependency spike) ---> Phase 1.5 (adopt cortex-core; ATTRIBUTION FIRST)
         \-> Phase 2A (DSRs x Observation demo pools)
-   ---> Phase 3 (autoresearcher)
+   ---> Phase 3 (autooptimizer)
    ---> Phase 2B (Pattern-aware optimizer)
    ---> Phase 4 (surface + UX)
    ---> Phase 5 (velocity hardening)
@@ -1100,7 +1100,7 @@ MIT obligations early and signals intent to the upstream maintainer.
   Bayesian beliefs, people graph, multi-signal retrieval, MCP server,
   HNSW vector index, consolidation engine, 25 MCP tools, plugin hooks).
   Mirrored but not vendored.
-- Autoresearcher: `2026-05-09-karpathy-autoresearcher-design.md`.
+- AutoOptimizer: `2026-05-09-karpathy-autooptimizer-design.md`.
 - Capability model: `2026-05-22-capability-first-agent-model-and-graph-composition.md`.
 - Optimizer thread: `2026-05-21-optimizer-and-capability-framing-handoff.md`,
   `team/intake/archive/2026-05-21-dspy-dsrs-optimizer-adoption.md`.
@@ -1112,7 +1112,7 @@ in the evidence ledger before the relevant phase begins.
 
 1. Default holdout split. 70/15/15 is the proposed default; operator may
    want stricter (60/20/20) for sparse cohorts. Decide at Phase 2 entry.
-2. LLM judge model for autoresearcher. Pinned per run, but a default is
+2. LLM judge model for autooptimizer. Pinned per run, but a default is
    required. Anthropic Haiku-3.5 or 4 are the candidates. Decide at
    Phase 3 entry.
 3. Demote-on-failure rolling window default. 30 cycles is the proposed
@@ -1124,7 +1124,7 @@ in the evidence ledger before the relevant phase begins.
 5. Cost-budget defaults per namespace. Decide at Phase 5 entry.
 6. Mutator-skill ladder visibility to operators vs. internal-only.
    Defaulting to operator-visible (operator should know how good
-   their autoresearcher is at being an autoresearcher), but the metric
+   their autooptimizer is at being an autooptimizer), but the metric
    is meta enough to confuse. Decide at Phase 5 entry.
 7. Phase 6 feature ordering inside the broad ladder. Phase 6 already
    ranks 8 features by leverage, but the specific entry point can
@@ -1178,7 +1178,7 @@ all gates have passed.
    post-migration carry the same Observation/Pattern row counts and
    content hashes; no data loss; rollback path documented and exercised.
 5. **Raw bypasses are closed.** `/api/memory`, CLI, dashboard, MCP,
-   optimizer, and autoresearcher access memory through adapter methods;
+   optimizer, and autooptimizer access memory through adapter methods;
    CI blocks `cortex_core::*` imports outside `xvision-memory`.
 
 ### Gate B - Offline flywheel works
@@ -1186,11 +1186,11 @@ all gates have passed.
 6. **A new agent created today**, given a memory mode and run on a
    paper corpus, captures Observations on every cycle with
    `(run_id, scenario_id, cycle_idx, source_window_end)`.
-7. After enough cycles, `xvn autoresearch run` proposes Patterns,
+7. After enough cycles, `xvn autooptimizer run` proposes Patterns,
    gates them, stores staged candidates with `promotion_state='staged'`,
    and promotes at least one by flipping `promotion_state='active'`.
    Cortex's consolidation engine may surface candidates but does not
-   bypass the autoresearcher gate.
+   bypass the autooptimizer gate.
 8. The promoted Pattern is recalled in the next paper cycle, visible in
    the trace dock with full lineage and final prompt hash/blob. If Phase
    6.5 has landed, the prepended context is token-budgeted.

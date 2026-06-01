@@ -7,7 +7,7 @@ Related: `docs/superpowers/research/2026-05-11-autoimproving-memory-survey.md`
 
 ## Goal
 
-Give xvision agents (intern, trader, risk, executor, autoresearcher,
+Give xvision agents (intern, trader, risk, executor, autooptimizer,
 scheduler) a self-hosted, auto-improving memory layer using
 [gambletan/cortex](https://github.com/gambletan/cortex) as the
 storage and inference backend.
@@ -93,11 +93,11 @@ From the survey:
 |---|---|---|
 | `agent_id` (StrategyBundle ULID) | **namespace** | Hard isolation. Each StrategyBundle gets its own namespace so beliefs / facts / episodic memories don't cross-contaminate between strategies. |
 | `cycle_id` (briefing→decision→outcome) | metadata field on memory + working-memory session id | Cycle ids are short-lived; we tag the cycle id in the memory body and use cortex's working-memory tier for in-flight context. |
-| Pipeline stage (intern / trader / risk / executor) | **channel** | The `channel` field tags origin: `"intern"`, `"trader"`, `"risk"`, `"executor"`, `"autoresearcher"`, `"eod"`, `"scheduled_task"`. Lets us query "what does the risk gate think about strategy X?" without text search. |
-| User config + global knowledge | **`shared` namespace** | One reserved global namespace (`"shared"`) for user preferences, market regime beliefs, autoresearcher findings, and anything the operator wants every strategy to see. |
+| Pipeline stage (intern / trader / risk / executor) | **channel** | The `channel` field tags origin: `"intern"`, `"trader"`, `"risk"`, `"executor"`, `"autooptimizer"`, `"eod"`, `"scheduled_task"`. Lets us query "what does the risk gate think about strategy X?" without text search. |
+| User config + global knowledge | **`shared` namespace** | One reserved global namespace (`"shared"`) for user preferences, market regime beliefs, autooptimizer findings, and anything the operator wants every strategy to see. |
 | Realized P&L / outcome | **belief observation + episodic memory** | Two writes per cycle close: (a) `belief_observe` on the relevant strategy-level beliefs with new confidence based on win/loss, (b) `memory_ingest` on the full `(briefing, decision, outcome, pnl)` tuple as an episodic memory. |
 | Contradictions (e.g. trader says BUY, risk vetoes) | **fact contradictions API** | Use `/v1/facts/contradictions` to surface conflicts in declared facts; let the consolidation engine resolve. |
-| Autoresearcher findings | **facts + semantic memory in `shared`** | Each finding lands as one structured fact (subject-predicate-object) plus a longer-form episodic memory. |
+| AutoOptimizer findings | **facts + semantic memory in `shared`** | Each finding lands as one structured fact (subject-predicate-object) plus a longer-form episodic memory. |
 | EOD reports | **episodic in `shared`**, channel `"eod"` | Stored verbatim for retrieval + auto-summarized via consolidation. |
 
 ## The `xvision-memory` crate
@@ -154,7 +154,7 @@ pub struct NewMemory {
 #[derive(Serialize, Deserialize)]
 pub enum Channel {
     Intern, Trader, Risk, Executor,
-    Autoresearcher, Eod, ScheduledTask,
+    AutoOptimizer, Eod, ScheduledTask,
     UserConfig, MarketRegime,
 }
 ```
@@ -175,14 +175,14 @@ Implementation notes:
 
 | xvision call | Cortex endpoint | Frequency |
 |---|---|---|
-| `ingest(NewMemory)` | `POST /v1/memories` | every cycle stage, autoresearcher, eod |
-| `search(Query)` | `POST /v1/memories/search` | trader pre-decision, risk pre-veto, autoresearcher |
+| `ingest(NewMemory)` | `POST /v1/memories` | every cycle stage, autooptimizer, eod |
+| `search(Query)` | `POST /v1/memories/search` | trader pre-decision, risk pre-veto, autooptimizer |
 | `context(...)` | `GET /v1/memories/context` | start of each cycle for intern; per-stage budget |
-| `add_fact(Fact)` | `POST /v1/facts` | autoresearcher, executor on confirmation |
+| `add_fact(Fact)` | `POST /v1/facts` | autooptimizer, executor on confirmation |
 | `observe_belief(...)` | `POST /v1/beliefs/observe` | on cycle close, risk verdict, EOD |
 | `beliefs(ns, thr)` | `GET /v1/beliefs?ns=...&min_confidence=...` | trader pre-decision |
 | `consolidate(ns)` | `POST /v1/memories/consolidate` | nightly scheduled task |
-| `contradictions(ns)` | `POST /v1/facts/contradictions` | nightly + after autoresearcher batch |
+| `contradictions(ns)` | `POST /v1/facts/contradictions` | nightly + after autooptimizer batch |
 | `export()` | `GET /v1/export` | nightly backup |
 | `import(json)` | `POST /v1/import` | restore / migration |
 
@@ -225,9 +225,9 @@ evolving.)
 3. `add_fact` for any newly confirmed structured fact
    (e.g. `(SYM, has_overnight_gap_tendency, true)`).
 
-### Autoresearcher
+### AutoOptimizer
 1. Each finding → `add_fact` in the `shared` namespace.
-2. Each report → `ingest` as channel `Autoresearcher`.
+2. Each report → `ingest` as channel `AutoOptimizer`.
 3. After a batch: call `contradictions("shared")` and surface
    any conflicts to the operator for manual resolution (or to
    the consolidation engine if confidence-weighted resolution
@@ -398,7 +398,7 @@ CREATE TABLE memory_disputes (
 - Add `observe_belief` + `add_fact` + `beliefs` to the client.
 - Hook the risk gate to observe overconfidence beliefs on veto.
 - Hook the executor to observe regime/setup beliefs on close.
-- Hook the autoresearcher to write facts.
+- Hook the autooptimizer to write facts.
 
 ### Phase 4 — consolidation and contradictions (week 4)
 - Wire the nightly scheduler.

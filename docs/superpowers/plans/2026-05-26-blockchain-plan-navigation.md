@@ -49,9 +49,9 @@ V2 complete and V3/V4 prep started in parallel. Specifically:
 
 - A new operator can install xvision, paper-trade on **both** Alpaca (equities) and Bybit (crypto), mint a strategy NFT on Mantle Sepolia, list it, see its identity page, buy it on testnet, and watch reputation/validation receipts accumulate.
 - No real money has moved at this point — V4 (mainnet, live capital) is a separate, gated launch.
-- V3 (autoresearcher) and V4 (mainnet) preparation tracks have started in parallel.
+- V3 (autooptimizer) and V4 (mainnet) preparation tracks have started in parallel.
 
-**Reframe to keep straight:** "real money trading" = V4, not V3. V3 is autoresearcher (mostly off-chain, consumes V2C primitives). Don't conflate them when planning.
+**Reframe to keep straight:** "real money trading" = V4, not V3. V3 is autooptimizer (mostly off-chain, consumes V2C primitives). Don't conflate them when planning.
 
 ---
 
@@ -142,7 +142,7 @@ Everything above complete. Then:
 
 ### Phase 8 — V3 prep + V4 prep, in parallel
 
-**V3 track (autoresearcher):** start the mutation-lineage-gate-seal loop per [`autoresearcher-1-mutator-lineage-gate-seal.md`](./2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md). The chain coupling is light by design — autoresearcher core is chain-free, the marketplace plugin reads its artifacts. Runs concurrently with V4 prep.
+**V3 track (autooptimizer):** start the mutation-lineage-gate-seal loop per [`autooptimizer-1-mutator-lineage-gate-seal.md`](./2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md). The chain coupling is light by design — autooptimizer core is chain-free, the marketplace plugin reads its artifacts. Runs concurrently with V4 prep.
 
 **V4 track (real money):**
 - Engage an audit firm immediately (4-8 week lead times — start the conversation the day V2 ships).
@@ -236,7 +236,7 @@ Existing specs and ADRs that inform this plan. **Each is the authoritative sourc
 | [Smart contract surface design](../specs/2026-05-08-smart-contract-surface-design.md) | Authoritative spec for the marketplace contract surface. Amended 2026-05-26 with lineage NFT terminology fix per direction doc §7 (A4). Open questions §11 feed into §4 above. |
 | [Non-custodial agent wallets design](../specs/2026-05-09-non-custodial-agent-wallets-design.md) | Authoritative spec for the trading rail. Validation gates §1.1 feed into §4.B above. |
 | [Marketplace plugin design](../specs/2026-05-09-marketplace-plugin-design.md) | Plugin-level spec. Amended 2026-05-26 to clarify that its §7 dashboard tab is the Persona A operator surface; Persona B public marketplace UX is owned by the direction doc. Lineage NFT decision is now canonical across both specs (A4 resolved). |
-| [Karpathy autoresearcher design](../specs/2026-05-09-karpathy-autoresearcher-design.md) | V3 source of truth. Chain-free core; plugin reads its `CycleSeal` artifacts. |
+| [Karpathy autooptimizer design](../specs/2026-05-09-karpathy-autooptimizer-design.md) | V3 source of truth. Chain-free core; plugin reads its `CycleSeal` artifacts. |
 | [ADR 0008 ERC-8004 deployment](../../../decisions/0008-erc8004-deployment.md) | Phase 3 deploy runbook. |
 | [Blockchain-1 non-custodial wallets plan](./2026-05-10-blockchain-1-non-custodial-wallets-plan.md) + [amendments](./2026-05-10-blockchain-1-non-custodial-wallets-amendments.md) | Phase 0 probe sources for B1-B2. |
 | [`crates/xvision-identity/`](../../../crates/xvision-identity/) | Existing stub crate; expand in Phase 3. |
@@ -258,7 +258,7 @@ Phase 7  UI layout pass                    1-2 wks   polish all pages
 ────────────────────────────────────────────────────────────────────────────────
 V2 EXIT GATE
 ────────────────────────────────────────────────────────────────────────────────
-Phase 8  V3 prep + V4 prep (parallel)      ongoing   autoresearcher loop / audit + mainnet prep
+Phase 8  V3 prep + V4 prep (parallel)      ongoing   autooptimizer loop / audit + mainnet prep
 ```
 
 Total time-to-V2-exit: **~14-21 weeks** at single-developer pace, less with parallelization on Phases 1-2 and Phases 5-6.

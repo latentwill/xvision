@@ -10,7 +10,7 @@
 Unlike FTX, Binance, or any custodial trading platform, **xvision never holds
 your trading capital — only the authority to trade with it.** You fund your own
 Orderly account, xvision signs orders with a scoped key it can't withdraw with,
-and every decision is on-chain attestable. An overnight autoresearcher
+and every decision is on-chain attestable. An overnight autooptimizer
 generates new strategy variants, evaluates them against a held-out judge, and
 seals the survivors as immutable lineage NFTs.
 
@@ -19,7 +19,7 @@ seals the survivors as immutable lineage NFTs.
 - **Trading rail:** Orderly Network on Mantle. Non-custodial — your USDC stays
   in your account, xvision holds a trading-only Ed25519 key with explicit scope
   enforcement at the broker layer.
-- **Autoresearcher:** mutates a seed strategy across the configuration manifold
+- **AutoOptimizer:** mutates a seed strategy across the configuration manifold
   (briefing format, prompt scaffolding, model selection, risk envelope), runs
   each variant against a backtest harness, gates survivors through an LLM judge,
   and seals only the variants that beat their parent on out-of-sample data.
@@ -32,7 +32,7 @@ seals the survivors as immutable lineage NFTs.
 
 ## What's load-bearing in the demo
 
-1. **Live autoresearcher run** — show one mutator iteration: variant in,
+1. **Live autooptimizer run** — show one mutator iteration: variant in,
    judge verdict out, lineage NFT minted.
 2. **Kill switch** — `xvn kill --all` halts every dispatcher in <1s.
 3. **Audit log replay** — recover position state from the audit log alone.

@@ -20,22 +20,22 @@ Tracks 1, 3, 5 deliberately not started — Track 1 is docs-only (out of scope p
 ### Phase 1 — AR-1 (cryptographic substrate, 17 tasks all done)
 | PR | Task | What |
 |---|---|---|
-| #658 | T1 | `crates/xvision-engine/src/autoresearch/` module scaffold with 11 placeholder submodules (so Tasks 2-13 don't collide on `mod.rs`) |
+| #658 | T1 | `crates/xvision-engine/src/autooptimizer/` module scaffold with 11 placeholder submodules (so Tasks 2-13 don't collide on `mod.rs`) |
 | #665 | T2 | BLAKE3 ContentHash + canonical JSON |
 | #661 | T3 | Filesystem blob store |
 | #662 | T4 | Strategy ↔ markdown program-view (round-trip preserving) |
-| #663 | T5 | AutoresearchConfig + `config/autoresearch.toml.example` |
+| #663 | T5 | AutoOptimizerConfig + `config/autooptimizer.toml.example` |
 | #664 | T6 | SessionCommitment + ed25519 operator key (0o600 on persist) |
 | #666 | T7 | MutationDiff types |
 | #669 | T8 | validate_mutation_diff (8 rule families, aggregating errors) |
-| #671 | T9 | LLM mutator + 2-retry loop + `prompts/autoresearch/mutator-v1.md` |
+| #671 | T9 | LLM mutator + 2-retry loop + `prompts/autooptimizer/mutator-v1.md` |
 | #667 | T10 | Deterministic numeric gate (Δ-Sharpe day + baseline-untouched + drawdown) |
 | #668 | T11 | Migration 048 — `lineage_nodes` + `cycle_seals` + `session_commitments` (renumbered from plan's 003 — current head was 047) |
 | #670 | T12 | LineageStore + deterministic Merkle root (Bitcoin-style duplicate-on-odd) |
 | #672 | T13 | CycleSeal (operator label "Evening summary") — sign + verify + persist + load |
-| #673 | T14 | `xvn autoresearch session-init` |
-| #675 | T15 | `xvn autoresearch mutate-once <parent_hash>` — full end-to-end integration |
-| #674 | T16 | `xvn autoresearch lineage ls/show` + `seal show` |
+| #673 | T14 | `xvn autooptimizer session-init` |
+| #675 | T15 | `xvn autooptimizer mutate-once <parent_hash>` — full end-to-end integration |
+| #674 | T16 | `xvn autooptimizer lineage ls/show` + `seal show` |
 | #676 | T17 | Workspace check + public re-exports + integration test |
 
 ### Phase 2 — AR-2 (cycle orchestrator + sanity checks, 10 of 12 tasks done)
@@ -44,7 +44,7 @@ Tracks 1, 3, 5 deliberately not started — Track 1 is docs-only (out of scope p
 | #677 | T1 | PaperTestRunner trait + BacktestPaperTester adapter |
 | #678 | T2 | baseline-untouched scenario synthesis |
 | #679 | T3 | ParentPolicy (round-robin / top-K / ε-greedy, deterministic) |
-| #680 | T4 | metrics-blind LLM judge + `prompts/autoresearch/judge-v1.md` |
+| #680 | T4 | metrics-blind LLM judge + `prompts/autooptimizer/judge-v1.md` |
 | #681 | T6 | honesty check (sabotaged-parent injection) |
 | #682 | T7 | diversity-decay + migration 049 (`lineage_embeddings`) |
 | #683 | T5 | inversion-pair eval (forward + reverse, symmetric-noise gate) |
@@ -55,11 +55,11 @@ Tracks 1, 3, 5 deliberately not started — Track 1 is docs-only (out of scope p
 ### Tasks deferred (stuck or out-of-scope)
 | Task | Reason | Suggested action |
 |---|---|---|
-| AR-2 T9 dedicated integration test | 100x's budget on Task 9 ran out before generating `tests/autoresearch_cycle.rs`; the orchestrator code itself shipped in #686 | One small 100x dispatch after #686 lands: `100x run "Add an integration test for run_evening_cycle …"` |
+| AR-2 T9 dedicated integration test | 100x's budget on Task 9 ran out before generating `tests/autooptimizer_cycle.rs`; the orchestrator code itself shipped in #686 | One small 100x dispatch after #686 lands: `100x run "Add an integration test for run_evening_cycle …"` |
 | AR-2 T11 (demo replay path) | Deferred — depends on T9 cycle orchestrator | Dispatch a follow-on 100x once #686 is on main |
-| AR-2 T12 (CLI `xvn autoresearch evening-cycle`) | 100x hit max_turns at 60 — exploration burned all 60 turns without producing the verb. Worktree cleaned. | The work is well-scoped — try a sharper task brief that points at `crates/xvision-cli/src/commands/autoresearch.rs` and lists the exact subcommand args; re-dispatch with `MAX_TURNS_IMPLEMENT=120`. The CycleOrchestrator API in #686 is the stable target |
-| Terminology Track 3 (SSE registry) | Targets SSE wiring being introduced by #686; ship after that merges | Small standalone PR — read `docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md` and apply |
-| Terminology Track 5 (skills + docs sweep) | Blocked by Track 4 (#660) merging | After #660 + the AR-1 CLI PRs land, sweep `.claude/skills/xvision/autoresearch-ops/SKILL.md` + `MANUAL.md` |
+| AR-2 T12 (CLI `xvn autooptimizer evening-cycle`) | 100x hit max_turns at 60 — exploration burned all 60 turns without producing the verb. Worktree cleaned. | The work is well-scoped — try a sharper task brief that points at `crates/xvision-cli/src/commands/autooptimizer.rs` and lists the exact subcommand args; re-dispatch with `MAX_TURNS_IMPLEMENT=120`. The CycleOrchestrator API in #686 is the stable target |
+| Terminology Track 3 (SSE registry) | Targets SSE wiring being introduced by #686; ship after that merges | Small standalone PR — read `docs/design/2026-05-27-autooptimizer-sse-registry-handoff.md` and apply |
+| Terminology Track 5 (skills + docs sweep) | Blocked by Track 4 (#660) merging | After #660 + the AR-1 CLI PRs land, sweep `.claude/skills/xvision/autooptimizer-ops/SKILL.md` + `MANUAL.md` |
 | Phase 4 (autoreason tournament) | Out of scope — needs a spec first per the spine | User constraint excluded doc work |
 | Phase 6 (skill discipline) | Out of scope — needs a spec first per the spine | User constraint excluded doc work |
 
@@ -75,7 +75,7 @@ Merge AR-1 first, **in this dependency order:**
 6. **#671 (T9 mutator)** — needs T7 + T8.
 7. **#661 (T3 blob store)** — minor content_hash.rs overlap with T2; resolve in favor of T2.
 8. **#672 (T13)** — needs T12.
-9. **#673 (T14), #674 (T16)** — both add subcommands to the same `autoresearch.rs`; merge sequentially.
+9. **#673 (T14), #674 (T16)** — both add subcommands to the same `autooptimizer.rs`; merge sequentially.
 10. **#676 (T17)** — re-exports; rebase onto merged AR-1 chain.
 11. **#675 (T15 mutate-once)** — the big integration; rebase last in AR-1.
 

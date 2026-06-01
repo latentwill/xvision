@@ -50,7 +50,7 @@ acceptance:
   - **`cycle_features.parquet` sidecar.** One row per decision; columns: `cycle_id`, `decision_index`, `model_id`, `prompt_template_hash`, `regime_tag` (nullable), `position_units`, `equity`, `drawdown_pct`, `prior_decision_action` (last cycle's action), `tokens_in`, `tokens_out`, `inference_cost_quote` (nullable — `eval-net-of-inference-cost-metric` populates), `latency_ms`. File path: `~/.xvn/runs/<run_id>/cycle_features.parquet`. Writer flushes on run finalize.
   - **Determinism receipts.** New SQLite table `determinism_receipts(run_id PRIMARY KEY, receipt_hash, engine_version, schema_version, created_at)` where `receipt_hash = sha256(strategy_hash || scenario_id || bars_content_hash || seed || engine_version)` → `metrics_summary_hash`. Reserve a `manifest_canonical` column on the row for `eval-candle-integrity-and-manifest` to fill in later (Option A: foundation persists `manifest_canonical: Option<String>` defaulting NULL; B: foundation reserves the column shape but the manifest contract migrates to populate it. Choose A — cheaper for the manifest track). Receipt-stability test included.
   - **Findings schema extension.** Add `evidence_cycle_ids: Vec<Ulid>` (default empty) and `produced_by_check: String` to `Finding`. Bump finding schema_version. Existing findings backfill with empty `evidence_cycle_ids` and `produced_by_check = "legacy"`.
-  - **Indexed query columns on the `cycles` table.** Add SQLite indices on `cycles.model_id`, `cycles.prompt_template_hash`, `cycles.regime_tag` (which may not exist yet — if not, add the column nullable). Index lookups are the autoresearcher's primary query shape ("all decisions made by model X under regime Y"); essential.
+  - **Indexed query columns on the `cycles` table.** Add SQLite indices on `cycles.model_id`, `cycles.prompt_template_hash`, `cycles.regime_tag` (which may not exist yet — if not, add the column nullable). Index lookups are the autooptimizer's primary query shape ("all decisions made by model X under regime Y"); essential.
   - **ts-rs exports.** `FillBranch`, `FeeSource`, `AggressorSide`, the bumped `Finding`, and the extended decision/fill records are regenerated under `frontend/web/src/api/types.gen/`.
   - **Migration 023** adds the `determinism_receipts` table, the `cycles` indices (+ `regime_tag` column if missing), and the findings schema columns. Down rolls back.
   - **Tests:** schema-version round-trip (old run loads, new run loads, no panics); receipt minted and stable across re-run with identical inputs; parquet sidecar writes correct row count for a fixed-decision-count run; findings carry the new fields and round-trip through JSONL; `cycles` index plan visible in `EXPLAIN QUERY PLAN` for the model_id+regime_tag pattern.
@@ -96,7 +96,7 @@ clean leaves against a stable shape.
 - Computing `evidence_cycle_ids` for any specific finding kind — that's
   per-finding-kind work in the producing track.
 - Cross-run diff harness, counterfactual replay tool, failed-decision
-  reservoir reader — all V3 autoresearcher tooling. This track lands the
+  reservoir reader — all V3 autooptimizer tooling. This track lands the
   storage shape they need; the tooling itself is downstream.
 
 # Migration coordination

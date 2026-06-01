@@ -1358,16 +1358,16 @@ git commit -m "feat(engine/api): schedule CRUD + scheduler/fire SQLite tables"
 
 ---
 
-### Task 9: Autoresearch stub module
+### Task 9: AutoOptimizer stub module
 
 **Files:**
-- Create: `crates/xvision-engine/src/api/autoresearch.rs`
+- Create: `crates/xvision-engine/src/api/autooptimizer.rs`
 
 > **Context.** AR-1/AR-2 aren't built yet. This module exposes the API shape so the tool registry and CLI can reference it; functions return `ApiError::Internal("not implemented")` until AR-2 lands. Tests verify the shape compiles and returns the expected error.
 
 - [ ] **Step 1: Implement stub**
 
-Create `crates/xvision-engine/src/api/autoresearch.rs`:
+Create `crates/xvision-engine/src/api/autooptimizer.rs`:
 
 ```rust
 //! AR-2 evening cycle hook. Functions return NotImplemented until AR-2 ships.
@@ -1397,7 +1397,7 @@ pub struct CycleSummary { pub cycle_id: String, pub started_at: DateTime<Utc>, p
 pub struct CycleDetail { pub cycle_id: String, pub note: String }
 
 pub async fn run_evening_cycle(_ctx: &ApiContext, _opts: EveningCycleOpts) -> ApiResult<CycleReport> {
-    Err(ApiError::Internal("autoresearch.run_evening_cycle wires when AR-2 ships".into()))
+    Err(ApiError::Internal("autooptimizer.run_evening_cycle wires when AR-2 ships".into()))
 }
 
 pub async fn list_cycles(_ctx: &ApiContext, _since: DateTime<Utc>) -> ApiResult<Vec<CycleSummary>> {
@@ -1418,8 +1418,8 @@ cargo check -p xvision-engine
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xvision-engine/src/api/autoresearch.rs
-git commit -m "feat(engine/api): autoresearch stub (AR-2 hook)"
+git add crates/xvision-engine/src/api/autooptimizer.rs
+git commit -m "feat(engine/api): autooptimizer stub (AR-2 hook)"
 ```
 
 ---

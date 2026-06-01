@@ -1,6 +1,6 @@
 ---
 name: xvision-flywheel-ops
-description: Operate and audit the xvision self-improvement flywheel across memory capture, autoresearch, training run example pools, child training, lineage, velocity, and look-ahead-protection evidence.
+description: Operate and audit the xvision self-improvement flywheel across memory capture, autooptimizer, training run example pools, child training, lineage, velocity, and look-ahead-protection evidence.
 ---
 
 # xvision flywheel ops

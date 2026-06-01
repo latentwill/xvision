@@ -1,18 +1,18 @@
-# Wave intake — autoresearcher terminology rollout
+# Wave intake — autooptimizer terminology rollout
 
 > Date: 2026-05-27
-> Source of truth: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
-> Audit context: `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
+> Source of truth: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
+> Audit context: `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
 > Process: per `docs/superpowers/specs/2026-05-16-execution-board-process-overhaul.md`
 
 ## Wave summary
 
-Roll out the autoresearcher plain-language rename across five
+Roll out the autooptimizer plain-language rename across five
 surfaces. The terminology lock is the contract; this wave decomposes
 the rollout into five tracks with explicit dependencies so the
 conductor can sequence them.
 
-Five handoff docs already exist (`docs/design/2026-05-27-autoresearcher-*-handoff.md`).
+Five handoff docs already exist (`docs/design/2026-05-27-autooptimizer-*-handoff.md`).
 Each handoff has its own acceptance criteria, file scope, and
 push-back notes — those are the working specs. This intake adds the
 cross-track dependencies and the wave-level acceptance gate.
@@ -21,11 +21,11 @@ cross-track dependencies and the wave-level acceptance gate.
 
 ### Track 1: Spec amendment (doc-only, 1–2 hours)
 
-- Handoff: `docs/design/2026-05-27-autoresearcher-spec-amendment-handoff.md`
+- Handoff: `docs/design/2026-05-27-autooptimizer-spec-amendment-handoff.md`
 - Owner: spec maintainer (anyone)
 - Scope: one file —
-  `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md`
-- Allowed paths: `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md`
+  `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md`
+- Allowed paths: `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md`
 - Forbidden paths: any other spec; any plan; any code
 - Verification: §0.1 exists, every renamed concept has its first-mention
   parenthetical, no other content moved or renumbered
@@ -35,7 +35,7 @@ cross-track dependencies and the wave-level acceptance gate.
 
 ### Track 2: Frontend label rename (React SPA)
 
-- Handoff: `docs/design/2026-05-27-autoresearcher-frontend-rename-handoff.md`
+- Handoff: `docs/design/2026-05-27-autooptimizer-frontend-rename-handoff.md`
 - Owner: frontend designer/engineer
 - Scope: ~80 string changes + 1 new component (`<ShortHash>`) + 1 new
   labels helper module
@@ -57,13 +57,13 @@ cross-track dependencies and the wave-level acceptance gate.
 
 ### Track 3: SSE display-label registry (Rust + JS)
 
-- Handoff: `docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md`
+- Handoff: `docs/design/2026-05-27-autooptimizer-sse-registry-handoff.md`
 - Owner: backend engineer with dashboard familiarity
 - Scope: ~50 lines Rust + ~30 lines JS + one new unit test
 - Allowed paths: `crates/xvision-dashboard/src/sse.rs`,
   `crates/xvision-dashboard/static/js/bus.js`,
   `crates/xvision-dashboard/tests/sse_smoke.rs`
-- Forbidden paths: `crates/xvision-engine/src/autoresearch/progress.rs`
+- Forbidden paths: `crates/xvision-engine/src/autooptimizer/progress.rs`
   (wire schema stays), any orchestrator emission code
 - Verification: all 13 event variants have a display label, SSE
   smoke test asserts the label is in the payload
@@ -75,21 +75,21 @@ cross-track dependencies and the wave-level acceptance gate.
 
 ### Track 4: CLI rename with deprecation aliases (Rust)
 
-- Handoff: `docs/design/2026-05-27-autoresearcher-cli-rename-handoff.md`
+- Handoff: `docs/design/2026-05-27-autooptimizer-cli-rename-handoff.md`
 - Owner: backend engineer
 - Scope: 4 verb renames + 8 flag renames + help text rewrites + 11
   human-output string changes, all with deprecation aliases; CLI
   surface snapshot test update
-- Allowed paths: `crates/xvision-cli/src/commands/autoresearch.rs`,
+- Allowed paths: `crates/xvision-cli/src/commands/autooptimizer.rs`,
   `crates/xvision-cli/src/commands/memory.rs`,
   `crates/xvision-cli/src/commands/flywheel.rs`,
   `crates/xvision-cli/src/lib.rs`,
   `crates/xvision-cli/tests/cli_surface_snapshot.json`,
-  `crates/xvision-cli/tests/autoresearch_cli.rs`
+  `crates/xvision-cli/tests/autooptimizer_cli.rs`
 - Forbidden paths: `crates/xvision-engine/**` (engine API stays),
   any migration, any frontend code
 - Verification: `cargo test -p xvision-cli` passes, the alias path
-  works (smoke: `xvn autoresearch promote --help` prints deprecation
+  works (smoke: `xvn autooptimizer promote --help` prints deprecation
   note and forwards to `activate`; `xvn memory promote --help`
   forwards to `distill`), banned-words grep on `--help` output of
   every subcommand returns nothing
@@ -103,12 +103,12 @@ cross-track dependencies and the wave-level acceptance gate.
 
 ### Track 5: Skills + docs sweep (mechanical)
 
-- Handoff: `docs/design/2026-05-27-autoresearcher-skills-docs-sweep-handoff.md`
+- Handoff: `docs/design/2026-05-27-autooptimizer-skills-docs-sweep-handoff.md`
 - Owner: technical writer or engineer
 - Scope: rewrite 2 skill files; mechanical replacement sweep on
   MANUAL.md, dashboard wiki CLI reference, README.md, and
   marketing/
-- Allowed paths: `.claude/skills/xvision/autoresearch-ops/SKILL.md`,
+- Allowed paths: `.claude/skills/xvision/autooptimizer-ops/SKILL.md`,
   `.claude/skills/xvision/flywheel-ops/SKILL.md`, `MANUAL.md`,
   `crates/xvision-dashboard/wiki/cli-reference.md`, `README.md`,
   `marketing/**` (proofread carefully)
@@ -132,17 +132,17 @@ The wave is complete when:
 
 1. All five tracks have landed on `main`.
 2. End-to-end smoke: a fresh operator (someone who hasn't used
-   xvision before) can read MANUAL.md, follow the autoresearch ops
+   xvision before) can read MANUAL.md, follow the autooptimizer ops
    skill's standard flow, look at the dashboard memory page, and
    not encounter any of the banned terms: `epsilon`, `holdout`,
    `mutation`, `mutator`, `ghost`, `quarantined`, `merkle`, `BLAKE3`,
-   `Ed25519`, `promote`/`promotion`/`promoted` (in autoresearch
+   `Ed25519`, `promote`/`promotion`/`promoted` (in autooptimizer
    context), `demote`/`demoted`, `mint`.
 3. The terminology lock at
-   `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
+   `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
    has its "Implementation deliverables" checklist marked complete
    (or moved into a "Done" appendix).
-4. CLAUDE.md "Operator-facing names (autoresearcher subsurface)"
+4. CLAUDE.md "Operator-facing names (autooptimizer subsurface)"
    section is unchanged (it's the canonical pointer; no edit needed
    unless a track changes the lock).
 
@@ -185,7 +185,7 @@ across the wave; no `team/CONFLICT_ZONES.md` entries needed.
 
 ## Reference
 
-- Terminology lock: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
-- Audit and rationale: `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
-- Five handoff docs: `docs/design/2026-05-27-autoresearcher-*-handoff.md`
-- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autoresearcher subsurface)"
+- Terminology lock: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
+- Audit and rationale: `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
+- Five handoff docs: `docs/design/2026-05-27-autooptimizer-*-handoff.md`
+- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autooptimizer subsurface)"

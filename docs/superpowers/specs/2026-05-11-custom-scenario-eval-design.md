@@ -3,7 +3,7 @@
 > **Status (2026-05-21):** Largely SHIPPED. M1 bars-cache + Alpaca fetcher, M2 (scenario table + CLI), and M3 (dashboard wizard) all landed. The residual work is the BTC-only wall removal (asset unlock) — `AssetSymbol` enum expansion, the `assets.len() != 1` validator at `crates/xvision-engine/src/eval/scenario.rs::validate_v1` line 263, and the BTC-only checks in `crates/xvision-execution/src/alpaca.rs`. That residual is tracked in `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md`. Treat this file as historical design context for the broader Custom-Scenario program; the asset-unlock residual has its own focused plan.
 > **Status:** Design / spec — accepted, ready for implementation planning. Drafted 2026-05-11.
 > **Author:** xvision team (with brainstorming input from a consulting agent).
-> **Companion specs:** [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md) · [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) · [xvn scheduling & agent CLI](./2026-05-10-xvn-scheduling-and-agent-cli-design.md) · [Install Customizer](./2026-05-11-install-customizer-design.md)
+> **Companion specs:** [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md) · [Karpathy AutoOptimizer](./2026-05-09-karpathy-autooptimizer-design.md) · [xvn scheduling & agent CLI](./2026-05-10-xvn-scheduling-and-agent-cli-design.md) · [Install Customizer](./2026-05-11-install-customizer-design.md)
 > **Tracking:** F30 (this spec) + F31 (replay-mode follow-ups). Adds to / supersedes parts of: the `BTC-only` scope wall in `crates/xvision-execution/src/alpaca.rs`, the compiled-in `canonical_scenarios()` in `crates/xvision-engine/src/eval/scenario.rs`, and the parts of F18 (`TraderDecision.asset`) that this spec pulls forward.
 
 ---

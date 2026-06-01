@@ -20,7 +20,7 @@
 
 **v1 test cut (eval + strategy engines on Alpaca paper):**
 
-The v1 test slice is "author a strategy → backtest it → paper-trade it on Alpaca." Scheduler (Plan 2c), blockchain/8004 (Plan 5 + wallet plan), and autoresearcher (AR-1/2/3) are all out of that slice. That has knock-on effects for items in *this* plan:
+The v1 test slice is "author a strategy → backtest it → paper-trade it on Alpaca." Scheduler (Plan 2c), blockchain/8004 (Plan 5 + wallet plan), and autooptimizer (AR-1/2/3) are all out of that slice. That has knock-on effects for items in *this* plan:
 
 | Item | Lands in v1 test? | What ships / what waits |
 |---|---|---|
@@ -86,7 +86,7 @@ Create `docs/HACKATHON-1-PAGER.md`:
 Unlike FTX, Binance, or any custodial trading platform, **xvision never holds
 your trading capital — only the authority to trade with it.** You fund your own
 Orderly account, xvision signs orders with a scoped key it can't withdraw with,
-and every decision is on-chain attestable. An overnight autoresearcher
+and every decision is on-chain attestable. An overnight autooptimizer
 generates new strategy variants, evaluates them against a held-out judge, and
 seals the survivors as immutable lineage NFTs.
 
@@ -95,7 +95,7 @@ seals the survivors as immutable lineage NFTs.
 - **Trading rail:** Orderly Network on Mantle. Non-custodial — your USDC stays
   in your account, xvision holds a trading-only Ed25519 key with explicit scope
   enforcement at the broker layer.
-- **Autoresearcher:** mutates a seed strategy across the configuration manifold
+- **AutoOptimizer:** mutates a seed strategy across the configuration manifold
   (briefing format, prompt scaffolding, model selection, risk envelope), runs
   each variant against a backtest harness, gates survivors through an LLM judge,
   and seals only the variants that beat their parent on out-of-sample data.
@@ -108,7 +108,7 @@ seals the survivors as immutable lineage NFTs.
 
 ## What's load-bearing in the demo
 
-1. **Live autoresearcher run** — show one mutator iteration: variant in,
+1. **Live autooptimizer run** — show one mutator iteration: variant in,
    judge verdict out, lineage NFT minted.
 2. **Kill switch** — `xvn kill --all` halts every dispatcher in <1s.
 3. **Audit log replay** — recover position state from the audit log alone.
@@ -152,7 +152,7 @@ support / etc.)
 
 ```bash
 git add docs/HACKATHON-1-PAGER.md
-git commit -m "docs: hackathon 1-pager — non-custodial trust + autoresearcher narrative"
+git commit -m "docs: hackathon 1-pager — non-custodial trust + autooptimizer narrative"
 ```
 
 ---
@@ -179,7 +179,7 @@ Replace the README.md content with:
 
 **Non-custodial AI trading agents.** xvision runs LLM-driven trading strategies
 against your own broker account, with explicit scope enforcement so xvision
-itself never holds your funds. An overnight autoresearcher mutates and
+itself never holds your funds. An overnight autooptimizer mutates and
 evaluates new strategy variants automatically.
 
 > ⚠️ **This is alpha software. Use at your own risk.** xvision executes real
@@ -199,7 +199,7 @@ evaluates new strategy variants automatically.
 - Logs every order's full lifecycle (emit → risk → simulate → sign → submit →
   fill → close) to an append-only audit log; positions can be reconstructed
   from the log alone.
-- Runs an overnight autoresearcher that mutates seed strategies, evaluates
+- Runs an overnight autooptimizer that mutates seed strategies, evaluates
   variants on held-out backtests, and seals survivors as immutable lineage
   artifacts.
 
@@ -259,7 +259,7 @@ Critical operator commands:
 The non-custodial design closes one failure mode (xvision can't drain you) but
 opens others:
 - A buggy strategy can lose its hard-cap allocation. Set caps small at first.
-- The autoresearcher can produce a variant that overfits the judge. Lineage
+- The autooptimizer can produce a variant that overfits the judge. Lineage
   attestations are explicit about which strategies are sealed (auditable) vs
   which are still mutating (use-with-care).
 - Cross-margin contagion: if Orderly applies losses across the whole account,
@@ -273,7 +273,7 @@ opens others:
 - **Marketplace rail** (separate scope, Plan 5): on-chain protocol for fees +
   delegation. xvision.io would run this; a self-hosted instance does not need
   it.
-- **Autoresearcher** (separate scope, AR-1/AR-2/AR-3): the mutator + judge +
+- **AutoOptimizer** (separate scope, AR-1/AR-2/AR-3): the mutator + judge +
   lineage seal pipeline.
 
 ## Documentation
@@ -360,7 +360,7 @@ Three things break here:
 - **Storage:** SQLite write throughput hits its ceiling around hundreds of
   concurrent writes/sec. Reservations + audit-log + ledger all serialize. WAL
   mode helps to ~thousands; beyond that, evaluate Postgres.
-- **Autoresearcher cost:** at N=100 with each agent generating 100 mutator
+- **AutoOptimizer cost:** at N=100 with each agent generating 100 mutator
   variants/night × 50K-token briefings × Sonnet-class evaluation, the LLM bill
   is ~$15K/month. **Migrate to:** subscription tier or hosted-runtime line
   (research Theme G).
@@ -382,7 +382,7 @@ Three things break here:
 
 - N=1 → N=10 ops break: research Run 8 (operator daily journal — daily review
   becomes full-time at N=10).
-- N=10 → N=100 storage + autoresearcher cost: research Run 11 (scaling tree).
+- N=10 → N=100 storage + autooptimizer cost: research Run 11 (scaling tree).
 - N=100 → N=1000 distribution: research Run 11 + Run 4 (mutation-loop cost).
 
 ### Default cadence

@@ -88,7 +88,7 @@ without editing SQLite directly.
 
 This is the **Package B** scope from the post-V2D `/grill-me` design
 pass. **Package C** (manual distillation: promote Observation →
-Pattern) is folded into the V3 autoresearcher track (board-v2 item
+Pattern) is folded into the V3 autooptimizer track (board-v2 item
 11a) and explicitly out of scope here.
 
 Plan source:
@@ -99,11 +99,11 @@ Plan source:
 - Pattern editing in place (defer until V3 supersede/replace
   semantics land).
 - Manual distillation (promote Observation → Pattern). Folded into
-  the V3 autoresearcher feature; building it here would duplicate
+  the V3 autooptimizer feature; building it here would duplicate
   V3's work.
 - Per-item Observation delete. Operators get bulk `forget` only —
   per-intake Decision 5, this keeps the Observation tier honest as
-  the autoresearcher's write-once substrate.
+  the autooptimizer's write-once substrate.
 - Memory export / diff / TTL / decay. Deferred to follow-ups.
 - Embedder configuration UI. The slot's provider+model already drive
   embedder selection (V2D Phase 3.3); a dedicated embedder picker is

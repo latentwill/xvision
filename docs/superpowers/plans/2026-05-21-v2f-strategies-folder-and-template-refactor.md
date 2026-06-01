@@ -21,7 +21,7 @@ alongside V2E without surface overlap.
 ## What V2F is **not**
 
 - Not a marketplace listing for strategy idea templates (V2C).
-- Not agent-writable (write surface deferred to V3 autoresearcher,
+- Not agent-writable (write surface deferred to V3 autooptimizer,
   which is the natural producer of "agent learned this; remember it").
 - Not a replacement for `docs/strategies/templates/` as source of
   truth. The python generator and the markdown backlog in
@@ -164,7 +164,7 @@ wizard-prompt-strategy-folder-and-templates  (independent — small)
 ## Out of scope
 
 - Marketplace listing for user-published idea templates (V2C).
-- Agent-writable strategies folder (V3 autoresearcher).
+- Agent-writable strategies folder (V3 autooptimizer).
 - Symlink-mode pre-population (post-v1).
 - Table extraction from PDFs / column-type inference from CSVs
   (post-v1, if usage demands).

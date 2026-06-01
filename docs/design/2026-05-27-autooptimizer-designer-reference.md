@@ -1,7 +1,7 @@
-# Autoresearcher designer reference — every label, every button, every word
+# AutoOptimizer designer reference — every label, every button, every word
 
 > Status: locked 2026-05-27 (terminology lock + amendment)
-> For: anyone designing, auditing, or implementing any autoresearcher,
+> For: anyone designing, auditing, or implementing any autooptimizer,
 > memory, or flywheel UI surface
 > This doc is self-contained. You should not need to read anything
 > else to design or QA a screen.
@@ -9,7 +9,7 @@
 ## How to use this document
 
 This is the single reference for every piece of operator-facing copy
-on the autoresearcher, memory, and flywheel surfaces. If you are
+on the autooptimizer, memory, and flywheel surfaces. If you are
 designing a new screen, auditing an existing one, or writing copy
 for a related feature, use the vocabulary defined here.
 
@@ -50,7 +50,7 @@ behind it (in case you're matching API fields to display labels).
 
 **Active**
 A Pattern that's currently being recalled at decision time, or an
-autoresearch run whose Pattern was activated. Renders as a status
+autooptimizer run whose Pattern was activated. Renders as a status
 badge. Developer field: `promotion_state = "active"`.
 
 **Background patterns**
@@ -100,7 +100,7 @@ enough. Renders as a status badge. Developer value:
 `gate_verdict = "failed"`.
 
 **Evening run**
-The nightly orchestrated cycle of the autoresearcher. Developer
+The nightly orchestrated cycle of the autooptimizer. Developer
 term: evening cycle.
 
 **Evening summary**
@@ -121,7 +121,7 @@ Where the examples come from when training a new version — either
 (record fresh). Developer field: `demo_source`.
 
 **Experiment**
-A proposed change to a strategy that the autoresearcher tests.
+A proposed change to a strategy that the autooptimizer tests.
 Developer term: Mutation / MutationDiff.
 
 **Experiment dropped**
@@ -153,7 +153,7 @@ A Pattern that's been retired but is still inside the grace window
 
 **Gate** (noun)
 The check that decides whether a candidate is Kept or Dropped. Same
-word developer-side; the verb structure (`xvn autoresearch gate`)
+word developer-side; the verb structure (`xvn autooptimizer gate`)
 also stays unchanged.
 
 **Gate decision**
@@ -244,7 +244,7 @@ in the genealogy view. Developer value: `LineageStatus = "Ghost"`.
 
 **Retire** (verb), **Retired**
 Soft-delete a Pattern. CLI verb: `xvn memory retire`,
-`xvn autoresearch retire`. Developer term: demote.
+`xvn autooptimizer retire`. Developer term: demote.
 
 **Reverse-mutation check**
 A sanity check: take a candidate that passed the gate, reverse the
@@ -374,14 +374,14 @@ form below.
   agent version with the configured training run. Pending state:
   **Training…**
 
-### Autoresearch runs panel (Latest / History)
+### AutoOptimizer runs panel (Latest / History)
 
 - **Activate** — per-run row action for runs whose Pattern is in
   status Staged after the gate has been recorded as Kept. Action:
   flip the Pattern to active.
 - **Retire** — per-run row action. Action: soft-delete the Pattern.
 
-### Autoresearch gate form (per-run, when the gate hasn't been recorded yet)
+### AutoOptimizer gate form (per-run, when the gate hasn't been recorded yet)
 
 - **Record gate decision** — primary action. Action: submit the
   numeric scores and finding, record the gate verdict. Pending
@@ -424,7 +424,7 @@ value behind it. Use sentence case for badge display.
 | Dropped | `gate_verdict = "failed"` | Gate rejected the candidate |
 | (no badge) | `gate_verdict IS NULL` | Gate hasn't been recorded yet |
 
-### Autoresearch run status badges
+### AutoOptimizer run status badges
 
 | Display | Developer value | When it appears |
 |---|---|---|
@@ -490,7 +490,7 @@ Modal-level alert (when no embedder is configured):
 Info banner at the top of the Observations tab:
 "Observations are read-only. Use 'Forget all memory' to clear."
 
-### Autoresearch gate form (per-run)
+### AutoOptimizer gate form (per-run)
 
 | Field | Label |
 |---|---|
@@ -553,7 +553,7 @@ When/if the per-agent memory mode is exposed in settings UI:
 | Active | `active_patterns` |
 | Staged | `staged_patterns` |
 | Forgotten | `forgotten_patterns` |
-| Runs | `autoresearch_runs` |
+| Runs | `autooptimizer_runs` |
 
 ### Velocity section (7-day windowed counts)
 
@@ -580,7 +580,7 @@ gate decision: {Kept|Dropped} · validation improvement: {value} · untouched im
 All ID and hash short-forms use the `<ShortHash>` component (Part 9
 below).
 
-### Autoresearch run row (per run in "Recent Autoresearch Runs")
+### AutoOptimizer run row (per run in "Recent AutoOptimizer Runs")
 
 The row format:
 
@@ -613,11 +613,11 @@ Gate decision: {Kept|Dropped} · {gate metric} · today {value} · untouched {va
 - Error: "Couldn't load flywheel status: {message}"
 - (No explicit empty state — metrics render as 0)
 
-### Autoresearch runs panel
+### AutoOptimizer runs panel
 
 - Loading: "Loading runs…"
 - Error: "Couldn't load runs: {message}"
-- Empty: "No autoresearch runs yet."
+- Empty: "No autooptimizer runs yet."
 
 ### Training run history
 
@@ -637,8 +637,8 @@ Gate decision: {Kept|Dropped} · {gate metric} · today {value} · untouched {va
 | Flywheel card title | Flywheel | |
 | Latest training run section (compact mode) | Latest training run | |
 | Training run history section (full mode) | Training run history | |
-| Recent autoresearch runs section (compact mode) | Recent autoresearch runs | |
-| Autoresearch history section (full mode) | Autoresearch history | |
+| Recent autooptimizer runs section (compact mode) | Recent autooptimizer runs | |
+| AutoOptimizer history section (full mode) | AutoOptimizer history | |
 | Train new version panel (agent mode only) | Train new version | |
 | Agent page Memory tab title | Memory | |
 | Agent flywheel route topbar title | Flywheel | |
@@ -683,7 +683,7 @@ Use `<ShortHash>` everywhere these IDs appear:
 | `optimization_id` (ULID) | "Training run" | 6 |
 | `session_id` (ULID) | "Session" | 6 |
 | `cycle_id` (ULID) | "Cycle" | 6 |
-| `run_id` (ULID, autoresearch run) | "Run" | 6 |
+| `run_id` (ULID, autooptimizer run) | "Run" | 6 |
 | `target_agent_id` / `child_agent_id` (ULIDs) | "Agent" | 6 |
 | `train_hash` / `dev_hash` / `holdout_hash` (64-hex) | "training" / "validation" / "untouched" | 8 |
 
@@ -757,7 +757,7 @@ as the final check.
 - `merkle`, `BLAKE3`, `Ed25519`, `canonical JSON`
 - `ghost`, `quarantined` (as status names — the words elsewhere are
   fine)
-- `promote`, `promotion`, `promoted` (in autoresearch and memory
+- `promote`, `promotion`, `promoted` (in autooptimizer and memory
   contexts — fine elsewhere)
 - `demote`, `demotion`, `demoted`
 - `mint` (in the "create a child agent" sense — fine in marketplace
@@ -767,7 +767,7 @@ as the final check.
 - `tier` (as a UI flag/field name — fine in spec/code)
 - `promotion_state` (as a UI flag/field name — fine in API)
 - `lineage depth` (the phrase — the metric is now "Generations deep")
-- `null-result canary`, `canary` (in autoresearch context — fine in
+- `null-result canary`, `canary` (in autooptimizer context — fine in
   CI/Kubernetes contexts elsewhere)
 - `inversion-pair`
 - `diversity-decay`
@@ -786,21 +786,21 @@ as the final check.
 ## Part 13 — Reference
 
 - **Canonical terminology lock** (source of truth):
-  `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
+  `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
 - **Audit and rationale** (the why behind each rename):
-  `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
+  `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
 - **Frontend rename handoff** (file-by-file PR-shaped work):
-  `docs/design/2026-05-27-autoresearcher-frontend-rename-handoff.md`
+  `docs/design/2026-05-27-autooptimizer-frontend-rename-handoff.md`
 - **CLI rename handoff** (the CLI surface contract):
-  `docs/design/2026-05-27-autoresearcher-cli-rename-handoff.md`
+  `docs/design/2026-05-27-autooptimizer-cli-rename-handoff.md`
 - **SSE display-label registry handoff** (live cycle viewer):
-  `docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md`
+  `docs/design/2026-05-27-autooptimizer-sse-registry-handoff.md`
 - **Skills + docs sweep handoff** (the documentation pass):
-  `docs/design/2026-05-27-autoresearcher-skills-docs-sweep-handoff.md`
+  `docs/design/2026-05-27-autooptimizer-skills-docs-sweep-handoff.md`
 - **Spec amendment handoff** (the spec footnotes):
-  `docs/design/2026-05-27-autoresearcher-spec-amendment-handoff.md`
+  `docs/design/2026-05-27-autooptimizer-spec-amendment-handoff.md`
 - **Wave intake** (rollout sequencing):
-  `team/intake/2026-05-27-autoresearcher-terminology-rollout.md`
+  `team/intake/2026-05-27-autooptimizer-terminology-rollout.md`
 - **Project-wide terminology convention**: `/CLAUDE.md` §Terminology
 - **Frontend design conventions** (no popups, no right-side boxes):
   `frontend/DESIGN.md`

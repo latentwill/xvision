@@ -1,15 +1,15 @@
-# Autoresearcher master implementation plan — the spine
+# AutoOptimizer master implementation plan — the spine
 
 > Date: 2026-05-27
 > Status: live; this is the canonical plan-of-plans for the
-> autoresearcher build
+> autooptimizer build
 > Owner: project-level (conductor reads this to sequence waves)
-> Read order if new to autoresearcher: this doc → terminology lock →
+> Read order if new to autooptimizer: this doc → terminology lock →
 > the layer you're working on
 
 ## What this document is
 
-The autoresearcher is xvision's self-improvement loop: an overnight
+The autooptimizer is xvision's self-improvement loop: an overnight
 process that proposes tweaks to trading strategies, paper-tests them
 against ground truth, gates on numeric improvement, captures
 qualitative findings blind to the metrics, and grows a content-
@@ -32,7 +32,7 @@ scope and the spine gets amended.
 
 ## Part 1 — The architecture in seven layers
 
-The autoresearcher is a stack. Each layer has a clear contract with
+The autooptimizer is a stack. Each layer has a clear contract with
 the layer below it and a clear consumer above. Layers can ship
 independently as long as the contract holds.
 
@@ -71,7 +71,7 @@ for both the day window and the untouched test period. This is the
 ground-truth signal the whole loop depends on.
 
 **Layer 2 — Cortex memory + DSPy/DSRs flywheel.** Observation and
-Pattern tiers with F+L+T leakage protection. The autoresearcher
+Pattern tiers with F+L+T leakage protection. The autooptimizer
 distills Observations into Patterns; the DSRs offline optimizer
 compiles instruction + demos from Pattern cohorts; the loop closes
 when the next decision cycle recalls a Pattern. Cortex provides the
@@ -113,10 +113,10 @@ State of each layer as of 2026-05-27.
 |---|---|---|
 | L1 — Eval engine | Shipped (foundation); ongoing accuracy work | Spec + plan landed; eval-trace-surface and execution-accuracy waves in flight per `docs/superpowers/research/2026-05-19-eval-data-and-execution-accuracy.md` |
 | L2 — Cortex memory + DSRs flywheel | V2D shipped (in-house adapter); cortex-core direct dep is the chosen Path A integration | `crates/xvision-memory/` is live; `crates/xvision-engine/src/agent/memory_recorder.rs` integrated; `xvn memory ls/promote/...` CLI shipped; migrations 0001-0005 applied |
-| L3 — AR-1 mutator+lineage+gate+seal | Partially shipped (offline distill path), key cryptographic pieces planned but not yet built | `crates/xvision-engine/src/api/autoresearch.rs` exists (deterministic distill); `crates/xvision-cli/src/commands/autoresearch.rs` shipped; migrations 0003-0005 applied; full AR-1 plan at `docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md` (3797 lines, ~Phase A complete) |
-| L4 — AR-2 cycle+judge+evals | Planned, not yet implemented | Plan at `docs/superpowers/plans/2026-05-09-autoresearcher-2-cycle-judge-evals.md` |
-| L5 — AR-3 dashboard | Planned, not yet implemented as a unified surface (some pieces in `frontend/web/src/features/memory/` ship adjacent value) | Plan at `docs/superpowers/plans/2026-05-09-autoresearcher-3-dashboard.md` |
-| L6 — Terminology & UX | Lock + design reference shipped; 5 implementation handoffs ready, rollout in flight | Lock at `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`; designer reference at `docs/design/2026-05-27-autoresearcher-designer-reference.md`; wave intake at `team/intake/2026-05-27-autoresearcher-terminology-rollout.md` |
+| L3 — AR-1 mutator+lineage+gate+seal | Partially shipped (offline distill path), key cryptographic pieces planned but not yet built | `crates/xvision-engine/src/api/autooptimizer.rs` exists (deterministic distill); `crates/xvision-cli/src/commands/autooptimizer.rs` shipped; migrations 0003-0005 applied; full AR-1 plan at `docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md` (3797 lines, ~Phase A complete) |
+| L4 — AR-2 cycle+judge+evals | Planned, not yet implemented | Plan at `docs/superpowers/plans/2026-05-09-autooptimizer-2-cycle-judge-evals.md` |
+| L5 — AR-3 dashboard | Planned, not yet implemented as a unified surface (some pieces in `frontend/web/src/features/memory/` ship adjacent value) | Plan at `docs/superpowers/plans/2026-05-09-autooptimizer-3-dashboard.md` |
+| L6 — Terminology & UX | Lock + design reference shipped; 5 implementation handoffs ready, rollout in flight | Lock at `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`; designer reference at `docs/design/2026-05-27-autooptimizer-designer-reference.md`; wave intake at `team/intake/2026-05-27-autooptimizer-terminology-rollout.md` |
 | L7 — Marketplace plugin | Has its own spine and active waves | Spec at `docs/superpowers/specs/2026-05-09-marketplace-plugin-design.md`; program strategy at `docs/superpowers/plans/2026-05-26-marketplace-program-strategy.md` |
 
 ## Part 3 — The phased spine sequence
@@ -130,7 +130,7 @@ the gate passes.
 - L1 eval engine paper-test path
 - L2 memory layer V2D (Observation/Pattern, F+L+T, recorder, recall)
 - L3 partial: the offline deterministic distill path
-  (`xvn autoresearch run/gate/promote/inspect/ls`)
+  (`xvn autooptimizer run/gate/promote/inspect/ls`)
 
 **Gate**: paper-test runs end-to-end and produces identical metrics
 on two consecutive runs; memory recorder writes Observations
@@ -143,22 +143,22 @@ Complete the AR-1 plan's remaining tasks: content-hash + blob store
 + session commitment + LLM mutator + bundle program-view + full
 numeric gate + CycleSeal artifact + Merkle root computation.
 
-Sub-plan: `docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md`
+Sub-plan: `docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md`
 (3797 lines, decomposed into ~14 tasks across phases A/B/C).
 
-**Allowed paths**: `crates/xvision-engine/src/autoresearch/**` (new),
+**Allowed paths**: `crates/xvision-engine/src/autooptimizer/**` (new),
 `crates/xvision-engine/src/bundle/program_view.rs` (new),
-`crates/xvision-engine/migrations/003_autoresearch.sql` (new),
-`crates/xvision-cli/src/commands/autoresearch.rs` (extend),
-`config/autoresearch.toml.example` (new).
+`crates/xvision-engine/migrations/003_autooptimizer.sql` (new),
+`crates/xvision-cli/src/commands/autooptimizer.rs` (extend),
+`config/autooptimizer.toml.example` (new).
 
 **Forbidden**: `crates/xvision-engine/src/marketplace/**` (lives
 behind feature flag in L7); any frontend; any spec doc.
 
 **Dependencies**: L1 eval engine complete (✓).
 
-**Gate**: `xvn autoresearch session-init` writes operator-signed
-pre-commitment; `xvn autoresearch mutate-once <parent>` proposes one
+**Gate**: `xvn autooptimizer session-init` writes operator-signed
+pre-commitment; `xvn autooptimizer mutate-once <parent>` proposes one
 LLM mutation, paper-tests it on day + untouched windows, runs the
 gate, commits Active or Ghost to lineage, emits a CycleSeal with
 Merkle root + operator signature. Two consecutive runs against the
@@ -172,17 +172,17 @@ honesty check, runs the reverse-mutation noise filter, computes
 diversity metrics, dispatches the blind LLM judge for Findings on
 kept experiments, and manages cycle-level state.
 
-Sub-plan: `docs/superpowers/plans/2026-05-09-autoresearcher-2-cycle-judge-evals.md`.
+Sub-plan: `docs/superpowers/plans/2026-05-09-autooptimizer-2-cycle-judge-evals.md`.
 
-**Allowed paths**: `crates/xvision-engine/src/autoresearch/cycle.rs`,
+**Allowed paths**: `crates/xvision-engine/src/autooptimizer/cycle.rs`,
 `/canary.rs`, `/inversion.rs`, `/diversity.rs`, `/judge.rs`,
 `/parent_policy.rs`, `/progress.rs` (SSE event emitters);
-`crates/xvision-cli/src/commands/autoresearch.rs` (add
-`evening-cycle` verb); `crates/xvision-engine/migrations/004_autoresearch_evals.sql`.
+`crates/xvision-cli/src/commands/autooptimizer.rs` (add
+`evening-cycle` verb); `crates/xvision-engine/migrations/004_autooptimizer_evals.sql`.
 
 **Dependencies**: Phase 1 gate passed.
 
-**Gate**: `xvn autoresearch evening-cycle` runs end-to-end:
+**Gate**: `xvn autooptimizer evening-cycle` runs end-to-end:
 selects N parents, injects 1 honesty check, proposes M mutations
 each, gates, runs the reverse-mutation check on keepers, dispatches
 the judge blind to metrics, computes diversity, writes the
@@ -196,7 +196,7 @@ Land the five canonical views. Decoupled from the orchestrator via
 the SSE channel + SQLite reads, so the dashboard can render against
 saved cycle outputs even when the orchestrator isn't running.
 
-Sub-plan: `docs/superpowers/plans/2026-05-09-autoresearcher-3-dashboard.md`.
+Sub-plan: `docs/superpowers/plans/2026-05-09-autooptimizer-3-dashboard.md`.
 
 **Allowed paths**: new crate `crates/xvision-dashboard/` (axum +
 vanilla SPA); `crates/xvision-cli/src/commands/dashboard.rs` (thin
@@ -214,7 +214,7 @@ snapshot.
 ### Phase 4 — Candidate-generation upgrade (autoreason tournament)
 
 **Currently unplanned. Needs a spec.** Per the earlier evaluation
-(`docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
+(`docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
 context: the three-repo comparison), the autoreason tournament
 addresses three known failure modes in the current single-shot
 mutator: prompt bias, scope creep, and lack of restraint.
@@ -246,23 +246,23 @@ be defined in the spec).
 
 Five tracks shipping per the existing wave intake.
 
-Wave intake: `team/intake/2026-05-27-autoresearcher-terminology-rollout.md`.
+Wave intake: `team/intake/2026-05-27-autooptimizer-terminology-rollout.md`.
 
 Tracks:
-1. Spec amendment — `docs/design/2026-05-27-autoresearcher-spec-amendment-handoff.md`
-2. Frontend label rename — `docs/design/2026-05-27-autoresearcher-frontend-rename-handoff.md`
-3. SSE display-label registry — `docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md`
-4. CLI rename — `docs/design/2026-05-27-autoresearcher-cli-rename-handoff.md`
-5. Skills + docs sweep — `docs/design/2026-05-27-autoresearcher-skills-docs-sweep-handoff.md`
+1. Spec amendment — `docs/design/2026-05-27-autooptimizer-spec-amendment-handoff.md`
+2. Frontend label rename — `docs/design/2026-05-27-autooptimizer-frontend-rename-handoff.md`
+3. SSE display-label registry — `docs/design/2026-05-27-autooptimizer-sse-registry-handoff.md`
+4. CLI rename — `docs/design/2026-05-27-autooptimizer-cli-rename-handoff.md`
+5. Skills + docs sweep — `docs/design/2026-05-27-autooptimizer-skills-docs-sweep-handoff.md`
 
 Designer reference (the design language doc):
-`docs/design/2026-05-27-autoresearcher-designer-reference.md`.
+`docs/design/2026-05-27-autooptimizer-designer-reference.md`.
 
 **Dependencies**: terminology lock landed (✓); Track 5 is blocked by
 Track 4; the rest are independent. Can run alongside Phases 1–4.
 
 **Gate**: every operator-visible surface (CLI help, UI labels, SSE
-display labels, MANUAL.md, the wiki, the autoresearch-ops skill)
+display labels, MANUAL.md, the wiki, the autooptimizer-ops skill)
 passes the banned-words check from the designer reference Part 12;
 fresh-operator smoke test passes (someone who hasn't used xvision
 follows the standard flow without encountering banned terms).
@@ -282,7 +282,7 @@ skills. Add CI gates that fail on skill-body health regressions.
 **Sub-plan**: needs to be written. Proposed path:
 `docs/superpowers/specs/2026-06-XX-skill-discipline-adoption-design.md`.
 
-**Dependencies**: none (orthogonal to the autoresearcher loop —
+**Dependencies**: none (orthogonal to the autooptimizer loop —
 disciplines the agents the loop is improving, not the loop itself).
 Can ship at any time.
 
@@ -293,28 +293,28 @@ baseline accuracy on a fixture corpus; CI fails on regression.
 ## Part 4 — Sub-plan registry
 
 Every spec, plan, handoff, intake, and notes doc that's part of the
-autoresearcher stack. Grouped by layer.
+autooptimizer stack. Grouped by layer.
 
 ### Cross-cutting
 
 | Path | Type | Status |
 |---|---|---|
 | `docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md` | Plan | The next-wave roadmap source per CLAUDE.md; conductor decomposes one wave at a time from this |
-| `docs/superpowers/plans/2026-05-27-autoresearcher-master-implementation-spine.md` | Plan | This document — the spine |
+| `docs/superpowers/plans/2026-05-27-autooptimizer-master-implementation-spine.md` | Plan | This document — the spine |
 
 ### Terminology & UX (Layer 6 / Phase 5)
 
 | Path | Type | Status |
 |---|---|---|
-| `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md` | Spec | Locked + amended (memory verb structure) |
-| `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md` | Notes | Approved with resolved decisions + post-resolution amendment |
-| `docs/design/2026-05-27-autoresearcher-designer-reference.md` | Design | Live reference for any UI work on these surfaces |
-| `docs/design/2026-05-27-autoresearcher-frontend-rename-handoff.md` | Handoff | Track 2 ready to ship |
-| `docs/design/2026-05-27-autoresearcher-cli-rename-handoff.md` | Handoff | Track 4 ready to ship |
-| `docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md` | Handoff | Track 3 ready to ship |
-| `docs/design/2026-05-27-autoresearcher-skills-docs-sweep-handoff.md` | Handoff | Track 5 ready to ship (blocked by Track 4) |
-| `docs/design/2026-05-27-autoresearcher-spec-amendment-handoff.md` | Handoff | Track 1 ready to ship |
-| `team/intake/2026-05-27-autoresearcher-terminology-rollout.md` | Intake | Wave intake decomposing the rollout into five tracks |
+| `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md` | Spec | Locked + amended (memory verb structure) |
+| `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md` | Notes | Approved with resolved decisions + post-resolution amendment |
+| `docs/design/2026-05-27-autooptimizer-designer-reference.md` | Design | Live reference for any UI work on these surfaces |
+| `docs/design/2026-05-27-autooptimizer-frontend-rename-handoff.md` | Handoff | Track 2 ready to ship |
+| `docs/design/2026-05-27-autooptimizer-cli-rename-handoff.md` | Handoff | Track 4 ready to ship |
+| `docs/design/2026-05-27-autooptimizer-sse-registry-handoff.md` | Handoff | Track 3 ready to ship |
+| `docs/design/2026-05-27-autooptimizer-skills-docs-sweep-handoff.md` | Handoff | Track 5 ready to ship (blocked by Track 4) |
+| `docs/design/2026-05-27-autooptimizer-spec-amendment-handoff.md` | Handoff | Track 1 ready to ship |
+| `team/intake/2026-05-27-autooptimizer-terminology-rollout.md` | Intake | Wave intake decomposing the rollout into five tracks |
 
 ### Eval engine (Layer 1 / Phase 0)
 
@@ -338,20 +338,20 @@ autoresearcher stack. Grouped by layer.
 
 | Path | Type | Status |
 |---|---|---|
-| `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md` | Spec | Locked; cross-references companion specs |
-| `docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md` | Plan | Partially executed (offline distill path live); cryptographic substrate + LLM mutator + CycleSeal remain |
+| `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md` | Spec | Locked; cross-references companion specs |
+| `docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md` | Plan | Partially executed (offline distill path live); cryptographic substrate + LLM mutator + CycleSeal remain |
 
 ### AR-2 cycle orchestrator + judge + evals (Layer 4 / Phase 2)
 
 | Path | Type | Status |
 |---|---|---|
-| `docs/superpowers/plans/2026-05-09-autoresearcher-2-cycle-judge-evals.md` | Plan | Planned, not yet started |
+| `docs/superpowers/plans/2026-05-09-autooptimizer-2-cycle-judge-evals.md` | Plan | Planned, not yet started |
 
 ### AR-3 dashboard (Layer 5 / Phase 3)
 
 | Path | Type | Status |
 |---|---|---|
-| `docs/superpowers/plans/2026-05-09-autoresearcher-3-dashboard.md` | Plan | Planned, not yet started; some adjacent UI shipped via the memory/flywheel React features |
+| `docs/superpowers/plans/2026-05-09-autooptimizer-3-dashboard.md` | Plan | Planned, not yet started; some adjacent UI shipped via the memory/flywheel React features |
 
 ### Autoreason tournament (Phase 4)
 
@@ -371,7 +371,7 @@ autoresearcher stack. Grouped by layer.
 
 | Path | Type | Status |
 |---|---|---|
-| `docs/superpowers/specs/2026-05-09-marketplace-plugin-design.md` | Spec | Companion to the autoresearcher spec; defines what consumes CycleSeals |
+| `docs/superpowers/specs/2026-05-09-marketplace-plugin-design.md` | Spec | Companion to the autooptimizer spec; defines what consumes CycleSeals |
 | `docs/superpowers/specs/2026-05-26-marketplace-phase1-metadata-data-contract.md` | Spec | Active |
 | `docs/superpowers/plans/2026-05-26-marketplace-program-strategy.md` | Plan | Active program strategy |
 | `docs/superpowers/plans/2026-05-26-marketplace-design-direction.md` | Plan | Active |
@@ -379,7 +379,7 @@ autoresearcher stack. Grouped by layer.
 | `docs/superpowers/plans/2026-05-26-marketplace-f-routes-integration-addendum.md` | Plan | Active addendum |
 | `docs/superpowers/notes/2026-05-27-marketplace-contracts-phase-3-5-status.md` | Notes | Status snapshot |
 
-The autoresearcher spine does not sequence marketplace work — that's
+The autooptimizer spine does not sequence marketplace work — that's
 the marketplace spine's job. The only contract between them is the
 CycleSeal artifact (defined in AR-1 plan §3.4 / spec §3.4).
 
@@ -539,7 +539,7 @@ events Phase 2 emits.
 ## Part 8 — How to use this when adding new work
 
 If you're about to add a new spec, plan, or handoff to the
-autoresearcher stack:
+autooptimizer stack:
 
 1. **Find the layer.** Map your work to one of the seven layers
    above. If it doesn't fit any layer, the spine needs amendment
@@ -550,7 +550,7 @@ autoresearcher stack:
    needs amendment.
 3. **Use the operator-surface vocabulary.** Every user-facing string
    in your work uses names from
-   `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`.
+   `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`.
    If you need a new operator-facing concept, amend the lock first.
 4. **Add an entry to Part 4's registry.** Path, type (spec / plan /
    handoff / intake / notes), and current status.

@@ -44,7 +44,7 @@ acceptance:
   - **Subfolder filtering** — `list(ctx, Some("notes"))` enumerates only `<root>/notes/**`. Allowed subfolder names locked to: `notes`, `docs`, `strategy-files`, `evals`, `library`. Anything else → `ApiError::BadRequest`.
   - **File-kind detection** — by extension (`.md` → Markdown, `.json` → Json, `.csv` → Csv, `.pdf` → Pdf, `.txt` → Text, else Other). Documented in the module header.
   - **Two new wizard tools** registered in `wizard_loop.rs` tool dispatch: `list_strategies_folder({ subfolder?: string }) → entries[]` and `read_strategies_file({ rel_path: string }) → FileContent`. Tool descriptions clarify: "reads from the user's strategies folder (read-only); use to consult their notes, library, or imported reference material when authoring strategies."
-  - **Tool authorization** — both tools available to wizard runs only (not eval-runtime agent calls). The runtime agent surface stays narrow until V3 autoresearcher.
+  - **Tool authorization** — both tools available to wizard runs only (not eval-runtime agent calls). The runtime agent surface stays narrow until V3 autooptimizer.
   - **Unit tests** — one per file kind (md / json / csv / pdf / txt), one missing-folder, one path-escape attempt, one symlink-escape attempt (skip on platforms without symlink support), one subfolder-allowlist rejection.
   - **Wizard integration test** — `crates/xvision-dashboard/tests/wizard_loop.rs` (or sibling) gets a new test that mounts a temp `xvn_home`, drops a markdown file under `notes/`, runs a wizard turn that asks "what notes do I have", asserts the wizard called `list_strategies_folder` and read the file.
   - **No code changes outside the listed allowed paths.**

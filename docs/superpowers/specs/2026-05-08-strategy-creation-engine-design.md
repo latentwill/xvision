@@ -402,7 +402,7 @@ crates/
 - The Marketplace + Identity engines — touched here at integration seams but separately specced later.
 - Tier C envelope-encrypted sealing.
 - Synthetic stress scenarios in eval (deferred per eval-engine brainstorm).
-- The Karpathy autoresearcher improvement loop (consumes findings but doesn't constrain this spec).
+- The Karpathy autooptimizer improvement loop (consumes findings but doesn't constrain this spec).
 - Mobile app, native desktop wrappers (Tauri/electron) — web dashboard at localhost is the v1 surface.
 - Pure rule-based (no LLM) strategies — all strategies are LLM-required.
 

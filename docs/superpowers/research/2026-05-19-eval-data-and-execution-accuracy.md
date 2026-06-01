@@ -242,7 +242,7 @@ This is small (an enum + a per-asset-class rule table + a hook in the fill simul
 
 ---
 
-## 5. Trace surface — for users, autoresearcher, and dev loop
+## 5. Trace surface — for users, autooptimizer, and dev loop
 
 The eval engine already emits `decisions.jsonl`, `trades.jsonl`, `events.jsonl`, `findings.jsonl`, and a `traces` table keyed by `cycle_id`. The shape is right; the *content* is too thin for three downstream consumers. This section enumerates what each consumer needs out of the trace surface so we can land the enrichment as a single coordinated change rather than three drive-by additions.
 
@@ -270,9 +270,9 @@ Today a user looking at a losing run can see the trade tape and the equity curve
 
 **User-facing rendering:** the reviewer's "trust receipt" surface is exactly a renderer over this trace. Dashboard drill-down per cycle expands a row into the full "why?" view without re-running anything.
 
-### 5.2 For the autoresearcher (Karpathy self-improvement loop)
+### 5.2 For the autooptimizer (Karpathy self-improvement loop)
 
-The eval design spec §16 names the autoresearcher loop as a downstream consumer of findings. For the loop to do real work it needs more than findings — it needs structured features it can learn from.
+The eval design spec §16 names the autooptimizer loop as a downstream consumer of findings. For the loop to do real work it needs more than findings — it needs structured features it can learn from.
 
 - **Decision feature vector** per decision: a parquet sidecar `cycle_features.parquet` with numeric/categorical features — regime tags, indicator values, position state, equity drawdown depth, prior-decision outcomes. This is the substrate the loop's ML side feeds on. Without it, every loop iteration has to re-extract features from raw JSON; wasteful and brittle.
 - **Decision outcome signal**: realized PnL attributable to this decision over the next K bars, holding-period adjusted. Without a pinned attribution rule, "did this decision work?" is unanswerable from trade tapes alone. Pin `decision_outcome.attribution_window_bars` per run so the loop compares apples to apples.
@@ -284,7 +284,7 @@ The eval design spec §16 names the autoresearcher loop as a downstream consumer
 
 ### 5.3 For xvision dev — the regression / debug loop
 
-Internal engineering needs trace surfaces the autoresearcher doesn't. The failure modes are different.
+Internal engineering needs trace surfaces the autooptimizer doesn't. The failure modes are different.
 
 - **Determinism receipt** per run: `sha256(strategy_hash || scenario_id || bars_hash || seed || engine_version)` → `metrics_summary_hash`. Tests assert receipt stability across PRs. Any simulator change that affects metrics fails the receipt check loudly; intentional changes bump `engine_version` and rebase the receipts.
 - **Simulator state snapshots** per N bars: open positions, pending orders, cash, equity, last fill, last finding. Replay tools can resume the simulator from any snapshot rather than from t=0. Essential for debugging long backtests.
@@ -297,16 +297,16 @@ Internal engineering needs trace surfaces the autoresearcher doesn't. The failur
 Don't rebuild the trace store — enrich what exists.
 
 - **Decisions and fills JSONL**: extend the per-line schema. Bump `schema_version`. Backfill not required; old runs declare a lower version and consumers handle it.
-- **`cycle_features.parquet` sidecar** per run: one row per decision, columns = the feature vector. Parquet because the autoresearcher will do columnar reads at scale.
+- **`cycle_features.parquet` sidecar** per run: one row per decision, columns = the feature vector. Parquet because the autooptimizer will do columnar reads at scale.
 - **`determinism_receipts` table** keyed by `(run_id)`: stores receipt hashes plus `engine_version` and `schema_version` they were minted under.
 - **Findings schema extension**: add `evidence_cycle_ids: Vec<Ulid>` and `produced_by_check: String` (e.g., `"validator:ohlc"`, `"prober:lookahead"`, `"sim:volume_cap"`, `"broker:unsupported_order_type"`).
 - **Indexed query columns** on the `cycles` table: `model_id`, `prompt_template_hash`, `regime_tag`. Every meta-loop query asks "all decisions made by model X under regime Y."
 
-**Scope estimate:** 1 wave for schema enrichment + parquet sidecar + receipts table + findings backreference. The counterfactual replay tool, cross-run diff harness, and feature-vector ML hooks are subsequent waves driven by autoresearcher need; the storage shape they need lands now.
+**Scope estimate:** 1 wave for schema enrichment + parquet sidecar + receipts table + findings backreference. The counterfactual replay tool, cross-run diff harness, and feature-vector ML hooks are subsequent waves driven by autooptimizer need; the storage shape they need lands now.
 
 ### 5.5 Why this should ship inside the v1 wave, not after
 
-If we ship the validator (§3.1), per-bar costs (§4.2), volume-share slippage (§4.3), and the lookahead prober (§3.5) without the trace enrichment, every one of those checks emits a finding that the user can read but the autoresearcher can't reason about — the cycle backref doesn't exist yet, the features aren't structured, the determinism receipt isn't minted. Then someone has to retrofit traces for every emitted finding kind. The cheaper move is one coordinated schema bump at the front.
+If we ship the validator (§3.1), per-bar costs (§4.2), volume-share slippage (§4.3), and the lookahead prober (§3.5) without the trace enrichment, every one of those checks emits a finding that the user can read but the autooptimizer can't reason about — the cycle backref doesn't exist yet, the features aren't structured, the determinism receipt isn't minted. Then someone has to retrofit traces for every emitted finding kind. The cheaper move is one coordinated schema bump at the front.
 
 That means the "five-plan wave" becomes a **trace-foundation plan plus five item plans**, with the foundation landing first or in parallel.
 
@@ -366,7 +366,7 @@ A post-draft review surfaced one substantive technical correction and several sc
 
 ### 8.3 New requirement added 2026-05-19: trace surface
 
-The five-plan wave is augmented with a **trace-surface foundation plan** (§5 of this doc) that lands first or in parallel with the validator. Rationale: every finding emitted by §3.1, §3.5, §4.3, §4.9, and §4.12 is consumed by users, the autoresearcher loop, and the dev regression loop. Building the trace shape once is cheaper than retrofitting it per finding kind.
+The five-plan wave is augmented with a **trace-surface foundation plan** (§5 of this doc) that lands first or in parallel with the validator. Rationale: every finding emitted by §3.1, §3.5, §4.3, §4.9, and §4.12 is consumed by users, the autooptimizer loop, and the dev regression loop. Building the trace shape once is cheaper than retrofitting it per finding kind.
 
 ### 8.4 Suggested execution order across the v1 plans
 
@@ -386,7 +386,7 @@ The five-plan wave is augmented with a **trace-surface foundation plan** (§5 of
 - **§4.9b live-micro-calibration harness** — gates signed marketplace attestations. Must include kill-switch, notional cap, whitelisted symbols, audit trail.
 - **§4.10 funding/borrow accrual** — already on the perps-eval-simulator plan.
 - **§4.11 market-impact research bet** — Almgren-Chriss / square-root. Skip until trade size justifies it.
-- **Autoresearcher meta-loop wave** — counterfactual replay tool, cross-run diff harness, failed-decision reservoir reader, feature-vector ML hooks. Storage shape lands in §5 v1; the loop tooling is a downstream wave.
+- **AutoOptimizer meta-loop wave** — counterfactual replay tool, cross-run diff harness, failed-decision reservoir reader, feature-vector ML hooks. Storage shape lands in §5 v1; the loop tooling is a downstream wave.
 
 ---
 

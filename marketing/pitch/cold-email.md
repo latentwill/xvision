@@ -14,7 +14,7 @@ Subject: AI trading agents that improve themselves overnight — pitch for <show
 Hi <host>,
 
 I'm building xvision — non-custodial AI trading agents that run on Orderly +
-Mantle, with an overnight autoresearcher that mutates strategies, evaluates
+Mantle, with an overnight autooptimizer that mutates strategies, evaluates
 variants against held-out backtests, and seals survivors as ERC-8004 lineage
 NFTs. There are three threads in here I'd love to talk through on <show>:
 
@@ -22,7 +22,7 @@ NFTs. There are three threads in here I'd love to talk through on <show>:
   trading platform can place orders but can't withdraw, and why this changes
   the FTX failure mode at the substrate level.
 
-- The autoresearcher: how an LLM judge avoids overfitting in a domain where
+- The autooptimizer: how an LLM judge avoids overfitting in a domain where
   every wrong call costs real money. (Spoiler: held-out windows, lineage
   attestation, kill-the-parent-if-the-child-wins.)
 
@@ -39,7 +39,7 @@ I can demo a live overnight run if useful. Pre-recorded fallback available.
 Before sending, the email passes these checks:
 
 - [ ] **Recent-episode reference.** Add one sentence between the greeting and the first paragraph that references a recent episode of the show. Specific, technical, not flattering. Example: "Loved the [date] episode on [topic] — your point about [specific] is part of why I think this is worth a conversation."
-- [ ] **Thread reorder.** Move the most-relevant thread to position 1. For a DeFi-infrastructure show, lead with non-custodial. For an AI/ML show, lead with autoresearcher. For an NFTs/identity show, lead with ERC-8004.
+- [ ] **Thread reorder.** Move the most-relevant thread to position 1. For a DeFi-infrastructure show, lead with non-custodial. For an AI/ML show, lead with autooptimizer. For an NFTs/identity show, lead with ERC-8004.
 - [ ] **Show-specific hook.** Append one sentence after the threads that connects to the show's framing. Example, for Bankless: "This is the bridge from 'trust the team' to 'trust the contracts' in agent-deployed capital."
 - [ ] **One link, max.** Body links to one of: `docs/HACKATHON-1-PAGER.md` (if there's a public mirror), the project README, or a representative Remotion video. Never multiple. Calendly links go in the reply, never the cold email.
 - [ ] **Length budget.** Whole email under 200 words. The pitch as written is ~175 words; the customization adds 25–50. Cut if over 225.

@@ -1,19 +1,19 @@
-# Autoresearcher terminology lock — 2026-05-27
+# AutoOptimizer terminology lock — 2026-05-27
 
 > Status: locked 2026-05-27; amended same day (memory verb structure —
 > see "Amendments" section at the bottom)
 > Operator approval for both the initial lock and the amendment
 > recorded in the companion audit doc.
-> Companion: `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
+> Companion: `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
 > Affects: AR-1 / AR-2 / AR-3 implementation plans, the karpathy
-> autoresearcher spec, the cortex-memory + DSPy flywheels spec, the
-> autoresearch-ops and flywheel-ops skills, MANUAL.md, dashboard wiki.
+> autooptimizer spec, the cortex-memory + DSPy flywheels spec, the
+> autooptimizer-ops and flywheel-ops skills, MANUAL.md, dashboard wiki.
 > Cross-reference: extends the project-wide terminology table at
-> `/CLAUDE.md` for the autoresearcher subsurface.
+> `/CLAUDE.md` for the autooptimizer subsurface.
 
 ## The two-surface principle
 
-Every named concept in the autoresearcher has two valid names:
+Every named concept in the autooptimizer has two valid names:
 
 - **Developer-surface name.** Used in Rust types, SQLite columns,
   spec documents, API type fields, internal module names, and
@@ -76,7 +76,7 @@ operator surface is a defect.
 
 | dev | ops |
 |---|---|
-| Gate, `xvn autoresearch gate` | Gate (CLI verb stays; noun "Gate" stays in UI form labels) |
+| Gate, `xvn autooptimizer gate` | Gate (CLI verb stays; noun "Gate" stays in UI form labels) |
 | `GateDecision::Approved` / `::Rejected` | Kept / Dropped |
 | `gate_verdict` (passed/failed) | Decision (Kept/Dropped) |
 | epsilon, ε, `--gate-epsilon`, `--min-delta` | Minimum improvement, `--min-improvement` |
@@ -92,7 +92,7 @@ operator surface is a defect.
 | dev | ops |
 |---|---|
 | Null-result canary | Honesty check |
-| `autoresearch_canary_runs` table, `canary_outcome` SSE wire name | (schema/wire stay); display label "Honesty check result" |
+| `autooptimizer_canary_runs` table, `canary_outcome` SSE wire name | (schema/wire stay); display label "Honesty check result" |
 | Inversion-pair eval | Reverse-mutation check |
 | Diversity-decay rate | Variety score |
 | Counterfactual-chain Merkle root | Lineage proof |
@@ -165,12 +165,12 @@ operator surface is a defect.
 
 | dev | ops |
 |---|---|
-| `xvn autoresearch run` | Same |
-| `xvn autoresearch gate` | Same (verb stays per resolved decision) |
-| `xvn autoresearch promote` | `xvn autoresearch activate` |
-| `xvn autoresearch demote` | `xvn autoresearch retire` |
-| `xvn autoresearch inspect` | Same |
-| `xvn autoresearch ls` | Same |
+| `xvn autooptimizer run` | Same |
+| `xvn autooptimizer gate` | Same (verb stays per resolved decision) |
+| `xvn autooptimizer promote` | `xvn autooptimizer activate` |
+| `xvn autooptimizer demote` | `xvn autooptimizer retire` |
+| `xvn autooptimizer inspect` | Same |
+| `xvn autooptimizer ls` | Same |
 | `xvn memory ls` | Same |
 | `xvn memory promote --ids ... --text ...` (Observation cohort → Pattern) | `xvn memory distill --ids ... --text ...` |
 | `xvn memory activate <id>` (single-Pattern form) | Same (preserved unchanged; the existing single-Pattern activation verb stays separate from the distillation verb) |
@@ -206,11 +206,11 @@ The lock above is the contract. The following patches realize it on
 each surface. Each can ship independently; recommended sequence:
 
 1. **Spec amendment** to
-   `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md`:
+   `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md`:
    add a §0.1 "Operator vocabulary" that points at this lock doc, and
    add a footnote at every first mention of a developer-surface term
    in §3–§9 saying "operator-facing as `<ops name>`."
-2. **CLI patch** in `crates/xvision-cli/src/commands/autoresearch.rs`,
+2. **CLI patch** in `crates/xvision-cli/src/commands/autooptimizer.rs`,
    `flywheel.rs`, and `memory.rs`: rename verbs/flags/help text per
    sections 3/5/9/10. Keep old verb names and flag names as hidden
    aliases for one release. Update
@@ -229,7 +229,7 @@ each surface. Each can ship independently; recommended sequence:
    (section 6): one shared React component used everywhere the UI
    currently renders a raw ULID or 64-hex string.
 6. **Skill files**: update
-   `.claude/skills/xvision/autoresearch-ops/SKILL.md` and
+   `.claude/skills/xvision/autooptimizer-ops/SKILL.md` and
    `flywheel-ops/SKILL.md` to use renamed CLI verbs and to drop
    developer-only vocabulary from the standard flow examples.
 7. **MANUAL.md and dashboard wiki sweep**: replace developer-surface
@@ -251,7 +251,7 @@ consistent.
 - Spec-document content (the spec uses developer-surface vocabulary;
   only adds footnotes pointing at operator-surface names).
 - CI-enforced public API (the dependency rule
-  `autoresearch/` cannot import `marketplace/` stays unchanged).
+  `autooptimizer/` cannot import `marketplace/` stays unchanged).
 - Marketplace plugin terminology (already passed its own rename).
 
 ## Amendments

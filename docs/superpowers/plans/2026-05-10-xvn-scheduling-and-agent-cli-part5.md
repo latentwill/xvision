@@ -565,29 +565,29 @@ git commit -m "feat(cli): xvn maintenance subcommands"
 
 ---
 
-### Task 24: `xvn autoresearch` subcommands
+### Task 24: `xvn autooptimizer` subcommands
 
 **Files:**
-- Create: `crates/xvision-cli/src/commands/autoresearch.rs`
+- Create: `crates/xvision-cli/src/commands/autooptimizer.rs`
 - Modify: CLI mod + dispatch.
 
 - [ ] **Step 1: Implement**
 
-Create `crates/xvision-cli/src/commands/autoresearch.rs`:
+Create `crates/xvision-cli/src/commands/autooptimizer.rs`:
 
 ```rust
 use clap::{Args, Subcommand};
 
-use xvision_engine::api::autoresearch;
+use xvision_engine::api::autooptimizer;
 
 #[derive(Args, Debug)]
-pub struct AutoresearchCmd {
+pub struct AutoOptimizerCmd {
     #[command(subcommand)]
-    pub action: AutoresearchAction,
+    pub action: AutoOptimizerAction,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum AutoresearchAction {
+pub enum AutoOptimizerAction {
     RunEveningCycle {
         #[arg(long)] strategy: Option<String>,
         #[arg(long)] dry_run: bool,
@@ -606,23 +606,23 @@ async fn ctx() -> anyhow::Result<std::sync::Arc<xvision_engine::api::ApiContext>
     Ok(std::sync::Arc::new(xvision_engine::api::ApiContext::new(xvn_home, db)))
 }
 
-pub async fn run(cmd: AutoresearchCmd) -> anyhow::Result<()> {
+pub async fn run(cmd: AutoOptimizerCmd) -> anyhow::Result<()> {
     let ctx = ctx().await?;
     match cmd.action {
-        AutoresearchAction::RunEveningCycle { strategy, dry_run } => {
-            let r = autoresearch::run_evening_cycle(&ctx, autoresearch::EveningCycleOpts { agent_id: strategy, dry_run }).await;
+        AutoOptimizerAction::RunEveningCycle { strategy, dry_run } => {
+            let r = autooptimizer::run_evening_cycle(&ctx, autooptimizer::EveningCycleOpts { agent_id: strategy, dry_run }).await;
             match r {
                 Ok(rep) => println!("{}", serde_json::to_string_pretty(&rep)?),
-                Err(e) => eprintln!("autoresearch not yet implemented: {e}"),
+                Err(e) => eprintln!("autooptimizer not yet implemented: {e}"),
             }
         }
-        AutoresearchAction::ListCycles { since_days } => {
+        AutoOptimizerAction::ListCycles { since_days } => {
             let since = chrono::Utc::now() - chrono::Duration::days(since_days as i64);
-            let r = autoresearch::list_cycles(&ctx, since).await?;
+            let r = autooptimizer::list_cycles(&ctx, since).await?;
             println!("{}", serde_json::to_string_pretty(&r)?);
         }
-        AutoresearchAction::ShowCycle { cycle_id } => {
-            let r = autoresearch::show_cycle(&ctx, &cycle_id).await?;
+        AutoOptimizerAction::ShowCycle { cycle_id } => {
+            let r = autooptimizer::show_cycle(&ctx, &cycle_id).await?;
             println!("{}", serde_json::to_string_pretty(&r)?);
         }
     }
@@ -635,7 +635,7 @@ pub async fn run(cmd: AutoresearchCmd) -> anyhow::Result<()> {
 - [ ] **Step 3: Smoke**
 
 ```bash
-cargo run -p xvision-cli -- autoresearch list-cycles --since-days 7
+cargo run -p xvision-cli -- autooptimizer list-cycles --since-days 7
 ```
 
 Expected: empty array output (`[]`).
@@ -643,10 +643,10 @@ Expected: empty array output (`[]`).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xvision-cli/src/commands/autoresearch.rs \
+git add crates/xvision-cli/src/commands/autooptimizer.rs \
         crates/xvision-cli/src/commands/mod.rs \
         crates/xvision-cli/src/lib.rs
-git commit -m "feat(cli): xvn autoresearch — run-evening-cycle, list-cycles, show-cycle (stubs until AR-2)"
+git commit -m "feat(cli): xvn autooptimizer — run-evening-cycle, list-cycles, show-cycle (stubs until AR-2)"
 ```
 
 ---
@@ -753,7 +753,7 @@ Typed action surface in `src/api/`:
 - `report` — strategy review, deployment health, EOD, P&L, token spend, anomaly scan
 - `maintenance` — log rotation, audit compaction, eval-cache refresh, vacuum, integrity check
 - `schedule` — durable cron schedules that fire LLM-driven prompts
-- `autoresearch` — AR-2 evening cycle hook (stub until AR-2 lands)
+- `autooptimizer` — AR-2 evening cycle hook (stub until AR-2 lands)
 
 Every mutating function writes an audit row. CLI handlers + the agent runner's
 tool registry both call these functions; one source of truth.
@@ -825,7 +825,7 @@ Run through the spec one last time. The plan's coverage map:
 | §4.4 report module + EOD | Tasks 5, 6 |
 | §4.5 maintenance module | Task 7 |
 | §4.6 schedule module | Task 8 |
-| §4.7 autoresearch module | Task 9 |
+| §4.7 autooptimizer module | Task 9 |
 | §4.8 Tool naming | Task 11 |
 | §5 Internal agent runner | Tasks 10, 11, 12 |
 | §6 Durable events scheduler | Tasks 14, 15 |
@@ -853,4 +853,4 @@ These limitations are intentional — they ship safely as stubs, and the plumbin
 - **Follow-up: real LlmToolDispatch impl.** Two small tasks: Anthropic Messages API and OpenAI Chat Completions, each reusing existing `xvision-intern` plumbing.
 - **Follow-up: dashboard /schedule routes.** Extends Plan 2d (`xvision-dashboard`). Adds list/detail/create routes + Live cockpit panel.
 - **Follow-up: scheduler_events live data wiring.** Once Plan 2c daemon writes to `scheduler_events`, fill in `report.strategy_review` decisions/PnL and the anomaly heuristics.
-- **Follow-up: AR-2 wires `autoresearch.run_evening_cycle`** to actual mutator + judge logic per AR-2 plan.
+- **Follow-up: AR-2 wires `autooptimizer.run_evening_cycle`** to actual mutator + judge logic per AR-2 plan.

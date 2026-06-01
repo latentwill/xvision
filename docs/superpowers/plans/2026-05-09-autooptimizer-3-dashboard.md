@@ -1,14 +1,14 @@
-# Autoresearcher AR-3 — Dashboard (5 views) + SSE + Mutator-Skill Ladder UI
+# AutoOptimizer AR-3 — Dashboard (5 views) + SSE + Mutator-Skill Ladder UI
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Spec:** `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md` — full design context. This plan implements **§9 (dashboard surfaces)** end-to-end.
+> **Spec:** `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md` — full design context. This plan implements **§9 (dashboard surfaces)** end-to-end.
 > **Companion plans:** AR-1 (mutator + lineage + gate + seal — must ship), AR-2 (cycle orchestrator + judge + canary + inversion + diversity — must ship), MP-1 (marketplace plugin; adds a sixth tab post-AR-3).
 > **Hard upstream dependencies:**
->   1. **AR-1 + AR-2 must be on `main`.** AR-3 consumes `xvision_engine::autoresearch::progress::{ProgressChannel, AutoresearchEvent}` and reads from the SQLite tables introduced by migrations 003/004. Verify before starting: `git log autoresearch-ar2..HEAD --oneline` shows the AR-2 tag is reachable.
->   2. **A live `evening-cycle` invocation drives the live view.** The dashboard tails the `ProgressChannel` shared with whichever process is running the cycle — typically the same `xvn autoresearch evening-cycle` daemon, but for development we run them in two terminals against the same SQLite + blob root.
-> **Hackathon role:** Wk 4 milestone (autoresearch spec §10): "Dashboard: all 5 core views. SSE event flow. Mutator-skill ladder. Dashboard renders live cycle in real time." This plan is exactly that scope.
+>   1. **AR-1 + AR-2 must be on `main`.** AR-3 consumes `xvision_engine::autooptimizer::progress::{ProgressChannel, AutoOptimizerEvent}` and reads from the SQLite tables introduced by migrations 003/004. Verify before starting: `git log autooptimizer-ar2..HEAD --oneline` shows the AR-2 tag is reachable.
+>   2. **A live `evening-cycle` invocation drives the live view.** The dashboard tails the `ProgressChannel` shared with whichever process is running the cycle — typically the same `xvn autooptimizer evening-cycle` daemon, but for development we run them in two terminals against the same SQLite + blob root.
+> **Hackathon role:** Wk 4 milestone (autooptimizer spec §10): "Dashboard: all 5 core views. SSE event flow. Mutator-skill ladder. Dashboard renders live cycle in real time." This plan is exactly that scope.
 
-**Goal:** After this plan ships, `xvn dashboard serve` boots a local axum server at `http://localhost:7777` that renders the five core autoresearch views (live cycle viewer, genealogy tree, mutation diff inspector, mutator-skill ladder, ladder-with-provenance) with real-time SSE updates from `ProgressChannel`. Clicking a node in the genealogy tree opens the diff inspector. The page reads on a projector at five meters (autoresearch spec §9). The marketplace plugin's tab is *not* added here — MP-1 adds it as the sixth tab.
+**Goal:** After this plan ships, `xvn dashboard serve` boots a local axum server at `http://localhost:7777` that renders the five core autooptimizer views (live cycle viewer, genealogy tree, mutation diff inspector, mutator-skill ladder, ladder-with-provenance) with real-time SSE updates from `ProgressChannel`. Clicking a node in the genealogy tree opens the diff inspector. The page reads on a projector at five meters (autooptimizer spec §9). The marketplace plugin's tab is *not* added here — MP-1 adds it as the sixth tab.
 
 **Architecture:** New crate `crates/xvision-dashboard/` with `axum` for the server + `tower-http` for static asset serving. Frontend is a single static SPA (vanilla HTML + JS + D3 v7 + minimal CSS); no React, no Next.js, no build step beyond `cargo build`. SSE events arrive on `/api/events` and are dispatched into client-side handlers per event type. REST endpoints (`/api/lineage`, `/api/lineage/<hash>`, `/api/seals/<cycle_id>`, `/api/ladder/snapshots`, `/api/diversity/samples`, `/api/findings/<bundle_hash>`) read from SQLite. The dashboard process opens the same SQLite database file and the same `ProgressChannel` as the orchestrator — for in-process operation we provide a "combined" mode (`xvn dashboard serve --with-cycle`) that runs both in the same Tokio runtime; for two-process operation we add a Unix domain socket bridge that proxies events into the dashboard's channel.
 
@@ -75,7 +75,7 @@ Plus modifications:
 - `Cargo.toml` workspace — add `crates/xvision-dashboard` to `members`
 - `crates/xvision-cli/src/lib.rs` — add `Command::Dashboard(commands::dashboard::DashboardCmd)`
 - `crates/xvision-cli/src/commands/dashboard.rs` — NEW: thin CLI wrapper around `xvision_dashboard::serve`
-- `crates/xvision-cli/src/commands/autoresearch.rs` — extend `EveningCycle` to optionally bind a Unix socket so the dashboard can subscribe (`--ipc-socket /tmp/xvn-events.sock`)
+- `crates/xvision-cli/src/commands/autooptimizer.rs` — extend `EveningCycle` to optionally bind a Unix socket so the dashboard can subscribe (`--ipc-socket /tmp/xvn-events.sock`)
 
 ---
 
@@ -105,7 +105,7 @@ Create `crates/xvision-dashboard/Cargo.toml`:
 ```toml
 [package]
 name        = "xvision-dashboard"
-description = "Autoresearch dashboard — axum server + static SPA"
+description = "AutoOptimizer dashboard — axum server + static SPA"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -147,7 +147,7 @@ ulid     = "1"
 Create `crates/xvision-dashboard/src/lib.rs`:
 
 ```rust
-//! xvision-dashboard — axum server + static SPA for the autoresearch
+//! xvision-dashboard — axum server + static SPA for the autooptimizer
 //! evening cycle.
 //!
 //! Public entry point: [`serve`]. Loads SQLite + blob store, attaches an
@@ -173,8 +173,8 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use xvision_engine::autoresearch::lineage::LineageStore;
-use xvision_engine::autoresearch::progress::ProgressChannel;
+use xvision_engine::autooptimizer::lineage::LineageStore;
+use xvision_engine::autooptimizer::progress::ProgressChannel;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -198,8 +198,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
-use xvision_engine::autoresearch::lineage::LineageStore;
-use xvision_engine::autoresearch::progress::ProgressChannel;
+use xvision_engine::autooptimizer::lineage::LineageStore;
+use xvision_engine::autooptimizer::progress::ProgressChannel;
 
 use crate::api;
 use crate::ipc;
@@ -313,7 +313,7 @@ Add to `crates/xvision-dashboard/src/ipc.rs`:
 ```rust
 use std::path::PathBuf;
 
-use xvision_engine::autoresearch::progress::ProgressChannel;
+use xvision_engine::autooptimizer::progress::ProgressChannel;
 
 pub async fn spawn_subscriber(_path: PathBuf, _channel: ProgressChannel) -> anyhow::Result<()> {
     // Real implementation in Task 4.
@@ -397,8 +397,8 @@ In `crates/xvision-cli/src/lib.rs`, add to `Command` enum: `Dashboard(commands::
 TMPDIR=$(mktemp -d)
 sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/001_init.sql 2>/dev/null
 sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/002_eval.sql
-sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autoresearch.sql
-sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autoresearch_evals.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autooptimizer.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autooptimizer_evals.sql
 cargo run -p xvision-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs &
 DASH_PID=$!
 sleep 1
@@ -439,8 +439,8 @@ use sqlx::SqlitePool;
 use tempfile::tempdir;
 
 use xvision_dashboard::server::{serve, ServeOpts};
-use xvision_engine::autoresearch::content_hash::ContentHash;
-use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot};
+use xvision_engine::autooptimizer::content_hash::ContentHash;
+use xvision_engine::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot};
 
 async fn boot_with_seed() -> (SocketAddr, tempfile::TempDir) {
     let dir = tempdir().unwrap();
@@ -520,7 +520,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::state::AppState;
-use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autooptimizer::content_hash::ContentHash;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ListQuery {
@@ -550,14 +550,14 @@ pub async fn list(
         Some(st) => sqlx::query(
             "SELECT bundle_hash, parent_hash, diff_blob_hash, finding_blob_hash, status,
                     born_at, metrics_json, cycle_id, session_id
-             FROM autoresearch_lineage_nodes WHERE status = ? ORDER BY born_at DESC LIMIT ?",
+             FROM autooptimizer_lineage_nodes WHERE status = ? ORDER BY born_at DESC LIMIT ?",
         )
         .bind(st)
         .bind(limit),
         None => sqlx::query(
             "SELECT bundle_hash, parent_hash, diff_blob_hash, finding_blob_hash, status,
                     born_at, metrics_json, cycle_id, session_id
-             FROM autoresearch_lineage_nodes ORDER BY born_at DESC LIMIT ?",
+             FROM autooptimizer_lineage_nodes ORDER BY born_at DESC LIMIT ?",
         )
         .bind(limit),
     }
@@ -579,7 +579,7 @@ pub async fn get(
     let row = sqlx::query(
         "SELECT bundle_hash, parent_hash, diff_blob_hash, finding_blob_hash, status,
                 born_at, metrics_json, cycle_id, session_id
-         FROM autoresearch_lineage_nodes WHERE bundle_hash = ?",
+         FROM autooptimizer_lineage_nodes WHERE bundle_hash = ?",
     )
     .bind(&hash)
     .fetch_optional(&state.pool)
@@ -642,7 +642,7 @@ The orchestrator writes events to its own `ProgressChannel`. The dashboard runs 
 
 **Files:**
 - Replace stub: `crates/xvision-dashboard/src/ipc.rs`
-- Modify: `crates/xvision-cli/src/commands/autoresearch.rs` — add `--ipc-socket` to `EveningCycle` and start a UDS sender alongside the stdout subscriber
+- Modify: `crates/xvision-cli/src/commands/autooptimizer.rs` — add `--ipc-socket` to `EveningCycle` and start a UDS sender alongside the stdout subscriber
 - Create: `crates/xvision-dashboard/tests/ipc_bridge.rs`
 
 - [ ] **Step 1: Failing test**
@@ -657,7 +657,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
 use xvision_dashboard::ipc::spawn_subscriber;
-use xvision_engine::autoresearch::progress::{AutoresearchEvent, ProgressChannel};
+use xvision_engine::autooptimizer::progress::{AutoOptimizerEvent, ProgressChannel};
 
 #[tokio::test]
 async fn ipc_bridge_re_emits_events_into_dashboard_channel() {
@@ -669,7 +669,7 @@ async fn ipc_bridge_re_emits_events_into_dashboard_channel() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut client = UnixStream::connect(&socket).await.unwrap();
-    let event = AutoresearchEvent::CycleStarted {
+    let event = AutoOptimizerEvent::CycleStarted {
         cycle_id: "test-cycle".into(),
         session_id: "test-session".into(),
         parent_count: 2,
@@ -680,7 +680,7 @@ async fn ipc_bridge_re_emits_events_into_dashboard_channel() {
 
     let received = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
     match received {
-        AutoresearchEvent::CycleStarted { cycle_id, .. } => assert_eq!(cycle_id, "test-cycle"),
+        AutoOptimizerEvent::CycleStarted { cycle_id, .. } => assert_eq!(cycle_id, "test-cycle"),
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -689,9 +689,9 @@ async fn ipc_bridge_re_emits_events_into_dashboard_channel() {
 - [ ] **Step 2: Implement ipc.rs**
 
 ```rust
-//! Unix-socket subscriber. The orchestrator (`xvn autoresearch
+//! Unix-socket subscriber. The orchestrator (`xvn autooptimizer
 //! evening-cycle`) binds to this socket and writes JSON-serialized
-//! AutoresearchEvent lines. The dashboard subscribes here and re-emits
+//! AutoOptimizerEvent lines. The dashboard subscribes here and re-emits
 //! each event into its in-process ProgressChannel so SSE clients see
 //! live updates.
 
@@ -700,7 +700,7 @@ use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixListener;
 
-use xvision_engine::autoresearch::progress::{AutoresearchEvent, ProgressChannel};
+use xvision_engine::autooptimizer::progress::{AutoOptimizerEvent, ProgressChannel};
 
 pub async fn spawn_subscriber(path: PathBuf, channel: ProgressChannel) -> anyhow::Result<()> {
     if path.exists() {
@@ -716,7 +716,7 @@ pub async fn spawn_subscriber(path: PathBuf, channel: ProgressChannel) -> anyhow
                         let reader = BufReader::new(stream);
                         let mut lines = reader.lines();
                         while let Ok(Some(line)) = lines.next_line().await {
-                            match serde_json::from_str::<AutoresearchEvent>(&line) {
+                            match serde_json::from_str::<AutoOptimizerEvent>(&line) {
                                 Ok(ev) => ch.emit(ev),
                                 Err(e) => tracing::warn!("ipc parse error: {e}; line: {line}"),
                             }
@@ -736,7 +736,7 @@ pub async fn spawn_subscriber(path: PathBuf, channel: ProgressChannel) -> anyhow
 
 - [ ] **Step 3: Orchestrator-side sender**
 
-Modify `crates/xvision-cli/src/commands/autoresearch.rs`. In the `EveningCycle` action, add `--ipc-socket: Option<PathBuf>`, and in the handler (right after `let progress = ProgressChannel::default();`), spawn:
+Modify `crates/xvision-cli/src/commands/autooptimizer.rs`. In the `EveningCycle` action, add `--ipc-socket: Option<PathBuf>`, and in the handler (right after `let progress = ProgressChannel::default();`), spawn:
 
 ```rust
 if let Some(sock) = &ipc_socket {
@@ -745,7 +745,7 @@ if let Some(sock) = &ipc_socket {
 
 async fn spawn_uds_sender(
     path: std::path::PathBuf,
-    mut rx: tokio::sync::broadcast::Receiver<xvision_engine::autoresearch::progress::AutoresearchEvent>,
+    mut rx: tokio::sync::broadcast::Receiver<xvision_engine::autooptimizer::progress::AutoOptimizerEvent>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
     use tokio::net::UnixStream;
@@ -777,7 +777,7 @@ async fn spawn_uds_sender(
 
 ```bash
 cargo test -p xvision-dashboard --test ipc_bridge
-git add crates/xvision-dashboard/src/ipc.rs crates/xvision-dashboard/tests/ipc_bridge.rs crates/xvision-cli/src/commands/autoresearch.rs
+git add crates/xvision-dashboard/src/ipc.rs crates/xvision-dashboard/tests/ipc_bridge.rs crates/xvision-cli/src/commands/autooptimizer.rs
 git commit -m "feat(dashboard): UDS ipc bridge — orchestrator events flow into dashboard channel"
 ```
 
@@ -803,7 +803,7 @@ use tempfile::tempdir;
 use tokio::time::timeout;
 
 use xvision_dashboard::server::{serve, ServeOpts};
-use xvision_engine::autoresearch::progress::AutoresearchEvent;
+use xvision_engine::autooptimizer::progress::AutoOptimizerEvent;
 
 #[tokio::test]
 async fn sse_endpoint_streams_events_emitted_into_progress_channel() {
@@ -830,7 +830,7 @@ async fn sse_endpoint_streams_events_emitted_into_progress_channel() {
     // Client connects to UDS and emits one event.
     let mut uds = tokio::net::UnixStream::connect(&socket).await.unwrap();
     use tokio::io::AsyncWriteExt;
-    let event = AutoresearchEvent::CycleSealed {
+    let event = AutoOptimizerEvent::CycleSealed {
         cycle_id: "test-cycle".into(),
         seal_blob_hash: "abc".repeat(20),
         merkle_root: "def".repeat(20),
@@ -870,19 +870,19 @@ pub async fn events_handler(
             let json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
             // Use event-type as SSE event name; payload as data.
             let kind = match &event {
-                xvision_engine::autoresearch::progress::AutoresearchEvent::CycleStarted { .. } => "cycle_started",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationProposed { .. } => "mutation_proposed",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationEvaluating { .. } => "mutation_evaluating",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationCommitted { .. } => "mutation_committed",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationRejected { .. } => "mutation_rejected",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationQuarantined { .. } => "mutation_quarantined",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::LineageForked { .. } => "lineage_forked",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::JudgeWroteFinding { .. } => "judge_wrote_finding",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::CanaryOutcome { .. } => "canary_outcome",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::DiversityUpdated { .. } => "diversity_updated",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::LadderSnapshot { .. } => "ladder_snapshot",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::CycleSealed { .. } => "cycle_sealed",
-                xvision_engine::autoresearch::progress::AutoresearchEvent::CycleFailed { .. } => "cycle_failed",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::CycleStarted { .. } => "cycle_started",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::MutationProposed { .. } => "mutation_proposed",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::MutationEvaluating { .. } => "mutation_evaluating",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::MutationCommitted { .. } => "mutation_committed",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::MutationRejected { .. } => "mutation_rejected",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::MutationQuarantined { .. } => "mutation_quarantined",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::LineageForked { .. } => "lineage_forked",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::JudgeWroteFinding { .. } => "judge_wrote_finding",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::CanaryOutcome { .. } => "canary_outcome",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::DiversityUpdated { .. } => "diversity_updated",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::LadderSnapshot { .. } => "ladder_snapshot",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::CycleSealed { .. } => "cycle_sealed",
+                xvision_engine::autooptimizer::progress::AutoOptimizerEvent::CycleFailed { .. } => "cycle_failed",
             };
             Some(Ok::<Event, Infallible>(Event::default().event(kind).data(json)))
         }
@@ -935,8 +935,8 @@ use serde::Serialize;
 use sqlx::Row;
 
 use crate::state::AppState;
-use xvision_engine::autoresearch::content_hash::ContentHash;
-use xvision_engine::autoresearch::seal::{CycleSeal, CycleSealWriter};
+use xvision_engine::autooptimizer::content_hash::ContentHash;
+use xvision_engine::autooptimizer::seal::{CycleSeal, CycleSealWriter};
 
 #[derive(Debug, Serialize)]
 pub struct SealRow {
@@ -950,7 +950,7 @@ pub struct SealRow {
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<SealRow>>, (StatusCode, String)> {
     let rows = sqlx::query(
         "SELECT cycle_id, session_id, sealed_at, merkle_root_hex, seal_blob_hash
-         FROM autoresearch_cycle_seals ORDER BY sealed_at DESC",
+         FROM autooptimizer_cycle_seals ORDER BY sealed_at DESC",
     )
     .fetch_all(&state.pool)
     .await
@@ -979,7 +979,7 @@ pub async fn get(
     State(state): State<AppState>,
 ) -> Result<Json<SealDetail>, (StatusCode, String)> {
     let blob_hex: String = sqlx::query_scalar(
-        "SELECT seal_blob_hash FROM autoresearch_cycle_seals WHERE cycle_id = ?",
+        "SELECT seal_blob_hash FROM autooptimizer_cycle_seals WHERE cycle_id = ?",
     )
     .bind(&cycle_id)
     .fetch_optional(&state.pool)
@@ -1039,7 +1039,7 @@ use serde::Serialize;
 use sqlx::Row;
 
 use crate::state::AppState;
-use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autooptimizer::content_hash::ContentHash;
 
 #[derive(Debug, Serialize)]
 pub struct LadderRow {
@@ -1050,7 +1050,7 @@ pub struct LadderRow {
 
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<LadderRow>>, (StatusCode, String)> {
     let rows = sqlx::query(
-        "SELECT cycle_id, snapshot_blob_hash, sampled_at FROM autoresearch_mutator_ladder_snapshots ORDER BY sampled_at",
+        "SELECT cycle_id, snapshot_blob_hash, sampled_at FROM autooptimizer_mutator_ladder_snapshots ORDER BY sampled_at",
     )
     .fetch_all(&state.pool)
     .await
@@ -1094,7 +1094,7 @@ pub struct DiversitySampleRow {
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<DiversitySampleRow>>, (StatusCode, String)> {
     let rows = sqlx::query(
         "SELECT cycle_id, lineage_root, mean_pairwise_distance, decay_ratio, sampled_at
-         FROM autoresearch_diversity_samples ORDER BY sampled_at",
+         FROM autooptimizer_diversity_samples ORDER BY sampled_at",
     )
     .fetch_all(&state.pool)
     .await
@@ -1130,7 +1130,7 @@ pub struct CanaryRunRow {
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<CanaryRunRow>>, (StatusCode, String)> {
     let rows = sqlx::query(
         "SELECT cycle_id, canary_bundle_hash, accepted_count, rejected_count
-         FROM autoresearch_canary_runs ORDER BY cycle_id DESC",
+         FROM autooptimizer_canary_runs ORDER BY cycle_id DESC",
     )
     .fetch_all(&state.pool)
     .await
@@ -1152,7 +1152,7 @@ use axum::Json;
 use serde::Serialize;
 
 use crate::state::AppState;
-use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autooptimizer::content_hash::ContentHash;
 
 #[derive(Debug, Serialize)]
 pub struct FindingDetail {
@@ -1165,7 +1165,7 @@ pub async fn get(
     State(state): State<AppState>,
 ) -> Result<Json<FindingDetail>, (StatusCode, String)> {
     let finding_hex: Option<String> = sqlx::query_scalar(
-        "SELECT finding_blob_hash FROM autoresearch_lineage_nodes WHERE bundle_hash = ?",
+        "SELECT finding_blob_hash FROM autooptimizer_lineage_nodes WHERE bundle_hash = ?",
     )
     .bind(&bundle_hash)
     .fetch_optional(&state.pool)
@@ -1229,12 +1229,12 @@ The SPA is one HTML page with five tab buttons and five view containers. Tab swi
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>xvision autoresearch</title>
+<title>xvision autooptimizer</title>
 <link rel="stylesheet" href="/static/css/tokens.css">
 </head>
 <body>
 <header class="app-header">
-  <h1>xvision · autoresearch</h1>
+  <h1>xvision · autooptimizer</h1>
   <div class="meta">
     <span id="meta-session">session: —</span>
     <span id="meta-cycle">cycle: —</span>
@@ -1411,7 +1411,7 @@ git commit -m "feat(dashboard): SPA shell + tokens + SSE bus + D3 v7 vendor"
 
 ### Task 9: live_cycle.js
 
-The headline view (autoresearch spec §9 #1). Vertical lineage column on the left listing parents being processed; mutation timeline scrolls right; ghost branches faded. Token meter at the top updates from `mutation_proposed` events.
+The headline view (autooptimizer spec §9 #1). Vertical lineage column on the left listing parents being processed; mutation timeline scrolls right; ghost branches faded. Token meter at the top updates from `mutation_proposed` events.
 
 **File:** `crates/xvision-dashboard/static/js/views/live_cycle.js`
 
@@ -1503,13 +1503,13 @@ on("cycle_failed", (d) =>
 TMPDIR=$(mktemp -d)
 sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/001_init.sql 2>/dev/null
 sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/002_eval.sql
-sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autoresearch.sql
-sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autoresearch_evals.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autooptimizer.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autooptimizer_evals.sql
 cargo run -p xvision-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs --ipc-socket /tmp/xvn-events.sock &
 
 # Separate terminal:
-cargo run -p xvision-cli -- autoresearch session-init --config config/autoresearch.toml.example --db $TMPDIR/test.db
-cargo run -p xvision-cli -- autoresearch evening-cycle --session-id <id-from-init> --config config/autoresearch.toml.example --db $TMPDIR/test.db --mock --ipc-socket /tmp/xvn-events.sock
+cargo run -p xvision-cli -- autooptimizer session-init --config config/autooptimizer.toml.example --db $TMPDIR/test.db
+cargo run -p xvision-cli -- autooptimizer evening-cycle --session-id <id-from-init> --config config/autooptimizer.toml.example --db $TMPDIR/test.db --mock --ipc-socket /tmp/xvn-events.sock
 ```
 
 Open `http://127.0.0.1:7777/`. Live tab should fill with mutation/eval/seal events as the cycle runs.
@@ -1752,7 +1752,7 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use crate::state::AppState;
-use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autooptimizer::content_hash::ContentHash;
 
 pub async fn get(
     Path(hash): Path<String>,
@@ -1953,14 +1953,14 @@ git commit -m "feat(dashboard): ladder-with-provenance (lineage depth + click-to
 TMPDIR=$(mktemp -d); export TMPDIR
 sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/001_init.sql 2>/dev/null
 sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/002_eval.sql
-sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autoresearch.sql
-sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autoresearch_evals.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autooptimizer.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autooptimizer_evals.sql
 cargo run -p xvision-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs --ipc-socket /tmp/xvn-events.sock
 
 # Term 2: orchestrator
-cargo run -p xvision-cli -- autoresearch session-init --config config/autoresearch.toml.example --db $TMPDIR/test.db --key-path $TMPDIR/op.ed25519
+cargo run -p xvision-cli -- autooptimizer session-init --config config/autooptimizer.toml.example --db $TMPDIR/test.db --key-path $TMPDIR/op.ed25519
 SESSION=<from above>
-cargo run -p xvision-cli -- autoresearch evening-cycle --session-id $SESSION --config config/autoresearch.toml.example --db $TMPDIR/test.db --mock --ipc-socket /tmp/xvn-events.sock
+cargo run -p xvision-cli -- autooptimizer evening-cycle --session-id $SESSION --config config/autooptimizer.toml.example --db $TMPDIR/test.db --mock --ipc-socket /tmp/xvn-events.sock
 ```
 
 Open `http://127.0.0.1:7777/`. Verify:
@@ -1994,7 +1994,7 @@ git commit --allow-empty -m "chore(dashboard): AR-3 cross-browser + projector sm
 cargo test --workspace 2>&1 | tail -40
 ```
 
-Expected: all tests pass (eval engine + autoresearch AR-1 + AR-2 + dashboard AR-3 + everything else). New tests: 7 in `crates/xvision-dashboard/tests/` (api_lineage, api_seals, api_ladder, api_diversity, api_findings, sse_smoke, ipc_bridge).
+Expected: all tests pass (eval engine + autooptimizer AR-1 + AR-2 + dashboard AR-3 + everything else). New tests: 7 in `crates/xvision-dashboard/tests/` (api_lineage, api_seals, api_ladder, api_diversity, api_findings, sse_smoke, ipc_bridge).
 
 - [ ] **Step 2: Fmt + clippy**
 
@@ -2006,15 +2006,15 @@ cargo clippy --workspace --all-targets -- -D warnings
 - [ ] **Step 3: Tag**
 
 ```bash
-git commit --allow-empty -m "chore(autoresearch): AR-3 (dashboard 5 views + SSE) done — Wk 4 milestone"
-git tag autoresearch-ar3
+git commit --allow-empty -m "chore(autooptimizer): AR-3 (dashboard 5 views + SSE) done — Wk 4 milestone"
+git tag autooptimizer-ar3
 ```
 
 ---
 
 ## Self-review checklist
 
-**Spec coverage (autoresearch design §9):**
+**Spec coverage (autooptimizer design §9):**
 - [x] §9 #1 Live evening cycle viewer — live_cycle.js (Task 9)
 - [x] §9 #1 Real-time SSE stream during evening run — sse.rs + bus.js (Tasks 5, 8)
 - [x] §9 #1 Token / cost meter at top — KPI in live_cycle.js
@@ -2026,7 +2026,7 @@ git tag autoresearch-ar3
 - [x] §9 #4 Mutator-skill ladder (acceptance + token efficiency) — mutator_ladder.js (Task 12). Calibration + regime bias panels reserved for future when AR-2's `regime_bias` field starts populating beyond `{}`.
 - [x] §9 #5 Ladder with provenance (depth + parent hash + click-to-inspect) — ladder_provenance.js (Task 13)
 - [x] §9 SSE event taxonomy (mutation_proposed / committed / rejected / quarantined / lineage_forked / canary_outcome / diversity_updated / cycle_sealed) — wired through sse.rs (Task 5) and bus.js (Task 8)
-- [x] §9 Demo replay fallback `xvn autoresearch demo` — *delivered in AR-2 Task 11*; AR-3 doesn't duplicate
+- [x] §9 Demo replay fallback `xvn autooptimizer demo` — *delivered in AR-2 Task 11*; AR-3 doesn't duplicate
 
 **Out of scope (cross-checked against companion plans):**
 - Marketplace tab — MP-1 (sixth tab, not added here)
@@ -2040,7 +2040,7 @@ git tag autoresearch-ar3
 - D3 vendor copy: pinned to v7.x; tests don't exercise D3 (UI is verified manually). If `static/vendor/d3.v7.min.js` is missing, the page shows `D3 failed to load — check ...` (handled in genealogy.js's draw()). The Task 8 smoke commit downloads it.
 
 **Type consistency:**
-- SSE event names in `sse::events_handler` match the literal strings registered in `bus.js`'s `EVENT_KINDS` array (cycle_started, mutation_proposed, mutation_evaluating, mutation_committed, mutation_rejected, mutation_quarantined, lineage_forked, judge_wrote_finding, canary_outcome, diversity_updated, ladder_snapshot, cycle_sealed, cycle_failed). Cross-checked against `progress.rs::AutoresearchEvent` variants from AR-2 — all 13 covered.
+- SSE event names in `sse::events_handler` match the literal strings registered in `bus.js`'s `EVENT_KINDS` array (cycle_started, mutation_proposed, mutation_evaluating, mutation_committed, mutation_rejected, mutation_quarantined, lineage_forked, judge_wrote_finding, canary_outcome, diversity_updated, ladder_snapshot, cycle_sealed, cycle_failed). Cross-checked against `progress.rs::AutoOptimizerEvent` variants from AR-2 — all 13 covered.
 - API response shapes (`LineageNodeRow`, `SealRow`, `LadderRow`, `DiversitySampleRow`, `CanaryRunRow`, `FindingDetail`) consistent between Rust handlers and the JS consumers (each consumer reads field names defined in the corresponding Rust struct).
 - The cross-tab `xvn:select-bundle` custom event has identical payload shape (`{ bundle_hash: string }`) in genealogy.js (emitter), ladder_provenance.js (emitter), and diff_inspector.js (consumer).
 
@@ -2050,7 +2050,7 @@ git tag autoresearch-ar3
 
 ## What ships after AR-3
 
-`xvn dashboard serve` boots the live demo surface. Run alongside `xvn autoresearch evening-cycle` (or the scheduler-driven nightly job) and the five views render in real time:
+`xvn dashboard serve` boots the live demo surface. Run alongside `xvn autooptimizer evening-cycle` (or the scheduler-driven nightly job) and the five views render in real time:
 
 1. **Live cycle viewer** — the headline. SSE event stream, KPIs, projector-friendly.
 2. **Genealogy tree** — D3 force-directed; status-coloured; click-to-inspect.
@@ -2058,6 +2058,6 @@ git tag autoresearch-ar3
 4. **Mutator-skill ladder** — acceptance trend + proposal volume; calibration/regime panels stubbed pending AR-2 follow-up data.
 5. **Ladder with provenance** — active nodes with lineage depth, click → diff inspector.
 
-The Wk 4 milestone (autoresearch spec §10): "Dashboard renders live cycle in real time" is satisfied.
+The Wk 4 milestone (autooptimizer spec §10): "Dashboard renders live cycle in real time" is satisfied.
 
 **Next plan: MP-1** (marketplace plugin) lands the sixth tab — NFT mints, Merkle receipts, in-house attesters, anchor history, operator action panel — and the on-chain integration. AR-1/AR-2/AR-3 stay chain-free; MP-1 reads the CycleSeal artifacts produced by AR-2 and the API endpoints exposed by AR-3 (it adds new routes under `/api/marketplace/*` rather than modifying existing ones).

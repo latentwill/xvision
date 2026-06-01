@@ -1,12 +1,12 @@
-# Overnight execution prompts for the autoresearcher spine
+# Overnight execution prompts for the autooptimizer spine
 
 > Date: 2026-05-27
 > For: operator (you) running an autonomous coding agent overnight
-> Companion: `docs/superpowers/plans/2026-05-27-autoresearcher-master-implementation-spine.md`
+> Companion: `docs/superpowers/plans/2026-05-27-autooptimizer-master-implementation-spine.md`
 
 ## Honest framing first
 
-You cannot execute the entire autoresearcher spine in one overnight
+You cannot execute the entire autooptimizer spine in one overnight
 session. The spine is 4–6 weeks single-engineer or 2–3 weeks with a
 team per Part 7 of the spine doc itself. An autonomous coding agent
 is not faster than a human at writing the cryptographic substrate
@@ -64,7 +64,7 @@ Copy/paste this as your starting message to the agent. Replace
 filename.
 
 ```text
-You are an autonomous coding agent executing the autoresearcher
+You are an autonomous coding agent executing the autooptimizer
 terminology rollout overnight. You work in the xvision repo at
 /Users/edkennedy/Code/xvision.
 
@@ -72,9 +72,9 @@ READ FIRST (in this order, then stop and confirm you understand
 before writing any code):
 1. /Users/edkennedy/Code/xvision/CLAUDE.md — project conventions and
    HARD RULES on cargo/docker
-2. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-27-autoresearcher-master-implementation-spine.md — the master plan
-3. /Users/edkennedy/Code/xvision/docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md — the locked vocabulary (the contract)
-4. /Users/edkennedy/Code/xvision/team/intake/2026-05-27-autoresearcher-terminology-rollout.md — the wave structure with track dependencies
+2. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-27-autooptimizer-master-implementation-spine.md — the master plan
+3. /Users/edkennedy/Code/xvision/docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md — the locked vocabulary (the contract)
+4. /Users/edkennedy/Code/xvision/team/intake/2026-05-27-autooptimizer-terminology-rollout.md — the wave structure with track dependencies
 
 If the superpowers:executing-plans skill is available, USE IT for
 each track below. If not, follow this loop per task: read the
@@ -87,10 +87,10 @@ hit its acceptance gate before the next one starts. Do not parallelize.
 ================================================================
 TRACK 1 — Spec amendment (doc-only, ~1 hour)
 ================================================================
-Handoff: /Users/edkennedy/Code/xvision/docs/design/2026-05-27-autoresearcher-spec-amendment-handoff.md
+Handoff: /Users/edkennedy/Code/xvision/docs/design/2026-05-27-autooptimizer-spec-amendment-handoff.md
 
 Allowed paths (only file you may modify):
-- docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md
+- docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md
 
 Acceptance gate: every term in the handoff's parenthetical table has
 its first-mention annotation added exactly once; §0.1 exists with
@@ -100,13 +100,13 @@ sentence; the spec still reads cleanly end-to-end.
 Verification: read the modified spec end-to-end before committing.
 If any parenthetical reads as intrusive editorial markup, rephrase.
 
-Commit message format: "docs(autoresearch): add §0.1 operator
+Commit message format: "docs(autooptimizer): add §0.1 operator
 vocabulary + first-mention annotations"
 
 ================================================================
 TRACK 3 — SSE display-label registry (Rust + JS, ~1–2 hours)
 ================================================================
-Handoff: /Users/edkennedy/Code/xvision/docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md
+Handoff: /Users/edkennedy/Code/xvision/docs/design/2026-05-27-autooptimizer-sse-registry-handoff.md
 
 Allowed paths:
 - crates/xvision-dashboard/src/sse.rs
@@ -114,11 +114,11 @@ Allowed paths:
 - crates/xvision-dashboard/tests/sse_smoke.rs
 
 Forbidden:
-- crates/xvision-engine/src/autoresearch/progress.rs (wire schema stays)
+- crates/xvision-engine/src/autooptimizer/progress.rs (wire schema stays)
 - Any orchestrator emission code
 
 Acceptance gate: display_label() helper exists in sse.rs covering
-all 13 AutoresearchEvent variants; SSE payload includes display_label
+all 13 AutoOptimizerEvent variants; SSE payload includes display_label
 field; bus.js has the fallback map; sse_smoke test asserts the label
 is in the payload.
 
@@ -126,8 +126,8 @@ Verification commands:
 - `cargo test -p xvision-dashboard --test sse_smoke` passes
 - `cargo build -p xvision-dashboard` passes
 - Manually grep the variants: count of arms in display_label() match
-  must equal count of AutoresearchEvent variants in
-  crates/xvision-engine/src/autoresearch/progress.rs (or wherever the
+  must equal count of AutoOptimizerEvent variants in
+  crates/xvision-engine/src/autooptimizer/progress.rs (or wherever the
   enum lives)
 
 Commit messages: one for the Rust helper, one for the bus.js fallback,
@@ -136,7 +136,7 @@ one for the test update.
 ================================================================
 TRACK 4 — CLI rename with deprecation aliases (Rust, ~2–3 hours)
 ================================================================
-Handoff: /Users/edkennedy/Code/xvision/docs/design/2026-05-27-autoresearcher-cli-rename-handoff.md
+Handoff: /Users/edkennedy/Code/xvision/docs/design/2026-05-27-autooptimizer-cli-rename-handoff.md
 
 NOTE the amendment: `xvn memory promote` renames to `xvn memory
 distill`, NOT to `xvn memory activate`. The single-Pattern
@@ -144,12 +144,12 @@ distill`, NOT to `xvn memory activate`. The single-Pattern
 "Memory verb structure (per lock amendment 2026-05-27)" section.
 
 Allowed paths:
-- crates/xvision-cli/src/commands/autoresearch.rs
+- crates/xvision-cli/src/commands/autooptimizer.rs
 - crates/xvision-cli/src/commands/memory.rs
 - crates/xvision-cli/src/commands/flywheel.rs (help text only)
 - crates/xvision-cli/src/lib.rs (only if top-level help text references renamed verbs)
 - crates/xvision-cli/tests/cli_surface_snapshot.json
-- crates/xvision-cli/tests/autoresearch_cli.rs
+- crates/xvision-cli/tests/autooptimizer_cli.rs
 
 Forbidden:
 - crates/xvision-engine/** (engine API stays developer-surface)
@@ -164,11 +164,11 @@ xvision-cli passes.
 
 Verification commands:
 - `cargo test -p xvision-cli` passes
-- Smoke: `cargo run -p xvision-cli -- autoresearch promote --help`
+- Smoke: `cargo run -p xvision-cli -- autooptimizer promote --help`
   should print the deprecation note and forward to activate's help
 - Smoke: `cargo run -p xvision-cli -- memory promote --help` should
   print the deprecation note and forward to distill's help
-- Banned-words grep: run `cargo run -p xvision-cli -- autoresearch
+- Banned-words grep: run `cargo run -p xvision-cli -- autooptimizer
   gate --help 2>&1 | grep -iE 'epsilon|holdout'` — should return
   nothing
 
@@ -225,7 +225,7 @@ By morning:
   operator
 
 If you have time after Track 4 lands, attempt Track 5 (skills + docs
-sweep) per /Users/edkennedy/Code/xvision/docs/design/2026-05-27-autoresearcher-skills-docs-sweep-handoff.md.
+sweep) per /Users/edkennedy/Code/xvision/docs/design/2026-05-27-autooptimizer-skills-docs-sweep-handoff.md.
 Track 5 has the same allowed/forbidden paths as documented in the
 handoff. Same stop conditions.
 
@@ -254,14 +254,14 @@ repo at /Users/edkennedy/Code/xvision but you write only spec docs,
 no code.
 
 READ FIRST:
-1. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-27-autoresearcher-master-implementation-spine.md
+1. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-27-autooptimizer-master-implementation-spine.md
    — Parts 6 (gaps), 3 (Phase 4 and Phase 6 framing), 4 (registry)
-2. /Users/edkennedy/Code/xvision/docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md
+2. /Users/edkennedy/Code/xvision/docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md
    — the karpathy spec (for Phase 4 context — the tournament wraps
    the mutator this spec defines)
-3. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md
+3. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md
    — the AR-1 plan (for the Mutator API shape Phase 4 will integrate with)
-4. /Users/edkennedy/Code/xvision/.claude/skills/xvision/autoresearch-ops/SKILL.md
+4. /Users/edkennedy/Code/xvision/.claude/skills/xvision/autooptimizer-ops/SKILL.md
    and /Users/edkennedy/Code/xvision/.claude/skills/xvision/flywheel-ops/SKILL.md
    (for Phase 6 context — these are the skills the discipline applies to)
 5. The Murat skill-pack release notes are public knowledge; you may
@@ -305,7 +305,7 @@ Tone: matches the karpathy spec — factual, decision-table-heavy,
 honest about tradeoffs. Around 800–1500 words.
 
 Operator-facing vocabulary throughout per
-/Users/edkennedy/Code/xvision/docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md
+/Users/edkennedy/Code/xvision/docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md
 — Mutator stays in developer surface, "Experiment writer" in
 operator-facing copy. "Tournament" is a new operator concept that
 should be added to the lock if this spec lands.
@@ -398,9 +398,9 @@ at /Users/edkennedy/Code/xvision.
 
 READ FIRST:
 1. /Users/edkennedy/Code/xvision/CLAUDE.md — hard rules
-2. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-27-autoresearcher-master-implementation-spine.md — Phase 1
-3. /Users/edkennedy/Code/xvision/docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md — the design context
-4. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md — the AR-1 plan; THIS IS YOUR EXECUTION SCRIPT
+2. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-27-autooptimizer-master-implementation-spine.md — Phase 1
+3. /Users/edkennedy/Code/xvision/docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md — the design context
+4. /Users/edkennedy/Code/xvision/docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md — the AR-1 plan; THIS IS YOUR EXECUTION SCRIPT
    (it's ~3800 lines; read tasks 1 through 6 first; reference the rest only as needed)
 
 The plan is TDD-shaped: write failing test → implement → run test →
@@ -419,7 +419,7 @@ Task 1: Cargo deps + module wiring
 Task 2: Content-hash helpers (BLAKE3 + canonical JSON)
 Task 3: Filesystem blob store
 Task 4: Bundle ↔ markdown program-view
-Task 5: AutoresearchConfig (autoresearch.toml loader)
+Task 5: AutoOptimizerConfig (autooptimizer.toml loader)
 Task 6: SessionCommitment + operator key
 
 After Task 6: STOP. Do not proceed to Task 7 (which begins the
@@ -501,7 +501,7 @@ Both worktrees rebase cleanly onto main since they touch disjoint
 paths. Merge in whatever order makes sense.
 
 **Why NOT to run Subset C in parallel with the others.** Subset C
-touches `crates/xvision-cli/src/commands/autoresearch.rs` (extending
+touches `crates/xvision-cli/src/commands/autooptimizer.rs` (extending
 it with new verbs in Tasks 1 and 7+). Subset A's Track 4 also
 touches that file (renaming verbs). They'd collide. Either run C
 sequentially after A is merged, or skip C this night.
@@ -516,7 +516,7 @@ For Subset A:
   show 1 commit for Track 1, 3 commits for Track 3, ~5 commits
   for Track 4
 - Smoke: `cargo test -p xvision-dashboard --test sse_smoke && cargo test -p xvision-cli`
-- Smoke: `cargo run -p xvision-cli -- autoresearch promote --help`
+- Smoke: `cargo run -p xvision-cli -- autooptimizer promote --help`
   should print a deprecation note
 
 For Subset B:
@@ -584,9 +584,9 @@ not have skills loaded.
 
 ## Reference
 
-- Master spine: `docs/superpowers/plans/2026-05-27-autoresearcher-master-implementation-spine.md`
-- Terminology lock: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
-- Wave intake: `team/intake/2026-05-27-autoresearcher-terminology-rollout.md`
-- All five terminology-rollout handoffs: `docs/design/2026-05-27-autoresearcher-*-handoff.md`
-- AR-1 plan: `docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md`
+- Master spine: `docs/superpowers/plans/2026-05-27-autooptimizer-master-implementation-spine.md`
+- Terminology lock: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
+- Wave intake: `team/intake/2026-05-27-autooptimizer-terminology-rollout.md`
+- All five terminology-rollout handoffs: `docs/design/2026-05-27-autooptimizer-*-handoff.md`
+- AR-1 plan: `docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md`
 - CLAUDE.md (hard rules): `/CLAUDE.md`

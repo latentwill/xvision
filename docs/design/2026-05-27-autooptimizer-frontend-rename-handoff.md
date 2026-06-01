@@ -1,9 +1,9 @@
-# Frontend handoff — autoresearcher plain-language rename
+# Frontend handoff — autooptimizer plain-language rename
 
-> For: frontend designer / engineer picking up the autoresearcher UI rename
+> For: frontend designer / engineer picking up the autooptimizer UI rename
 > Date: 2026-05-27
-> Source of truth: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
-> Background (skim only if curious): `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
+> Source of truth: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
+> Background (skim only if curious): `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
 
 ## TL;DR
 
@@ -23,7 +23,7 @@ match the acceptance gallery (§"Acceptance criteria").
 
 ## Project context (skip if you've shipped to xvision before)
 
-xvision is a trading platform with an "autoresearcher" — a nightly
+xvision is a trading platform with an "autooptimizer" — a nightly
 loop that proposes tweaks to trading strategies, paper-tests them, and
 keeps the survivors. The Memory page lets the operator inspect what
 the loop has learned (Patterns) and observe what the loop has captured
@@ -47,7 +47,7 @@ intentional. As a frontend engineer:
   `optimization_id` from the API. The component layer maps those
   field names to the new display labels.
 - TypeScript type definitions DO NOT CHANGE. Keep importing
-  `AutoresearchRun`, `FlywheelLineageItem`, `FlywheelVelocity`, etc.
+  `AutoOptimizerRun`, `FlywheelLineageItem`, `FlywheelVelocity`, etc.
   as they are.
 - Only the rendered string changes. Where the JSX today says
   `<span>Gate {run.gate_verdict}</span>` and `gate_verdict` is
@@ -60,7 +60,7 @@ intentional. As a frontend engineer:
 - `frontend/web/src/features/memory/MemorySurface.tsx` — the big one,
   ~1700 lines. Holds the Patterns tab, Observations tab, the Add
   Pattern modal, the Forget dialog, the Flywheel panel, the Latest
-  Lineage and Autoresearch Runs sections, and the optimization form.
+  Lineage and AutoOptimizer Runs sections, and the optimization form.
   Roughly 70 of the 80 string changes are here.
 - `frontend/web/src/features/memory/MemoryPage.tsx` — small wrapper
   page. Topbar copy needs one update.
@@ -91,7 +91,7 @@ The lowest-risk rename. Do this first to get a feel for the codebase.
 
 | Where (file:approx line) | Today | Replace with |
 |---|---|---|
-| MemorySurface.tsx ~742, ~754 — autoresearch run badge | `staged`, `promoted`, `demoted` | `Staged`, `Active`, `Retired` *(sentence-case the badge and use "Active" instead of "promoted" so it matches the Patterns lifecycle vocabulary)* |
+| MemorySurface.tsx ~742, ~754 — autooptimizer run badge | `staged`, `promoted`, `demoted` | `Staged`, `Active`, `Retired` *(sentence-case the badge and use "Active" instead of "promoted" so it matches the Patterns lifecycle vocabulary)* |
 | MemorySurface.tsx ~754, ~462 — gate verdict | `passed` / `failed` | `Kept` / `Dropped` |
 | MemorySurface.tsx ~1227 — Pattern lifecycle badge | `active` / `staged` / `forgotten` | `Active` / `Staged` / `Forgotten` *(sentence-case only; values already plain)* |
 | Future: lineage node status (not in UI today but coming with AR-2) | `Active` / `Ghost` / `Quarantined` | `Active` / `Rejected` / `Suspect` |
@@ -104,15 +104,15 @@ A/B test labels later.
 
 ## Section 2 — Form labels (the gate forms)
 
-This is the most jargon-dense block. The two gate forms (autoresearch
+This is the most jargon-dense block. The two gate forms (autooptimizer
 run gate, and optimization gate) share the same field set.
 
 | Where (MemorySurface.tsx line) | Today | Replace with |
 |---|---|---|
 | ~509, ~876 | `Parent Holdout` | `Baseline untouched-period score` |
 | ~529, ~861 | `Child Holdout` | `Candidate untouched-period score` |
-| ~881 (autoresearch gate form) | `Parent Day` | `Baseline today's score` |
-| ~886 (autoresearch gate form) | `Child Day` | `Candidate today's score` |
+| ~881 (autooptimizer gate form) | `Parent Day` | `Baseline today's score` |
+| ~886 (autooptimizer gate form) | `Child Day` | `Candidate today's score` |
 | ~549, ~891 | `Epsilon` | `Minimum improvement (Sharpe)` |
 | (any helper text near these fields explaining "epsilon = tolerance") | "Epsilon is the minimum delta…" | "Minimum improvement is the smallest Sharpe gain that counts as real." |
 
@@ -127,7 +127,7 @@ readable.
 | Where (MemorySurface.tsx line) | Today | Replace with |
 |---|---|---|
 | ~595 (optimization gate) | `Record Optimization Gate {id}` | `Record gate decision for {id}` |
-| ~931 (autoresearch gate) | `Record Gate {run.id}` | `Record gate decision` (drop the ID — it's redundant with the row context) |
+| ~931 (autooptimizer gate) | `Record Gate {run.id}` | `Record gate decision` (drop the ID — it's redundant with the row context) |
 | ~803 | `Promote` | `Activate` |
 | ~816 | `Demote` | `Retire` |
 | ~692 | `Mint Child` | `Train new version` |
@@ -163,9 +163,9 @@ should follow the same verb. If today it's `Promoting…`, change to
 | ~386 (Flywheel card title) | `Flywheel` | (keep) |
 | ~430 (section header) | `Latest Lineage` | (keep) |
 | ~430 (section header, full history) | `Optimization History` | `Training run history` |
-| ~723 (section header) | `Recent Autoresearch Runs` | (keep) |
-| ~723 (section header, full history) | `Autoresearch History` | (keep) |
-| MemoryPage.tsx topbar sub | `Global namespace · Operator patterns and autoresearcher observations` | `Global namespace · Operator patterns and observations from the evening run` |
+| ~723 (section header) | `Recent AutoOptimizer Runs` | (keep) |
+| ~723 (section header, full history) | `AutoOptimizer History` | (keep) |
+| MemoryPage.tsx topbar sub | `Global namespace · Operator patterns and autooptimizer observations` | `Global namespace · Operator patterns and observations from the evening run` |
 | agents-flywheel.tsx topbar title | `Flywheel` | (keep) |
 | agents-flywheel.tsx back link | `Back to agent` | (keep) |
 
@@ -173,7 +173,7 @@ should follow the same verb. If today it's `Promoting…`, change to
 
 | Where (MemorySurface.tsx line) | Today | Replace with |
 |---|---|---|
-| ~735 (autoresearch empty) | `No autoresearch runs yet.` | (keep) |
+| ~735 (autooptimizer empty) | `No autooptimizer runs yet.` | (keep) |
 | ~1100s (Patterns empty, lifecycle=all) | `No patterns yet for {namespace}. Use "+ Add Pattern" to seed one.` | (keep) |
 | ~1500s (Observations empty, agent) | `No observations yet for this agent.` | (keep) |
 | ~1500s (Observations empty, workspace) | `No observations yet for the global namespace.` | (keep) |
@@ -287,7 +287,7 @@ The rename is done when:
    visible, (b) the Memory tab on an agent page with the Flywheel
    panel rendered, (c) the Add Pattern modal open, (d) the Forget
    dialog open, (e) the agent-scoped flywheel page with at least one
-   lineage row visible and one autoresearch run visible. Compare
+   lineage row visible and one autooptimizer run visible. Compare
    against the today-snapshots in the existing test fixtures.
 
 ## Test paths
@@ -304,7 +304,7 @@ The rename is done when:
 
 ## Out of scope (do not change in this patch)
 
-- CLI verbs and flags (`xvn autoresearch gate`, `--gate-epsilon`,
+- CLI verbs and flags (`xvn autooptimizer gate`, `--gate-epsilon`,
   etc.) — handled by a separate CLI rename patch.
 - API field names — read-only contract for the frontend.
 - Route paths — would break deep links.
@@ -337,9 +337,9 @@ copywriting judgment matters more than my proposals:
 ## Reference
 
 - Canonical terminology lock (the source of truth that drove this
-  handoff): `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
+  handoff): `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
 - Background audit with full rationale per term:
-  `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
+  `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
 - Project-wide terminology conventions: `/CLAUDE.md` §Terminology
 - xvision frontend design conventions: `frontend/DESIGN.md` (no
   popups rule, no right-side boxes when chat rail is visible —
