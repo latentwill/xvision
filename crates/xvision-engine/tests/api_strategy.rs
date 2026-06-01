@@ -277,6 +277,8 @@ async fn list_returns_summaries_for_existing_strategys() {
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
     store.save(&strategy).await.unwrap();
 

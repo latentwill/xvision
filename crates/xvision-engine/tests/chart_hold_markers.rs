@@ -48,6 +48,8 @@ async fn seed_btc_strategy(ctx: &ApiContext, id: &str) {
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     store.save(&strategy).await.unwrap();

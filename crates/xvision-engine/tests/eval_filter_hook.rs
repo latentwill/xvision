@@ -59,6 +59,8 @@ fn build_strategy(activation_mode: ActivationMode, filter: Option<Filter>) -> St
         activation_mode,
         filter,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 
