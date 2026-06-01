@@ -60,7 +60,7 @@ Scope of the plan (not of this track):
 - Where OTel emission attaches in `crates/xvision-engine/src/agent/`
   (likely `agent/llm.rs`, `agent/execute.rs`, `agent/pipeline.rs`).
 - The `xvn_run.json` export schema (schema_version `xvn.agent_run.v1`) and
-  `xvn_report.md` template — both stable enough for autoresearcher
+  `xvn_report.md` template — both stable enough for autooptimizer
   ingestion.
 - The Run Detail UI route and its relationship to the existing
   `/eval-runs/:id` view (separate route vs. tab on the same page).
@@ -87,5 +87,5 @@ git worktree add .worktrees/agent-run-observability-foundation \
 
 Spec gate quoted in the intake doc. Key constraint: the spec deliberately
 narrows the first deliverable to the trace/report layer — do not let the
-plan sprawl into the harness adapter or the autoresearcher ingestion
+plan sprawl into the harness adapter or the autooptimizer ingestion
 contract. Those land later, after the trace/report schema stabilizes.

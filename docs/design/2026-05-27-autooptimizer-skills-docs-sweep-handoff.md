@@ -1,13 +1,13 @@
-# Skills + docs sweep handoff — autoresearcher rename
+# Skills + docs sweep handoff — autooptimizer rename
 
 > For: technical writer / engineer doing the doc sweep
 > Date: 2026-05-27
-> Source of truth: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
+> Source of truth: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
 
 ## TL;DR
 
 Sweep two skill files, MANUAL.md, the dashboard wiki, and any
-README/marketing copy that references autoresearcher surfaces.
+README/marketing copy that references autooptimizer surfaces.
 Replace developer-surface terms with operator-surface terms per the
 terminology lock. This is largely mechanical search-and-replace, but
 the skills are operator-facing reference material and need extra
@@ -20,18 +20,18 @@ release) AND the new verbs are landed (so the skill can use them).
 
 ## Files in scope
 
-- `.claude/skills/xvision/autoresearch-ops/SKILL.md` — the canonical
-  autoresearch ops skill; demonstrates the standard distillation
+- `.claude/skills/xvision/autooptimizer-ops/SKILL.md` — the canonical
+  autooptimizer ops skill; demonstrates the standard distillation
   flow with the CLI
 - `.claude/skills/xvision/flywheel-ops/SKILL.md` — the flywheel
   observability skill (read it first to see what's there)
-- `MANUAL.md` (project root) — search for autoresearch / memory /
+- `MANUAL.md` (project root) — search for autooptimizer / memory /
   flywheel sections
 - `crates/xvision-dashboard/wiki/cli-reference.md` — CLI reference
   rendered into the dashboard wiki
 - `README.md` (project root) — only if it mentions any of the
   renamed terms in user-facing copy
-- `marketing/` — if any marketing copy references autoresearcher
+- `marketing/` — if any marketing copy references autooptimizer
   vocabulary; search `marketing/` for `mutation`, `mutator`,
   `epsilon`, `holdout`, `merkle`, `ghost`, `quarantined`
 
@@ -47,32 +47,32 @@ release) AND the new verbs are landed (so the skill can use them).
   technical)
 - The team coordination files at `team/` (developer process docs)
 
-## The autoresearch-ops skill rewrite
+## The autooptimizer-ops skill rewrite
 
-Current content (`.claude/skills/xvision/autoresearch-ops/SKILL.md`):
+Current content (`.claude/skills/xvision/autooptimizer-ops/SKILL.md`):
 
 ```
 ---
-name: xvision-autoresearch-ops
-description: Operate xvision autoresearcher distillation: stage Patterns from Observation cohorts, apply numeric gates and blind Findings, promote/demote Patterns, and preserve lineage evidence.
+name: xvision-autooptimizer-ops
+description: Operate xvision autooptimizer distillation: stage Patterns from Observation cohorts, apply numeric gates and blind Findings, promote/demote Patterns, and preserve lineage evidence.
 ---
 
-# xvision autoresearch ops
+# xvision autooptimizer ops
 
 Use this skill for offline memory distillation and Pattern promotion work.
-Autoresearcher commands are offline-only; do not run them inside a live trading
+AutoOptimizer commands are offline-only; do not run them inside a live trading
 decision process.
 
 ## Standard Flow
 
 ```bash
-xvn autoresearch run \
+xvn autooptimizer run \
   --agent <agent_id> \
   --pattern-text "<candidate Pattern>" \
   --embedding-json '[...]' \
   --json
 
-xvn autoresearch gate <run_id> \
+xvn autooptimizer gate <run_id> \
   --metric sharpe \
   --parent-day-score <n> \
   --child-day-score <n> \
@@ -82,7 +82,7 @@ xvn autoresearch gate <run_id> \
   --finding-text "<blind qualitative finding>" \
   --json
 
-xvn autoresearch promote <run_id> --json
+xvn autooptimizer promote <run_id> --json
 ```
 
 [...]
@@ -92,26 +92,26 @@ Proposed rewrite:
 
 ```
 ---
-name: xvision-autoresearch-ops
-description: Operate the xvision autoresearcher: distill Observations into candidate Patterns, run the gate against today and the untouched test period, record blind findings, activate or retire Patterns, and preserve the lineage evidence for audit.
+name: xvision-autooptimizer-ops
+description: Operate the xvision autooptimizer: distill Observations into candidate Patterns, run the gate against today and the untouched test period, record blind findings, activate or retire Patterns, and preserve the lineage evidence for audit.
 ---
 
-# xvision autoresearch ops
+# xvision autooptimizer ops
 
-Use this skill for offline Pattern distillation work. Autoresearcher
+Use this skill for offline Pattern distillation work. AutoOptimizer
 commands are offline-only; do not run them inside a live trading
 decision process.
 
 ## Standard flow
 
 ```bash
-xvn autoresearch run \
+xvn autooptimizer run \
   --agent <agent_id> \
   --pattern-text "<candidate Pattern>" \
   --embedding-json '[...]' \
   --json
 
-xvn autoresearch gate <run_id> \
+xvn autooptimizer gate <run_id> \
   --metric sharpe \
   --baseline-today-score <n> \
   --candidate-today-score <n> \
@@ -121,7 +121,7 @@ xvn autoresearch gate <run_id> \
   --finding-text "<finding written blind to the numeric scores>" \
   --json
 
-xvn autoresearch activate <run_id> --json
+xvn autooptimizer activate <run_id> --json
 ```
 
 ## Invariants
@@ -137,7 +137,7 @@ xvn autoresearch activate <run_id> --json
 
 ## Evidence to capture
 
-- `xvn autoresearch inspect <run_id> --json`
+- `xvn autooptimizer inspect <run_id> --json`
 - Gate input/output JSON, including the blind finding fields.
 - Activated Pattern row and contributing Observation ids.
 - Look-ahead-protection regression output before declaring an
@@ -174,7 +174,7 @@ Search MANUAL.md for these terms and replace per the lock:
 - `epsilon`, `gate-epsilon` → `minimum improvement`, `min-improvement`
 - `holdout` (when describing the time window) → `untouched test period`
 - `mutation`, `mutator` → `experiment`, `experiment writer`
-- `promote`/`promotion`/`promoted` in autoresearch context →
+- `promote`/`promotion`/`promoted` in autooptimizer context →
   `activate`/`activation`/`activated`
 - `xvn memory promote` (Observation-cohort distillation form) →
   `xvn memory distill`; surrounding "promote(d)" prose for this
@@ -219,11 +219,11 @@ any are present:
 
 ## Acceptance criteria
 
-1. autoresearch-ops/SKILL.md and flywheel-ops/SKILL.md both updated;
-   `cat .claude/skills/xvision/autoresearch-ops/SKILL.md | grep -iE
+1. autooptimizer-ops/SKILL.md and flywheel-ops/SKILL.md both updated;
+   `cat .claude/skills/xvision/autooptimizer-ops/SKILL.md | grep -iE
    '(epsilon|holdout|mutation|mutator|promote|demote|ghost|quarantined|merkle|blake3|ed25519)'`
    returns nothing.
-2. MANUAL.md: same grep on the autoresearch / memory / flywheel
+2. MANUAL.md: same grep on the autooptimizer / memory / flywheel
    sections returns nothing.
 3. crates/xvision-dashboard/wiki/cli-reference.md: same grep returns
    nothing.
@@ -239,7 +239,7 @@ any are present:
 This handoff requires the CLI rename to have shipped first (so the
 new verbs and flags exist). Do not start until:
 
-- `xvn autoresearch activate`, `xvn autoresearch retire`,
+- `xvn autooptimizer activate`, `xvn autooptimizer retire`,
   `xvn memory activate`, `xvn memory retire` (or `distill`) all exist
 - `--min-improvement`, `--baseline-today-score`,
   `--candidate-today-score`, `--baseline-untouched-score`,
@@ -252,23 +252,23 @@ new verbs and flags exist). Do not start until:
 
 - If a skill description rewrite changes the activation behavior of
   the skill (the LLM router matches against the description), flag
-  it — Murat's skill-pack discipline (see the earlier autoresearcher
+  it — Murat's skill-pack discipline (see the earlier autooptimizer
   evaluation) says skill descriptions drive routing precision. The
   rewrite above tries to preserve intent but the wording shift might
   affect when the skill fires.
 - If marketing/methods.md has carefully crafted copy that the rename
   would break, leave it and open a follow-up ticket — don't damage
   outbound material with a mechanical sweep.
-- If you find autoresearcher vocabulary in places this handoff
+- If you find autooptimizer vocabulary in places this handoff
   didn't anticipate (a blog post, a Twitter thread checked into the
   repo, screenshots in marketing/demos/), flag and decide
   case-by-case.
 
 ## Reference
 
-- Terminology lock: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
+- Terminology lock: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
 - Frontend handoff (for context on what the operator sees):
-  `docs/design/2026-05-27-autoresearcher-frontend-rename-handoff.md`
+  `docs/design/2026-05-27-autooptimizer-frontend-rename-handoff.md`
 - CLI handoff (the prerequisite):
-  `docs/design/2026-05-27-autoresearcher-cli-rename-handoff.md`
+  `docs/design/2026-05-27-autooptimizer-cli-rename-handoff.md`
 - Project-wide terminology note: `/CLAUDE.md` §Terminology

@@ -1,16 +1,16 @@
-# CLI rename handoff — autoresearcher plain-language verbs and flags
+# CLI rename handoff — autooptimizer plain-language verbs and flags
 
 > For: backend engineer picking up the CLI rename
 > Date: 2026-05-27
-> Source of truth: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
+> Source of truth: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
 
 ## TL;DR
 
-Rename a set of CLI verbs and flags on `xvn autoresearch`,
+Rename a set of CLI verbs and flags on `xvn autooptimizer`,
 `xvn memory`, and `xvn flywheel` to use the locked operator-surface
 names. Keep every renamed verb and flag as a hidden deprecation alias
 for one release so existing operator scripts and the
-`autoresearch-ops` skill continue to work while users migrate. Update
+`autooptimizer-ops` skill continue to work while users migrate. Update
 the public CLI surface snapshot test.
 
 The CLI is the most invasive of the rename patches because it has
@@ -20,7 +20,7 @@ consumers working until we cut a release that drops them.
 
 ## Files in scope
 
-- `crates/xvision-cli/src/commands/autoresearch.rs` — verb + flag
+- `crates/xvision-cli/src/commands/autooptimizer.rs` — verb + flag
   renames, help text rewrites
 - `crates/xvision-cli/src/commands/flywheel.rs` — help text only (no
   verb/flag renames in scope; section 7 of the lock keeps these names)
@@ -32,15 +32,15 @@ consumers working until we cut a release that drops them.
   references renamed verbs
 - `crates/xvision-cli/tests/cli_surface_snapshot.json` — the
   authoritative public-CLI snapshot
-- `crates/xvision-cli/tests/autoresearch_cli.rs` — integration tests
+- `crates/xvision-cli/tests/autooptimizer_cli.rs` — integration tests
   that assert on verb/flag names
 
 ## Files NOT in scope
 
-- Any file under `crates/xvision-engine/src/autoresearch/` — Rust
+- Any file under `crates/xvision-engine/src/autooptimizer/` — Rust
   types, internal modules, and engine API stay developer-surface.
 - SQLite migrations — schema names stay.
-- `crates/xvision-engine/src/api/autoresearch.rs` — the engine API is
+- `crates/xvision-engine/src/api/autooptimizer.rs` — the engine API is
   developer-surface; only the CLI translates to operator vocabulary.
 - The dashboard SSE wire names — handled by the SSE registry handoff.
 
@@ -54,15 +54,15 @@ removed in the next."
 
 | Subcommand path | Today | Rename to | Deprecation alias |
 |---|---|---|---|
-| `xvn autoresearch promote` | (current) | `xvn autoresearch activate` | `promote` hidden |
-| `xvn autoresearch demote` | (current) | `xvn autoresearch retire` | `demote` hidden |
+| `xvn autooptimizer promote` | (current) | `xvn autooptimizer activate` | `promote` hidden |
+| `xvn autooptimizer demote` | (current) | `xvn autooptimizer retire` | `demote` hidden |
 | `xvn memory promote --ids ... --text ...` | (current — Observation cohort → Pattern) | `xvn memory distill --ids ... --text ...` | `promote` hidden alias forwards to `distill` |
 | `xvn memory activate <id>` | (current — single-Pattern form) | `xvn memory activate <id>` (unchanged) | — (kept separate from `distill` per lock amendment) |
 | `xvn memory demote` | (current) | `xvn memory retire` | `demote` hidden |
 
-Verbs that DO NOT rename per the lock: `xvn autoresearch run`,
-`xvn autoresearch gate`, `xvn autoresearch inspect`,
-`xvn autoresearch ls`, `xvn memory ls`, `xvn memory namespaces`,
+Verbs that DO NOT rename per the lock: `xvn autooptimizer run`,
+`xvn autooptimizer gate`, `xvn autooptimizer inspect`,
+`xvn autooptimizer ls`, `xvn memory ls`, `xvn memory namespaces`,
 `xvn memory show`, `xvn memory add-pattern`, `xvn memory rm`,
 `xvn memory forget`, `xvn memory undo-forget`, `xvn flywheel status`,
 `xvn flywheel velocity`, `xvn flywheel lineage`.
@@ -87,12 +87,12 @@ See "Amendments" section in the terminology lock for the rationale.
 
 | Subcommand | Old flag | New flag | Alias |
 |---|---|---|---|
-| `xvn autoresearch gate` | `--gate-epsilon` | `--min-improvement` | old hidden |
-| `xvn autoresearch gate` | `--parent-day-score` | `--baseline-today-score` | old hidden |
-| `xvn autoresearch gate` | `--child-day-score` | `--candidate-today-score` | old hidden |
-| `xvn autoresearch gate` | `--parent-holdout-score` | `--baseline-untouched-score` | old hidden |
-| `xvn autoresearch gate` | `--child-holdout-score` | `--candidate-untouched-score` | old hidden |
-| `xvn autoresearch gate` | `--min-delta` | `--min-improvement` | old hidden (consolidates with the epsilon rename — both flags meant the same thing on different code paths) |
+| `xvn autooptimizer gate` | `--gate-epsilon` | `--min-improvement` | old hidden |
+| `xvn autooptimizer gate` | `--parent-day-score` | `--baseline-today-score` | old hidden |
+| `xvn autooptimizer gate` | `--child-day-score` | `--candidate-today-score` | old hidden |
+| `xvn autooptimizer gate` | `--parent-holdout-score` | `--baseline-untouched-score` | old hidden |
+| `xvn autooptimizer gate` | `--child-holdout-score` | `--candidate-untouched-score` | old hidden |
+| `xvn autooptimizer gate` | `--min-delta` | `--min-improvement` | old hidden (consolidates with the epsilon rename — both flags meant the same thing on different code paths) |
 | `xvn memory ls` | `--tier` | `--kind` | old hidden |
 | `xvn memory ls` | `--promotion-state` | `--status` | old hidden |
 | `xvn memory add-pattern` | `--attest-null-window` | `--confirm-no-cutoff` | old hidden |
@@ -114,30 +114,30 @@ this run as activated if it passes"; consider renaming to
 Every command and flag with a `help = "..."` clap attribute needs the
 help text re-read for jargon. Specific edits:
 
-### `xvn autoresearch` subcommands (full help text proposals)
+### `xvn autooptimizer` subcommands (full help text proposals)
 
-`xvn autoresearch run` description:
+`xvn autooptimizer run` description:
 - Today: "Distill recent Observations into a staged Pattern."
 - New: "Distill recent Observations into a candidate Pattern. The
-  Pattern enters staged status; use `xvn autoresearch gate` to
-  evaluate it, then `xvn autoresearch activate` to put it into use."
+  Pattern enters staged status; use `xvn autooptimizer gate` to
+  evaluate it, then `xvn autooptimizer activate` to put it into use."
 
-`xvn autoresearch gate` description:
+`xvn autooptimizer gate` description:
 - Today: "Record numeric gate and blind Finding for a staged Pattern."
 - New: "Record the gate decision (Kept or Dropped) for a candidate
   Pattern, based on its score on today's data and on an untouched
   test period. The qualitative finding is recorded blind to the
   numeric scores."
 
-`xvn autoresearch activate` description (renamed from `promote`):
-- New: "Activate a candidate Pattern from an autoresearch run, making
+`xvn autooptimizer activate` description (renamed from `promote`):
+- New: "Activate a candidate Pattern from an autooptimizer run, making
   it available for recall during decisions."
 
-`xvn autoresearch retire` description (renamed from `demote`):
-- New: "Retire a Pattern produced by an autoresearch run. Soft-delete
+`xvn autooptimizer retire` description (renamed from `demote`):
+- New: "Retire a Pattern produced by an autooptimizer run. Soft-delete
   with a grace window; restore via `xvn memory undo-forget`."
 
-Flag help on `xvn autoresearch gate`:
+Flag help on `xvn autooptimizer gate`:
 - `--min-improvement`: "Minimum improvement (Sharpe gain) required on
   both today's score and the untouched-period score for the gate to
   return Kept."
@@ -180,14 +180,14 @@ Flag help on `xvn autoresearch gate`:
 ## Human-readable output strings
 
 The CLI also prints status lines like
-`autoresearch run {id} gate_verdict=passed (active)` — these need
+`autooptimizer run {id} gate_verdict=passed (active)` — these need
 operator-surface vocabulary too:
 
 | Today | Replace with |
 |---|---|
 | `gate_verdict=passed (active)` / `gate_verdict=failed (staged)` | `gate decision: Kept (status: active)` / `gate decision: Dropped (status: staged)` |
-| `autoresearch run {id} activated pattern {pattern_id}` | (keep — "activated" is now the verb) |
-| `autoresearch run {id} demoted pattern {pattern_id}` | `autoresearch run {id} retired pattern {pattern_id}` |
+| `autooptimizer run {id} activated pattern {pattern_id}` | (keep — "activated" is now the verb) |
+| `autooptimizer run {id} demoted pattern {pattern_id}` | `autooptimizer run {id} retired pattern {pattern_id}` |
 | `xvn memory ls` table column header `tier` | `kind` |
 | `xvn memory ls` table column header for promotion_state field | `status` |
 | `xvn flywheel velocity` output `patterns_promoted: N` | `patterns_activated: N` |
@@ -209,12 +209,12 @@ top-level CLI help if it isn't already.
 authoritative test of the public CLI shape. Update it to reflect the
 new verbs and flags. The diff should show:
 
-- New verbs added: `autoresearch activate`, `autoresearch retire`,
+- New verbs added: `autooptimizer activate`, `autooptimizer retire`,
   `memory activate` (extended), `memory distill`, `memory retire`
 - Old verbs marked hidden (still present, but with `hidden: true`):
-  `autoresearch promote`, `autoresearch demote`, `memory promote`,
+  `autooptimizer promote`, `autooptimizer demote`, `memory promote`,
   `memory demote`
-- Renamed flags on `autoresearch gate`: hidden aliases for the old
+- Renamed flags on `autooptimizer gate`: hidden aliases for the old
   names, new names visible
 - Renamed flags on `memory ls` and `memory add-pattern`: same
 
@@ -228,32 +228,32 @@ metadata, use it. Otherwise add a comment in the JSON (or a sibling
 2. Every old verb and flag is preserved as a hidden alias with a
    stderr deprecation note on use.
 3. The CLI surface snapshot test is updated and passes.
-4. `crates/xvision-cli/tests/autoresearch_cli.rs` is updated to
+4. `crates/xvision-cli/tests/autooptimizer_cli.rs` is updated to
    assert on the new verb and flag names (the existing assertions
    should be moved to new ones; do not delete the alias tests — add a
    parallel test that exercises the alias path to confirm
    backward-compat).
 5. `cargo test -p xvision-cli` passes.
-6. `xvn --help`, `xvn autoresearch --help`, `xvn memory --help`,
+6. `xvn --help`, `xvn autooptimizer --help`, `xvn memory --help`,
    `xvn flywheel --help`, and the help of every individual subcommand
    reads cleanly with the new vocabulary — no remaining instances of
    `epsilon`, `holdout` (in user-facing surfaces; "Untouched test
    period" is fine), `promotion`, `demote`, `mutation`, `mutator`.
-7. `cargo run -p xvision-cli -- autoresearch promote --help` prints
+7. `cargo run -p xvision-cli -- autooptimizer promote --help` prints
    the deprecation note and forwards to `activate`'s logic.
 
 ## Test paths
 
 - `crates/xvision-cli/tests/cli_surface_snapshot.json` — update
-- `crates/xvision-cli/tests/autoresearch_cli.rs` — update + add
+- `crates/xvision-cli/tests/autooptimizer_cli.rs` — update + add
   alias-path tests
 - Any clap unit tests in `crates/xvision-cli/src/commands/*.rs`
-- Manual smoke: run `xvn autoresearch --help` and read it like an
+- Manual smoke: run `xvn autooptimizer --help` and read it like an
   operator who's never used the tool
 
 ## Things to push back on
 
-- `--promote-if-pass` flag inside `xvn autoresearch gate` —
+- `--promote-if-pass` flag inside `xvn autooptimizer gate` —
   recommend renaming to `--activate-if-pass` for consistency with
   the verb rename. Flag back if you make this change so we update
   the lock.
@@ -273,12 +273,12 @@ metadata, use it. Otherwise add a comment in the JSON (or a sibling
 1. Land the rename PR with deprecation aliases.
 2. One release cycle later, drop the aliases.
 3. The skills-and-docs sweep handoff (separate doc) updates
-   `.claude/skills/xvision/autoresearch-ops/SKILL.md` to use the new
+   `.claude/skills/xvision/autooptimizer-ops/SKILL.md` to use the new
    verbs immediately — that skill is the official command-line
    reference and shouldn't show deprecated forms.
 
 ## Reference
 
-- Terminology lock: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
-- Audit context: `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
-- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autoresearcher subsurface)"
+- Terminology lock: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
+- Audit context: `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
+- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autooptimizer subsurface)"

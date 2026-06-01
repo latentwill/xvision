@@ -65,7 +65,7 @@ Implemented in `web/src/routes/`:
 | `/live/:id` | `live.tsx` | Live chart stream for an active run |
 | `/settings/{providers,brokers,skills,danger}` | `settings/*.tsx` | LLM/broker/skill config and destructive maintenance |
 
-Out of v1: marketplace, autoresearcher dashboard, and journal/lab notebook.
+Out of v1: marketplace, autooptimizer dashboard, and journal/lab notebook.
 See `v1-shipping-plan.md` for the cut list.
 
 ## Viewing the prototype (reference only)

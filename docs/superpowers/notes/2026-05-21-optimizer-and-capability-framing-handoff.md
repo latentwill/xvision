@@ -48,13 +48,13 @@ The conversation arc (compressed):
 - **Started:** "Would DSPy help xvision? Wouldn't it complicate things for
   vibetraders?" The original ask was about whether to adopt DSPy-style
   optimization at all.
-- **Identified killer use case:** xvision's planned V3 autoresearcher is
+- **Identified killer use case:** xvision's planned V3 autooptimizer is
   itself a hand-rolled prompt optimizer (per `MANUAL.md` §scaling — "~100
   mutator variants/night × 50K-token briefings × Sonnet-class evaluation, the
   LLM bill is ~$15K/month"). GEPA-style reflective mutation should bend that
   unit economics meaningfully.
-- **Slotting:** Adoption belongs *before* autoresearcher, not as part of it.
-  Autoresearcher should consume the optimizer as a primitive.
+- **Slotting:** Adoption belongs *before* autooptimizer, not as part of it.
+  AutoOptimizer should consume the optimizer as a primitive.
 - **Original first target was wrong.** Initial recommendation pointed at the
   "watcher" abstraction and proposed a critic agent. This was wrong on two
   axes — see §"What changed mid-conversation."
@@ -154,9 +154,9 @@ This creates a hierarchical optimization loop:
    filter you specified fires too rarely; the agent you grading-configured
    has 51% accuracy on holdout."
 
-This is meta-optimization. The chat rail authoring agent IS the autoresearcher
+This is meta-optimization. The chat rail authoring agent IS the autooptimizer
 in the limit — the artifacts it produces are exactly the artifacts
-autoresearcher mutates. Worth being explicit that they're the same loop at
+autooptimizer mutates. Worth being explicit that they're the same loop at
 different scopes.
 
 ## Audit results
@@ -254,7 +254,7 @@ rationale + actual outcome + observed return) as feedback.
 **Why first.** Lowest blast radius (post-hoc, no live impact), cleanest
 metric (label is deterministic from price data), reusable downstream (a
 calibrated critic IS the judge for any subsequent capability optimization,
-including autoresearcher's mutator variants).
+including autooptimizer's mutator variants).
 
 **Composition.** Once `grades_decisions` is calibrated:
 
@@ -262,12 +262,12 @@ including autoresearcher's mutator variants).
   agreement (direct) PLUS the critic's per-decision grade (judged).
 - Chat rail agents optimize partly against artifact downstream performance
   judged by the same critic — "how good are the strategies you produced?".
-- Autoresearcher uses the critic to grade mutator variants without full
+- AutoOptimizer uses the critic to grade mutator variants without full
   backtests, which is where the $15K/month projection actually bends.
 
 ## Validity discipline (non-negotiable)
 
-The user's stated goal is "track valid improvements for autoresearcher and
+The user's stated goal is "track valid improvements for autooptimizer and
 internal optimization" — not just any improvement. Concrete:
 
 - Every optimizer run reports `train_score`, `holdout_score`,
@@ -279,13 +279,13 @@ internal optimization" — not just any improvement. Concrete:
 - Improvements smaller than the noise floor (computed from train→train
   split-half variance) are reported as "no improvement" regardless of point
   estimate.
-- Every optimized variant is a named artifact; the user (or autoresearcher)
+- Every optimized variant is a named artifact; the user (or autooptimizer)
   compares pairs on the holdout. No automatic promotion.
 - The optimizer cost runs on internal credits, not user tokens. Live
   runtime never re-pays optimization cost (consumes a frozen String).
 
 The optimizer's value is honest "no improvement" reports as much as it is
-the rare "+5% on holdout with CI" wins. Pattern-match for the autoresearcher:
+the rare "+5% on holdout with CI" wins. Pattern-match for the autooptimizer:
 1× real signal and 9× honest "no signal" is better than 10× overconfident
 "improvements" half of which are wrong.
 
@@ -369,7 +369,7 @@ In suggested execution order:
 - `team/intake/2026-05-21-eval-honesty-and-agent-graph.md` — adjacent intake,
   some `agent-graph-composition` track items overlap (capability model
   surface).
-- `MANUAL.md` §scaling — the $15K/month autoresearcher cost projection that
+- `MANUAL.md` §scaling — the $15K/month autooptimizer cost projection that
   motivates GEPA's sample efficiency argument.
 - `crates/xvision-filters/` — the canonical filter crate; obsoletes the
   retired watcher v1 spec.
@@ -383,8 +383,8 @@ In suggested execution order:
 - Chat rail agent inventory — which existing agents declare which
   capabilities, who their authoring touchpoints are. Belongs in the
   capability-model PR sequence, not here.
-- Autoresearcher integration design — how `grades_decisions` becomes a
-  primitive the autoresearcher consumes. V3 work; this handoff sets up
+- AutoOptimizer integration design — how `grades_decisions` becomes a
+  primitive the autooptimizer consumes. V3 work; this handoff sets up
   the substrate for it but does not specify it.
 - v2-board slotting — where the optimizer wave lives in the wave
   sequence (V2G? V3 foundation?). Conductor's call at decomposition time.

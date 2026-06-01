@@ -216,7 +216,7 @@ async fn registry_includes_all_seven_domains() {
     assert!(names.iter().any(|n| n.starts_with("report.")));
     assert!(names.iter().any(|n| n.starts_with("maintenance.")));
     assert!(names.iter().any(|n| n.starts_with("schedule.")));
-    assert!(names.iter().any(|n| n.starts_with("autoresearch.")));
+    assert!(names.iter().any(|n| n.starts_with("autooptimizer.")));
     assert!(names.iter().any(|n| n == &"record_outcome"));
 }
 
@@ -370,7 +370,7 @@ use futures::FutureExt;
 use serde_json::{json, Value};
 
 use crate::agent_runner::registry::{require, optional, FnHandler, ToolHandler, ToolRegistry, ToolSchema};
-use crate::api::{autoresearch, deploy, maintenance, report, risk, schedule, strategy, Actor, ApiResult};
+use crate::api::{autooptimizer, deploy, maintenance, report, risk, schedule, strategy, Actor, ApiResult};
 
 fn schema(name: &str, desc: &str, input_schema: Value) -> ToolSchema {
     ToolSchema { name: name.to_string(), description: desc.to_string(), input_schema }
@@ -383,7 +383,7 @@ pub fn register_all(reg: &mut ToolRegistry) {
     register_report(reg);
     register_maintenance(reg);
     register_schedule(reg);
-    register_autoresearch(reg);
+    register_autooptimizer(reg);
     register_record_outcome(reg);
 }
 
@@ -735,18 +735,18 @@ fn register_schedule(reg: &mut ToolRegistry) {
     )));
 }
 
-// ---- autoresearch --------------------------------------------------------
-fn register_autoresearch(reg: &mut ToolRegistry) {
+// ---- autooptimizer --------------------------------------------------------
+fn register_autooptimizer(reg: &mut ToolRegistry) {
     reg.add(Arc::new(FnHandler::new(
-        schema("autoresearch.run_evening_cycle", "Run AR-2 evening cycle",
+        schema("autooptimizer.run_evening_cycle", "Run AR-2 evening cycle",
             json!({"type":"object","properties":{
                 "agent_id":{"type":"string"},"dry_run":{"type":"boolean"}
             }})),
         |ctx, args, _actor| async move {
             let sid: Option<String> = optional(&args, "agent_id")?;
             let dry: bool = optional::<bool>(&args, "dry_run")?.unwrap_or(false);
-            Ok(serde_json::to_value(autoresearch::run_evening_cycle(ctx,
-                autoresearch::EveningCycleOpts { agent_id: sid, dry_run: dry }).await?)?)
+            Ok(serde_json::to_value(autooptimizer::run_evening_cycle(ctx,
+                autooptimizer::EveningCycleOpts { agent_id: sid, dry_run: dry }).await?)?)
         }.boxed(),
     )));
 }

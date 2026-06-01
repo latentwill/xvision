@@ -1,12 +1,12 @@
-# Karpathy Autoresearcher — Design
+# Karpathy AutoOptimizer — Design
 
 > **Status:** Draft for user review · 2026-05-09 (revised same day to decouple from ERC-8004)
 > **Author:** xvision hackathon team
 > **Companion specs:** [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md) · [Eval Engine](./2026-05-08-eval-engine-design.md) · [Strategy Creation Engine](./2026-05-08-strategy-creation-engine-design.md) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md)
-> **Reference:** github.com/karpathy/autoresearch (March 2026)
+> **Reference:** github.com/karpathy/autooptimizer (March 2026)
 > **Hackathon deadline:** 2026-06-15 (5 weeks)
 
-Memory attribution: the flywheel memory substrate this autoresearcher now
+Memory attribution: the flywheel memory substrate this autooptimizer now
 distills is aligned with [gambletan/cortex](https://github.com/gambletan/cortex),
 MIT-licensed, with xvision-specific Observation/Pattern naming and F+L+T
 leakage protection layered on top.
@@ -15,11 +15,11 @@ leakage protection layered on top.
 
 ## 1. Purpose, scope, and personas
 
-The Karpathy Autoresearcher is xvision's evening cycle: an LLM-driven loop that proposes mutations to existing strategy variants, paper-tests them on day-of trades plus a held-out window, and commits surviving children into a content-addressed lineage. The loop runs entirely off-chain. Whether any of its outputs ever reach Mantle is a separate, optional concern handled by the [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md).
+The Karpathy AutoOptimizer is xvision's evening cycle: an LLM-driven loop that proposes mutations to existing strategy variants, paper-tests them on day-of trades plus a held-out window, and commits surviving children into a content-addressed lineage. The loop runs entirely off-chain. Whether any of its outputs ever reach Mantle is a separate, optional concern handled by the [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md).
 
 ### 1.1 Personas
 
-xvision serves two user personas. The autoresearcher core is built for **Persona A**; the marketplace plugin extends it for **Persona B**.
+xvision serves two user personas. The autooptimizer core is built for **Persona A**; the marketplace plugin extends it for **Persona B**.
 
 | | **Persona A — trader/researcher** | **Persona B — marketplace participant** |
 |---|---|---|
@@ -27,7 +27,7 @@ xvision serves two user personas. The autoresearcher core is built for **Persona
 | Cares about chain? | No | Yes |
 | Cares about NFTs? | No | Yes |
 | Wants the dashboard? | Yes — live cycle, tree, ladder | Yes + a marketplace tab |
-| Install | `xvn autoresearch start` (default build includes marketplace) | Same install; opts in by connecting a wallet in Settings → Marketplace |
+| Install | `xvn autooptimizer start` (default build includes marketplace) | Same install; opts in by connecting a wallet in Settings → Marketplace |
 | Wallet required? | No | Yes (one-time setup, in Settings) |
 
 The hackathon submission targets Persona B but the foundation must work cleanly for Persona A — it's the durable artifact, not the hackathon-specific wrapper. **Marketplace is part of xvn, framed as opt-in.** Persona A always sees a Marketplace section in Settings but never has to engage with it; nothing reaches Mantle until they connect a wallet. The cargo feature gate `marketplace` exists for build-flexibility (size-conscious / audit / minimal builds) but the default `cargo build` includes marketplace; user-visible opt-in is the wallet-connect step, not a recompile.
@@ -42,7 +42,7 @@ The hackathon submission targets Persona B but the foundation must work cleanly 
 - **CycleSeal artifact** — the contract surface between core and any downstream consumer (marketplace plugin, future v2 consumers, external auditors)
 - Five novel evals: counterfactual-chain Merkle receipts, null-result canary, inversion-pair eval, mutator-skill ladder, embedding-divergence diversity-decay
 - Dashboard: genealogy tree, live evening cycle viewer, mutation diff inspector, lineage timeline, mutator-skill ladder, ladder-with-provenance
-- Replay fixture (`xvn autoresearch demo`) for offline reproduction
+- Replay fixture (`xvn autooptimizer demo`) for offline reproduction
 
 ### 1.3 Out of scope (v1)
 
@@ -51,7 +51,7 @@ The hackathon submission targets Persona B but the foundation must work cleanly 
 - Slot/template-swap mutations (architectural mutations beyond prose/params/tools)
 - Adaptive cycle budget (per-lineage allocation tied to recent gains)
 - Cross-run memory beyond the strategy ledger
-- Multi-asset autoresearch (BTC-only in v1, matches the rest of the hackathon scope)
+- Multi-asset autooptimizer (BTC-only in v1, matches the rest of the hackathon scope)
 
 ---
 
@@ -62,12 +62,12 @@ The hackathon submission targets Persona B but the foundation must work cleanly 
 | 1 | **Hackathon scope:** full loop in submission. Live evening cycle runs nightly through hackathon window. |
 | 2 | **Mutation surface:** three-way — `program.md` prose, parameter knobs, MCP tool selection. Slot/template swaps deferred. |
 | 3 | **Merge gate:** numeric primary (Δ-Sharpe ≥ ε on day AND held-out). LLM judge writes structured finding for accepted children, **blind to metrics**. |
-| 4 | **Cycle budget:** configurable via `config/autoresearch.toml` (mutations-per-parent, parents-per-evening, token caps). Default tuned during week 4. |
-| 5 | **Demo shape:** autoresearch-first. Live evening cycle is the headline. `xvn autoresearch demo` replay is the air-gap fallback. |
-| 6 | **No chain coupling.** Core emits `CycleSeal` artifacts; the marketplace plugin reads them. The autoresearch module has zero `use` statements pointing at chain code. |
+| 4 | **Cycle budget:** configurable via `config/autooptimizer.toml` (mutations-per-parent, parents-per-evening, token caps). Default tuned during week 4. |
+| 5 | **Demo shape:** autooptimizer-first. Live evening cycle is the headline. `xvn autooptimizer demo` replay is the air-gap fallback. |
+| 6 | **No chain coupling.** Core emits `CycleSeal` artifacts; the marketplace plugin reads them. The autooptimizer module has zero `use` statements pointing at chain code. |
 | 7 | **Pre-commitment:** ε, held-out window, parent-selection seed, and cycle config are sealed and operator-signed locally at session start. Anchoring on-chain is optional and handled by the marketplace plugin. |
 | 8 | **Hard go/no-go on 2026-05-23:** if eval engine paper-test path is not working end-to-end, fall back to "Mutator + lineage UI, run once" branch (no live evening cycle). The go/no-go is purely about the loop; chain readiness is a separate concern. |
-| 9 | **Module location:** new `xvision-engine/src/autoresearch/` parallel to `eval/`. Reuses eval engine's executor, findings extractor, persistence. |
+| 9 | **Module location:** new `xvision-engine/src/autooptimizer/` parallel to `eval/`. Reuses eval engine's executor, findings extractor, persistence. |
 | 10 | **Cheap mutator + expensive judge:** Haiku for proposals (high volume), Sonnet for findings (only on accepted children). Per-cycle token cap with alarm. |
 | 11 | **Marketplace is part of default build, opt-in at wallet-connect.** Cargo feature `marketplace` exists for build-flexibility (minimal / audit builds) but default `cargo build` includes it; user-visible opt-in is the Settings → Marketplace wallet-connect step, not a recompile. Core still compiles and runs without the feature. |
 
@@ -81,7 +81,7 @@ The hackathon submission targets Persona B but the foundation must work cleanly 
 xvision-engine/
 └── src/
     ├── eval/                    # existing — paper-test executor, scenario fixtures, findings extractor
-    ├── autoresearch/            # THIS SPEC — chain-free
+    ├── autooptimizer/            # THIS SPEC — chain-free
     │   ├── mod.rs
     │   ├── mutator.rs           # parent + ledger → candidate bundle + MutationDiff
     │   ├── lineage.rs           # content-addressed mutation log; genealogy queries; Merkle root computation
@@ -101,7 +101,7 @@ xvision-engine/
     └── scheduler/               # existing — durable cron, owns the evening cycle trigger
 ```
 
-**Dependency rule:** `autoresearch/` has zero `use` statements pointing at `marketplace/`. The arrow only goes the other direction. CI enforces this with a feature-flag-off build that must succeed.
+**Dependency rule:** `autooptimizer/` has zero `use` statements pointing at `marketplace/`. The arrow only goes the other direction. CI enforces this with a feature-flag-off build that must succeed.
 
 ### 3.2 Per-cycle data flow
 
@@ -145,7 +145,7 @@ The cycle ends with `seal.write()`. Anything beyond that — minting NFTs, ancho
 | Scenario fixtures | `xvision-engine/src/eval/scenario.rs` | held-out window pinned at session start |
 | Finding extractor | `xvision-engine/src/eval/findings.rs` | judge.rs wraps it with metrics-blind input filtering |
 | Persistence | SQLite + JSONL | new tables: `mutations`, `lineage_edges`, `findings`, `canary_runs`, `cycle_seals` |
-| Scheduler | `scheduler/` (ported from SwarmClaw) | new job: `autoresearch.evening_cycle` |
+| Scheduler | `scheduler/` (ported from SwarmClaw) | new job: `autooptimizer.evening_cycle` |
 | MCP | `xvision-mcp` | tool selection mutations validated against the live tool registry |
 
 ### 3.4 The CycleSeal artifact (the contract surface)
@@ -154,7 +154,7 @@ The cycle ends with `seal.write()`. Anything beyond that — minting NFTs, ancho
 struct CycleSeal {
     cycle_id: Ulid,
     sealed_at: DateTime,
-    config_hash: ContentHash,                   // autoresearch.toml + ε + holdout window at session start
+    config_hash: ContentHash,                   // autooptimizer.toml + ε + holdout window at session start
     session_commitment: ContentHash,            // operator-signed; pre-committed at session start
     parent_seeds: Vec<ContentHash>,             // bundles that were mutated this evening
     mutations: Vec<ContentHash>,                // every mutation diff blob (incl. rejected/ghost)
@@ -303,7 +303,7 @@ struct SessionCommitment {
     epsilon: f64,                               // merge-gate threshold
     holdout_window: TimeRange,                  // pinned, never touched by day trading
     parent_policy_seed: u64,                    // for reproducible parent selection
-    cycle_config_hash: ContentHash,             // hash of autoresearch.toml at session start
+    cycle_config_hash: ContentHash,             // hash of autooptimizer.toml at session start
     canary_seed: u64,                           // for reproducible sabotaged-parent generation
     session_id: Ulid,
     operator_signature: Signature,              // long-lived key signs the commitment
@@ -314,7 +314,7 @@ The commitment is sealed locally and operator-signed. The signature establishes 
 
 If the marketplace plugin is enabled, the session commitment hash is anchored to Mantle at session start (one tx, see marketplace spec). Without the plugin, the commitment is purely local — auditable via the artifact bundle but not publicly timestamped.
 
-If ε is loosened mid-hackathon (e.g., merge rate < 1/evening for 3 consecutive evenings), the loosening follows a **pre-committed schedule** — written into `autoresearch.toml` from day one and hashed in `cycle_config_hash`. Schedule example: ε starts at 0.10, drops to 0.07 if no merges for 3 nights, drops to 0.05 if still none. The schedule itself is in the commitment; the values aren't tuned, only triggered.
+If ε is loosened mid-hackathon (e.g., merge rate < 1/evening for 3 consecutive evenings), the loosening follows a **pre-committed schedule** — written into `autooptimizer.toml` from day one and hashed in `cycle_config_hash`. Schedule example: ε starts at 0.10, drops to 0.07 if no merges for 3 nights, drops to 0.05 if still none. The schedule itself is in the commitment; the values aren't tuned, only triggered.
 
 ---
 
@@ -332,7 +332,7 @@ Five evals beyond the standard Δ-Sharpe gate. All run in core; all produce on-d
 
 ### 8.1 Null-result canary (`canary.rs`)
 
-Each evening, one synthetic "broken parent" is injected: random params, contradictory `program.md`, conflicting tool set. Generated reproducibly from `canary_seed`. The autoresearcher doesn't know which parent is the canary. The gate's behavior on the canary is published nightly:
+Each evening, one synthetic "broken parent" is injected: random params, contradictory `program.md`, conflicting tool set. Generated reproducibly from `canary_seed`. The autooptimizer doesn't know which parent is the canary. The gate's behavior on the canary is published nightly:
 - **Mutations rejected** → gate is healthy.
 - **Mutations accepted** → gate is fitting noise; alarm raised; that night's results are flagged.
 
@@ -352,7 +352,7 @@ For every committed bundle, embed `program.md` (one OpenAI / Voyage embedding ca
 
 ---
 
-## 9. Dashboard surfaces (autoresearch-first)
+## 9. Dashboard surfaces (autooptimizer-first)
 
 Five core views, ordered for the demo. The marketplace plugin adds a sixth tab (see marketplace spec) but the five below render fully without the plugin enabled.
 
@@ -381,7 +381,7 @@ Five core views, ordered for the demo. The marketplace plugin adds a sixth tab (
 Marketplace-plugin events (`nft_minted`, `receipt_posted`, `attestation_received`) are emitted from the plugin and rendered in its own dashboard tab.
 
 **Demo replay fallback:**
-`xvn autoresearch demo` replays the most recent successful evening cycle from saved fixtures + cached LLM responses. No API keys required. This is the air-gap path — used only if the live demo network or LLM API fails on stage.
+`xvn autooptimizer demo` replays the most recent successful evening cycle from saved fixtures + cached LLM responses. No API keys required. This is the air-gap path — used only if the live demo network or LLM API fails on stage.
 
 ---
 
@@ -406,7 +406,7 @@ Wks 1–4 require zero chain dependencies. The marketplace plugin is integrated 
 3. Numeric gate compares parent vs child correctly on a known-improvement test case (synthetic).
 4. SQLite tables for lineage / mutations / findings / cycle_seals exist and are written by the prototype loop.
 
-If any of those four are missing, fall back to "Mutator + lineage UI, run once" (genealogy view rendered from manually-seeded variants; no live evening cycle; demo shape changes from autoresearch-first to genealogy-first).
+If any of those four are missing, fall back to "Mutator + lineage UI, run once" (genealogy view rendered from manually-seeded variants; no live evening cycle; demo shape changes from autooptimizer-first to genealogy-first).
 
 ---
 
@@ -417,14 +417,14 @@ Distilled from the ideonomy adversarial pass; each row is a way the loop could p
 | # | Failure | Mitigation |
 |---|---|---|
 | 1 | Loop overfits, lineages bloom but ladder doesn't move | Pre-committed ε > bootstrap noise floor; held-out window non-negotiable; canary nightly. |
-| 2 | Live evening cycle crashes on stage (rate limits, MCP timeouts, sim bugs) | `xvn autoresearch demo` replay fixture; rate-limit-aware retry with backoff; idempotent paper-test runs. |
+| 2 | Live evening cycle crashes on stage (rate limits, MCP timeouts, sim bugs) | `xvn autooptimizer demo` replay fixture; rate-limit-aware retry with backoff; idempotent paper-test runs. |
 | 3 | Mutator hallucinates invalid bundles | JSON-mode + bundle validator; 2-retry cap with error feedback; ungrammatical mutations never enter lineage. |
 | 4 | All lineages converge (mode collapse) | Diversity-decay metric public; ε-greedy parent policy with explicit exploration term. |
 | 5 | "Karpathy" framing reads as hype | Lead pitch with on-chain population evolution; cite Karpathy in references with explicit list of xvision extensions. |
 | 6 | LLM judge reverse-engineers the gate | Judge metrics-blinded in code (panic on leak); numeric gate runs first, deterministically. |
 | 7 | Eval engine slips | Wk 2 hard go/no-go; fallback branch ready. |
 | 8 | Genealogy unreadable at >50 nodes | Cluster by lineage; top-K filter; on-demand expand; demo storyboard ≤ 10 visible. |
-| 9 | Judges can't reproduce | `xvn autoresearch demo` replay; no API keys needed. |
+| 9 | Judges can't reproduce | `xvn autooptimizer demo` replay; no API keys needed. |
 | 10 | Token budget runs out | Haiku mutator + Sonnet judge only on accepted; per-cycle cap with alarm. |
 | 11 | Gate too tight, nothing merges | Pre-committed loosening schedule (NOT retroactive); pre-baked "honest gate refused noise" messaging if still nothing. |
 | 12 | Single point of demo failure | Three-beat demo: live cycle → genealogy → ladder. Each beat tells a partial story alone. The marketplace beat is *additive* to all three; if it breaks, the core demo still stands. |
@@ -443,13 +443,13 @@ Distilled from the ideonomy adversarial pass; each row is a way the loop could p
 
 ## 13. References
 
-- `architecture.md` §11 (deferred Karpathy autoresearch direction — un-deferred by this spec)
-- `decisions/0010-hackathon-pivot-strategy-loom.md` (the loom + autoresearch framing; cargo-feature-gate idiom)
-- `FOLLOWUPS.md` SLF8, SLF9 (program.md as autoresearch unit-of-work; evening-loop wrapper)
+- `architecture.md` §11 (deferred Karpathy autooptimizer direction — un-deferred by this spec)
+- `decisions/0010-hackathon-pivot-strategy-loom.md` (the loom + autooptimizer framing; cargo-feature-gate idiom)
+- `FOLLOWUPS.md` SLF8, SLF9 (program.md as autooptimizer unit-of-work; evening-loop wrapper)
 - [Marketplace Plugin spec](./2026-05-09-marketplace-plugin-design.md) (companion — handles all chain/8004/marketplace concerns)
 - [Eval Engine spec](./2026-05-08-eval-engine-design.md) (paper-test runner, findings extractor, scenario fixtures)
 - [Strategy Creation Engine spec](./2026-05-08-strategy-creation-engine-design.md) (bundle schema, slot templates)
 - [Smart Contract Surface spec](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 registries on Mantle; consumed by marketplace plugin)
 - ERC-8004 EIP — eips.ethereum.org/EIPS/eip-8004 (mainnet live 2026-01-29)
-- Karpathy autoresearch — github.com/karpathy/autoresearch (March 2026)
+- Karpathy autooptimizer — github.com/karpathy/autooptimizer (March 2026)
 - Mantle Turing Test Hackathon 2026 (Phase 2, "AI Awakening")

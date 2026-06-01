@@ -88,7 +88,7 @@ Other surfaces touched by this intake:
 - **Agent-writable strategies folder.** v1 is read-only — agents read,
   users write. Agent-write requires a permission model + audit trail
   (which strategy did this come from, why did the agent add it). Defer
-  to V3 autoresearcher; it's the natural consumer of "agent learned
+  to V3 autooptimizer; it's the natural consumer of "agent learned
   this; remember it in the user's strategies folder."
 - **Replacing `docs/strategies/templates/` as the source of truth.**
   This intake migrates the *content* into the strategies folder but

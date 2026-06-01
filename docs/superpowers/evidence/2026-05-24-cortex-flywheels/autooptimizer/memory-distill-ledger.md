@@ -2,20 +2,20 @@
 
 Date: 2026-05-25
 
-Implemented the first repo-native autoresearcher entry point:
+Implemented the first repo-native autooptimizer entry point:
 
-- `xvn autoresearch run` reads a same-namespace Observation cohort from
+- `xvn autooptimizer run` reads a same-namespace Observation cohort from
   the memory store.
 - The run requires at least two Observations, preserving the
   anti-one-hot promotion rule.
 - The run mints a staged Pattern through the existing
   `promote_observations` path, so `training_window_end` is computed from
   the latest contributing Observation `source_window_end`.
-- The run writes an `autoresearch_runs` ledger row in the memory DB and
-  `xvn autoresearch inspect` reads it back.
+- The run writes an `autooptimizer_runs` ledger row in the memory DB and
+  `xvn autooptimizer inspect` reads it back.
 - `xvn flywheel status` summarizes the namespace-level loop state:
   Observation count, active/staged/forgotten Pattern counts, total
-  autoresearch runs, and the latest autoresearch run id.
+  autooptimizer runs, and the latest autooptimizer run id.
 - `xvn optimize memory-demos` now bridges DSRs x memory at the substrate
   layer: it selects Observation demos, renders a deterministic
   `<memory_demos>` prompt prefix, dry-runs by default, and mints a child
@@ -54,10 +54,10 @@ Implemented the first repo-native autoresearcher entry point:
   revalidates every auto-selected id against the active Pattern
   namespace guard before rendering or persisting it.
 - Memory-demo optimization also records candidate Patterns whose
-  autoresearch source Observation cohort overlaps the selected
+  autooptimizer source Observation cohort overlaps the selected
   train/dev/holdout demo pool. These links are restricted to same-
   namespace, non-forgotten active/staged Patterns and active/staged
-  autoresearch runs, returned as `demo_source_pattern_ids` plus
+  autooptimizer runs, returned as `demo_source_pattern_ids` plus
   `pattern_demo_source_count`, and persisted in `pattern_optimizations`
   with `role='demo_source'`.
 - `scripts/audit-memory-demos.sh` wraps `xvn optimize memory-demos
@@ -72,7 +72,7 @@ Implemented the first repo-native autoresearcher entry point:
 - Flywheel velocity is now a read surface across CLI, dashboard API, and
   web UI. `xvn flywheel velocity`, `GET /api/flywheel/velocity`, and the
   Flywheel panel report recent Observation capture, Pattern promotion,
-  Pattern demotion, autoresearch run count, optimized child-agent count,
+  Pattern demotion, autooptimizer run count, optimized child-agent count,
   and average optimizer lineage depth for a namespace lookback window.
   `scripts/export-flywheel-velocity.sh` exports the same JSON-backed
   values as a Markdown evidence report.
@@ -81,12 +81,12 @@ Implemented the first repo-native autoresearcher entry point:
   client, and the Flywheel panel expose optimizer rows for the selected
   namespace, including child agent id, train/dev/holdout Observation
   counts, demo-source Pattern ids, and prior Pattern ids.
-- `xvn autoresearch ls`, `xvn autoresearch promote <run_id>`, and
-  `xvn autoresearch demote <run_id>` now expose the staged Pattern
+- `xvn autooptimizer ls`, `xvn autooptimizer promote <run_id>`, and
+  `xvn autooptimizer demote <run_id>` now expose the staged Pattern
   lifecycle from the CLI. Promotion flips the produced Pattern to
   `promotion_state='active'`; demotion soft-deletes it with
   `forgotten_at` so the grace-window restore path remains available.
-- Staged Patterns created outside autoresearch now have Pattern-id
+- Staged Patterns created outside autooptimizer now have Pattern-id
   lifecycle controls too: `xvn memory activate <pattern_id>`,
   `xvn memory demote <pattern_id>`, `POST /api/memory/:id/activate`,
   and `POST /api/memory/:id/demote`.
@@ -99,11 +99,11 @@ Implemented the first repo-native autoresearcher entry point:
   `listMemoryNamespaces()`, and MCP `xvn_memory_namespaces` report live
   total, Observation count, active/staged Pattern counts, forgotten
   count, and latest creation timestamp by namespace.
-- `memory undo-forget` now reconciles restored autoresearch Pattern
-  rows back from `autoresearch_runs.promotion_state='demoted'` to the
+- `memory undo-forget` now reconciles restored autooptimizer Pattern
+  rows back from `autooptimizer_runs.promotion_state='demoted'` to the
   restored Pattern's live lifecycle state.
-- `xvn autoresearch gate <run_id>` and
-  `POST /api/autoresearch/:id/gate` now persist a plan-aligned
+- `xvn autooptimizer gate <run_id>` and
+  `POST /api/autooptimizer/:id/gate` now persist a plan-aligned
   day/holdout numeric gate:
   `parent_day_score`, `child_day_score`, `parent_holdout_score`,
   `child_holdout_score`, `gate_epsilon`, computed `delta_day`,
@@ -115,14 +115,14 @@ Implemented the first repo-native autoresearcher entry point:
   `qualitative_finding_json`, `finding_blinded_metrics`, `judge_model`,
   and `judge_token_cost`, while continuing to expose the earlier
   `finding_text`/`finding_blind` fields for older clients. `xvn
-  autoresearch promote` rejects runs whose gate explicitly failed or has
+  autooptimizer promote` rejects runs whose gate explicitly failed or has
   not passed.
 - Dashboard API routes now expose the same backend surfaces:
-  `GET /api/flywheel/status`, `POST /api/autoresearch/run`,
-  `GET /api/autoresearch`, `GET /api/autoresearch/:id`,
-  `POST /api/autoresearch/:id/gate`,
-  `POST /api/autoresearch/:id/promote`,
-  `POST /api/autoresearch/:id/demote`, and
+  `GET /api/flywheel/status`, `POST /api/autooptimizer/run`,
+  `GET /api/autooptimizer`, `GET /api/autooptimizer/:id`,
+  `POST /api/autooptimizer/:id/gate`,
+  `POST /api/autooptimizer/:id/promote`,
+  `POST /api/autooptimizer/:id/demote`, and
   `POST /api/optimize/memory-demos`. The POST routes live in the
   dashboard mutating router so they inherit the existing auth/audit
   middleware; the GET routes are read-only.
@@ -132,14 +132,14 @@ Implemented the first repo-native autoresearcher entry point:
 - The persistent memory UI now has a Flywheel panel in both
   `/agents/memory` and the per-agent Memory tab. It shows namespace
   status counts, can stage a candidate Pattern through the
-  autoresearch API, and in agent mode can mint a memory-demo child
-  agent through the optimize API. It also lists recent autoresearch
+  autooptimizer API, and in agent mode can mint a memory-demo child
+  agent through the optimize API. It also lists recent autooptimizer
   runs, lets an operator record the day/holdout numeric gate from the
   dashboard, renders gate/Finding state, and lets an operator promote
   or demote the produced Pattern.
 - The dedicated `/agents/:id/flywheel` route is now the full-history
-  operator page: it requests 25 autoresearch runs and 20 optimizer
-  lineage rows, rendering "Autoresearch History" and "Optimization
+  operator page: it requests 25 autooptimizer runs and 20 optimizer
+  lineage rows, rendering "AutoOptimizer History" and "Optimization
   History" instead of the compact latest-row summary used inside the
   Memory tab.
   Pattern rows now expose lifecycle filters plus Activate/Demote
@@ -176,14 +176,14 @@ Implemented the first repo-native autoresearcher entry point:
   evidence note is
   `docs/superpowers/evidence/2026-05-24-cortex-flywheels/cortex-adoption/attribution.md`.
 - Operator skills from the surface matrix now exist under
-  `.claude/skills/xvision/`: `memory-ops`, `autoresearch-ops`, and
+  `.claude/skills/xvision/`: `memory-ops`, `autooptimizer-ops`, and
   `flywheel-ops`. The skills give agents a runbook for F+L+T-safe memory
   operations, offline Pattern distillation, numeric gate/Finding evidence,
   flywheel velocity/lineage checks, MCP read tools, and script-based
   regression probes.
-- MCP autoresearch read parity is in place with
-  `xvn_autoresearch_list`, `xvn_autoresearch_inspect`, and
-  `xvn_autoresearch_findings`. These are read-only wrappers over the
+- MCP autooptimizer read parity is in place with
+  `xvn_autooptimizer_list`, `xvn_autooptimizer_inspect`, and
+  `xvn_autooptimizer_findings`. These are read-only wrappers over the
   existing run ledger APIs and expose numeric gate/Finding provenance to
   chat-rail/MCP clients without adding a write tool.
 - MCP flywheel read parity now includes `xvn_flywheel_lineage`, so chat
@@ -195,12 +195,12 @@ Implemented the first repo-native autoresearcher entry point:
   MCP fixture proves dry-run hashes, minted child id, demo-source Pattern
   links, prior Pattern links, and lineage hash proof.
 - `scripts/export-pattern-lineage.sh` exports a Markdown lineage report
-  from `xvn autoresearch inspect --json` plus the produced Pattern row
+  from `xvn autooptimizer inspect --json` plus the produced Pattern row
   from `xvn memory show --json`, covering the surface-matrix
   pattern-lineage export script.
-- `scripts/smoke-autoresearch-distill.sh` is a one-command smoke harness
-  for phase-entry proof: it runs `xvn autoresearch run --json`, reads the
-  same run back through `xvn autoresearch inspect --json`, then captures
+- `scripts/smoke-autooptimizer-distill.sh` is a one-command smoke harness
+  for phase-entry proof: it runs `xvn autooptimizer run --json`, reads the
+  same run back through `xvn autooptimizer inspect --json`, then captures
   `xvn flywheel status --json` for the same namespace or agent.
 - Durable DSRs holdout proof is now visible after the optimize response is
   gone: `xvn flywheel lineage`, `/api/flywheel/lineage`, and the dashboard
@@ -245,7 +245,7 @@ Implemented the first repo-native autoresearcher entry point:
 Verification commands:
 
 ```text
-cargo test -p xvision-engine --lib api::autoresearch::tests
+cargo test -p xvision-engine --lib api::autooptimizer::tests
 TMPDIR=/Users/edkennedy/Code/xvision/.tmp cargo test -p xvision-engine --lib api::memory::tests
 TMPDIR=/Users/edkennedy/Code/xvision/.tmp cargo test -p xvision-engine --lib api::flywheel::tests
 TMPDIR=/Users/edkennedy/Code/xvision/.tmp cargo test -p xvision-engine --lib api::optimize::tests
@@ -254,7 +254,7 @@ cargo test -p xvision-engine api::optimize
 TMPDIR=/Users/edkennedy/Code/xvision/.tmp cargo test -p xvision-engine --test api_context api_context_open_creates_db_and_runs_migrations
 TMPDIR=/Users/edkennedy/Code/xvision/.tmp cargo test -p xvision-engine --features ts-export --lib api::flywheel::tests
 TMPDIR=/Users/edkennedy/Code/xvision/.tmp cargo test -p xvision-engine --features ts-export --lib api::optimize::tests
-cargo test -p xvision-cli --test autoresearch_cli
+cargo test -p xvision-cli --test autooptimizer_cli
 TMPDIR=/Users/edkennedy/Code/xvision/.tmp cargo test -p xvision-cli --test memory_cli
 cargo test -p xvision-cli --test memory_cli namespaces_json_summarizes_memory_scopes
 TMPDIR=/Users/edkennedy/Code/xvision/.tmp cargo test -p xvision-cli --test optimize_cli
@@ -286,12 +286,12 @@ cargo test -p xvision-mcp mcp_flywheel_lineage_returns_optimizer_hash_proof
 cargo test -p xvision-mcp
 cd frontend/web && npm test -- agents-flywheel.test.tsx routes-code-splitting.test.ts
 bash -n scripts/export-pattern-lineage.sh
-bash -n scripts/smoke-autoresearch-distill.sh
+bash -n scripts/smoke-autooptimizer-distill.sh
 test -f CREDITS.md
 test -f LICENSES/gambletan-cortex.txt
-rg -n "gambletan/cortex" CREDITS.md README.md docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md
+rg -n "gambletan/cortex" CREDITS.md README.md docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md
 test -f .claude/skills/xvision/memory-ops/SKILL.md
-test -f .claude/skills/xvision/autoresearch-ops/SKILL.md
+test -f .claude/skills/xvision/autooptimizer-ops/SKILL.md
 test -f .claude/skills/xvision/flywheel-ops/SKILL.md
 cargo fmt --check
 git diff --check

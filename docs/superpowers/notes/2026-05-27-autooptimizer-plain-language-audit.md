@@ -1,8 +1,8 @@
-# Autoresearcher plain-language audit — 2026-05-27
+# AutoOptimizer plain-language audit — 2026-05-27
 
 > Status: operator-approved 2026-05-27; superseded by terminology lock
-> at `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
-> Companion specs: `2026-05-09-karpathy-autoresearcher-design.md`,
+> at `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
+> Companion specs: `2026-05-09-karpathy-autooptimizer-design.md`,
 > `2026-05-24-cortex-memory-cline-dspy-flywheels.md`
 > AR plans this affects: AR-1 (mutator+lineage+gate+seal), AR-2 (cycle
 > orchestrator+judge+canary+inversion+diversity), AR-3 (dashboard surfaces)
@@ -11,7 +11,7 @@
 
 ## Why this pass exists
 
-The autoresearcher spec uses research-paper and cryptography vocabulary
+The autooptimizer spec uses research-paper and cryptography vocabulary
 throughout: merkle roots, content hashes, Ed25519 signatures, ε
 pre-commitment, BLAKE3, inversion-pair eval, null-result canary,
 diversity-decay rate, mutator-skill ladder. The marketplace pass already
@@ -23,7 +23,7 @@ dashboard, is cheaper than renaming after release.
 
 ## The two-surface principle (proposed addition to CLAUDE.md)
 
-Every concept in the autoresearcher has two valid names: the
+Every concept in the autooptimizer has two valid names: the
 **developer-surface name** (in code, in specs, in db columns, in API
 type fields) and the **operator-surface name** (in CLI flags and help
 text, in UI labels, in SSE event display names, in error messages, in
@@ -32,7 +32,7 @@ docs operators read).
 - **Developer surface stays precise.** `LineageStatus::Quarantined`,
   `BLAKE3`, `Ed25519`, `MerkleRoot`, `epsilon`, `holdout_window` —
   these terms carry exact technical meaning. Keep them in
-  `crates/xvision-engine/src/autoresearch/`, in
+  `crates/xvision-engine/src/autooptimizer/`, in
   `docs/superpowers/specs/`, in SQLite column names. Removing them
   weakens the spec and makes type signatures lie.
 - **Operator surface becomes plain.** No operator should ever read the
@@ -61,7 +61,7 @@ Each section groups terms by theme. For each term:
 
 ## Section 1: Evolution & lineage machinery
 
-The autoresearcher is fundamentally an evolutionary loop — parents
+The autooptimizer is fundamentally an evolutionary loop — parents
 spawn children, children get judged, survivors reproduce. The
 evolutionary metaphor is intuitive and the operator pulls genealogy
 mental models from biology and version control. Most of this block
@@ -112,7 +112,7 @@ right now (`--gate-epsilon`, `--parent-day-score`,
 
 | Today | Where | Verdict | Proposed | Why |
 |---|---|---|---|---|
-| Gate | CLI `xvn autoresearch gate`, dashboard "Record Gate" button, SSE | 🔄 RENAME | "Check" or "Decision" | "Gate" is OK but "check" is more obvious. Both verbs work; let's pick "check" for the verb and "decision" for the noun. CLI becomes `xvn autoresearch check`. |
+| Gate | CLI `xvn autooptimizer gate`, dashboard "Record Gate" button, SSE | 🔄 RENAME | "Check" or "Decision" | "Gate" is OK but "check" is more obvious. Both verbs work; let's pick "check" for the verb and "decision" for the noun. CLI becomes `xvn autooptimizer check`. |
 | Gate verdict | API field, UI display "Gate passed/failed" | 🔄 RENAME | "Verdict" → "Decision" or "Outcome" | "Verdict" sounds courtroom-formal. The two values become "Kept" and "Dropped" instead of "Passed" and "Failed" (matches what actually happens to the candidate). |
 | Gate epsilon / `--gate-epsilon` / "Epsilon" form label | CLI flag, dashboard form label (×8 locations) | 🔄 RENAME | "Minimum improvement" / `--min-improvement` | The single ugliest term in the surface. Operator has to look up that ε means "tolerance threshold." Just say "minimum improvement (Sharpe)." |
 | Delta day / `--parent-day-score` / `--child-day-score` | CLI flags, dashboard form labels | 🔄 RENAME | "Today's score" (parent + child) / `--baseline-today-score`, `--candidate-today-score` | "Parent day" means "the existing strategy's score on today's data"; operator-facing it's "baseline today vs candidate today." |
@@ -134,7 +134,7 @@ diversity decay charts) and need renaming.
 | Today | Where | Verdict | Proposed | Why |
 |---|---|---|---|---|
 | Null-result canary | Spec §8.1, future SSE `canary_outcome`, future dashboard alarm | 🔄 RENAME | "Honesty check" or "Decoy strategy" | A canary is mining-industry jargon for "an early warning signal." We inject a deliberately broken parent; if the gate accepts mutations against it, the gate is lying. "Honesty check" describes what it tests. |
-| Canary outcome / canary_runs table | SSE event, table name | 🔄 RENAME (operator-side) | "Honesty check result" / SSE event `honesty_check_result` | Match the rename. SQLite table can stay `autoresearch_canary_runs` (developer surface). |
+| Canary outcome / canary_runs table | SSE event, table name | 🔄 RENAME (operator-side) | "Honesty check result" / SSE event `honesty_check_result` | Match the rename. SQLite table can stay `autooptimizer_canary_runs` (developer surface). |
 | Inversion-pair eval | Spec §5.3, future SSE `mutation_quarantined` reason | 🔄 RENAME | "Reverse-mutation check" or "Noise check" | "Inversion" is technical; "reverse" is plain. The point: if reversing the mutation gives the same score, the original mutation might have just been noise. |
 | Diversity-decay rate | Spec §8.3, future dashboard sparkline | 🔄 RENAME | "Variety score" or "Sameness drift" | "Diversity-decay" is two abstractions stacked. The chart shows whether siblings are becoming more similar over time. "Variety score" (high = explorations stay varied, low = mode collapse) is the operator-meaningful version. |
 | Counterfactual-chain Merkle root | Spec §6.2, future lineage detail | 🔄 RENAME | "Lineage proof" | Already covered under section 2; matches the "Cycle proof" pattern. |
@@ -175,7 +175,7 @@ aren't readable. We need a display name strategy.
 |---|---|---|---|---|
 | Session | CLI, future UI topbar | ✅ KEEP | Session | Clear |
 | Cycle | CLI, UI, locked term | ✅ KEEP | Cycle | Locked |
-| Run | CLI `xvn autoresearch run`, UI "Runs" count | ✅ KEEP | Run | Clear |
+| Run | CLI `xvn autooptimizer run`, UI "Runs" count | ✅ KEEP | Run | Clear |
 | session_id (ULID) | API field, UI display | 🔄 RENAME (UI surface) | Show as "Session #<short>" using first 6 chars of ULID with copy-on-click for full ID | Operators don't process 26-character strings visually; give them a recognizable short label. |
 | cycle_id (ULID) | Same | 🔄 RENAME (UI surface) | "Cycle #<short>" same pattern | Same |
 | run_id (ULID) | Same | 🔄 RENAME (UI surface) | "Run #<short>" same pattern | Same |
@@ -233,12 +233,12 @@ The current verb tree is well-organized. Some renames worth proposing:
 
 | Today | Verdict | Proposed | Why |
 |---|---|---|---|
-| `xvn autoresearch run` | ✅ KEEP | Same | Plain |
-| `xvn autoresearch gate` | 🔄 RENAME | `xvn autoresearch check` | Section 3 rename |
-| `xvn autoresearch promote` | 🔄 RENAME | `xvn autoresearch activate` (or `... approve`) | Match memory-layer rename |
-| `xvn autoresearch demote` | 🔄 RENAME | `xvn autoresearch retire` | Same |
-| `xvn autoresearch inspect` | ✅ KEEP | Same | Plain |
-| `xvn autoresearch ls` | ✅ KEEP | Same | Standard CLI verb |
+| `xvn autooptimizer run` | ✅ KEEP | Same | Plain |
+| `xvn autooptimizer gate` | 🔄 RENAME | `xvn autooptimizer check` | Section 3 rename |
+| `xvn autooptimizer promote` | 🔄 RENAME | `xvn autooptimizer activate` (or `... approve`) | Match memory-layer rename |
+| `xvn autooptimizer demote` | 🔄 RENAME | `xvn autooptimizer retire` | Same |
+| `xvn autooptimizer inspect` | ✅ KEEP | Same | Plain |
+| `xvn autooptimizer ls` | ✅ KEEP | Same | Standard CLI verb |
 | `xvn memory ls` | ✅ KEEP | Same | Standard |
 | `xvn memory promote` | 🔄 RENAME | `xvn memory activate` | Consolidate verbs |
 | `xvn memory demote` | 🔄 RENAME | `xvn memory retire` | Consolidate |
@@ -284,20 +284,20 @@ Operator decisions on the five open questions, locked:
 
 3. **"Canary" → "Honesty check".** Operator-side. Tells the operator
    what the mechanism tests, not what it is. SQLite table stays
-   `autoresearch_canary_runs`; SSE wire name stays `canary_outcome`
+   `autooptimizer_canary_runs`; SSE wire name stays `canary_outcome`
    with display label "Honesty check result".
 
 4. **"Namespace" stays.** No rename. Term is widespread, value is
    unclear. If operator confusion shows up later we revisit.
 
 5. **CLI verb `gate` stays.** No rename to `check`. Touches too many
-   downstream surfaces (the autoresearch-ops skill, operator scripts,
+   downstream surfaces (the autooptimizer-ops skill, operator scripts,
    the gate flag families). The form label "Gate" in UI stays;
    verdict values still become "Kept" / "Dropped" per section 3.
 
 All other proposed renames from sections 1–10 are approved as drafted.
 The full canonical mapping lives in
-`docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`.
+`docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`.
 
 ## Post-resolution amendments (2026-05-27)
 
@@ -329,14 +329,14 @@ deliverables fall out as:
    developer and operator surfaces can use different names for the
    same concept and lists every accepted pair.
 
-2. **Spec amendment to `2026-05-09-karpathy-autoresearcher-design.md`.**
+2. **Spec amendment to `2026-05-09-karpathy-autooptimizer-design.md`.**
    Add a §0.1 "Operator vocabulary" with the rename table; footnote
    every first appearance of a renamed term in §3–§9 with the
    operator-facing version.
 
 3. **Three implementation patches.** One per surface:
    - **CLI patch**: rename clap commands/flags/help text in
-     `crates/xvision-cli/src/commands/autoresearch.rs` and
+     `crates/xvision-cli/src/commands/autooptimizer.rs` and
      `crates/xvision-cli/src/commands/flywheel.rs`. Keep old verbs as
      hidden aliases for one release. Update
      `crates/xvision-cli/tests/cli_surface_snapshot.json`.
@@ -347,7 +347,7 @@ deliverables fall out as:
      `crates/xvision-dashboard/src/sse.rs` that maps wire event names
      to operator display labels. Update `static/js/bus.js`.
 
-4. **Skill files.** Update `.claude/skills/xvision/autoresearch-ops/SKILL.md`
+4. **Skill files.** Update `.claude/skills/xvision/autooptimizer-ops/SKILL.md`
    and `.claude/skills/xvision/flywheel-ops/SKILL.md` to use the new
    operator-facing CLI verbs.
 
@@ -361,7 +361,7 @@ cosmetic and ship together.
 
 Full source: subagent inventory from this session.
 
-- `xvn autoresearch run | ls | inspect | gate | promote | demote` — 6
+- `xvn autooptimizer run | ls | inspect | gate | promote | demote` — 6
   subcommands. ~25 flags total. Flags carrying the most jargon today:
   `--gate-epsilon`, `--parent-day-score`, `--child-day-score`,
   `--parent-holdout-score`, `--child-holdout-score`,
@@ -405,7 +405,7 @@ Full source: subagent inventory from this session.
 ## Appendix C — Spec terminology inventory (condensed)
 
 Full source: subagent inventory from this session. Lists 85+ named
-concepts across the autoresearcher spec, AR-1/2/3 plans, and
+concepts across the autooptimizer spec, AR-1/2/3 plans, and
 cortex-memory plan. Of those:
 
 - **30 are user-facing** (appear in CLI, UI, or operator-readable

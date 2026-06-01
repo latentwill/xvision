@@ -1,13 +1,13 @@
-# Spec amendment handoff — autoresearcher operator vocabulary
+# Spec amendment handoff — autooptimizer operator vocabulary
 
 > For: spec maintainer (anyone — this is doc work)
 > Date: 2026-05-27
-> Source of truth: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
+> Source of truth: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
 
 ## TL;DR
 
 Add one new §0.1 "Operator vocabulary" section to the karpathy
-autoresearcher spec that points at the terminology lock, then add a
+autooptimizer spec that points at the terminology lock, then add a
 footnote (or parenthetical) at the first mention of every
 renamed term in §3–§9 of the spec so future readers know which
 operator-facing name they'll see on screen. Same data, same
@@ -18,7 +18,7 @@ no code, no tests to update.
 
 ## Files in scope
 
-- `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md`
+- `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md`
   (the only file you touch)
 
 ## Files NOT in scope
@@ -44,7 +44,7 @@ developer-surface name (used here, in Rust types, SQLite columns, and
 API fields) and the operator-surface name (used in CLI flags and help
 text, UI labels, SSE event display names, MANUAL.md, and the
 dashboard wiki). The complete mapping is locked at
-`docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`.
+`docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`.
 
 Throughout the rest of this spec, the developer-surface name is the
 primary term. The first appearance of a renamed concept is followed
@@ -127,6 +127,6 @@ terminology lock:
 
 ## Reference
 
-- Terminology lock: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
-- Audit context: `docs/superpowers/notes/2026-05-27-autoresearcher-plain-language-audit.md`
-- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autoresearcher subsurface)"
+- Terminology lock: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
+- Audit context: `docs/superpowers/notes/2026-05-27-autooptimizer-plain-language-audit.md`
+- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autooptimizer subsurface)"

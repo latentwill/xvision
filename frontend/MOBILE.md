@@ -86,7 +86,7 @@ Chat is not just text-Q&A. The agent dispatches to domain-specific actions:
 | "Compare run A vs run B" | Two-run delta card with mini equity overlay |
 | "Why did bundle Y veto AAPL?" | Decision trace card with cycle_id link |
 | "Show me bundles for high-vol earnings" | Bundle carousel (swipe through results) |
-| "Find a new strategy for chop regime" | Kicks autoresearcher; returns when candidate found |
+| "Find a new strategy for chop regime" | Kicks autooptimizer; returns when candidate found |
 | "Draft from this finding" | Opens setup wizard pre-seeded |
 | "Approve" / "Veto" (in response to a pinned verdict card) | Commits decision |
 
@@ -206,7 +206,7 @@ running state, polled or pushed.
 2. **Web Push (PWA-installed)**: user has installed the PWA via "Add to Home
    Screen". Notifications go through the browser's Web Push API. iOS supports
    this only from 16.4+ and only for installed PWAs. Use for: eval run done,
-   risk-gate decision needs approval, autoresearcher found a candidate.
+   risk-gate decision needs approval, autooptimizer found a candidate.
 3. **CLI / agent-side notifier**: for everything that needs to reach the user
    when the app isn't installed or open, the agent emits to whatever channel
    is configured: email, Slack, Telegram, the desktop daemon's tray. The
@@ -218,7 +218,7 @@ extension of `/api/health` or a dedicated `/api/activity`). All three modes
 read from it. The mobile app polls when foregrounded, subscribes via Web Push
 when installed, and the CLI watches it server-side.
 
-**Decision approval cards** (risk-gate verdicts, autoresearcher proposals):
+**Decision approval cards** (risk-gate verdicts, autooptimizer proposals):
 - Foreground: pin to top of chat stream.
 - Web Push: notification deep-links to the relevant card.
 - CLI: emits a one-liner with a `xvn` command to approve/veto.
@@ -252,7 +252,7 @@ chat composer:
 │  ─────────────────────────       │
 │  📈  3 runs completed overnight │  <- one tappable summary card
 │  ⚠  1 verdict awaiting approval │  <- tap → opens decision card
-│  💡 Autoresearcher found 2      │
+│  💡 AutoOptimizer found 2      │
 │      candidate bundles          │
 │                                 │
 │  [Equity sparkline, 7d]         │
@@ -480,7 +480,7 @@ Brainstorm operators used to derive this design:
 - **Combination** of {modalities} × {xvision actions} → eight composite
   features. Web-app subset of those: autorouter (chat × launch-run),
   morning brief (in-app × summary), bundle carousel (gesture × browse),
-  discovery feed (in-app × autoresearcher), race view (gesture × compare).
+  discovery feed (in-app × autooptimizer), race view (gesture × compare).
 - **Tree** organon with input-modality as the sub-typing relation. Surfaced
   the gap: chat-first is one modality of N, not the root.
 

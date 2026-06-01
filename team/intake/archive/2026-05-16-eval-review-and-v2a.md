@@ -28,7 +28,7 @@ Source specs/plans:
 
 - V2B items 4–6 (auth boundary, remote CLI orphan audit trail, kill switch) — separate intake when V2A lands.
 - V2C, V3, V4 — long horizon; no contracts yet.
-- Autoresearcher mutation loop — deferred per eval-review spec.
+- AutoOptimizer mutation loop — deferred per eval-review spec.
 
 ## Queued for next intake
 

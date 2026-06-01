@@ -1,24 +1,24 @@
 ---
-name: xvision-autoresearch-ops
-description: Operate the xvision autoresearcher: distill Observations into candidate Patterns, run the gate against today and the untouched test period, record blind findings, activate or retire Patterns, and preserve the lineage evidence for audit.
+name: xvision-autooptimizer-ops
+description: Operate the xvision autooptimizer: distill Observations into candidate Patterns, run the gate against today and the untouched test period, record blind findings, activate or retire Patterns, and preserve the lineage evidence for audit.
 ---
 
-# xvision autoresearch ops
+# xvision autooptimizer ops
 
-Use this skill for offline Pattern distillation work. Autoresearcher
+Use this skill for offline Pattern distillation work. AutoOptimizer
 commands are offline-only; do not run them inside a live trading
 decision process.
 
 ## Standard flow
 
 ```bash
-xvn autoresearch run \
+xvn autooptimizer run \
   --agent <agent_id> \
   --pattern-text "<candidate Pattern>" \
   --embedding-json '[...]' \
   --json
 
-xvn autoresearch gate <run_id> \
+xvn autooptimizer gate <run_id> \
   --metric sharpe \
   --baseline-today-score <n> \
   --candidate-today-score <n> \
@@ -28,7 +28,7 @@ xvn autoresearch gate <run_id> \
   --finding-text "<finding written blind to the numeric scores>" \
   --json
 
-xvn autoresearch activate <run_id> --json
+xvn autooptimizer activate <run_id> --json
 ```
 
 ## Invariants
@@ -44,7 +44,7 @@ xvn autoresearch activate <run_id> --json
 
 ## Evidence to capture
 
-- `xvn autoresearch inspect <run_id> --json`
+- `xvn autooptimizer inspect <run_id> --json`
 - Gate input/output JSON, including the blind finding fields.
 - Activated Pattern row and contributing Observation ids.
 - Look-ahead-protection regression output before declaring an

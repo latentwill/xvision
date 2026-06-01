@@ -48,7 +48,7 @@ Memory in xvision is two-layered. Your agents *write*
 **Observations** as they run — what they saw, what they decided,
 when. Observations stay in the engine's memory store for analysis.
 Your agents *read* **Patterns** — distilled insights that the
-autoresearcher (or you, manually) has validated as predictive.
+autooptimizer (or you, manually) has validated as predictive.
 Reading is one-way: agents never see raw Observations during a
 decision, only the Patterns those Observations have been distilled
 into. Patterns also carry the date their training data ended, so
@@ -70,14 +70,14 @@ Two practical consequences:
 
 ## What you'll see today
 
-Patterns ships empty. The autoresearcher that distils Patterns from
+Patterns ships empty. The autooptimizer that distils Patterns from
 accumulated Observations hasn't landed yet, but as of v1.1 you can
 hand-seed Patterns yourself — see "Managing memory" below for the
 CLI and dashboard surfaces.
 
 So even with a slot set to Agent-scoped or Global, the Memory panel
 on the eval-review page will show no recall items until you (or a
-future autoresearcher pass) put some Patterns on the shelf.
+future autooptimizer pass) put some Patterns on the shelf.
 Observations are still being recorded — you can think of v1 as the
 data-gathering phase — but the agent is reading from an empty
 Patterns shelf until you seed it.
@@ -248,10 +248,10 @@ Three operations are intentionally absent from v1.1:
   Edits land via V3's supersede/replace semantics; until then,
   `rm` and re-add.
 - **Per-item Observation delete.** Observations are bulk-forget-only.
-  This keeps the Observation tier honest as the autoresearcher's
+  This keeps the Observation tier honest as the autooptimizer's
   write-once substrate.
 - **Manual distillation (Observation → Pattern).** That's the V3
-  autoresearcher's job (board-v2 item 11a). v1.1's
+  autooptimizer's job (board-v2 item 11a). v1.1's
   `xvn memory add-pattern` lets you hand-write Patterns from prior
   art, but it won't read your Observations and propose Patterns for
   you.
@@ -261,8 +261,8 @@ Three operations are intentionally absent from v1.1:
 The manual seeding path landed in v1.1 — see the "Managing memory"
 section above. The remaining gap is automated distillation:
 
-- **V3: the autoresearcher.** Item 11a on `team/board-v2.md`. The
-  autoresearcher's mutator-judge-promote loop is the cortex
+- **V3: the autooptimizer.** Item 11a on `team/board-v2.md`. The
+  autooptimizer's mutator-judge-promote loop is the cortex
   distillation pass: it reads Observations across many runs,
   proposes candidate Patterns, validates them against held-out
   scenarios, and promotes the ones that survive. That's when the

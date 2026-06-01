@@ -87,7 +87,7 @@ This spec defines which FreqTrade-style metrics and charts to lift, how to make 
 
 - **plot-dataframe-style indicator overlays.** Covered by `2026-05-11-tradingview-charts-design.md`. This spec doesn't touch the price-pane.
 - **Per-pair tables.** xvision is single-pair-per-arm. See locked-decision #8.
-- **Hyperopt-style parameter search** driven by these metrics. Different spec (autoresearcher mutator).
+- **Hyperopt-style parameter search** driven by these metrics. Different spec (autooptimizer mutator).
 - **Custom user-defined metrics** (Lua / Pyodine / etc.). Tier-1 metrics are hardcoded Rust.
 - **CSV export.** JSON + markdown only in v1. CSV is a follow-up if a user asks.
 - **Live-cockpit streaming of breakdown tables.** They render once on run completion. Equity/underwater charts in live cockpit are covered by the existing SSE stream in the TradingView Charts spec.

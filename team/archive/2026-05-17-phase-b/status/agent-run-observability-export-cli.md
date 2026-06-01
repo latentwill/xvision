@@ -19,7 +19,7 @@ Read-side export surface for the canonical agent-run SQLite ledger.
   the run row's JSON columns. `final_artifact` is dereferenced inline.
 - `xvn run inspect <id> [--out <dir>|-] [--format json|md|both]` CLI
   verb under `crates/xvision-cli/src/commands/run/`. `--out -` writes
-  JSON to stdout (for the autoresearcher). `--db` overrides the
+  JSON to stdout (for the autooptimizer). `--db` overrides the
   default `<xvn_home>/data/store.db` path. Pool opens in `mode=ro`.
 - New routes on `xvision-dashboard`:
   `GET /api/agent-runs/:id`,

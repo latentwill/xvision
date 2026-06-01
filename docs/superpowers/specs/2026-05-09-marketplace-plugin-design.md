@@ -6,7 +6,7 @@
 > V2 is Mantle Sepolia testnet only; mainnet is V4. · originally drafted
 > 2026-05-09
 > **Author:** xvision team
-> **Companion specs:** [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) (the producer of artifacts this plugin consumes) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 + marketplace contract surface on Mantle Sepolia for V2)
+> **Companion specs:** [Karpathy AutoOptimizer](./2026-05-09-karpathy-autooptimizer-design.md) (the producer of artifacts this plugin consumes) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 + marketplace contract surface on Mantle Sepolia for V2)
 > **Hackathon deadline:** superseded; historical schedule retained only as old context where explicitly marked.
 >
 > **Amended 2026-05-26** by [`docs/superpowers/plans/2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md). Three points:
@@ -25,7 +25,7 @@
 ## 1. Purpose, scope, and persona
 
 The Marketplace Plugin is the **Persona A operator / chain-ops layer** on top of
-the autoresearcher. It consumes `CycleSeal` artifacts from the autoresearch core
+the autooptimizer. It consumes `CycleSeal` artifacts from the autooptimizer core
 and exposes them as ERC-8004 receipts on Mantle Sepolia for V2. Marketplace is
 part of the default xvn build; Persona A always sees chain ops in Settings but
 never has to publish. Persona B buyer/seller marketplace UX is owned by the
@@ -33,7 +33,7 @@ direction doc and Phase-F frontend spec, not this plugin spec.
 
 The cargo feature gate `marketplace` exists for build-flexibility (size-conscious / audit / minimal builds) but is enabled by default. The user-facing opt-in is the wallet-connect step in Settings, not a recompile. Mirroring the framing from [ADR 0010](../../decisions/0010-hackathon-pivot-strategy-loom.md): the feature gate handles build choice, the wallet-connect handles user choice.
 
-The plugin's job is narrow: **publish what's already provable.** It does not generate new lineage data, does not gate the autoresearch loop, does not modify the core's behavior. It reads sealed artifacts, mints NFTs, posts Merkle roots, and indexes external attestations. Anything else is out of scope.
+The plugin's job is narrow: **publish what's already provable.** It does not generate new lineage data, does not gate the autooptimizer loop, does not modify the core's behavior. It reads sealed artifacts, mints NFTs, posts Merkle roots, and indexes external attestations. Anything else is out of scope.
 
 ### 1.1 In scope (first plugin slice, V2 testnet)
 
@@ -80,9 +80,9 @@ estimate before testnet runs.
 | 2 | **One NFT per lineage**, not per variant. Variants are referenced inside the lineage manifest by content hash. |
 | 3 | **Lineage-end Merkle anchoring** (or on-demand snapshots) is the default. No per-cycle anchoring in the first slice. |
 | 4 | **In-house attesters seeded for V2.** xvision operates 1–2 ERC-8004 attester agents. Public/external participation is later work. |
-| 5 | **Subscribes to CycleSeal events** from autoresearch core; never modifies them. Strict one-way data flow. |
+| 5 | **Subscribes to CycleSeal events** from autooptimizer core; never modifies them. Strict one-way data flow. |
 | 6 | **Mantle Sepolia only through V2.** Mainnet is V4 after the V2 exit gate, audit, and governance prep. |
-| 7 | **Operator key separation.** Operator's autoresearch signing key (per autoresearch spec §7) is distinct from the on-chain wallet that holds NFTs. The autoresearch key signs seals; the wallet posts transactions. |
+| 7 | **Operator key separation.** Operator's autooptimizer signing key (per autooptimizer spec §7) is distinct from the on-chain wallet that holds NFTs. The autooptimizer key signs seals; the wallet posts transactions. |
 
 ---
 
@@ -93,7 +93,7 @@ estimate before testnet runs.
 ```
 xvision-engine/
 └── src/
-    ├── autoresearch/            # core (chain-free) — see autoresearcher spec
+    ├── autooptimizer/            # core (chain-free) — see autooptimizer spec
     └── marketplace/             # THIS SPEC; only compiled with `--features marketplace`
         ├── mod.rs
         ├── adapter.rs           # AnchorDriver trait; ERC-8004 implementation
@@ -103,12 +103,12 @@ xvision-engine/
         │   ├── mod.rs
         │   ├── regime_verifier.rs    # checks finding's regime claim against trace
         │   └── diversity_check.rs    # confirms variant adds genuine diversity
-        ├── ingest.rs            # subscribes to autoresearch::progress SSE events
+        ├── ingest.rs            # subscribes to autooptimizer::progress SSE events
         ├── dashboard.rs         # Settings → Chain ops handlers for NFT/receipt/attestation
         └── cli.rs               # `xvn marketplace ...` subcommands
 ```
 
-**Dependency rule:** `marketplace/` may freely import from `autoresearch/`, `eval/`, `strategy/`, `mcp/`. The reverse is forbidden — autoresearch core has no `use crate::marketplace::*` anywhere. CI enforces this with a feature-flag-off build that must succeed.
+**Dependency rule:** `marketplace/` may freely import from `autooptimizer/`, `eval/`, `strategy/`, `mcp/`. The reverse is forbidden — autooptimizer core has no `use crate::marketplace::*` anywhere. CI enforces this with a feature-flag-off build that must succeed.
 
 ### 3.2 The AnchorDriver port
 
@@ -135,9 +135,9 @@ trait AnchorDriver: Send + Sync {
 V2 ships one anchor implementation: `Erc8004MantleDriver`, plus a `MockDriver`
 for tests and `cargo test --features marketplace` runs.
 
-### 3.3 Subscription to autoresearch core
+### 3.3 Subscription to autooptimizer core
 
-`ingest.rs` subscribes to `autoresearch::progress` SSE events:
+`ingest.rs` subscribes to `autooptimizer::progress` SSE events:
 
 ```
 cycle_sealed { cycle_id, seal_hash, lineage_edges_added }
@@ -162,7 +162,7 @@ struct LineageManifest {
     parent_lineage_id: Option<Ulid>,    // for forks; None for seed lineages
     born_at: DateTime,
     operator_signature: Signature,
-    autoresearch_session_id: Ulid,      // links back to the SessionCommitment
+    autooptimizer_session_id: Ulid,      // links back to the SessionCommitment
 }
 ```
 
@@ -177,7 +177,7 @@ This means the on-chain artifact for "lineage" is one NFT + one mutation-log Mer
 
 ## 5. Counterfactual-chain Merkle receipts (Reputation Registry)
 
-`autoresearch::lineage::compute_merkle_root(lineage_id)` produces:
+`autooptimizer::lineage::compute_merkle_root(lineage_id)` produces:
 
 ```
 Merkle root over leaves:
@@ -251,7 +251,7 @@ V2 opens this surface to external participants (anyone with an ERC-8004 Identity
 
 > **Scope clarification (amended 2026-05-26).** This section describes the **Persona A operator surface** — the dashboard tab inside the self-hosted XVN install for the operator who minted the lineages. It is *not* the public buyer/seller marketplace, which is owned by [`2026-05-26-marketplace-design-direction.md`](../plans/2026-05-26-marketplace-design-direction.md) and lives in a separate thin read-only public viewer. The four panels below are operator-facing: anchor status, attester verdicts, anchor history, operator actions (mint / anchor / run attesters). The public Persona B surface has different columns, different defaults, and no operator-action panel — see direction doc §4.
 
-A sixth tab in the autoresearch dashboard (only present when the plugin is enabled). Four panels:
+A sixth tab in the autooptimizer dashboard (only present when the plugin is enabled). Four panels:
 
 1. **Lineage list with NFT links.** One row per lineage. Columns: lineage_id, NFT token_id, parent lineage, birth time, current Sharpe, anchor status (anchored / pending / never).
 2. **Per-lineage attestation viewer.** Click a lineage → shows in-house attester verdicts (regime + diversity), with rationale text expandable. Disagreements highlighted.
@@ -260,7 +260,7 @@ A sixth tab in the autoresearch dashboard (only present when the plugin is enabl
 
 The Settings → Chain ops surface listens for plugin SSE events: `nft_minted`,
 `merkle_anchored`, `attestation_posted`, `attester_disagreement`. These are
-emitted by the plugin's own SSE channel, separate from autoresearch core's
+emitted by the plugin's own SSE channel, separate from autooptimizer core's
 channel.
 
 ---
@@ -312,7 +312,7 @@ gate, audit, and governance prep.
 
 ## 10. Failure modes and mitigations
 
-Marketplace-specific risks. Loop-side risks live in the [autoresearcher spec §11](./2026-05-09-karpathy-autoresearcher-design.md).
+Marketplace-specific risks. Loop-side risks live in the [autooptimizer spec §11](./2026-05-09-karpathy-autooptimizer-design.md).
 
 | # | Failure | Mitigation |
 |---|---|---|
@@ -324,7 +324,7 @@ Marketplace-specific risks. Loop-side risks live in the [autoresearcher spec §1
 | 6 | Merkle root posted, but verification fails (manifest missing, wrong hash) | Anchor is idempotent and the manifest is content-addressed; if verification fails, post the corrected manifest CID and re-anchor. Old anchor is left as historical (signed bytes don't lie). |
 | 7 | Per-tx cost higher than estimated | Conservative Sepolia pre-fund (5× estimate) and budget alarm in the dashboard if wallet balance falls below threshold. |
 | 8 | "It's not really decentralized — xvision runs the attesters" | True for the first V2 slice; the plugin architecture explicitly enables later external participation. Product copy calls this out as a design feature, not a hack. |
-| 9 | A lineage's Merkle root differs between local computation and on-chain receipt | Single source of truth: `autoresearch::lineage::compute_merkle_root`. Plugin imports it, never re-implements. Test asserts byte-identical roots between core and plugin. |
+| 9 | A lineage's Merkle root differs between local computation and on-chain receipt | Single source of truth: `autooptimizer::lineage::compute_merkle_root`. Plugin imports it, never re-implements. Test asserts byte-identical roots between core and plugin. |
 | 10 | Operator wallet key compromised during V2 testnet | Wallet is operator-controlled EOA with limited Sepolia funds. V4 moves upgrade authority to timelock + multisig before mainnet. |
 
 ---
@@ -342,7 +342,7 @@ Marketplace-specific risks. Loop-side risks live in the [autoresearcher spec §1
 
 ## 12. References
 
-- [Karpathy Autoresearcher spec](./2026-05-09-karpathy-autoresearcher-design.md) (the producer of CycleSeal artifacts this plugin consumes; defines persona split)
+- [Karpathy AutoOptimizer spec](./2026-05-09-karpathy-autooptimizer-design.md) (the producer of CycleSeal artifacts this plugin consumes; defines persona split)
 - [Smart Contract Surface spec](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 registry deployment, contract interfaces, ABI)
 - [ADR 0010 — Hackathon Pivot](../../decisions/0010-hackathon-pivot-strategy-loom.md) (cargo-feature-gate idiom; marketplace-as-surface framing)
 - ERC-8004 EIP — eips.ethereum.org/EIPS/eip-8004 (mainnet live 2026-01-29)

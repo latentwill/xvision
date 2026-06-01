@@ -133,7 +133,7 @@ The LLM is now framing the recall as precedent-to-be-reasoned-about,
 not as fact-to-inherit. The cost is one prompt template change in
 the recorder; the benefit is belt-and-suspenders protection against
 both (a) accidentally over-specific Patterns from a future
-autoresearcher bug and (b) adversarial prompt-injection in recorded
+autooptimizer bug and (b) adversarial prompt-injection in recorded
 text.
 
 ### T — temporal (training-window filter)
@@ -148,7 +148,7 @@ Patterns carry one extra column:
 ```sql
 ALTER TABLE memory_items ADD COLUMN training_window_end TEXT;
 -- ISO 8601 datetime. REQUIRED on Patterns from automated distillation
--- (autoresearcher). NULL on operator-attested manual seeds and on
+-- (autooptimizer). NULL on operator-attested manual seeds and on
 -- Observations.
 ```
 
@@ -228,7 +228,7 @@ impl MemoryStore {
     /// training_window_end may be Some(date) or None (operator wisdom).
     pub async fn upsert_pattern(&self, item: &MemoryItem) -> Result<()>;
 
-    /// Autoresearcher Pattern retirement.
+    /// AutoOptimizer Pattern retirement.
     pub async fn demote_pattern(&self, id: &str) -> Result<u64>;
 
     /// Dispatcher recall — Patterns only, time-window filtered.
@@ -278,20 +278,20 @@ Patterns populate when:
 
 - **v1.1**: a manual seeding CLI ships (`xvn memory add-pattern
   --namespace global "<text>" [--training-end <date>]`).
-- **V3**: the autoresearcher's distillation pass produces and
+- **V3**: the autooptimizer's distillation pass produces and
   promotes Patterns from accumulated Observations.
 
-## Autoresearcher (V3) interplay
+## AutoOptimizer (V3) interplay
 
 The cortex tier split surfaces a meaningful V3 design constraint:
-**the autoresearcher is the distillation pass**. Specifically:
+**the autooptimizer is the distillation pass**. Specifically:
 
 - **Read** Observations across many runs to spot patterns
   (mutator's "what happened the last 50 times this shape appeared?"
   question).
 - **Propose** candidate Patterns with sample counts and outcome stats.
 - **Judge** with held-out scenarios — does the Pattern predict on
-  data the autoresearcher hasn't seen?
+  data the autooptimizer hasn't seen?
 - **Promote** validated Patterns into the Patterns tier with
   `training_window_end` set to the latest bar timestamp across all
   contributing Observations.
@@ -299,17 +299,17 @@ The cortex tier split surfaces a meaningful V3 design constraint:
   `demote_pattern`.
 
 The auto-recorder has INSERT access to Observations only. The
-autoresearcher has full access (INSERT/DELETE on both tiers, plus
+autooptimizer has full access (INSERT/DELETE on both tiers, plus
 the only path that legitimately writes Patterns).
 
 **V3 board entry (`team/board-v2.md` item 11a):**
 
-> Autoresearcher's mutator/judge/promote loop *is* the cortex
-> distillation pass. The autoresearcher gains write access to the
+> AutoOptimizer's mutator/judge/promote loop *is* the cortex
+> distillation pass. The autooptimizer gains write access to the
 > Patterns tier (via `MemoryStore::upsert_pattern` /
 > `demote_pattern`) and read access to Observations. Editing
 > semantics (create / supersede / retire) need to land before the
-> first nightly autoresearcher run that targets a Pattern-consuming
+> first nightly autooptimizer run that targets a Pattern-consuming
 > agent — otherwise the loop is purely evaluative and nothing
 > accumulates.
 
@@ -321,7 +321,7 @@ Boiled down for the V2D user-facing docs (Phase 6):
 > **Observations** as they run — what they saw, what they decided,
 > when. Observations stay in the engine's memory store for analysis.
 > Your agents *read* **Patterns** — distilled insights that the
-> autoresearcher (or you, manually) has validated as predictive.
+> autooptimizer (or you, manually) has validated as predictive.
 > Reading is one-way: agents never see raw Observations during a
 > decision, only the Patterns those Observations have been distilled
 > into. Patterns also carry the date their training data ended, so
@@ -367,12 +367,12 @@ blocked until Phases 1.5 and 6 land.
 
 - **Manual Pattern seeding UX.** `xvn memory add-pattern` CLI
   design is a small follow-up contract; not blocking V2D.
-- **Distillation pass spec.** Belongs in V3 autoresearcher intake;
+- **Distillation pass spec.** Belongs in V3 autooptimizer intake;
   V2D ships the API surface, not the implementation.
 - **Pattern editing — supersede vs replace.** When the
-  autoresearcher invalidates an old Pattern, does it delete or mark
+  autooptimizer invalidates an old Pattern, does it delete or mark
   deprecated? Recommend: soft-delete via a `deprecated_at`
-  timestamp so longitudinal autoresearcher logs can compare
+  timestamp so longitudinal autooptimizer logs can compare
   before/after.
 - **Operator audit of Observations.** Operators may want to review
   what was recorded — `xvn memory list --tier observation --run

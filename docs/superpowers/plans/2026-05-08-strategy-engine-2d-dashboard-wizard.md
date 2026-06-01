@@ -1023,7 +1023,7 @@ impl SeedContext {
 }
 ```
 
-`lookup_finding` reads from the eval engine's findings store; `count_recent_vetoes` reads from the scheduler events table; `lookup_nudge` from a nudges store the autoresearch plan owns. v1 stubs return empty strings + `0` for unknown ids — the template still renders, the user just sees a generic prompt.
+`lookup_finding` reads from the eval engine's findings store; `count_recent_vetoes` reads from the scheduler events table; `lookup_nudge` from a nudges store the autooptimizer plan owns. v1 stubs return empty strings + `0` for unknown ids — the template still renders, the user just sees a generic prompt.
 
 - [ ] **Step 2: Wizard root accepts `Query<SetupQuery>`**
 

@@ -158,15 +158,15 @@ creep and confused product framing.
   embedders. Until then, the absence of this tool is enforcing "pick
   one embedder, stick with it" — which is the right default.
 
-**V3 candidates (deferred *to autoresearcher*, not killed):**
+**V3 candidates (deferred *to autooptimizer*, not killed):**
 
 - **Tool-driven memory** (`memory_recall` / `memory_write` exposed as
   agent tools). V2D ships auto-recall + auto-write as Decision 5. Tool
-  surface is the autoresearcher's natural consumer; let V3 shape the
+  surface is the autooptimizer's natural consumer; let V3 shape the
   tool contract based on actual mutation-loop needs, not pre-build it
   now.
 - **TTL / time decay / LRU eviction.** V2D ships operator-driven
-  forget. V3 autoresearcher is when memory volume becomes
+  forget. V3 autooptimizer is when memory volume becomes
   load-bearing; that's where the janitor design earns its keep.
 
 **Kept as small v1.2 tracks** (see

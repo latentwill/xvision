@@ -36,7 +36,7 @@ negation produces. Each row is a feature direction the page can grow into.
 | One-at-a-time editing                       | Bulk operations (rename N, attach skill to N, run eval on N)           |
 | Edit-only                                   | Run / test / replay / debug surfaces inline                            |
 | Visual / form-based                         | Also a markdown view (program.md-shaped, Karpathy unit)                |
-| Operator creates and edits                  | Autoresearcher creates and edits (agent-authored agents)               |
+| Operator creates and edits                  | AutoOptimizer creates and edits (agent-authored agents)               |
 | Single-user view                            | Comparison across users / leaderboard (marketplace tie-in)             |
 | Agents are static config                    | Agents have history, versions, lineage, attestations                   |
 | The user chooses everything                 | Defaults seeded from a baseline; user overrides what matters           |
@@ -68,7 +68,7 @@ States:
 - **Live** — running against live capital; subject to kill switch + budget caps
 - **Halted** — kill switch fired / risk-veto streak / operator paused; positions either flat or frozen
 - **Retired** — taken out of rotation; archived; queryable, not runnable
-- **Mutated** — variant proposed by autoresearcher; parent stays, child enters Drafting
+- **Mutated** — variant proposed by autooptimizer; parent stays, child enters Drafting
 
 Transitions:
 
@@ -85,7 +85,7 @@ Halted         -> Live          : operator hits "Unhalt" after diagnosis
 Halted         -> Retired       : operator decides to archive
 Live           -> Retired       : operator de-provisions
 Forward-paper  -> Retired       : operator de-provisions
-Sealed         -> Mutated*      : autoresearcher proposes child (parent unchanged; * is the child)
+Sealed         -> Mutated*      : autooptimizer proposes child (parent unchanged; * is the child)
 Any state      -> Drafting      : "Fork to draft" — creates new agent_id, preserves lineage
 ```
 
@@ -126,12 +126,12 @@ Run-time cadence surfaces:
 - Pause / resume toggle independent of Halted state
 - One-shot trigger ("Run one cycle now against current market")
 - Cycle history strip: last N cycle outcomes as colored markers
-- Background mutation status ("Autoresearcher last visited: 4h ago; 2 candidates pending review")
+- Background mutation status ("AutoOptimizer last visited: 4h ago; 2 candidates pending review")
 
 Design-time lineage surfaces:
 
 - Parent agent_id (link)
-- Children: operator forks + autoresearcher mutations
+- Children: operator forks + autooptimizer mutations
 - Diff against parent — what changed between this version and forebear
 - Sealed-attestation hash + chain-explorer link
 
@@ -201,7 +201,7 @@ Composition into strategies:
 ## Synthesis — full feature checklist
 
 Flat enumeration, ranked by build-order leverage. Items marked `*` touch
-concepts that don't fully exist yet (autoresearcher loop, ERC-8004
+concepts that don't fully exist yet (autooptimizer loop, ERC-8004
 attestation, skill marketplace, leaderboard).
 
 **Tier 1 — page is incomplete without these:**
@@ -222,7 +222,7 @@ attestation, skill marketplace, leaderboard).
 - Variance scan
 - Confidence calibration display
 - Diff-from-template (drift indicator)
-- Background mutation status from autoresearcher *
+- Background mutation status from autooptimizer *
 - Cycle-frequency knob with event-triggered option
 - Pause / resume toggle independent of Halted
 - Adversarial probe
@@ -235,12 +235,12 @@ attestation, skill marketplace, leaderboard).
 - Skill marketplace integration *
 - Custom-skill upload / link
 - Leaderboard / cross-user comparison *
-- `program.md` markdown view (Karpathy unit) — pairs with autoresearcher
+- `program.md` markdown view (Karpathy unit) — pairs with autooptimizer
 - Bulk operations across N agents
 
 **Tier 4 — unexpected directions worth a separate think:**
 
-- Agent-authored agents: page becomes a *review surface* for autoresearcher mutations as much as an authoring surface
+- Agent-authored agents: page becomes a *review surface* for autooptimizer mutations as much as an authoring surface
 - Live-vs-paper twin view: same agent_id running in two surfaces simultaneously, surfacing divergence in real time
 - "Adversarial agent" slot: a separate agent whose job is to find weaknesses in another agent's decisions
 - Plain-language summary: every agent has a generated 100-word description for sharing / marketplace / quick-recall

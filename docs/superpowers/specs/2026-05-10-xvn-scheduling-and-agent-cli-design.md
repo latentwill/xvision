@@ -3,11 +3,11 @@
 > **Status:** design / spec — not yet implemented.
 > **Date:** 2026-05-10.
 > **Supersedes parts of:** Plan 2c (durable scheduler section). 2c's live-daemon and broker-surface portions remain.
-> **Integrates with:** Plan 1 (agent pipeline), Plan 2a (tool-use loop, deferred), Plan 2c (live daemon), Plan 2d (dashboard), Plan 3 (eval engine), AR-1/2/3 (autoresearch).
+> **Integrates with:** Plan 1 (agent pipeline), Plan 2a (tool-use loop, deferred), Plan 2c (live daemon), Plan 2d (dashboard), Plan 3 (eval engine), AR-1/2/3 (autooptimizer).
 
 ## 1. Goal & non-goals
 
-**Goal.** Make xvn's action surface complete and agent-driven on a schedule. Any operation an agent might want — review strategies, cull losers, reset risk limits, adjust per-deployment capital allocation, deploy/stop daemons, run maintenance, trigger autoresearch — must be reachable through (a) the xvn CLI for external agents and (b) a tool-use loop inside xvn for durably scheduled LLM jobs.
+**Goal.** Make xvn's action surface complete and agent-driven on a schedule. Any operation an agent might want — review strategies, cull losers, reset risk limits, adjust per-deployment capital allocation, deploy/stop daemons, run maintenance, trigger autooptimizer — must be reachable through (a) the xvn CLI for external agents and (b) a tool-use loop inside xvn for durably scheduled LLM jobs.
 
 After this ships: a user can write *"daily at 21:00 UTC, review all running strategies and deactivate any with rolling-30d Sharpe below 0.5"* as a prompt, register it as a recurring schedule, and the agent will wake up, call the right xvn engine functions, and act.
 
@@ -165,12 +165,12 @@ xvn maintenance vacuum-db
 xvn maintenance integrity-check
 ```
 
-**Autoresearch:**
+**AutoOptimizer:**
 
 ```
-xvn autoresearch run-evening-cycle [--strategy <id>] [--dry-run]
-xvn autoresearch list-cycles --since 7d
-xvn autoresearch show-cycle <cycle_id>
+xvn autooptimizer run-evening-cycle [--strategy <id>] [--dry-run]
+xvn autooptimizer list-cycles --since 7d
+xvn autooptimizer show-cycle <cycle_id>
 ```
 
 **`xvn schedule list` output:**
@@ -358,7 +358,7 @@ pub struct ScheduleSpec {
 }
 ```
 
-### 4.7 `autoresearch`
+### 4.7 `autooptimizer`
 
 Thin pass-throughs to AR-2 logic, surfaced for tool-registry symmetry.
 
@@ -370,7 +370,7 @@ pub async fn show_cycle(ctx, cycle_id) -> Result<CycleDetail>;
 
 ### 4.8 Tool-registry naming
 
-Tools mirror the engine API namespace one-to-one: `strategy.create`, `strategy.deactivate`, `risk.set_capital`, `deploy.stop`, `report.strategy_review`, `maintenance.rotate_logs`, `schedule.create`, `autoresearch.run_evening_cycle`. Glob patterns supported in `allowed_tools` use the same dot-separated form: `strategy.*`, `risk.*`, `report.*`, `*` for everything.
+Tools mirror the engine API namespace one-to-one: `strategy.create`, `strategy.deactivate`, `risk.set_capital`, `deploy.stop`, `report.strategy_review`, `maintenance.rotate_logs`, `schedule.create`, `autooptimizer.run_evening_cycle`. Glob patterns supported in `allowed_tools` use the same dot-separated form: `strategy.*`, `risk.*`, `report.*`, `*` for everything.
 
 ## 5. Internal agent runner
 
@@ -586,7 +586,7 @@ xvn never holds user trading capital. "Budget" means three distinct things; only
 - **Plan 2c (live daemon):** Daemon stays. System-wide scheduler can `deploy.start/stop/restart` it. Daemon's internal per-strategy decision cadence is unchanged.
 - **Plan 2d (dashboard):** Adds `/schedule` route + Live cockpit panel. Wizard gains `schedule.*` tools.
 - **Plan 3 (eval engine):** `report.strategy_review` and `maintenance.refresh_eval_cache` are integration points.
-- **AR-1/2/3 (autoresearch):** `autoresearch.run_evening_cycle` is the engine API hook. AR-2's evening cycle becomes a default schedule entry shipped at install (`name='ar-evening-cycle', at='03:00 UTC'`).
+- **AR-1/2/3 (autooptimizer):** `autooptimizer.run_evening_cycle` is the engine API hook. AR-2's evening cycle becomes a default schedule entry shipped at install (`name='ar-evening-cycle', at='03:00 UTC'`).
 - **`xvision-eval::report` (existing):** `report.eod` and `report.backtest_report` reuse the existing Markdown renderer. The renderer becomes a shared output format for backtest *and* live data — no duplicate report code. Live data is shaped into a `BacktestResult`-compatible struct from `scheduler_events`/event_store rows.
 
 **Migration:** No existing scheduler code today, so this is greenfield. New SQLite tables; no prior data to migrate.
@@ -620,10 +620,10 @@ sch_default_eod_report
 sch_default_ar_evening_cycle
   name:      ar-evening-cycle
   schedule:  daily 03:00 UTC
-  prompt:    Run autoresearch.run_evening_cycle. Summarize accepted mutations,
+  prompt:    Run autooptimizer.run_evening_cycle. Summarize accepted mutations,
              rejections, and any judge anomalies. Cull strategies whose
              quarantine status changed.
-  allow:     autoresearch.*, strategy.deactivate, report.strategy_review
+  allow:     autooptimizer.*, strategy.deactivate, report.strategy_review
   budget:    max-cost-usd=2.00, max-tokens=200000
 ```
 

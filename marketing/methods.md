@@ -97,7 +97,7 @@ config that takes a single `RunBundle` as input.
    delta-narrative ("Arm A used 8x leverage, Arm B used spot. Funding drag
    cost Arm A $X. Here's where each one decided differently"). Great for
    showcasing perp vs spot trade-offs.
-3. **Strategy lineage** — overnight autoresearcher output. Show the parent
+3. **Strategy lineage** — overnight autooptimizer output. Show the parent
    strategy at the top, fork tree below, sealed survivors highlighted with
    their `agent_id` NFT. "11 experiments attempted, 2 sealed. Here's why
    `agent-018K…` won."
@@ -110,7 +110,7 @@ config that takes a single `RunBundle` as input.
    execution path. Show the audit log as the verifiable artifact.
 6. **Concept explainers** — non-data videos for the harder ideas: "Why
    non-custodial matters", "What ERC-8004 actually does", "How the
-   autoresearcher avoids overfitting." Manually-storyboarded; longer
+   autooptimizer avoids overfitting." Manually-storyboarded; longer
    production cycle, but they're the videos that win over skeptics.
 
 ### Stack
@@ -178,7 +178,7 @@ Subject: AI trading agents that improve themselves overnight — pitch for <show
 Hi <host>,
 
 I'm building xvision — non-custodial AI trading agents that run on Orderly +
-Mantle, with an overnight autoresearcher that mutates strategies, evaluates
+Mantle, with an overnight autooptimizer that mutates strategies, evaluates
 variants against held-out backtests, and seals survivors as ERC-8004 lineage
 NFTs. There are three threads in here I'd love to talk through on <show>:
 
@@ -186,7 +186,7 @@ NFTs. There are three threads in here I'd love to talk through on <show>:
   trading platform can place orders but can't withdraw, and why this changes
   the FTX failure mode at the substrate level.
 
-- The autoresearcher: how an LLM judge avoids overfitting in a domain where
+- The autooptimizer: how an LLM judge avoids overfitting in a domain where
   every wrong call costs real money. (Spoiler: held-out windows, lineage
   attestation, kill-the-parent-if-the-child-wins.)
 
@@ -205,7 +205,7 @@ I can demo a live overnight run if useful. Pre-recorded fallback available.
 - **Bankless** (Ryan Adams + David Hoffman) — DeFi-first, deep on infrastructure narratives. Pitch: non-custodial trust model.
 - **Empire** (Jason Yanowitz + Santiago Santos) — macro + alpha-seeking. Pitch: alpha generation as a market.
 - **Unchained** (Laura Shin) — investigative + skeptical. Good for the "what could go wrong" segment of the non-custodial story.
-- **The Chopping Block** (Haseeb + Tom + Tarun + Robert) — extremely technical audience. Pitch: ERC-8004 + autoresearcher mechanics.
+- **The Chopping Block** (Haseeb + Tom + Tarun + Robert) — extremely technical audience. Pitch: ERC-8004 + autooptimizer mechanics.
 - **The Defiant Podcast** (Camila Russo) — DeFi natives, EU-leaning audience.
 
 **Tier 2 — high fit, smaller reach. Build momentum.**
@@ -218,10 +218,10 @@ I can demo a live overnight run if useful. Pre-recorded fallback available.
 
 **Tier 3 — AI / non-crypto. Cross-pollinate.**
 
-- **Latent Space** (swyx) — AI engineering audience. Pitch: LLM-as-judge in adversarial domains, autoresearcher loop.
+- **Latent Space** (swyx) — AI engineering audience. Pitch: LLM-as-judge in adversarial domains, autooptimizer loop.
 - **MLST** (Machine Learning Street Talk) — technical depth, longer episodes.
 - **Practical AI** — applied ML audience.
-- **No Priors** (Sarah Guo + Elad Gil) — AI VC audience; not their typical guest profile but the autoresearcher narrative fits.
+- **No Priors** (Sarah Guo + Elad Gil) — AI VC audience; not their typical guest profile but the autooptimizer narrative fits.
 
 **Tier 4 — Mantle / Orderly / partner-ecosystem podcasts.** If they don't
 have one, propose a one-off episode. Hackathon sponsors are often eager for
@@ -251,7 +251,7 @@ the talking points are tight.
 | Non-custodial trust | "What if your trading bot literally couldn't take your money?" | Scope-enforced trading keys; broker-layer enforcement; failure mode contrast with custodial platforms |
 | AI judges in adversarial domains | "Why most LLM evaluation is wrong for trading" | Held-out windows; survivorship bias; lineage attestation; kill-the-parent rule |
 | On-chain reputation | "Strategy track records that move between platforms" | ERC-8004 mechanics; portability across marketplaces; what governance looks like |
-| Autoresearch as a product | "What if your trading bot wrote better trading bots overnight?" | Mutation manifold; cost economics; the operator-load reduction story |
+| AutoOptimizer as a product | "What if your trading bot wrote better trading bots overnight?" | Mutation manifold; cost economics; the operator-load reduction story |
 | What scales break at | "The N=10 problem" | MANUAL.md's scale tier section; operational maturity vs. capital scaling |
 
 ---

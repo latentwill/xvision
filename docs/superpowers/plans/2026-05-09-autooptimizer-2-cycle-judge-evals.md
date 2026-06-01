@@ -1,16 +1,16 @@
-# Autoresearcher AR-2 — Cycle Orchestrator + Judge + Canary + Inversion + Diversity
+# AutoOptimizer AR-2 — Cycle Orchestrator + Judge + Canary + Inversion + Diversity
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Spec:** `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md` — full design context. This plan implements **§3.2 (per-cycle data flow), §5.2 (LLM judge), §5.3 (inversion-pair eval), §8 (five novel evals).**
+> **Spec:** `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md` — full design context. This plan implements **§3.2 (per-cycle data flow), §5.2 (LLM judge), §5.3 (inversion-pair eval), §8 (five novel evals).**
 > **Companion plans:** AR-1 (mutator + lineage + gate + seal — must ship first), AR-3 (dashboard + SSE rendering + mutator-skill ladder UI), MP-1 (marketplace plugin).
 > **Hard upstream dependencies:**
->   1. **AR-1 must be on `main`.** AR-2 imports `xvision_engine::autoresearch::{Mutator, MutationDiff, NumericGate, LineageStore, CycleSeal, CycleSealWriter, OperatorKey, SessionCommitment, AutoresearchConfig}`. Verify before starting: `git log autoresearch-ar1..HEAD --oneline` shows the AR-1 tag is reachable.
+>   1. **AR-1 must be on `main`.** AR-2 imports `xvision_engine::autooptimizer::{Mutator, MutationDiff, NumericGate, LineageStore, CycleSeal, CycleSealWriter, OperatorKey, SessionCommitment, AutoOptimizerConfig}`. Verify before starting: `git log autooptimizer-ar1..HEAD --oneline` shows the AR-1 tag is reachable.
 >   2. **Eval engine on `main`.** AR-2 wires real `xvision_engine::eval::executor::backtest::BacktestExecutor` calls in place of AR-1's `paper_test_window` stubs.
-> **Hackathon role:** Wk 3 milestone (autoresearch spec §10): "Cycle orchestrator + judge + canary + inversion-pair + diversity. Full evening cycle runs end-to-end locally." After this plan ships, `xvn autoresearch evening-cycle` runs one full nightly loop with real LLM calls and produces a sealed cycle that includes findings, canary outcome, diversity metric, and inversion-pair quarantine flags.
+> **Hackathon role:** Wk 3 milestone (autooptimizer spec §10): "Cycle orchestrator + judge + canary + inversion-pair + diversity. Full evening cycle runs end-to-end locally." After this plan ships, `xvn autooptimizer evening-cycle` runs one full nightly loop with real LLM calls and produces a sealed cycle that includes findings, canary outcome, diversity metric, and inversion-pair quarantine flags.
 
-**Goal:** After this plan ships: `xvn autoresearch evening-cycle --session-id <id>` runs the full per-cycle loop from autoresearch spec §3.2 — selects parents, generates one canary parent, proposes mutations, paper-tests them on day + held-out windows via the real eval engine, runs the gate, runs an LLM judge on accepted children (metrics-blind), runs the inversion-pair eval to quarantine noise-suspects, computes a diversity-decay metric, updates the mutator-skill ladder, and seals the cycle. The replay fallback `xvn autoresearch demo` boots a sealed cycle from a pinned fixture (no API keys required).
+**Goal:** After this plan ships: `xvn autooptimizer evening-cycle --session-id <id>` runs the full per-cycle loop from autooptimizer spec §3.2 — selects parents, generates one canary parent, proposes mutations, paper-tests them on day + held-out windows via the real eval engine, runs the gate, runs an LLM judge on accepted children (metrics-blind), runs the inversion-pair eval to quarantine noise-suspects, computes a diversity-decay metric, updates the mutator-skill ladder, and seals the cycle. The replay fallback `xvn autooptimizer demo` boots a sealed cycle from a pinned fixture (no API keys required).
 
-**Architecture:** Six new files in `xvision-engine/src/autoresearch/` (`cycle.rs`, `judge.rs`, `canary.rs`, `inversion.rs`, `diversity.rs`, `parent_policy.rs`, `mutator_ladder.rs`). One new file per node-type into the lineage's secondary tables (canary runs, ladder snapshots). The orchestrator is fully async; SSE events are emitted via a broadcast channel that AR-3 will consume from a dashboard handler — AR-2 wires the channel and adds an exhaust-to-stdout subscriber for CLI runs.
+**Architecture:** Six new files in `xvision-engine/src/autooptimizer/` (`cycle.rs`, `judge.rs`, `canary.rs`, `inversion.rs`, `diversity.rs`, `parent_policy.rs`, `mutator_ladder.rs`). One new file per node-type into the lineage's secondary tables (canary runs, ladder snapshots). The orchestrator is fully async; SSE events are emitted via a broadcast channel that AR-3 will consume from a dashboard handler — AR-2 wires the channel and adds an exhaust-to-stdout subscriber for CLI runs.
 
 **Tech Stack:** Rust 2021. New deps in `xvision-engine/Cargo.toml`: `statrs = "0.17"` (already added by eval-engine plan; use the same; bootstrap CIs for inversion eval), `rand = "0.8"` + `rand_chacha = "0.3"` (deterministic RNG seeded from session commitment), `tokio` `broadcast` channel feature (already enabled by workspace tokio config). Optionally: `voyageai = "0.x"` or just direct `reqwest` calls to OpenAI's embeddings endpoint (we do reqwest directly to keep deps lean).
 
@@ -18,7 +18,7 @@
 - Dashboard surfaces — AR-3 (we emit SSE events; AR-3 renders them)
 - Marketplace anchoring — MP-1
 - Real-time multi-cycle parent-policy adaptation beyond what cfg.parent_policy declares
-- Cross-asset autoresearch (BTC-only per spec §1.3)
+- Cross-asset autooptimizer (BTC-only per spec §1.3)
 - Slot/template-swap mutations
 - Public attestation by external attesters (in-house only is MP-1; external is v2)
 
@@ -30,39 +30,39 @@
 crates/xvision-engine/
 ├── Cargo.toml                                       # add rand, rand_chacha; verify statrs from eval-engine
 ├── migrations/
-│   └── 004_autoresearch_evals.sql                   # NEW — canary_runs + mutator_ladder_snapshots + diversity_samples tables
+│   └── 004_autooptimizer_evals.sql                   # NEW — canary_runs + mutator_ladder_snapshots + diversity_samples tables
 ├── prompts/
-│   └── autoresearch/
+│   └── autooptimizer/
 │       ├── mutator-v1.md                            # already shipped in AR-1
 │       └── judge-v1.md                              # NEW — metrics-blind finding writer prompt
 ├── src/
-│   └── autoresearch/
+│   └── autooptimizer/
 │       ├── mod.rs                                   # MODIFY — re-export new types
 │       ├── canary.rs                                # NEW — null-result sabotaged-parent injection
 │       ├── cycle.rs                                 # NEW — evening orchestrator
 │       ├── diversity.rs                             # NEW — embedding-divergence diversity-decay
-│       ├── eval_adapter.rs                          # NEW — bridges autoresearch ↔ eval::BacktestExecutor (replaces AR-1 stubs)
+│       ├── eval_adapter.rs                          # NEW — bridges autooptimizer ↔ eval::BacktestExecutor (replaces AR-1 stubs)
 │       ├── inversion.rs                             # NEW — forward + reverse mutation eval
 │       ├── judge.rs                                 # NEW — LLM judge (metrics-blind)
 │       ├── mutator_ladder.rs                        # NEW — mutator-skill metrics
 │       ├── parent_policy.rs                         # NEW — round-robin / top-K / ε-greedy parent selection
 │       └── progress.rs                              # MODIFY — add real broadcast::Sender + Channel
 └── tests/
-    ├── autoresearch_parent_policy.rs                # NEW
-    ├── autoresearch_canary.rs                       # NEW
-    ├── autoresearch_inversion.rs                    # NEW
-    ├── autoresearch_diversity.rs                    # NEW
-    ├── autoresearch_judge.rs                        # NEW
-    ├── autoresearch_eval_adapter.rs                 # NEW
-    ├── autoresearch_mutator_ladder.rs               # NEW
-    ├── autoresearch_cycle_full.rs                   # NEW — end-to-end one-cycle test with mocks
-    └── autoresearch_demo_replay.rs                  # NEW — replay-fixture E2E
+    ├── autooptimizer_parent_policy.rs                # NEW
+    ├── autooptimizer_canary.rs                       # NEW
+    ├── autooptimizer_inversion.rs                    # NEW
+    ├── autooptimizer_diversity.rs                    # NEW
+    ├── autooptimizer_judge.rs                        # NEW
+    ├── autooptimizer_eval_adapter.rs                 # NEW
+    ├── autooptimizer_mutator_ladder.rs               # NEW
+    ├── autooptimizer_cycle_full.rs                   # NEW — end-to-end one-cycle test with mocks
+    └── autooptimizer_demo_replay.rs                  # NEW — replay-fixture E2E
 ```
 
 Plus modifications:
-- `crates/xvision-cli/src/commands/autoresearch.rs` — replace AR-1's `mutate_once` paper-test stubs with `eval_adapter` calls; add `EveningCycle`, `Demo` subcommand actions; add `Loosen` action that triggers the pre-committed loosening schedule (see autoresearch spec §7)
-- `crates/xvision-engine/src/autoresearch/mutator.rs` — small extension: `Mutator::propose_with_canary_marker(...)` so the mutator's per-cycle context can include "this parent is the canary; you don't know which" — but the *mutator* doesn't get told which is the canary; the *orchestrator* tracks it. So the only change needed is to make `MutatorContext` carry an extra `parent_kind: ParentKind` field that records `Real | Canary` for downstream telemetry but is **stripped before the mutator's prompt is built**.
-- `data/probes/autoresearch/replay-fixture.json` — pinned cycle artifacts for `xvn autoresearch demo`
+- `crates/xvision-cli/src/commands/autooptimizer.rs` — replace AR-1's `mutate_once` paper-test stubs with `eval_adapter` calls; add `EveningCycle`, `Demo` subcommand actions; add `Loosen` action that triggers the pre-committed loosening schedule (see autooptimizer spec §7)
+- `crates/xvision-engine/src/autooptimizer/mutator.rs` — small extension: `Mutator::propose_with_canary_marker(...)` so the mutator's per-cycle context can include "this parent is the canary; you don't know which" — but the *mutator* doesn't get told which is the canary; the *orchestrator* tracks it. So the only change needed is to make `MutatorContext` carry an extra `parent_kind: ParentKind` field that records `Real | Canary` for downstream telemetry but is **stripped before the mutator's prompt is built**.
+- `data/probes/autooptimizer/replay-fixture.json` — pinned cycle artifacts for `xvn autooptimizer demo`
 
 ---
 
@@ -73,20 +73,20 @@ Plus modifications:
 AR-1 stubbed `paper_test_window` returning a fixed 1.0. AR-2's first job is to plug in the real eval engine. We wrap the eval engine's executor behind a `PaperTestRunner` trait so tests can substitute deterministic fixtures and the orchestrator stays decoupled.
 
 **Files:**
-- Create: `crates/xvision-engine/src/autoresearch/eval_adapter.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_eval_adapter.rs`
+- Create: `crates/xvision-engine/src/autooptimizer/eval_adapter.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_eval_adapter.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-// tests/autoresearch_eval_adapter.rs
+// tests/autooptimizer_eval_adapter.rs
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
 use tempfile::tempdir;
 
 use xvision_engine::agent::llm::MockDispatch;
-use xvision_engine::autoresearch::eval_adapter::{EvalAdapter, PaperTestRunner, WindowKind};
+use xvision_engine::autooptimizer::eval_adapter::{EvalAdapter, PaperTestRunner, WindowKind};
 use xvision_engine::tools::ToolRegistry;
 
 #[tokio::test]
@@ -159,9 +159,9 @@ fn mock_minimal_bundle() -> xvision_engine::bundle::StrategyBundle {
 - [ ] **Step 2: Implement eval_adapter.rs**
 
 ```rust
-//! Bridges autoresearch's per-cycle paper-test calls to the eval engine's
+//! Bridges autooptimizer's per-cycle paper-test calls to the eval engine's
 //! BacktestExecutor. Each call returns a Sharpe + the eval_run_id so
-//! autoresearch can persist the trace into its own paper_tests table.
+//! autooptimizer can persist the trace into its own paper_tests table.
 
 use std::sync::Arc;
 
@@ -267,9 +267,9 @@ impl PaperTestRunner for EvalAdapter {
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_eval_adapter
-git add crates/xvision-engine/src/autoresearch/eval_adapter.rs crates/xvision-engine/tests/autoresearch_eval_adapter.rs
-git commit -m "feat(autoresearch): EvalAdapter bridges paper-tests to BacktestExecutor"
+cargo test -p xvision-engine --test autooptimizer_eval_adapter
+git add crates/xvision-engine/src/autooptimizer/eval_adapter.rs crates/xvision-engine/tests/autooptimizer_eval_adapter.rs
+git commit -m "feat(autooptimizer): EvalAdapter bridges paper-tests to BacktestExecutor"
 ```
 
 ---
@@ -278,7 +278,7 @@ git commit -m "feat(autoresearch): EvalAdapter bridges paper-tests to BacktestEx
 
 The held-out window is pinned at session-init via `cfg.holdout.{start_iso, end_iso}`. We don't ship a separate canonical scenario for it — we synthesize a `Scenario` struct on the fly with that time range, BTC/USD universe, and the same slippage/fees/latency model as the canonical bull scenario.
 
-**File:** extend `crates/xvision-engine/src/autoresearch/eval_adapter.rs`.
+**File:** extend `crates/xvision-engine/src/autooptimizer/eval_adapter.rs`.
 
 - [ ] **Step 1: Append to eval_adapter.rs**
 
@@ -309,14 +309,14 @@ pub fn holdout_scenario(start: DateTime<Utc>, end: DateTime<Utc>) -> Scenario {
         latency: LatencyModel { decision_to_fill_ms: 250 },
         data_seed: "alpaca-historical-v1".into(),
         created_at: Utc::now(),
-        created_by: "@xvision_autoresearch".into(),
+        created_by: "@xvision_autooptimizer".into(),
     }
 }
 ```
 
 - [ ] **Step 2: Add test for holdout synthesis**
 
-Append to `tests/autoresearch_eval_adapter.rs`:
+Append to `tests/autooptimizer_eval_adapter.rs`:
 
 ```rust
 use chrono::{TimeZone, Utc};
@@ -325,7 +325,7 @@ use chrono::{TimeZone, Utc};
 fn holdout_scenario_uses_provided_window() {
     let start = Utc.with_ymd_and_hms(2025, 9, 1, 0, 0, 0).unwrap();
     let end = Utc.with_ymd_and_hms(2025, 12, 1, 0, 0, 0).unwrap();
-    let s = xvision_engine::autoresearch::eval_adapter::holdout_scenario(start, end);
+    let s = xvision_engine::autooptimizer::eval_adapter::holdout_scenario(start, end);
     assert_eq!(s.time_window.start, start);
     assert_eq!(s.time_window.end, end);
     assert_eq!(s.asset_universe, vec!["BTC/USD".to_string()]);
@@ -335,9 +335,9 @@ fn holdout_scenario_uses_provided_window() {
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_eval_adapter
-git add crates/xvision-engine/src/autoresearch/eval_adapter.rs crates/xvision-engine/tests/autoresearch_eval_adapter.rs
-git commit -m "feat(autoresearch): synthesize Scenario for the pinned holdout window"
+cargo test -p xvision-engine --test autooptimizer_eval_adapter
+git add crates/xvision-engine/src/autooptimizer/eval_adapter.rs crates/xvision-engine/tests/autooptimizer_eval_adapter.rs
+git commit -m "feat(autooptimizer): synthesize Scenario for the pinned holdout window"
 ```
 
 ---
@@ -346,11 +346,11 @@ git commit -m "feat(autoresearch): synthesize Scenario for the pinned holdout wi
 
 ### Task 3: ParentPolicy (round-robin / top-K / ε-greedy)
 
-Per autoresearch spec §3.2 the parent policy is pluggable; the policy's seed is sealed in the SessionCommitment. AR-2 ships three implementations and the orchestrator picks based on `cfg.parent_policy.kind`.
+Per autooptimizer spec §3.2 the parent policy is pluggable; the policy's seed is sealed in the SessionCommitment. AR-2 ships three implementations and the orchestrator picks based on `cfg.parent_policy.kind`.
 
 **Files:**
-- Create: `crates/xvision-engine/src/autoresearch/parent_policy.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_parent_policy.rs`
+- Create: `crates/xvision-engine/src/autooptimizer/parent_policy.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_parent_policy.rs`
 
 - [ ] **Step 1: Add deps**
 
@@ -364,14 +364,14 @@ rand_chacha = "0.3"
 - [ ] **Step 2: Failing test**
 
 ```rust
-// tests/autoresearch_parent_policy.rs
+// tests/autooptimizer_parent_policy.rs
 use chrono::Utc;
 use sqlx::SqlitePool;
 use tempfile::tempdir;
 
-use xvision_engine::autoresearch::content_hash::ContentHash;
-use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot};
-use xvision_engine::autoresearch::parent_policy::{ParentPolicy, PolicyKind};
+use xvision_engine::autooptimizer::content_hash::ContentHash;
+use xvision_engine::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot};
+use xvision_engine::autooptimizer::parent_policy::{ParentPolicy, PolicyKind};
 
 async fn store_with_n_active(n: usize) -> (LineageStore, tempfile::TempDir) {
     let dir = tempdir().unwrap();
@@ -455,8 +455,8 @@ use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-use crate::autoresearch::content_hash::ContentHash;
-use crate::autoresearch::lineage::LineageStore;
+use crate::autooptimizer::content_hash::ContentHash;
+use crate::autooptimizer::lineage::LineageStore;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -478,7 +478,7 @@ impl ParentPolicy {
         Self { kind, top_k, epsilon_explore, seed }
     }
 
-    pub fn from_config(cfg: &crate::autoresearch::config::ParentPolicyConfig) -> Self {
+    pub fn from_config(cfg: &crate::autooptimizer::config::ParentPolicyConfig) -> Self {
         let kind = match cfg.kind.as_str() {
             "round_robin" => PolicyKind::RoundRobin,
             "top_k" => PolicyKind::TopK,
@@ -570,7 +570,7 @@ impl ParentPolicy {
         // Pull active nodes ordered by born_at; carry pnl as the policy's
         // ranking signal. Quarantined and Ghost are excluded.
         let rows = sqlx::query(
-            "SELECT bundle_hash, metrics_json FROM autoresearch_lineage_nodes
+            "SELECT bundle_hash, metrics_json FROM autooptimizer_lineage_nodes
              WHERE status = 'active' ORDER BY born_at",
         )
         .fetch_all(store.pool())
@@ -579,7 +579,7 @@ impl ParentPolicy {
         for r in rows {
             let h = ContentHash::from_hex(r.try_get::<&str, _>("bundle_hash")?)?;
             let pnl = match r.try_get::<Option<&str>, _>("metrics_json")? {
-                Some(s) => serde_json::from_str::<crate::autoresearch::lineage::MetricsSnapshot>(s)
+                Some(s) => serde_json::from_str::<crate::autooptimizer::lineage::MetricsSnapshot>(s)
                     .map(|m| m.realized_pnl_attributed)
                     .unwrap_or(0.0),
                 None => 0.0,
@@ -594,9 +594,9 @@ impl ParentPolicy {
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_parent_policy
-git add crates/xvision-engine/src/autoresearch/parent_policy.rs crates/xvision-engine/tests/autoresearch_parent_policy.rs crates/xvision-engine/Cargo.toml
-git commit -m "feat(autoresearch): ParentPolicy (round-robin / top-K / ε-greedy) seeded from session"
+cargo test -p xvision-engine --test autooptimizer_parent_policy
+git add crates/xvision-engine/src/autooptimizer/parent_policy.rs crates/xvision-engine/tests/autooptimizer_parent_policy.rs crates/xvision-engine/Cargo.toml
+git commit -m "feat(autooptimizer): ParentPolicy (round-robin / top-K / ε-greedy) seeded from session"
 ```
 
 ---
@@ -608,18 +608,18 @@ git commit -m "feat(autoresearch): ParentPolicy (round-robin / top-K / ε-greedy
 Per spec §5.2, the judge runs only on children that already passed the numeric gate. It receives parent + child trace tapes, parent + child program-view, and the mutation diff — but **never** Sharpe, drawdown, profit factor, or any metric. The metrics-blind invariant is enforced in code: `judge.rs` strips metrics before constructing the prompt and panics if any leak through.
 
 **Files:**
-- Create: `crates/xvision-engine/prompts/autoresearch/judge-v1.md`
-- Create: `crates/xvision-engine/src/autoresearch/judge.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_judge.rs`
+- Create: `crates/xvision-engine/prompts/autooptimizer/judge-v1.md`
+- Create: `crates/xvision-engine/src/autooptimizer/judge.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_judge.rs`
 
 - [ ] **Step 1: Judge prompt**
 
-Create `crates/xvision-engine/prompts/autoresearch/judge-v1.md`:
+Create `crates/xvision-engine/prompts/autooptimizer/judge-v1.md`:
 
 ```markdown
 ---
-name: autoresearch-judge
-display_name: "Autoresearch Judge v1"
+name: autooptimizer-judge
+display_name: "AutoOptimizer Judge v1"
 description: "Writes a structured Finding for an accepted child variant. Metrics-blind: never sees Sharpe/drawdown/etc."
 version: 1.0.0
 allowed_tools: []
@@ -661,11 +661,11 @@ Rules:
 - [ ] **Step 2: Failing test**
 
 ```rust
-// tests/autoresearch_judge.rs
+// tests/autooptimizer_judge.rs
 use std::sync::Arc;
 
 use xvision_engine::agent::llm::MockDispatch;
-use xvision_engine::autoresearch::judge::{Finding, Judge, JudgeContext, RegimeTag};
+use xvision_engine::autooptimizer::judge::{Finding, Judge, JudgeContext, RegimeTag};
 
 #[tokio::test]
 async fn judge_emits_finding_when_response_is_valid_json() {
@@ -699,7 +699,7 @@ async fn judge_panics_if_caller_tries_to_smuggle_metrics_into_context() {
     // cycle orchestrator) can't accidentally pass them. We simulate the
     // failure case by hand-rolling a context-like JSON with a "sharpe" key,
     // which the assertion in judge.rs catches.
-    use xvision_engine::autoresearch::judge::assert_metrics_blind;
+    use xvision_engine::autooptimizer::judge::assert_metrics_blind;
     let bad = serde_json::json!({"parent": {"sharpe": 1.5}});
     assert_metrics_blind(&bad);
 }
@@ -716,7 +716,7 @@ async fn judge_returns_low_confidence_finding_on_unparseable_response() {
         child_trace: serde_json::json!([]),
     };
     let finding = judge.write(&ctx).await.unwrap();
-    assert_eq!(finding.confidence, xvision_engine::autoresearch::judge::Confidence::Low);
+    assert_eq!(finding.confidence, xvision_engine::autooptimizer::judge::Confidence::Low);
     assert!(finding.summary.contains("could not parse"));
 }
 ```
@@ -724,7 +724,7 @@ async fn judge_returns_low_confidence_finding_on_unparseable_response() {
 - [ ] **Step 3: Implement judge.rs**
 
 ```rust
-//! Metrics-blind LLM judge. See autoresearch spec §5.2.
+//! Metrics-blind LLM judge. See autooptimizer spec §5.2.
 //!
 //! Invariant: the judge prompt is constructed from program-view markdown
 //! plus trace tapes only. No numeric metrics ever appear in the prompt.
@@ -739,7 +739,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{LlmDispatch, LlmRequest};
 
-const JUDGE_PROMPT: &str = include_str!("../../prompts/autoresearch/judge-v1.md");
+const JUDGE_PROMPT: &str = include_str!("../../prompts/autooptimizer/judge-v1.md");
 const FORBIDDEN_METRIC_TOKENS: &[&str] = &[
     "sharpe", "drawdown", "profit_factor", "return", "win_rate", "equity_usd",
     "pnl", "max_drawdown", "alpha", "beta", "ratio", "calmar", "sortino",
@@ -888,9 +888,9 @@ pub fn assert_metrics_blind(value: &serde_json::Value) {
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_judge
-git add crates/xvision-engine/src/autoresearch/judge.rs crates/xvision-engine/tests/autoresearch_judge.rs crates/xvision-engine/prompts/autoresearch/judge-v1.md
-git commit -m "feat(autoresearch): metrics-blind LLM judge + Finding schema + invariant assertion"
+cargo test -p xvision-engine --test autooptimizer_judge
+git add crates/xvision-engine/src/autooptimizer/judge.rs crates/xvision-engine/tests/autooptimizer_judge.rs crates/xvision-engine/prompts/autooptimizer/judge-v1.md
+git commit -m "feat(autooptimizer): metrics-blind LLM judge + Finding schema + invariant assertion"
 ```
 
 ---
@@ -902,16 +902,16 @@ git commit -m "feat(autoresearch): metrics-blind LLM judge + Finding schema + in
 Per spec §5.3, every numeric-gate-passing candidate gets an inverse mutation generated (revert prose, reset params, undo tool changes) and paper-tested on the day window. If the inverse's Sharpe is statistically indistinguishable from the forward child's (within bootstrap 95% CI), the lineage is committed but flagged `Quarantined`.
 
 **Files:**
-- Create: `crates/xvision-engine/src/autoresearch/inversion.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_inversion.rs`
+- Create: `crates/xvision-engine/src/autooptimizer/inversion.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_inversion.rs`
 
 - [ ] **Step 1: Failing test**
 
 ```rust
-// tests/autoresearch_inversion.rs
-use xvision_engine::autoresearch::inversion::{is_signal, reverse_diff};
-use xvision_engine::autoresearch::mutator::{MutationDiff, ParamChange, ToolDiff};
-use xvision_engine::autoresearch::content_hash::ContentHash;
+// tests/autooptimizer_inversion.rs
+use xvision_engine::autooptimizer::inversion::{is_signal, reverse_diff};
+use xvision_engine::autooptimizer::mutator::{MutationDiff, ParamChange, ToolDiff};
+use xvision_engine::autooptimizer::content_hash::ContentHash;
 
 fn diff_with_param_change() -> MutationDiff {
     MutationDiff {
@@ -979,7 +979,7 @@ use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
-use crate::autoresearch::mutator::{MutationDiff, ParamChange, ToolDiff};
+use crate::autooptimizer::mutator::{MutationDiff, ParamChange, ToolDiff};
 
 /// Generate the reverse of a mutation: swap each ParamChange's old/new,
 /// swap added/removed tools, and (for prose) reverse the unified diff. AR-2
@@ -1078,9 +1078,9 @@ fn resample_means(values: &[f64], iterations: usize, rng: &mut ChaCha20Rng) -> V
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_inversion
-git add crates/xvision-engine/src/autoresearch/inversion.rs crates/xvision-engine/tests/autoresearch_inversion.rs
-git commit -m "feat(autoresearch): inversion-pair eval (reverse mutation + bootstrap CI signal test)"
+cargo test -p xvision-engine --test autooptimizer_inversion
+git add crates/xvision-engine/src/autooptimizer/inversion.rs crates/xvision-engine/tests/autooptimizer_inversion.rs
+git commit -m "feat(autooptimizer): inversion-pair eval (reverse mutation + bootstrap CI signal test)"
 ```
 
 ---
@@ -1089,18 +1089,18 @@ git commit -m "feat(autoresearch): inversion-pair eval (reverse mutation + boots
 
 ### Task 6: canary.rs (sabotaged-parent injection)
 
-Per spec §8.1, each evening one synthetic "broken parent" is injected: random params, contradictory `program.md`, conflicting tool set. Generated reproducibly from `canary_seed` (sealed in SessionCommitment). The autoresearcher doesn't know which parent is the canary. The gate's behavior on the canary is published nightly.
+Per spec §8.1, each evening one synthetic "broken parent" is injected: random params, contradictory `program.md`, conflicting tool set. Generated reproducibly from `canary_seed` (sealed in SessionCommitment). The autooptimizer doesn't know which parent is the canary. The gate's behavior on the canary is published nightly.
 
 **Files:**
-- Create: `crates/xvision-engine/src/autoresearch/canary.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_canary.rs`
-- Modify: `crates/xvision-engine/migrations/004_autoresearch_evals.sql` — adds `autoresearch_canary_runs` table (we'll write the migration in Task 7's bundle).
+- Create: `crates/xvision-engine/src/autooptimizer/canary.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_canary.rs`
+- Modify: `crates/xvision-engine/migrations/004_autooptimizer_evals.sql` — adds `autooptimizer_canary_runs` table (we'll write the migration in Task 7's bundle).
 
 - [ ] **Step 1: Failing test**
 
 ```rust
-// tests/autoresearch_canary.rs
-use xvision_engine::autoresearch::canary::{generate_canary, CanaryParent};
+// tests/autooptimizer_canary.rs
+use xvision_engine::autooptimizer::canary::{generate_canary, CanaryParent};
 
 #[test]
 fn same_seed_same_canary() {
@@ -1135,7 +1135,7 @@ fn canary_bundle_is_validator_admissible_but_internally_contradictory() {
 
 ```rust
 //! Null-result canary. A synthetic broken parent is injected each evening;
-//! the autoresearcher's gate must reject mutations of it. If the gate
+//! the autooptimizer's gate must reject mutations of it. If the gate
 //! accepts mutations of the canary, the gate is fitting noise → alarm.
 
 use rand::Rng;
@@ -1237,9 +1237,9 @@ pub fn generate_canary(canary_seed: u64, template_name: &str) -> anyhow::Result<
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_canary
-git add crates/xvision-engine/src/autoresearch/canary.rs crates/xvision-engine/tests/autoresearch_canary.rs
-git commit -m "feat(autoresearch): null-result canary parent generator (seeded)"
+cargo test -p xvision-engine --test autooptimizer_canary
+git add crates/xvision-engine/src/autooptimizer/canary.rs crates/xvision-engine/tests/autooptimizer_canary.rs
+git commit -m "feat(autooptimizer): null-result canary parent generator (seeded)"
 ```
 
 ---
@@ -1251,16 +1251,16 @@ git commit -m "feat(autoresearch): null-result canary parent generator (seeded)"
 For every committed bundle, embed `program_view::to_markdown(bundle)` (one OpenAI/Voyage embedding call). For each lineage, compute mean pairwise distance between siblings at each cycle. Diversity-decay rate = ratio at t to t-1. Falling = mode collapse alarm.
 
 **Files:**
-- Create: `crates/xvision-engine/src/autoresearch/diversity.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_diversity.rs`
-- Create: `crates/xvision-engine/migrations/004_autoresearch_evals.sql`
+- Create: `crates/xvision-engine/src/autooptimizer/diversity.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_diversity.rs`
+- Create: `crates/xvision-engine/migrations/004_autooptimizer_evals.sql`
 
 - [ ] **Step 1: Migration**
 
 ```sql
--- migrations/004_autoresearch_evals.sql
+-- migrations/004_autooptimizer_evals.sql
 
-CREATE TABLE IF NOT EXISTS autoresearch_canary_runs (
+CREATE TABLE IF NOT EXISTS autooptimizer_canary_runs (
     cycle_id          TEXT NOT NULL,
     canary_bundle_hash TEXT NOT NULL,
     accepted_count    INTEGER NOT NULL,        -- number of canary mutations the gate accepted (should be 0)
@@ -1268,7 +1268,7 @@ CREATE TABLE IF NOT EXISTS autoresearch_canary_runs (
     PRIMARY KEY (cycle_id, canary_bundle_hash)
 );
 
-CREATE TABLE IF NOT EXISTS autoresearch_diversity_samples (
+CREATE TABLE IF NOT EXISTS autooptimizer_diversity_samples (
     cycle_id        TEXT NOT NULL,
     lineage_root    TEXT NOT NULL,            -- root parent hash
     mean_pairwise_distance REAL NOT NULL,
@@ -1277,14 +1277,14 @@ CREATE TABLE IF NOT EXISTS autoresearch_diversity_samples (
     PRIMARY KEY (cycle_id, lineage_root)
 );
 
-CREATE TABLE IF NOT EXISTS autoresearch_embeddings (
+CREATE TABLE IF NOT EXISTS autooptimizer_embeddings (
     bundle_hash     TEXT PRIMARY KEY,
     embedding_blob_hash TEXT NOT NULL,        -- pointer into blob store; embeddings are ~1.5KB each as f32
     embedding_model TEXT NOT NULL,
     computed_at     TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS autoresearch_mutator_ladder_snapshots (
+CREATE TABLE IF NOT EXISTS autooptimizer_mutator_ladder_snapshots (
     cycle_id        TEXT PRIMARY KEY,
     snapshot_blob_hash TEXT NOT NULL,         -- pointer into blob store
     sampled_at      TEXT NOT NULL
@@ -1294,8 +1294,8 @@ CREATE TABLE IF NOT EXISTS autoresearch_mutator_ladder_snapshots (
 - [ ] **Step 2: Failing test**
 
 ```rust
-// tests/autoresearch_diversity.rs
-use xvision_engine::autoresearch::diversity::{
+// tests/autooptimizer_diversity.rs
+use xvision_engine::autooptimizer::diversity::{
     cosine_distance, mean_pairwise_distance, MockEmbeddingClient,
 };
 
@@ -1470,10 +1470,10 @@ pub fn arc_mock() -> Arc<dyn EmbeddingClient> {
 - [ ] **Step 4: Run + commit**
 
 ```bash
-sqlite3 ":memory:" < crates/xvision-engine/migrations/004_autoresearch_evals.sql && echo OK
-cargo test -p xvision-engine --test autoresearch_diversity
-git add crates/xvision-engine/src/autoresearch/diversity.rs crates/xvision-engine/tests/autoresearch_diversity.rs crates/xvision-engine/migrations/004_autoresearch_evals.sql
-git commit -m "feat(autoresearch): embedding-divergence diversity-decay + 004 migration"
+sqlite3 ":memory:" < crates/xvision-engine/migrations/004_autooptimizer_evals.sql && echo OK
+cargo test -p xvision-engine --test autooptimizer_diversity
+git add crates/xvision-engine/src/autooptimizer/diversity.rs crates/xvision-engine/tests/autooptimizer_diversity.rs crates/xvision-engine/migrations/004_autooptimizer_evals.sql
+git commit -m "feat(autooptimizer): embedding-divergence diversity-decay + 004 migration"
 ```
 
 ---
@@ -1485,20 +1485,20 @@ git commit -m "feat(autoresearch): embedding-divergence diversity-decay + 004 mi
 Treats the LLM mutator as a model with measurable skill: acceptance rate by parent type, calibration (claimed vs realized Δ-Sharpe), regime bias, token efficiency. Stored as periodic snapshots (one per cycle).
 
 **Files:**
-- Create: `crates/xvision-engine/src/autoresearch/mutator_ladder.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_mutator_ladder.rs`
+- Create: `crates/xvision-engine/src/autooptimizer/mutator_ladder.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_mutator_ladder.rs`
 
 - [ ] **Step 1: Failing test**
 
 ```rust
-// tests/autoresearch_mutator_ladder.rs
+// tests/autooptimizer_mutator_ladder.rs
 use chrono::Utc;
 use sqlx::SqlitePool;
 use tempfile::tempdir;
 
-use xvision_engine::autoresearch::content_hash::ContentHash;
-use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot};
-use xvision_engine::autoresearch::mutator_ladder::{compute_snapshot, MutatorLadderSnapshot};
+use xvision_engine::autooptimizer::content_hash::ContentHash;
+use xvision_engine::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot};
+use xvision_engine::autooptimizer::mutator_ladder::{compute_snapshot, MutatorLadderSnapshot};
 
 async fn fixture() -> (LineageStore, tempfile::TempDir) {
     let dir = tempdir().unwrap();
@@ -1580,7 +1580,7 @@ async fn snapshot_counts_active_vs_ghost_correctly() {
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-use crate::autoresearch::lineage::LineageStore;
+use crate::autooptimizer::lineage::LineageStore;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MutatorLadderSnapshot {
@@ -1600,7 +1600,7 @@ pub async fn compute_snapshot(
         "SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS accepted
-         FROM autoresearch_lineage_nodes WHERE cycle_id = ?",
+         FROM autooptimizer_lineage_nodes WHERE cycle_id = ?",
     )
     .bind(cycle_id)
     .fetch_one(store.pool())
@@ -1627,7 +1627,7 @@ pub async fn persist_snapshot(
         .put_json(&serde_json::to_value(snap)?)
         .await?;
     sqlx::query(
-        "INSERT OR REPLACE INTO autoresearch_mutator_ladder_snapshots
+        "INSERT OR REPLACE INTO autooptimizer_mutator_ladder_snapshots
          (cycle_id, snapshot_blob_hash, sampled_at) VALUES (?, ?, ?)",
     )
     .bind(&snap.cycle_id)
@@ -1642,9 +1642,9 @@ pub async fn persist_snapshot(
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_mutator_ladder
-git add crates/xvision-engine/src/autoresearch/mutator_ladder.rs crates/xvision-engine/tests/autoresearch_mutator_ladder.rs
-git commit -m "feat(autoresearch): mutator-skill ladder snapshot computation + persistence"
+cargo test -p xvision-engine --test autooptimizer_mutator_ladder
+git add crates/xvision-engine/src/autooptimizer/mutator_ladder.rs crates/xvision-engine/tests/autooptimizer_mutator_ladder.rs
+git commit -m "feat(autooptimizer): mutator-skill ladder snapshot computation + persistence"
 ```
 
 ---
@@ -1653,16 +1653,16 @@ git commit -m "feat(autoresearch): mutator-skill ladder snapshot computation + p
 
 ### Task 9: cycle.rs full body + progress channel wiring
 
-This is AR-2's headliner. The orchestrator implements the per-cycle data flow from autoresearch spec §3.2.
+This is AR-2's headliner. The orchestrator implements the per-cycle data flow from autooptimizer spec §3.2.
 
 **Files:**
-- Modify: `crates/xvision-engine/src/autoresearch/progress.rs` — add real `Channel`
-- Create: `crates/xvision-engine/src/autoresearch/cycle.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_cycle_full.rs`
+- Modify: `crates/xvision-engine/src/autooptimizer/progress.rs` — add real `Channel`
+- Create: `crates/xvision-engine/src/autooptimizer/cycle.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_cycle_full.rs`
 
 - [ ] **Step 1: Extend progress.rs to a real broadcast channel**
 
-Replace `crates/xvision-engine/src/autoresearch/progress.rs` with:
+Replace `crates/xvision-engine/src/autooptimizer/progress.rs` with:
 
 ```rust
 //! SSE event taxonomy + broadcast channel. AR-2 wires the channel + an
@@ -1674,7 +1674,7 @@ use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum AutoresearchEvent {
+pub enum AutoOptimizerEvent {
     CycleStarted { cycle_id: String, session_id: String, parent_count: u32 },
     MutationProposed { cycle_id: String, parent_hash: String, retries: u32 },
     MutationEvaluating { cycle_id: String, child_hash: String, window: String },
@@ -1692,7 +1692,7 @@ pub enum AutoresearchEvent {
 
 #[derive(Clone)]
 pub struct ProgressChannel {
-    tx: broadcast::Sender<AutoresearchEvent>,
+    tx: broadcast::Sender<AutoOptimizerEvent>,
 }
 
 impl ProgressChannel {
@@ -1701,11 +1701,11 @@ impl ProgressChannel {
         Self { tx }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<AutoresearchEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<AutoOptimizerEvent> {
         self.tx.subscribe()
     }
 
-    pub fn emit(&self, event: AutoresearchEvent) {
+    pub fn emit(&self, event: AutoOptimizerEvent) {
         // Receivers may have lagged — that's fine; we drop on full.
         let _ = self.tx.send(event);
     }
@@ -1721,7 +1721,7 @@ impl Default for ProgressChannel {
 - [ ] **Step 2: Failing test**
 
 ```rust
-// tests/autoresearch_cycle_full.rs
+// tests/autooptimizer_cycle_full.rs
 //! Drives the full per-cycle data flow with a mock dispatch + mock
 //! embedding client + a stub PaperTestRunner. Asserts:
 //! - At least one MutationCommitted event fires.
@@ -1737,15 +1737,15 @@ use sqlx::SqlitePool;
 use tempfile::tempdir;
 
 use xvision_engine::agent::llm::MockDispatch;
-use xvision_engine::autoresearch::{
+use xvision_engine::autooptimizer::{
     blob_store::BlobStore,
-    config::AutoresearchConfig,
+    config::AutoOptimizerConfig,
     content_hash::ContentHash,
     cycle::{run_cycle, CycleInputs},
     diversity::MockEmbeddingClient,
     eval_adapter::{PaperTestReport, PaperTestRunner, WindowKind},
     lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot},
-    progress::{AutoresearchEvent, ProgressChannel},
+    progress::{AutoOptimizerEvent, ProgressChannel},
     session::{OperatorKey, SessionCommitment},
 };
 use async_trait::async_trait;
@@ -1840,9 +1840,9 @@ async fn full_cycle_runs_to_seal_with_at_least_one_commit() {
     drop(rx);     // ensure no test-side panic on receiver-drop
 }
 
-fn mock_config() -> AutoresearchConfig {
-    use xvision_engine::autoresearch::config::*;
-    AutoresearchConfig {
+fn mock_config() -> AutoOptimizerConfig {
+    use xvision_engine::autooptimizer::config::*;
+    AutoOptimizerConfig {
         cycle: CycleConfig { mutations_per_parent: 1, parents_per_evening: 2, per_cycle_token_cap: 250_000 },
         gate: GateConfig { epsilon_initial: 0.10, loosening_schedule: vec![] },
         holdout: HoldoutConfig {
@@ -1906,7 +1906,7 @@ fn mock_minimal_bundle(id: String) -> xvision_engine::bundle::StrategyBundle {
 - [ ] **Step 3: Implement cycle.rs**
 
 ```rust
-//! Evening-cycle orchestrator. See autoresearch spec §3.2.
+//! Evening-cycle orchestrator. See autooptimizer spec §3.2.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -1916,32 +1916,32 @@ use sqlx::Row;
 use ulid::Ulid;
 
 use crate::agent::llm::LlmDispatch;
-use crate::autoresearch::canary::generate_canary;
-use crate::autoresearch::config::AutoresearchConfig;
-use crate::autoresearch::content_hash::ContentHash;
-use crate::autoresearch::diversity::{
+use crate::autooptimizer::canary::generate_canary;
+use crate::autooptimizer::config::AutoOptimizerConfig;
+use crate::autooptimizer::content_hash::ContentHash;
+use crate::autooptimizer::diversity::{
     mean_pairwise_distance, update_lineage_diversity, EmbeddingClient,
 };
-use crate::autoresearch::eval_adapter::{PaperTestRunner, WindowKind};
-use crate::autoresearch::gate::{GateDecision, NumericGate};
-use crate::autoresearch::inversion::{is_signal, reverse_diff};
-use crate::autoresearch::judge::{Judge, JudgeContext};
-use crate::autoresearch::lineage::{
+use crate::autooptimizer::eval_adapter::{PaperTestRunner, WindowKind};
+use crate::autooptimizer::gate::{GateDecision, NumericGate};
+use crate::autooptimizer::inversion::{is_signal, reverse_diff};
+use crate::autooptimizer::judge::{Judge, JudgeContext};
+use crate::autooptimizer::lineage::{
     compute_merkle_root, LineageEdge, LineageNode, LineageStatus, LineageStore, MetricsSnapshot,
 };
-use crate::autoresearch::mutator::{Mutator, MutatorContext, MutatorOutcome};
-use crate::autoresearch::mutator_ladder::{compute_snapshot, persist_snapshot};
-use crate::autoresearch::parent_policy::ParentPolicy;
-use crate::autoresearch::progress::{AutoresearchEvent, ProgressChannel};
-use crate::autoresearch::seal::{CycleSeal, CycleSealWriter};
-use crate::autoresearch::session::{OperatorKey, SessionCommitment};
-use crate::autoresearch::validator::flatten_param_keys;
+use crate::autooptimizer::mutator::{Mutator, MutatorContext, MutatorOutcome};
+use crate::autooptimizer::mutator_ladder::{compute_snapshot, persist_snapshot};
+use crate::autooptimizer::parent_policy::ParentPolicy;
+use crate::autooptimizer::progress::{AutoOptimizerEvent, ProgressChannel};
+use crate::autooptimizer::seal::{CycleSeal, CycleSealWriter};
+use crate::autooptimizer::session::{OperatorKey, SessionCommitment};
+use crate::autooptimizer::validator::flatten_param_keys;
 use crate::bundle::program_view::{apply_unified_diff, from_markdown, to_markdown};
 use crate::bundle::StrategyBundle;
 
 pub struct CycleInputs<'a> {
     pub store: LineageStore,
-    pub cfg: AutoresearchConfig,
+    pub cfg: AutoOptimizerConfig,
     pub session: SessionCommitment,
     pub operator_key: &'a OperatorKey,
     pub mutator_dispatch: Arc<dyn LlmDispatch>,
@@ -1977,7 +1977,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
     let judge = Judge::new(judge_dispatch.clone(), &cfg.judge.model, cfg.judge.max_tokens);
     let gate = NumericGate { epsilon: session.epsilon };
 
-    progress.emit(AutoresearchEvent::CycleStarted {
+    progress.emit(AutoOptimizerEvent::CycleStarted {
         cycle_id: cycle_id.clone(),
         session_id: session.session_id.clone(),
         parent_count: cfg.cycle.parents_per_evening,
@@ -2038,7 +2038,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
             let (diff, retries) = match outcome {
                 MutatorOutcome::Accepted { diff, retries } => (diff, retries),
                 MutatorOutcome::Dropped { retries, last_error } => {
-                    progress.emit(AutoresearchEvent::MutationRejected {
+                    progress.emit(AutoOptimizerEvent::MutationRejected {
                         cycle_id: cycle_id.clone(),
                         child_hash: "<dropped>".into(),
                         reason: format!("dropped after {retries} retries: {last_error}"),
@@ -2047,7 +2047,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
                     continue;
                 }
             };
-            progress.emit(AutoresearchEvent::MutationProposed {
+            progress.emit(AutoOptimizerEvent::MutationProposed {
                 cycle_id: cycle_id.clone(),
                 parent_hash: parent_hash.to_hex(),
                 retries,
@@ -2085,13 +2085,13 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
 
             // Paper-test child + parent on day + holdout (parent metrics
             // cached from prior cycles in v2; for v1 we re-run).
-            progress.emit(AutoresearchEvent::MutationEvaluating {
+            progress.emit(AutoOptimizerEvent::MutationEvaluating {
                 cycle_id: cycle_id.clone(),
                 child_hash: child_hash.to_hex(),
                 window: "day+holdout".into(),
             });
             let day_scenario_id = "crypto-bull-q1-2025";
-            let holdout_scenario = crate::autoresearch::eval_adapter::holdout_scenario(
+            let holdout_scenario = crate::autooptimizer::eval_adapter::holdout_scenario(
                 cfg.holdout.start_iso, cfg.holdout.end_iso,
             );
             let parent_day = paper_tester.run(&parent_bundle, day_scenario_id, WindowKind::Day).await?;
@@ -2112,7 +2112,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
                     } else {
                         mutations_rejected += 1;
                     }
-                    progress.emit(AutoresearchEvent::MutationRejected {
+                    progress.emit(AutoOptimizerEvent::MutationRejected {
                         cycle_id: cycle_id.clone(),
                         child_hash: child_hash.to_hex(),
                         reason: reason.clone(),
@@ -2156,7 +2156,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
             let finding = judge.write(&judge_ctx).await?;
             let finding_blob_hash = store.blobs().put_json(&serde_json::to_value(&finding)?).await?;
             finding_blobs.push(finding_blob_hash);
-            progress.emit(AutoresearchEvent::JudgeWroteFinding {
+            progress.emit(AutoOptimizerEvent::JudgeWroteFinding {
                 cycle_id: cycle_id.clone(),
                 child_hash: child_hash.to_hex(),
                 confidence: format!("{:?}", finding.confidence).to_lowercase(),
@@ -2179,14 +2179,14 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
             let final_status = if signal { LineageStatus::Active } else { LineageStatus::Quarantined };
             if !signal {
                 mutations_quarantined += 1;
-                progress.emit(AutoresearchEvent::MutationQuarantined {
+                progress.emit(AutoOptimizerEvent::MutationQuarantined {
                     cycle_id: cycle_id.clone(),
                     child_hash: child_hash.to_hex(),
                     reason: "noise-suspect: forward + inverse Sharpe statistically indistinguishable".into(),
                 });
             } else {
                 mutations_committed += 1;
-                progress.emit(AutoresearchEvent::MutationCommitted {
+                progress.emit(AutoOptimizerEvent::MutationCommitted {
                     cycle_id: cycle_id.clone(),
                     child_hash: child_hash.to_hex(),
                     status: "active".into(),
@@ -2212,7 +2212,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
 
     // 3. Canary outcome.
     sqlx::query(
-        "INSERT OR REPLACE INTO autoresearch_canary_runs
+        "INSERT OR REPLACE INTO autooptimizer_canary_runs
          (cycle_id, canary_bundle_hash, accepted_count, rejected_count) VALUES (?, ?, ?, ?)",
     )
     .bind(&cycle_id)
@@ -2221,7 +2221,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
     .bind(canary_rejected as i64)
     .execute(store.pool())
     .await?;
-    progress.emit(AutoresearchEvent::CanaryOutcome {
+    progress.emit(AutoOptimizerEvent::CanaryOutcome {
         cycle_id: cycle_id.clone(),
         accepted: canary_accepted,
         rejected: canary_rejected,
@@ -2245,7 +2245,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
             let prev = previous_mean_distance(&store, parent_hash).await?;
             let (mean, decay) = update_lineage_diversity(&vecs, prev).await;
             sqlx::query(
-                "INSERT OR REPLACE INTO autoresearch_diversity_samples
+                "INSERT OR REPLACE INTO autooptimizer_diversity_samples
                  (cycle_id, lineage_root, mean_pairwise_distance, decay_ratio, sampled_at) VALUES (?, ?, ?, ?, ?)",
             )
             .bind(&cycle_id)
@@ -2255,7 +2255,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
             .bind(Utc::now().to_rfc3339())
             .execute(store.pool())
             .await?;
-            progress.emit(AutoresearchEvent::DiversityUpdated {
+            progress.emit(AutoOptimizerEvent::DiversityUpdated {
                 cycle_id: cycle_id.clone(),
                 lineage_root: parent_hash.to_hex(),
                 mean_distance: mean,
@@ -2268,7 +2268,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
     // 5. Mutator-skill ladder snapshot.
     let snap = compute_snapshot(&store, &cycle_id).await?;
     persist_snapshot(&store, &snap).await?;
-    progress.emit(AutoresearchEvent::LadderSnapshot {
+    progress.emit(AutoOptimizerEvent::LadderSnapshot {
         cycle_id: cycle_id.clone(),
         acceptance_rate: snap.acceptance_rate,
     });
@@ -2299,7 +2299,7 @@ pub async fn run_cycle(inputs: CycleInputs<'_>) -> anyhow::Result<CycleOutcome> 
     };
     let writer = CycleSealWriter::new(&store, operator_key);
     let seal_blob_hash = writer.seal_and_commit(seal).await?;
-    progress.emit(AutoresearchEvent::CycleSealed {
+    progress.emit(AutoOptimizerEvent::CycleSealed {
         cycle_id: cycle_id.clone(),
         seal_blob_hash: seal_blob_hash.to_hex(),
         merkle_root: merkle_root.to_hex(),
@@ -2343,7 +2343,7 @@ fn set_dotted(target: &mut serde_json::Value, dotted: &str, value: serde_json::V
 
 async fn previous_mean_distance(store: &LineageStore, lineage_root: &ContentHash) -> anyhow::Result<Option<f64>> {
     let row = sqlx::query(
-        "SELECT mean_pairwise_distance FROM autoresearch_diversity_samples
+        "SELECT mean_pairwise_distance FROM autooptimizer_diversity_samples
          WHERE lineage_root = ? ORDER BY sampled_at DESC LIMIT 1",
     )
     .bind(lineage_root.to_hex())
@@ -2385,9 +2385,9 @@ async fn compute_merkle_root_for_cycle(
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_cycle_full
-git add crates/xvision-engine/src/autoresearch/cycle.rs crates/xvision-engine/src/autoresearch/progress.rs crates/xvision-engine/tests/autoresearch_cycle_full.rs
-git commit -m "feat(autoresearch): cycle orchestrator (mutate → eval → gate → judge → invert → seal)"
+cargo test -p xvision-engine --test autooptimizer_cycle_full
+git add crates/xvision-engine/src/autooptimizer/cycle.rs crates/xvision-engine/src/autooptimizer/progress.rs crates/xvision-engine/tests/autooptimizer_cycle_full.rs
+git commit -m "feat(autooptimizer): cycle orchestrator (mutate → eval → gate → judge → invert → seal)"
 ```
 
 ---
@@ -2399,14 +2399,14 @@ git commit -m "feat(autoresearch): cycle orchestrator (mutate → eval → gate 
 Per spec §7, ε is loosened mid-hackathon if the merge rate falls below 1/evening for N consecutive evenings. The loosening *schedule* is committed; the *trigger code* lives here.
 
 **Files:**
-- Create: `crates/xvision-engine/src/autoresearch/cycle_loosen.rs`
-- Create: `crates/xvision-engine/tests/autoresearch_loosen.rs`
+- Create: `crates/xvision-engine/src/autooptimizer/cycle_loosen.rs`
+- Create: `crates/xvision-engine/tests/autooptimizer_loosen.rs`
 
 - [ ] **Step 1: Failing test**
 
 ```rust
-// tests/autoresearch_loosen.rs
-use xvision_engine::autoresearch::cycle_loosen::{LooseningTrigger, LooseningStep};
+// tests/autooptimizer_loosen.rs
+use xvision_engine::autooptimizer::cycle_loosen::{LooseningTrigger, LooseningStep};
 
 #[test]
 fn no_loosen_when_recent_evenings_have_merges() {
@@ -2451,7 +2451,7 @@ fn never_tightens_existing_epsilon() {
 //! cycles' merge counts; if the streak of zero-merge cycles meets a step's
 //! threshold, returns the corresponding new ε. Never tightens.
 
-pub use crate::autoresearch::config::LooseningStep;
+pub use crate::autooptimizer::config::LooseningStep;
 
 pub struct LooseningTrigger;
 
@@ -2484,23 +2484,23 @@ impl LooseningTrigger {
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xvision-engine --test autoresearch_loosen
-git add crates/xvision-engine/src/autoresearch/cycle_loosen.rs crates/xvision-engine/tests/autoresearch_loosen.rs
-git commit -m "feat(autoresearch): pre-committed loosening schedule trigger"
+cargo test -p xvision-engine --test autooptimizer_loosen
+git add crates/xvision-engine/src/autooptimizer/cycle_loosen.rs crates/xvision-engine/tests/autooptimizer_loosen.rs
+git commit -m "feat(autooptimizer): pre-committed loosening schedule trigger"
 ```
 
 ---
 
 ## Phase J — Demo replay fixture
 
-### Task 11: `xvn autoresearch demo` replay path
+### Task 11: `xvn autooptimizer demo` replay path
 
-The replay fixture is a frozen sealed cycle: artifact bundle (CycleSeal + all referenced blobs) on disk under `data/probes/autoresearch/replay-fixture/`. `xvn autoresearch demo` loads the fixture, verifies the seal, and prints a human-readable narrative of what happened.
+The replay fixture is a frozen sealed cycle: artifact bundle (CycleSeal + all referenced blobs) on disk under `data/probes/autooptimizer/replay-fixture/`. `xvn autooptimizer demo` loads the fixture, verifies the seal, and prints a human-readable narrative of what happened.
 
 **Files:**
-- Create: `crates/xvision-engine/tests/autoresearch_demo_replay.rs`
-- Modify: `crates/xvision-cli/src/commands/autoresearch.rs` — add `Demo` action
-- Manually generate: `data/probes/autoresearch/replay-fixture/{seal.json, blobs/...}` — written by a one-shot script committed alongside
+- Create: `crates/xvision-engine/tests/autooptimizer_demo_replay.rs`
+- Modify: `crates/xvision-cli/src/commands/autooptimizer.rs` — add `Demo` action
+- Manually generate: `data/probes/autooptimizer/replay-fixture/{seal.json, blobs/...}` — written by a one-shot script committed alongside
 
 - [ ] **Step 1: Generation script**
 
@@ -2523,19 +2523,19 @@ use sqlx::SqlitePool;
 
 // ... (full body: builds a 2-parent cycle, runs `run_cycle`, then exports
 //      the seal blob + every referenced blob + a manifest into
-//      data/probes/autoresearch/replay-fixture/)
+//      data/probes/autooptimizer/replay-fixture/)
 ```
 
 (Subagent expands this to ~100 lines following the pattern from the existing eval-engine replay path. The fixture committed to disk is a JSON manifest naming the seal blob path + every leaf blob; the test in step 3 verifies the manifest reads correctly.)
 
 - [ ] **Step 2: Demo CLI subcommand**
 
-Append to `crates/xvision-cli/src/commands/autoresearch.rs` `AutoresearchAction` enum:
+Append to `crates/xvision-cli/src/commands/autooptimizer.rs` `AutoOptimizerAction` enum:
 
 ```rust
 /// Replay the canonical fixture cycle. No API keys required.
 Demo {
-    #[arg(long, default_value = "data/probes/autoresearch/replay-fixture")]
+    #[arg(long, default_value = "data/probes/autooptimizer/replay-fixture")]
     fixture: PathBuf,
 },
 ```
@@ -2544,7 +2544,7 @@ Implementation:
 
 ```rust
 async fn demo(fixture: PathBuf) -> anyhow::Result<()> {
-    use xvision_engine::autoresearch::{
+    use xvision_engine::autooptimizer::{
         content_hash::ContentHash,
         seal::{CycleSeal, CycleSealWriter},
     };
@@ -2553,7 +2553,7 @@ async fn demo(fixture: PathBuf) -> anyhow::Result<()> {
     let seal_path = fixture.join(manifest["seal"].as_str().ok_or_else(|| anyhow::anyhow!("manifest missing seal"))?);
     let seal: CycleSeal = serde_json::from_slice(&std::fs::read(&seal_path)?)?;
     CycleSealWriter::verify(&seal)?;
-    println!("=== xvn autoresearch demo ===");
+    println!("=== xvn autooptimizer demo ===");
     println!("cycle_id           : {}", seal.cycle_id);
     println!("session_id         : {}", seal.session_id);
     println!("sealed_at          : {}", seal.sealed_at);
@@ -2570,16 +2570,16 @@ async fn demo(fixture: PathBuf) -> anyhow::Result<()> {
 - [ ] **Step 3: Demo replay test**
 
 ```rust
-// tests/autoresearch_demo_replay.rs
+// tests/autooptimizer_demo_replay.rs
 use std::path::PathBuf;
 
-use xvision_engine::autoresearch::seal::CycleSealWriter;
+use xvision_engine::autooptimizer::seal::CycleSealWriter;
 
 #[test]
 fn replay_fixture_seal_verifies() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap().parent().unwrap()
-        .join("data/probes/autoresearch/replay-fixture");
+        .join("data/probes/autooptimizer/replay-fixture");
     if !fixture.exists() {
         // Allow CI to pass before the fixture is generated; fail
         // explicitly if it's missing post-Wk-3.
@@ -2589,7 +2589,7 @@ fn replay_fixture_seal_verifies() {
     let manifest_path = fixture.join("manifest.json");
     let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     let seal_path = fixture.join(manifest["seal"].as_str().unwrap());
-    let seal: xvision_engine::autoresearch::seal::CycleSeal =
+    let seal: xvision_engine::autooptimizer::seal::CycleSeal =
         serde_json::from_slice(&std::fs::read(&seal_path).unwrap()).unwrap();
     CycleSealWriter::verify(&seal).unwrap();
 }
@@ -2599,31 +2599,31 @@ fn replay_fixture_seal_verifies() {
 
 ```bash
 cargo run --example generate_replay_fixture --release
-git add data/probes/autoresearch/replay-fixture
-git add crates/xvision-engine/examples/generate_replay_fixture.rs crates/xvision-engine/tests/autoresearch_demo_replay.rs crates/xvision-cli/src/commands/autoresearch.rs
-git commit -m "feat(autoresearch): replay-fixture generator + xvn autoresearch demo (offline)"
+git add data/probes/autooptimizer/replay-fixture
+git add crates/xvision-engine/examples/generate_replay_fixture.rs crates/xvision-engine/tests/autooptimizer_demo_replay.rs crates/xvision-cli/src/commands/autooptimizer.rs
+git commit -m "feat(autooptimizer): replay-fixture generator + xvn autooptimizer demo (offline)"
 ```
 
 ---
 
 ## Phase K — Wire the orchestrator into the CLI + smoke
 
-### Task 12: `xvn autoresearch evening-cycle`
+### Task 12: `xvn autooptimizer evening-cycle`
 
 Replace the AR-1 `mutate-once` orchestrator stubs with a full `evening-cycle` subcommand that calls `run_cycle`.
 
-**File:** `crates/xvision-cli/src/commands/autoresearch.rs`.
+**File:** `crates/xvision-cli/src/commands/autooptimizer.rs`.
 
 - [ ] **Step 1: Add EveningCycle subcommand**
 
-Append to the `AutoresearchAction` enum:
+Append to the `AutoOptimizerAction` enum:
 
 ```rust
 /// Run one full evening cycle (orchestrator).
 EveningCycle {
     #[arg(long)]
     session_id: String,
-    #[arg(long, default_value = "config/autoresearch.toml")]
+    #[arg(long, default_value = "config/autooptimizer.toml")]
     config: PathBuf,
     #[arg(long)]
     db: PathBuf,
@@ -2635,7 +2635,7 @@ EveningCycle {
 Handler (`fn evening_cycle(...)`) calls:
 
 ```rust
-use xvision_engine::autoresearch::{
+use xvision_engine::autooptimizer::{
     cycle::{run_cycle, CycleInputs},
     diversity::{MockEmbeddingClient, OpenAiEmbeddingClient},
     eval_adapter::EvalAdapter,
@@ -2644,7 +2644,7 @@ use xvision_engine::autoresearch::{
 };
 use xvision_engine::tools::ToolRegistry;
 
-let cfg = AutoresearchConfig::load(&config)?;
+let cfg = AutoOptimizerConfig::load(&config)?;
 let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db.display())).await?;
 sqlx::migrate!("../xvision-engine/migrations").run(&pool).await?;
 let store = LineageStore::new(pool.clone(), dirs::home_dir().unwrap().join(".xvn/lineage/blobs")).await?;
@@ -2687,8 +2687,8 @@ with helpers:
 
 ```rust
 async fn load_session(pool: &sqlx::SqlitePool, session_id: &str) -> anyhow::Result<SessionCommitment> { /* SELECT and reconstruct */ }
-async fn cycle_offset_from_db(pool: &sqlx::SqlitePool) -> anyhow::Result<u64> { /* SELECT COUNT(*) FROM autoresearch_cycle_seals WHERE session_id = ? */ }
-fn spawn_stdout_subscriber(mut rx: tokio::sync::broadcast::Receiver<AutoresearchEvent>) {
+async fn cycle_offset_from_db(pool: &sqlx::SqlitePool) -> anyhow::Result<u64> { /* SELECT COUNT(*) FROM autooptimizer_cycle_seals WHERE session_id = ? */ }
+fn spawn_stdout_subscriber(mut rx: tokio::sync::broadcast::Receiver<AutoOptimizerEvent>) {
     tokio::spawn(async move {
         while let Ok(ev) = rx.recv().await {
             println!("[event] {}", serde_json::to_string(&ev).unwrap());
@@ -2701,14 +2701,14 @@ fn spawn_stdout_subscriber(mut rx: tokio::sync::broadcast::Receiver<Autoresearch
 
 ```bash
 TMPDIR=$(mktemp -d)
-cargo run -p xvision-cli -- autoresearch session-init \
-    --config config/autoresearch.toml.example \
+cargo run -p xvision-cli -- autooptimizer session-init \
+    --config config/autooptimizer.toml.example \
     --db $TMPDIR/test.db \
     --key-path $TMPDIR/op.ed25519 | tee $TMPDIR/init.out
 SESSION=$(grep "session_id" $TMPDIR/init.out | awk '{print $3}')
-cargo run -p xvision-cli -- autoresearch evening-cycle \
+cargo run -p xvision-cli -- autooptimizer evening-cycle \
     --session-id $SESSION \
-    --config config/autoresearch.toml.example \
+    --config config/autooptimizer.toml.example \
     --db $TMPDIR/test.db \
     --mock
 ```
@@ -2718,8 +2718,8 @@ Expected: stream of `[event] {"type":"cycle_started",...}` lines, ending with `[
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xvision-cli/src/commands/autoresearch.rs
-git commit -m "feat(cli): xvn autoresearch evening-cycle (orchestrator) + stdout subscriber"
+git add crates/xvision-cli/src/commands/autooptimizer.rs
+git commit -m "feat(cli): xvn autooptimizer evening-cycle (orchestrator) + stdout subscriber"
 ```
 
 ---
@@ -2732,7 +2732,7 @@ git commit -m "feat(cli): xvn autoresearch evening-cycle (orchestrator) + stdout
 cargo test --workspace 2>&1 | tail -40
 ```
 
-Expected: all tests pass (eval engine + autoresearch AR-1 + AR-2 + everything else). Number of new tests: ~30 across all autoresearch_* files added in this plan.
+Expected: all tests pass (eval engine + autooptimizer AR-1 + AR-2 + everything else). Number of new tests: ~30 across all autooptimizer_* files added in this plan.
 
 - [ ] **Step 2: Fmt + clippy**
 
@@ -2744,15 +2744,15 @@ cargo clippy --workspace --all-targets -- -D warnings
 - [ ] **Step 3: Tag**
 
 ```bash
-git commit --allow-empty -m "chore(autoresearch): AR-2 (cycle + judge + canary + inversion + diversity) done — Wk 3 milestone"
-git tag autoresearch-ar2
+git commit --allow-empty -m "chore(autooptimizer): AR-2 (cycle + judge + canary + inversion + diversity) done — Wk 3 milestone"
+git tag autooptimizer-ar2
 ```
 
 ---
 
 ## Self-review checklist
 
-**Spec coverage (autoresearch design §3.2, §5.2, §5.3, §8):**
+**Spec coverage (autooptimizer design §3.2, §5.2, §5.3, §8):**
 - [x] §3.2 Per-cycle data flow (parent pick + canary inject + per-mutation loop + ε gate + judge + inversion + lineage commit + diversity update + ladder update + seal) → Task 9
 - [x] §5.2 LLM judge writes structured Finding for accepted children, metrics-blind → Task 4 (judge.rs + invariant)
 - [x] §5.3 Inversion-pair eval → Task 5
@@ -2762,13 +2762,13 @@ git tag autoresearch-ar2
 - [x] §3.2 SSE event taxonomy emitted from orchestrator → Task 9 (progress.rs + emits in run_cycle)
 - [x] §6.2 Counterfactual-chain Merkle root included in seal → reused from AR-1 + cycle.rs's `compute_merkle_root_for_cycle`
 - [x] §7 Pre-committed loosening schedule trigger → Task 10
-- [x] Replay fixture for `xvn autoresearch demo` (the air-gap fallback) → Task 11
+- [x] Replay fixture for `xvn autooptimizer demo` (the air-gap fallback) → Task 11
 
 **Out of scope (cross-checked against companion plans):**
 - Dashboard rendering of SSE events → AR-3
 - Marketplace anchoring → MP-1
 - External attesters → MP-1 v2
-- Per-cycle real-time anchoring → out (autoresearch §1.3)
+- Per-cycle real-time anchoring → out (autooptimizer §1.3)
 - Slot/template-swap mutations → out (§1.3)
 
 **Placeholder scan:**
@@ -2779,7 +2779,7 @@ git tag autoresearch-ar2
 - `WindowKind {Day, Holdout}` consistent across eval_adapter.rs and cycle.rs.
 - `Finding` consistent between judge.rs and the lineage's `finding_blob_hash` blob.
 - `MutationDiff` and `reverse_diff` produce the same struct shape; inversion.rs's reversal swaps fields the validator expects.
-- `CycleSeal.canary_outcome: ContentHash` (single hash pointing into blob store) — cycle.rs writes the canary outcome JSON to the blob and stores the hash. SQL row in `autoresearch_canary_runs` carries the structured fields.
+- `CycleSeal.canary_outcome: ContentHash` (single hash pointing into blob store) — cycle.rs writes the canary outcome JSON to the blob and stores the hash. SQL row in `autooptimizer_canary_runs` carries the structured fields.
 - `LineageStatus::Quarantined` introduced in AR-1 lineage.rs is used for the first time here in cycle.rs's inversion-pair branch.
 
 **Frequent commits:** 13 tasks → ~13 commits.
@@ -2788,8 +2788,8 @@ git tag autoresearch-ar2
 
 ## What ships after AR-2
 
-`xvn autoresearch evening-cycle --session-id <id> [--mock]` runs the full nightly loop end-to-end with real LLM calls (or fully offline with `--mock`). The Wk 3 hard milestone (autoresearch spec §10): "Full evening cycle runs end-to-end locally." is satisfied.
+`xvn autooptimizer evening-cycle --session-id <id> [--mock]` runs the full nightly loop end-to-end with real LLM calls (or fully offline with `--mock`). The Wk 3 hard milestone (autooptimizer spec §10): "Full evening cycle runs end-to-end locally." is satisfied.
 
-`xvn autoresearch demo` boots the canonical replay fixture without API keys — the air-gap fallback for stage demos.
+`xvn autooptimizer demo` boots the canonical replay fixture without API keys — the air-gap fallback for stage demos.
 
 **Next plan: AR-3** picks up the SSE consumer side: scaffolds a `xvision-dashboard` crate, builds the five core dashboard views (live cycle viewer, genealogy tree, mutation diff inspector, mutator-skill ladder, ladder-with-provenance), and wires the broadcast channel through axum SSE handlers.

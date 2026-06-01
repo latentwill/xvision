@@ -14,7 +14,7 @@ The Eval Engine is one of Xvision's four engines (per the Strategy Creation Engi
 - **Marketplace** — surfaces eval attestations on listings
 - **Identity** — signs eval results into ERC-8004 reputation receipts
 
-The eval engine consumes a strategy bundle (from the creation engine) and a **scenario** (a deterministic configuration of time range + asset universe + capital + risk + slippage + regime tags). It runs the strategy through the scenario in either backtest or paper mode, captures every decision and fill, computes metrics, and emits a structured **finding record** for downstream consumers (autoresearcher loop, marketplace listings, comparison views).
+The eval engine consumes a strategy bundle (from the creation engine) and a **scenario** (a deterministic configuration of time range + asset universe + capital + risk + slippage + regime tags). It runs the strategy through the scenario in either backtest or paper mode, captures every decision and fill, computes metrics, and emits a structured **finding record** for downstream consumers (autooptimizer loop, marketplace listings, comparison views).
 
 ## 2. Locked decisions (from brainstorm)
 
@@ -243,7 +243,7 @@ Emits structured findings, one JSON line per finding:
 }
 ```
 
-**Schema is versioned** (`schema_version: "1"`) so the autoresearcher loop can rely on stable record shape.
+**Schema is versioned** (`schema_version: "1"`) so the autooptimizer loop can rely on stable record shape.
 
 **Prompt + model for v1:** the extractor uses the user's LLM key (NOT a xvn-issued key). Default model is the same model the strategy used for its slot agents (rationale: the user has already authorized that model). Override available via `xvn eval extract-findings --model <provider:model>`.
 
@@ -332,7 +332,7 @@ The existing `crates/xvision-eval/` has working: ab-compare, baselines (always_l
 - **Findings extractor prompt variants.** v1 ships one prompt. Should there be specialized prompts per regime / asset type / strategy template?
 - **Comparison view performance with N=20+ runs.** Equity curve overlay readability degrades; need to think about color palette + selectability.
 - **Receipt issuance cadence for live runs** (when the buyer goes live, when do attestations flow to 8004 identity? per-trade? per-day? per-week?). Coordinate with Identity engine spec.
-- **Eval engine's role in the autoresearcher Karpathy loop.** Findings are the substrate; how does the loop *consume* them — pull via MCP, push via SSE, or batch-export?
+- **Eval engine's role in the autooptimizer Karpathy loop.** Findings are the substrate; how does the loop *consume* them — pull via MCP, push via SSE, or batch-export?
 
 ## 17. Out of scope
 
@@ -342,7 +342,7 @@ The existing `crates/xvision-eval/` has working: ab-compare, baselines (always_l
 - Postgres + object storage migration — deferred until marketplace ships.
 - Multi-tenant eval-as-a-service hosting — Xvision doesn't run buyers' evals.
 - Drawdown overlay, regime-shaded background, NL Q&A box in comparison view — deferred to v2.
-- The Karpathy autoresearcher improvement loop itself (consumes findings, doesn't constrain this spec).
+- The Karpathy autooptimizer improvement loop itself (consumes findings, doesn't constrain this spec).
 
 ## 18. Decision log (this brainstorm, 2026-05-08)
 

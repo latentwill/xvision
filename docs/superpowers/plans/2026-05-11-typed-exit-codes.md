@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Source:** the highest-leverage Printing Press recommendation from `docs/superpowers/research/2026-05-11-printing-press-review-xvn-cli.md` — agents reading `4 → not found` instead of grepping anyhow output.
-> **Scope decision (2026-05-11):** Targeted to `xvn skill *`, `xvn strategy *`, and `xvn eval *` — the verbs an autoresearcher / dashboard / human agent calls every loop. Other verbs (fire-trade, venue, store, dashboard, eod, indicator, intern, trader, risk, provider, ab-compare, run-setup, show-*) keep returning anyhow → exit 1, with the new `From<anyhow::Error> for CliError` defaulting them to `XvnExit::Upstream`. They can opt in incrementally.
+> **Scope decision (2026-05-11):** Targeted to `xvn skill *`, `xvn strategy *`, and `xvn eval *` — the verbs an autooptimizer / dashboard / human agent calls every loop. Other verbs (fire-trade, venue, store, dashboard, eod, indicator, intern, trader, risk, provider, ab-compare, run-setup, show-*) keep returning anyhow → exit 1, with the new `From<anyhow::Error> for CliError` defaulting them to `XvnExit::Upstream`. They can opt in incrementally.
 
 **Goal:** `xvn skill`, `xvn strategy`, and `xvn eval` return Printing-Press-style typed exit codes (0 success / 2 usage / 3 auth / 4 not found / 5 upstream / 7 conflict) so AI agents can self-correct without parsing error text. Adds `XvnExit` enum, `CliError` newtype with `?`-friendly conversion, and per-command exit-code wiring with integration tests asserting `process::exit_code()` per scenario.
 

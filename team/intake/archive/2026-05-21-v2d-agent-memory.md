@@ -5,8 +5,8 @@ per-agent memory toggle) from `team/board-v2.md` into named tracks and
 records the design decisions the conductor needs locked before any
 contract is written.
 
-V2D is the first of two prerequisites for V3 autoresearcher; V2E (eval
-accuracy & trace surface) is the second. The autoresearcher's mutator
+V2D is the first of two prerequisites for V3 autooptimizer; V2E (eval
+accuracy & trace surface) is the second. The autooptimizer's mutator
 loop needs persistent agent memory so that judged-bad outcomes don't
 get re-discovered every night.
 
@@ -109,7 +109,7 @@ re-derive them:
 | 4 | **Slot-level toggle, agent-id-scoped namespace.** `AgentSlot.memory_mode: MemoryMode { off, global, agent_scoped }`. Multiple slots inside one `Agent` that all set `agent_scoped` share the same `agent:<agent_id>` bucket — agent identity is the namespace, not slot identity. Slot identity is a free-text label and would not survive a slot rename; agent id is a ULID and is stable. |
 | 5 | **Auto-recall + auto-write, no tool surface.** v1 does not expose a `memory_recall` / `memory_write` tool to the model. Recall is automatic (top-k retrieval prepended to `system_prompt` as a bracketed `<prior_observations>` block); write is automatic post-decision (`(context_digest, decision_text)` summarized to a short memory item by a thin recorder, not a model call). Tool-driven memory is v1.1. Rationale: simpler dispatcher seam, no new tool-loop iterations charged to the operator's budget, no risk of the model emitting unbounded `memory_write` storms. |
 | 6 | **Default off.** `MemoryMode::default() == Off`. New slots get `memory_mode = off`; existing rows pre-migration-026 read back as `off`. No agent acquires memory implicitly. Default-off matches the install-customizer's "v1 preset = memory off" decision. |
-| 7 | **Forget is explicit + operator-driven; no TTL in v1.** UI exposes a "Clear memory" button per namespace (global, per-agent); CLI exposes `xvn memory forget --namespace global` and `xvn memory forget --agent <agent_id>`. No time decay, no LRU eviction. v1 store ceiling is ~10k items per namespace; the operator owns the eviction policy until V3 autoresearcher proves a need for automatic decay. |
+| 7 | **Forget is explicit + operator-driven; no TTL in v1.** UI exposes a "Clear memory" button per namespace (global, per-agent); CLI exposes `xvn memory forget --namespace global` and `xvn memory forget --agent <agent_id>`. No time decay, no LRU eviction. v1 store ceiling is ~10k items per namespace; the operator owns the eviction policy until V3 autooptimizer proves a need for automatic decay. |
 | 8 | **Privacy: 127.0.0.1 only, no external creds for storage.** The SQLite file lives in `~/.xvn/memory.db`, mode 0600. Embedder calls go through the existing provider client (so they inherit the provider's API key handling); no new credential surface is introduced. Operator can audit `memory.db` with `sqlite3` directly. |
 | 9 | **No cargo feature gate.** The `xvision-memory` crate is a regular workspace member, always compiled. The install-customizer spec contemplated a `memory` cargo feature, but Decision 1 (in-process v1) makes that gate cost more than it saves — the crate is small, has no transitive heavy deps, and operators turn memory off by leaving every slot at `memory_mode = off`. F28 plugin architecture can introduce the feature gate later if it materially shrinks the binary; v1 does not need it. |
 | 10 | **Eval review surface emits two new event kinds.** `memory_recall { namespace, k, items: [{id, text, score}] }` and `memory_write { namespace, id, text_preview }`. Both land on the existing `events.jsonl` per-run sink. No new SQLite table. The eval-review UI gains a "Memory" panel per cycle that filters these two kinds out of the event stream. |
@@ -131,7 +131,7 @@ re-derive them:
   architecture lands.
 - **Cross-host memory sharing.** Multiple xvn deployments on the same
   operator account writing to a shared store. Needs auth + conflict
-  resolution; out of scope until V3 autoresearcher operates across
+  resolution; out of scope until V3 autooptimizer operates across
   hosts.
 - **Tool-driven memory** (`memory_recall` / `memory_write` exposed as
   agent tools). Decision 5. v1.1 if operator data shows auto-recall
@@ -150,7 +150,7 @@ re-derive them:
   them to decision text. Open as a follow-up after `v2d-eval-review-
   memory-surface` lands.
 - **TTL / time decay / LRU eviction.** Decision 7. Operator-driven
-  forget is enough until V3 autoresearcher gates a real eviction
+  forget is enough until V3 autooptimizer gates a real eviction
   story.
 - **Memory across strategy versions.** When a strategy is republished
   with a new hash, does its agent-scoped memory carry forward?
@@ -241,7 +241,7 @@ These resolve at decomposition, not in this intake:
    quality is poor. Cheaper than (b), more useful than (c).
 5. **Cycle-level vs run-level write.** Does the recorder write once
    per cycle or once per run? **Recommend per-cycle** so the
-   autoresearcher can replay cycle-by-cycle judgments; that's the
+   autooptimizer can replay cycle-by-cycle judgments; that's the
    whole point of having memory at all. Per-run is too coarse.
 
 ## Related artifacts

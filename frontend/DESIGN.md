@@ -4,7 +4,7 @@ End-to-end design for the v1 web dashboard. The prototype at `frontend/prototype
 
 **Author**: synthesis pass on 2026-05-10 against the v1 plans, the runtime crates, and the design handoff.
 
-> **Scope note from the user**: marketplace, autoresearcher, and journal are deferred. Findings have no proper structure behind them yet — that and other backend gaps are flagged inline (`⚠ BACKEND GAP`) and consolidated in [§9](#9-backend-gaps-that-block-v1).
+> **Scope note from the user**: marketplace, autooptimizer, and journal are deferred. Findings have no proper structure behind them yet — that and other backend gaps are flagged inline (`⚠ BACKEND GAP`) and consolidated in [§9](#9-backend-gaps-that-block-v1).
 
 ---
 
@@ -17,7 +17,7 @@ End-to-end design for the v1 web dashboard. The prototype at `frontend/prototype
 | `/` Home (Control Tower) | `/live/:id` Flight Deck (live deployment cockpit) — needs Plan 2c scheduler |
 | `/setup` Wizard (first-run + on-demand) | `/marketplace` — Plan 5 (NFTs, blockchain) |
 | `/strategies` list | `/journal` Lab Notebook — own deferred plan |
-| `/authoring/:id` Inspector | Autoresearcher (AR-1/AR-2/AR-3 — separate program) |
+| `/authoring/:id` Inspector | AutoOptimizer (AR-1/AR-2/AR-3 — separate program) |
 | `/eval/runs` list | Lineage tree visualization, Slot Machine, Spreadsheet sweep, Canvas node graph |
 | `/eval/runs/:id` detail | Mobile responsive, multi-workspace, theme switcher |
 | `/eval/compare?ids=…` | Voice/transcription chat input |

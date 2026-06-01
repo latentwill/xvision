@@ -164,7 +164,7 @@ Six tracks merged: strategies-folder-surface (#414), agent-pipeline-template-lib
   broader "expanding and evaluating agent types" V2 piece. Output
   before contract: short design note under `docs/superpowers/notes/`
   scoping the Settings surface + which review passes are configurable
-  (results review only, or also research / autoresearcher passes).
+  (results review only, or also research / autooptimizer passes).
 
 - **V2 "walk back"** — research + competitor comparison before scoping.
   What does "walking back" a v2 action (decision/order/agent step) look
@@ -217,11 +217,11 @@ through `team/intake/<date>-<phase>.md` first.
 |---|---|---|
 | 15 | Rust cortex memory + per-agent memory toggle (off / global / agent-specific) | Decomposed: contract `v2d-agent-memory`, plan `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md` |
 
-V2D is a prerequisite for the V3 autoresearcher: a mutator/judge loop without
+V2D is a prerequisite for the V3 autooptimizer: a mutator/judge loop without
 persistent memory keeps re-discovering the same lessons. Land before V3 unless
-the autoresearcher track is explicitly scoped as stateless v1.
+the autooptimizer track is explicitly scoped as stateless v1.
 
-### V2E — eval accuracy & trace surface (new phase; also enables V3 autoresearcher)
+### V2E — eval accuracy & trace surface (new phase; also enables V3 autooptimizer)
 
 | # | Item | Source |
 |---|---|---|
@@ -235,8 +235,8 @@ the autoresearcher track is explicitly scoped as stateless v1.
 | 24 | Adaptive intra-bar fill ordering — NautilusTrader-style `O→H→L→C` / gap-past-trigger logic; minimal `OrderState` enum; maker/taker aggressor classification | Research doc §4.7 + §4.5 (promoted from follow-up via 2026-05-20 intake update) |
 | 25 | Net-of-inference-cost profitability metric — `net_return_pct = gross_return_pct − (inference_cost_quote_total / capital_initial)`; new `inference_cost_dominates_return` finding | Operator review of LLM strategy eval results (2026-05-20 intake update) |
 
-V2E is the second prerequisite for V3 autoresearcher (alongside V2D memory).
-The autoresearcher's diff harness, failed-decision reservoir, and feature-vector
+V2E is the second prerequisite for V3 autooptimizer (alongside V2D memory).
+The autooptimizer's diff harness, failed-decision reservoir, and feature-vector
 ML hooks all assume the trace shape from item 17 already exists; building it
 once up front avoids retrofitting traces for every emitted finding kind.
 
@@ -278,13 +278,13 @@ Pre-existing alternative placement: this could ride alongside V2D
 distinction is user-curated (V2F) vs agent-learned (V2D). They don't
 share files; safe to run in parallel either way.
 
-### V3 — autoresearcher
+### V3 — autooptimizer
 
 | # | Item | Source |
 |---|---|---|
-| 11 | Autoresearcher mutation / eval / judge loop | autoresearcher plans |
-| 11a | **Autoresearcher = cortex memory distillation pass** — reads V2D Observations, proposes/judges/promotes Patterns, retires stale ones. Needs write access to the Patterns tier (`MemoryStore::upsert_pattern` / `demote_pattern`); auto-recorder is INSERT-only on Observations. Each promoted Pattern must carry `training_window_end` (latest bar timestamp across contributing Observations) so the dispatcher's time-window recall filter can exclude Patterns from in-replay scenarios. Editing semantics (create / supersede / retire) must land before the first nightly autoresearcher run that targets a Pattern-consuming agent — otherwise the loop is purely evaluative and nothing accumulates. **Folded in from the V2D follow-up grill pass: Package C (manual distillation primitives — operator-driven Observation → Pattern promotion).** The same UI + CLI surface the autoresearcher uses for promote/judge/retire should also support a manual "promote this Observation as a Pattern" path so operators can hand-distill before the autoresearcher's loop is reliable. Doing this in V3 instead of V2D v1.1 avoids building the surface twice. | `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` · `team/intake/2026-05-21-v2d-memory-manual-ops-and-audit.md` Decision 1 |
-| 12 | Autoresearcher dashboard + lineage review | autoresearcher dashboard plan |
+| 11 | AutoOptimizer mutation / eval / judge loop | autooptimizer plans |
+| 11a | **AutoOptimizer = cortex memory distillation pass** — reads V2D Observations, proposes/judges/promotes Patterns, retires stale ones. Needs write access to the Patterns tier (`MemoryStore::upsert_pattern` / `demote_pattern`); auto-recorder is INSERT-only on Observations. Each promoted Pattern must carry `training_window_end` (latest bar timestamp across contributing Observations) so the dispatcher's time-window recall filter can exclude Patterns from in-replay scenarios. Editing semantics (create / supersede / retire) must land before the first nightly autooptimizer run that targets a Pattern-consuming agent — otherwise the loop is purely evaluative and nothing accumulates. **Folded in from the V2D follow-up grill pass: Package C (manual distillation primitives — operator-driven Observation → Pattern promotion).** The same UI + CLI surface the autooptimizer uses for promote/judge/retire should also support a manual "promote this Observation as a Pattern" path so operators can hand-distill before the autooptimizer's loop is reliable. Doing this in V3 instead of V2D v1.1 avoids building the surface twice. | `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` · `team/intake/2026-05-21-v2d-memory-manual-ops-and-audit.md` Decision 1 |
+| 12 | AutoOptimizer dashboard + lineage review | autooptimizer dashboard plan |
 | 13 | Final UI/UX pass across dashboard surfaces | design docs, chart plans |
 | 16 | Chart aesthetics + customization pass using Lightweight Charts layout/grid/crosshair/series/scale options | F32, [Lightweight Charts customization](https://tradingview.github.io/lightweight-charts/tutorials/customization/intro) |
 
@@ -338,7 +338,7 @@ Open questions for intake (do not decide on the board):
 - Persistence: V2D shipped SQLite-backed embedded; the sidecar form
   may revisit external stores (Qdrant / Postgres) at the F28 stage.
 - Forget / TTL semantics: explicit user-driven forget shipped in V2D;
-  time decay deferred until V3 autoresearcher gates a real eviction
+  time decay deferred until V3 autooptimizer gates a real eviction
   story.
 - Privacy: the install-customizer spec already binds the sidecar to
   127.0.0.1 with no external creds; V2D inherited that for the
@@ -457,7 +457,7 @@ When all V2B contracts merge, the conductor:
 1. Archives V2B contracts to `team/archive/<date>-v2b/contracts/`.
 2. Updates this file to reflect the next active phase (V2C testnet,
    V2D memory, or both — conductor decides at intake time based on
-   V3 autoresearcher readiness and marketplace flow scoping).
+   V3 autooptimizer readiness and marketplace flow scoping).
 3. Opens the next phase's intake doc and decomposes its items into contracts.
 
 ## See also

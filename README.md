@@ -2,7 +2,7 @@
 
 **Non-custodial AI trading agents.** xvision runs LLM-driven trading strategies
 against your own broker account, with explicit scope enforcement so xvision
-itself never holds your funds. An overnight autoresearcher generates and
+itself never holds your funds. An overnight autooptimizer generates and
 evaluates new strategy experiments automatically.
 
 > ⚠️ **This is alpha software. Use at your own risk.** xvision executes real
@@ -22,7 +22,7 @@ evaluates new strategy experiments automatically.
 - Logs every order's full lifecycle (emit → risk → simulate → sign → submit →
   fill → close) to an append-only audit log; positions can be reconstructed
   from the log alone.
-- Runs an overnight autoresearcher that generates strategy experiments, evaluates
+- Runs an overnight autooptimizer that generates strategy experiments, evaluates
   variants on held-out backtests, and seals survivors as immutable lineage
   artifacts.
 
@@ -174,7 +174,7 @@ Current operator commands:
 The non-custodial design closes one failure mode (xvision can't drain you) but
 opens others:
 - A buggy strategy can lose its hard-cap allocation. Set caps small at first.
-- The autoresearcher can produce a variant that overfits the judge. Lineage
+- The autooptimizer can produce a variant that overfits the judge. Lineage
   attestations are explicit about which strategies are sealed (auditable) vs
   which are still evolving (use-with-care).
 - Cross-margin contagion: if Orderly applies losses across the whole account,

@@ -286,7 +286,7 @@ V1 is complete when:
 
 Do not include:
 
-- Full autoresearcher loop.
+- Full autooptimizer loop.
 - Automatic strategy mutation.
 - Blockchain identity.
 - Marketplace publishing.

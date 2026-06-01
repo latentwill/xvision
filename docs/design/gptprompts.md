@@ -13,7 +13,7 @@
 >
 > Added two settings-screen prompts:
 >
-> - §17 Settings · Autoresearch — sidebar nav + active-session card + config form for the next session
+> - §17 Settings · AutoOptimizer — sidebar nav + active-session card + config form for the next session
 > - §18 Settings · Marketplace — sidebar nav + connected-wallet state + attester agents + anchor preferences
 >
 > Both reflect the persona-split decision: Marketplace is always visible in the
@@ -23,11 +23,11 @@
 >
 > ## Changelog — v0.3 (2026-05-09)
 >
-> Added six prompts for the autoresearch + marketplace surfaces from the
-> [autoresearcher spec](../superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md)
+> Added six prompts for the autooptimizer + marketplace surfaces from the
+> [autooptimizer spec](../superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md)
 > and the [marketplace plugin spec](../superpowers/specs/2026-05-09-marketplace-plugin-design.md):
 >
-> - §11 Live Evening Cycle Viewer — the autoresearch demo headline
+> - §11 Live Evening Cycle Viewer — the autooptimizer demo headline
 > - §12 Genealogy Tree — every variant ever born, with parents, children, ghosts
 > - §13 Mutation Diff Inspector — three orthogonal panes (prose / param / tool) + finding + inversion check
 > - §14 Mutator-Skill Ladder — the second ladder, measuring the LLM mutator itself
@@ -52,7 +52,7 @@
 > - **v1 in-scope** (10 prompts in v0.2; 16 in v0.3) — Control Tower, Wizard,
 >   Inspector (with live-preview split), Lab Notebook, Flight Deck (with Move I),
 >   Run Detail (with Move I), Compare, Run List + Scenarios, Chat Rail fragment,
->   Command Palette overlay; v0.3 adds the autoresearch + marketplace prompts.
+>   Command Palette overlay; v0.3 adds the autooptimizer + marketplace prompts.
 > - **Deferred** (5 prompts, preserved verbatim from v0.1 for future use) —
 >   Canvas, Power Notebook, Spreadsheet, Ticker / Pass-ribbon, Slot Machine.
 >
@@ -736,10 +736,10 @@ faint enough to confirm there's a real surface there, but not legible.
 
 ---
 
-### 11. Live Evening Cycle Viewer  —  `/autoresearch/live` (the autoresearch demo headline)
+### 11. Live Evening Cycle Viewer  —  `/autooptimizer/live` (the autooptimizer demo headline)
 
 ```
-App screen of the xvn live evening cycle viewer — autoresearch is currently mid-run.
+App screen of the xvn live evening cycle viewer — autooptimizer is currently mid-run.
 Strategies are mutating, paper-tests running, the gate sorting wheat from chaff in real
 time. Dark mode, desktop 16:9. The chat rail is docked on the right, collapsed (40px).
 
@@ -795,7 +795,7 @@ glance at this once and instantly understand "the loop is alive and selective".
 
 ---
 
-### 12. Genealogy Tree  —  `/autoresearch/lineage`
+### 12. Genealogy Tree  —  `/autooptimizer/lineage`
 
 ```
 App screen of the xvn genealogy tree — every strategy variant ever born, with parents,
@@ -1108,10 +1108,10 @@ wallet-aware surface and the user should always know what's about to spend gas.
 
 ---
 
-### 17. Settings · Autoresearch  —  `/settings` with sidebar nav, Autoresearch section active
+### 17. Settings · AutoOptimizer  —  `/settings` with sidebar nav, AutoOptimizer section active
 
 ```
-App screen of the xvn settings page, with the Autoresearch section selected. Dark mode,
+App screen of the xvn settings page, with the AutoOptimizer section selected. Dark mode,
 desktop 16:9. Chat rail docked on the right, collapsed (40px).
 
 Top nav: standard nav. NOTE: no top-nav item is "active" because /settings is reached via
@@ -1124,7 +1124,7 @@ Sidebar nav (220px wide, slate panel surface):
 - Small uppercase dim header "ACCOUNT", with two rows below: "Account" and "Appearance".
 - Thin slate divider.
 - Small uppercase dim header "CONFIG", with five rows: "LLM keys", "Brokers",
-  "Autoresearch" (highlighted, active, with amber-gold left bar), "Marketplace", and indented
+  "AutoOptimizer" (highlighted, active, with amber-gold left bar), "Marketplace", and indented
   one level "└ Identity".
 - Thin slate divider.
 - Small uppercase dim header "RUNTIME", with two rows: "Daemon", "Telemetry".
@@ -1133,9 +1133,9 @@ Sidebar nav (220px wide, slate panel surface):
 
 Right content area:
 
-Page header strip: title "Autoresearch" in primary (Cormorant Garamond serif). Subtitle
+Page header strip: title "AutoOptimizer" in primary (Cormorant Garamond serif). Subtitle
 in dim secondary "Evening cycle configuration · pre-commitments · models · budget".
-Right side: ghost "View live cycle ↗" linking to the autoresearch live view.
+Right side: ghost "View live cycle ↗" linking to the autooptimizer live view.
 
 Active session card (top of content, ~280px tall, tinted slate panel surface, prominent
 amber-gold left border):
@@ -1211,7 +1211,7 @@ Top nav: standard nav, no top-nav item active (reached via avatar dropdown).
 
 Page body: 220px sidebar nav on the left, content flex on the right. Sidebar nav matches
 §17 layout but "Marketplace" is the active row (highlighted with amber-gold left bar);
-"Autoresearch" is inactive. The "└ Identity" row indented under Marketplace is visible
+"AutoOptimizer" is inactive. The "└ Identity" row indented under Marketplace is visible
 but not active.
 
 Right content area:

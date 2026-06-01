@@ -1,8 +1,8 @@
-# SSE display-label registry handoff — autoresearcher events
+# SSE display-label registry handoff — autooptimizer events
 
 > For: backend/frontend engineer working on the live cycle viewer
 > Date: 2026-05-27
-> Source of truth: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md` §11
+> Source of truth: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md` §11
 
 ## TL;DR
 
@@ -20,7 +20,7 @@ readable labels.
 ## Files in scope
 
 - `crates/xvision-dashboard/src/sse.rs` — add a `display_label(event:
-  &AutoresearchEvent) -> &'static str` helper, include the label in
+  &AutoOptimizerEvent) -> &'static str` helper, include the label in
   the SSE event metadata (either as the `event:` field of the SSE
   frame, as a `display_label` JSON field on the payload, or both)
 - `crates/xvision-dashboard/static/js/bus.js` — add a wire→display
@@ -31,8 +31,8 @@ readable labels.
 
 ## Files NOT in scope
 
-- `crates/xvision-engine/src/autoresearch/progress.rs` — the
-  `AutoresearchEvent` enum definition stays (it's the wire schema)
+- `crates/xvision-engine/src/autooptimizer/progress.rs` — the
+  `AutoOptimizerEvent` enum definition stays (it's the wire schema)
 - Any code that emits events (orchestrator, mutator, judge, etc.) —
   emitters keep emitting the same wire names
 - Frontend React SPA — already has its own
@@ -63,16 +63,16 @@ readable labels.
 Add to `crates/xvision-dashboard/src/sse.rs`:
 
 ```rust
-use xvision_engine::autoresearch::progress::AutoresearchEvent;
+use xvision_engine::autooptimizer::progress::AutoOptimizerEvent;
 
 /// Maps an event's wire name to its operator-facing display label.
 /// The wire name (returned by `event_kind`) is the SSE `event:`
 /// frame identifier and the JSON `kind` field on the payload. The
 /// display label is what the dashboard renders to the operator.
 ///
-/// See: docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md §11
-pub fn display_label(event: &AutoresearchEvent) -> &'static str {
-    use AutoresearchEvent::*;
+/// See: docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md §11
+pub fn display_label(event: &AutoOptimizerEvent) -> &'static str {
+    use AutoOptimizerEvent::*;
     match event {
         CycleStarted { .. }        => "Evening run started",
         MutationProposed { .. }    => "Experiment proposed",
@@ -121,7 +121,7 @@ Add to `crates/xvision-dashboard/static/js/bus.js`:
 ```js
 // Wire-to-display mapping. Mirrors crates/xvision-dashboard/src/sse.rs::display_label.
 // Kept in sync via the SSE registry handoff
-// (docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md).
+// (docs/design/2026-05-27-autooptimizer-sse-registry-handoff.md).
 // If the server is sending display_label on the payload, prefer that;
 // this map is the fallback when the field is missing.
 const DISPLAY_LABELS = {
@@ -169,7 +169,7 @@ const label = displayLabel(event);
 6. Adding a new event variant requires updating both the Rust and JS
    mappings; document this expectation in a comment at the top of each
    file (and add a CI lint if feasible — match the variant count of
-   `AutoresearchEvent` against the entry count of the mapping).
+   `AutoOptimizerEvent` against the entry count of the mapping).
 
 ## Test paths
 
@@ -195,7 +195,7 @@ const label = displayLabel(event);
 
 ## Reference
 
-- Terminology lock §11: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
+- Terminology lock §11: `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`
 - AR-3 plan (where the dashboard SSE event taxonomy was specified):
-  `docs/superpowers/plans/2026-05-09-autoresearcher-3-dashboard.md`
-- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autoresearcher subsurface)"
+  `docs/superpowers/plans/2026-05-09-autooptimizer-3-dashboard.md`
+- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autooptimizer subsurface)"

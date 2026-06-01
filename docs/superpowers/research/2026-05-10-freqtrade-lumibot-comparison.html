@@ -138,7 +138,7 @@ hr { border: none; border-top: 1px solid var(--rule); margin: 36px 0; }
 <header class="doc">
   <div class="eyebrow">research · 2026-05-10 · edward kennedy</div>
   <h1>Freqtrade &amp; Lumibot vs xvision</h1>
-  <p class="muted">Architectural map of xvision today (post CV-extraction, with autoresearcher AR-1/2/3 and ERC-8004 marketplace as the hackathon spine) and a gap analysis against two of the most-used retail algotrading frameworks. Filtered for backtest/eval, strategy authoring, and operator UX. No hackathon-deadline filtering — full surface area.</p>
+  <p class="muted">Architectural map of xvision today (post CV-extraction, with autooptimizer AR-1/2/3 and ERC-8004 marketplace as the hackathon spine) and a gap analysis against two of the most-used retail algotrading frameworks. Filtered for backtest/eval, strategy authoring, and operator UX. No hackathon-deadline filtering — full surface area.</p>
   <small class="meta">Saved at <code>docs/superpowers/research/2026-05-10-freqtrade-lumibot-comparison.html</code>.</small>
 </header>
 
@@ -157,11 +157,11 @@ hr { border: none; border-top: 1px solid var(--rule); margin: 36px 0; }
 
 <h2 id="tldr">1. TL;DR</h2>
 
-<p>xvision and the two reference projects are not in the same product category. Freqtrade is a mature retail crypto bot. Lumibot is a Python framework for retail equities/options/crypto with hosted-deployment add-ons. xvision is a Rust agentic-trading research stack whose differentiator is the four-stage pipeline (Intern → Trader → Risk → Executor), the Karpathy-style autoresearcher, and on-chain identity/reputation via ERC-8004 on Mantle.</p>
+<p>xvision and the two reference projects are not in the same product category. Freqtrade is a mature retail crypto bot. Lumibot is a Python framework for retail equities/options/crypto with hosted-deployment add-ons. xvision is a Rust agentic-trading research stack whose differentiator is the four-stage pipeline (Intern → Trader → Risk → Executor), the Karpathy-style autooptimizer, and on-chain identity/reputation via ERC-8004 on Mantle.</p>
 
 <p>The honest comparison: xvision is <em>statistically more rigorous</em> than either reference (paired bootstrap CIs on Δ-Sharpe, deterministic risk gate as a first-class stage, content-addressed lineage with pre-committed evaluation gates) but <em>operationally far thinner</em>. Strategy authoring is a single-method <code>Algorithm</code> trait with no lifecycle hooks. There's no Telegram/Discord, no FreqUI-equivalent dashboard, no hyperopt, no walk-forward harness, no protections framework, no per-trade state mechanism, no informative-pairs / multi-timeframe pattern, no <code>TradingFee</code> abstraction with maker/taker/per-contract knobs.</p>
 
-<p>The most useful things to mine — in priority order — are: (1) <strong>Freqtrade's hyperopt architecture</strong> (NSGA-III + <code>IHyperOptLoss</code> trait) as a reference for the autoresearcher's parameter-only mutation sub-mode; (2) <strong>Freqtrade's protections framework</strong> as a model for extending the deterministic risk layer; (3) <strong>Lumibot's lifecycle methods</strong> + <strong>Freqtrade's callback surface</strong> as templates for a richer <code>Algorithm</code> trait; (4) <strong>both projects' fee/slippage modeling</strong>; (5) <strong>Freqtrade's config-reload + REST control plane</strong> patterns for the engine API. Things to skip: FreqUI (xvision is building its own), Telegram (wrong audience), FreqAI (the LLM Trader is the ML signal), Lumibot's broker grab-bag (Alpaca + Orderly is intentional).</p>
+<p>The most useful things to mine — in priority order — are: (1) <strong>Freqtrade's hyperopt architecture</strong> (NSGA-III + <code>IHyperOptLoss</code> trait) as a reference for the autooptimizer's parameter-only mutation sub-mode; (2) <strong>Freqtrade's protections framework</strong> as a model for extending the deterministic risk layer; (3) <strong>Lumibot's lifecycle methods</strong> + <strong>Freqtrade's callback surface</strong> as templates for a richer <code>Algorithm</code> trait; (4) <strong>both projects' fee/slippage modeling</strong>; (5) <strong>Freqtrade's config-reload + REST control plane</strong> patterns for the engine API. Things to skip: FreqUI (xvision is building its own), Telegram (wrong audience), FreqAI (the LLM Trader is the ML signal), Lumibot's broker grab-bag (Alpaca + Orderly is intentional).</p>
 
 <h2 id="xvn">2. xvision today — architectural map</h2>
 
@@ -181,11 +181,11 @@ hr { border: none; border-top: 1px solid var(--rule); margin: 36px 0; }
 <tr><td><code>xvision-risk</code></td><td>Stage 3 gate: deterministic rules — position limits, daily-loss circuit breaker, correlation cluster cap, asset whitelist. Emits <code>RiskDecision::{Approved,Modified,Vetoed}</code>.</td><td class="y">Shipping</td></tr>
 <tr><td><code>xvision-execution</code></td><td>Stage 4: Alpaca paper (apca v0.30) + Orderly perps on Mantle (Ed25519 signed; bypassing <code>orderly-connector-rs</code> due to <code>zeroize</code> pin per F19).</td><td class="y">Shipping</td></tr>
 <tr><td><code>xvision-eval</code></td><td>Backtest harness, 8 baselines (<code>baselines/*.rs</code>), <code>Algorithm</code> trait, paired-bootstrap A/B compare on Δ-Sharpe.</td><td class="y">Shipping</td></tr>
-<tr><td><code>xvision-engine</code></td><td><code>StrategyBundle</code> immutable artifact. Future home of <code>autoresearch/</code> module (AR-1 implements <code>mutator/lineage/gate/seal</code>).</td><td class="p">Type shipping; autoresearch module not yet — AR-1 is the next plan to land.</td></tr>
+<tr><td><code>xvision-engine</code></td><td><code>StrategyBundle</code> immutable artifact. Future home of <code>autooptimizer/</code> module (AR-1 implements <code>mutator/lineage/gate/seal</code>).</td><td class="p">Type shipping; autooptimizer module not yet — AR-1 is the next plan to land.</td></tr>
 <tr><td><code>xvision-identity</code></td><td>ERC-8004 client (alloy v2). <code>IdentityClient::register(agentURI)</code>, reputation writes, validation receipts. Opt-in workspace member.</td><td class="p">Scaffold; no live Mantle deployment yet (SLF2 pending operator).</td></tr>
 <tr><td><code>xvision-mcp</code></td><td>stdio MCP server <code>xvn-mcp</code> exposing indicators as agent-callable tools (RSI, SMA, EMA, MACD, Bollinger, ATR, Donchian, Fib, health). Used only when <code>INTERN=acpx</code>.</td><td class="y">Shipping</td></tr>
 <tr><td><code>xvision-dashboard</code></td><td>Axum 0.7 web backend. Embeds static frontend via <code>rust-embed</code>. Runs sqlx migrations on startup.</td><td class="p">Backend shipping; Next.js frontend in <code>.worktrees/frontend-foundation</code>, Frontend 1–5 plans dated 2026-05-10.</td></tr>
-<tr><td><code>xvision-cli</code></td><td><code>xvn</code> binary. Verbs include <code>setup</code> (config init), <code>strategy</code> (StrategyBundle CRUD), <code>ab-compare</code>, <code>run-setup</code> (one cycle through the pipeline), <code>autoresearch</code> (planned).</td><td class="y">Shipping</td></tr>
+<tr><td><code>xvision-cli</code></td><td><code>xvn</code> binary. Verbs include <code>setup</code> (config init), <code>strategy</code> (StrategyBundle CRUD), <code>ab-compare</code>, <code>run-setup</code> (one cycle through the pipeline), <code>autooptimizer</code> (planned).</td><td class="y">Shipping</td></tr>
 <tr><td><code>xvision-harness</code></td><td>Boundary probes, scenario fixtures, deterministic snapshot corpus.</td><td class="y">Shipping</td></tr>
 </tbody>
 </table>
@@ -222,14 +222,14 @@ pub trait Algorithm: Send + Sync {
 
 <h3>Identity and on-chain (ERC-8004)</h3>
 
-<p>Three planned registries (per ADR 0008): <strong>IdentityRegistry</strong> (per-strategy NFT mint, <code>agentURI → token_id</code>), <strong>ReputationRegistry</strong> (per-cycle performance feedback with hash anchoring), <strong>ValidationRegistry</strong> (signed-oracle receipts for autoresearch mutations). Mantle Sepolia testnet + mainnet contract addresses pending SLF2. <code>IdentityClient</code> is a working alloy-v2 client wired against the ERC-8004 draft headers; integration tests are <code>#[ignore]</code> and run only against local anvil. No <code>mint-identity</code> binary ships — operators currently have to write a thin driver against <code>crates/xvision-identity/src/client.rs</code> (see <code>MANUAL.md</code> M7).</p>
+<p>Three planned registries (per ADR 0008): <strong>IdentityRegistry</strong> (per-strategy NFT mint, <code>agentURI → token_id</code>), <strong>ReputationRegistry</strong> (per-cycle performance feedback with hash anchoring), <strong>ValidationRegistry</strong> (signed-oracle receipts for autooptimizer mutations). Mantle Sepolia testnet + mainnet contract addresses pending SLF2. <code>IdentityClient</code> is a working alloy-v2 client wired against the ERC-8004 draft headers; integration tests are <code>#[ignore]</code> and run only against local anvil. No <code>mint-identity</code> binary ships — operators currently have to write a thin driver against <code>crates/xvision-identity/src/client.rs</code> (see <code>MANUAL.md</code> M7).</p>
 
-<h3>Autoresearcher (AR-1, AR-2, AR-3)</h3>
+<h3>AutoOptimizer (AR-1, AR-2, AR-3)</h3>
 
-<p>Spec at <code>docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md</code> (locked 2026-05-09). Three plan files split by scope:</p>
+<p>Spec at <code>docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md</code> (locked 2026-05-09). Three plan files split by scope:</p>
 
 <ul>
-  <li><strong>AR-1</strong> — <code>2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md</code>. New module <code>xvision-engine/src/autoresearch/</code>. Implements: Haiku-driven mutator that proposes prose/param/tool diffs against a parent <code>StrategyBundle</code>, paper-tests on day + held-out windows, runs deterministic Δ-Sharpe gate with pre-committed ε, commits to a content-addressed lineage at <code>~/.xvn/lineage/blobs/&lt;blake3&gt;.json</code>, emits a CycleSeal with Merkle root + operator Ed25519 signature. Hard upstream: the eval-engine plan <code>2026-05-08-eval-engine-plan.md</code>. Wk-2 milestone.</li>
+  <li><strong>AR-1</strong> — <code>2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md</code>. New module <code>xvision-engine/src/autooptimizer/</code>. Implements: Haiku-driven mutator that proposes prose/param/tool diffs against a parent <code>StrategyBundle</code>, paper-tests on day + held-out windows, runs deterministic Δ-Sharpe gate with pre-committed ε, commits to a content-addressed lineage at <code>~/.xvn/lineage/blobs/&lt;blake3&gt;.json</code>, emits a CycleSeal with Merkle root + operator Ed25519 signature. Hard upstream: the eval-engine plan <code>2026-05-08-eval-engine-plan.md</code>. Wk-2 milestone.</li>
   <li><strong>AR-2</strong> — cycle orchestrator + LLM judge (Sonnet, metrics-blinded) + canary (sabotaged-parent nightly) + inversion-pair eval + embedding-divergence diversity-decay metric. SSE event emission lands here.</li>
   <li><strong>AR-3</strong> — Next.js dashboard surfaces: live evening-cycle viewer, genealogy tree (D3 force-directed), mutation diff inspector, mutator-skill ladder.</li>
 </ul>
@@ -238,7 +238,7 @@ pub trait Algorithm: Send + Sync {
 
 <h3>What was lost when CV dropped (ADR 0011, 2026-05-07)</h3>
 
-<p>The control-vector substrate (steering tensors, learned vector configurations, vector-trained Qwen3 trader, <code>vectors_off</code>/<code>vectors_on</code> agent manifests) moved to a sibling repo <code>xvision-play</code>. xvision's edge thesis is now: <em>balanced Intern briefing + LLM judgment + evolutionary selection via the autoresearcher + on-chain reputation as a verifiable track record</em>. Whether (a) Intern bias-control + (b) autoresearch selection + (c) on-chain receipts is a sufficient differentiator is the open question — and the hackathon's job is to demo the receipts story strongly enough that the underlying performance claim becomes secondary to the verifiability claim.</p>
+<p>The control-vector substrate (steering tensors, learned vector configurations, vector-trained Qwen3 trader, <code>vectors_off</code>/<code>vectors_on</code> agent manifests) moved to a sibling repo <code>xvision-play</code>. xvision's edge thesis is now: <em>balanced Intern briefing + LLM judgment + evolutionary selection via the autooptimizer + on-chain reputation as a verifiable track record</em>. Whether (a) Intern bias-control + (b) autooptimizer selection + (c) on-chain receipts is a sufficient differentiator is the open question — and the hackathon's job is to demo the receipts story strongly enough that the underlying performance claim becomes secondary to the verifiability claim.</p>
 
 <h3>Operator UX, briefly</h3>
 
@@ -400,11 +400,11 @@ trace_stats(context, snapshot_before)  # per-iteration custom metrics → tearsh
 <tr><td>Intra-candle realism</td><td class="y">--timeframe-detail</td><td class="x">next-bar-open</td><td class="x">bar-resolution only</td></tr>
 <tr><td>Slippage model</td><td class="x">none in backtest</td><td class="x">implicit only</td><td class="x">none</td></tr>
 <tr><td>Fee abstraction</td><td class="p">single --fee ratio</td><td class="y">TradingFee(percent/flat/per_contract/maker/taker)</td><td class="p">basic</td></tr>
-<tr><td>Hyperopt / param search</td><td class="y">NSGA-III + IHyperOptLoss + 12 built-in losses</td><td class="x">none (script it)</td><td class="x">none — autoresearch is the analogue but it's prose+param+tool, not param-only</td></tr>
+<tr><td>Hyperopt / param search</td><td class="y">NSGA-III + IHyperOptLoss + 12 built-in losses</td><td class="x">none (script it)</td><td class="x">none — autooptimizer is the analogue but it's prose+param+tool, not param-only</td></tr>
 <tr><td>Sub-period reporting</td><td class="y">--breakdown {day,week,month,year,weekday}</td><td class="p">via tearsheet</td><td class="x">none</td></tr>
 <tr><td>Multi-strategy compare</td><td class="p">--strategy-list (aggregate table)</td><td class="x">script it</td><td class="y">ab-compare with paired bootstrap CIs on Δ-Sharpe — <strong>strongest of the three</strong></td></tr>
 <tr><td>Tearsheet / report artifacts</td><td class="y">JSON + .feather + sanitized config zip</td><td class="y">quantstats_lumi HTML + CSVs</td><td class="p">SQLite traces; no rendered tearsheet yet</td></tr>
-<tr><td>Pre-committed evaluation gate</td><td class="x">no</td><td class="x">no</td><td class="unique">held-out window pinned at session start; ε-gate signed by operator (autoresearch §7)</td></tr>
+<tr><td>Pre-committed evaluation gate</td><td class="x">no</td><td class="x">no</td><td class="unique">held-out window pinned at session start; ε-gate signed by operator (autooptimizer §7)</td></tr>
 <tr><td>Content-addressed lineage</td><td class="x">no</td><td class="x">no</td><td class="unique">blake3-addressed bundles + diffs + traces in <code>~/.xvn/lineage/blobs/</code></td></tr>
 <tr><td>Null-result canary</td><td class="x">no</td><td class="x">no</td><td class="unique">sabotaged-parent nightly to detect noise-fitting (AR-2)</td></tr>
 <tr><td>Inversion-pair eval</td><td class="x">no</td><td class="x">no</td><td class="unique">forward + reverse mutation eval (AR-2)</td></tr>
@@ -471,7 +471,7 @@ trace_stats(context, snapshot_before)  # per-iteration custom metrics → tearsh
 
 <h3>6.1 Backtest / eval</h3>
 
-<p><span class="tag steal">steal</span> <strong>The <code>IHyperOptLoss</code> trait + 12 built-in losses.</strong> Mirror as a Rust trait <code>HyperOptLoss</code> in <code>xvision-eval</code>: <code>fn evaluate(&amp;self, results: &amp;BacktestResult) -&gt; f64</code>. Implement Sharpe, SharpeDaily, Sortino, SortinoDaily, Calmar, MaxDrawdown, ProfitDrawdown as starter set. The autoresearcher mutator becomes pluggable on which loss it gates on, and operators can pre-commit to one in <code>autoresearch.toml</code>. Critically, this lets the autoresearcher run a <em>parameter-only</em> sub-mode that's recognizable to anyone coming from Freqtrade.</p>
+<p><span class="tag steal">steal</span> <strong>The <code>IHyperOptLoss</code> trait + 12 built-in losses.</strong> Mirror as a Rust trait <code>HyperOptLoss</code> in <code>xvision-eval</code>: <code>fn evaluate(&amp;self, results: &amp;BacktestResult) -&gt; f64</code>. Implement Sharpe, SharpeDaily, Sortino, SortinoDaily, Calmar, MaxDrawdown, ProfitDrawdown as starter set. The autooptimizer mutator becomes pluggable on which loss it gates on, and operators can pre-commit to one in <code>autooptimizer.toml</code>. Critically, this lets the autooptimizer run a <em>parameter-only</em> sub-mode that's recognizable to anyone coming from Freqtrade.</p>
 
 <p><span class="tag steal">steal</span> <strong><code>--breakdown</code> sub-period rollups.</strong> Trivial to add to <code>ab-compare</code>. Per-day / per-week Sharpe + drawdown columns surface regime sensitivity without changing the underlying eval.</p>
 
@@ -479,7 +479,7 @@ trace_stats(context, snapshot_before)  # per-iteration custom metrics → tearsh
 
 <p><span class="tag steal">steal</span> <strong>Result-bundle zip pattern (Freqtrade).</strong> Each <code>ab-compare</code> run produces a zip containing report JSON, the bundle, the sanitized config, and the lineage seal. Already content-addressable; package it for share-with-judges.</p>
 
-<p><span class="tag adapt">adapt</span> <strong>Walk-forward harness.</strong> Neither reference has one — this is open territory. A minimal version: <code>xvn ab-compare --walk-forward train=N test=M step=K</code> that loops <code>ab-compare</code> over rolling windows and aggregates with the existing paired bootstrap. The autoresearcher's "day window + held-out window" model already implies this; promote it to the eval CLI.</p>
+<p><span class="tag adapt">adapt</span> <strong>Walk-forward harness.</strong> Neither reference has one — this is open territory. A minimal version: <code>xvn ab-compare --walk-forward train=N test=M step=K</code> that loops <code>ab-compare</code> over rolling windows and aggregates with the existing paired bootstrap. The autooptimizer's "day window + held-out window" model already implies this; promote it to the eval CLI.</p>
 
 <p><span class="tag adapt">adapt</span> <strong>Tearsheet.</strong> Generate a quantstats-style HTML at the end of <code>ab-compare</code>. Two paths: (a) emit a JSON summary and post-process via a thin Python wrapper around <code>quantstats_lumi</code>; (b) Rust-native using <code>plotly-rs</code> or static SVGs. Path (a) ships in a day; path (b) is the right long-term answer.</p>
 
@@ -501,11 +501,11 @@ fn confirm_decision(...) -&gt; bool { true }             // last-mile veto insid
 
 <p><span class="tag steal">steal</span> <strong>Per-cycle custom data (Freqtrade <code>trade.set_custom_data</code>, Lumibot <code>self.vars</code>).</strong> Add a <code>strategy_state</code> table keyed on <code>(agent_id, cycle_id)</code> with a JSON blob. Algorithms get <code>ctx.set("ema_long_at_entry", 4500.0)</code> / <code>ctx.get("ema_long_at_entry")</code>. Cheap, immediately useful for stateful strategies.</p>
 
-<p><span class="tag adapt">adapt</span> <strong>Multi-timeframe via @informative pattern.</strong> Replicate as a builder on <code>MarketSnapshot</code>: <code>snapshot.with_timeframe(Tf::H1).indicator(Rsi(14))</code> auto-merges into the active panel with column rename, lookahead-safe by construction. Useful for the autoresearcher to mutate which timeframes a strategy looks at.</p>
+<p><span class="tag adapt">adapt</span> <strong>Multi-timeframe via @informative pattern.</strong> Replicate as a builder on <code>MarketSnapshot</code>: <code>snapshot.with_timeframe(Tf::H1).indicator(Rsi(14))</code> auto-merges into the active panel with column rename, lookahead-safe by construction. Useful for the autooptimizer to mutate which timeframes a strategy looks at.</p>
 
 <p><span class="tag adapt">adapt</span> <strong>Protections framework as a structural extension of Risk.</strong> <code>xvision-risk</code> already has the right shape. Add four primitives modeled on Freqtrade: <code>StoplossGuard</code>, <code>MaxDrawdown</code>, <code>LowProfitArm</code>, <code>CooldownPeriod</code>. These compose under the existing deterministic-rule model and slot into <code>config/risk.toml</code> with no architectural change.</p>
 
-<p><span class="tag adapt">adapt</span> <strong>Pairlist filters for Mantle perp markets.</strong> Most of Freqtrade's pipeline doesn't apply (no orderbook spread for Orderly until phase 11.5), but <code>VolumeFilter</code> + <code>VolatilityFilter</code> + <code>AgeFilter</code> are straightforward and relevant to autoresearch's universe selection.</p>
+<p><span class="tag adapt">adapt</span> <strong>Pairlist filters for Mantle perp markets.</strong> Most of Freqtrade's pipeline doesn't apply (no orderbook spread for Orderly until phase 11.5), but <code>VolumeFilter</code> + <code>VolatilityFilter</code> + <code>AgeFilter</code> are straightforward and relevant to autooptimizer's universe selection.</p>
 
 <p><span class="tag steal">steal</span> <strong><code>xvn new-strategy --template {minimal,full,onchain,llm}</code> scaffolder.</strong> Generates <code>strategies/&lt;name&gt;.md</code> + a stub Algorithm impl + a config snippet. Enormous adoption-friction reducer.</p>
 
@@ -515,11 +515,11 @@ fn confirm_decision(...) -&gt; bool { true }             // last-mile veto insid
 
 <p><span class="tag steal">steal</span> <strong>Hot config reload.</strong> <code>xvn reload-config</code> over the engine API. The trader-stage prompt is in config; iterating a prompt without restarting the agent loop is a meaningful operator-UX win.</p>
 
-<p><span class="tag steal">steal</span> <strong>Health endpoint.</strong> <code>GET /health</code> with last cycle timestamp, last fill timestamp, last autoresearch session id, current arm count. Mirrors Freqtrade exactly; fits engine-api-foundation.</p>
+<p><span class="tag steal">steal</span> <strong>Health endpoint.</strong> <code>GET /health</code> with last cycle timestamp, last fill timestamp, last autooptimizer session id, current arm count. Mirrors Freqtrade exactly; fits engine-api-foundation.</p>
 
 <p><span class="tag steal">steal</span> <strong>Nested env-override syntax.</strong> Move from <code>XVN_SECTION_KEY</code> to <code>XVN__SECTION__KEY</code> (double-underscore separator) so that nested config keys round-trip cleanly. Trivial change in the config loader.</p>
 
-<p><span class="tag adapt">adapt</span> <strong>REST control surface.</strong> The engine-api-foundation plan covers this, but the Freqtrade endpoint set is a good shopping list: <code>/start /stop /pause /reload-config /status /trades /forceexit /performance /balance /sysinfo /health /logs</code> map cleanly. WebSocket / SSE for fills + autoresearch events.</p>
+<p><span class="tag adapt">adapt</span> <strong>REST control surface.</strong> The engine-api-foundation plan covers this, but the Freqtrade endpoint set is a good shopping list: <code>/start /stop /pause /reload-config /status /trades /forceexit /performance /balance /sysinfo /health /logs</code> map cleanly. WebSocket / SSE for fills + autooptimizer events.</p>
 
 <p><span class="tag adapt">adapt</span> <strong>Trace stats hook (Lumibot's <code>trace_stats</code>).</strong> Inside an algorithm, <code>self.trace("custom_metric", value)</code> writes into the <code>traces</code> table and surfaces in the tearsheet. Bridges arbitrary-strategy-metric to dashboard for free.</p>
 
@@ -533,21 +533,21 @@ fn confirm_decision(...) -&gt; bool { true }             // last-mile veto insid
 
 <h3>6.4 Cross-cutting</h3>
 
-<p><span class="tag adapt">adapt</span> <strong>JSON-with-comments configs (Freqtrade).</strong> TOML is fine, but the merge-multiple-configs pattern (<code>--config base.toml --config overrides.toml --config secrets.toml</code>) is operationally pleasant and not currently shipped. Layered loading also makes an <code>autoresearch.toml</code> + <code>session-commitment.toml</code> split feel natural.</p>
+<p><span class="tag adapt">adapt</span> <strong>JSON-with-comments configs (Freqtrade).</strong> TOML is fine, but the merge-multiple-configs pattern (<code>--config base.toml --config overrides.toml --config secrets.toml</code>) is operationally pleasant and not currently shipped. Layered loading also makes an <code>autooptimizer.toml</code> + <code>session-commitment.toml</code> split feel natural.</p>
 
-<p><span class="tag adapt">adapt</span> <strong>Pre-commitment file (specifically the autoresearcher's session commitment) as Freqtrade-style human-readable.</strong> JSON with comments + trailing commas tolerated, so judges can read the operator's signed pre-registered hypotheses without a viewer.</p>
+<p><span class="tag adapt">adapt</span> <strong>Pre-commitment file (specifically the autooptimizer's session commitment) as Freqtrade-style human-readable.</strong> JSON with comments + trailing commas tolerated, so judges can read the operator's signed pre-registered hypotheses without a viewer.</p>
 
 <h2 id="x-unique">7. The xvision differentiators worth foregrounding</h2>
 
 <p>Things neither reference has, ranked by how load-bearing they are for the marketplace story:</p>
 
 <ol>
-  <li><strong>Pre-committed evaluation gates.</strong> Operator signs the held-out window + ε threshold + loss-function choice <em>before</em> the autoresearch session runs. Fundamentally changes the trustworthiness of any reported result. Neither FT nor LB has anything like this.</li>
+  <li><strong>Pre-committed evaluation gates.</strong> Operator signs the held-out window + ε threshold + loss-function choice <em>before</em> the autooptimizer session runs. Fundamentally changes the trustworthiness of any reported result. Neither FT nor LB has anything like this.</li>
   <li><strong>Content-addressed lineage with Merkle-rooted CycleSeal.</strong> Each surviving mutation is anchored. Combined with on-chain reputation receipts, the result is a strategy whose history is <em>verifiable</em>, not just claimed.</li>
   <li><strong>Non-custodial trading via scoped Ed25519 key.</strong> xvision never holds capital. This is the ethical/structural counter-argument to FTX, and it makes the marketplace story coherent: you're delegating trading authority, not custody.</li>
   <li><strong>Risk gate as a first-class pipeline stage with deterministic verdicts.</strong> FT and LB push position limits, drawdown circuit breakers, etc. into the strategy code. xvision separates them. This is the right architecture; the protections framework can be ported as primitives <em>inside</em> the existing stage rather than scattered around the strategy.</li>
   <li><strong>Intern → Trader split.</strong> Neutral evidence prep before judgment is a structural anti-bias mechanism. Worth foregrounding as design intent in any positioning material.</li>
-  <li><strong>Null-result canary, inversion-pair eval, embedding-divergence diversity-decay.</strong> Three structural defenses against autoresearch noise-fitting. The phrase "we measured the noise floor of our own eval" is rare in this space.</li>
+  <li><strong>Null-result canary, inversion-pair eval, embedding-divergence diversity-decay.</strong> Three structural defenses against autooptimizer noise-fitting. The phrase "we measured the noise floor of our own eval" is rare in this space.</li>
 </ol>
 
 <h2 id="refs">8. References</h2>
@@ -558,8 +558,8 @@ fn confirm_decision(...) -&gt; bool { true }             // last-mile veto insid
   <li><code>MANUAL.md</code> — operator-side prerequisites (Alpaca, Orderly, Mantle minting, Anthropic key)</li>
   <li><code>decisions/0008-erc8004-deployment.md</code>, <code>decisions/0010-hackathon-pivot-strategy-loom.md</code>, <code>decisions/0011-cv-extraction.md</code></li>
   <li><code>docs/HACKATHON-1-PAGER.md</code> — current pitch and demo path</li>
-  <li><code>docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md</code> — autoresearcher spec</li>
-  <li><code>docs/superpowers/plans/2026-05-09-autoresearcher-{1,2,3}-*.md</code> — AR-1/2/3 plans</li>
+  <li><code>docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md</code> — autooptimizer spec</li>
+  <li><code>docs/superpowers/plans/2026-05-09-autooptimizer-{1,2,3}-*.md</code> — AR-1/2/3 plans</li>
   <li><code>docs/superpowers/plans/2026-05-08-eval-engine-plan.md</code> — eval engine (AR-1's hard upstream)</li>
   <li><code>crates/xvision-eval/src/baselines/</code> — 8 Algorithm impls</li>
   <li><code>strategies/README.md</code> — strategy backlog format and queue</li>
