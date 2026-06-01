@@ -41,6 +41,9 @@ pub mod parent_policy;
 pub mod program_view;
 pub mod progress;
 pub mod scenario_synthesis;
+pub mod seal;
+pub mod session;
+pub mod tournament;
 pub mod validator;
 
 pub use blob_store::BlobStore;

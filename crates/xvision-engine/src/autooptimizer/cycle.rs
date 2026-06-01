@@ -258,9 +258,21 @@ where
         .await?;
 
     for _ in 0..cycle_config.mutations_per_parent {
-        let diff = match mutator.propose(parent_strategy, config, dsr_prefix).await {
-            Ok(d) => d,
-            Err(_) => continue,
+        // When tournament_enabled, run the 3-candidate Borda-count tournament
+        // instead of a direct propose call. Incumbent win skips this iteration.
+        let diff = if config.tournament_enabled {
+            use crate::autooptimizer::tournament::TournamentRunner;
+            let runner = TournamentRunner::from_mutator(mutator);
+            match runner.run_tournament(parent_strategy, config).await {
+                Ok(r) if r.incumbent_wins => continue,
+                Ok(r) => r.winner_diff,
+                Err(_) => continue,
+            }
+        } else {
+            match mutator.propose(parent_strategy, config, dsr_prefix).await {
+                Ok(d) => d,
+                Err(_) => continue,
+            }
         };
         progress(CycleProgressEvent::MutationProposed {
             cycle_id: cycle_id.to_string(),

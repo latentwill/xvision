@@ -27,6 +27,7 @@ fn test_config() -> AutoOptimizerConfig {
         lineage_root: None,
         dspy_enabled: false,
         dspy_pattern_cohort_threshold: 5,
+        tournament_enabled: false,
     }
 }
 

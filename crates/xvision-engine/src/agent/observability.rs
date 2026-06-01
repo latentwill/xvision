@@ -1523,53 +1523,6 @@ impl ObsEmitter {
             .await;
     }
 
-    /// Open a `risk.gate` span around one `RiskGate::evaluate` call.
-    pub async fn emit_risk_gate_started(&self, span_id: &str, parent_span_id: Option<String>) {
-        self.bus
-            .publish(RunEvent::SpanStarted(SpanStartedEvent {
-                span_id: span_id.to_string(),
-                run_id: self.run_id.clone(),
-                parent_span_id,
-                kind: SpanKind::RiskGate,
-                name: "risk.gate".to_string(),
-                started_at: Utc::now(),
-                otel_trace_id: None,
-                otel_span_id: None,
-                attributes_json: None,
-            }))
-            .await;
-    }
-
-    /// Close a `risk.gate` span. `verdict` is `"approved"`, `"modified"`, or `"vetoed"`.
-    pub async fn emit_risk_gate_finished(
-        &self,
-        span_id: &str,
-        verdict: &str,
-        veto_reason: Option<&str>,
-        modified_qty: Option<f64>,
-    ) {
-        let error_json = if verdict == "vetoed" {
-            Some(serde_json::json!({
-                "verdict": verdict,
-                "veto_reason": veto_reason,
-                "modified_qty": modified_qty,
-            }).to_string())
-        } else {
-            None
-        };
-        self.bus
-            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
-                span_id: span_id.to_string(),
-                status: if verdict == "vetoed" {
-                    SpanStatus::Error
-                } else {
-                    SpanStatus::Ok
-                },
-                ended_at: Utc::now(),
-                error_json,
-            }))
-            .await;
-    }
 }
 
 /// Emit a `tracing::debug!` line for an unpriced `(provider, model)`
