@@ -418,7 +418,7 @@ fn parquet_sidecar_row_count_matches_push_count() {
 // ---------------------------------------------------------------------------
 
 /// The composite index idx_cycles_model_regime must be used for the
-/// autoresearcher's primary query shape: model_id = ? AND regime_tag = ?.
+/// autooptimizer's primary query shape: model_id = ? AND regime_tag = ?.
 #[tokio::test]
 async fn cycles_index_plan_uses_composite_index() {
     let pool = core_pool_with_0003().await;
@@ -434,7 +434,7 @@ async fn cycles_index_plan_uses_composite_index() {
     .await
     .unwrap();
 
-    // Run EXPLAIN QUERY PLAN for the autoresearcher query pattern.
+    // Run EXPLAIN QUERY PLAN for the autooptimizer query pattern.
     let rows = sqlx::query(
         "EXPLAIN QUERY PLAN \
          SELECT cycle_id, model_id, regime_tag \

@@ -16,7 +16,7 @@ and UI for those operations.
   `docs/v2d-memory-overview.md`.
 - Design discussion: `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`
   (F+L+T design, Observations / Patterns terminology, V3
-  autoresearcher interplay).
+  autooptimizer interplay).
 - V2D operator docs themselves call out the gap: the Memory panel
   ships empty in v1 because Patterns is empty, and the docs point
   to a v1.1 manual seeding CLI as the earliest path to populate it.
@@ -30,7 +30,7 @@ slot's `memory_mode` to `agent_scoped` and runs an eval sees:
   them).
 - Patterns staying empty (no UI to seed them, no CLI to add them).
 - The Memory panel in eval-review showing "no recall items" forever
-  unless V3 autoresearcher ships.
+  unless V3 autooptimizer ships.
 
 The operator can verify nothing leaked (good), but they can't
 *productively use* memory without either waiting for V3 or hand-
@@ -61,12 +61,12 @@ Without that, the F+L+T design lives entirely in tests and trust.
 
 | # | Decision |
 |---|---|
-| 1 | **Scope = Package B from the post-V2D grill pass.** Read + seed + delete + audit surface; **no manual distillation primitives** (Package C — promote Observation → Pattern). Distillation is V3 autoresearcher's job; doing it manually as a UI feature builds a path that V3 obsoletes. C is **folded into the V3 autoresearcher follow-up** (board-v2 item 11a). |
+| 1 | **Scope = Package B from the post-V2D grill pass.** Read + seed + delete + audit surface; **no manual distillation primitives** (Package C — promote Observation → Pattern). Distillation is V3 autooptimizer's job; doing it manually as a UI feature builds a path that V3 obsoletes. C is **folded into the V3 autooptimizer follow-up** (board-v2 item 11a). |
 | 2 | **`xvn memory` CLI surface.** Mirrors the existing `xvn agents` / `xvn strategies` shape. Verbs: `ls`, `show`, `add-pattern`, `rm`, `forget`. No `add-observation` — Observations are engine-written, never operator-written (write-side enforced by the existing `MemoryStore::upsert_observation` provenance assertions). |
 | 3 | **HTTP API at `/api/memory`.** Five endpoints: GET list, GET detail, POST patterns, DELETE one, DELETE bulk by namespace/agent. The dashboard's TanStack Query layer consumes this; no separate dashboard-side store. |
 | 4 | **Per-agent Memory tab on `/agents/<id>`** is the primary UI placement. A workspace-wide `/memory` route (for the `global` namespace) is a smaller secondary surface. The eval-review MemoryPanel gains a "Open Pattern" link on each recall row that deep-links into the management UI. |
-| 5 | **Observations tab is read-only.** Operators cannot add or edit Observations from the UI/CLI. They CAN delete (via `forget --namespace` or `forget --agent`) — bulk only, not per-item — so the operator's only "delete" lever on the Observation tier is namespace-level forget. This keeps Observations honest as a write-once log; per-item observation edits would corrupt the autoresearcher's distillation substrate. |
-| 6 | **Patterns are operator-editable.** Operators can add (`add-pattern`), delete (`rm` or `forget`). **Editing a Pattern is deferred to a follow-up** — the design discussion at `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` notes that the autoresearcher will eventually need "supersede vs replace" semantics; baking edit-in-place now would commit to one shape before V3 spec lands. v1.1 ships add + delete only. |
+| 5 | **Observations tab is read-only.** Operators cannot add or edit Observations from the UI/CLI. They CAN delete (via `forget --namespace` or `forget --agent`) — bulk only, not per-item — so the operator's only "delete" lever on the Observation tier is namespace-level forget. This keeps Observations honest as a write-once log; per-item observation edits would corrupt the autooptimizer's distillation substrate. |
+| 6 | **Patterns are operator-editable.** Operators can add (`add-pattern`), delete (`rm` or `forget`). **Editing a Pattern is deferred to a follow-up** — the design discussion at `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` notes that the autooptimizer will eventually need "supersede vs replace" semantics; baking edit-in-place now would commit to one shape before V3 spec lands. v1.1 ships add + delete only. |
 | 7 | **`training_window_end` is exposed on the CLI but optional in v1.1.** `xvn memory add-pattern` accepts `--training-end <date>`. If omitted, the Pattern is recorded with `training_window_end = NULL` (operator-attested wisdom, recalled in every scenario). The UI form has a "training data ends" date picker, blank by default. |
 | 8 | **Delete operations require confirmation in the UI but not the CLI.** UI: a Radix AlertDialog confirms each delete with item count + scope. CLI: `--yes` flag is *not* required (CLI users are assumed to know what they're doing), but `rm` and `forget` print the count of items that will be deleted before the operation completes and emit the count on stdout. |
 | 9 | **No new SQLite table.** Everything operates on the existing `memory_items` table from the merged V2D wave. No engine migration. |
@@ -99,16 +99,16 @@ Phase 5  operator docs update (xvn memory subcommand reference,
 ## Out of this intake
 
 - **Package C — manual distillation primitives.** Folded into V3
-  autoresearcher (`team/board-v2.md` item 11a) — the V3 wave will
-  build the same distillation surface as part of the autoresearcher's
+  autooptimizer (`team/board-v2.md` item 11a) — the V3 wave will
+  build the same distillation surface as part of the autooptimizer's
   promote/judge/retire loop, so building it twice is wasted effort.
-- **Pattern editing.** Decision 6. Defer until V3 autoresearcher
+- **Pattern editing.** Decision 6. Defer until V3 autooptimizer
   edit semantics land.
 - **Observation per-item delete.** Decision 5. Operators get bulk-
   forget only.
 - **Memory export (`xvn memory export --tier observation --out
   memory.jsonl`).** Useful for V3 dev work, not v1 operators. Defer
-  until the autoresearcher contract is written.
+  until the autooptimizer contract is written.
 - **Memory diff (`xvn memory diff --before <date> --after <date>`).**
   Operator audit nicety; not blocking. Defer.
 - **Cross-namespace recall blending.** Already deferred in V2D
@@ -168,6 +168,6 @@ These resolve at decomposition or contract-claim time:
 - V2D plan: `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`
 - V2D design note: `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`
 - V2D operator docs: `docs/v2d-memory-overview.md`
-- V3 autoresearcher entry (Package C lives here): `team/board-v2.md` item 11a
+- V3 autooptimizer entry (Package C lives here): `team/board-v2.md` item 11a
 - AgentForm UI (existing memory selector): `frontend/web/src/components/agent/SlotForm.tsx`
 - eval-review MemoryPanel (existing): `frontend/web/src/features/eval-runs/review/MemoryPanel.tsx`

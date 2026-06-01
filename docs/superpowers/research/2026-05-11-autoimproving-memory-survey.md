@@ -26,7 +26,7 @@ infrastructure for xvision, because each of those is Python-only
 sidecar service and adds latency + ops surface that conflicts with
 "xvn ships as a single binary." Mem0 / Graphiti can still play a
 **secondary, post-cycle role** for batch consolidation of EOD reports
-and autoresearcher output if needed — but that's a Phase 2 question.
+and autooptimizer output if needed — but that's a Phase 2 question.
 
 The user's two named candidates fared as follows:
 - **Hermes Agent (NousResearch)**: real and impressive, but it is an
@@ -42,7 +42,7 @@ The user's two named candidates fared as follows:
 
 xvision is a Rust workspace running a multi-agent trading pipeline
 (intern → trader → risk → executor) plus periodic activities
-(autoresearcher, EOD reports, scheduled tasks). The marketplace
+(autooptimizer, EOD reports, scheduled tasks). The marketplace
 roadmap puts a `StrategyBundle` behind each `agent_id` (ULID, later
 NFT token ID); each cycle (briefing → decision → outcome) is keyed by
 `cycle_id`.
@@ -51,7 +51,7 @@ Requirements for memory:
 
 | Axis | Requirement |
 |---|---|
-| Scope | per-`cycle_id`, per-`agent_id`, and global (user/config/EOD/tasks/autoresearcher) |
+| Scope | per-`cycle_id`, per-`agent_id`, and global (user/config/EOD/tasks/autooptimizer) |
 | Self-host | Yes — xvn users run it themselves, no 3rd-party paid services |
 | Stack | Rust-native preferred; sidecar acceptable if compelling |
 | Learns from outcomes | Yes — absorb briefing → decision → outcome tuples after each cycle |
@@ -98,7 +98,7 @@ Six-component schema (Core / Episodic / Semantic / Procedural /
 Resource / Knowledge Vault) managed by dedicated sub-agents. SOTA on
 LoCoMo (85.4 %). The taxonomy maps cleanly onto xvision concepts
 (Procedural = `StrategyBundle` behavior; Episodic = cycle traces;
-Semantic = autoresearcher findings; Resource/Vault = EOD reports &
+Semantic = autooptimizer findings; Resource/Vault = EOD reports &
 config). Heavy sidecar.
 
 **cognee** (Apache-2.0, Python with Rust SDK in progress)
@@ -189,7 +189,7 @@ tables). Tables:
 - `memory_agent` — per-`agent_id` long-term memory for each
   `StrategyBundle`; survives across cycles.
 - `memory_global` — user config, EOD reports, scheduled-task
-  outputs, autoresearcher findings; queryable by tag.
+  outputs, autooptimizer findings; queryable by tag.
 
 Embeddings: **fastembed-rs** with `nomic-embed-text` (no Python).
 
@@ -271,7 +271,7 @@ callers. **That's the right experiment to run first.**
    Rust SDK — if it's already shipping basic recall, evaluate it as
    a third option.
 3. **Schema design**: how exactly do `cycle_id` / `agent_id` rows
-   relate to user-global rows when an autoresearcher finding is
+   relate to user-global rows when an autooptimizer finding is
    relevant to a future trade? Plausible answer: cross-table
    metadata pointers + `tag` columns.
 4. **Local LLM choice**: which model drives extraction /

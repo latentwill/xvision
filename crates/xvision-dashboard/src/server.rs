@@ -61,12 +61,12 @@
 // 50. POST   /api/chat-rail/sessions                  chat_rail::create_session
 // 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
-// 53. POST   /api/autoresearch/run                    flywheel::autoresearch_run
+// 53. POST   /api/autooptimizer/run                    flywheel::autooptimizer_run
 // 54. POST   /api/memory/:id/activate                 memory::activate_pattern
 // 55. POST   /api/memory/:id/demote                   memory::demote_pattern
-// 56. POST   /api/autoresearch/:id/gate               flywheel::autoresearch_gate
-// 57. POST   /api/autoresearch/:id/promote            flywheel::autoresearch_promote
-// 58. POST   /api/autoresearch/:id/demote             flywheel::autoresearch_demote
+// 56. POST   /api/autooptimizer/:id/gate               flywheel::autooptimizer_gate
+// 57. POST   /api/autooptimizer/:id/promote            flywheel::autooptimizer_promote
+// 58. POST   /api/autooptimizer/:id/demote             flywheel::autooptimizer_demote
 // 59. POST   /api/optimize/memory-demos               flywheel::optimize_memory_demos
 // 60. POST   /api/optimize/memory-demos/:id/gate      flywheel::optimize_memory_demos_gate
 //
@@ -127,8 +127,9 @@
 //  R53. GET  /api/flywheel/status
 //  R54. GET  /api/flywheel/velocity
 //  R55. GET  /api/flywheel/lineage
-//  R56. GET  /api/autoresearch
-//  R57. GET  /api/autoresearch/:id
+//  R56. GET  /api/autooptimizer
+//  R57. GET  /api/autooptimizer/:id
+//  R58. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -153,7 +154,8 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, charts_annotated, charts_dashboards, charts_market_context, chat_rail,
+    agent_runs, agents, autooptimizer as autooptimizer_route, bars, charts_annotated,
+    charts_dashboards, charts_market_context, chat_rail,
     checkpoints as checkpoints_route, cli, diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
@@ -263,8 +265,48 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/flywheel/status", get(flywheel::status))
         .route("/api/flywheel/velocity", get(flywheel::velocity))
         .route("/api/flywheel/lineage", get(flywheel::lineage))
-        .route("/api/autoresearch", get(flywheel::autoresearch_list))
-        .route("/api/autoresearch/:id", get(flywheel::autoresearch_get))
+        .route("/api/autooptimizer", get(flywheel::autooptimizer_list))
+        // AR-3 backend: lineage graph, cycle seals, mutator ladder, diversity, findings.
+        // IMPORTANT: these static-segment routes must be registered BEFORE
+        // /api/autooptimizer/:id (the flywheel memory-distillation detail route)
+        // so axum's router resolves them correctly — static segments take
+        // priority over parameter segments at the same path depth, but we
+        // register them explicitly ahead of the catch-all to be safe.
+        .route(
+            "/api/autooptimizer/lineage",
+            get(autooptimizer_route::list_lineage),
+        )
+        .route(
+            "/api/autooptimizer/lineage/:hash",
+            get(autooptimizer_route::get_lineage_node),
+        )
+        .route(
+            "/api/autooptimizer/seals",
+            get(autooptimizer_route::list_seals),
+        )
+        .route(
+            "/api/autooptimizer/seals/:cycle_id",
+            get(autooptimizer_route::get_seal_by_cycle),
+        )
+        .route(
+            "/api/autooptimizer/ladder",
+            get(autooptimizer_route::get_ladder),
+        )
+        .route(
+            "/api/autooptimizer/diversity",
+            get(autooptimizer_route::list_diversity),
+        )
+        .route(
+            "/api/autooptimizer/findings/:bundle_hash",
+            get(autooptimizer_route::get_findings),
+        )
+        // Flywheel memory-distillation detail — catch-all after static AR-3 routes.
+        .route("/api/autooptimizer/:id", get(flywheel::autooptimizer_get))
+        // AR-3: live cycle progress stream for the dashboard autooptimizer surface.
+        .route(
+            "/api/autooptimizer/events",
+            get(crate::sse::autooptimizer_sse::autooptimizer_events_handler),
+        )
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
         .route("/api/cli/jobs/:id/output", get(cli::output))
@@ -376,18 +418,18 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/memory/:id/demote", post(memory_route::demote_pattern))
         .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── Flywheel / offline self-improvement ─────────────────────────
-        .route("/api/autoresearch/run", post(flywheel::autoresearch_run))
+        .route("/api/autooptimizer/run", post(flywheel::autooptimizer_run))
         .route(
-            "/api/autoresearch/:id/gate",
-            post(flywheel::autoresearch_gate),
+            "/api/autooptimizer/:id/gate",
+            post(flywheel::autooptimizer_gate),
         )
         .route(
-            "/api/autoresearch/:id/promote",
-            post(flywheel::autoresearch_promote),
+            "/api/autooptimizer/:id/promote",
+            post(flywheel::autooptimizer_promote),
         )
         .route(
-            "/api/autoresearch/:id/demote",
-            post(flywheel::autoresearch_demote),
+            "/api/autooptimizer/:id/demote",
+            post(flywheel::autooptimizer_demote),
         )
         .route(
             "/api/optimize/memory-demos",
@@ -551,7 +593,11 @@ pub fn wrap_with_auth(router: Router, auth: AuthState) -> Router {
     router.layer(axum::middleware::from_fn_with_state(auth, auth_middleware))
 }
 
-pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
+pub async fn serve(
+    addr: SocketAddr,
+    state: AppState,
+    autooptimizer_ipc_socket: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     // Run dashboard-owned migrations (dashboard_sessions, auth_audit).
     state.run_dashboard_migrations().await?;
 
@@ -592,6 +638,22 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     // it terminates with the process. See
     // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
     let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
+
+    // AR-3: start the autooptimizer IPC Unix socket listener when the
+    // operator passes `--autooptimizer-ipc-socket`. Evening-cycle CLI
+    // clients connect and stream CycleProgressEvents; the listener
+    // broadcasts them into `state.autooptimizer_tx` which feeds
+    // `GET /api/autooptimizer/events` SSE.
+    if let Some(socket_path) = autooptimizer_ipc_socket {
+        if let Err(e) =
+            crate::ipc::spawn_autooptimizer_subscriber(socket_path, state.autooptimizer_tx.clone())
+        {
+            tracing::warn!(
+                error = %e,
+                "could not start autooptimizer IPC socket; continuing without it",
+            );
+        }
+    }
 
     // Non-loopback bind: print a loud warning to stderr so operators
     // are aware they're exposing the dashboard. Terminal only — no UI popup.

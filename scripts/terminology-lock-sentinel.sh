@@ -2,7 +2,7 @@
 # Scan operator-facing surfaces for forbidden cryptographic/internal terms.
 # Exits 1 if any violations found. CI-safe; add `# terminology-ok` inline to suppress.
 #
-# Terminology lock doc: docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md
+# Terminology lock doc: docs/superpowers/specs/2026-05-27-autooptimizerer-terminology-lock.md
 
 set -euo pipefail
 
@@ -11,10 +11,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OPERATOR_PATHS=(
     "$REPO_ROOT/MANUAL.md"
     "$REPO_ROOT/crates/xvision-dashboard/wiki"
-    "$REPO_ROOT/crates/xvision-cli/src/commands/autoresearch.rs"
+    "$REPO_ROOT/crates/xvision-cli/src/commands/autooptimizer.rs"
     "$REPO_ROOT/frontend/web/src/features/marketplace"
     "$REPO_ROOT/frontend/web/src/features/memory"
-    "$REPO_ROOT/frontend/web/src/features/autoresearcher"
+    "$REPO_ROOT/frontend/web/src/features/autooptimizerer"
 )
 
 FORBIDDEN_PATTERNS=(
@@ -56,7 +56,7 @@ done
 if [ "$VIOLATIONS" -gt 0 ]; then
     echo ""
     echo "Found $VIOLATIONS terminology violation(s) on operator-facing surfaces."
-    echo "See docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md for remediation."
+    echo "See docs/superpowers/specs/2026-05-27-autooptimizerer-terminology-lock.md for remediation."
     exit 1
 fi
 

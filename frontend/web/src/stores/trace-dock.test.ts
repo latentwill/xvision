@@ -335,3 +335,21 @@ describe("trace-dock store — streamingState", () => {
     expect(s.activeSpanMeta).toEqual({});
   });
 });
+
+describe("trace-dock store — costOverrideUsd", () => {
+  beforeEach(resetStore);
+
+  test("setCostOverrideUsd stores the eval-side cost", () => {
+    expect(useTraceDock.getState().costOverrideUsd).toBeNull();
+    useTraceDock.getState().setCostOverrideUsd(0.4242);
+    expect(useTraceDock.getState().costOverrideUsd).toBe(0.4242);
+    useTraceDock.getState().setCostOverrideUsd(null);
+    expect(useTraceDock.getState().costOverrideUsd).toBeNull();
+  });
+
+  test("setActiveRun clears any pinned cost override", () => {
+    useTraceDock.getState().setCostOverrideUsd(1.23);
+    useTraceDock.getState().setActiveRun("run_next", "post-hoc");
+    expect(useTraceDock.getState().costOverrideUsd).toBeNull();
+  });
+});

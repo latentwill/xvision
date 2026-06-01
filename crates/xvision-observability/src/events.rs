@@ -155,6 +155,13 @@ pub struct ModelCallFinishedEvent {
     pub cost_usd: Option<f64>,
     pub prompt_hash: String,
     pub response_hash: Option<String>,
+    /// Full plaintext prompt/request body. Sidecar model-call spans must keep
+    /// this visible for trace review; callers that cannot retain plaintext
+    /// leave it `None` and still populate `prompt_hash`.
+    pub prompt_text: Option<String>,
+    /// Full plaintext assistant/model response body. For tool-use turns this
+    /// may be a JSON summary of the streamed tool-call deltas.
+    pub response_text: Option<String>,
     pub prompt_payload_ref: Option<String>,
     pub response_payload_ref: Option<String>,
     pub tool_calls_requested: Option<String>,

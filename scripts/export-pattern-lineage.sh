@@ -4,9 +4,9 @@ set -euo pipefail
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  scripts/export-pattern-lineage.sh <autoresearch_run_id> [--output path]
+  scripts/export-pattern-lineage.sh <autooptimizer_run_id> [--output path]
 
-Reads `xvn autoresearch inspect --json` and the produced Pattern row via
+Reads `xvn optimizer inspect --json` and the produced Pattern row via
 `xvn memory show --json`, then emits a small Markdown lineage report.
 USAGE
 }
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-run_json="$(xvn autoresearch inspect "$run_id" --json)"
+run_json="$(xvn optimizer inspect "$run_id" --json)"
 pattern_id="$(
   JSON="$run_json" python3 - <<'PY'
 import json
@@ -59,7 +59,7 @@ obs = run.get("observation_ids") or []
 
 print("# Pattern Lineage")
 print()
-print(f"- autoresearch run: `{run['id']}`")
+print(f"- autooptimizer run: `{run['id']}`")
 print(f"- namespace: `{run['namespace']}`")
 print(f"- pattern id: `{run['pattern_id']}`")
 print(f"- pattern promotion state: `{pattern.get('promotion_state') or 'active'}`")

@@ -19,7 +19,7 @@ import {
   fireEvent,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   isBlocker,
@@ -30,6 +30,7 @@ import {
   type AgentDiagnostics,
   type StrategyDiagnostics,
 } from "@/api/diagnostics";
+import { listAgents } from "@/api/agents";
 import { mintOptimization } from "@/api/optimizations";
 import { ApiError } from "@/api/client";
 import { CapabilityBadges } from "./CapabilityBadges";
@@ -57,6 +58,16 @@ vi.mock("@/api/optimizations", async () => {
   return {
     ...actual,
     mintOptimization: vi.fn(),
+  };
+});
+
+vi.mock("@/api/agents", async () => {
+  const actual = await vi.importActual<typeof import("@/api/agents")>(
+    "@/api/agents",
+  );
+  return {
+    ...actual,
+    listAgents: vi.fn(),
   };
 });
 
@@ -270,6 +281,10 @@ function blockedStrategy(): StrategyDiagnostics {
 }
 
 describe("StrategyReadinessPanel", () => {
+  beforeEach(() => {
+    vi.mocked(listAgents).mockResolvedValue([]);
+  });
+
   it("shows the launchable verdict when ready", async () => {
     vi.mocked(getStrategyDiagnostics).mockResolvedValue(launchableStrategy());
     render(withQC(<StrategyReadinessPanel strategyId="st1" />));
@@ -286,6 +301,39 @@ describe("StrategyReadinessPanel", () => {
     // The missing-tool remediation names the tool to grant. It appears in
     // both the unmet-summary list and the per-agent card, so assert ≥1.
     expect(screen.getAllByText(/Grant the "ohlcv" tool/i).length).toBeGreaterThan(0);
+  });
+
+  it("loads strategy-scoped agents and shows the bound model", async () => {
+    vi.mocked(getStrategyDiagnostics).mockResolvedValue(launchableStrategy());
+    vi.mocked(listAgents).mockResolvedValue([
+      {
+        agent_id: "ag1",
+        name: "Trader",
+        description: "",
+        tags: [],
+        archived: false,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        scope_strategy_id: "st1",
+        slots: [
+          {
+            name: "trader",
+            provider: "openrouter",
+            model: "anthropic/claude-sonnet-4",
+            system_prompt: "Trade.",
+            skill_ids: [],
+            max_tokens: null,
+          },
+        ],
+      },
+    ]);
+
+    render(withQC(<StrategyReadinessPanel strategyId="st1" />));
+
+    await waitFor(() => screen.getByTestId("agent-model-trader"));
+    expect(listAgents).toHaveBeenCalledWith({ scope: "st1" });
+    expect(screen.getByText("anthropic/claude-sonnet-4")).toBeTruthy();
+    expect(screen.getByText(/openrouter/)).toBeTruthy();
   });
 });
 

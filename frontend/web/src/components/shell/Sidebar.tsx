@@ -16,6 +16,8 @@ const PRIMARY: Item[] = [
   { to: "/scenarios", label: "Scenarios", icon: "list" },
   { to: "/charts", label: "Charts", icon: "chartPie" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
+  { to: "/marketplace", label: "Marketplace", icon: "bag" },
+  { to: "/autooptimizer", label: "Optimizer", icon: "pulse" },
   { to: "/docs", label: "Docs", icon: "book" },
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
@@ -68,40 +70,51 @@ export function Sidebar({ className = "" }: { className?: string }) {
         ))}
       </nav>
 
-      <div className="mx-4 mb-3 flex items-center gap-1 rounded border border-border-soft bg-surface-elev p-1">
-        <button
-          type="button"
-          onClick={setLightTheme}
-          aria-label="Switch to light theme"
-          className={[
-            "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
-            isLight ? "bg-gold/[0.12] text-gold" : "",
-          ].join(" ")}
-        >
-          <Icon name="sun" size={15} />
-        </button>
-        <button
-          type="button"
-          onClick={setDarkTheme}
-          aria-label="Switch to dark theme"
-          className={[
-            "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
-            !isLight ? "bg-gold/[0.12] text-gold" : "",
-          ].join(" ")}
-        >
-          <Icon name="moon" size={15} />
-        </button>
-      </div>
+      {/*
+        QA31: wrap theme toggle + user chip in a single `mt-auto` block
+        so BOTH are anchored to the bottom of the sidebar, not just the
+        chip. Previously only the chip had `mt-auto` while the theme
+        toggle floated up directly beneath the nav — on short nav lists
+        the theme toggle sat in the middle of the column with the chip
+        glued to the bottom. Operators reported both should sit at the
+        viewport bottom regardless of nav-list length.
+      */}
+      <div className="mt-auto">
+        <div className="mx-4 mb-3 flex items-center gap-1 rounded border border-border-soft bg-surface-elev p-1">
+          <button
+            type="button"
+            onClick={setLightTheme}
+            aria-label="Switch to light theme"
+            className={[
+              "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
+              isLight ? "bg-gold/[0.12] text-gold" : "",
+            ].join(" ")}
+          >
+            <Icon name="sun" size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={setDarkTheme}
+            aria-label="Switch to dark theme"
+            className={[
+              "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
+              !isLight ? "bg-gold/[0.12] text-gold" : "",
+            ].join(" ")}
+          >
+            <Icon name="moon" size={15} />
+          </button>
+        </div>
 
-      <div className="flex items-center gap-2.5 px-4 py-3.5 border-t border-border-soft mt-auto">
-        <div className="w-8 h-8 rounded-full bg-surface-panel border border-border flex items-center justify-center text-[11px] font-semibold text-text">
-          AK
+        <div className="flex items-center gap-2.5 px-4 py-3.5 border-t border-border-soft">
+          <div className="w-8 h-8 rounded-full bg-surface-panel border border-border flex items-center justify-center text-[11px] font-semibold text-text">
+            AK
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[13px] text-text leading-tight">Alex Kim</div>
+            <div className="text-[11px] text-text-3 leading-tight">alex@xvn.dev</div>
+          </div>
+          <Icon name="chevR" size={14} className="text-text-3" />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] text-text leading-tight">Alex Kim</div>
-          <div className="text-[11px] text-text-3 leading-tight">alex@xvn.dev</div>
-        </div>
-        <Icon name="chevR" size={14} className="text-text-3" />
       </div>
     </aside>
   );

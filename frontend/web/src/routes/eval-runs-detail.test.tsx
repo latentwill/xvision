@@ -12,7 +12,7 @@ import * as scenariosApi from "@/api/scenarios";
 import * as settingsApi from "@/api/settings";
 import * as strategyApi from "@/api/strategies";
 import { useTraceDock } from "@/stores/trace-dock";
-import type { DecisionRowDto, RunDetail } from "@/api/types.gen";
+import type { DecisionRowDto, FilterEventV1, RunDetail } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {
   const actual = await vi.importActual<typeof import("@/api/eval")>(
@@ -310,6 +310,56 @@ describe("EvalRunDetailRoute", () => {
     expect(screen.getByText("77%")).toBeInTheDocument();
   });
 
+  // The filter-event timeline is fed by `detail.filter_events`, which only
+  // refreshes via `GET /runs/:id`. SSE does not carry per-bar filter events,
+  // so without a streaming-side refetch nudge the strip lags the 2s adaptive
+  // poll (and can sit stale until a terminal status invalidates the cache).
+  // useLiveRunStream debounces a refetch off every decision/status event so
+  // the strip grows in step with streamed decisions.
+  it("grows the filter timeline as decisions stream in", async () => {
+    const filterEvent = (i: number): FilterEventV1 => ({
+      schema_version: 1,
+      bar_timestamp: `2026-05-13T15:0${i}:00Z`,
+      filter_id: "01FILTER",
+      triggered: i % 2 === 0,
+      suppressed_reason: null,
+      conditions_passed: [],
+      conditions_failed: [],
+      indicator_snapshot: {},
+    });
+    let calls = 0;
+    vi.mocked(evalApi.getRun).mockImplementation(async () => {
+      const next = detail({
+        filter_events: Array.from({ length: calls }, (_, i) => filterEvent(i)),
+      });
+      calls += 1;
+      return next;
+    });
+
+    renderDetail();
+
+    // First render: filter_events length 0 → timeline section is hidden.
+    await screen.findByText("No decisions");
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(screen.queryByTestId("filter-event-timeline")).toBeNull();
+
+    const es = FakeEventSource.instances[0];
+
+    for (let i = 1; i <= 3; i += 1) {
+      es.emit("decision", {
+        event: "decision",
+        data: decision({ decision_index: i - 1 }),
+      });
+      // The strip lives in `detail.filter_events`, which only refreshes via
+      // `GET /runs/:id`. Each emit schedules a debounced refetch; wait for
+      // the resulting render rather than the request itself so the test
+      // stays insensitive to the exact debounce timing.
+      await waitFor(() =>
+        expect(screen.getAllByTestId("filter-event-tick")).toHaveLength(i),
+      );
+    }
+  });
+
   it("keeps rendering cached run detail when a live refetch gets a transient not_found", async () => {
     vi.mocked(evalApi.getRun)
       .mockResolvedValueOnce(detail())
@@ -390,9 +440,19 @@ describe("EvalRunDetailRoute", () => {
       detail({
         summary: { ...detail().summary, status: "completed" },
         decisions: [
-          decision({ decision_index: 0, justification: "breakout confirmed" }),
+          // Each fixture row gets a distinct timestamp so it represents its
+          // own decision step. The PHASE chip dedupe collapses per-asset
+          // child rows of the SAME step, which isn't what this test is
+          // exercising — the contract here is phase derivation from the
+          // synthesized-row markers, one row per step.
+          decision({
+            decision_index: 0,
+            timestamp: "2026-05-13T15:00:00Z",
+            justification: "breakout confirmed",
+          }),
           decision({
             decision_index: 1,
+            timestamp: "2026-05-13T16:00:00Z",
             action: "hold",
             conviction: null,
             order_size: null,
@@ -401,6 +461,7 @@ describe("EvalRunDetailRoute", () => {
           }),
           decision({
             decision_index: 2,
+            timestamp: "2026-05-13T17:00:00Z",
             action: "flat",
             conviction: null,
             order_size: null,
@@ -413,9 +474,9 @@ describe("EvalRunDetailRoute", () => {
 
     renderDetail();
 
-    // One engaged (the breakout) + two filtered (the synthesized rows).
+    // One engaged (the breakout) + two no-op (the synthesized rows).
     expect((await screen.findAllByText("ENGAGED")).length).toBe(1);
-    expect(screen.getAllByText("FILTERED").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("NO-OP").length).toBeGreaterThanOrEqual(2);
   });
 
   it("dims filtered rows and dashes out their engaged-only cells", async () => {
@@ -423,9 +484,17 @@ describe("EvalRunDetailRoute", () => {
       detail({
         summary: { ...detail().summary, status: "completed" },
         decisions: [
-          decision({ decision_index: 0, justification: "breakout confirmed" }),
+          // Distinct timestamps so each row is its own step — the dimming /
+          // dash-out contract is per-row, separate from the PHASE-chip
+          // per-step dedupe.
+          decision({
+            decision_index: 0,
+            timestamp: "2026-05-13T15:00:00Z",
+            justification: "breakout confirmed",
+          }),
           decision({
             decision_index: 1,
+            timestamp: "2026-05-13T16:00:00Z",
             action: "hold",
             conviction: null,
             order_size: null,
@@ -438,10 +507,10 @@ describe("EvalRunDetailRoute", () => {
 
     renderDetail();
 
-    const filteredChip = await screen.findByText("FILTERED");
+    const filteredChip = await screen.findByText("NO-OP");
     const row = filteredChip.closest("tr");
     expect(row).not.toBeNull();
-    // Filtered rows render at reduced opacity (0.78) and replace engaged-only
+    // No-op rows render at reduced opacity (0.78) and replace engaged-only
     // cells with em dashes.
     expect(row?.getAttribute("style") ?? "").toMatch(/opacity:\s*0\.78/);
     expect((row?.querySelectorAll("td") ?? [])).not.toHaveLength(0);
@@ -973,6 +1042,40 @@ describe("EvalRunDetailRoute", () => {
     unmount();
 
     expect(useTraceDock.getState().activeRunId).toBeNull();
+  });
+
+  it("pushes the eval-side cost into the trace dock so the capsule matches the meta strip", async () => {
+    // Pricing rolled up on the eval table (`inference_cost_quote_total`)
+    // but not on the linked agent-run summary (`total_cost_usd === 0`):
+    // the meta strip uses `displayCost`, which prefers the eval-side
+    // value. The capsule reads from the trace-dock store's
+    // `costOverrideUsd`, so the eval-detail page must push the same
+    // computed value or the capsule will show "—" / "$0.00" while the
+    // strip shows the real cost.
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+          inference_cost_quote_total: 0.4242,
+        },
+      }),
+    );
+
+    renderDetail();
+
+    // Wait for the page to settle on the completed-run surface (the
+    // Rerun button is only mounted after the run summary loads).
+    await screen.findByRole("button", { name: /rerun eval run 01live/i });
+
+    await waitFor(() =>
+      expect(useTraceDock.getState().costOverrideUsd).toBe(0.4242),
+    );
+
+    // And the meta strip renders the same number.
+    const meta = screen.getByTestId("eval-run-meta");
+    expect(meta.textContent ?? "").toMatch(/\$0\.4242/);
   });
 
   it("renders the topbar status pill from run.status while the run is running", async () => {

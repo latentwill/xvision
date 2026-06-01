@@ -658,7 +658,7 @@ pub enum GateVerdict {
 pub fn anti_overfit_verdict(result: &BacktestResult) -> GateVerdict { ... }
 ```
 
-Rationale: the NexusTrade $676 warning still applies — a *self-improvement loop* (Karpathy autoresearch v2) without the gate will hill-climb into single-regime optima. v1 is not running a self-improvement loop; v1 is one human picking strategy variants and reporting their limits honestly. The gate's epistemic role is preserved (the report frames the result truthfully); its scheduling role (blocking forward paper) is what gets relaxed.
+Rationale: the NexusTrade $676 warning still applies — a *self-improvement loop* (Karpathy autooptimizer v2) without the gate will hill-climb into single-regime optima. v1 is not running a self-improvement loop; v1 is one human picking strategy variants and reporting their limits honestly. The gate's epistemic role is preserved (the report frames the result truthfully); its scheduling role (blocking forward paper) is what gets relaxed.
 
 Re-tightening trigger: any v2 work that adds an automated optimizer over strategy variants or strategy parameters — in that mode, the gate must block again to prevent Goodhart.
 
@@ -739,7 +739,7 @@ Acceptance criteria for hackathon submission:
 
 ## Telemetry (v1: SQLite flight recorder only)
 
-v1 ships the §9.4 SQLite flight recorder plus `tracing` with `tracing-subscriber` printing to stderr in dev. **OTel export, GenAI semantic conventions, and self-hosted Langfuse are deferred to v2** — appropriate for a deployable serving system, over-budget for a 45-day hackathon. The conflict between "autoresearch loop without traces is just drift" (true, but the v1 scope explicitly does not run an autoresearch loop) and "ship the headline number" (the v1 priority) resolves toward the latter.
+v1 ships the §9.4 SQLite flight recorder plus `tracing` with `tracing-subscriber` printing to stderr in dev. **OTel export, GenAI semantic conventions, and self-hosted Langfuse are deferred to v2** — appropriate for a deployable serving system, over-budget for a 45-day hackathon. The conflict between "autooptimizer loop without traces is just drift" (true, but the v1 scope explicitly does not run an autooptimizer loop) and "ship the headline number" (the v1 priority) resolves toward the latter.
 
 ### Task T.1: `tracing` console subscriber
 
@@ -759,11 +759,11 @@ These are deferred until the headline Δ-Sharpe claim has been validated. Each i
 
 - **Multi-asset basket (Tier 2 fix #6).** ETH, SOL, xStocks. Re-add trigger: BTC v1 result is positive and the cluster-cap risk rule needs cross-asset exercise. Concatenate paired returns across assets for the bootstrap.
 - **xStocks integration (Mantle tokenized equities).** Re-add trigger: Mantle's xStocks have a programmatic surface that doesn't require a separate executor (current state is unverified for v1; check ecosystem registry).
-- **Telemetry crate + OTel + Langfuse.** Re-add trigger: serving load justifies live observability, OR the Karpathy autoresearch loop ships and needs honest cross-run traces.
+- **Telemetry crate + OTel + Langfuse.** Re-add trigger: serving load justifies live observability, OR the Karpathy autooptimizer loop ships and needs honest cross-run traces.
 - **Telegram bot (`xvision-bot`).** Re-add trigger: post-hackathon polish, demo audience extends beyond the judges' README walkthrough.
 - **`mantle-risk-evaluator` LLM pre-flight.** Re-add trigger: Mantle forward-trade volume justifies a second LLM-mediated gate on top of the deterministic risk layer.
 
-### Karpathy autoresearch loop (deferred)
+### Karpathy autooptimizer loop (deferred)
 
 The Rust orchestrator proposes strategy mutations from per-strategy trade ledgers, validates the resulting variants against the boundary probe corpus, and admits survivors to the loom. Implementation in `crates/xvision-harness/src/karpathy_loop.rs`.
 

@@ -37,7 +37,7 @@ import { logInfo, safeUrlHost } from "@/lib/logger";
 type KindOption = {
   value: string;
   label: string;
-  wireKind: "anthropic" | "openai-compat";
+  wireKind: "anthropic" | "openai-compat" | "ollama" | "llama-cpp";
   defaultName: string;
   defaultBaseUrl: string;
   isCustom: boolean;
@@ -93,18 +93,36 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
     keyHelp: "Starts with sk-or-…",
   },
   {
+    value: "ollama",
+    label: "Ollama (local)",
+    wireKind: "ollama",
+    defaultName: "ollama",
+    defaultBaseUrl: "http://localhost:11434",
+    isCustom: false,
+    keyHelp: "Optional — leave blank for local Ollama.",
+  },
+  {
+    value: "llama-cpp",
+    label: "llama.cpp server",
+    wireKind: "llama-cpp",
+    defaultName: "llama-cpp",
+    defaultBaseUrl: "http://localhost:8080",
+    isCustom: false,
+    keyHelp: "Optional — leave blank for local llama-server.",
+  },
+  {
     value: "custom",
-    label: "Custom (Ollama, Together, vLLM, self-hosted, …)",
+    label: "Custom (Together, vLLM, self-hosted, …)",
     wireKind: "openai-compat",
     defaultName: "",
     defaultBaseUrl: "",
     isCustom: true,
-    keyHelp: "Leave blank for no-auth endpoints (local Ollama).",
+    keyHelp: "Leave blank for no-auth endpoints.",
   },
 ];
 
-// Local-Ollama style endpoints don't need a key. Anything else does.
 function keyRequired(meta: KindOption, baseUrl: string): boolean {
+  if (meta.value === "ollama" || meta.value === "llama-cpp") return false;
   if (meta.value === "custom" && /localhost|127\.0\.0\.1/.test(baseUrl)) {
     return false;
   }
@@ -127,6 +145,8 @@ const PROVIDER_KIND_FILTER: FilterDef = {
     { value: "all", label: "All kinds" },
     { value: "anthropic", label: "Anthropic" },
     { value: "openai-compat", label: "OpenAI-compat" },
+    { value: "ollama", label: "Ollama" },
+    { value: "llama-cpp", label: "llama.cpp" },
   ],
 };
 
@@ -313,7 +333,15 @@ function ProviderRowView({
   return (
     <>
       <tr className="border-t border-border-soft align-middle">
-        <td className="py-2 pr-3">
+        {/*
+          QA31: header cells get `paddingLeft: 20` on the first column
+          via ListCard.tsx, but the row cells had no matching `pl-` so
+          the provider names rendered flush against the card's left
+          edge while their header label was indented 20px. Aligning the
+          first cell with `pl-5` (20px) so the column reads as a
+          proper column.
+        */}
+        <td className="py-2 pl-5 pr-3">
           <div className="flex items-center gap-2">
             <code className="font-mono text-[13px] text-text">{row.name}</code>
           </div>
@@ -390,7 +418,7 @@ function ProviderRowView({
       </tr>
       {test.data || test.isError ? (
         <tr className="border-t border-border-soft/40">
-          <td colSpan={5} className="py-1.5 pr-0 text-[12px]">
+          <td colSpan={5} className="py-1.5 pl-5 pr-5 text-[12px]">
             <ConnectionResult
               data={test.data ?? null}
               error={test.isError ? test.error : null}
@@ -400,21 +428,21 @@ function ProviderRowView({
       ) : null}
       {editing ? (
         <tr className="border-t border-border-soft/40 bg-surface-elev/20">
-          <td colSpan={5} className="py-3 pr-0">
+          <td colSpan={5} className="py-3 pl-5 pr-5">
             <EditProviderForm row={row} onClose={() => setEditing(false)} />
           </td>
         </tr>
       ) : null}
       {managing ? (
         <tr className="border-t border-border-soft/40 bg-surface-elev/20">
-          <td colSpan={5} className="py-3 pr-0">
+          <td colSpan={5} className="py-3 pl-5 pr-5">
             <ModelManager row={row} onClose={() => setManaging(false)} />
           </td>
         </tr>
       ) : null}
       {removeError ? (
         <tr className="border-t border-border-soft/40">
-          <td colSpan={5} className="py-2 pr-0 text-[12px] text-danger">
+          <td colSpan={5} className="py-2 pl-5 pr-5 text-[12px] text-danger">
             {removeError}
           </td>
         </tr>
@@ -525,6 +553,8 @@ function EditProviderForm({
             <option value="anthropic">anthropic</option>
             <option value="openai-compat">openai-compat</option>
             <option value="local-candle">local-candle</option>
+            <option value="ollama">ollama</option>
+            <option value="llama-cpp">llama-cpp</option>
           </select>
         </Field>
         <Field label="Base URL">

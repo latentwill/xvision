@@ -83,6 +83,16 @@ type State = {
    * Advanced is the forensics view.
    */
   advanced_view: boolean;
+  /**
+   * Eval-side cost override pushed by `eval-runs-detail` so the floating
+   * capsule renders the same number as the page meta strip. The eval's
+   * `inference_cost_quote_total` is the authoritative aggregate; the
+   * agent-run rollup (`summary.total_cost_usd`) can lag or stay at zero
+   * for runs whose pricing data lives only in the eval table. When
+   * `null` the capsule falls back to the agent-run summary value. Reset
+   * to `null` on every `setActiveRun` so it never leaks across runs.
+   */
+  costOverrideUsd: number | null;
 };
 
 type Actions = {
@@ -101,6 +111,7 @@ type Actions = {
   applyStreamEvent: (ev: AgentRunStreamEvent) => void;
   resetStreamingState: () => void;
   setAdvancedView: (v: boolean) => void;
+  setCostOverrideUsd: (v: number | null) => void;
 };
 
 const EMPTY_STREAMING: StreamingState = {
@@ -192,10 +203,12 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
   lastOpenHeight: "working",
   streamingState: EMPTY_STREAMING,
   advanced_view: readPersistedAdvancedView(),
+  costOverrideUsd: null,
   setAdvancedView: (v) => {
     writePersistedAdvancedView(v);
     set({ advanced_view: v });
   },
+  setCostOverrideUsd: (v) => set({ costOverrideUsd: v }),
   setHeight: (h) =>
     set((s) => ({
       height: h,
@@ -220,6 +233,7 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
       mode,
       selectedSpanId: null,
       streamingState: freshStreaming(),
+      costOverrideUsd: null,
     }),
   setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
   markSpanActive: (spanId, meta) =>

@@ -532,14 +532,14 @@ async fn seed_pattern(memory_db: &Path, id: &str, namespace: &str) {
     .expect("seed pattern");
 }
 
-async fn seed_autoresearch_run(memory_db: &Path, id: &str, namespace: &str, pattern_id: &str) {
+async fn seed_autooptimizer_run(memory_db: &Path, id: &str, namespace: &str, pattern_id: &str) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect(&format!("sqlite://{}", memory_db.display()))
         .await
         .expect("open memory db");
     sqlx::query(
-        "INSERT INTO autoresearch_runs \
+        "INSERT INTO autooptimizer_runs \
          (id, namespace, observation_ids_json, pattern_id, pattern_text, promotion_state, \
           min_observations, created_at, status, error) \
          VALUES (?, ?, ?, ?, 'Demo-source Pattern', 'active', 2, \
@@ -551,7 +551,7 @@ async fn seed_autoresearch_run(memory_db: &Path, id: &str, namespace: &str, patt
     .bind(pattern_id)
     .execute(&pool)
     .await
-    .expect("seed autoresearch run");
+    .expect("seed autooptimizer run");
 }
 
 async fn seed_memory_recall_event(
@@ -629,7 +629,7 @@ async fn optimize_memory_demos_mints_child_agent_prompt() {
     seed_pattern(&mem, "opt-cli-prior-1", &namespace).await;
     seed_pattern(&mem, "opt-cli-auto-prior-1", &namespace).await;
     seed_pattern(&mem, "opt-cli-demo-pattern-1", &namespace).await;
-    seed_autoresearch_run(&mem, "opt-cli-run-1", &namespace, "opt-cli-demo-pattern-1").await;
+    seed_autooptimizer_run(&mem, "opt-cli-run-1", &namespace, "opt-cli-demo-pattern-1").await;
     seed_memory_recall_event(
         dir.path(),
         "opt-cli-auto-prior-event-1",
@@ -758,11 +758,11 @@ async fn optimize_memory_demos_mints_child_agent_prompt() {
             "0.7",
             "--child-dev-score",
             "0.95",
-            "--parent-holdout-score",
+            "--baseline-untouched-score",
             "1.0",
-            "--child-holdout-score",
+            "--candidate-untouched-score",
             "1.2",
-            "--gate-epsilon",
+            "--min-improvement",
             "0.1",
             "--reason",
             "child beat parent on dev and holdout",
@@ -809,9 +809,9 @@ async fn optimize_memory_demos_mints_child_agent_prompt() {
     );
     assert_ok(&out);
     let lineage_text = String::from_utf8_lossy(&out.stdout);
-    assert!(lineage_text.contains("gate verdict=passed"));
-    assert!(lineage_text.contains("delta_dev=0.250000"));
-    assert!(lineage_text.contains("delta_holdout=0.200000"));
+    assert!(lineage_text.contains("gate decision: Kept"));
+    assert!(lineage_text.contains("validation improvement: 0.250000"));
+    assert!(lineage_text.contains("untouched improvement: 0.200000"));
 
     let out = xvn_with_memory(&["agent", "get", child_id], dir.path(), &mem);
     assert_ok(&out);

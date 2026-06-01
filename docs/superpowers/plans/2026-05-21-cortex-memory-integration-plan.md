@@ -12,7 +12,7 @@ while preserving the F+L+T leakage contract.
 
 **Architecture:** A new `xvision-memory` crate owns a SQLite-backed cosine-top-k store at `~/.xvn/memory.db`. `AgentSlot` gains a `memory_mode: MemoryMode` field (engine migration 029). The `execute_slot` dispatcher seam in `crates/xvision-engine/src/agent/execute.rs` recalls top-k matches and prepends them to `system_prompt` for non-off slots, then a post-dispatch recorder writes the decision back to the slot's namespace. Two new `events.jsonl` event kinds (`memory_recall` / `memory_write`) drive the eval-review UI. Sidecar / cortex-http boundary is deferred to v2 per `team/intake/2026-05-21-v2d-agent-memory.md` Decision 1.
 
-**Cortex tier split (added 2026-05-21):** the store is two-tier — `tier=resource` (concrete observations, provenance-tagged with `run_id`/`scenario_id`/`cycle_idx`, never recalled at decision time) and `tier=skill` (abstracted patterns, no provenance, recalled at decision time). The auto-recorder writes Resources only; recall queries Skills only. This dissolves the look-ahead leakage problem identified in `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` — backtest replays cannot recall prior runs' decisions because the recall path is Skills-only and Skills is empty in v1. Skills are populated by an explicit distillation pass (V3 autoresearcher item 11a on the V2 board) or a manual seeding CLI (v1.1 follow-up).
+**Cortex tier split (added 2026-05-21):** the store is two-tier — `tier=resource` (concrete observations, provenance-tagged with `run_id`/`scenario_id`/`cycle_idx`, never recalled at decision time) and `tier=skill` (abstracted patterns, no provenance, recalled at decision time). The auto-recorder writes Resources only; recall queries Skills only. This dissolves the look-ahead leakage problem identified in `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md` — backtest replays cannot recall prior runs' decisions because the recall path is Skills-only and Skills is empty in v1. Skills are populated by an explicit distillation pass (V3 autooptimizer item 11a on the V2 board) or a manual seeding CLI (v1.1 follow-up).
 
 **Tech Stack:** Rust workspace (`sqlx::SqlitePool`, `serde`, `thiserror`, `chrono`, `sha2`); existing `xvision-intern` provider clients for embedding calls (OpenAI / Voyage); ts-rs for the frontend type surface; React (`AgentForm.tsx`) for the Memory selector.
 
@@ -711,7 +711,7 @@ vibetraders.
 - No leakage is possible because the read path the LLM sees is
   Patterns-only, and Patterns has no rows.
 
-Patterns populate via V3 autoresearcher (item 11a on the V2 board)
+Patterns populate via V3 autooptimizer (item 11a on the V2 board)
 or a v1.1 manual seeding CLI.
 
 **Files:**
@@ -781,7 +781,7 @@ pub struct MemoryItem {
     pub scenario_id: Option<String>,
     pub cycle_idx: Option<i64>,
     /// Latest bar timestamp across the Observations that contributed
-    /// to this Pattern. REQUIRED on autoresearcher-distilled
+    /// to this Pattern. REQUIRED on autooptimizer-distilled
     /// Patterns; MAY be `None` on operator-attested manual seeds
     /// (recalled in every scenario, operator owns the safety
     /// guarantee). MUST be `None` on Observations.
@@ -864,7 +864,7 @@ impl MemoryStore {
     /// Asserts:
     ///   - tier == Pattern
     ///   - run_id, scenario_id, cycle_idx all None
-    ///   - training_window_end may be Some(date) (autoresearcher) or
+    ///   - training_window_end may be Some(date) (autooptimizer) or
     ///     None (operator wisdom)
     pub async fn upsert_pattern(
         &self,
@@ -880,7 +880,7 @@ impl MemoryStore {
         // ... INSERT OR REPLACE
     }
 
-    /// Autoresearcher Pattern retirement.
+    /// AutoOptimizer Pattern retirement.
     pub async fn demote_pattern(&self, id: &str) -> anyhow::Result<u64> {
         // ... DELETE WHERE id = ? AND tier = 'pattern'
     }
@@ -2125,12 +2125,12 @@ types):
    into the LLM's context.
 5. **What the operator sees today** — Skills is empty in v1, so the
    Memory panel will show "no recall items" even with `agent_scoped`
-   selected. That's expected; Skills populate when the autoresearcher
+   selected. That's expected; Skills populate when the autooptimizer
    (V3) is enabled, or when a manual seeding CLI ships (v1.1
    follow-up).
 6. **`xvn memory forget`** — operator-driven clearing.
 7. **Coming next** — link to the V2 board's V3 entry (item 11a) for
-   when the autoresearcher will start populating Skills.
+   when the autooptimizer will start populating Skills.
 
 - [ ] **Step 6.1.2: Add a one-paragraph hook in `MANUAL.md`**
 

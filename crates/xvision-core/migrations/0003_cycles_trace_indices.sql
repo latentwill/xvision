@@ -1,6 +1,6 @@
--- 0003_cycles_trace_indices.sql — V2E autoresearcher query columns + indices.
+-- 0003_cycles_trace_indices.sql — V2E autooptimizer query columns + indices.
 --
--- The autoresearcher's primary query shape is "all decisions made by model X
+-- The autooptimizer's primary query shape is "all decisions made by model X
 -- under regime Y". This migration adds the LLM-provenance columns to the
 -- `cycles` table and indices to make those queries fast.
 --
@@ -18,7 +18,7 @@
 -- Existing rows: all three columns default to NULL. No backfill pass is
 -- required; cycle writers updated to V2E fill the columns going forward.
 --
--- The indices are the essential autoresearcher query support:
+-- The indices are the essential autooptimizer query support:
 --   idx_cycles_model_id  — filter by model (primary query axis)
 --   idx_cycles_prompt    — filter by prompt template (secondary axis)
 --   idx_cycles_regime    — filter by regime tag (tertiary axis)
@@ -42,7 +42,7 @@ CREATE INDEX IF NOT EXISTS idx_cycles_prompt
 CREATE INDEX IF NOT EXISTS idx_cycles_regime
     ON cycles(regime_tag);
 
--- Composite index for the primary autoresearcher query pattern:
+-- Composite index for the primary autooptimizer query pattern:
 -- "all cycles where model_id = ? AND regime_tag = ?".
 -- SQLite can use this for either prefix alone or the full composite.
 CREATE INDEX IF NOT EXISTS idx_cycles_model_regime

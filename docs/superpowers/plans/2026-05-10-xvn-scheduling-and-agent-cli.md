@@ -15,7 +15,7 @@
 
 **Goal:** Ship the foundation that makes "daily at 4pm EST review all strategies and deactivate any with rolling-30d Sharpe below 0.5" runnable end-to-end: typed engine API across 7 domains, CLI surface mirroring it, internal tool-use agent runner, SQLite-backed cron scheduler firing scheduled prompts, EOD report integration, and pre-paused default schedules.
 
-**Architecture:** Engine API in `xvision-engine/src/api/` is the single source of truth — typed async functions per domain (strategy, risk, deploy, report, maintenance, schedule, autoresearch). CLI handlers in `xvision-cli/src/commands/` thin-wrap them. `xvision-engine/src/agent_runner/` is a generic tool-use loop using `xvision-intern`'s LLM dispatch; tools are thin shims around engine API functions. `xvision-engine/src/scheduler/` is a SQLite-backed cron daemon that spawns AgentRunner invocations on schedule. EOD report reuses `xvision_eval::report::render` over live `scheduler_events` data.
+**Architecture:** Engine API in `xvision-engine/src/api/` is the single source of truth — typed async functions per domain (strategy, risk, deploy, report, maintenance, schedule, autooptimizer). CLI handlers in `xvision-cli/src/commands/` thin-wrap them. `xvision-engine/src/agent_runner/` is a generic tool-use loop using `xvision-intern`'s LLM dispatch; tools are thin shims around engine API functions. `xvision-engine/src/scheduler/` is a SQLite-backed cron daemon that spawns AgentRunner invocations on schedule. EOD report reuses `xvision_eval::report::render` over live `scheduler_events` data.
 
 **Tech Stack:** Rust 2021. New deps: `cron 0.13` (cron parser), `chrono-tz 0.10` (IANA timezone DST), `glob 0.3` (tool-pattern matching). Reuses `tokio`, `sqlx` (workspace), `chrono`, `serde`, `tracing`, `anyhow`, `thiserror`, `async-trait`, `ulid`, `tempfile` (dev).
 
@@ -154,7 +154,7 @@ crates/
 │       │   ├── report.rs                           # read-only analytics + EOD
 │       │   ├── maintenance.rs                      # system hygiene
 │       │   ├── schedule.rs                         # self-referential schedule CRUD
-│       │   └── autoresearch.rs                     # AR-2 hook (stub until AR-2 ships)
+│       │   └── autooptimizer.rs                     # AR-2 hook (stub until AR-2 ships)
 │       ├── agent_runner/
 │       │   ├── mod.rs                              # AgentRunner, RunRequest, RunOutcome
 │       │   ├── registry.rs                         # ToolRegistry, ToolHandler trait
@@ -182,7 +182,7 @@ crates/
 │       ├── maintenance.rs                          # NEW
 │       ├── schedule.rs                             # NEW
 │       ├── agent.rs                                # NEW: agent ask, agent run
-│       └── autoresearch.rs                         # NEW
+│       └── autooptimizer.rs                         # NEW
 └── (no other crates touched in v1)
 ```
 
@@ -266,7 +266,7 @@ Create `crates/xvision-engine/src/api/mod.rs`:
 //! agent runner. One source of truth: every mutating operation is a function
 //! here, and writes one audit row per transition.
 
-pub mod autoresearch;
+pub mod autooptimizer;
 pub mod deploy;
 pub mod maintenance;
 pub mod report;
@@ -1064,4 +1064,4 @@ git commit -m "feat(engine/api): risk module — per-deployment knobs + audit"
 
 ---
 
-> **Plan continues in subsequent files.** Tasks 4–29 follow the same pattern: tests first, implementation second, commit third. Next file: `2026-05-10-xvn-scheduling-and-agent-cli-part2.md` covers Task 4 (deploy module) through Task 9 (autoresearch stub). Part 3 covers agent runner. Part 4 covers scheduler. Part 5 covers CLI completeness + polish.
+> **Plan continues in subsequent files.** Tasks 4–29 follow the same pattern: tests first, implementation second, commit third. Next file: `2026-05-10-xvn-scheduling-and-agent-cli-part2.md` covers Task 4 (deploy module) through Task 9 (autooptimizer stub). Part 3 covers agent runner. Part 4 covers scheduler. Part 5 covers CLI completeness + polish.

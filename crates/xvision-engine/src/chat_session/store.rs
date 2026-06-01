@@ -159,36 +159,65 @@ impl ChatSessionStore {
         let now_rfc = now.to_rfc3339();
         let blocks_json = serde_json::to_string(blocks).context("serialize content_blocks array")?;
 
+        // Acquire a dedicated connection so the write transaction can be opened
+        // with `BEGIN IMMEDIATE`. sqlx's `pool.begin()` issues a *deferred*
+        // `BEGIN`; this method is a read-modify-write (SELECT MAX(seq) → INSERT
+        // → UPDATE), and under a deferred transaction the SELECT takes a read
+        // snapshot and the INSERT must then upgrade to a writer. Under WAL a
+        // concurrent writer (the FinalizeWriter actor, the observability
+        // event-bus writer, api_audit / search-index upserts) can commit in
+        // that window, so the upgrade fails with SQLITE_BUSY_SNAPSHOT —
+        // returned *immediately* (`wait_ms=0`), which `busy_timeout` cannot
+        // rescue because waiting can never resolve a stale snapshot. That was
+        // the root cause of the `wait_ms=0` "database is locked" cluster.
+        // `BEGIN IMMEDIATE` takes the write lock up front: `busy_timeout` then
+        // governs the wait, no stale snapshot can form, and same-session
+        // appends serialize cleanly. Mirrors `SearchIndex::upsert_once`, which
+        // fixed the identical deferred→immediate upgrade race (intake #344).
         let begin_pool = pool_snapshot(pool);
         let begin_started = Instant::now();
-        let mut tx = pool.begin().await.map_err(|e| {
-            let wait_ms = begin_started.elapsed().as_millis() as u64;
-            let label = sqlite_error_label(&e);
-            tracing::error!(
-                session_id = session_id,
-                wait_ms = wait_ms,
-                pool_size = begin_pool.size,
-                pool_idle = begin_pool.idle,
-                pool_in_use = begin_pool.in_use(),
-                db_error = %e,
-                "begin chat append tx failed: {label}",
-            );
-            anyhow::anyhow!(
-                "begin tx for append: {label} (wait_ms={wait_ms}, pool_in_use={}) - {e}",
-                begin_pool.in_use()
-            )
-        })?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .context("acquire connection for chat append")?;
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                let wait_ms = begin_started.elapsed().as_millis() as u64;
+                let label = sqlite_error_label(&e);
+                tracing::error!(
+                    session_id = session_id,
+                    wait_ms = wait_ms,
+                    pool_size = begin_pool.size,
+                    pool_idle = begin_pool.idle,
+                    pool_in_use = begin_pool.in_use(),
+                    db_error = %e,
+                    "begin chat append tx failed: {label}",
+                );
+                anyhow::anyhow!(
+                    "begin immediate tx for append: {label} (wait_ms={wait_ms}, pool_in_use={}) - {e}",
+                    begin_pool.in_use()
+                )
+            })?;
 
-        let next_seq: i64 =
-            sqlx::query_scalar("SELECT COALESCE(MAX(seq), -1) + 1 FROM chat_messages WHERE session_id = ?1")
-                .bind(session_id)
-                .fetch_one(&mut *tx)
-                .await
-                .context("compute next seq")?;
+        let next_seq: i64 = match sqlx::query_scalar(
+            "SELECT COALESCE(MAX(seq), -1) + 1 FROM chat_messages WHERE session_id = ?1",
+        )
+        .bind(session_id)
+        .fetch_one(&mut *conn)
+        .await
+        {
+            Ok(seq) => seq,
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(anyhow::Error::from(e).context("compute next seq"));
+            }
+        };
 
         let insert_pool = pool_snapshot(pool);
         let insert_started = Instant::now();
-        sqlx::query(
+        if let Err(e) = sqlx::query(
             "INSERT INTO chat_messages (id, session_id, seq, role, content_blocks_json, ts) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
@@ -198,9 +227,9 @@ impl ChatSessionStore {
         .bind(role)
         .bind(&blocks_json)
         .bind(&now_rfc)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await
-        .map_err(|e| {
+        {
             let wait_ms = insert_started.elapsed().as_millis() as u64;
             let label = sqlite_error_label(&e);
             tracing::error!(
@@ -213,20 +242,27 @@ impl ChatSessionStore {
                 db_error = %e,
                 "insert chat_messages row failed: {label}",
             );
-            anyhow::anyhow!(
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            return Err(anyhow::anyhow!(
                 "insert chat_messages row: {label} (wait_ms={wait_ms}, pool_in_use={}) - {e}",
                 insert_pool.in_use()
-            )
-        })?;
+            ));
+        }
 
-        sqlx::query("UPDATE chat_sessions SET last_activity_at = ?2 WHERE id = ?1")
+        if let Err(e) = sqlx::query("UPDATE chat_sessions SET last_activity_at = ?2 WHERE id = ?1")
             .bind(session_id)
             .bind(&now_rfc)
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await
-            .context("touch session last_activity_at")?;
+        {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            return Err(anyhow::Error::from(e).context("touch session last_activity_at"));
+        }
 
-        tx.commit().await.context("commit append tx")?;
+        sqlx::query("COMMIT")
+            .execute(&mut *conn)
+            .await
+            .context("commit append tx")?;
 
         Ok(ChatMessage {
             id,

@@ -29,3 +29,12 @@ xtask = "run --quiet -p xtask --"
 # explicitly set by the shell take precedence over `[env]` here.
 [env]
 XVISION_DISABLE_AGENT_SAVE_GATE = "1"
+
+[build]
+# Incremental compilation balloons the shared cargo target dir (it has spiked
+# to 30+ GB of target/debug/incremental across concurrent agent builds) for
+# little benefit in a multi-worktree workspace that rebuilds from many branches.
+# Off keeps the target dir bounded. See scripts/cargo-disk-guard.sh and CLAUDE.md
+# → "Disk hygiene". Override per-shell with CARGO_INCREMENTAL=1 if iterating hard
+# on one crate.
+incremental = false

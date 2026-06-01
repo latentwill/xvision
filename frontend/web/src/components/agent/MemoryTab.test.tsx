@@ -46,13 +46,13 @@ vi.mock("@/api/flywheel", async () => {
     getFlywheelStatus: vi.fn(),
     getFlywheelVelocity: vi.fn(),
     getFlywheelLineage: vi.fn(),
-    listAutoresearchRuns: vi.fn(),
-    runAutoresearch: vi.fn(),
-    getAutoresearchRun: vi.fn(),
-    gateAutoresearchRun: vi.fn(),
+    listAutoOptimizerRuns: vi.fn(),
+    runAutoOptimizer: vi.fn(),
+    getAutoOptimizerRun: vi.fn(),
+    gateAutoOptimizerRun: vi.fn(),
     gateOptimization: vi.fn(),
-    promoteAutoresearchRun: vi.fn(),
-    demoteAutoresearchRun: vi.fn(),
+    promoteAutoOptimizerRun: vi.fn(),
+    demoteAutoOptimizerRun: vi.fn(),
     optimizeMemoryDemos: vi.fn(),
   };
 });
@@ -114,9 +114,9 @@ beforeEach(() => {
     active_patterns: 1,
     staged_patterns: 1,
     forgotten_patterns: 0,
-    autoresearch_runs: 2,
-    latest_autoresearch_run_id: "ar-1",
-    latest_autoresearch_created_at: "2026-05-21T12:00:00Z",
+    autooptimizer_runs: 2,
+    latest_autooptimizer_run_id: "ar-1",
+    latest_autooptimizer_created_at: "2026-05-21T12:00:00Z",
   });
   vi.mocked(flywheelApi.getFlywheelVelocity).mockResolvedValue({
     namespace: "agent:agent-1",
@@ -125,7 +125,7 @@ beforeEach(() => {
     observations_captured: 3,
     patterns_promoted: 1,
     patterns_demoted: 0,
-    autoresearch_runs: 2,
+    autooptimizer_runs: 2,
     optimized_child_agents: 1,
     average_lineage_depth: 1,
     latest_activity_at: "2026-05-21T12:00:00Z",
@@ -162,7 +162,7 @@ beforeEach(() => {
       },
     ],
   });
-  vi.mocked(flywheelApi.runAutoresearch).mockResolvedValue({
+  vi.mocked(flywheelApi.runAutoOptimizer).mockResolvedValue({
     id: "ar-new",
     namespace: "agent:agent-1",
     observation_ids: ["obs-1", "obs-2"],
@@ -173,7 +173,7 @@ beforeEach(() => {
     created_at: "2026-05-21T12:00:00Z",
     status: "completed",
   });
-  vi.mocked(flywheelApi.listAutoresearchRuns).mockResolvedValue({
+  vi.mocked(flywheelApi.listAutoOptimizerRuns).mockResolvedValue({
     items: [
       {
         id: "ar-1",
@@ -191,7 +191,7 @@ beforeEach(() => {
     ],
     total: 1,
   });
-  vi.mocked(flywheelApi.promoteAutoresearchRun).mockResolvedValue({
+  vi.mocked(flywheelApi.promoteAutoOptimizerRun).mockResolvedValue({
     id: "ar-1",
     namespace: "agent:agent-1",
     observation_ids: ["obs-1", "obs-2"],
@@ -202,7 +202,7 @@ beforeEach(() => {
     created_at: "2026-05-21T12:00:00Z",
     status: "completed",
   });
-  vi.mocked(flywheelApi.gateAutoresearchRun).mockResolvedValue({
+  vi.mocked(flywheelApi.gateAutoOptimizerRun).mockResolvedValue({
     id: "ar-1",
     namespace: "agent:agent-1",
     observation_ids: ["obs-1", "obs-2"],
@@ -237,7 +237,7 @@ beforeEach(() => {
     gate_reason: "child beat parent",
     gated_at: "2026-05-21T12:10:00Z",
   });
-  vi.mocked(flywheelApi.demoteAutoresearchRun).mockResolvedValue({
+  vi.mocked(flywheelApi.demoteAutoOptimizerRun).mockResolvedValue({
     id: "ar-1",
     namespace: "agent:agent-1",
     observation_ids: ["obs-1", "obs-2"],
@@ -322,7 +322,7 @@ describe("MemoryTab — empty state", () => {
         agent: "agent-1",
         limit: 1,
       });
-      expect(screen.getByText("Children / 7d")).toBeInTheDocument();
+      expect(screen.getByText("New versions / 7d")).toBeInTheDocument();
       expect(screen.getByText("Latest Lineage")).toBeInTheDocument();
     });
   });
@@ -337,8 +337,8 @@ describe("MemoryTab — Flywheel panel", () => {
       await screen.findByLabelText(/Child Agent Name/i),
       "Agent child",
     );
-    await user.click(screen.getByLabelText(/Use recalled Pattern priors/i));
-    await user.click(screen.getByRole("button", { name: /Mint Child/i }));
+    await user.click(screen.getByLabelText(/Include patterns I've already learned/i));
+    await user.click(screen.getByRole("button", { name: /Train new version/i }));
 
     await waitFor(() => {
       expect(flywheelApi.optimizeMemoryDemos).toHaveBeenCalledWith({
@@ -351,32 +351,32 @@ describe("MemoryTab — Flywheel panel", () => {
         child_name: "Agent child",
       });
     });
-    expect(await screen.findByText("Demo Patterns")).toBeInTheDocument();
-    expect(screen.getByText("Prior Patterns")).toBeInTheDocument();
-    expect(screen.getByText(/gate passed/)).toBeInTheDocument();
-    expect(screen.getByText(/holdout 0.300/)).toBeInTheDocument();
+    expect(await screen.findByText("Example patterns")).toBeInTheDocument();
+    expect(screen.getByText("Background patterns")).toBeInTheDocument();
+    expect(screen.getAllByText(/Decision: Kept/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/untouched test 0.300/)).toBeInTheDocument();
   });
 
-  it("records the day and holdout gate for a staged autoresearch run", async () => {
+  it("records the day and holdout gate for a staged autooptimizer run", async () => {
     const user = userEvent.setup();
     renderTab();
 
-    await user.type(await screen.findByLabelText(/Parent day score ar-1/i), "1");
-    await user.type(screen.getByLabelText(/Child day score ar-1/i), "1.25");
-    await user.type(screen.getByLabelText(/Parent holdout score ar-1/i), "0.8");
-    await user.type(screen.getByLabelText(/Child holdout score ar-1/i), "0.95");
-    await user.clear(screen.getByLabelText(/Gate epsilon ar-1/i));
-    await user.type(screen.getByLabelText(/Gate epsilon ar-1/i), "0.01");
+    await user.type(await screen.findByLabelText(/Baseline today's score ar-1/i), "1");
+    await user.type(screen.getByLabelText(/Candidate today's score ar-1/i), "1.25");
+    await user.type(screen.getByLabelText(/Baseline untouched-period score ar-1/i), "0.8");
+    await user.type(screen.getByLabelText(/Candidate untouched-period score ar-1/i), "0.95");
+    await user.clear(screen.getByLabelText(/Min improvement ar-1/i));
+    await user.type(screen.getByLabelText(/Min improvement ar-1/i), "0.01");
     await user.type(
       screen.getByLabelText(/Gate reason ar-1/i),
       "day and holdout improved",
     );
     await user.click(
-      screen.getByRole("button", { name: /Record Gate ar-1/i }),
+      screen.getByRole("button", { name: /Record gate decision/i }),
     );
 
     await waitFor(() => {
-      expect(flywheelApi.gateAutoresearchRun).toHaveBeenCalledWith("ar-1", {
+      expect(flywheelApi.gateAutoOptimizerRun).toHaveBeenCalledWith("ar-1", {
         parent_day_score: 1,
         child_day_score: 1.25,
         parent_holdout_score: 0.8,
@@ -420,23 +420,23 @@ describe("MemoryTab — Flywheel panel", () => {
     renderTab();
 
     await user.type(
-      await screen.findByLabelText(/Parent dev score opt-agent/i),
+      await screen.findByLabelText(/Baseline validation score opt-agent/i),
       "1",
     );
-    await user.type(screen.getByLabelText(/Child dev score opt-agent/i), "1.2");
+    await user.type(screen.getByLabelText(/Candidate validation score opt-agent/i), "1.2");
     await user.type(
-      screen.getByLabelText(/Parent optimization holdout score opt-agent/i),
+      screen.getByLabelText(/Baseline untouched-period score opt-agent/i),
       "0.8",
     );
     await user.type(
-      screen.getByLabelText(/Child optimization holdout score opt-agent/i),
+      screen.getByLabelText(/Candidate untouched-period score opt-agent/i),
       "1.1",
     );
     await user.clear(
-      screen.getByLabelText(/Optimization gate epsilon opt-agent/i),
+      screen.getByLabelText(/Min improvement opt-agent/i),
     );
     await user.type(
-      screen.getByLabelText(/Optimization gate epsilon opt-agent/i),
+      screen.getByLabelText(/Min improvement opt-agent/i),
       "0.01",
     );
     await user.type(
@@ -445,7 +445,7 @@ describe("MemoryTab — Flywheel panel", () => {
     );
     await user.click(
       screen.getByRole("button", {
-        name: /Record Optimization Gate opt-agent/i,
+        name: /Record gate decision for opt-agent/i,
       }),
     );
 

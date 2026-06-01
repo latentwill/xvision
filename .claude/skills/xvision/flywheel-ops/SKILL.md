@@ -1,12 +1,12 @@
 ---
 name: xvision-flywheel-ops
-description: Operate and audit the xvision self-improvement flywheel across memory capture, autoresearch, optimizer demo pools, child minting, lineage, velocity, and leakage evidence.
+description: Operate and audit the xvision self-improvement flywheel across memory capture, autooptimizer, training run example pools, child training, lineage, velocity, and look-ahead-protection evidence.
 ---
 
 # xvision flywheel ops
 
 Use this skill when driving the closed loop: capture, observe, score, distill,
-optimize, mint, gate, promote, recall, and demote.
+optimize, train, gate, activate, recall, and retire.
 
 ## Read Surfaces
 
@@ -21,14 +21,14 @@ Dashboard equivalents live in the memory/flywheel panels. MCP read equivalents:
 - `xvn_flywheel_status`
 - `xvn_flywheel_velocity`
 
-## Optimizer Demo Discipline
+## Training Run Example Discipline
 
 ```bash
 xvn optimize memory-demos \
   --target-agent <agent_id> \
   --memory-agent <agent_id> \
   --demo-source frozen-snapshot \
-  --holdout-split 70/15/15 \
+  --untouched-split 70/15/15 \
   --json
 
 bash scripts/audit-memory-demos.sh --target-agent <agent_id> --memory-agent <agent_id>

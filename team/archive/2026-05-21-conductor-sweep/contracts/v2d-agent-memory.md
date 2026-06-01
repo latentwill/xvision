@@ -75,7 +75,7 @@ recall before dispatch + automatic write after each decision in
 `execute_slot`, a UI selector in `AgentForm.tsx`, and a Memory panel
 in the eval-review run detail. This is V2D item 15 from
 `team/board-v2.md` and is the first of two prerequisites for V3
-autoresearcher.
+autooptimizer.
 
 Implementation plan:
 `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`

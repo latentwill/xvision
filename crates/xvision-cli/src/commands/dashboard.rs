@@ -26,6 +26,16 @@ pub struct ServeArgs {
     /// Override the XVN home dir (defaults to $XVN_HOME or ~/.xvn).
     #[arg(long)]
     pub home: Option<PathBuf>,
+    /// Unix socket path for the autooptimizer IPC bridge (AR-3).
+    ///
+    /// When set, the dashboard listens on this socket for newline-delimited
+    /// JSON `CycleProgressEvent` messages from `xvn optimizer mutate-once
+    /// --ipc-socket <path>` and streams them to connected browser clients via
+    /// `GET /api/autooptimizer/events` (SSE).
+    ///
+    /// Example: --autooptimizer-ipc-socket /tmp/xvn-events.sock
+    #[arg(long)]
+    pub autooptimizer_ipc_socket: Option<PathBuf>,
 }
 
 pub async fn run(cmd: DashboardCmd) -> anyhow::Result<()> {
@@ -37,7 +47,7 @@ pub async fn run(cmd: DashboardCmd) -> anyhow::Result<()> {
                 .with_context(|| format!("invalid --bind address: {}", args.bind))?;
             let home = crate::commands::home::resolve_xvn_home(args.home)?;
             let state = xvision_dashboard::AppState::new(home).await?;
-            xvision_dashboard::serve(addr, state).await
+            xvision_dashboard::serve(addr, state, args.autooptimizer_ipc_socket).await
         }
     }
 }

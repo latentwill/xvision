@@ -252,8 +252,8 @@ struct MemoryDemosArgs {
     /// Demo source selector: frozen-snapshot, fresh-recorder, or manual-csv.
     #[arg(long, default_value = "frozen-snapshot")]
     demo_source: String,
-    /// Train/dev/holdout split, e.g. 70/15/15.
-    #[arg(long, default_value = "70/15/15")]
+    /// Train/dev/untouched split, e.g. 70/15/15.
+    #[arg(long = "untouched-split", alias = "holdout-split", default_value = "70/15/15")]
     holdout_split: String,
     /// Verbatim cohort selector recorded for reproducibility.
     #[arg(long)]
@@ -296,18 +296,18 @@ struct MemoryDemosGateArgs {
     /// Metric name for the dev score.
     #[arg(long, default_value = "score_delta")]
     dev_metric: String,
-    /// Metric name for the holdout score. Defaults to --dev-metric.
-    #[arg(long)]
+    /// Metric name for the untouched-period score. Defaults to --dev-metric.
+    #[arg(long = "untouched-metric", alias = "holdout-metric")]
     holdout_metric: Option<String>,
     #[arg(long)]
     parent_dev_score: f64,
     #[arg(long)]
     child_dev_score: f64,
-    #[arg(long)]
+    #[arg(long = "baseline-untouched-score", alias = "parent-holdout-score")]
     parent_holdout_score: f64,
-    #[arg(long)]
+    #[arg(long = "candidate-untouched-score", alias = "child-holdout-score")]
     child_holdout_score: f64,
-    #[arg(long, default_value_t = 0.0)]
+    #[arg(long = "min-improvement", alias = "gate-epsilon", default_value_t = 0.0)]
     gate_epsilon: f64,
     #[arg(long)]
     reason: Option<String>,
@@ -1001,20 +1001,20 @@ async fn run_memory_demos(args: MemoryDemosArgs) -> CliResult<()> {
         println!("namespace: {}", out.namespace);
         println!("target_agent_id: {}", out.target_agent_id);
         println!("demo_source: {}", out.demo_source);
-        println!("holdout_split: {}", out.holdout_split);
+        println!("untouched_split: {}", out.holdout_split);
         println!("cohort_query: {}", out.cohort_query);
         if let Some(child) = out.child_agent_id {
             println!("child_agent_id: {child}");
         } else {
             println!("child_agent_id: <dry-run>");
-            println!("rerun with --yes to mint the child agent");
+            println!("rerun with --yes to train the child agent");
         }
         println!("slot: {}", out.slot);
         println!("demo_count: {}", out.demo_count);
         println!("pattern_demo_source_count: {}", out.pattern_demo_source_count);
         println!("pattern_prior_count: {}", out.pattern_prior_count);
         println!("dev_count: {}", out.dev_observation_ids.len());
-        println!("holdout_count: {}", out.holdout_observation_ids.len());
+        println!("untouched_count: {}", out.holdout_observation_ids.len());
         println!("prompt_prefix_chars: {}", out.prompt_prefix_chars);
     }
     Ok(())
@@ -1047,9 +1047,9 @@ async fn run_memory_demos_gate(args: MemoryDemosGateArgs) -> CliResult<()> {
         println!("optimization_id: {}", out.optimization_id);
         println!("gate_verdict: {}", out.gate_verdict);
         println!("dev_metric: {}", out.dev_metric);
-        println!("holdout_metric: {}", out.holdout_metric);
+        println!("untouched_metric: {}", out.holdout_metric);
         println!("delta_dev: {}", out.delta_dev);
-        println!("delta_holdout: {}", out.delta_holdout);
+        println!("delta_untouched: {}", out.delta_holdout);
         println!("gate_reason: {}", out.gate_reason);
     }
     Ok(())

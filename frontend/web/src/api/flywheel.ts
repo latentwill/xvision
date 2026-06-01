@@ -9,9 +9,9 @@ export type FlywheelStatus = {
   active_patterns: number;
   staged_patterns: number;
   forgotten_patterns: number;
-  autoresearch_runs: number;
-  latest_autoresearch_run_id?: string | null;
-  latest_autoresearch_created_at?: string | null;
+  autooptimizer_runs: number;
+  latest_autooptimizer_run_id?: string | null;
+  latest_autooptimizer_created_at?: string | null;
 };
 
 export type FlywheelStatusQuery = {
@@ -30,7 +30,7 @@ export type FlywheelVelocity = {
   observations_captured: number;
   patterns_promoted: number;
   patterns_demoted: number;
-  autoresearch_runs: number;
+  autooptimizer_runs: number;
   optimized_child_agents: number;
   average_lineage_depth: number;
   latest_activity_at?: string | null;
@@ -81,7 +81,7 @@ export type FlywheelLineage = {
   total: number;
 };
 
-export type AutoresearchRunRequest = {
+export type AutoOptimizerRunRequest = {
   namespace?: string;
   agent?: string;
   scenario_id?: string;
@@ -94,7 +94,7 @@ export type AutoresearchRunRequest = {
   embedder_id?: string;
 };
 
-export type AutoresearchRun = {
+export type AutoOptimizerRun = {
   id: string;
   namespace: string;
   observation_ids: string[];
@@ -129,7 +129,7 @@ export type AutoresearchRun = {
   judge_token_cost?: number | null;
 };
 
-export type AutoresearchGateRequest = {
+export type AutoOptimizerGateRequest = {
   metric?: string;
   baseline_score?: number;
   candidate_score?: number;
@@ -149,15 +149,15 @@ export type AutoresearchGateRequest = {
   judge_token_cost?: number;
 };
 
-export type AutoresearchRunListQuery = {
+export type AutoOptimizerRunListQuery = {
   namespace?: string;
   agent?: string;
   limit?: number;
   offset?: number;
 };
 
-export type AutoresearchRunList = {
-  items: AutoresearchRun[];
+export type AutoOptimizerRunList = {
+  items: AutoOptimizerRun[];
   total: number;
 };
 
@@ -270,14 +270,14 @@ function buildLineageUrl(q?: FlywheelLineageQuery): string {
   return qs ? `/api/flywheel/lineage?${qs}` : "/api/flywheel/lineage";
 }
 
-function buildAutoresearchListUrl(q?: AutoresearchRunListQuery): string {
+function buildAutoOptimizerListUrl(q?: AutoOptimizerRunListQuery): string {
   const params = new URLSearchParams();
   if (q?.namespace) params.set("namespace", q.namespace);
   if (q?.agent) params.set("agent", q.agent);
   if (q?.limit != null) params.set("limit", String(q.limit));
   if (q?.offset != null) params.set("offset", String(q.offset));
   const qs = params.toString();
-  return qs ? `/api/autoresearch?${qs}` : "/api/autoresearch";
+  return qs ? `/api/autooptimizer?${qs}` : "/api/autooptimizer";
 }
 
 export async function getFlywheelStatus(
@@ -298,42 +298,42 @@ export async function getFlywheelLineage(
   return apiFetch<FlywheelLineage>(buildLineageUrl(q));
 }
 
-export async function runAutoresearch(
-  body: AutoresearchRunRequest,
-): Promise<AutoresearchRun> {
-  return apiFetch<AutoresearchRun>("/api/autoresearch/run", {
+export async function runAutoOptimizer(
+  body: AutoOptimizerRunRequest,
+): Promise<AutoOptimizerRun> {
+  return apiFetch<AutoOptimizerRun>("/api/autooptimizer/run", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function getAutoresearchRun(id: string): Promise<AutoresearchRun> {
-  return apiFetch<AutoresearchRun>(
-    `/api/autoresearch/${encodeURIComponent(id)}`,
+export async function getAutoOptimizerRun(id: string): Promise<AutoOptimizerRun> {
+  return apiFetch<AutoOptimizerRun>(
+    `/api/autooptimizer/${encodeURIComponent(id)}`,
   );
 }
 
-export async function listAutoresearchRuns(
-  q?: AutoresearchRunListQuery,
-): Promise<AutoresearchRunList> {
-  return apiFetch<AutoresearchRunList>(buildAutoresearchListUrl(q));
+export async function listAutoOptimizerRuns(
+  q?: AutoOptimizerRunListQuery,
+): Promise<AutoOptimizerRunList> {
+  return apiFetch<AutoOptimizerRunList>(buildAutoOptimizerListUrl(q));
 }
 
-export async function promoteAutoresearchRun(
+export async function promoteAutoOptimizerRun(
   id: string,
-): Promise<AutoresearchRun> {
-  return apiFetch<AutoresearchRun>(
-    `/api/autoresearch/${encodeURIComponent(id)}/promote`,
+): Promise<AutoOptimizerRun> {
+  return apiFetch<AutoOptimizerRun>(
+    `/api/autooptimizer/${encodeURIComponent(id)}/promote`,
     { method: "POST" },
   );
 }
 
-export async function gateAutoresearchRun(
+export async function gateAutoOptimizerRun(
   id: string,
-  body: AutoresearchGateRequest,
-): Promise<AutoresearchRun> {
-  return apiFetch<AutoresearchRun>(
-    `/api/autoresearch/${encodeURIComponent(id)}/gate`,
+  body: AutoOptimizerGateRequest,
+): Promise<AutoOptimizerRun> {
+  return apiFetch<AutoOptimizerRun>(
+    `/api/autooptimizer/${encodeURIComponent(id)}/gate`,
     {
       method: "POST",
       body: JSON.stringify(body),
@@ -341,11 +341,11 @@ export async function gateAutoresearchRun(
   );
 }
 
-export async function demoteAutoresearchRun(
+export async function demoteAutoOptimizerRun(
   id: string,
-): Promise<AutoresearchRun> {
-  return apiFetch<AutoresearchRun>(
-    `/api/autoresearch/${encodeURIComponent(id)}/demote`,
+): Promise<AutoOptimizerRun> {
+  return apiFetch<AutoOptimizerRun>(
+    `/api/autooptimizer/${encodeURIComponent(id)}/demote`,
     { method: "POST" },
   );
 }
@@ -380,8 +380,8 @@ export const flywheelKeys = {
     [...flywheelKeys.all, "velocity", q ?? {}] as const,
   lineage: (q?: FlywheelLineageQuery) =>
     [...flywheelKeys.all, "lineage", q ?? {}] as const,
-  autoresearch: (id: string) =>
-    [...flywheelKeys.all, "autoresearch", id] as const,
-  autoresearchList: (q?: AutoresearchRunListQuery) =>
-    [...flywheelKeys.all, "autoresearch-list", q ?? {}] as const,
+  autooptimizer: (id: string) =>
+    [...flywheelKeys.all, "autooptimizer", id] as const,
+  autooptimizerList: (q?: AutoOptimizerRunListQuery) =>
+    [...flywheelKeys.all, "autooptimizer-list", q ?? {}] as const,
 };

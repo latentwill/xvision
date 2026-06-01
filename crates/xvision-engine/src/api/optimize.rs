@@ -1004,7 +1004,7 @@ async fn select_demo_source_patterns(
     let observation_ids: HashSet<&str> = observation_ids.iter().map(String::as_str).collect();
     let rows = sqlx::query(
         "SELECT ar.pattern_id, ar.observation_ids_json \
-         FROM autoresearch_runs ar \
+         FROM autooptimizer_runs ar \
          JOIN memory_items mi ON mi.id = ar.pattern_id \
          WHERE ar.namespace = ? \
            AND mi.namespace = ? \
@@ -1024,7 +1024,7 @@ async fn select_demo_source_patterns(
         let observation_ids_json: String = row.try_get("observation_ids_json")?;
         let source_ids: Vec<String> = serde_json::from_str(&observation_ids_json).map_err(|e| {
             ApiError::Internal(format!(
-                "decode autoresearch observation_ids_json for pattern {pattern_id}: {e}"
+                "decode autooptimizer observation_ids_json for pattern {pattern_id}: {e}"
             ))
         })?;
         if source_ids.iter().any(|id| observation_ids.contains(id.as_str())) {
@@ -1208,7 +1208,7 @@ mod tests {
         .expect("insert pattern");
     }
 
-    async fn seed_autoresearch_run(
+    async fn seed_autooptimizer_run(
         store: &MemoryStore,
         id: &str,
         namespace: &str,
@@ -1218,7 +1218,7 @@ mod tests {
     ) {
         let observation_ids_json = serde_json::to_string(observation_ids).expect("observation ids json");
         sqlx::query(
-            "INSERT INTO autoresearch_runs \
+            "INSERT INTO autooptimizer_runs \
              (id, namespace, observation_ids_json, pattern_id, pattern_text, promotion_state, \
               min_observations, created_at, status, error) \
              VALUES (?, ?, ?, ?, ?, ?, 2, '2024-01-05T00:00:00Z', 'staged', NULL)",
@@ -1231,7 +1231,7 @@ mod tests {
         .bind(promotion_state)
         .execute(store.pool())
         .await
-        .expect("insert autoresearch run");
+        .expect("insert autooptimizer run");
     }
 
     async fn seed_memory_recall_event(
@@ -1286,7 +1286,7 @@ mod tests {
         seed_observation(&store, "opt-obs-2", "agent:target", "2024-01-03T00:00:00Z").await;
         seed_observation(&store, "opt-obs-3", "agent:target", "2024-01-04T00:00:00Z").await;
         seed_pattern(&store, "opt-demo-pattern-1", "agent:target", "active").await;
-        seed_autoresearch_run(
+        seed_autooptimizer_run(
             &store,
             "opt-demo-run-1",
             "agent:target",
@@ -1545,7 +1545,7 @@ mod tests {
         seed_pattern(&store, "opt-demo-no-overlap", "agent:target", "active").await;
         seed_pattern(&store, "opt-demo-demoted", "agent:target", "demoted").await;
         seed_pattern(&store, "opt-demo-other-ns", "agent:other", "active").await;
-        seed_autoresearch_run(
+        seed_autooptimizer_run(
             &store,
             "opt-demo-active-run",
             "agent:target",
@@ -1554,7 +1554,7 @@ mod tests {
             "active",
         )
         .await;
-        seed_autoresearch_run(
+        seed_autooptimizer_run(
             &store,
             "opt-demo-staged-run",
             "agent:target",
@@ -1563,7 +1563,7 @@ mod tests {
             "staged",
         )
         .await;
-        seed_autoresearch_run(
+        seed_autooptimizer_run(
             &store,
             "opt-demo-no-overlap-run",
             "agent:target",
@@ -1572,7 +1572,7 @@ mod tests {
             "active",
         )
         .await;
-        seed_autoresearch_run(
+        seed_autooptimizer_run(
             &store,
             "opt-demo-demoted-run",
             "agent:target",
@@ -1581,7 +1581,7 @@ mod tests {
             "active",
         )
         .await;
-        seed_autoresearch_run(
+        seed_autooptimizer_run(
             &store,
             "opt-demo-other-ns-run",
             "agent:other",
@@ -1636,7 +1636,7 @@ mod tests {
         seed_pattern(&store, "opt-prior-staged", "agent:target", "staged").await;
         seed_pattern(&store, "opt-prior-other-ns", "agent:other", "active").await;
         seed_pattern(&store, "opt-demo-source", "agent:target", "active").await;
-        seed_autoresearch_run(
+        seed_autooptimizer_run(
             &store,
             "opt-demo-source-run",
             "agent:target",

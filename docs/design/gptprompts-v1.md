@@ -3,7 +3,7 @@
 > **Status:** v1 · 2026-05-10. Cut of `gptprompts.md` to the v1-test surface.
 > **Companion to:** [`v1-shipping-plan.md`](../../v1-shipping-plan.md), [`docs/design/ui-elements.md`](./ui-elements.md), [`docs/design/themes.md`](./themes.md), [`docs/design/gptprompts.md`](./gptprompts.md) (the full library, including deferred archetypes).
 > **Theme:** Folio (warm dark + classical serif headings, sans body) — the canonical xvn theme. This file ships **both dark and light variants** of Folio so the design team can render every v1 route in both modes and pick one for production. v1 ships **one** mode in product (no theme switcher); both renders exist only for the design selection process.
-> **Out of v1 scope:** marketplace, live cockpit (`/live/<id>`), lab notebook (`/journal`), autoresearcher routes, deferred archetypes (Slot Machine, Spreadsheet, Power Notebook, Canvas, Pass-Ribbon). See `v1-shipping-plan.md` §"Routes NOT shipping for v1 test."
+> **Out of v1 scope:** marketplace, live cockpit (`/live/<id>`), lab notebook (`/journal`), autooptimizer routes, deferred archetypes (Slot Machine, Spreadsheet, Power Notebook, Canvas, Pass-Ribbon). See `v1-shipping-plan.md` §"Routes NOT shipping for v1 test."
 
 ---
 
@@ -647,7 +647,7 @@ Left sidebar (sticky):
   - "Danger zone"
   - thin slate divider
   - "Marketplace" (dim text, with a "Coming soon" chip in slate)
-  - "Autoresearch" (dim text, "Coming soon" chip)
+  - "AutoOptimizer" (dim text, "Coming soon" chip)
 - Sidebar footer in dim 12px mono: "xvn 0.1.0 · build a83…f12".
 
 Content area — Providers:
@@ -992,9 +992,9 @@ The following routes and archetypes are **not** part of v1 test and have no prom
 | `/journal` Lab Notebook | Lab Notebook plan deferred (post-v1) | gptprompts.md §4 |
 | `/marketplace` listings grid | Plan 5 (blockchain) deferred | gptprompts.md §16 |
 | `/settings/marketplace` | Plan 5 deferred | gptprompts.md §18 |
-| `/settings/autoresearch` | AR-1/2/3 deferred | gptprompts.md §17 |
-| `/autoresearch/live` (evening cycle viewer) | AR-1/2/3 deferred | gptprompts.md §11 |
-| `/autoresearch/lineage` (genealogy tree) | AR-1/2/3 deferred | gptprompts.md §12 |
+| `/settings/autooptimizer` | AR-1/2/3 deferred | gptprompts.md §17 |
+| `/autooptimizer/live` (evening cycle viewer) | AR-1/2/3 deferred | gptprompts.md §11 |
+| `/autooptimizer/lineage` (genealogy tree) | AR-1/2/3 deferred | gptprompts.md §12 |
 | `/strategies/<bundle_hash>/diff` (mutation diff) | AR-1/2/3 deferred | gptprompts.md §13 |
 | `/eval/mutator-ladder` | AR-1/2/3 deferred | gptprompts.md §14 |
 | `/eval/ladder` (provenance) | AR-1/2/3 deferred | gptprompts.md §15 |

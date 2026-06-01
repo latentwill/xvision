@@ -578,7 +578,7 @@ New product spec captured in
 `docs/superpowers/specs/2026-05-15-eval-review-agent.md`. This is not a simple
 metrics summary. It adds an analytical review layer over completed eval runs,
 using selected review agents and storing review findings as first-class objects
-for future autoresearcher, lineage, and reputation work.
+for future autooptimizer, lineage, and reputation work.
 
 Raw spec mapped to board tracks:
 
@@ -613,7 +613,7 @@ MVP acceptance:
   tests, and questions.
 - CLI can generate and export the review.
 - The agent does not hallucinate metrics or trades absent from the eval payload.
-- Deferred: autoresearcher loop, mutation, blockchain identity, marketplace
+- Deferred: autooptimizer loop, mutation, blockchain identity, marketplace
   publishing, live trading decisions, settlement, multi-agent debate, and memory
   graph.
 
@@ -636,7 +636,7 @@ Seed the next execution board from these first tickets:
 | 8 | Implement strategy NFT mint/readback flow | V2C | L | SLF3 |
 | 9 | Implement testnet marketplace list/buy/sell/delegate flow | V2C | L | marketplace spec |
 | 10 | Implement reputation and validation receipt write/readback | V2C | L | SLF4, SLF5 |
-| 11 | Build autoresearcher mutation/eval/judge loop | V3 | L | autoresearcher plans |
-| 12 | Build autoresearcher dashboard and lineage review | V3 | L | autoresearcher dashboard plan |
+| 11 | Build autooptimizer mutation/eval/judge loop | V3 | L | autooptimizer plans |
+| 12 | Build autooptimizer dashboard and lineage review | V3 | L | autooptimizer dashboard plan |
 | 13 | Run final UI/UX pass across dashboard surfaces | V3 | L | design docs, chart plans |
 | 14 | Prepare contract audit, launch flags, and mainnet runbook | V4 | L | ADR 0008, contract specs |

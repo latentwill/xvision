@@ -2,14 +2,14 @@
 
 Source: operator strategy conversation 2026-05-21 exploring whether DSPy-style
 prompt optimization should land as workspace infrastructure before V3
-autoresearcher. After initial scoping the operator redirected: DSPy/DSRs
+autooptimizer. After initial scoping the operator redirected: DSPy/DSRs
 adoption should **not** be its own wave. Stage 1 folds into the filter
 work — specifically into **filter v1.5**, which adds LLM-backed filters
 on top of the deterministic-indicator v1 that ships first per
 `docs/superpowers/specs/2026-05-21-filter-v1-shape.md` and
 `docs/superpowers/plans/2026-05-21-filter-v1-implementation.md`. Stage 2
 is a separately-tracked future agent refactor (intern / trader / risk)
-that lands after v1.5 proves the loop and before autoresearcher's mutator
+that lands after v1.5 proves the loop and before autooptimizer's mutator
 design is locked.
 
 This intake captures both stages and the rationale; Stage 1 contracts are
@@ -37,7 +37,7 @@ lands after v1.5 proves the loop.
 
 The convergence is concrete. From `MANUAL.md` §scaling:
 
-> Autoresearcher cost: at N=100 with each agent generating 100 mutator
+> AutoOptimizer cost: at N=100 with each agent generating 100 mutator
 > variants/night × 50K-token briefings × Sonnet-class evaluation, the LLM
 > bill is ~$15K/month.
 
@@ -47,8 +47,8 @@ improvement with substantially fewer rollouts because each mutation is
 informed by an LM reading the failed trace and proposing a targeted
 change. The same substrate — outcomes per cycle, metric, mutate-and-
 evaluate loop — already exists in `crates/xvision-engine/src/eval/`.
-Adopting the optimizer as a primitive before autoresearcher locks its
-mutator design means autoresearcher consumes it instead of rebuilding
+Adopting the optimizer as a primitive before autooptimizer locks its
+mutator design means autooptimizer consumes it instead of rebuilding
 it later.
 
 The same primitive also applies to filters (regime detectors, news
@@ -74,7 +74,7 @@ that repo). No Python sidecar required.
   on these. This is the input shape an optimizer needs.
 - **No Rust DSPy dependency.** Workspace `Cargo.toml` does not depend
   on `dspy-rs`.
-- **Autoresearcher unbuilt.** V3 per `FOLLOWUPS.md` row 15. Right time
+- **AutoOptimizer unbuilt.** V3 per `FOLLOWUPS.md` row 15. Right time
   to make the foundational optimizer choice before the mutator loop is
   written.
 - **V2D + V2E shipped 2026-05-21** per `team/board-v2.md`. The two
@@ -133,7 +133,7 @@ even if DSRs hits a snag.
 
 Once filters prove the loop in production, a broader agent refactor
 brings DSPy primitives — typed signatures, modules, optimizer adapters
-— to the intern / trader / risk pipeline. The autoresearcher's mutator
+— to the intern / trader / risk pipeline. The autooptimizer's mutator
 loop is built as a GEPA call from day one in V3 instead of as random
 mutation that gets replaced later.
 
@@ -146,7 +146,7 @@ lands):
   proven in Stage 1. Codified in a small adapter trait inside
   `xvision-engine` so the choice is per-agent-kind config, not a
   global flag.
-- **Autoresearcher refoundation.** The V3 mutator loop is a GEPA call,
+- **AutoOptimizer refoundation.** The V3 mutator loop is a GEPA call,
   not random mutation. This is the lever that justifies the work — the
   $15K/month cost projection assumes random mutation.
 - **Strategy-detail-page UI.** Same "tune this strategy" opt-in
@@ -209,9 +209,9 @@ Stage 2 is "low risk, do it next" or "needs more soak time."
 
 - This intake's source — cowork session 2026-05-21 (DSPy strategy
   thread + redirect to fold-into-filters framing).
-- `MANUAL.md` §scaling — autoresearcher $15K/month cost projection at
+- `MANUAL.md` §scaling — autooptimizer $15K/month cost projection at
   N=100; the lever number that justifies the intake.
-- `FOLLOWUPS.md` row 15 — V3 autoresearcher scope.
+- `FOLLOWUPS.md` row 15 — V3 autooptimizer scope.
 - `team/board-v2.md` — V2D + V2E shipped 2026-05-21; V2C marketplace
   next-active; filters come after.
 - `docs/superpowers/specs/2026-05-21-filter-v1-shape.md` — filter v1

@@ -2,14 +2,14 @@
 
 > **Status:** Deferred — design accepted, implementation gated on the **xvn plugin architecture** ([F28](../../../FOLLOWUPS.md#f28-shared-plugin-architecture-for-xvn-make-optional-modules-pluggable)) landing first. Without a plugin contract there is nothing for the customizer to install. Drafted 2026-05-11.
 > **Author:** xvision team
-> **Companion specs:** [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md) · [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) · [Cortex Memory Integration plan](../plans/2026-05-11-cortex-memory-integration-plan.md)
+> **Companion specs:** [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md) · [Karpathy AutoOptimizer](./2026-05-09-karpathy-autooptimizer-design.md) · [Cortex Memory Integration plan](../plans/2026-05-11-cortex-memory-integration-plan.md)
 > **Tracking:** [F27 (this spec)](../../../FOLLOWUPS.md#f27-shared-install-customizer-interactive-module-selection-on-install--upgrade) · [F28 (plugin architecture, blocking)](../../../FOLLOWUPS.md#f28-shared-plugin-architecture-for-xvn-make-optional-modules-pluggable)
 
 ---
 
 ## 1. Purpose
 
-`xvn install` (or first-run on a fresh deployment) currently delivers the full default build. As optional capabilities accrete — marketplace (ERC-8004 publishing), memory (cortex sidecar), autoresearcher (evening mutator loop), and the long tail of future plugins — operators want to choose what they ship. The install customizer is the interactive surface for that choice.
+`xvn install` (or first-run on a fresh deployment) currently delivers the full default build. As optional capabilities accrete — marketplace (ERC-8004 publishing), memory (cortex sidecar), autooptimizer (evening mutator loop), and the long tail of future plugins — operators want to choose what they ship. The install customizer is the interactive surface for that choice.
 
 The customizer's job is narrow:
 
@@ -23,12 +23,12 @@ It does **not** invent new install primitives. It composes the existing `scripts
 
 ## 2. Persona & UX
 
-**Persona.** Operator standing up a new xvn deployment, or an existing operator who wants to enable a previously-skipped module (e.g. "I want to turn on the autoresearcher now that v1 paper trading is stable").
+**Persona.** Operator standing up a new xvn deployment, or an existing operator who wants to enable a previously-skipped module (e.g. "I want to turn on the autooptimizer now that v1 paper trading is stable").
 
 **Surfaces.**
 
 - **Terminal wizard** (default). `xvn install` or `xvn install --customize` drops into a TUI selector — checkbox list of modules grouped by category (core / capabilities / integrations / experimental), with descriptions and dependency arrows.
-- **Non-interactive** for CI / Dockerfile / RunPod scripts. `xvn install --modules marketplace,memory,autoresearcher` or `xvn install --manifest install.toml`. Emits the same manifest the wizard writes.
+- **Non-interactive** for CI / Dockerfile / RunPod scripts. `xvn install --modules marketplace,memory,autooptimizer` or `xvn install --manifest install.toml`. Emits the same manifest the wizard writes.
 - **Re-entrant.** `xvn install --add memory`, `xvn install --remove marketplace`, `xvn install --reconfigure` for env / API key updates.
 
 **Persisted manifest.** `~/.xvn/install.toml` (or project-local equivalent) records the selected module set, version pins, and any config-only overrides. The manifest is the canonical input to subsequent builds and to the dashboard's Settings → Install pane (read-only mirror).
@@ -49,8 +49,8 @@ version = "0.4.0"
 sidecar = "cortex-http"      # implies docker-compose overlay
 config_ref = "memory.toml"
 
-[modules.autoresearcher]
-enabled = false              # opted out; no autoresearcher artifacts will be produced
+[modules.autooptimizer]
+enabled = false              # opted out; no autooptimizer artifacts will be produced
 ```
 
 ## 3. Locked decisions
@@ -58,7 +58,7 @@ enabled = false              # opted out; no autoresearcher artifacts will be pr
 | # | Decision |
 |---|---|
 | 1 | **Customizer is opt-in re-runnable**, not one-shot. First-run defaults to the recommended preset; the operator can change selection any time without reinstalling from scratch. |
-| 2 | **Recommended preset = "Persona A v1"**: core + memory off + marketplace off + autoresearcher off. Lowest-friction first-run. Matches v1-shipping-plan §"Routes NOT shipping for v1 test." |
+| 2 | **Recommended preset = "Persona A v1"**: core + memory off + marketplace off + autooptimizer off. Lowest-friction first-run. Matches v1-shipping-plan §"Routes NOT shipping for v1 test." |
 | 3 | **Modules are discovered from the plugin registry**, not hard-coded in the customizer. Adding a new plugin = registering it; no customizer code change needed. (Depends on F28.) |
 | 4 | **Manifest is the source of truth.** Build scripts (`setup_runpod.sh`, `docker-compose.yml` overlay generator), the dashboard's Install pane, and `xvn doctor` all read `install.toml`. No drift between "what the operator selected" and "what is actually compiled/running." |
 | 5 | **Per-module config + env-var prompts are owned by the plugin**, not the customizer. The customizer asks each enabled plugin's manifest "what do you need from the user?" and runs that subflow. Keeps the customizer dumb and the plugins self-describing. |
@@ -73,7 +73,7 @@ enabled = false              # opted out; no autoresearcher artifacts will be pr
 - Persisted `install.toml` with schema versioning.
 - Cargo feature flag + docker-compose overlay generation from manifest.
 - Per-plugin config / env-var subflows (driven by plugin manifest).
-- Initial registered modules: **marketplace**, **memory** (cortex sidecar), **autoresearcher**.
+- Initial registered modules: **marketplace**, **memory** (cortex sidecar), **autooptimizer**.
 - Dashboard Settings → Install pane (read-only mirror of `install.toml` with "Reconfigure" deep-link to the CLI).
 
 ## 5. Out of scope (deferred to v2+)
@@ -101,7 +101,7 @@ xvision-cli/
 xvision-engine/
 └── src/plugins/                 # NEW — see F28 plugin architecture spec (to be written)
     ├── mod.rs                   # PluginRegistry, PluginManifest, install hooks
-    └── builtins/                # marketplace / memory / autoresearcher manifests
+    └── builtins/                # marketplace / memory / autooptimizer manifests
 ```
 
 The customizer talks to the plugin registry through a small `PluginCatalog` API:
@@ -113,7 +113,7 @@ trait PluginCatalog {
 }
 
 struct PluginManifest {
-    id: PluginId,                       // "marketplace" / "memory" / "autoresearcher"
+    id: PluginId,                       // "marketplace" / "memory" / "autooptimizer"
     name: String,
     description: String,                // one-line for the wizard
     long_description: String,           // shown in the detail pane
@@ -144,7 +144,7 @@ Invariants:
 
 Two emitted artifacts drive the actual build / runtime composition:
 
-1. `.cargo/xvn-features` — a one-line file consumed by `setup_runpod.sh` and Dockerfile build args: `XVN_FEATURES="marketplace,memory,autoresearcher"`. Passed to `cargo build --features "$XVN_FEATURES"`.
+1. `.cargo/xvn-features` — a one-line file consumed by `setup_runpod.sh` and Dockerfile build args: `XVN_FEATURES="marketplace,memory,autooptimizer"`. Passed to `cargo build --features "$XVN_FEATURES"`.
 2. `docker-compose.override.yml` — generated from the union of each enabled plugin's `SidecarSpec`. Memory plugin contributes the `cortex-http` service; marketplace contributes nothing at the compose layer (it's a cargo feature only); future plugins may contribute services.
 
 Both files are gitignored. The manifest itself can be committed for reproducible deployments.
@@ -155,7 +155,7 @@ Both files are gitignored. The manifest itself can be committed for reproducible
 |---|---|---|---|---|---|---|
 | **marketplace** | `marketplace` (already exists, on by default in current build) | none | `marketplace.toml` | `MARKETPLACE_OPERATOR_PRIVATE_KEY` (optional; wallet-connect at runtime is the real opt-in) | off in v1 preset | Per existing marketplace-plugin-design spec, build-level feature gate is for size / audit builds; user-facing opt-in stays at wallet-connect. |
 | **memory** | `memory` (new) | `cortex-http` | `memory.toml` | none (sidecar binds to 127.0.0.1; no external creds) | off in v1 preset | Per cortex-memory-integration-plan; sidecar overlay + new `xvision-memory` crate. |
-| **autoresearcher** | `autoresearcher` (new) | none (in-process) | `autoresearcher.toml` | `AUTORESEARCHER_INTERN_PROVIDER`, `AUTORESEARCHER_BUDGET_USD_PER_NIGHT` | off in v1 preset | Per AR-1/AR-2/AR-3 plans; nightly cycle is opt-in. |
+| **autooptimizer** | `autooptimizer` (new) | none (in-process) | `autooptimizer.toml` | `AUTOOPTIMIZER_INTERN_PROVIDER`, `AUTOOPTIMIZER_BUDGET_USD_PER_NIGHT` | off in v1 preset | Per AR-1/AR-2/AR-3 plans; nightly cycle is opt-in. |
 
 Future plugins register via F28's registry; no customizer change needed beyond the plugin shipping its manifest.
 

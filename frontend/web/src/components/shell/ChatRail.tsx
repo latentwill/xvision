@@ -52,7 +52,6 @@ import {
   type WizardEvent,
   UNIFIED_STREAM_REPLAY_FROM_START,
   createSession,
-  headerLabel,
   listSessions,
   loadSessionHistory,
   openUnifiedSessionStream,
@@ -80,11 +79,24 @@ const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
 const RAIL_MODE_LS = "xvn.chat_rail.mode";
 const RAIL_HISTORY_COLLAPSED_LS = "xvn.chat_rail.history_collapsed";
+const RAIL_CONTEXT_MODE_LS = "xvn.chat_rail.context_mode";
 
 function readPersistedMode(): ChatSessionMode {
   const v = safeStorageGet(RAIL_MODE_LS);
   return v === "act" ? "act" : "research";
 }
+
+export type RailContextMode = "active" | "workspace";
+
+function readPersistedContextMode(): RailContextMode {
+  const v = safeStorageGet(RAIL_CONTEXT_MODE_LS);
+  return v === "workspace" ? "workspace" : "active";
+}
+
+const CONTEXT_MODE_LABEL: Record<RailContextMode, string> = {
+  active: "Active page",
+  workspace: "Whole workspace",
+};
 
 export type ChatRailProps = {
   variant?: "desktop" | "panel";
@@ -101,11 +113,24 @@ export function ChatRail({
 }: ChatRailProps) {
   const location = useLocation();
   const qc = useQueryClient();
+  const [contextMode, setContextMode] = useState<RailContextMode>(
+    () => readPersistedContextMode(),
+  );
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const scope = useMemo<ContextScope>(
-    () => scopeFromPath(location.pathname, location.search),
-    [location.pathname, location.search],
+    () =>
+      contextMode === "workspace"
+        ? { scope: "workspace" }
+        : scopeFromPath(location.pathname, location.search),
+    [contextMode, location.pathname, location.search],
   );
   const key = useMemo(() => scopeKey(scope), [scope]);
+
+  const selectContextMode = useCallback((next: RailContextMode) => {
+    setContextMode(next);
+    safeStorageSet(RAIL_CONTEXT_MODE_LS, next);
+    setContextMenuOpen(false);
+  }, []);
 
   const [open, setOpen] = useState<boolean>(() => {
     return safeStorageGet(RAIL_OPEN_LS) === "1";
@@ -322,11 +347,14 @@ export function ChatRail({
       setError(null);
       const userText = text.trim();
       setInput("");
-      // Anchor the new user turn to the count of assistant rows that have
-      // already streamed into the unified log. Multi-step prior turns produce
-      // multiple assistant rows for a single legacy bubble, and without this
-      // anchor the merge would place this user message in between them.
-      const anchor = unifiedRows.filter((r) => r.type === "assistant").length;
+      // Anchor the new user turn to the count of assistant rows already
+      // visible. Use the MAX of the bubbles-side and unified-side counts:
+      // during the SSE replay window after `resolveSession`, bubbles is
+      // hydrated synchronously while unifiedRows is still empty, so a
+      // unified-only count would stamp anchor=0 and the merge would place
+      // this user above the historical assistant. Symmetrically, multi-step
+      // prior turns can produce more unified assistant rows than bubbles.
+      const anchor = computeUserAnchor(bubbles, unifiedRows);
       setBubbles((b) => [
         ...b,
         { role: "user", text: userText, assistantAnchor: anchor },
@@ -440,6 +468,7 @@ export function ChatRail({
       modelId,
       key,
       qc,
+      bubbles,
       unifiedRows,
       scope,
       resetSessionEvents,
@@ -531,28 +560,69 @@ export function ChatRail({
       aria-label="Chat rail"
     >
       {showHeader && (
-        <header className="px-4 py-3 border-b border-border-soft flex items-center justify-between gap-2">
-          <div className="text-[12px] text-text-2 truncate">
-            Context · <span className="text-text">{headerLabel(scope)}</span>
-          </div>
-          <div className="flex items-center gap-1">
+        <header className="px-4 py-3 border-b border-border-soft">
+          <div className="flex items-center justify-between gap-2">
             <button
-              className="text-[11px] text-text-3 hover:text-text border border-border-soft rounded-sm px-2 py-1"
-              onClick={startFresh}
-              title="Start a new conversation in this context"
+              type="button"
+              className="text-[12px] text-text-2 truncate flex items-center gap-1 hover:text-text"
+              aria-expanded={contextMenuOpen}
+              aria-controls="chat-rail-context-menu"
+              onClick={() => setContextMenuOpen((v) => !v)}
+              title="Switch chat context"
             >
-              New chat
+              <span>Context ·</span>
+              <span className="text-text">{CONTEXT_MODE_LABEL[contextMode]}</span>
+              <Icon
+                name="chevR"
+                size={12}
+                className={contextMenuOpen ? "rotate-90" : ""}
+              />
             </button>
-            {variant === "desktop" && (
+            <div className="flex items-center gap-1">
               <button
-                className="text-text-3 hover:text-text"
-                onClick={() => setOpen(false)}
-                title="Collapse rail"
+                className="text-[11px] text-text-3 hover:text-text border border-border-soft rounded-sm px-2 py-1"
+                onClick={startFresh}
+                title="Start a new conversation in this context"
               >
-                <Icon name="chevR" size={14} />
+                New chat
               </button>
-            )}
+              {variant === "desktop" && (
+                <button
+                  className="text-text-3 hover:text-text"
+                  onClick={() => setOpen(false)}
+                  title="Collapse rail"
+                >
+                  <Icon name="chevR" size={14} />
+                </button>
+              )}
+            </div>
           </div>
+          {contextMenuOpen && (
+            <div
+              id="chat-rail-context-menu"
+              role="menu"
+              aria-label="Chat context"
+              className="mt-2 space-y-1"
+            >
+              {(["active", "workspace"] as RailContextMode[]).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={contextMode === value}
+                  onClick={() => selectContextMode(value)}
+                  className={[
+                    "w-full text-left text-[11px] px-2 py-1 rounded-sm border",
+                    contextMode === value
+                      ? "border-border bg-surface-elev text-text"
+                      : "border-border-soft text-text-3 hover:text-text",
+                  ].join(" ")}
+                >
+                  {CONTEXT_MODE_LABEL[value]}
+                </button>
+              ))}
+            </div>
+          )}
         </header>
       )}
       {showHeader && recentScopeSessions.length > 0 && (
@@ -795,6 +865,24 @@ function RailModelBar({
  * `crates/xvision-dashboard/src/wizard_loop.rs:446-541`. New tools that
  * mutate must be added here in the same PR they ship.
  */
+/**
+ * Anchor a new user turn to the count of assistant rows already visible.
+ * Returns the max of the assistant counts in `bubbles` and `unifiedRows`
+ * so the merge places the user *after* whichever side currently leads —
+ * critical during the SSE replay window when bubbles is hydrated but
+ * unifiedRows hasn't caught up.
+ */
+export function computeUserAnchor(
+  bubbles: Bubble[],
+  unifiedRows: MessageRow[],
+): number {
+  let inBubbles = 0;
+  for (const b of bubbles) if (b.role === "assistant") inBubbles += 1;
+  let inUnified = 0;
+  for (const r of unifiedRows) if (r.type === "assistant") inUnified += 1;
+  return inBubbles > inUnified ? inBubbles : inUnified;
+}
+
 /** First user-turn text in a bubble list, or undefined if none yet. */
 function firstUserText(bubbles: Bubble[]): string | undefined {
   for (const b of bubbles) if (b.role === "user") return b.text;

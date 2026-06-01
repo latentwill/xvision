@@ -16,7 +16,7 @@ Xvision is pivoting fully to: (1) the multi-strategy evaluation engine, then (2)
 | 3 | **Comparison axis:** runs are first-class artifacts identified by (strategy, params, scenario) triples. Comparison view renders any arbitrary user-picked subset. |
 | 4 | **Visualization host:** Rust axum server + SPA dashboard at localhost. Live run progress streams via SSE/WebSocket. |
 | 5 | **Chart library:** TradingView Lightweight Charts (Apache 2.0) as primary. TradingView Advanced Charts noted as a post-hackathon upgrade path if studies / drawings / multi-chart layouts are wanted. |
-| 6 | **NL evaluator v1:** structured-finding extractor only — LLM reads run set, emits JSON findings with kind / severity / affected_runs / evidence. No chat surface. v2 will add Q&A on top of the same record stream. Records are the substrate the future Karpathy autoresearcher loop consumes. |
+| 6 | **NL evaluator v1:** structured-finding extractor only — LLM reads run set, emits JSON findings with kind / severity / affected_runs / evidence. No chat surface. v2 will add Q&A on top of the same record stream. Records are the substrate the future Karpathy autooptimizer loop consumes. |
 | 7 | **Concurrency model:** tier-gated. Free tier = 1 run at a time. Paid tier = bring-your-own API keys, unlimited concurrent agents. Backtests parallelizable (CPU-bound, pure); paper sequential against shared Alpaca rate budget. |
 | 8 | **Persistence:** SQLite + JSONL trade tapes on disk for hackathon / free tier. Run id = ULID. Postgres + object-storage migration path noted but deferred until the marketplace ships. |
 
@@ -43,7 +43,7 @@ Xvision is pivoting fully to: (1) the multi-strategy evaluation engine, then (2)
 
 - Strategy creation engine itself — separate spec.
 - Marketplace UI, ERC-8004 reputation surfaces — later phase.
-- Karpathy autoresearcher improvement loop — consumes findings but doesn't constrain this spec.
+- Karpathy autooptimizer improvement loop — consumes findings but doesn't constrain this spec.
 - Synthetic stress scenarios — deferred per Q2.
 - Native desktop wrapper — deferred per Q4.
 - Q&A surface over findings — v2 per Q5.

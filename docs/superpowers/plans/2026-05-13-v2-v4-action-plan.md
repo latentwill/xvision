@@ -17,7 +17,7 @@
 | V2A | Ease of use sweep | A new operator can install, tour, read docs, run examples, and understand results without repo spelunking. |
 | V2B | Security hardening | Local, remote, broker, and testnet actions require explicit auth, safe defaults, audit trails, and kill switches. |
 | V2C | Blockchain testnet | NFT mint, buy, sell, delegate, marketplace listing, reputation, and validation receipt flows work end-to-end on testnet only. |
-| V3 | Autoresearcher and final UI/UX | Strategy mutation, judging, lineage, dashboard review, and rollback are operator-grade and visually final. |
+| V3 | AutoOptimizer and final UI/UX | Strategy mutation, judging, lineage, dashboard review, and rollback are operator-grade and visually final. |
 | V4 | Smart contract go-live | Contracts and runbooks are audited, deployed off testnet, monitored, and guarded by mainnet launch controls. |
 
 ## V2A - Ease Of Use Sweep
@@ -160,16 +160,16 @@
 - Mainnet code paths remain disabled by configuration and launch flags.
 - Contract addresses, deployment commands, and rollback notes are documented.
 
-## V3 - Autoresearcher And Final UI/UX
+## V3 - AutoOptimizer And Final UI/UX
 
 **Priority:** after V2 testnet flows are safe and demoable. This phase turns Xvision into a research loop rather than only an operator tool.
 
 **Source anchors:**
 - `FOLLOWUPS.md`: SLF9 Karpathy loop, SLF13 cross-pollination, F29 agent social feed, F31 scenario replay modes, F32/F33 charting followups.
-- `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md`
-- `docs/superpowers/plans/2026-05-09-autoresearcher-1-mutator-lineage-gate-seal.md`
-- `docs/superpowers/plans/2026-05-09-autoresearcher-2-cycle-judge-evals.md`
-- `docs/superpowers/plans/2026-05-09-autoresearcher-3-dashboard.md`
+- `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md`
+- `docs/superpowers/plans/2026-05-09-autooptimizer-1-mutator-lineage-gate-seal.md`
+- `docs/superpowers/plans/2026-05-09-autooptimizer-2-cycle-judge-evals.md`
+- `docs/superpowers/plans/2026-05-09-autooptimizer-3-dashboard.md`
 - `docs/superpowers/research/2026-05-10-ideonomy-explorations.md`
 - `docs/superpowers/research/2026-05-11-agents-page-design-space.md`
 - `docs/superpowers/specs/2026-05-11-tradingview-charts-design.md`
@@ -177,13 +177,13 @@
 
 **Work packages:**
 
-1. Autoresearcher loop
+1. AutoOptimizer loop
    - Add strategy mutation proposals with lineage metadata.
    - Run candidate strategies through fixed scenario sets and held-out evals.
    - Judge candidates with deterministic gates before any LLM-assisted ranking.
    - Seal accepted mutations with manifest hashes and parent links.
 
-2. Autoresearcher dashboard
+2. AutoOptimizer dashboard
    - Show candidate queue, lineage tree, judge rationale, eval deltas, accepted/rejected mutations, and rollback actions.
    - Connect accepted strategies to testnet NFT identity where enabled.
    - Add operator approval gates for any candidate that can reach broker or chain surfaces.
@@ -204,14 +204,14 @@
    - Plugin architecture only where it removes real coupling in marketplace/research integrations.
 
 **Exit checks:**
-- Autoresearcher can propose, evaluate, accept/reject, seal, and display a mutation cycle.
+- AutoOptimizer can propose, evaluate, accept/reject, seal, and display a mutation cycle.
 - Every autonomous action has budget, sandbox, and approval limits.
 - UI/UX review passes on desktop and mobile viewports.
 - Examples, tutorials, and tours remain accurate after V3 changes.
 
 ## V4 - Smart Contract Go-Live
 
-**Priority:** final launch phase. No off-testnet launch until V2 security, V2C testnet, and V3 UX/autoresearcher gates are complete.
+**Priority:** final launch phase. No off-testnet launch until V2 security, V2C testnet, and V3 UX/autooptimizer gates are complete.
 
 **Source anchors:**
 - `decisions/0008-erc8004-deployment.md`
@@ -274,8 +274,8 @@ Suggested first board tickets:
 | 8 | Implement strategy NFT mint/readback flow | V2C | L | SLF3 |
 | 9 | Implement testnet marketplace list/buy/sell/delegate flow | V2C | L | marketplace spec |
 | 10 | Implement reputation and validation receipt write/readback | V2C | L | SLF4, SLF5 |
-| 11 | Build autoresearcher mutation/eval/judge loop | V3 | L | autoresearcher plans |
-| 12 | Build autoresearcher dashboard and lineage review | V3 | L | autoresearcher dashboard plan |
+| 11 | Build autooptimizer mutation/eval/judge loop | V3 | L | autooptimizer plans |
+| 12 | Build autooptimizer dashboard and lineage review | V3 | L | autooptimizer dashboard plan |
 | 13 | Run final UI/UX pass across dashboard surfaces | V3 | L | design docs, chart plans |
 | 14 | Prepare contract audit, launch flags, and mainnet runbook | V4 | L | ADR 0008, contract specs |
 
@@ -292,8 +292,8 @@ Suggested first board tickets:
 | `docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md` | V2C/V4 contract surface input. |
 | `docs/superpowers/specs/2026-05-09-non-custodial-agent-wallets-design.md` | V2C/V4 wallet input. |
 | `docs/superpowers/specs/2026-05-09-marketplace-plugin-design.md` | V2C/V4 marketplace input. |
-| `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md` | V3 source of truth for autonomous research loop. |
-| `docs/superpowers/plans/2026-05-09-autoresearcher-*.md` | V3 implementation sequence. |
+| `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md` | V3 source of truth for autonomous research loop. |
+| `docs/superpowers/plans/2026-05-09-autooptimizer-*.md` | V3 implementation sequence. |
 | `docs/design/*` and chart plans/specs | V3 final UI/UX pass input; V2A can use them for docs/tour visuals. |
 
 ## Operating Rules

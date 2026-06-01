@@ -35,7 +35,9 @@ import type { Phase } from "./PhaseChip";
 export type TimelineDecision = {
   /** decision index (matches `decision_index`, used as the jump key). */
   i: number;
-  /** raw ISO timestamp (rendered as HH:MM:SS.mmm by callers). */
+  /** raw ISO timestamp. Callers render via `fmtStepStamp` (UTC, date-bearing)
+   *  so multi-day runs can be read at a glance; keep the raw ISO for `title=`
+   *  tooltips and downstream tooling. */
   t: string;
   phase: Phase;
   /** present only when engaged. */
@@ -86,6 +88,114 @@ export function mapAction(action: string, priorSide: PositionSide): ActionPillAc
 
 export function justificationText(row: DecisionRowDto): string {
   return row.reasoning?.trim() || row.justification?.trim() || "";
+}
+
+/** "BTC/USD" → "BTC"; bare symbols and the empty string pass through. The full
+ *  pair stays available for tooltip/search; this is just the column label. */
+export function shortAsset(asset: string): string {
+  return asset.split("/")[0] ?? asset;
+}
+
+/**
+ * Render a step's raw ISO timestamp as `YYYY-MM-DD HH:MM:SS` in UTC.
+ *
+ * Shared by the Decisions table TIMESTAMP column and the density-strip hover
+ * tooltip so the two surfaces can't drift. The format is intentionally
+ * locale-free and tabular — sortable as a string, copy-pasteable into the CLI,
+ * and unambiguous regardless of the operator's locale.
+ *
+ * Why date + seconds, no milliseconds: scenarios span days to months, so the
+ * date is load-bearing for orientation; bar boundaries are integer seconds
+ * (the engine writes `YYYY-MM-DDTHH:MM:SSZ`), so milliseconds are always `.000`
+ * and would only add noise. Anyone who needs the original ISO can read the
+ * full string from the row's `title=` attribute.
+ *
+ * Returns the raw input on parse failure (matches the previous behaviour of
+ * the two local formatters this replaced).
+ */
+export function fmtStepStamp(t: string): string {
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return t;
+  const yyyy = String(d.getUTCFullYear()).padStart(4, "0");
+  const MM = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Step- vs row-level counts for the Decisions summary chips.
+ *
+ * A multi-asset wakeup is ONE decision step in the strategy's perspective; the
+ * per-asset trader calls are children of that step. The deployed UI used to
+ * count rows where it meant steps ("22 of 22 decisions · 5 steps · 22 engaged"
+ * for a 5-step / 5-asset run), inflating the cardinality the operator was
+ * trying to read. These four numbers are the source of truth for the
+ * summary-chip strip on the desktop table, the density-strip header, and the
+ * mobile Decisions tab.
+ *
+ * Semantics:
+ *   - `totalSteps` / `viewedSteps` count distinct timestamps in the full data
+ *     and the filtered/searched view respectively.
+ *   - `engagedSteps` counts visible timestamps where at least one row produced
+ *     a real trader decision (phase !== "filtered"). Scoped to the view so it
+ *     stays consistent with `viewedSteps` under filtering.
+ *   - `viewedTraderCalls` / `totalTraderCalls` are the per-asset row counts —
+ *     i.e. how many trader invocations happened. A "trader call" can be either
+ *     engaged (real decision) or filtered (synthesized no-op).
+ */
+export type DecisionCounts = {
+  viewedSteps: number;
+  totalSteps: number;
+  engagedSteps: number;
+  viewedTraderCalls: number;
+  totalTraderCalls: number;
+};
+
+export function decisionCounts(
+  filteredView: TimelineDecision[],
+  all: TimelineDecision[],
+): DecisionCounts {
+  const viewSteps = new Set<string>();
+  const engagedSteps = new Set<string>();
+  for (const d of filteredView) {
+    viewSteps.add(d.t);
+    if (d.phase !== "filtered") engagedSteps.add(d.t);
+  }
+  const totalSteps = new Set(all.map((d) => d.t));
+  return {
+    viewedSteps: viewSteps.size,
+    totalSteps: totalSteps.size,
+    engagedSteps: engagedSteps.size,
+    viewedTraderCalls: filteredView.length,
+    totalTraderCalls: all.length,
+  };
+}
+
+/**
+ * Assign a 1-based *step* ordinal per distinct timestamp, ranked chronologically,
+ * returning a map keyed by `i` (decision_index).
+ *
+ * A multi-asset run fans one decision step out into one row per asset, all sharing
+ * that step's timestamp (e.g. decision_index 0=BTC and 1=ETH both at 20:00). Those
+ * rows collapse to the same step number here, so the table can show the step on the
+ * first row and blank the rest instead of counting per-asset rows as separate steps.
+ *
+ * Computed over the FULL decision list (not a filtered view) so a row's step number
+ * stays stable when the table is filtered — step 33 reads "33" even if step 32 is
+ * filtered out.
+ */
+export function stepOrdinalsByDecision(rows: TimelineDecision[]): Map<number, number> {
+  const distinct = [...new Set(rows.map((r) => r.t))].sort(
+    (a, b) => new Date(a).getTime() - new Date(b).getTime(),
+  );
+  const stepByTs = new Map<string, number>();
+  distinct.forEach((t, idx) => stepByTs.set(t, idx + 1));
+  const out = new Map<number, number>();
+  for (const r of rows) out.set(r.i, stepByTs.get(r.t) ?? 0);
+  return out;
 }
 
 /**

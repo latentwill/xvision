@@ -15,6 +15,12 @@ pub struct PublicManifest {
     /// published / tested with. Surfaced in the UI but never gates which
     /// model the operator binds at eval-launch — the binding choice is
     /// owned by the operator, not the strategy author.
+    ///
+    /// `#[serde(default)]` so strategy manifests written before this field
+    /// existed still deserialize (missing → empty Vec) rather than failing the
+    /// search reindex with `missing field attested_with`. Serialization is
+    /// unchanged (no `skip_serializing_if`): the field is always written out.
+    #[serde(default)]
     pub attested_with: Vec<String>,
     pub required_tools: Vec<String>,
     pub risk_preset_or_config: String, // "conservative" | "balanced" | "aggressive" | "custom"

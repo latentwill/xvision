@@ -299,8 +299,14 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "DECISIONS" }));
 
-    // Step/trade counter row
-    expect(screen.getByText(/1 STEPS · 1 TRADES/)).toBeInTheDocument();
+    // Step / trader-call / trade counter row. The legacy format read
+    // "N STEPS · M TRADES" where N was the per-asset row count; on a
+    // 5-step / 5-asset run it said "22 STEPS" instead of "5 STEPS". The
+    // chip now reports distinct decision steps as the primary count and
+    // surfaces the per-asset trader-call count alongside it.
+    expect(
+      screen.getByText(/1 STEP · 1 TRADER CALL · 1 TRADE/),
+    ).toBeInTheDocument();
     // Decision card: action pill, conviction bar, justification
     expect(screen.getByText("#14")).toBeInTheDocument();
     expect(screen.getByText("BUY")).toBeInTheDocument();
@@ -425,6 +431,50 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     // topbar (mobile uses a LIVE strip instead) is the positive sentinel.
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.getByTestId("eval-topbar")).toBeInTheDocument();
+  });
+
+  it("DECISIONS counter reports STEPS as distinct timestamps, not per-asset row count", async () => {
+    // Regression guard for the multi-asset case. Two steps (TS_A, TS_B), each
+    // fanned out into BTC + ETH = 4 trader-call rows. The legacy chip read
+    // "4 STEPS · …" because it used decisions.length. After the fix:
+    //   "2 STEPS · 4 TRADER CALLS · M TRADES"
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        decisions: [
+          decision({
+            decision_index: 0,
+            timestamp: "2024-01-01T20:00:00Z",
+            asset: "BTC/USD",
+            pnl_realized: null,
+          }),
+          decision({
+            decision_index: 1,
+            timestamp: "2024-01-01T20:00:00Z",
+            asset: "ETH/USD",
+            pnl_realized: null,
+          }),
+          decision({
+            decision_index: 2,
+            timestamp: "2024-01-07T13:00:00Z",
+            asset: "BTC/USD",
+            pnl_realized: 100,
+          }),
+          decision({
+            decision_index: 3,
+            timestamp: "2024-01-07T13:00:00Z",
+            asset: "ETH/USD",
+            pnl_realized: 50,
+          }),
+        ],
+      }),
+    );
+
+    renderRoute();
+    fireEvent.click(await screen.findByRole("tab", { name: "DECISIONS" }));
+
+    expect(
+      await screen.findByText(/2 STEPS · 4 TRADER CALLS · 2 TRADES/),
+    ).toBeInTheDocument();
   });
 
   it("DECISIONS tab renders SHORT / COVER pills resolved against prior side (QA22 round-4)", async () => {

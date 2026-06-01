@@ -233,13 +233,16 @@ the polling endpoint if the SSE connection drops.
 ## Allowlist policy
 
 The allowlist enforces the **safe-to-surface principle**: a command is
-allowed remotely only when it meets one of:
+allowed remotely when it is either:
 
 - **(a) Read-only** — it cannot mutate persistent state.
-- **(b) Explicitly scoped + hard-limited + cancellable** — it accepts a
-  mandatory scope argument (strategy/scenario ID), the engine enforces
-  hard caps on decisions/tokens/wall-clock, and the job can be cancelled
-  via `DELETE /api/cli/jobs/:id`.
+- **(b) Scoped operational work** — it accepts a mandatory scope argument
+  (strategy/scenario ID), the engine enforces hard caps on
+  decisions/tokens/wall-clock, and the job can be cancelled via
+  `DELETE /api/cli/jobs/:id`.
+- **(c) Draft authoring** — low-risk record creation on the strategy surface
+  (`strategy create` / `strategy new`) is allowed because it only creates a
+  draft; deeper strategy-shape mutations remain denied.
 
 The check runs before any child process is spawned. Rejected requests return
 HTTP 422 with the allowlist message verbatim so you can diagnose why.
@@ -256,6 +259,8 @@ HTTP 422 with the allowlist message verbatim so you can diagnose why.
 | `["eval", "cancel", "<run_id>"]` | Cancellable |
 | `["strategy", "show", "<id>"]` | Read-only |
 | `["strategy", "validate", "<id>", "--scenario", "<sc>"]` | Read-only |
+| `["strategy", "create", "--name", "Remote draft"]` | Draft authoring |
+| `["strategy", "new", "--name", "Remote draft"]` | Draft authoring |
 | `["scenario", "show", "<id>"]` | Read-only |
 | `["scenario", "select", "--asset", "BTC/USD", "--count", "4"]` | Read-only |
 | `["doctor"]` | Read-only |

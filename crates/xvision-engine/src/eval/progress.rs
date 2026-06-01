@@ -27,7 +27,7 @@ use tokio::sync::broadcast;
 use crate::eval::run::MetricsSummary;
 
 /// Single event in an eval-run's lifecycle. The executor emits these via
-/// a `ProgressTx`; the CLI / dashboard / autoresearcher subscribes via
+/// a `ProgressTx`; the CLI / dashboard / autooptimizer subscribes via
 /// a `ProgressBus`. New variants are additive; the enum is tagged so
 /// the wire shape is JSON like `{"type": "run_started", ...}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

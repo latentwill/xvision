@@ -69,6 +69,8 @@ pub enum ProviderKind {
     Anthropic,
     OpenaiCompat,
     LocalCandle,
+    Ollama,
+    LlamaCpp,
 }
 
 impl From<InternProvider> for ProviderKind {
@@ -1327,7 +1329,7 @@ sqlite_url = "sqlite://x.db"
     #[test]
     fn provider_kind_round_trips_via_serde() {
         use ProviderKind::*;
-        for k in [Anthropic, OpenaiCompat, LocalCandle] {
+        for k in [Anthropic, OpenaiCompat, LocalCandle, Ollama, LlamaCpp] {
             let s = toml::to_string(&ProviderEntry {
                 name: "p".into(),
                 kind: k,

@@ -38,6 +38,13 @@ export function ReviewPanel({
   // returned by the list query". Set by either the user clicking a
   // history entry or by a successful generate mutation.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Format key for the post-copy "Copied" affordance on the review actions
+  // row. Declared up here (rather than after the `!runIsCompleted` early
+  // return below) so the hook order is identical between the "run still
+  // in progress" render and the "run completed" render — otherwise an
+  // eval transitioning from in-progress → completed flips the hook count
+  // (5 → 6) and triggers React error #310.
+  const [copiedFormat, setCopiedFormat] = useState<"md" | "json" | null>(null);
 
   const effectiveId =
     selectedId ?? newestNonFailed(listQuery.data ?? null)?.id ?? null;
@@ -73,7 +80,6 @@ export function ReviewPanel({
   const hasReviews = reviews.length > 0;
   const detail = detailQuery.data ?? null;
   const detailReview: EvalReview | null = detail?.review ?? null;
-  const [copiedFormat, setCopiedFormat] = useState<"md" | "json" | null>(null);
 
   async function copyReview(format: "md" | "json", detail: ReviewDetail) {
     const text =

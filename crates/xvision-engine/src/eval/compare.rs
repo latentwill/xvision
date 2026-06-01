@@ -5,7 +5,7 @@
 //! per-run equity curve, and the union of all extracted findings.
 //!
 //! Stays in the `eval` module so callers can compose it directly without
-//! going through `api::eval` (e.g., the autoresearcher's lineage gate
+//! going through `api::eval` (e.g., the autooptimizer's lineage gate
 //! reuses `compare_runs` in-process).
 //!
 //! # Manifest mismatch refusal (V2E, migration 027)

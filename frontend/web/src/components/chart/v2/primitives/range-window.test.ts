@@ -4,10 +4,12 @@ import { granularitySeconds, rangeWindowSeconds } from "./range-window";
 
 describe("rangeWindowSeconds", () => {
   it("maps finite presets to their second-counts", () => {
+    expect(rangeWindowSeconds("1h")).toBe(3_600);
+    expect(rangeWindowSeconds("4h")).toBe(4 * 3_600);
+    expect(rangeWindowSeconds("6h")).toBe(6 * 3_600);
+    expect(rangeWindowSeconds("12h")).toBe(12 * 3_600);
     expect(rangeWindowSeconds("1d")).toBe(86_400);
     expect(rangeWindowSeconds("1w")).toBe(7 * 86_400);
-    expect(rangeWindowSeconds("1m")).toBe(30 * 86_400);
-    expect(rangeWindowSeconds("3m")).toBe(90 * 86_400);
   });
 
   it("maps All to null", () => {

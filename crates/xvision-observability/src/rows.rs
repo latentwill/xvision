@@ -71,6 +71,8 @@ pub struct ModelCallRow {
     pub cost_usd: Option<f64>,
     pub prompt_hash: String,
     pub response_hash: Option<String>,
+    pub prompt_text: Option<String>,
+    pub response_text: Option<String>,
     pub prompt_payload_ref: Option<String>,
     pub response_payload_ref: Option<String>,
     pub tool_calls_requested: Option<String>,

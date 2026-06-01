@@ -25,6 +25,7 @@ describe("TraceDock", () => {
       selectedSpanId: null,
       activeRunId: null,
       lastOpenHeight: "working",
+      costOverrideUsd: null,
     });
   });
 
@@ -124,5 +125,33 @@ describe("TraceDock", () => {
       "title",
       expect.stringContaining("No broker.call spans"),
     );
+  });
+
+  test("capsule cost reflects the eval-side override when one is pinned", async () => {
+    // MOCK_RUN_COMPLETED.summary.total_cost_usd is 0.0624; the eval-side
+    // `inference_cost_quote_total` may differ when pricing rolled up on
+    // the eval table only. The capsule must prefer the pinned override
+    // so it matches the meta-strip number rather than the stale rollup.
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "working",
+      costOverrideUsd: 0.4242,
+    });
+    renderDock();
+    const cost = await screen.findByTestId("trace-dock-cost");
+    expect(cost.textContent).toBe("$0.4242");
+    expect(cost.getAttribute("title")).toBe("$0.4242");
+  });
+
+  test("capsule cost falls back to the agent-run summary when no override is pinned", async () => {
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "working",
+      costOverrideUsd: null,
+    });
+    renderDock();
+    const cost = await screen.findByTestId("trace-dock-cost");
+    // MOCK_RUN_COMPLETED.summary.total_cost_usd === 0.0624.
+    expect(cost.textContent).toBe("$0.0624");
   });
 });

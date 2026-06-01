@@ -1244,4 +1244,4 @@ Commit `chore: Plan 3 end-to-end smoke verified`.
 
 **Hackathon submission (June 15)** is fully capable: strategies authored via Wizard or external AI, evaluated against canonical scenarios, signed attestations, marketplace listings on Mantle Sepolia, live execution via Alpaca paper or Orderly.
 
-**Plan 4 (post-hackathon)** — Tier B sealing + xvn API server (envelope encryption per OSShip pattern), remaining UX archetypes (Notebook for L4 researchers, Lab Bench for versioned-history view, Canvas for spatial node-graph authoring), Postgres migration for marketplace launch, the autoresearcher Karpathy improvement loop that consumes findings.
+**Plan 4 (post-hackathon)** — Tier B sealing + xvn API server (envelope encryption per OSShip pattern), remaining UX archetypes (Notebook for L4 researchers, Lab Bench for versioned-history view, Canvas for spatial node-graph authoring), Postgres migration for marketplace launch, the autooptimizer Karpathy improvement loop that consumes findings.

@@ -9,10 +9,17 @@
 
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/primitives/Icon";
+import type { FilterSummary } from "@/api/types.gen/FilterSummary";
 import { ActionPill } from "./ActionPill";
 import { PhaseChip } from "./PhaseChip";
 import { DecisionTimeline } from "./DecisionTimeline";
-import type { TimelineDecision } from "./decision-view";
+import {
+  decisionCounts,
+  fmtStepStamp,
+  shortAsset,
+  stepOrdinalsByDecision,
+  type TimelineDecision,
+} from "./decision-view";
 import {
   actionCounts,
   matchesActionFilter,
@@ -69,7 +76,12 @@ const PILLS: {
   },
   {
     k: "FILTERED",
-    label: "Filtered",
+    // Pill label matches the PhaseChip's `NO-OP` (commit 970433b renamed the
+    // chip but missed the pill, leaving the toolbar reading "Filtered 0"
+    // when in fact 1399 bars were suppressed by the engine filter — two
+    // distinct concepts. Engine-filter suppression is surfaced as a
+    // separate activity line on the card header.)
+    label: "No-op",
     dotColor: "var(--text-3)",
     activeBg: "transparent",
     activeBd: "var(--text-3)",
@@ -78,14 +90,35 @@ const PILLS: {
   },
 ];
 
-function fmtRowTime(t: string): string {
-  const d = new Date(t);
-  if (Number.isNaN(d.getTime())) return t;
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  const ss = String(d.getUTCSeconds()).padStart(2, "0");
-  const ms = String(d.getUTCMilliseconds()).padStart(3, "0");
-  return `${hh}:${mm}:${ss}.${ms}`;
+/** Aggregate the engine-filter activity across all `FilterSummary` entries.
+ *
+ *  Returns:
+ *  - `barsScanned` — total cadence-gated bars the engine evaluated.
+ *  - `wakeups` — bars where the filter fired and the trader was woken.
+ *  - `suppressed` — bars that DID NOT wake the trader, for any reason.
+ *    This is `bars_scanned - wakeups` (= `llm_calls_saved`), which folds
+ *    together "filter conditions evaluated false" AND the three rule-based
+ *    suppression counters (in-position / cooldown / daily-cap). The pill
+ *    row already separates row-level NO-OP (synthesized decisions); this
+ *    counter is strictly the engine-gate-rejected bars that never produced
+ *    a decision row at all — the number the operator means when they say
+ *    "the filter rejected 1399 of 1404 bars."
+ *
+ *  Returns `null` when there's no activity to report (no summaries, or
+ *  `bars_scanned` is zero across all of them) so the activity line is
+ *  omitted entirely on EveryBar runs. */
+function aggregateFilterActivity(
+  summaries: FilterSummary[] | undefined,
+): { barsScanned: number; wakeups: number; suppressed: number } | null {
+  if (!summaries || summaries.length === 0) return null;
+  let barsScanned = 0;
+  let wakeups = 0;
+  for (const s of summaries) {
+    barsScanned += s.bars_scanned;
+    wakeups += s.wakeups;
+  }
+  if (barsScanned === 0) return null;
+  return { barsScanned, wakeups, suppressed: barsScanned - wakeups };
 }
 
 function fmtPnl(pnl: number | null | undefined): string {
@@ -98,10 +131,17 @@ export function DecisionsTable({
   decisions,
   focusedIdx,
   onJump,
+  filterSummaries,
 }: {
   decisions: TimelineDecision[];
   focusedIdx: number | null;
   onJump: (i: number) => void;
+  /** Engine-filter activity summary from the run export. The table only shows
+   *  bars where the filter fired (= rows in `decisions`); the suppressed bars
+   *  are invisible without this context. Surfaced as a one-line header
+   *  alongside the steps chip on FilterGated runs. Omit / pass `[]` for
+   *  EveryBar runs to hide the line entirely. */
+  filterSummaries?: FilterSummary[];
 }) {
   const [search, setSearch] = useState("");
   const [actionFilter, setActionFilter] = useState<ActionFilter>("all");
@@ -117,26 +157,71 @@ export function DecisionsTable({
     return sortDecisions(out, sortKey);
   }, [decisions, search, actionFilter, sortKey]);
 
-  const engagedCount = useMemo(
-    () => decisions.filter((d) => d.phase !== "filtered").length,
-    [decisions],
+  // Step ordinals are keyed by decision_index and computed over the FULL list so
+  // they stay stable under filtering. A multi-asset step (BTC+ETH at one
+  // timestamp) shares one step number; `summary.totalSteps` is the number of
+  // distinct decision steps, which is what the header should report (not the
+  // per-asset row count). Blanking the step number on the 2nd+ row of a step
+  // only makes sense when same-step rows are adjacent — i.e. in chronological
+  // sort.
+  const stepByI = useMemo(() => stepOrdinalsByDecision(decisions), [decisions]);
+  const summary = useMemo(
+    () => decisionCounts(filteredView, decisions),
+    [filteredView, decisions],
   );
+  const filterActivity = useMemo(
+    () => aggregateFilterActivity(filterSummaries),
+    [filterSummaries],
+  );
+  const isChronological = sortKey === "time-asc" || sortKey === "time-desc";
 
   return (
     <div className="bg-surface-card border border-border rounded-card">
       <div
-        className="flex items-center justify-between px-5 pt-4 pb-3"
+        className="flex items-start justify-between px-5 pt-4 pb-3 gap-3"
         style={{ borderBottom: "1px solid var(--border-soft)" }}
       >
-        <div className="flex items-baseline gap-3">
-          <h2 className="m-0 font-sans text-[22px] tracking-tight text-text" style={{ fontWeight: 600 }}>
-            Decisions
-          </h2>
-          <span className="text-[11px] font-mono text-text-3">
-            {filteredView.length} of {decisions.length} steps · {engagedCount} engaged
-          </span>
+        <div className="flex flex-col gap-1 min-w-0">
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <h2 className="m-0 font-sans text-[22px] tracking-tight text-text" style={{ fontWeight: 600 }}>
+              Decisions
+            </h2>
+            {/* Step-centric counts. The legacy chip read
+                  "{rows} of {rows} decisions · {steps} steps · {rows} engaged"
+                and triple-counted the multi-asset fanout — a 5-step / 5-asset run
+                read as "22 of 22 decisions · 5 steps · 22 engaged." We now report
+                steps (the strategy's decision moments) as the primary count and
+                keep the per-asset row total visible as "trader calls" so the
+                operator can still see the fanout cardinality. Both step counts
+                follow filtering; trader calls follow the view too. */}
+            <span className="text-[11px] font-mono text-text-3">
+              {summary.viewedSteps} of {summary.totalSteps}{" "}
+              {summary.totalSteps === 1 ? "step" : "steps"} ·{" "}
+              {summary.engagedSteps} engaged · {summary.viewedTraderCalls} trader{" "}
+              {summary.viewedTraderCalls === 1 ? "call" : "calls"}
+            </span>
+          </div>
+          {/* Engine-filter activity. Without this line the operator reads the
+              steps chip in isolation and concludes "every step was engaged" —
+              missing the 1399 suppressed bars that never produced a decision
+              row at all. Only the bars that wake the trader become rows in
+              this table; the rest are visible to the operator only through
+              this header (and the FilterSummaryPanel / FilterEventTimeline
+              above). Conditional render — EveryBar runs (no filterSummaries)
+              get no line, so the layout doesn't shift for them. */}
+          {filterActivity && (
+            <span
+              data-testid="decisions-filter-activity"
+              className="text-[11px] font-mono text-text-3"
+            >
+              engine filter: {filterActivity.barsScanned.toLocaleString()}{" "}
+              {filterActivity.barsScanned === 1 ? "bar" : "bars"} scanned ·{" "}
+              {filterActivity.wakeups.toLocaleString()} fired ·{" "}
+              {filterActivity.suppressed.toLocaleString()} suppressed
+            </span>
+          )}
         </div>
-        <span className="text-[10px] font-mono text-text-3">click row → focus</span>
+        <span className="text-[10px] font-mono text-text-3 shrink-0">click row → focus</span>
       </div>
 
       {/* Toolbar — search + sort */}
@@ -158,7 +243,7 @@ export function DecisionsTable({
             onChange={(e) => setSearch(e.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
-            placeholder="Search decisions… (id, justification, action)"
+            placeholder="Search decisions… (asset, justification, action)"
             spellCheck={false}
             aria-label="Search decisions"
             className="flex-1 bg-transparent border-none outline-none text-text text-[12.5px] font-mono"
@@ -245,20 +330,23 @@ export function DecisionsTable({
         })}
       </div>
 
-      {/* Density strip */}
+      {/* Density strip — one tick per per-asset row; header reports the
+          step count derived from the same source as the summary chip above. */}
       <DecisionTimeline
         decisions={decisions}
         focusedIdx={focusedIdx}
         onJump={onJump}
         activeFilter={actionFilter}
+        stepsCount={summary.totalSteps}
       />
 
       <div className="overflow-x-auto xvn-scroll">
         <table className="w-full text-[11px] font-mono">
           <thead style={{ background: "var(--surface-elev)" }}>
             <tr className="text-left text-text-3">
-              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-10">#</th>
-              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-32">TIMESTAMP</th>
+              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-12">STEP</th>
+              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-16">ASSET</th>
+              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-44">TIMESTAMP</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-24">PHASE</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-20">ACTION</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-28">CONVICTION</th>
@@ -269,14 +357,21 @@ export function DecisionsTable({
           <tbody>
             {filteredView.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-text-3">
+                <td colSpan={8} className="px-4 py-8 text-center text-text-3">
                   No decisions match these filters.
                 </td>
               </tr>
             ) : (
-              filteredView.map((d) => {
+              filteredView.map((d, idx) => {
                 const focus = d.i === focusedIdx;
                 const isFiltered = d.phase === "filtered";
+                // Show the step number on the first row of each step; blank the
+                // 2nd+ rows of the same step (the per-asset fan-out) so the count
+                // tracks decision steps, not rows. Only blank in chronological
+                // sort, where same-step rows are adjacent; otherwise number every
+                // row since a step's rows may be scattered.
+                const prev = filteredView[idx - 1];
+                const sameStepAsPrev = isChronological && prev != null && prev.t === d.t;
                 return (
                   <tr
                     key={d.i}
@@ -290,10 +385,26 @@ export function DecisionsTable({
                       opacity: isFiltered ? 0.78 : 1,
                     }}
                   >
-                    <td className="px-4 py-2 tabular-nums text-text-3">{d.i}</td>
-                    <td className="px-4 py-2 tabular-nums text-text-2">{fmtRowTime(d.t)}</td>
+                    <td className="px-4 py-2 tabular-nums text-text-3">
+                      {sameStepAsPrev ? "" : stepByI.get(d.i)}
+                    </td>
+                    <td className="px-4 py-2 text-text-2 whitespace-nowrap" title={d.asset}>
+                      {shortAsset(d.asset)}
+                    </td>
+                    <td
+                      className="px-4 py-2 tabular-nums text-text-2 whitespace-nowrap"
+                      title={d.t}
+                    >
+                      {fmtStepStamp(d.t)}
+                    </td>
                     <td className="px-4 py-2">
-                      <PhaseChip phase={d.phase} />
+                      {/* PHASE is a step-level concept (filter fired vs not),
+                          so blank the chip on per-asset child rows the same
+                          way we blank the STEP number — otherwise a single
+                          step renders ENGAGED N times for an N-asset universe
+                          and reads as "engaged every row." Non-chronological
+                          sort numbers every row, so show every chip too. */}
+                      {sameStepAsPrev ? null : <PhaseChip phase={d.phase} />}
                     </td>
                     <td className="px-4 py-2">
                       {isFiltered || !d.action ? (

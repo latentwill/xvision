@@ -135,7 +135,7 @@ pub struct SlotInput<'a> {
     /// every non-eval call site (unit tests, legacy `LLMSlot` pipeline).
     pub scenario_start: Option<chrono::DateTime<chrono::Utc>>,
     /// Market-data window that contributed to this slot's briefing.
-    /// Persisted on Observation writes so autoresearcher can compute
+    /// Persisted on Observation writes so autooptimizer can compute
     /// Pattern `training_window_end` from source data.
     pub source_window_start: Option<chrono::DateTime<chrono::Utc>>,
     pub source_window_end: Option<chrono::DateTime<chrono::Utc>>,

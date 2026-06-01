@@ -292,6 +292,26 @@ For command-style live-node work, prefer the typed remote CLI job API instead of
 - Use `GET /api/cli/jobs/:id/events` for SSE progress.
 - `xvn-mcp` is separate stdio MCP, not the HTTP remote-control surface.
 
+**It is read / eval / research only by default.** A server-side allowlist
+(`crates/xvision-dashboard/src/cli_jobs/allowlist.rs`) accepts read-only verbs
+plus scoped + hard-capped + cancellable ones (`eval run`, `eval compare/watch`,
+`experiment run`, `model bakeoff`, `bars fetch`). **Unscoped mutations are
+rejected**: `strategy new` / `create` / `add-agent` / `remove-agent` /
+`set-pipeline`, `agent create`, `scenario create/clone/archive/rm/classify/set-regime`,
+`experiment new/create/update`, `provider add/remove/refresh-models`,
+`example seed`, `obs retention set|clear`, `obs janitor run`, `bars rm/gc`,
+`store migrate`. Top-level `dashboard`, `mcp`, `fire-trade`, `close-position`,
+`migrate` are denied outright. The rejection reads `… not allowed over remote cli`.
+
+To run an intentional mutation against a live node, choose one of:
+1. **Run `xvn` locally** — the local binary has no allowlist.
+2. **The dashboard CRUD API** (or the MCP tools — e.g. `xvn_strategy_create_atomic`
+   mirrors `strategy new --prompt`) — these are the supported write paths.
+3. **Full-bypass dev mode**: set `XVN_DASHBOARD_CLI_DEVMODE=1` (or `true`) on the
+   node. This accepts **every** argv, including live-trade/host-admin verbs, so
+   only set it on a trusted dev node with no live broker creds. Off by default;
+   does not replace the auth gate. See the runbook's "CLI jobs allowlist".
+
 ## Don'ts (operator-facing)
 
 - Don't bind the dashboard wider than loopback outside Tailscale until **F35** (dashboard auth) lands.

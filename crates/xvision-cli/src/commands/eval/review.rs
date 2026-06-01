@@ -313,7 +313,11 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
             ))
         })?
     };
-    if api_key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+    let no_auth = matches!(
+        entry.kind,
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+    );
+    if api_key.is_empty() && !no_auth {
         return Err(ApiError::Validation(format!(
             "provider `{}` has no API key set",
             entry.name
@@ -321,7 +325,9 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
     }
     Ok(match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
+        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp => {
+            Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
+        }
         ProviderKind::LocalCandle => Arc::new(MockDispatch::echo(
             r#"{"summary":"local-candle stub","verdict":"inconclusive","confidence":0.0,"score":0,"findings":[],"risks":[],"next_tests":[],"questions":[]}"#,
         )),

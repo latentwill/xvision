@@ -22,7 +22,7 @@ capability lands after `0.29.0`, it should ship as `0.30.0`, not
 `0.3.0`, because semver compares `0.3.0` as older than `0.29.0`.
 
 ```
-… → 0.21.0 → 0.22.0 → 0.23.0 → … → 0.29.0 → 0.30.0 (autoresearcher) → 0.31.0 → …
+… → 0.21.0 → 0.22.0 → 0.23.0 → … → 0.29.0 → 0.30.0 (autooptimizer) → 0.31.0 → …
 ```
 
 ## Where the version lives
@@ -42,7 +42,7 @@ The CLI surfaces the version via `xvn --version` (clap reads
 
 ```bash
 scripts/bump-version.sh 0.22.0           # standard bump for the next image
-scripts/bump-version.sh 0.30.0           # named capability train (e.g. autoresearcher)
+scripts/bump-version.sh 0.30.0           # named capability train (e.g. autooptimizer)
 scripts/bump-version.sh --dry-run 0.22.0 # show what would change without writing
 ```
 

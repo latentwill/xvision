@@ -5,8 +5,8 @@ surface — see `team/board-v2.md`). It decomposes V2E items 17–25 into
 named tracks — the seven items from the research doc's recommended-wave
 list plus two added 2026-05-20 from the operator review pass.
 
-V2E is the second of two prerequisites for V3 autoresearcher (V2D memory
-is the first). The autoresearcher's diff harness, failed-decision
+V2E is the second of two prerequisites for V3 autooptimizer (V2D memory
+is the first). The autooptimizer's diff harness, failed-decision
 reservoir, and feature-vector ML hooks all assume the trace shape from
 the foundation track already exists.
 
@@ -185,9 +185,9 @@ at the cost of harder-to-kill-independently scope. Conductor's call.
   after the v1 wave is in place. New follow-up entry on `team/board-v2.md`.
 - **Marketplace anti-overfitting suite** — hidden eval scenarios,
   walk-forward splits with embargo, metric stability, leakage guards,
-  simplicity penalty. Owned by the marketplace / V3 autoresearcher
+  simplicity penalty. Owned by the marketplace / V3 autooptimizer
   tracks, not V2E.
-- **Autoresearcher meta-loop tooling** — counterfactual replay tool,
+- **AutoOptimizer meta-loop tooling** — counterfactual replay tool,
   cross-run diff harness, failed-decision reservoir reader, feature-vector
   ML hooks. Storage shape lands in V2E foundation; the loop tooling is
   a downstream wave (V3).

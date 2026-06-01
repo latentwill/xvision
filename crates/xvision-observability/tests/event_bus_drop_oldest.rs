@@ -268,6 +268,8 @@ async fn lifecycle_event_evicts_routine_to_make_room() {
         cost_usd: None,
         prompt_hash: "sha256:p".to_string(),
         response_hash: None,
+        prompt_text: None,
+        response_text: None,
         prompt_payload_ref: None,
         response_payload_ref: None,
         tool_calls_requested: None,

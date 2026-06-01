@@ -473,7 +473,12 @@ async fn load_model_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ModelCa
         "SELECT mc.span_id, mc.provider, mc.model, mc.input_token_count, \
                 mc.output_token_count, mc.cost_usd, mc.prompt_hash, \
                 mc.response_hash, mc.prompt_payload_ref, mc.response_payload_ref, \
-                mc.tool_calls_requested, mc.capability_path \
+                mc.tool_calls_requested, mc.capability_path, \
+                (SELECT e.payload_json \
+                   FROM events e \
+                  WHERE e.span_id = mc.span_id AND e.kind = 'model_call_payload' \
+                  ORDER BY e.created_at DESC, e.id DESC \
+                  LIMIT 1) AS model_call_payload_json \
          FROM model_calls mc \
          JOIN spans s ON s.id = mc.span_id \
          WHERE s.run_id = ? \
@@ -485,6 +490,8 @@ async fn load_model_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ModelCa
 
     rows.into_iter()
         .map(|r| {
+            let payload_json: Option<String> = r.try_get("model_call_payload_json")?;
+            let (prompt_text, response_text) = parse_model_call_payload(payload_json.as_deref());
             Ok(ModelCallRow {
                 span_id: r.try_get("span_id")?,
                 provider: r.try_get("provider")?,
@@ -494,6 +501,8 @@ async fn load_model_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ModelCa
                 cost_usd: r.try_get("cost_usd")?,
                 prompt_hash: r.try_get("prompt_hash")?,
                 response_hash: r.try_get("response_hash")?,
+                prompt_text,
+                response_text,
                 prompt_payload_ref: r.try_get("prompt_payload_ref")?,
                 response_payload_ref: r.try_get("response_payload_ref")?,
                 tool_calls_requested: r.try_get("tool_calls_requested")?,
@@ -501,6 +510,24 @@ async fn load_model_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ModelCa
             })
         })
         .collect()
+}
+
+fn parse_model_call_payload(payload_json: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(raw) = payload_json else {
+        return (None, None);
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return (None, None);
+    };
+    let prompt = value
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .map(ToOwned::to_owned);
+    let response = value
+        .get("response")
+        .and_then(|v| v.as_str())
+        .map(ToOwned::to_owned);
+    (prompt, response)
 }
 
 async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCallRow>, ExportError> {

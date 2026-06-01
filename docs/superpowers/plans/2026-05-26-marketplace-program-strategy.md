@@ -104,7 +104,7 @@ Data-Contract spec** must unify them into one canonical schema:
 
 - **IPFS metadata behind `agentURI`**: plugin `LineageManifest` (6 fields:
   `lineage_id`, `initial_bundle_hash`, `parent_lineage_id`, `born_at`,
-  `operator_signature`, `autoresearch_session_id`) **vs.** direction §6.2 Tier 1
+  `operator_signature`, `autooptimizer_session_id`) **vs.** direction §6.2 Tier 1
   (name, description, perf summary with on-chain hash commit, asset/model/style
   tags, equity-curve file, **required-ingredients list**, license terms, rating
   receipts). → unify.
@@ -253,7 +253,7 @@ normalized.
 ### — V2 EXIT GATE —
 
 ### Phase 8 — V3 + V4 prep (parallel) · ongoing
-- **V3 (autoresearcher):** the mutation→lineage→gate→seal loop; chain-free core,
+- **V3 (autooptimizer):** the mutation→lineage→gate→seal loop; chain-free core,
   marketplace plugin reads its `CycleSeal` artifacts.
 - **V4 (real money):** engage audit firm (4–8 wk lead — start day V2 ships);
   pick 2-of-3 multisig signers (D1); implement **timelock + multisig** (now,
@@ -402,6 +402,7 @@ its dependent phase.
 | `publishedAt`/`mintedAt` on `ListingRow` (so `newest` sort isn't an id proxy) | ✅ SCHEMA LOCKED (Phase 1) → frontend rewire | F1 OQ |
 | `transferableLicense` surfaced on receipt/license UI (absent on `Receipt.license` today) | ✅ SCHEMA LOCKED (Phase 1) → receipt UI rewire | F6 OQ |
 | Human-vs-agent payer-class source in marketplace event/subgraph | ✅ SCHEMA LOCKED (Phase 1) → Phase 5 contract event | E6 |
+| `Sold.payerKind` real **derivation** (v1 just mirrors `purchasePath`; typed `uint16` for headroom — EOA vs smart-account vs intent-solver vs sponsored). Indexers MUST NOT derive analytics from it until refined. | Phase 5.x (post-testnet-deploy) / indexer | spec §3.2 deferred; Sold event note in `IMarketplace.sol`; subgraph `schema.graphql` |
 | Handle resolution (ENS / on-chain registry / `agentURI`) | ✅ LOCKED (Phase 1): address canonical; handle/ENS optional display | A8 |
 | Verification badge thresholds (green vs gray criteria) | ✅ LOCKED (Phase 1): backtest + ≥30d live-paper + ≥1 positive closed-cycle hash | A9 |
 | Tier-B clone license-check semantics (gate timing) | Phase-1 read model recommended → Phase 5 contract check | A10 |

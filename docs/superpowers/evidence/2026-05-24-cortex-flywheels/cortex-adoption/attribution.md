@@ -19,12 +19,12 @@ Artifacts:
 - Memory-touching docs now carry first-mention attribution:
   - `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md`
   - `docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md`
-  - `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md`
+  - `docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md`
 
 Verification:
 
 ```text
 test -f CREDITS.md
 test -f LICENSES/gambletan-cortex.txt
-rg -n "gambletan/cortex" CREDITS.md README.md docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md
+rg -n "gambletan/cortex" CREDITS.md README.md docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md docs/superpowers/notes/2026-05-21-v2d-memory-cortex-tiers-and-leakage.md docs/superpowers/specs/2026-05-09-karpathy-autooptimizer-design.md
 ```

@@ -282,6 +282,8 @@ fn kind_to_str(k: xvision_core::config::ProviderKind) -> &'static str {
         xvision_core::config::ProviderKind::Anthropic => "anthropic",
         xvision_core::config::ProviderKind::OpenaiCompat => "openai-compat",
         xvision_core::config::ProviderKind::LocalCandle => "local-candle",
+        xvision_core::config::ProviderKind::Ollama => "ollama",
+        xvision_core::config::ProviderKind::LlamaCpp => "llama-cpp",
     }
 }
 

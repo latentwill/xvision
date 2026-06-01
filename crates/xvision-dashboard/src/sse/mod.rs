@@ -1,22 +1,14 @@
-//! SSE response builder for the agent-run observability stream.
+//! SSE response builders for the dashboard event streams.
 //!
-//! Used by [`crate::routes::agent_runs::stream`]. The handler builds the
-//! initial `xvn.agent_run.v1` snapshot once, hands it + a
-//! `broadcast::Receiver<RunEvent>` to [`agent_run_sse`], and returns the
-//! resulting `Sse<...>` response.
-//!
-//! Wire format:
-//!
-//! - First event: `event: snapshot\ndata: <full AgentRunExport JSON>\n\n`
-//! - Subsequent events: `event: <variant_snake_case>\ndata: <RunEvent JSON>\n\n`
-//! - On `RecvError::Lagged(n)`: `event: lagged\ndata: {"dropped": n}\n\n`
-//!   — the client reconnects via existing exponential backoff in
-//!   `frontend/web/src/api/agent-runs.ts`.
-//! - On `RecvError::Closed` or `RunEvent::RunFinished` /
-//!   `RunInterrupted`: the stream terminates gracefully.
-//! - KeepAlive: a `: keep-alive\n\n` comment every 15 s so HTTP
-//!   intermediaries (Coolify reverse proxy, NGINX) don't time out the
-//!   connection.
+//! - [`agent_run_sse`]: agent-run observability stream
+//! - [`autooptimizer_labels`]: operator-facing display labels for
+//!   autooptimizer `CycleProgressEvent` variants (AR-3)
+//! - [`autooptimizer_sse`]: cycle progress stream for
+//!   `GET /api/autooptimizer/events`.
+
+pub mod autooptimizer_labels;
+
+pub mod autooptimizer_sse;
 
 use std::convert::Infallible;
 use std::time::Duration;

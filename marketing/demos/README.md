@@ -11,7 +11,7 @@ demo at least twice in a clean environment before showing it externally.
 
 | Demo | File | Where it's shown | Status |
 |---|---|---|---|
-| Live overnight run | `live-overnight-run.md` | Tier-1 podcast demos, Tier-1 AMAs | ⚪ deferred — needs the autoresearcher loop live |
+| Live overnight run | `live-overnight-run.md` | Tier-1 podcast demos, Tier-1 AMAs | ⚪ deferred — needs the Optimizer loop live |
 | Build-from-scratch strategy | `build-from-scratch.md` | Onboarding-leaning podcasts, dev streams | ⚪ deferred |
 | Risk-gate veto walk-through | `risk-veto-walkthrough.md` | Trust-narrative podcasts (Bankless, Unchained) | ⚪ deferred |
 | Lineage tree explorer | `lineage-tree-explorer.md` | Identity / reputation podcasts (ERC-8004 working group, NFT shows) | ⚪ deferred |

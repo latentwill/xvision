@@ -59,7 +59,7 @@ the response, and persists the normalized review.
 - `xvn eval review` CLI verb (next track: `eval-review-api-cli`).
 - Run-detail UI (next track: `eval-review-run-detail-ui`).
 - Schema changes — the migrations and tables are already in place.
-- Autoresearcher mutation loop, lineage, marketplace, settlement (deferred per spec).
+- AutoOptimizer mutation loop, lineage, marketplace, settlement (deferred per spec).
 
 # Sync-before-work ritual
 

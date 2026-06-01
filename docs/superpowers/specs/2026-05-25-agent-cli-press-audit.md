@@ -177,7 +177,7 @@ Two new top-level docs:
 Cookbook v1 covers, at minimum:
 1. Backtest one strategy on one scenario (local).
 2. Backtest the same scenario remote via `scripts/xvn-remote.py`.
-3. Promote a strategy variant from the autoresearcher (variant → lineage seal).
+3. Promote a strategy variant from the autooptimizer (variant → lineage seal).
 4. Re-run a single cycle from the flight recorder.
 5. Diff two eval runs (treatment vs baseline).
 6. Fire a paper trade end-to-end against Alpaca paper.
@@ -272,7 +272,7 @@ candidates that join across `cycles`, `briefings`, `decisions`,
    executions → traces. Output: a single JSON object with the rollup.
 3. **`xvn strategy similar <strategy_id> [--k N]`** — nearest neighbors in
    the agent library / lineage graph. Useful for "this lost money, what
-   else from this lineage did the autoresearcher promote."
+   else from this lineage did the autooptimizer promote."
 4. **`xvn provider load --since <duration>`** — call counts × cost per
    provider over a window. Reads from the observability tables.
 5. **`xvn run bottleneck <run-id>`** — per-stage latency / token-cost

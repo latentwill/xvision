@@ -579,7 +579,7 @@ git commit -m "docs(engine): README for api module pattern"
 - `api/settings.rs` — Settings & Onboarding plan
 - `api/skill.rs` — Plan 2b (skills)
 - `api/risk.rs`, `api/deploy.rs`, `api/report.rs`, `api/maintenance.rs`,
-  `api/schedule.rs`, `api/autoresearch.rs` — xvn-scheduling-and-agent-cli when
+  `api/schedule.rs`, `api/autooptimizer.rs` — xvn-scheduling-and-agent-cli when
   it lands
 
 **Pattern downstream plans MUST follow:**

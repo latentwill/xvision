@@ -946,10 +946,10 @@ pub async fn ensure_defaults(ctx: &ApiContext) -> ApiResult<()> {
             schedule_expr_raw: "at 03:00 UTC",
             cron_normalized: "0 0 3 * * *",
             timezone: "UTC",
-            prompt: "Run autoresearch.run_evening_cycle. Summarize accepted mutations, \
+            prompt: "Run autooptimizer.run_evening_cycle. Summarize accepted mutations, \
                      rejections, and any judge anomalies. Cull strategies whose quarantine \
                      status changed. End with record_outcome.",
-            allowed_tools: vec!["autoresearch.*", "strategy.deactivate", "report.strategy_review", "record_outcome"],
+            allowed_tools: vec!["autooptimizer.*", "strategy.deactivate", "report.strategy_review", "record_outcome"],
             model: "claude-opus-4-7",
             max_tokens: 200_000,
             max_cost_usd: 2.00,

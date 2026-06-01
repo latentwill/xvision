@@ -233,6 +233,8 @@ mod tests {
             cost_usd: None,
             prompt_hash: "sha256:prompt".into(),
             response_hash: Some("sha256:response".into()),
+            prompt_text: None,
+            response_text: None,
             prompt_payload_ref: None,
             response_payload_ref: None,
             tool_calls_requested: None,

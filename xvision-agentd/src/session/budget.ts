@@ -113,6 +113,16 @@ export interface WallTimer {
  * The default scheduler uses `setTimeout`/`clearTimeout`. Tests inject
  * their own to drive deterministic timing.
  */
+// QA31: Node's `setTimeout` stores its delay as a signed 32-bit integer
+// (TIMEOUT_MAX = 2_147_483_647 ms ≈ 24.8 days). Any larger value is
+// silently clamped to 1 ms, which makes the timer fire immediately —
+// surfacing as `budget_wall_ms_exceeded` on cycle 0 of every fresh
+// trader run when the engine passes `u32::MAX` (~49 days) as the
+// "effectively no enforcement" sentinel. Treat anything beyond
+// TIMEOUT_MAX as "no wall budget at all" rather than arming a doomed
+// 1 ms timer.
+const NODE_SETTIMEOUT_MAX_MS = 2_147_483_647
+
 export function armWallTimer(
   wallMs: number,
   opts: { schedule?: typeof setTimeout; cancel?: typeof clearTimeout } = {},
@@ -125,6 +135,18 @@ export function armWallTimer(
   if (wallMs <= 0) {
     fired = true
     controller.abort(new Error("budget_wall_ms_exceeded"))
+    return {
+      signal: controller.signal,
+      fired: () => fired,
+      clear: () => {},
+    }
+  }
+
+  // QA31 fix: values past Node's setTimeout cap mean "no enforcement".
+  // Return an unfireable timer (no setTimeout armed) so the step runs
+  // to natural completion. The caller's `clear()` is a no-op which is
+  // already what the existing fast-path returns above.
+  if (wallMs > NODE_SETTIMEOUT_MAX_MS) {
     return {
       signal: controller.signal,
       fired: () => fired,

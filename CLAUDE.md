@@ -96,15 +96,31 @@ The `xvn strategy` CLI verb manages strategy bundles and is NOT renamed.
 The `xvn setup` CLI verb (config init) is NOT renamed — it remains the
 verb form.
 
-### Operator-facing names (autoresearcher subsurface)
+### Operator-facing names (autooptimizer subsurface)
 
-The autoresearcher, memory, and flywheel surfaces follow a two-name
+**Top-level name (locked 2026-06-01, autoresearcher → optimizer rename; landed in PR #706).**
+The subsystem formerly called the "autoresearcher" has two names:
+
+| Surface | Name |
+|---|---|
+| Developer-surface (Rust module `autooptimizer/`, types `AutoOptimizer*`, SQLite tables `autooptimizer_*`, HTTP routes `/api/autooptimizer/*`, frontend `features/autooptimizer/`, MCP types, internal field names) | `autooptimizer` / `AutoOptimizer` |
+| Operator-surface (dashboard nav/menu + page titles, CLI verb `xvn optimizer`, SSE display labels, MANUAL.md, dashboard wiki) | **Optimizer** |
+
+The codename is deliberately `autooptimizer` (NOT `optimizer`) to stay
+distinct from the **pre-existing, unrelated DSPy prompt-optimizer**
+(`xvision-dspy`, the engine `optimization/` module, `optimization_*`
+tables, the `xvn optimize` verb, `Optimizer`/`OptimizerKind`/`OptimizerModel`/
+`OptimizerResult`). Never rename DSPy `optimize`/`optimization`/`Optimizer*`
+tokens, and never let the autooptimizer codename collapse into bare
+`optimizer` in code.
+
+The autooptimizer, memory, and flywheel surfaces follow a two-name
 convention: developer-surface names (in Rust types, SQLite columns,
 spec docs, API field names) stay precise and technical, while
 operator-surface names (in CLI flags and help text, UI labels, SSE
 display labels, MANUAL.md, dashboard wiki) are plain-language. The
 two-name pairs are locked at
-`docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`.
+`docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`.
 
 Examples: `Mutation` → "Experiment"; `Mutator` → "Experiment writer";
 `LineageStatus::Ghost` → "Rejected"; `LineageStatus::Quarantined` →
@@ -154,6 +170,33 @@ review branches, or Claude worktrees.
   leaving the task. Keep `/Users/edkennedy/Code/xvision/target` only when the
   user is actively preparing a local build/deploy image.
 
+### Disk hygiene (shared cargo target — check & self-clean)
+
+The shared cargo target dir has no garbage collection: `target/debug/deps`
+accumulates artifacts from every branch/profile ever built across all the
+concurrent agents and grows tens of GB until the volume fills and unrelated
+builds fail with `No space left on device`.
+
+Two guards keep it bounded:
+
+- **`incremental = false`** in `.cargo/config.toml` — stops the
+  `target/debug/incremental` dir (which has spiked to 30+ GB) from forming.
+- **`scripts/cargo-disk-guard.sh`** — checks free space and, when below the
+  threshold (`XVISION_DISK_MIN_GB`, default 12), self-cleans in tiers:
+  incremental → `cargo-sweep` artifacts >7 days old → full deps/build drop as a
+  last resort. Run it any time; it's a no-op when space is fine.
+
+**Build through the wrapper, not bare cargo**, so the guard runs first:
+
+```bash
+scripts/cargo build --workspace      # guards, then execs real cargo
+scripts/cargo test  -p xvision-engine
+scripts/cargo-disk-guard.sh --check  # report free space (exit 3 if low)
+```
+
+The `pre-commit` hook also prints a non-blocking low-space warning. None of this
+nukes source — only rebuildable artifacts.
+
 ## Docker
 
 Slim runtime image of the `xvn` CLI lives at `ghcr.io/latentwill/xvision`.
@@ -168,6 +211,38 @@ docker compose run --rm xvn --version
 ```
 
 See `docker/README.md` for env vars and mounts.
+
+## Worktree isolation (enforced)
+
+This clone is shared by multiple concurrent agents (claude, codex, 100x runs,
+human). **Never do branch/feature work in the main checkout
+(`/Users/edkennedy/Code/xvision`).** Checking out a branch there while another
+agent is working causes HEAD/branch collisions, surprise force-pushes, and
+tangled auto-commits. The main checkout stays on `main` for pulling/inspection
+only.
+
+All branch work — including overnight agents and `100x run` — must happen in an
+isolated worktree:
+
+```bash
+git worktree add .worktrees/<name> -b <branch>     # or agent-conductor (worktreeRoot=.worktrees)
+cd .worktrees/<name>
+export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision"   # avoid duplicate target/ trees
+```
+
+This is enforced by a tracked `pre-commit` hook (`.githooks/pre-commit`) that
+blocks commits on non-`main` branches in the primary checkout. Activate it once
+per clone (the setting is shared across all worktrees):
+
+```bash
+scripts/setup-hooks.sh        # sets core.hooksPath=.githooks
+```
+
+Deliberate, rare main-checkout commits: `XVISION_ALLOW_MAIN_COMMIT=1 git commit …`.
+
+Also: `100x run` auto-commits/pushes and can trigger an auto-PR+merge, and it
+sweeps any uncommitted WIP into its commit — run it from a clean worktree, never
+the main checkout with live WIP.
 
 ## Team coordination
 

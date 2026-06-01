@@ -59,19 +59,27 @@ Failed authentication returns HTTP 401:
 
 ### CLI jobs allowlist
 
-`POST /api/cli/jobs` runs `xvn` subcommands on the dashboard host. The default
-allowlist is a small safe set — today just `bars fetch` (the per-scenario
-"fetch missing bars" panel).
+`POST /api/cli/jobs` runs `xvn` subcommands on the dashboard host. By default
+the allowlist is a broad read/eval/research set: all read-only verbs plus the
+scoped, hard-capped, cancellable ones (`eval run`, `eval compare/watch`,
+`experiment run`, `model bakeoff`, `bars fetch`) and low-risk strategy draft
+creation (`strategy create` / `strategy new`). Unscoped writes
+(`agent create`, `scenario create`, …) and categorically dangerous heads
+(`fire-trade`, `close-position`, `migrate`, `dashboard`, `mcp`) are denied. The authoritative list is
+`crates/xvision-dashboard/src/cli_jobs/allowlist.rs`.
 
-To opt into permissive behavior for local development:
+To turn the policy into a **full bypass** on a trusted dev node:
 
 ```bash
-export XVN_DASHBOARD_CLI_DEVMODE=1
+export XVN_DASHBOARD_CLI_DEVMODE=1   # accepts 1 or true
 ```
 
-A few subcommands (`dashboard`, `mcp`, `fire-trade`) remain rejected even in
-devmode. The devmode flag does not replace the auth gate — non-loopback binds
-still require `XVN_DASHBOARD_TOKEN` regardless of CLI devmode.
+In full-bypass mode **every** argv is accepted — including the live-trade
+(`fire-trade`, `close-position`) and host-admin (`migrate`, `dashboard`,
+`mcp`) verbs. Only set this on a dev node that (a) has no live broker
+credentials and (b) is reachable solely from a trusted tailnet. It does NOT
+replace the auth gate — non-loopback binds still require `XVN_DASHBOARD_TOKEN`
+regardless of CLI devmode.
 
 ### Danger-op typed phrases
 

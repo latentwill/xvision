@@ -105,7 +105,7 @@ impl FilterHook {
         );
         let trigger_context = outcome
             .decision
-            .is_active()
+            .is_trip()
             .then(|| self.build_trigger_context(&event.indicator_snapshot))
             .flatten();
         self.bar_index += 1;

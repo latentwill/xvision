@@ -19,7 +19,7 @@ pub struct FlywheelCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// Summarize Observation, Pattern, and autoresearch run counts.
+    /// Summarize Observation, Pattern, and optimizer run counts.
     Status(StatusArgs),
     /// Show flywheel movement over a recent lookback window.
     Velocity(VelocityArgs),
@@ -109,9 +109,9 @@ async fn run_status(args: StatusArgs) -> CliResult<()> {
         println!("active_patterns: {}", status.active_patterns);
         println!("staged_patterns: {}", status.staged_patterns);
         println!("forgotten_patterns: {}", status.forgotten_patterns);
-        println!("autoresearch_runs: {}", status.autoresearch_runs);
-        if let Some(id) = status.latest_autoresearch_run_id {
-            println!("latest_autoresearch_run_id: {id}");
+        println!("autooptimizer_runs: {}", status.autooptimizer_runs);
+        if let Some(id) = status.latest_autooptimizer_run_id {
+            println!("latest_autooptimizer_run_id: {id}");
         }
     }
     Ok(())
@@ -147,11 +147,11 @@ async fn run_velocity(args: VelocityArgs) -> CliResult<()> {
         println!("days: {}", velocity.days);
         println!("since: {}", velocity.since);
         println!("observations_captured: {}", velocity.observations_captured);
-        println!("patterns_promoted: {}", velocity.patterns_promoted);
-        println!("patterns_demoted: {}", velocity.patterns_demoted);
-        println!("autoresearch_runs: {}", velocity.autoresearch_runs);
-        println!("optimized_child_agents: {}", velocity.optimized_child_agents);
-        println!("average_lineage_depth: {:.2}", velocity.average_lineage_depth);
+        println!("patterns_activated: {}", velocity.patterns_promoted);
+        println!("patterns_retired: {}", velocity.patterns_demoted);
+        println!("autooptimizer_runs: {}", velocity.autooptimizer_runs);
+        println!("new_versions_trained: {}", velocity.optimized_child_agents);
+        println!("average_generations_deep: {:.2}", velocity.average_lineage_depth);
         if let Some(ts) = velocity.latest_activity_at {
             println!("latest_activity_at: {ts}");
         }
@@ -194,16 +194,25 @@ async fn run_lineage(args: LineageArgs) -> CliResult<()> {
                 item.holdout_observation_count,
                 item.demo_source_pattern_ids.len(),
                 item.prior_pattern_ids.len(),
-                item.status
+                match item.status.as_str() {
+                    "ghost" => "rejected",
+                    "quarantined" => "suspect",
+                    other => other,
+                }
             );
             println!(
-                "  hashes train={} dev={} holdout={}",
+                "  hashes training={} validation={} untouched={}",
                 item.train_hash, item.dev_hash, item.holdout_hash
             );
             if let Some(verdict) = item.gate_verdict {
+                let verdict_display = match verdict.as_str() {
+                    "passed" => "Kept",
+                    "failed" => "Dropped",
+                    other => other,
+                };
                 println!(
-                    "  gate verdict={} delta_dev={} delta_holdout={}{}",
-                    verdict,
+                    "  gate decision: {}  validation improvement: {} · untouched improvement: {}{}",
+                    verdict_display,
                     item.delta_dev
                         .map(|v| format!("{v:.6}"))
                         .unwrap_or_else(|| "<none>".to_string()),

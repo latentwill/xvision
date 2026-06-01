@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
-  demoteAutoresearchRun,
-  gateAutoresearchRun,
+  demoteAutoOptimizerRun,
+  gateAutoOptimizerRun,
   gateOptimization,
-  getAutoresearchRun,
+  getAutoOptimizerRun,
   getFlywheelLineage,
   getFlywheelStatus,
   getFlywheelVelocity,
-  listAutoresearchRuns,
+  listAutoOptimizerRuns,
   optimizeMemoryDemos,
-  promoteAutoresearchRun,
-  runAutoresearch,
+  promoteAutoOptimizerRun,
+  runAutoOptimizer,
 } from "./flywheel";
 
 function mockJson(body: unknown) {
@@ -37,7 +37,7 @@ describe("flywheel API", () => {
           active_patterns: 1,
           staged_patterns: 0,
           forgotten_patterns: 0,
-          autoresearch_runs: 1,
+          autooptimizer_runs: 1,
         }),
       );
 
@@ -62,7 +62,7 @@ describe("flywheel API", () => {
           observations_captured: 3,
           patterns_promoted: 2,
           patterns_demoted: 1,
-          autoresearch_runs: 2,
+          autooptimizer_runs: 2,
           optimized_child_agents: 1,
           average_lineage_depth: 1,
           latest_activity_at: "2026-05-24T00:00:00Z",
@@ -130,7 +130,7 @@ describe("flywheel API", () => {
     expect(lineage.items[0].delta_holdout).toBe(0.3);
   });
 
-  test("runAutoresearch posts the provided embedding body", async () => {
+  test("runAutoOptimizer posts the provided embedding body", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(() =>
@@ -147,7 +147,7 @@ describe("flywheel API", () => {
         }),
       );
 
-    const run = await runAutoresearch({
+    const run = await runAutoOptimizer({
       agent: "A",
       pattern_text: "reduce risk",
       embedding: [1, 0],
@@ -155,7 +155,7 @@ describe("flywheel API", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/autoresearch/run",
+      "/api/autooptimizer/run",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
@@ -169,7 +169,7 @@ describe("flywheel API", () => {
     expect(run.pattern_id).toBe("pat_1");
   });
 
-  test("getAutoresearchRun encodes ids", async () => {
+  test("getAutoOptimizerRun encodes ids", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(() =>
@@ -186,15 +186,15 @@ describe("flywheel API", () => {
         }),
       );
 
-    await getAutoresearchRun("ar/1");
+    await getAutoOptimizerRun("ar/1");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/autoresearch/ar%2F1",
+      "/api/autooptimizer/ar%2F1",
       expect.any(Object),
     );
   });
 
-  test("listAutoresearchRuns builds scoped list URLs", async () => {
+  test("listAutoOptimizerRuns builds scoped list URLs", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(() =>
@@ -204,15 +204,15 @@ describe("flywheel API", () => {
         }),
       );
 
-    await listAutoresearchRuns({ agent: "A", limit: 10, offset: 5 });
+    await listAutoOptimizerRuns({ agent: "A", limit: 10, offset: 5 });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/autoresearch?agent=A&limit=10&offset=5",
+      "/api/autooptimizer?agent=A&limit=10&offset=5",
       expect.any(Object),
     );
   });
 
-  test("promote and demote autoresearch runs encode ids", async () => {
+  test("promote and demote autooptimizer runs encode ids", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(() =>
@@ -229,22 +229,22 @@ describe("flywheel API", () => {
         }),
       );
 
-    await promoteAutoresearchRun("ar/1");
-    await demoteAutoresearchRun("ar/1");
+    await promoteAutoOptimizerRun("ar/1");
+    await demoteAutoOptimizerRun("ar/1");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/autoresearch/ar%2F1/promote",
+      "/api/autooptimizer/ar%2F1/promote",
       expect.objectContaining({ method: "POST" }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/api/autoresearch/ar%2F1/demote",
+      "/api/autooptimizer/ar%2F1/demote",
       expect.objectContaining({ method: "POST" }),
     );
   });
 
-  test("gateAutoresearchRun posts numeric gate and finding body", async () => {
+  test("gateAutoOptimizerRun posts numeric gate and finding body", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(() =>
@@ -267,7 +267,7 @@ describe("flywheel API", () => {
         }),
       );
 
-    await gateAutoresearchRun("ar/1", {
+    await gateAutoOptimizerRun("ar/1", {
       metric: "sharpe_delta",
       parent_day_score: 0.7,
       child_day_score: 0.9,
@@ -281,7 +281,7 @@ describe("flywheel API", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/autoresearch/ar%2F1/gate",
+      "/api/autooptimizer/ar%2F1/gate",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
