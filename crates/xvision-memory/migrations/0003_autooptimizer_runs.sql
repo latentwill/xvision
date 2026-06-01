@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS autoresearch_runs (
+CREATE TABLE IF NOT EXISTS autooptimizer_runs (
     id                   TEXT PRIMARY KEY,
     namespace            TEXT NOT NULL,
     observation_ids_json TEXT NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS autoresearch_runs (
     error                TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_namespace_created
-    ON autoresearch_runs(namespace, created_at);
-CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_pattern_id
-    ON autoresearch_runs(pattern_id);
+CREATE INDEX IF NOT EXISTS idx_autooptimizer_runs_namespace_created
+    ON autooptimizer_runs(namespace, created_at);
+CREATE INDEX IF NOT EXISTS idx_autooptimizer_runs_pattern_id
+    ON autooptimizer_runs(pattern_id);

@@ -1,6 +1,6 @@
-//! SSE handler for autoresearch cycle progress events (AR-3).
+//! SSE handler for autooptimizer cycle progress events (AR-3).
 //!
-//! Wire format for `GET /api/autoresearch/events`:
+//! Wire format for `GET /api/autooptimizer/events`:
 //!
 //! - Events: `event: <kind>\ndata: {"kind":<kind>,"display_label":<label>,"data":<CycleProgressEvent JSON>}\n\n`
 //! - On lag: `event: lagged\ndata: {"dropped":<n>}\n\n` — client should reconnect.
@@ -8,7 +8,7 @@
 //! - KeepAlive: comment every 15 s so reverse proxies don't time out.
 //!
 //! Operator-surface `display_label` values follow the 2026-05-27 terminology
-//! lock (see `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`).
+//! lock (see `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`).
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -17,18 +17,18 @@ use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use tokio_stream::Stream;
 
-use crate::sse::autoresearch_labels::{display_label, event_kind};
+use crate::sse::autooptimizer_labels::{display_label, event_kind};
 use crate::state::AppState;
 
-/// SSE handler for `GET /api/autoresearch/events`.
+/// SSE handler for `GET /api/autooptimizer/events`.
 ///
-/// Subscribes to the `AppState::autoresearch_tx` broadcast channel and
+/// Subscribes to the `AppState::autooptimizer_tx` broadcast channel and
 /// streams each `CycleProgressEvent` as a Server-Sent Event with a
 /// `{kind, display_label, data}` envelope.
-pub async fn autoresearch_events_handler(
+pub async fn autooptimizer_events_handler(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let mut rx = state.autoresearch_tx.subscribe();
+    let mut rx = state.autooptimizer_tx.subscribe();
 
     let body = async_stream::stream! {
         loop {

@@ -1,14 +1,14 @@
 //! SSE response builders for the dashboard event streams.
 //!
 //! - [`agent_run_sse`]: agent-run observability stream
-//! - [`autoresearch_labels`]: operator-facing display labels for
-//!   autoresearch `CycleProgressEvent` variants (AR-3)
-//! - [`autoresearch_sse`]: cycle progress stream for
-//!   `GET /api/autoresearch/events`.
+//! - [`autooptimizer_labels`]: operator-facing display labels for
+//!   autooptimizer `CycleProgressEvent` variants (AR-3)
+//! - [`autooptimizer_sse`]: cycle progress stream for
+//!   `GET /api/autooptimizer/events`.
 
-pub mod autoresearch_labels;
+pub mod autooptimizer_labels;
 
-pub mod autoresearch_sse;
+pub mod autooptimizer_sse;
 
 use std::convert::Infallible;
 use std::time::Duration;

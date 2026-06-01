@@ -15,7 +15,7 @@ use xvision_engine::api::chart::RunEventBus;
 use xvision_engine::api::eval::RunDetail;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::autoresearch::progress::CycleProgressEvent;
+use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 use xvision_engine::safety::SafetyManager;
 use xvision_observability::{
     AgentRunRecorder, BroadcastSubscriber, RunEventBus as ObsRunEventBus, SqliteRecorder,
@@ -90,11 +90,11 @@ pub struct AppState {
     /// Global safety pause-gate singleton. Bootstrapped at server startup from
     /// `safety_state` table (migration 030). Clone-cheap — inner `Arc<RwLock<>>`.
     safety_manager: SafetyManager,
-    /// Broadcast channel for autoresearch cycle progress events. The IPC
-    /// bridge (`ipc::spawn_autoresearch_subscriber`) publishes here when
-    /// `xvn autoresearch mutate-once --ipc-socket` connects; the SSE handler
-    /// at `GET /api/autoresearch/events` subscribes per request.
-    pub autoresearch_tx: tokio::sync::broadcast::Sender<CycleProgressEvent>,
+    /// Broadcast channel for autooptimizer cycle progress events. The IPC
+    /// bridge (`ipc::spawn_autooptimizer_subscriber`) publishes here when
+    /// `xvn autooptimizer mutate-once --ipc-socket` connects; the SSE handler
+    /// at `GET /api/autooptimizer/events` subscribes per request.
+    pub autooptimizer_tx: tokio::sync::broadcast::Sender<CycleProgressEvent>,
 }
 
 impl AppState {
@@ -172,7 +172,7 @@ impl AppState {
             tracing::warn!(error = %e, "safety_manager bootstrap failed; using default (unpaused) state");
         }
 
-        let (autoresearch_tx, _) = tokio::sync::broadcast::channel(256);
+        let (autooptimizer_tx, _) = tokio::sync::broadcast::channel(256);
 
         Ok(Self {
             pool,
@@ -187,7 +187,7 @@ impl AppState {
             cli_command,
             cli_runner,
             safety_manager,
-            autoresearch_tx,
+            autooptimizer_tx,
         })
     }
 

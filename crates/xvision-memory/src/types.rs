@@ -98,13 +98,13 @@ pub struct MemoryItem {
     pub scenario_id: Option<String>,
     pub cycle_idx: Option<i64>,
     /// Market-data window that contributed to an Observation. Required
-    /// on Observations so autoresearcher can compute Pattern
+    /// on Observations so autooptimizer can compute Pattern
     /// `training_window_end` from source data, not wall-clock time.
     /// Must be `None` on Patterns.
     pub source_window_start: Option<chrono::DateTime<chrono::Utc>>,
     pub source_window_end: Option<chrono::DateTime<chrono::Utc>>,
     /// Latest bar timestamp across the Observations that contributed
-    /// to this Pattern. REQUIRED on autoresearcher-distilled Patterns;
+    /// to this Pattern. REQUIRED on autooptimizer-distilled Patterns;
     /// MAY be `None` on operator-attested manual seeds (recalled in
     /// every scenario; operator owns the safety guarantee). MUST be
     /// `None` on Observations.

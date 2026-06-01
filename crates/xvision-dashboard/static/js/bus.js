@@ -1,12 +1,12 @@
 /**
- * Autoresearch SSE event label registry — static SPA fallback.
+ * AutoOptimizer SSE event label registry — static SPA fallback.
  *
- * Mirrors crates/xvision-dashboard/src/sse/autoresearch_labels.rs::display_label.
+ * Mirrors crates/xvision-dashboard/src/sse/autooptimizer_labels.rs::display_label.
  * Kept in sync via the SSE registry handoff:
- *   docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md
+ *   docs/design/2026-05-27-autooptimizer-sse-registry-handoff.md
  *
  * Terminology follows the lock at:
- *   docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md §11
+ *   docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md §11
  *
  * Maintenance note: when a new CycleProgressEvent variant is added, update
  * both this map and the Rust-side display_label() simultaneously. The Rust

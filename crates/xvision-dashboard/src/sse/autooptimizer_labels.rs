@@ -1,8 +1,8 @@
-//! Operator-facing display labels for autoresearch SSE events.
+//! Operator-facing display labels for autooptimizer SSE events.
 //!
 //! Maps `CycleProgressEvent` variants (developer-surface wire names) to
 //! plain-language strings for operator-facing display. Follows the
-//! terminology lock in `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md` §11.
+//! terminology lock in `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md` §11.
 //!
 //! # Maintenance note
 //! When a new `CycleProgressEvent` variant is added, this match must be
@@ -10,7 +10,7 @@
 //! below provides an exhaustive check. Also update the corresponding JS-side
 //! mapping in `crates/xvision-dashboard/static/js/bus.js`.
 
-use xvision_engine::autoresearch::progress::CycleProgressEvent;
+use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 
 /// Returns the operator-facing display label for a `CycleProgressEvent`.
 ///
