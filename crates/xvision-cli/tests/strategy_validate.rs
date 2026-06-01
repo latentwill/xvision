@@ -141,6 +141,66 @@ fn seed_strategy_with_trader(
     })
 }
 
+fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String {
+    let strategy_id = Ulid::new().to_string();
+    let strategy = Strategy {
+        manifest: PublicManifest {
+            id: strategy_id.clone(),
+            display_name: strategy_name.into(),
+            plain_summary: "validate-test strategy with dangling agent ref".into(),
+            creator: "@validate-test".into(),
+            template: "custom".into(),
+            regime_fit: vec![],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            attested_with: vec![],
+            required_tools: vec![],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+            min_warmup_bars: None,
+            color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
+        },
+        agents: vec![AgentRef {
+            agent_id: "01MISSINGAGENTREF0000000000".into(),
+            role: "trader".into(),
+            activates: Some(xvision_engine::agents::Capability::Trader),
+        }],
+        pipeline: PipelineDef {
+            kind: PipelineKind::Single,
+            edges: vec![],
+        },
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: None,
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+        hypothesis: None,
+        activation_mode: ActivationMode::EveryBar,
+        filter: None,
+        acknowledge_no_filter: false,
+    };
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let _ctx = ApiContext::open(
+            home,
+            Actor::Cli {
+                user: "validate-test".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let store = FilesystemStore::new(strategy_store_dir(home));
+        store.save(&strategy).await.unwrap();
+    });
+    strategy_id
+}
+
 /// Create a scenario via the CLI and return its id.
 /// Uses a 6-month window (Jan–Jul 2025) so that 200 warmup bars still leaves
 /// a positive `expected_decisions` count even at 4h granularity:
@@ -238,6 +298,31 @@ fn validate_missing_strategy_id_returns_not_found() {
         4,
         "expected exit 4 for missing strategy id; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn validate_plain_text_rejects_dangling_agent_ref() {
+    let dir = tempdir().unwrap();
+    let strategy_id = seed_strategy_with_missing_agent(dir.path(), "dangling-agent-strategy");
+
+    let out = xvn(&["strategy", "validate", &strategy_id], dir.path());
+
+    assert_ne!(
+        code(&out),
+        0,
+        "dangling agent refs must not print ok; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        combined.contains("01MISSINGAGENTREF0000000000") || combined.contains("not launchable"),
+        "error should identify the dangling agent ref or launchability failure: {combined}",
     );
 }
 

@@ -115,7 +115,9 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
           </span>
         </div>
         <div className="text-[12px] text-text-2 mt-0.5">
-          Deterministic JSON gate that fires the strategy on selected bars only.
+          Filter-gated agent mode: this JSON gate runs before the agent.
+          Passing bars dispatch the agent; non-passing bars skip model calls.
+          Without a saved filter, agent strategies run every bar.
         </div>
       </header>
 

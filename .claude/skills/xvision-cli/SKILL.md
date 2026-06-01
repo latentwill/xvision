@@ -87,6 +87,57 @@ xvn provider refresh-models --name openrouter
 xvn dashboard serve --bind 127.0.0.1:8788
 ```
 
+## Safe eval launch path for agents
+
+When an agent is asked to launch, debug, or explain an eval, use this order.
+It separates provider/config problems from strategy wiring problems and avoids
+turning a launch into a blind first-decision failure:
+
+```bash
+# 1. Provider readiness: config exists, secret env is reachable, model catalog is sane.
+xvn doctor --json
+xvn provider list
+xvn provider check --name <provider>
+xvn provider models --name <provider>
+
+# 2. Strategy diagnostics: launchability of required capabilities.
+xvn strategy diagnostics <strategy-id> --json
+
+# 3. Eval validate: scenario/mode/preflight without enqueueing a run.
+xvn eval validate --strategy <strategy-id> --scenario <scenario-id> --mode backtest
+
+# 4. Eval run only after the prior gates are clean.
+xvn eval run --strategy <strategy-id> --scenario <scenario-id> --mode backtest
+```
+
+`strategy diagnostics` answers "is this strategy launchable?". `eval validate`
+answers "can this specific strategy/scenario/mode run be enqueued?". Run both
+before `eval run` unless the user explicitly asks to skip preflight.
+
+## Execution modes: agent vs mechanical
+
+Use these labels when explaining strategy behavior:
+
+- **Default: Filter-gated agent** — a saved deterministic filter artifact gates
+  whether the agent/model is called. The strategy still needs its required
+  agent capability and provider/model binding. This is the normal production
+  path for filtered LLM strategies.
+- **Advanced: Rules-only mechanical** — deterministic rules make the decision
+  without a model call. Treat this as an intentional mechanical strategy mode,
+  not as "the agent is missing". It should be documented in the strategy
+  manifest/hypothesis and checked with `eval validate` like any other mode.
+- **Legacy/discouraged: Agent-direct** — the model is called without a saved
+  filter gate. Use only for legacy comparisons or explicit baseline work; do
+  not present prompt text containing the word "filter" as equivalent to a
+  saved filter artifact.
+
+If a strategy is supposed to be **Filter-gated agent** or **Agent-direct** and
+diagnostics reports `missing_prompt`, `missing_model_binding`, `missing_tool`,
+or `unsupported`, that is a broken/missing-agent state. If the strategy is
+intentionally **Rules-only mechanical**, absence of a model call is expected;
+the bug would be ambiguous labeling or validation that treats it as an
+unconfigured agent.
+
 ## Strategy inspector and filters
 
 - Canonical dashboard inspector route: `/strategies/:id`.
@@ -222,6 +273,8 @@ xvn agent inspect <agent-id> --diagnostics --json
 
 Use diagnostics before launching an eval the same way you'd use
 `xvn strategy validate` — both are safe shell gates (non-zero on blocker).
+For agent-facing launch work, prefer the full sequence:
+provider readiness → `strategy diagnostics` → `eval validate` → `eval run`.
 
 ## Chat rail (conversational driving surface)
 
@@ -292,26 +345,6 @@ For command-style live-node work, prefer the typed remote CLI job API instead of
 - Use `GET /api/cli/jobs/:id/events` for SSE progress.
 - `xvn-mcp` is separate stdio MCP, not the HTTP remote-control surface.
 
-**It is read / eval / research only by default.** A server-side allowlist
-(`crates/xvision-dashboard/src/cli_jobs/allowlist.rs`) accepts read-only verbs
-plus scoped + hard-capped + cancellable ones (`eval run`, `eval compare/watch`,
-`experiment run`, `model bakeoff`, `bars fetch`). **Unscoped mutations are
-rejected**: `strategy new` / `create` / `add-agent` / `remove-agent` /
-`set-pipeline`, `agent create`, `scenario create/clone/archive/rm/classify/set-regime`,
-`experiment new/create/update`, `provider add/remove/refresh-models`,
-`example seed`, `obs retention set|clear`, `obs janitor run`, `bars rm/gc`,
-`store migrate`. Top-level `dashboard`, `mcp`, `fire-trade`, `close-position`,
-`migrate` are denied outright. The rejection reads `… not allowed over remote cli`.
-
-To run an intentional mutation against a live node, choose one of:
-1. **Run `xvn` locally** — the local binary has no allowlist.
-2. **The dashboard CRUD API** (or the MCP tools — e.g. `xvn_strategy_create_atomic`
-   mirrors `strategy new --prompt`) — these are the supported write paths.
-3. **Full-bypass dev mode**: set `XVN_DASHBOARD_CLI_DEVMODE=1` (or `true`) on the
-   node. This accepts **every** argv, including live-trade/host-admin verbs, so
-   only set it on a trusted dev node with no live broker creds. Off by default;
-   does not replace the auth gate. See the runbook's "CLI jobs allowlist".
-
 ## Don'ts (operator-facing)
 
 - Don't bind the dashboard wider than loopback outside Tailscale until **F35** (dashboard auth) lands.
@@ -332,5 +365,5 @@ Engineering-side deployment + crate-level architecture moved to the
 
 *Skills owner: whichever track ships a new `xvn` verb, Filter DSL
 surface, or operator-visible strategy/eval workflow is responsible for
-updating this file in the same PR. Last refresh: 2026-05-24 (chat-rail
-driving surface, `xvn optimize`, capability diagnostics).*
+updating this file in the same PR. Last refresh: 2026-06-01 (agent-safe
+eval launch path, execution-mode labels, no-agent mechanical distinction).*

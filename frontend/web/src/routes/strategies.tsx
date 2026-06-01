@@ -73,6 +73,25 @@ function filterLabel(row: StrategyListItem): string | null {
   return `${count} ${count === 1 ? "filter" : "filters"}`;
 }
 
+function decisionMode(row: StrategyListItem): {
+  label: string;
+  pillTone: "default" | "info" | "warn" | "danger";
+  badgeColor: "info" | "muted" | "warn" | "danger";
+} {
+  const agents = agentCount(row);
+  if (row.activation_mode === "compiled_rules") {
+    return { label: "rules-only", pillTone: "warn", badgeColor: "warn" };
+  }
+  if (row.activation_mode === "filter_gated" || (row.filter_count ?? 0) > 0) {
+    return agents > 0
+      ? { label: "filter-gated agent", pillTone: "info", badgeColor: "info" }
+      : { label: "missing agent", pillTone: "danger", badgeColor: "danger" };
+  }
+  return agents > 0
+    ? { label: "agent-direct", pillTone: "warn", badgeColor: "warn" }
+    : { label: "missing agent", pillTone: "danger", badgeColor: "danger" };
+}
+
 type StrategiesView = "list" | "folder";
 
 export function StrategiesRoute() {
@@ -324,8 +343,8 @@ function StrategiesListView() {
               window.location.href = `/strategies/${encodeURIComponent(row.agent_id)}`;
             }}
             title={row.display_name || "Untitled strategy"}
-            badge={shapeOf(row) === "multi" ? "multi-agent" : "trader-only"}
-            badgeColor={shapeOf(row) === "multi" ? "info" : "muted"}
+            badge={decisionMode(row).label}
+            badgeColor={decisionMode(row).badgeColor}
             subtitle={`${row.template} · ${formatCadence(row.decision_cadence_minutes)}`}
             meta={modelSummary(row)}
             rightTop={
@@ -389,6 +408,7 @@ function subtitleFor(
 
 function DesktopRow({ row }: { row: StrategyListItem }) {
   const shape = shapeOf(row);
+  const mode = decisionMode(row);
   return (
     <tr
       key={row.agent_id}
@@ -404,14 +424,15 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
       </td>
       <td className="px-3 py-3 text-text-2">{row.template}</td>
       <td className="px-3 py-3">
-        <Pill tone={shape === "multi" ? "info" : "default"}>
-          {shape === "multi"
-            ? `multi · ${agentCount(row)} agents`
-            : `${agentCount(row) || 1} agent`}
-        </Pill>
+        <Pill tone={mode.pillTone}>{mode.label}</Pill>
         {filterLabel(row) ? (
           <span className="ml-1.5">
             <Pill tone="default">{filterLabel(row)}</Pill>
+          </span>
+        ) : null}
+        {shape === "multi" ? (
+          <span className="ml-1.5">
+            <Pill tone="default">{agentCount(row)} agents</Pill>
           </span>
         ) : null}
       </td>

@@ -68,12 +68,20 @@ pub struct StrategySummary {
     /// Number of deterministic strategy-level filters.
     #[serde(default)]
     pub filter_count: usize,
+    /// Strategy decision activation mode: `filter_gated`, `every_bar`, or
+    /// `compiled_rules`.
+    #[serde(default = "default_strategy_summary_activation_mode")]
+    pub activation_mode: ActivationMode,
     /// Asset universe from the strategy manifest (e.g. `["BTC/USD", "ETH/USD"]`).
     #[serde(default)]
     pub asset_universe: Vec<String>,
     /// Execution mode as a snake_case string (e.g. `"per_asset"`, `"portfolio"`).
     #[serde(default)]
     pub execution_mode: String,
+}
+
+fn default_strategy_summary_activation_mode() -> ActivationMode {
+    ActivationMode::EveryBar
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -358,6 +366,7 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             provider_models: inventory.provider_models,
             agent_count: strategy.agents.len(),
             filter_count: usize::from(strategy.filter.is_some()),
+            activation_mode: strategy.activation_mode,
             asset_universe: strategy.manifest.asset_universe.clone(),
             execution_mode,
         });

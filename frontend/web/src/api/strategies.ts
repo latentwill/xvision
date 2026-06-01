@@ -24,6 +24,7 @@ export type StrategyListItem = {
   provider_models?: ProviderModelPair[];
   agent_count?: number;
   filter_count?: number;
+  activation_mode?: ActivationMode;
   asset_universe?: string[];
   execution_mode?: string;
 };
@@ -129,6 +130,7 @@ type PublicManifest = {
 
 export type { Filter } from "./types.gen/Filter";
 import type { Filter } from "./types.gen/Filter";
+import type { ActivationMode } from "./types.gen/ActivationMode";
 
 export type Strategy = {
   manifest: PublicManifest;
@@ -142,6 +144,7 @@ export type Strategy = {
   /// Per-strategy deterministic gate. `null` (or absent) means
   /// `EveryBar` — the strategy fires on every cycle. Non-null means
   /// `Filtered` — the engine evaluates the DSL each bar.
+  activation_mode?: ActivationMode;
   filter?: Filter | null;
 };
 

@@ -194,6 +194,12 @@ Label vocabulary: `regime ∈ {trend, chop, crash, expansion, recovery}`,
 ## Eval
 
 ```bash
+xvn doctor --json
+xvn provider list
+xvn provider check --name <provider>
+xvn provider models --name <provider>
+xvn strategy diagnostics <strategy-id> --json
+xvn eval validate --strategy <strategy-id> --scenario <scenario-id> --mode backtest
 xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
 xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest --auto-fire-review --max-review-annotations 8
 xvn eval list
@@ -216,6 +222,25 @@ xvn eval attest <run_id>                              # sign + persist EvalAttes
 xvn eval export <run_id> --output exports/<run>.json  # canonical EvalRunExport (q15 §3)
 xvn eval review <run_id>                              # analytical review
 ```
+
+Agent-facing launch checklist:
+
+1. Provider readiness: `doctor`, `provider list`, `provider check`, and cached
+   `provider models`.
+2. Strategy diagnostics: `strategy diagnostics <id> --json` must be launchable
+   for agent-backed modes.
+3. Eval validation: `eval validate` checks the concrete strategy/scenario/mode
+   without enqueueing.
+4. Eval run: enqueue only after the previous gates are clean unless the user
+   explicitly asks to skip preflight.
+
+Execution mode labels:
+
+- **Default: Filter-gated agent** — saved deterministic filter gates an
+  agent/model call.
+- **Advanced: Rules-only mechanical** — deterministic rules decide without a
+  model call; this is intentional no-agent execution, not a missing-agent bug.
+- **Legacy/discouraged: Agent-direct** — model call without saved filter gate.
 
 Review annotations are persisted on completed reviews and rendered by
 `/charts/annotated?run_id=<run_id>`. Use `xvn eval show <run_id>` to confirm
