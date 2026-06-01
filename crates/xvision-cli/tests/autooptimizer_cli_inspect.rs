@@ -34,30 +34,16 @@ async fn setup_lineage_db(path: &Path) -> SqlitePool {
         "CREATE TABLE IF NOT EXISTS lineage_nodes (\
             bundle_hash TEXT PRIMARY KEY, \
             parent_hash TEXT, \
-            diff_hash TEXT, \
-            metrics_day_hash TEXT, \
-            metrics_untouched_hash TEXT, \
             gate_verdict TEXT NOT NULL, \
             status TEXT NOT NULL, \
             cycle_id TEXT, \
-            created_at TEXT NOT NULL\
+            created_at TEXT NOT NULL, \
+            diversity_score REAL\
         )",
     )
     .execute(&pool)
     .await
     .expect("create lineage_nodes");
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS cycle_seals (\
-            seal_id TEXT PRIMARY KEY, \
-            cycle_id TEXT NOT NULL, \
-            merkle_root TEXT NOT NULL, \
-            operator_signature TEXT NOT NULL, \
-            sealed_at TEXT NOT NULL\
-        )",
-    )
-    .execute(&pool)
-    .await
-    .expect("create cycle_seals");
     pool
 }
 
@@ -82,27 +68,6 @@ async fn seed_lineage_node(
     .execute(pool)
     .await
     .expect("seed lineage_node");
-}
-
-async fn seed_cycle_seal(
-    pool: &SqlitePool,
-    seal_id: &str,
-    cycle_id: &str,
-    merkle_root: &str,
-    operator_signature: &str,
-) {
-    sqlx::query(
-        "INSERT INTO cycle_seals \
-         (seal_id, cycle_id, merkle_root, operator_signature, sealed_at) \
-         VALUES (?, ?, ?, ?, '2026-01-01T00:00:00Z')",
-    )
-    .bind(seal_id)
-    .bind(cycle_id)
-    .bind(merkle_root)
-    .bind(operator_signature)
-    .execute(pool)
-    .await
-    .expect("seed cycle_seal");
 }
 
 #[tokio::test]
@@ -197,35 +162,4 @@ async fn lineage_show_known_hash() {
         dir.path(),
     );
     assert!(!out.status.success(), "nonexistent hash should exit non-zero");
-}
-
-#[tokio::test]
-async fn seal_show_known_seal_id() {
-    let dir = tempdir().expect("tempdir");
-    let db_path = dir.path().join("lineage.db");
-    let pool = setup_lineage_db(&db_path).await;
-
-    let bundle_hash = "ee".repeat(32);
-    seed_lineage_node(&pool, &bundle_hash, None, "active", "passed", Some("cycle-test")).await;
-
-    let merkle = "ff".repeat(32);
-    let sig = "0123456789abcdef".repeat(4);
-    seed_cycle_seal(&pool, "seal-01", "cycle-test", &merkle, &sig).await;
-
-    let out = xvn(
-        &[
-            "optimizer",
-            "seal",
-            "show",
-            "seal-01",
-            "--db",
-            &db_path.to_string_lossy(),
-        ],
-        dir.path(),
-    );
-    assert_ok(&out);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Evening summary"), "expected header in output");
-    assert!(stdout.contains("cycle-test"), "expected cycle_id in output");
-    assert!(stdout.contains('1'), "expected node_count=1 in output");
 }

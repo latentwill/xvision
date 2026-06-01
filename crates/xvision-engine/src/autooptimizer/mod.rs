@@ -37,11 +37,8 @@ pub mod parent_policy;
 pub mod program_view;
 pub mod progress;
 pub mod scenario_synthesis;
-pub mod seal;
-pub mod session;
 pub mod validator;
 
-// AR-1 public surface — confirmed against each submodule file.
 pub use blob_store::BlobStore;
 pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult};
 pub use config::{AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig};
@@ -58,6 +55,4 @@ pub use mutator_ladder::{compute_ladder, record_outcome, record_proposal, Mutato
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
 pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, ProgramViewError};
 pub use scenario_synthesis::synthesize_baseline_untouched_scenario;
-pub use seal::{build_and_sign, CycleSeal, OPERATOR_DISPLAY_LABEL};
-pub use session::{default_key_path, load_or_generate_key, SessionCommitment};
 pub use validator::{validate_mutation_diff, ValidationError};

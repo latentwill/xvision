@@ -97,14 +97,6 @@ mod tests {
             code: "J001".into(),
         }
     }
-    fn cycle_sealed() -> CycleProgressEvent {
-        CycleProgressEvent::CycleSealed {
-            cycle_id: "c1".into(),
-            merkle_root: "mr".into(),
-            node_count: 5,
-        }
-    }
-
     #[test]
     fn display_label_covers_all_variants() {
         assert_eq!(display_label(&cycle_started()), "Evening run started");
@@ -114,7 +106,6 @@ mod tests {
         assert_eq!(display_label(&mutation_gated_dropped()), "Experiment dropped");
         assert_eq!(display_label(&honesty_check_run()), "Honesty check result");
         assert_eq!(display_label(&judge_finding()), "Reviewer finished notes");
-        assert_eq!(display_label(&cycle_sealed()), "Evening summary signed");
     }
 
     #[test]
@@ -126,6 +117,5 @@ mod tests {
         assert_eq!(event_kind(&mutation_gated_dropped()), "mutation_gated_dropped");
         assert_eq!(event_kind(&honesty_check_run()), "honesty_check_run");
         assert_eq!(event_kind(&judge_finding()), "judge_finding");
-        assert_eq!(event_kind(&cycle_sealed()), "cycle_sealed");
     }
 }
