@@ -61,7 +61,8 @@
 // 50. POST   /api/chat-rail/sessions                  chat_rail::create_session
 // 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
-// 53. POST   /api/autooptimizer/run                    flywheel::autooptimizer_run
+// 53. POST   /api/autooptimizer/evening-cycle           autooptimizer_cycle::start_evening_cycle
+// 53b. POST  /api/autooptimizer/run                    flywheel::autooptimizer_run
 // 54. POST   /api/memory/:id/activate                 memory::activate_pattern
 // 55. POST   /api/memory/:id/demote                   memory::demote_pattern
 // 56. POST   /api/autooptimizer/:id/gate               flywheel::autooptimizer_gate
@@ -130,6 +131,7 @@
 //  R56. GET  /api/autooptimizer
 //  R57. GET  /api/autooptimizer/:id
 //  R58. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
+//  R59. GET  /api/autooptimizer/blob/:hash
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -154,7 +156,8 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, autooptimizer as autooptimizer_route, bars, charts_annotated,
+    agent_runs, agents, autooptimizer as autooptimizer_route, autooptimizer_cycle, bars,
+    charts_annotated,
     charts_dashboards, charts_market_context, chat_rail,
     checkpoints as checkpoints_route, cli, diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
@@ -300,6 +303,10 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/findings/:bundle_hash",
             get(autooptimizer_route::get_findings),
         )
+        .route(
+            "/api/autooptimizer/blob/:hash",
+            get(autooptimizer_route::get_blob),
+        )
         // Flywheel memory-distillation detail — catch-all after static AR-3 routes.
         .route("/api/autooptimizer/:id", get(flywheel::autooptimizer_get))
         // AR-3: live cycle progress stream for the dashboard autooptimizer surface.
@@ -418,6 +425,10 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/memory/:id/demote", post(memory_route::demote_pattern))
         .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── Flywheel / offline self-improvement ─────────────────────────
+        .route(
+            "/api/autooptimizer/evening-cycle",
+            post(autooptimizer_cycle::start_evening_cycle),
+        )
         .route("/api/autooptimizer/run", post(flywheel::autooptimizer_run))
         .route(
             "/api/autooptimizer/:id/gate",

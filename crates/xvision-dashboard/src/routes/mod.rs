@@ -1,6 +1,7 @@
 pub mod agent_runs;
 pub mod agents;
 pub mod autooptimizer;
+pub mod autooptimizer_cycle;
 pub mod bars;
 pub mod charts_annotated;
 pub mod charts_dashboards;
