@@ -310,5 +310,3 @@ The subsystem was renamed from "autoresearcher" → ops surface "Optimizer" / co
 
 | File | Title | Date | Status | Summary |
 |---|---|---|---|---|
-| [2026-05-15-eval-review-agent.md](../specs/2026-05-15-eval-review-agent.md) | Eval Review Agent | 2026-05-15 | COMPLETE | Rule-based verdict + score from eval findings |
-| [2026-05-25-execution-capital-modes.md](../specs/2026-05-25-execution-capital-modes.md) | Execution & Capital Modes — Behavior Spec | 2026-05-25 | COMPLETE | Capital modes, paper mode deprecation, backtest-only clarification |
