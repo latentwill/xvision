@@ -388,6 +388,7 @@ pub struct CycleSealRow {
 
 pub async fn get_blob(
     Path(hash): Path<String>,
+    State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, DashboardError> {
     use xvision_engine::autooptimizer::{blob_store::BlobStore, ContentHash};
 
@@ -396,7 +397,7 @@ pub async fn get_blob(
         msg: format!("invalid content hash: {e}"),
     })?;
 
-    let blob_root = BlobStore::default_root().map_err(DashboardError::Internal)?;
+    let blob_root = state.xvn_home.join("lineage").join("blobs");
     let store = BlobStore::new(blob_root);
 
     if !store.exists(&content_hash) {

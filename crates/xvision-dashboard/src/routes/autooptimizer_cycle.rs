@@ -11,10 +11,14 @@ use ulid::Ulid;
 use xvision_core::config::ProviderKind;
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
 use xvision_engine::autooptimizer::{
+    blob_store::BlobStore,
     config::AutoOptimizerConfig,
+    content_hash::ContentHash,
     cycle::{run_evening_cycle, CycleConfig},
     eval_adapter::StubPaperTester,
+    gate::GateVerdict,
     judge::Judge,
+    lineage::{LineageNode, LineageStatus, LineageStore},
     mutator::Mutator,
     parent_policy::ParentPolicy,
     scenario_synthesis::synthesize_baseline_untouched_scenario,
@@ -22,18 +26,21 @@ use xvision_engine::autooptimizer::{
 };
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, Capital, DataSource,
-    Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
-    ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
-    DEFAULT_WARMUP_BARS,
+    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, Capital, DataSource, Fees,
+    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
+    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use xvision_engine::safety::VenueLabel;
+use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+use xvision_engine::strategies::Strategy;
 
 use crate::error::DashboardError;
 use crate::state::AppState;
 
 #[derive(Deserialize, Default)]
 pub struct StartCycleBody {
+    pub strategy_id: Option<String>,
+    pub budget_usd: Option<f64>,
     pub mutator_model: Option<String>,
     pub judge_model: Option<String>,
 }
@@ -48,6 +55,10 @@ pub async fn start_evening_cycle(
     State(state): State<AppState>,
     Json(body): Json<StartCycleBody>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
+    if let Some(budget) = body.budget_usd {
+        validate_budget_usd(budget)?;
+    }
+
     let cfg = load_optimizer_config()?;
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
     let judge_model = body.judge_model.unwrap_or_else(|| cfg.mutator.model.clone());
@@ -58,8 +69,32 @@ pub async fn start_evening_cycle(
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
     let (mutator, judge) = build_mutator_and_judge(&cfg, mutator_model, judge_model, dispatch);
-    let cycle_config = build_cycle_config(&cfg, &judge, day_scenario, baseline_scenario);
     let pool = state.pool.clone();
+    let lineage_store = LineageStore::new(pool.clone());
+    let strategy_blob_store = BlobStore::new(state.xvn_home.join("lineage").join("blobs"));
+    let (parent_strategies, explicit_parent_hashes) = match body.strategy_id.as_deref() {
+        Some(strategy_id) if !strategy_id.trim().is_empty() => {
+            let (bundle_hash, strategy) = load_strategy_parent(
+                strategy_id.trim(),
+                &state.xvn_home,
+                &lineage_store,
+                &strategy_blob_store,
+            )
+            .await?;
+            let mut parents = HashMap::new();
+            parents.insert(bundle_hash.to_hex(), strategy);
+            (parents, vec![bundle_hash])
+        }
+        _ => (HashMap::new(), vec![]),
+    };
+    let cycle_config = build_cycle_config(
+        &cfg,
+        &judge,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+        explicit_parent_hashes,
+    );
     let tx = state.autooptimizer_tx.clone();
     let obs_blob_store =
         xvision_observability::BlobStore::new(state.xvn_home.join("lineage").join("obs-blobs"));
@@ -179,9 +214,15 @@ fn build_cycle_config(
     judge: &Judge,
     day_scenario: Scenario,
     baseline_scenario: Scenario,
+    parent_strategies: HashMap<String, Strategy>,
+    explicit_parent_hashes: Vec<ContentHash>,
 ) -> CycleConfig {
     CycleConfig {
-        num_parents: 2,
+        num_parents: if explicit_parent_hashes.is_empty() {
+            2
+        } else {
+            explicit_parent_hashes.len()
+        },
         mutations_per_parent: 1,
         sabotage_seed: 42,
         judge_provider: cfg.mutator.provider.clone(),
@@ -190,16 +231,88 @@ fn build_cycle_config(
         sustained_no_pass_cycles: 0,
         day_scenario,
         baseline_scenario,
-        parent_strategies: HashMap::new(),
-        explicit_parent_hashes: vec![],
+        parent_strategies,
+        explicit_parent_hashes,
     }
 }
 
+async fn load_strategy_parent(
+    strategy_id: &str,
+    xvn_home: &std::path::Path,
+    lineage: &LineageStore,
+    blobs: &BlobStore,
+) -> Result<(ContentHash, Strategy), DashboardError> {
+    let store = FilesystemStore::new(strategy_store_dir(xvn_home));
+    store
+        .path_for(strategy_id)
+        .map_err(|e| DashboardError::Validation {
+            field: "strategy_id".into(),
+            msg: format!("invalid strategy id '{strategy_id}': {e}"),
+        })?;
+    let strategy = store.load(strategy_id).await.map_err(|e| {
+        if e.to_string().contains("reading ") {
+            DashboardError::NotFound(format!("strategy '{strategy_id}' not found"))
+        } else {
+            DashboardError::Internal(anyhow::anyhow!("load strategy '{strategy_id}': {e}"))
+        }
+    })?;
+    let strategy_json = serde_json::to_value(&strategy)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize strategy '{strategy_id}': {e}")))?;
+    let bundle_hash = blobs
+        .put_json(&strategy_json)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("write strategy blob '{strategy_id}': {e}")))?;
+
+    match lineage
+        .get(&bundle_hash)
+        .await
+        .map_err(DashboardError::Internal)?
+    {
+        Some(node) if node.status != LineageStatus::Active => {
+            return Err(DashboardError::Validation {
+                field: "strategy_id".into(),
+                msg: format!(
+                    "strategy '{strategy_id}' resolves to lineage parent {} but that parent is not active",
+                    bundle_hash.to_hex()
+                ),
+            });
+        }
+        Some(_) => {}
+        None => {
+            let root_node = LineageNode {
+                bundle_hash,
+                parent_hash: None,
+                diff_hash: None,
+                metrics_day_hash: None,
+                metrics_untouched_hash: None,
+                gate_verdict: GateVerdict::Pass,
+                status: LineageStatus::Active,
+                cycle_id: None,
+                created_at: Utc::now(),
+            };
+            lineage
+                .insert(&root_node)
+                .await
+                .map_err(DashboardError::Internal)?;
+        }
+    }
+
+    Ok((bundle_hash, strategy))
+}
+
+fn validate_budget_usd(budget: f64) -> Result<(), DashboardError> {
+    if budget.is_finite() && budget > 0.0 {
+        return Ok(());
+    }
+    Err(DashboardError::Validation {
+        field: "budget_usd".into(),
+        msg: "budget_usd must be a finite positive USD value".into(),
+    })
+}
+
 fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardError> {
-    let start = Utc
-        .from_utc_datetime(&cfg.day_window.start.and_hms_opt(0, 0, 0).expect("valid midnight"));
-    let end = Utc
-        .from_utc_datetime(&cfg.day_window.end.and_hms_opt(0, 0, 0).expect("valid midnight"));
+    let start = Utc.from_utc_datetime(&cfg.day_window.start.and_hms_opt(0, 0, 0).expect("valid midnight"));
+    let end = Utc.from_utc_datetime(&cfg.day_window.end.and_hms_opt(0, 0, 0).expect("valid midnight"));
     Ok(Scenario {
         id: format!("ec-day-{}", Ulid::new()),
         parent_scenario_id: None,
@@ -223,9 +336,14 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
         },
         venue: VenueSettings {
             venue: Venue::Alpaca,
-            fees: Fees { maker_bps: 10, taker_bps: 25 },
+            fees: Fees {
+                maker_bps: 10,
+                taker_bps: 25,
+            },
             slippage: SlippageModel::None,
-            latency: LatencyModel { decision_to_fill_ms: 250 },
+            latency: LatencyModel {
+                decision_to_fill_ms: 250,
+            },
             fill_model: FillModel {
                 market_order_fill: MarketOrderFill::FullAtClose,
                 limit_order_fill: LimitOrderFill::NeverFills,
