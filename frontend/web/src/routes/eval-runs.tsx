@@ -705,6 +705,7 @@ function StartEvalDialog({
     mutationFn: startRun,
     onSuccess: (detail) => {
       qc.invalidateQueries({ queryKey: evalKeys.runs() });
+      qc.setQueryData(evalKeys.run(detail.summary.id), detail);
       onClose();
       navigate(`/eval-runs/${encodeURIComponent(detail.summary.id)}`);
     },

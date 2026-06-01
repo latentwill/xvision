@@ -87,7 +87,7 @@ export const ListToolbar = forwardRef<HTMLInputElement, ListToolbarProps>(
           )}
         </div>
 
-        {showActiveChips && !compact && search && (
+        {showActiveChips && !compact && (
           <ListActiveChips
             search={search}
             filters={filters}

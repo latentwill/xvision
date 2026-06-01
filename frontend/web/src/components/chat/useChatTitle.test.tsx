@@ -218,6 +218,37 @@ describe("useChatTitle", () => {
     expect(chatRail.streamChat).toHaveBeenCalledOnce();
   });
 
+  test("does not retain s1 title when rerendered with sessionId s2", async () => {
+    vi.mocked(chatRail.streamChat)
+      .mockImplementationOnce(() => asyncTokens("Title A"))
+      .mockImplementationOnce(() => asyncTokens("Title B"));
+
+    const { rerender } = render(
+      <Harness
+        sessionId="s1"
+        firstUser="user msg 1"
+        firstAssistant="asst resp 1"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("title")).toHaveTextContent("Title A"),
+    );
+
+    rerender(
+      <Harness
+        sessionId="s2"
+        firstUser="user msg 2"
+        firstAssistant="asst resp 2"
+      />,
+    );
+
+    expect(screen.getByTestId("title")).not.toHaveTextContent("Title A");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("title")).toHaveTextContent("Title B"),
+    );
+  });
+
   test("skips dispatch until ready (first assistant turn complete)", async () => {
     render(
       <Harness

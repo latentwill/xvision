@@ -183,6 +183,100 @@ describe("ListCard", () => {
     expect(setStatus).toHaveBeenCalledWith("all");
   });
 
+  describe("zero-value ReactNode slots are not dropped", () => {
+    it("title={0} renders the heading", () => {
+      render(
+        <ListCard<Row>
+          title={0}
+          columns={COLUMNS}
+          rows={ROWS}
+          renderRow={(r) => (
+            <tr key={r.id}>
+              <td>{r.name}</td>
+            </tr>
+          )}
+        />,
+      );
+      expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("0");
+    });
+
+    it("subtitle={0} renders the subtitle span", () => {
+      render(
+        <ListCard<Row>
+          title="List"
+          subtitle={0}
+          columns={COLUMNS}
+          rows={ROWS}
+          renderRow={(r) => (
+            <tr key={r.id}>
+              <td>{r.name}</td>
+            </tr>
+          )}
+        />,
+      );
+      expect(screen.getByText("0")).toBeInTheDocument();
+    });
+
+    it("footer={0} renders the footer", () => {
+      render(
+        <ListCard<Row>
+          footer={0}
+          columns={COLUMNS}
+          rows={ROWS}
+          renderRow={(r) => (
+            <tr key={r.id}>
+              <td>{r.name}</td>
+            </tr>
+          )}
+        />,
+      );
+      expect(screen.getByText("0")).toBeInTheDocument();
+    });
+
+    it("emptyAction={0} renders in the empty state", () => {
+      render(
+        <ListCard<Row>
+          columns={COLUMNS}
+          rows={[]}
+          renderRow={() => <tr />}
+          emptyAction={0}
+        />,
+      );
+      expect(screen.getByText("0")).toBeInTheDocument();
+    });
+  });
+
+  it("active chips render for filter state when no search state is provided", () => {
+    const setStatus = vi.fn();
+    render(
+      <ListCard<Row>
+        columns={COLUMNS}
+        rows={ROWS}
+        renderRow={() => <tr />}
+        toolbar={{
+          filters: [
+            {
+              def: {
+                id: "status",
+                label: "Status",
+                options: [
+                  { value: "all", label: "All" },
+                  { value: "Validated", label: "Validated" },
+                ],
+              },
+              value: "Validated",
+              setValue: setStatus,
+            },
+          ],
+          clearAll: vi.fn(),
+        }}
+      />,
+    );
+
+    const chips = screen.getByRole("region", { name: /active filters/i });
+    expect(within(chips).getByRole("button", { name: /Validated/ })).toBeInTheDocument();
+  });
+
   it("compact density hides the active-chips row and the / keyboard hint", () => {
     const state = makeState({
       search: { value: "eth", setValue: vi.fn() },

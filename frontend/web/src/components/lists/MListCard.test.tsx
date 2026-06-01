@@ -197,6 +197,20 @@ describe("MListCard", () => {
     expect(setStatus).toHaveBeenCalledWith("all");
   });
 
+  it("renders numeric zero for title and subtitle (nullish guard)", () => {
+    render(
+      <MListCard<Row>
+        title={0}
+        subtitle={0}
+        toolbar={{ search: makeSearch(), sort: makeSort() }}
+        rows={[]}
+        renderRow={() => null}
+      />,
+    );
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("0");
+    expect(screen.getAllByText("0")).toHaveLength(2);
+  });
+
   it("MListRow renders zero-valued optional slots", () => {
     render(
       <MListRow

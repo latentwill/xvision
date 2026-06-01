@@ -19,6 +19,15 @@ function renderComposer(
 }
 
 describe("ChatComposer", () => {
+  it("does not submit whitespace via Enter key", async () => {
+    const onSubmit = vi.fn();
+    renderComposer({ value: "   ", onSubmit });
+
+    await userEvent.type(screen.getByPlaceholderText("Message"), "{Enter}");
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("disables send for blank input", async () => {
     const onSubmit = vi.fn();
     renderComposer({ value: "   ", onSubmit });
@@ -60,6 +69,12 @@ describe("ChatComposer", () => {
 
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("disables send button while busy with no onCancel handler", () => {
+    renderComposer({ busy: true, value: "hello" });
+
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   });
 
   it("disables controls when disabled", () => {

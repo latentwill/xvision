@@ -58,7 +58,7 @@ describe("DesktopThreePaneShell", () => {
     expect(shell).toHaveClass("grid", "grid-cols-[220px_minmax(0,1fr)_auto]", "min-h-screen");
     expect(shell?.children[0]).toBe(sidebar);
     expect(shell?.children[1]).toBe(main);
-    expect(shell?.children[2]).toBe(chatRail);
+    expect(shell?.children[2]).toContainElement(chatRail);
 
     // Regression guard for the text-overlap QA: the middle column must keep
     // its width hard-capped (max-w-[960px]) AND its track must be allowed to
@@ -66,5 +66,28 @@ describe("DesktopThreePaneShell", () => {
     // from pushing the main column past the chat rail. Centered via
     // justify-self so it doesn't drift left when the cap kicks in.
     expect(main).toHaveClass("min-w-0", "max-w-[960px]", "justify-self-center");
+  });
+
+  it("keeps the third grid cell mounted while the chat rail is suspended", () => {
+    const neverResolves = new Promise<void>(() => {});
+    function SuspendingRail(_: ChatRailProps): JSX.Element {
+      throw neverResolves;
+    }
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<DesktopThreePaneShell ChatRailComponent={SuspendingRail} />}>
+            <Route index element={<div>Route content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const shell = container.firstElementChild;
+    const main = screen.getByRole("main");
+
+    expect(shell?.children[2]).toBeInTheDocument();
+    expect(shell?.children[1]).toBe(main);
   });
 });

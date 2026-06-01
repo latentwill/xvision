@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { EvalRunDetailRoute } from "./eval-runs-detail";
+import { ApiError } from "@/api/client";
 import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as evalReviewApi from "@/api/eval-review";
@@ -357,6 +358,25 @@ describe("EvalRunDetailRoute", () => {
         expect(screen.getAllByTestId("filter-event-tick")).toHaveLength(i),
       );
     }
+  });
+
+  it("keeps rendering cached run detail when a live refetch gets a transient not_found", async () => {
+    vi.mocked(evalApi.getRun)
+      .mockResolvedValueOnce(detail())
+      .mockRejectedValueOnce(new ApiError(404, "not_found", "eval run '01LIVE'"));
+
+    renderDetail();
+
+    await screen.findByRole("button", { name: /stop eval run/i });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    (FakeEventSource.instances[0] as unknown as { onerror?: (ev: Event) => void }).onerror?.(
+      new Event("error"),
+    );
+
+    await waitFor(() => expect(evalApi.getRun).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("eval-run-id")).toHaveTextContent("01LIVE");
+    expect(screen.queryByText("Run not found")).not.toBeInTheDocument();
   });
 
   it("shows an explicit stop control for active runs", async () => {
