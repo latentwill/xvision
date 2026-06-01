@@ -1,7 +1,7 @@
 // GenealogyTree — renders the experiment genealogy tree.
 // Fetches all lineage nodes, groups by cycle_id, and shows a simple
 // flat list (no D3 dependency — plain HTML rows with parent arrows).
-// Clicking a node navigates to /autoresearch/diff/:hash.
+// Clicking a node navigates to /autooptimizer/diff/:hash.
 
 import { useNavigate } from "react-router-dom";
 import { Card, CardHeader } from "@/components/primitives/Card";
@@ -79,7 +79,7 @@ function NodeRow({ node }: { node: LineageNode }) {
     <button
       type="button"
       onClick={() =>
-        navigate(`/autoresearch/diff/${encodeURIComponent(node.bundle_hash)}`)
+        navigate(`/autooptimizer/diff/${encodeURIComponent(node.bundle_hash)}`)
       }
       className="w-full flex items-center gap-3 px-3 py-2.5 rounded border border-border hover:border-text-3 hover:bg-surface-elev/40 transition-colors text-left"
     >

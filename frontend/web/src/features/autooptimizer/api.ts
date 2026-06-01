@@ -1,14 +1,14 @@
-// Autoresearch API — wrappers around the dashboard's `/api/autoresearch/*`
+// AutoOptimizer API — wrappers around the dashboard's `/api/autooptimizer/*`
 // surface added in the AR-3 backend PR.
 //
 // Routes:
-//   GET  /api/autoresearch/lineage           → LineageNode[]
-//   GET  /api/autoresearch/lineage/:hash     → LineageNode
-//   GET  /api/autoresearch/seals             → CycleSeal[]
-//   GET  /api/autoresearch/seals/:cycle_id   → CycleSeal
-//   GET  /api/autoresearch/ladder            → MutatorScore[]
-//   GET  /api/autoresearch/diversity?...     → DiversityEntry[]
-//   GET  /api/autoresearch/events            → SSE stream of CycleProgressEvent
+//   GET  /api/autooptimizer/lineage           → LineageNode[]
+//   GET  /api/autooptimizer/lineage/:hash     → LineageNode
+//   GET  /api/autooptimizer/seals             → CycleSeal[]
+//   GET  /api/autooptimizer/seals/:cycle_id   → CycleSeal
+//   GET  /api/autooptimizer/ladder            → MutatorScore[]
+//   GET  /api/autooptimizer/diversity?...     → DiversityEntry[]
+//   GET  /api/autooptimizer/events            → SSE stream of CycleProgressEvent
 //
 // Operator-facing names (per terminology lock):
 //   LineageNode    → "Experiment" / genealogy node
@@ -64,7 +64,7 @@ export type DiversityEntry = {
   created_at: string;
 };
 
-/** SSE event from the /api/autoresearch/events stream. */
+/** SSE event from the /api/autooptimizer/events stream. */
 export type CycleProgressEvent = {
   event_type: string;
   cycle_id?: string | null;
@@ -88,29 +88,29 @@ function buildDiversityUrl(q?: DiversityQuery): string {
   if (q?.cycle_id) params.set("cycle_id", q.cycle_id);
   if (q?.limit != null) params.set("limit", String(q.limit));
   const qs = params.toString();
-  return qs ? `/api/autoresearch/diversity?${qs}` : "/api/autoresearch/diversity";
+  return qs ? `/api/autooptimizer/diversity?${qs}` : "/api/autooptimizer/diversity";
 }
 
 // ─── Fetch functions ──────────────────────────────────────────────────────────
 
 export async function listLineageNodes(): Promise<LineageNode[]> {
-  return apiFetch<LineageNode[]>("/api/autoresearch/lineage");
+  return apiFetch<LineageNode[]>("/api/autooptimizer/lineage");
 }
 
 export async function getLineageNode(hash: string): Promise<LineageNode> {
-  return apiFetch<LineageNode>(`/api/autoresearch/lineage/${encodeURIComponent(hash)}`);
+  return apiFetch<LineageNode>(`/api/autooptimizer/lineage/${encodeURIComponent(hash)}`);
 }
 
 export async function listSeals(): Promise<CycleSeal[]> {
-  return apiFetch<CycleSeal[]>("/api/autoresearch/seals");
+  return apiFetch<CycleSeal[]>("/api/autooptimizer/seals");
 }
 
 export async function getSeal(cycleId: string): Promise<CycleSeal> {
-  return apiFetch<CycleSeal>(`/api/autoresearch/seals/${encodeURIComponent(cycleId)}`);
+  return apiFetch<CycleSeal>(`/api/autooptimizer/seals/${encodeURIComponent(cycleId)}`);
 }
 
 export async function getLadder(): Promise<MutatorScore[]> {
-  return apiFetch<MutatorScore[]>("/api/autoresearch/ladder");
+  return apiFetch<MutatorScore[]>("/api/autooptimizer/ladder");
 }
 
 export async function getDiversity(q?: DiversityQuery): Promise<DiversityEntry[]> {
@@ -119,22 +119,22 @@ export async function getDiversity(q?: DiversityQuery): Promise<DiversityEntry[]
 
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
-export const autoresearchKeys = {
-  all: ["autoresearch"] as const,
-  lineage: () => [...autoresearchKeys.all, "lineage"] as const,
-  lineageNode: (hash: string) => [...autoresearchKeys.all, "lineage", hash] as const,
-  seals: () => [...autoresearchKeys.all, "seals"] as const,
-  seal: (cycleId: string) => [...autoresearchKeys.all, "seals", cycleId] as const,
-  ladder: () => [...autoresearchKeys.all, "ladder"] as const,
+export const autooptimizerKeys = {
+  all: ["autooptimizer"] as const,
+  lineage: () => [...autooptimizerKeys.all, "lineage"] as const,
+  lineageNode: (hash: string) => [...autooptimizerKeys.all, "lineage", hash] as const,
+  seals: () => [...autooptimizerKeys.all, "seals"] as const,
+  seal: (cycleId: string) => [...autooptimizerKeys.all, "seals", cycleId] as const,
+  ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   diversity: (q?: DiversityQuery) =>
-    [...autoresearchKeys.all, "diversity", q ?? {}] as const,
+    [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
 };
 
 // ─── TanStack Query hooks ─────────────────────────────────────────────────────
 
 export function useLineageNodes() {
   return useQuery({
-    queryKey: autoresearchKeys.lineage(),
+    queryKey: autooptimizerKeys.lineage(),
     queryFn: listLineageNodes,
     staleTime: 30_000,
   });
@@ -142,7 +142,7 @@ export function useLineageNodes() {
 
 export function useLineageNode(hash: string) {
   return useQuery({
-    queryKey: autoresearchKeys.lineageNode(hash),
+    queryKey: autooptimizerKeys.lineageNode(hash),
     queryFn: () => getLineageNode(hash),
     enabled: !!hash,
     staleTime: 60_000,
@@ -151,7 +151,7 @@ export function useLineageNode(hash: string) {
 
 export function useSeals() {
   return useQuery({
-    queryKey: autoresearchKeys.seals(),
+    queryKey: autooptimizerKeys.seals(),
     queryFn: listSeals,
     staleTime: 60_000,
   });
@@ -159,7 +159,7 @@ export function useSeals() {
 
 export function useLadder() {
   return useQuery({
-    queryKey: autoresearchKeys.ladder(),
+    queryKey: autooptimizerKeys.ladder(),
     queryFn: getLadder,
     staleTime: 30_000,
   });
@@ -167,7 +167,7 @@ export function useLadder() {
 
 export function useDiversity(q?: DiversityQuery) {
   return useQuery({
-    queryKey: autoresearchKeys.diversity(q),
+    queryKey: autooptimizerKeys.diversity(q),
     queryFn: () => getDiversity(q),
     staleTime: 30_000,
   });

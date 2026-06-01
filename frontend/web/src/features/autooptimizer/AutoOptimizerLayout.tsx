@@ -1,4 +1,4 @@
-// AutoresearchLayout — top-level container for /autoresearch/*.
+// AutoOptimizerLayout — top-level container for /autooptimizer/*.
 //
 // Five tabs:
 //   Live       → LiveCycleView   (SSE event feed)
@@ -8,8 +8,8 @@
 //   Provenance → LadderWithProvenance  (ladder + lineage context)
 //
 // Tab state is driven by the URL:
-//   /autoresearch           → Live tab
-//   /autoresearch/diff/:hash → Diff tab (hash forwarded to DiffInspector)
+//   /autooptimizer           → Live tab
+//   /autooptimizer/diff/:hash → Diff tab (hash forwarded to DiffInspector)
 //   ?tab=genealogy|diff|ladder|provenance → other tabs via query param
 //
 // No popups — all content is inline per CLAUDE.md rules.
@@ -50,10 +50,10 @@ function tabFromSearch(param: string | null, pathHasDiff: boolean): Tab {
   }
 }
 
-export function AutoresearchLayout() {
+export function AutoOptimizerLayout() {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
-  // :hash is only present on nested /autoresearch/diff/:hash routes
+  // :hash is only present on nested /autooptimizer/diff/:hash routes
   const { hash } = useParams<{ hash?: string }>();
 
   const pathHasDiff = location.pathname.includes("/diff/") && !!hash;
@@ -79,7 +79,7 @@ export function AutoresearchLayout() {
   return (
     <>
       <Topbar
-        title="Autoresearch"
+        title="AutoOptimizer"
         sub="Live experiments, genealogy, and experiment-writer performance"
       />
 
@@ -87,7 +87,7 @@ export function AutoresearchLayout() {
         {/* Tab bar */}
         <div
           role="tablist"
-          aria-label="Autoresearch views"
+          aria-label="AutoOptimizer views"
           className="flex gap-4 border-b border-border"
         >
           {TABS.map(([t, label]) => (
