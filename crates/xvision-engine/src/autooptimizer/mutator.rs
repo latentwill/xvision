@@ -82,6 +82,7 @@ impl Mutator {
         &self,
         base: &Strategy,
         config: &AutoOptimizerConfig,
+        dsr_prefix: Option<&str>,
     ) -> anyhow::Result<MutationDiff> {
         let program_md = program_view::to_markdown(base);
         let mut last_errors: Option<Vec<ValidationError>> = None;
@@ -97,7 +98,7 @@ impl Mutator {
             );
             let req = LlmRequest {
                 model: self.model.clone(),
-                system_prompt: system_prompt_text(),
+                system_prompt: build_system_prompt(dsr_prefix),
                 messages: vec![Message::user_text(user_text)],
                 max_tokens: None,
                 tools: vec![],
@@ -147,6 +148,14 @@ fn system_prompt_text() -> String {
         PROMPT_TEMPLATE[..idx].trim().to_string()
     } else {
         PROMPT_TEMPLATE.to_string()
+    }
+}
+
+fn build_system_prompt(dsr_prefix: Option<&str>) -> String {
+    let base = system_prompt_text();
+    match dsr_prefix {
+        None | Some("") => base,
+        Some(prefix) => format!("{prefix}\n\n---\n\n{base}"),
     }
 }
 

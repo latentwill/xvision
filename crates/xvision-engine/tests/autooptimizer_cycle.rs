@@ -362,6 +362,7 @@ async fn run_evening_cycle_smoke() {
         move |evt| {
             events_clone.lock().unwrap().push(evt);
         },
+        None,
     )
     .await;
 

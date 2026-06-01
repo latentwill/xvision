@@ -583,6 +583,42 @@ impl MemoryStore {
         Ok(res.rows_affected())
     }
 
+    /// Count live (not forgotten) Observations in a namespace. Used by the
+    /// autooptimizer DSPy flywheel to decide when a cohort is large enough to
+    /// trigger a compilation pass.
+    pub async fn count_live_observations(&self, namespace: &str) -> anyhow::Result<u64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as n FROM memory_items \
+             WHERE namespace = ? AND tier = 'observation' AND forgotten_at IS NULL",
+        )
+        .bind(namespace)
+        .fetch_one(&self.pool)
+        .await?;
+        let n: i64 = row.try_get("n")?;
+        Ok(n.max(0) as u64)
+    }
+
+    /// Return the text of up to `limit` live Observations in a namespace,
+    /// ordered by most recently created first. Used by the DSPy flywheel to
+    /// build the training corpus for a compilation pass.
+    pub async fn list_live_observation_texts(
+        &self,
+        namespace: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        assert!(limit <= 1024, "limit exceeds bound");
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT text FROM memory_items \
+             WHERE namespace = ? AND tier = 'observation' AND forgotten_at IS NULL \
+             ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(namespace)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(t,)| t).collect())
+    }
+
     /// Count rows tagged forgotten in a namespace. Used by the engine
     /// API to surface the "N restorable items" hint and by tests.
     pub async fn count_forgotten(&self, namespace: &str) -> anyhow::Result<u64> {

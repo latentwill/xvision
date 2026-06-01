@@ -111,7 +111,7 @@ async fn run_chain(pool: &sqlx::SqlitePool) -> ContentHash {
         max_retries: 0,
     };
     let diff = mutator
-        .propose(&strategy, &AutoOptimizerConfig::default())
+        .propose(&strategy, &AutoOptimizerConfig::default(), None)
         .await
         .expect("propose must succeed with valid diff JSON");
 

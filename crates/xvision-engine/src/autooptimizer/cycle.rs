@@ -13,6 +13,7 @@ use crate::autooptimizer::config::AutoOptimizerConfig;
 use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
+use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
 use crate::autooptimizer::gate::{evaluate, GateInput, GateVerdict};
 use crate::autooptimizer::inversion::run_inversion_pair;
@@ -74,12 +75,20 @@ pub async fn run_evening_cycle(
     judge: &Judge,
     paper_tester: &dyn PaperTestRunner,
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
+    dspy_ctx: Option<&DspyContext>,
 ) -> Result<CycleResult> {
     let cycle_id = Ulid::new().to_string();
     let min_improvement =
         effective_min_improvement_for_cycle(pool, config, 0, cycle_config.sustained_no_pass_cycles)
             .await?
             .effective_min_improvement;
+
+    let dsr_prefix: Option<String> = match dspy_ctx {
+        Some(ctx) if config.dspy_enabled => {
+            query_dsr_prefix(&ctx.store, &ctx.namespace).await?
+        }
+        _ => None,
+    };
 
     let lineage_store = LineageStore::new(pool.clone());
     let parents = if cycle_config.explicit_parent_hashes.is_empty() {
@@ -132,6 +141,8 @@ pub async fn run_evening_cycle(
                 paper_tester,
                 &progress,
                 &mut findings_by_node,
+                dsr_prefix.as_deref(),
+                dspy_ctx,
             )
             .await?;
             active_nodes.extend(active);
@@ -227,6 +238,8 @@ async fn process_parent_mutations<F>(
     paper_tester: &dyn PaperTestRunner,
     progress: &F,
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
+    dsr_prefix: Option<&str>,
+    dspy_ctx: Option<&DspyContext>,
 ) -> Result<(Vec<LineageNode>, Vec<LineageNode>)>
 where
     F: Fn(CycleProgressEvent),
@@ -245,7 +258,7 @@ where
         .await?;
 
     for _ in 0..cycle_config.mutations_per_parent {
-        let diff = match mutator.propose(parent_strategy, config).await {
+        let diff = match mutator.propose(parent_strategy, config, dsr_prefix).await {
             Ok(d) => d,
             Err(_) => continue,
         };
@@ -288,6 +301,7 @@ where
                     code: f.code.clone(),
                 });
             }
+            handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await?;
             findings_by_node.insert(outcome.child_hash, findings);
             active.push(node);
         } else {

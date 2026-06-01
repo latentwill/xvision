@@ -28,6 +28,8 @@ pub mod content_hash;
 pub mod cycle;
 pub mod cycle_loosen;
 pub mod diversity;
+pub mod dspy_bridge;
+pub mod dspy_flywheel;
 pub mod eval_adapter;
 pub mod gate;
 pub mod inversion;
