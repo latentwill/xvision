@@ -16,11 +16,15 @@ let nextRowId = 1;
 
 function LaunchStrip() {
   const [strategyId, setStrategyId] = useState("");
-  const [budget, setBudget] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
 
   const handleLaunch = async () => {
+    const trimmedStrategyId = strategyId.trim();
+    if (!trimmedStrategyId) {
+      setLaunchError("Strategy ID is required");
+      return;
+    }
     setIsRunning(true);
     setLaunchError(null);
     const mutatorModel =
@@ -31,8 +35,7 @@ function LaunchStrip() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          strategy_id: strategyId || undefined,
-          budget_usd: budget ? parseFloat(budget) : undefined,
+          strategy_id: trimmedStrategyId,
           mutator_model: mutatorModel,
           judge_model: judgeModel,
         }),
@@ -41,7 +44,7 @@ function LaunchStrip() {
         setLaunchError("Not yet available on this server");
       } else if (!resp.ok) {
         const text = await resp.text();
-        setLaunchError(text || `Error ${resp.status}`);
+        setLaunchError(errorMessageFromResponse(text) || `Error ${resp.status}`);
       }
     } catch (e) {
       setLaunchError(e instanceof Error ? e.message : "Network error");
@@ -63,16 +66,6 @@ function LaunchStrip() {
         disabled={isRunning}
         className={`${inp} w-[180px]`}
       />
-      <input
-        type="number"
-        placeholder="5.00"
-        value={budget}
-        onChange={(e) => setBudget(e.target.value)}
-        disabled={isRunning}
-        step="0.01"
-        min="0"
-        className={`${inp} w-[80px]`}
-      />
       <button
         type="button"
         onClick={() => {
@@ -88,6 +81,16 @@ function LaunchStrip() {
       )}
     </div>
   );
+}
+
+function errorMessageFromResponse(text: string): string {
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text) as { message?: unknown };
+    return typeof parsed.message === "string" ? parsed.message : text;
+  } catch {
+    return text;
+  }
 }
 
 export function LiveCycleView() {
