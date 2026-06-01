@@ -19,6 +19,11 @@ if [ "${XVISION_ALLOW_MAIN_COMMIT:-}" = "1" ]; then
   exit 0
 fi
 
+# Non-blocking heads-up when the shared cargo target volume is low on space.
+# (Builds happen before commits, so this catches "you just filled the disk".)
+guard="$(git rev-parse --show-toplevel 2>/dev/null)/scripts/cargo-disk-guard.sh"
+[ -x "$guard" ] && "$guard" --warn 2>/dev/null || true
+
 # Identify the primary worktree: in a linked worktree `--git-dir` resolves to
 # `<common>/worktrees/<name>` while `--git-common-dir` is `<common>`; in the
 # primary worktree the two resolve to the same directory.

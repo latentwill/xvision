@@ -23,5 +23,16 @@ A `pre-commit` hook (`.githooks/pre-commit`, enabled via `scripts/setup-hooks.sh
 blocks branch commits in the main checkout. Override only deliberately with
 `XVISION_ALLOW_MAIN_COMMIT=1`.
 
-See `CLAUDE.md` → "Worktree isolation (enforced)" and "Team coordination" for the
-full coordination model (`team/` board, contracts, conflict zones).
+## Disk hygiene
+
+The shared cargo target dir fills the disk if left unchecked. Build through the
+guarded wrapper so it self-cleans when low, and never bare `cargo`:
+
+```bash
+scripts/cargo build --workspace      # checks/frees disk, then runs cargo
+scripts/cargo-disk-guard.sh --check  # report free space
+```
+
+See `CLAUDE.md` → "Worktree isolation (enforced)", "Disk hygiene", and
+"Team coordination" for the full coordination model (`team/` board, contracts,
+conflict zones).
