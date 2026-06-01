@@ -40,7 +40,6 @@ use crate::state::AppState;
 #[derive(Deserialize, Default)]
 pub struct StartCycleBody {
     pub strategy_id: Option<String>,
-    pub budget_usd: Option<f64>,
     pub mutator_model: Option<String>,
     pub judge_model: Option<String>,
 }
@@ -55,10 +54,6 @@ pub async fn start_evening_cycle(
     State(state): State<AppState>,
     Json(body): Json<StartCycleBody>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
-    if let Some(budget) = body.budget_usd {
-        validate_budget_usd(budget)?;
-    }
-
     let cfg = load_optimizer_config()?;
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
     let judge_model = body.judge_model.unwrap_or_else(|| cfg.mutator.model.clone());
@@ -72,21 +67,25 @@ pub async fn start_evening_cycle(
     let pool = state.pool.clone();
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(state.xvn_home.join("lineage").join("blobs"));
-    let (parent_strategies, explicit_parent_hashes) = match body.strategy_id.as_deref() {
-        Some(strategy_id) if !strategy_id.trim().is_empty() => {
-            let (bundle_hash, strategy) = load_strategy_parent(
-                strategy_id.trim(),
-                &state.xvn_home,
-                &lineage_store,
-                &strategy_blob_store,
-            )
-            .await?;
-            let mut parents = HashMap::new();
-            parents.insert(bundle_hash.to_hex(), strategy);
-            (parents, vec![bundle_hash])
-        }
-        _ => (HashMap::new(), vec![]),
-    };
+    let strategy_id = body
+        .strategy_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| DashboardError::Validation {
+            field: "strategy_id".into(),
+            msg: "strategy_id is required for dashboard evening-cycle launches".into(),
+        })?;
+    let (bundle_hash, strategy) = load_strategy_parent(
+        strategy_id,
+        &state.xvn_home,
+        &lineage_store,
+        &strategy_blob_store,
+    )
+    .await?;
+    let mut parent_strategies = HashMap::new();
+    parent_strategies.insert(bundle_hash.to_hex(), strategy);
+    let explicit_parent_hashes = vec![bundle_hash];
     let cycle_config = build_cycle_config(
         &cfg,
         &judge,
@@ -298,16 +297,6 @@ async fn load_strategy_parent(
     }
 
     Ok((bundle_hash, strategy))
-}
-
-fn validate_budget_usd(budget: f64) -> Result<(), DashboardError> {
-    if budget.is_finite() && budget > 0.0 {
-        return Ok(());
-    }
-    Err(DashboardError::Validation {
-        field: "budget_usd".into(),
-        msg: "budget_usd must be a finite positive USD value".into(),
-    })
 }
 
 fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardError> {
