@@ -96,6 +96,26 @@ The `xvn strategy` CLI verb manages strategy bundles and is NOT renamed.
 The `xvn setup` CLI verb (config init) is NOT renamed — it remains the
 verb form.
 
+### Operator-facing names (autoresearcher subsurface)
+
+The autoresearcher, memory, and flywheel surfaces follow a two-name
+convention: developer-surface names (in Rust types, SQLite columns,
+spec docs, API field names) stay precise and technical, while
+operator-surface names (in CLI flags and help text, UI labels, SSE
+display labels, MANUAL.md, dashboard wiki) are plain-language. The
+two-name pairs are locked at
+`docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`.
+
+Examples: `Mutation` → "Experiment"; `Mutator` → "Experiment writer";
+`LineageStatus::Ghost` → "Rejected"; `LineageStatus::Quarantined` →
+"Suspect"; `CycleSeal` → "Evening summary"; `Merkle root` → "Cycle
+proof"; `--gate-epsilon` → `--min-improvement`; `--parent-holdout-score`
+→ `--baseline-untouched-score`; null-result canary → "honesty check".
+
+Any new operator-facing concept on these surfaces requires a row in
+the lock doc. Cryptographic primitives (BLAKE3, Ed25519, "merkle,"
+canonical JSON) must never appear on an operator surface.
+
 **Migration notes:**
 - DB migration `0002_rename_setup_to_cycle.sql` renamed the `setups` table to
   `cycles` and `setup_id` to `cycle_id` across all six referencing tables

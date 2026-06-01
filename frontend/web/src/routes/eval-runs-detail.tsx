@@ -208,7 +208,7 @@ export function EvalRunDetailRoute() {
         disambiguator={disambiguator}
         agents={strategyDetail.data?.agents ?? []}
         agentsAll={agentsAll.data ?? []}
-        totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
+        totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd || null}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
@@ -251,7 +251,7 @@ export function EvalRunDetailRoute() {
                 started{" "}
                 <span className="text-text-2">{fmtTime(detail.summary.started_at)}</span>
                 <span className="text-text-4 mx-2">·</span>
-                token cost <span className="text-text-2">{formatSpendUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd ?? null))}</span>
+                token cost <span className="text-text-2">{formatSpendUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd || null))}</span>
                 <span className="text-text-4 mx-2">·</span>
                 <span className="text-text-2">{disambiguator}</span>
               </div>
@@ -300,13 +300,13 @@ export function EvalRunDetailRoute() {
           <div className="space-y-5">
             <MetaCard
               summary={detail.summary}
-              totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
+              totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd || null}
             />
 
             <SummaryCard
               summary={detail.summary}
               equityCurve={detail.equity_curve}
-              totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd ?? null}
+              totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd || null}
               chartPending={chart.isPending}
               chartError={chart.isError ? String(chart.error) : null}
               chartNode={chart.data ? <RunChartV2 payload={runChartPayloadToV2(chart.data)} /> : null}
@@ -625,7 +625,7 @@ function SummaryCard({
         <Stat
           label="TOTAL PNL"
           value={fmtPnlUsd(totalPnlUsd(equityCurve))}
-          sub={fmtPct(summary.total_return_pct)}
+          sub={`${fmtPct(summary.total_return_pct)} · incl. unrealized`}
           tone={pnlTone(totalPnlUsd(equityCurve))}
         />
         <Stat
@@ -918,6 +918,25 @@ type AssetRollup = {
   pnlRealized: number | null;
 };
 
+// `pnl_realized` is set on every filled decision but its meaning differs by
+// action type:
+//   • long_open / short_open from a flat position: realized = 0, so
+//     pnl_realized = 0 - fee = -fee (just the entry cost, not a return).
+//   • flat (close): pnl_realized = position_gain - fee (the actual trade return).
+//   • long_open / short_open that REVERSES an existing position: pnl_realized
+//     includes the close-leg gain too, but we cannot distinguish this from a
+//     pure open using the action field alone.
+//
+// To avoid showing only entry fees as "Realized PnL", we only accumulate
+// pnl_realized for "flat" decisions (clean closes). Reversal opens are
+// counted separately in tradesOpened but their realized component is omitted
+// here — a known conservative undercount that is still far more accurate
+// than the previous sum-all-actions approach which showed only negative fee
+// noise (e.g. -$2.50 per trade when the portfolio had +$315 total equity).
+//
+// TOTAL PNL (the equity-curve delta) includes mark-to-market unrealized gains
+// from positions still open at backtest end, which is why it can be much
+// larger than the sum of closed-trade returns here.
 function buildAssetRollups(decisions: DecisionRowDto[]): AssetRollup[] {
   const map = new Map<string, AssetRollup>();
   for (const row of decisions) {
@@ -930,7 +949,10 @@ function buildAssetRollups(decisions: DecisionRowDto[]): AssetRollup[] {
     if (row.action === "long_open" || row.action === "short_open") {
       entry.tradesOpened += 1;
     }
-    if (row.pnl_realized != null) {
+    // Only accumulate realized PnL on flat (close) decisions. Open decisions
+    // carry pnl_realized = -fee (entry cost only, no gain/loss yet), which
+    // would make this column show nothing but small negative fee noise.
+    if (row.action === "flat" && row.pnl_realized != null) {
       entry.pnlRealized = (entry.pnlRealized ?? 0) + row.pnl_realized;
     }
   }
@@ -957,7 +979,7 @@ function AssetRollupPanel({ decisions }: { decisions: DecisionRowDto[] }) {
             <th className="font-normal py-2 px-4">Asset</th>
             <th className="font-normal py-2 px-3 text-right">Decisions</th>
             <th className="font-normal py-2 px-3 text-right">Trades opened</th>
-            <th className="font-normal py-2 px-3 text-right">Realized PnL</th>
+            <th className="font-normal py-2 px-3 text-right">Closed trade PnL</th>
           </tr>
         </thead>
         <tbody>

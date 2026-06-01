@@ -2086,12 +2086,6 @@ fn parse_timeframe_mcp(timeframe: &str) -> Result<u32, rmcp::ErrorData> {
     }
 }
 
-/// Alias for backward compat with wave-C tests that call `parse_timeframe_minutes_mcp`.
-#[inline]
-fn parse_timeframe_minutes_mcp(timeframe: &str) -> Result<u32, rmcp::ErrorData> {
-    parse_timeframe_mcp(timeframe)
-}
-
 /// Count each action kind in the decisions table for a run.
 /// Returns a `serde_json::Value` map (`{ "long_open": N, ... }`).
 async fn action_distribution_mcp(ctx: &ApiContext, run_id: &str) -> anyhow::Result<serde_json::Value> {

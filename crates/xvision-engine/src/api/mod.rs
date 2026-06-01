@@ -370,10 +370,10 @@ impl ApiContext {
         migrate_agents_scope_strategy_id(&pool).await?;
         migrate_review_annotations_and_autofire(&pool).await?;
         migrate_eval_runs_live_config(&pool).await?;
+        migrate_run_trajectory_mode(&pool).await?;
         migrate_eval_runs_dependent_fks_038(&pool).await?;
         migrate_agent_slot_optimizations(&pool).await?;
         migrate_pattern_optimizations(&pool).await?;
-        migrate_run_trajectory_mode(&pool).await?;
         migrate_trajectory_frames(&pool).await?;
         migrate_chat_session_rail_state(&pool).await?;
         migrate_session_events(&pool).await?;

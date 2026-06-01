@@ -20,7 +20,9 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{
     strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore,
 };
-use xvision_engine::strategies::validate::{no_filter_warnings, preflight_validate, validate_strategy};
+use xvision_engine::strategies::validate::{
+    every_bar_warning, no_filter_warnings, preflight_validate, validate_strategy,
+};
 use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::{AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
@@ -975,6 +977,9 @@ async fn new_atomic(
         let out = build_atomic_create_output(&strategy_id, &agent_id, &provider, &model, warnings);
         crate::io::print_json(&out)?;
     } else {
+        if let Some(warn) = every_bar_warning(&strategy) {
+            eprintln!("warning: {warn}");
+        }
         println!("{strategy_id}");
     }
     Ok(())

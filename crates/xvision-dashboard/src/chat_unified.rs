@@ -16,9 +16,10 @@ use sha2::{Digest, Sha256};
 use xvision_engine::chat_session::ContextScope;
 use xvision_observability::types::{RiskLevel, SideEffectLevel, ToolOrigin};
 use xvision_observability::{
-    Actor, EventScope, EventSource, ToolCallFinishedEvent, ToolCallStartedEvent, ToolDenied,
-    ToolPolicyChecked, ToolPolicyOutcome, UnifiedEvent, UnifiedPayload,
+    Actor, EventScope, EventSource, ToolCallFinishedEvent, ToolCallStartedEvent, UnifiedEvent, UnifiedPayload,
 };
+#[cfg(test)]
+use xvision_observability::{ToolDenied, ToolPolicyChecked, ToolPolicyOutcome};
 
 use crate::wizard_loop::WizardEvent;
 
