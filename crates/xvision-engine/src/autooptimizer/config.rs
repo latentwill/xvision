@@ -33,6 +33,11 @@ pub struct AutoOptimizerConfig {
     /// compilation pass is triggered. Default 5.
     #[serde(default = "default_dspy_pattern_cohort_threshold")]
     pub dspy_pattern_cohort_threshold: usize,
+    /// When true, each mutation proposal runs through the three-candidate
+    /// Borda-count tournament instead of a single `mutator.propose()` call.
+    /// Defaults to false; set in autoresearch.toml to opt in.
+    #[serde(default)]
+    pub tournament_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +85,7 @@ impl Default for AutoOptimizerConfig {
             lineage_root: None,
             dspy_enabled: false,
             dspy_pattern_cohort_threshold: default_dspy_pattern_cohort_threshold(),
+            tournament_enabled: false,
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Smoke test for `run_evening_cycle` — AR-2 T9 follow-up.
 //!
-//! Verifies the orchestrator starts, emits progress events, and exits
+//! Verifies the orchestrator starts, emits progress events, seals, and exits
 //! cleanly using:
 //!  - real SQLite with all AR-1/AR-2 migrations applied
 //!  - `StubPaperTester` (fixed Sharpe, no real eval)
@@ -12,21 +12,22 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use chrono::{TimeZone, Utc};
+use ed25519_dalek::SigningKey;
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use ulid::Ulid;
 
 use xvision_engine::agent::llm::MockDispatch;
-use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
-use xvision_engine::autooptimizer::content_hash::ContentHash;
-use xvision_engine::autooptimizer::cycle::{run_evening_cycle, CycleConfig};
-use xvision_engine::autooptimizer::eval_adapter::StubPaperTester;
-use xvision_engine::autooptimizer::gate::GateVerdict;
-use xvision_engine::autooptimizer::judge::Judge;
-use xvision_engine::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
-use xvision_engine::autooptimizer::mutator::Mutator;
-use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
-use xvision_engine::autooptimizer::progress::CycleProgressEvent;
+use xvision_engine::autoresearch::config::AutoresearchConfig;
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::cycle::{run_evening_cycle, CycleConfig};
+use xvision_engine::autoresearch::eval_adapter::StubPaperTester;
+use xvision_engine::autoresearch::gate::GateVerdict;
+use xvision_engine::autoresearch::judge::Judge;
+use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
+use xvision_engine::autoresearch::mutator::Mutator;
+use xvision_engine::autoresearch::parent_policy::ParentPolicy;
+use xvision_engine::autoresearch::progress::CycleProgressEvent;
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::eval::scenario::Scenario;
 use xvision_engine::eval::scenario::{
@@ -40,6 +41,9 @@ use xvision_observability::BlobStore;
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
+/// Open an in-memory SQLite pool with all AR-1/AR-2 migrations applied.
+/// Runs every migration file individually (include_str! style, consistent
+/// with other autoresearch tests in this codebase).
 async fn fresh_pool() -> sqlx::SqlitePool {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -47,6 +51,8 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         .await
         .expect("open in-memory sqlite");
 
+    // Apply migrations in order — full set required so run_evening_cycle
+    // can read from cycle_seals, lineage_nodes, mutator_attribution etc.
     let migrations: &[&str] = &[
         include_str!("../migrations/001_api_audit.sql"),
         include_str!("../migrations/002_eval.sql"),
@@ -82,22 +88,21 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         include_str!("../migrations/036_agents_scope_strategy_id.sql"),
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
+        include_str!("../migrations/039_agent_slot_optimizations.sql"),
         include_str!("../migrations/039_run_trajectory_mode.sql"),
+        include_str!("../migrations/040_pattern_optimizations.sql"),
         include_str!("../migrations/040_trajectory_frames.sql"),
+        include_str!("../migrations/041_agent_slot_optimization_gates.sql"),
         include_str!("../migrations/041_chat_session_rail_state.sql"),
-        include_str!("../migrations/051_agent_slot_optimizations.sql"),
-        include_str!("../migrations/052_pattern_optimizations.sql"),
-        include_str!("../migrations/053_agent_slot_optimization_gates.sql"),
         include_str!("../migrations/042_session_events.sql"),
         include_str!("../migrations/043_tool_policies.sql"),
         include_str!("../migrations/044_checkpoints.sql"),
         include_str!("../migrations/045_optimization_store.sql"),
         include_str!("../migrations/046_holdout.sql"),
         include_str!("../migrations/047_agent_slot_max_wall_ms.sql"),
-        include_str!("../migrations/048_autooptimizer.sql"),
-        include_str!("../migrations/049_autooptimizer_diversity.sql"),
+        include_str!("../migrations/048_autoresearch.sql"),
+        include_str!("../migrations/049_autoresearch_diversity.sql"),
         include_str!("../migrations/050_mutator_attribution.sql"),
-        include_str!("../migrations/051_drop_autooptimizer_provenance.sql"),
     ];
 
     for sql in migrations {
@@ -217,6 +222,8 @@ fn metrics_stub(sharpe: f64) -> MetricsSummary {
 
 // ── JSON for mock LLM responses ───────────────────────────────────────────────
 
+/// A minimal valid `MutationDiff` JSON — mutator mock returns this.
+/// The prose references an agent role that matches the strategy fixture.
 fn valid_diff_json() -> String {
     serde_json::json!({
         "kind": "prose",
@@ -232,6 +239,7 @@ fn valid_diff_json() -> String {
     .to_string()
 }
 
+/// A minimal valid `Finding` list — judge mock returns this.
 fn valid_findings_json() -> String {
     serde_json::json!([{
         "code": "style_ok",
@@ -256,11 +264,13 @@ async fn run_evening_cycle_smoke() {
     let root_node = LineageNode {
         bundle_hash,
         parent_hash: None,
+        diff_hash: None,
+        metrics_day_hash: None,
+        metrics_untouched_hash: None,
         gate_verdict: GateVerdict::Pass,
         status: LineageStatus::Active,
         cycle_id: None,
         created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-        diversity_score: None,
     };
     LineageStore::new(pool.clone())
         .insert(&root_node)
@@ -269,9 +279,28 @@ async fn run_evening_cycle_smoke() {
 
     // ── 3. BlobStore in a temp dir ────────────────────────────────────────────
     let blob_dir = TempDir::new().expect("create temp blob dir");
+    // xvision_observability::BlobStore — the type expected by run_evening_cycle
     let blob_store = BlobStore::new(blob_dir.path().join("blobs"));
 
-    // ── 4. MockDispatch ───────────────────────────────────────────────────────
+    // ── 4. MockDispatch: returns valid_diff_json for mutator calls,
+    //       valid_findings_json for judge calls, repeating forever ────────────
+    //
+    // The cycle calls: mutator (propose × mutations_per_parent) + canary
+    // propose + judge (per passing mutation). We seed enough responses;
+    // MockDispatch::echo returns the single canned response forever after
+    // the queue is exhausted.
+    //
+    // Mutator expects `MutationDiff` JSON; judge expects `Finding[]` JSON.
+    // We interleave by using a single shared dispatch that always returns
+    // valid_diff_json first, then valid_findings_json, then loops. Since
+    // mutator and judge share the same mock, and we only have 1 mutation
+    // and the diff will NOT pass the gate (parent sharpe == child sharpe,
+    // Δ = 0 which fails min_improvement), the judge is never called for
+    // this cycle (only called on Active children). The canary's mutator
+    // call also needs a valid diff. So we need at least 2 diff responses:
+    // one for the mutation proposal + one for the canary sabotaged propose.
+    //
+    // We use MockDispatch::sequence with several copies to be safe.
     let dispatch = Arc::new(MockDispatch::sequence(vec![
         xvision_engine::agent::llm::LlmResponse {
             content: vec![xvision_engine::agent::llm::ContentBlock::Text {
@@ -312,15 +341,24 @@ async fn run_evening_cycle_smoke() {
         model: "mock-model".into(),
     };
 
-    // ── 6. StubPaperTester ────────────────────────────────────────────────────
+    // ── 6. StubPaperTester — parent sharpe=0.8, child sharpe=0.9 ─────────────
+    // Having child sharpe > parent means Δ = 0.1. With min_improvement=0.05
+    // the gate should pass. The inversion-pair check inverts the diff and
+    // re-runs; with StubPaperTester it also returns 0.9 sharpe so inversion
+    // child sharpe ≈ 0.9, but for the symmetric-noise check we'd need the
+    // inverted child to fail the gate (Δ ≤ min_improvement). Since StubPaperTester
+    // returns the same metrics for every call, inversion child Δ = 0 which
+    // fails the gate — so symmetric_noise=true and the child is ultimately
+    // rejected. That's still valid: the cycle runs end-to-end and seals.
     let paper_tester = StubPaperTester {
         metrics: metrics_stub(0.9),
     };
 
     // ── 7. Configs ────────────────────────────────────────────────────────────
-    let ar_config = AutoOptimizerConfig {
+    let ar_config = AutoresearchConfig {
         min_improvement: 0.05,
-        ..AutoOptimizerConfig::default()
+        tournament_enabled: false,
+        ..AutoresearchConfig::default()
     };
 
     let day_scenario = make_scenario("day-smoke", 2024, 2025);
@@ -345,11 +383,16 @@ async fn run_evening_cycle_smoke() {
 
     let parent_policy = ParentPolicy::RoundRobin;
 
-    // ── 8. Collect progress events ────────────────────────────────────────────
+    // ── 8. Operator signing key (deterministic for tests) ─────────────────────
+    let operator_key = SigningKey::from_bytes(&[7u8; 32]);
+
+    let session_id = Ulid::new().to_string();
+
+    // ── 9. Collect progress events ────────────────────────────────────────────
     let events: Arc<Mutex<Vec<CycleProgressEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let events_clone = Arc::clone(&events);
 
-    // ── 9. Run the cycle ──────────────────────────────────────────────────────
+    // ── 10. Run the cycle ─────────────────────────────────────────────────────
     let result = run_evening_cycle(
         &pool,
         &blob_store,
@@ -359,20 +402,37 @@ async fn run_evening_cycle_smoke() {
         &mutator,
         &judge,
         &paper_tester,
+        &operator_key,
+        &session_id,
         move |evt| {
             events_clone.lock().unwrap().push(evt);
         },
-        None,
     )
     .await;
 
-    // ── 10. Assertions ────────────────────────────────────────────────────────
+    // ── 11. Assertions ────────────────────────────────────────────────────────
     let result = result.expect("run_evening_cycle must return Ok");
 
+    // cycle_id is non-empty
     assert!(!result.cycle_id.is_empty(), "cycle_id must be non-empty");
 
+    // seal.merkle_root is non-empty (non-zero ContentHash).
+    // The actual merkle root should not be the empty-bytes hash since we
+    // have at least one node (the rejected child). A zero-node cycle could
+    // produce the empty root — but we inserted a root node + processed
+    // 1 mutation — so the Merkle root should reflect at least one entry.
+    let merkle_hex = result.seal.merkle_root.to_hex();
+    assert!(!merkle_hex.is_empty(), "merkle_root hex must be non-empty");
+    assert!(
+        merkle_hex.len() == 64,
+        "merkle_root must be a 64-char hex string (32 bytes), got len {}",
+        merkle_hex.len()
+    );
+
+    // Collected events
     let collected = events.lock().unwrap().clone();
 
+    // CycleStarted must be present
     let has_started = collected
         .iter()
         .any(|e| matches!(e, CycleProgressEvent::CycleStarted { .. }));
@@ -381,6 +441,16 @@ async fn run_evening_cycle_smoke() {
         "CycleStarted event must appear in progress events; got: {collected:?}"
     );
 
+    // CycleSealed must be present
+    let has_sealed = collected
+        .iter()
+        .any(|e| matches!(e, CycleProgressEvent::CycleSealed { .. }));
+    assert!(
+        has_sealed,
+        "CycleSealed event must appear in progress events; got: {collected:?}"
+    );
+
+    // HonestyCheckRun must be present (canary always runs)
     let has_honesty = collected
         .iter()
         .any(|e| matches!(e, CycleProgressEvent::HonestyCheckRun { .. }));
@@ -389,6 +459,14 @@ async fn run_evening_cycle_smoke() {
         "HonestyCheckRun event must appear in progress events; got: {collected:?}"
     );
 
-    // No CycleSealed events should appear (provenance layer removed).
-    let _ = Ulid::new(); // suppress unused import lint
+    // CycleSealed event cycle_id must match result.cycle_id
+    if let Some(CycleProgressEvent::CycleSealed { cycle_id, .. }) = collected
+        .iter()
+        .find(|e| matches!(e, CycleProgressEvent::CycleSealed { .. }))
+    {
+        assert_eq!(
+            cycle_id, &result.cycle_id,
+            "CycleSealed event cycle_id must match CycleResult.cycle_id"
+        );
+    }
 }

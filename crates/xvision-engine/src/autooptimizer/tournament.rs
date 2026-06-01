@@ -323,18 +323,41 @@ mod tests {
     use crate::strategies::Strategy;
 
     fn stub_strategy() -> Strategy {
-        Strategy::default()
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000A",
+                "display_name": "Tournament Test Strategy",
+                "plain_summary": "Minimal fixture for tournament tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": [],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000A", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": {}
+        });
+        serde_json::from_value(v).expect("stub_strategy fixture must deserialise")
     }
 
     fn valid_diff_json() -> String {
         serde_json::to_string(&MutationDiff {
             kind: crate::autoresearch::mutator::MutationKind::Prose,
-            prose: vec![],
-            params: vec![crate::autoresearch::mutator::ParamChange {
-                key: "unused".into(),
-                before: serde_json::Value::Null,
-                after: serde_json::Value::Null,
+            prose: vec![crate::autoresearch::mutator::ProseEdit {
+                agent_role: "trader".into(),
+                before: "analyze market".into(),
+                after: "analyze market trends carefully".into(),
             }],
+            params: vec![],
             tools: crate::autoresearch::mutator::ToolDiff { added: vec![], removed: vec![] },
             rationale: "test rationale".into(),
         })
