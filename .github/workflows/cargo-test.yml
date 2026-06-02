@@ -31,4 +31,5 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
           CARGO_BUILD_JOBS: "1"
+          RUSTFLAGS: "-C link-arg=-fuse-ld=bfd"
         run: scripts/cargo test --workspace --lib --tests
