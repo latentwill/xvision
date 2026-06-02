@@ -329,7 +329,6 @@ export function EvalRunsRoute() {
   const desktopColumns = [
     { key: "select", label: "", width: 32 },
     { key: "run", label: "Run" },
-    { key: "strategy", label: "Strategy" },
     { key: "scenario", label: "Scenario" },
     { key: "mode", label: "Mode" },
     { key: "status", label: "Status" },
@@ -363,7 +362,7 @@ export function EvalRunsRoute() {
         </button>
       </div>
       {startOpen ? (
-        <StartEvalDialog
+        <StartEvalPanel
           initialAgentId={preselectedStrategy}
           onClose={() => {
             setStartOpen(false);
@@ -588,7 +587,10 @@ function DesktopRow({
         />
       </td>
       <td className="px-3 py-3">
-        <div className="text-[11px] text-text-2">
+        <div className="text-[13px] text-text font-medium">
+          {displayStrategyName(row.agent_id, strategies)}
+        </div>
+        <div className="mt-0.5 text-[11px] text-text-2">
           {evalRunDisambiguator(row, allRows)}
         </div>
         <div
@@ -597,15 +599,6 @@ function DesktopRow({
         >
           {row.id}
         </div>
-      </td>
-      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-        <Link
-          to={`/strategies/${row.agent_id}`}
-          className="text-[13px] text-text-2 hover:text-text hover:underline"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {displayStrategyName(row.agent_id, strategies)}
-        </Link>
       </td>
       <td className="px-3 py-3 text-text-2">
         {displayScenarioName(row.scenario_id, scenarios)}
@@ -666,7 +659,7 @@ function DesktopRow({
   );
 }
 
-function StartEvalDialog({
+function StartEvalPanel({
   initialAgentId,
   onClose,
 }: {
@@ -842,17 +835,7 @@ function StartEvalDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-start justify-center pt-24 px-4 bg-bg/80 backdrop-blur-sm"
-      onClick={onClose}
-      role="presentation"
-    >
-      <div
-        className="w-full max-w-md bg-surface border border-border rounded-lg shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Start eval"
-      >
+    <div className="w-full bg-surface border border-border rounded-lg shadow-sm mb-3">
         <form onSubmit={onSubmit} className="p-5 space-y-4">
           <div>
             <h2 className="m-0 font-sans font-medium text-[20px] tracking-tight">
@@ -1092,7 +1075,6 @@ function StartEvalDialog({
             </button>
           </div>
         </form>
-      </div>
     </div>
   );
 }
