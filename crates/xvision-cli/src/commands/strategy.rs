@@ -12,7 +12,7 @@ use xvision_engine::agent::pipeline::{
 use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
 use xvision_engine::api::eval::{self as api_eval, ListRunsRequest};
 use xvision_engine::api::scenario as api_scenario;
-use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
+use xvision_engine::api::{agents as api_agents, search as api_search, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::diagnostics::{
     self, assert_launchable, CapabilityStatus, DiagnosticsError, StrategyDiagnostics,
 };
@@ -219,6 +219,9 @@ enum StrategyAction {
         /// Emit as JSON array (legacy alias for `--format json`).
         #[arg(long)]
         json: bool,
+        /// Print bundle IDs present on disk but absent from the search index.
+        #[arg(long, default_value_t = false)]
+        orphans: bool,
     },
     /// Show a saved strategy as JSON. Output shape matches the
     /// `strategy` slot in `EvalRunExport` (q15 §3 / §6) — same
@@ -519,7 +522,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning, fields).await,
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
         StrategyAction::Diagnostics { id, json } => diagnostics(&id, json).await,
-        StrategyAction::Ls { format, json } => ls(format, json).await,
+        StrategyAction::Ls { format, json, orphans } => ls(format, json, orphans).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
         StrategyAction::AddAgent {
@@ -1413,21 +1416,36 @@ fn print_diagnostics_text(diag: &StrategyDiagnostics) {
     }
 }
 
-async fn ls(format: Option<ListFormat>, json: bool) -> CliResult<()> {
-    let ids = store().list().await.exit_with(XvnExit::Upstream)?;
-    // Resolve effective format: explicit --format wins, then --json, then default table.
+async fn ls(format: Option<ListFormat>, json: bool, orphans: bool) -> CliResult<()> {
+    let ctx = open_ctx().await?;
+    let indexed_ids = api_search::list_strategy_ids(&ctx)
+        .await
+        .map_err(|e| api_to_cli("strategy ls", e))?;
+
+    if orphans {
+        let disk_ids = store().list().await.exit_with(XvnExit::Upstream)?;
+        let indexed_set: std::collections::HashSet<&str> =
+            indexed_ids.iter().map(String::as_str).collect();
+        for id in &disk_ids {
+            if !indexed_set.contains(id.as_str()) {
+                println!("ORPHAN {id}");
+            }
+        }
+        return Ok(());
+    }
+
     let effective = format.unwrap_or(if json { ListFormat::Json } else { ListFormat::Table });
     match effective {
         ListFormat::Table => {
-            for id in ids {
+            for id in &indexed_ids {
                 println!("{id}");
             }
         }
         ListFormat::Json => {
-            crate::io::print_json(&ids)?;
+            crate::io::print_json(&indexed_ids)?;
         }
         ListFormat::JsonCompact => {
-            crate::io::print_json_compact(&ids)?;
+            crate::io::print_json_compact(&indexed_ids)?;
         }
     }
     Ok(())
