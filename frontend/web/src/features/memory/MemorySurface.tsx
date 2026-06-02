@@ -166,7 +166,7 @@ export function MemorySurface(props: MemorySurfaceProps) {
       </div>
 
       {forgetOpen ? (
-        <ForgetDialog
+        <ForgetPanel
           {...props}
           itemCount={allItemsQuery.data?.total ?? 0}
           onClose={() => setForgetOpen(false)}
@@ -1118,7 +1118,7 @@ function PatternsPanel(props: PatternsPanelProps) {
       )}
 
       {addOpen ? (
-        <AddPatternDialog
+        <AddPatternPanel
           {...props}
           defaultNamespace={namespace}
           onClose={() => setAddOpen(false)}
@@ -1238,7 +1238,7 @@ function PatternList({
 
 // ── add-pattern modal ───────────────────────────────────────────────────────
 
-type AddPatternDialogProps = MemorySurfaceProps & {
+type AddPatternPanelProps = MemorySurfaceProps & {
   defaultNamespace: string;
   onClose: () => void;
 };
@@ -1247,7 +1247,7 @@ type AddPatternMutationBody = PatternCreateBody & {
   operator_initials?: string;
 };
 
-function AddPatternDialog(props: AddPatternDialogProps) {
+function AddPatternPanel(props: AddPatternPanelProps) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [trainingEnd, setTrainingEnd] = useState("");
@@ -1311,18 +1311,7 @@ function AddPatternDialog(props: AddPatternDialogProps) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-start justify-center pt-24 px-4 bg-bg/80 backdrop-blur-sm"
-      onClick={props.onClose}
-      role="presentation"
-    >
-      <div
-        className="w-full max-w-md bg-surface-card border border-border rounded-lg shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Add Pattern"
-        aria-modal="true"
-      >
+    <div className="mt-3 w-full bg-surface-card border border-border rounded-lg shadow-sm">
         <form onSubmit={onSubmit} className="p-5 space-y-4">
           <div>
             <h2 className="m-0 font-sans font-medium text-[20px] tracking-tight text-text">
@@ -1463,7 +1452,6 @@ function AddPatternDialog(props: AddPatternDialogProps) {
             </button>
           </div>
         </form>
-      </div>
     </div>
   );
 }
@@ -1605,12 +1593,12 @@ function ObservationList({ items }: { items: MemoryItem[] }) {
 
 // ── forget dialog ──────────────────────────────────────────────────────────
 
-type ForgetDialogProps = MemorySurfaceProps & {
+type ForgetPanelProps = MemorySurfaceProps & {
   itemCount: number;
   onClose: () => void;
 };
 
-function ForgetDialog(props: ForgetDialogProps) {
+function ForgetPanel(props: ForgetPanelProps) {
   const qc = useQueryClient();
   const m = useMutation({
     mutationFn: () =>
@@ -1633,57 +1621,45 @@ function ForgetDialog(props: ForgetDialogProps) {
     props.mode === "agent" ? agentNamespace(props.agentId) : "global";
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-start justify-center pt-32 px-4 bg-bg/80 backdrop-blur-sm"
-      onClick={props.onClose}
-      role="presentation"
-    >
-      <div
-        className="w-full max-w-sm bg-surface-card border border-border rounded-lg shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-        role="alertdialog"
-        aria-label={aria}
-        aria-modal="true"
-      >
-        <div className="p-5 space-y-4">
-          <div>
-            <h2 className="m-0 font-sans font-medium text-[18px] tracking-tight text-text">
-              {title}
-            </h2>
-            <p className="m-0 mt-2 text-text-2 text-[13px]">
-              This will soft-delete{" "}
-              <span className="font-mono text-text">{props.itemCount}</span>{" "}
-              memory item{props.itemCount === 1 ? "" : "s"} from namespace{" "}
-              <code className="font-mono text-text">{namespaceCode}</code>.
-              Observations and Patterns alike. Items can be restored during the
-              configured grace window.
-            </p>
-          </div>
+    <div className="mt-3 w-full bg-surface-card border border-danger/30 rounded-lg shadow-sm">
+      <div className="p-5 space-y-4">
+        <div>
+          <h2 className="m-0 font-sans font-medium text-[18px] tracking-tight text-text">
+            {title}
+          </h2>
+          <p className="m-0 mt-2 text-text-2 text-[13px]">
+            This will soft-delete{" "}
+            <span className="font-mono text-text">{props.itemCount}</span>{" "}
+            memory item{props.itemCount === 1 ? "" : "s"} from namespace{" "}
+            <code className="font-mono text-text">{namespaceCode}</code>.
+            Observations and Patterns alike. Items can be restored during the
+            configured grace window.
+          </p>
+        </div>
 
-          {m.isError ? (
-            <div className="text-danger text-[12.5px]">
-              {errorMessage(m.error)}
-            </div>
-          ) : null}
-
-          <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={props.onClose}
-              disabled={m.isPending}
-              className="px-3 py-1.5 rounded text-[12.5px] text-text-2 hover:text-text disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => m.mutate()}
-              disabled={m.isPending}
-              className="px-3 py-1.5 rounded text-[12.5px] font-medium border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-50"
-            >
-              {m.isPending ? "Forgetting…" : "Confirm forget"}
-            </button>
+        {m.isError ? (
+          <div className="text-danger text-[12.5px]">
+            {errorMessage(m.error)}
           </div>
+        ) : null}
+
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={props.onClose}
+            disabled={m.isPending}
+            className="px-3 py-1.5 rounded text-[12.5px] text-text-2 hover:text-text disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => m.mutate()}
+            disabled={m.isPending}
+            className="px-3 py-1.5 rounded text-[12.5px] font-medium border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-50"
+          >
+            {m.isPending ? "Forgetting…" : "Confirm forget"}
+          </button>
         </div>
       </div>
     </div>
