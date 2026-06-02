@@ -6,8 +6,10 @@
 //! `VenueSettings.borrow_bps_per_day` + `VenueOverride.borrow_bps_per_day`
 //! configuration surface.
 
-use xvision_engine::eval::scenario::{Fees, FillModel, LatencyModel, LimitOrderFill,
-    MarketOrderFill, SlippageModel, Venue, VenueOverride, VenueSettings};
+use xvision_engine::eval::scenario::{
+    Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, SlippageModel, Venue, VenueOverride,
+    VenueSettings,
+};
 
 // ---------------------------------------------------------------------------
 // Direct borrow-cost math checks (no executor round-trip needed)
@@ -74,9 +76,14 @@ fn borrow_cost_determinism_same_inputs_same_output() {
 fn default_venue() -> VenueSettings {
     VenueSettings {
         venue: Venue::Alpaca,
-        fees: Fees { maker_bps: 10, taker_bps: 25 },
+        fees: Fees {
+            maker_bps: 10,
+            taker_bps: 25,
+        },
         slippage: SlippageModel::None,
-        latency: LatencyModel { decision_to_fill_ms: 0 },
+        latency: LatencyModel {
+            decision_to_fill_ms: 0,
+        },
         fill_model: FillModel {
             market_order_fill: MarketOrderFill::NextBarOpen,
             limit_order_fill: LimitOrderFill::NeverFills,
@@ -135,7 +142,8 @@ fn venue_override_borrow_overrides_default() {
         ..default_venue()
     };
     // Per-asset override wins.
-    let eff = venue.overrides
+    let eff = venue
+        .overrides
         .iter()
         .find(|o| o.matches("BTC/USD"))
         .and_then(|o| o.borrow_bps_per_day)
@@ -155,7 +163,8 @@ fn venue_override_borrow_falls_through_when_none() {
         borrow_bps_per_day: 8.0,
         ..default_venue()
     };
-    let eff = venue.overrides
+    let eff = venue
+        .overrides
         .iter()
         .find(|o| o.matches("BTC/USD"))
         .and_then(|o| o.borrow_bps_per_day)

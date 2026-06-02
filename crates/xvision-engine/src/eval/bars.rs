@@ -225,12 +225,11 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
     //     validated before being committed to the bar cache.
     {
         let ohlcv_check: Vec<Ohlcv> = bars.iter().map(|b| market_bar_to_ohlcv(b.clone())).collect();
-        let gap_findings =
-            crate::eval::candle_integrity::validate_bar_series(
-                &ohlcv_check,
-                Some(args.granularity.seconds()),
-            )
-            .map_err(|e| ApiError::Validation(format!("candle integrity: {e}")))?;
+        let gap_findings = crate::eval::candle_integrity::validate_bar_series(
+            &ohlcv_check,
+            Some(args.granularity.seconds()),
+        )
+        .map_err(|e| ApiError::Validation(format!("candle integrity: {e}")))?;
         for gap in &gap_findings {
             tracing::warn!(
                 asset = %args.asset_pair,

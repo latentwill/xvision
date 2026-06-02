@@ -134,19 +134,13 @@ fn check_ohlc_sanity(bar: &Ohlcv) -> Result<(), IntegrityError> {
     if bar.high < max_oc {
         return Err(IntegrityError {
             bar_ts: bar.timestamp,
-            kind: format!(
-                "high ({}) < max(open, close) ({})",
-                bar.high, max_oc
-            ),
+            kind: format!("high ({}) < max(open, close) ({})", bar.high, max_oc),
         });
     }
     if bar.low > min_oc {
         return Err(IntegrityError {
             bar_ts: bar.timestamp,
-            kind: format!(
-                "low ({}) > min(open, close) ({})",
-                bar.low, min_oc
-            ),
+            kind: format!("low ({}) > min(open, close) ({})", bar.low, min_oc),
         });
     }
     Ok(())

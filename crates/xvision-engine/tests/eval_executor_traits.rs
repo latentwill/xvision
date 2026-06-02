@@ -11,10 +11,10 @@
 
 use chrono::{Duration, TimeZone, Utc};
 use xvision_core::market::Ohlcv;
+use xvision_engine::eval::executor::traits::EvalOnly;
 use xvision_engine::eval::executor::{
     BarSource, Clock, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
 };
-use xvision_engine::eval::executor::traits::EvalOnly;
 use xvision_engine::eval::scenario::{FeeSource, SlippageModel};
 
 // ---------------------------------------------------------------------------

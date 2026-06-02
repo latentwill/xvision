@@ -43,9 +43,7 @@ fn req_with_latency(
 #[tokio::test]
 async fn zero_latency_fills_at_next_open() {
     let mut sink = SimulatedFills::new(EvalOnly::new_for_tests());
-    let rec = sink
-        .submit(req_with_latency(100.0, 102.0, 0, 3_600_000))
-        .await;
+    let rec = sink.submit(req_with_latency(100.0, 102.0, 0, 3_600_000)).await;
 
     let fp = rec.fill_price.expect("filled");
     assert!(
@@ -102,9 +100,7 @@ async fn latency_exceeding_bar_duration_is_capped_at_bar_close() {
 #[tokio::test]
 async fn nonzero_latency_shifts_long_fill_up_when_close_above_open() {
     let mut s_zero = SimulatedFills::new(EvalOnly::new_for_tests());
-    let r_zero = s_zero
-        .submit(req_with_latency(100.0, 105.0, 0, 3_600_000))
-        .await;
+    let r_zero = s_zero.submit(req_with_latency(100.0, 105.0, 0, 3_600_000)).await;
 
     let mut s_latency = SimulatedFills::new(EvalOnly::new_for_tests());
     let r_latency = s_latency
@@ -130,7 +126,10 @@ async fn latency_deterministic_same_inputs_same_result() {
     let r2 = s2.submit(req.clone()).await;
 
     assert_eq!(r1.fill_price, r2.fill_price, "fill_price must be deterministic");
-    assert_eq!(r1.realized_pnl, r2.realized_pnl, "realized_pnl must be deterministic");
+    assert_eq!(
+        r1.realized_pnl, r2.realized_pnl,
+        "realized_pnl must be deterministic"
+    );
 }
 
 #[test]

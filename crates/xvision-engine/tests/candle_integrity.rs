@@ -30,14 +30,18 @@ fn high_less_than_close_hard_fails_with_ts() {
     let b = Ohlcv {
         timestamp: ts,
         open: 100.0,
-        high: 99.0,  // violation: high < close
+        high: 99.0, // violation: high < close
         low: 98.0,
         close: 100.0,
         volume: 1.0,
     };
     let err: IntegrityError = validate_bar_series(&[b], None).unwrap_err();
     assert_eq!(err.bar_ts, ts, "error must name the offending bar ts");
-    assert!(err.kind.contains("high"), "kind must mention 'high': {}", err.kind);
+    assert!(
+        err.kind.contains("high"),
+        "kind must mention 'high': {}",
+        err.kind
+    );
 }
 
 #[test]
@@ -58,8 +62,11 @@ fn nan_open_hard_fails() {
         volume: 1.0,
     };
     let err = validate_bar_series(&[b], None).unwrap_err();
-    assert!(err.kind.contains("open") || err.kind.contains("finite"),
-        "NaN open must be detected: {}", err.kind);
+    assert!(
+        err.kind.contains("open") || err.kind.contains("finite"),
+        "NaN open must be detected: {}",
+        err.kind
+    );
 }
 
 #[test]
@@ -73,16 +80,22 @@ fn inf_close_hard_fails() {
         volume: 1.0,
     };
     let err = validate_bar_series(&[b], None).unwrap_err();
-    assert!(err.kind.contains("finite") || err.kind.contains("high"),
-        "Inf must be detected: {}", err.kind);
+    assert!(
+        err.kind.contains("finite") || err.kind.contains("high"),
+        "Inf must be detected: {}",
+        err.kind
+    );
 }
 
 #[test]
 fn zero_open_hard_fails() {
     let b = bar(0, 0.0, 1.0, 0.0, 0.5);
     let err = validate_bar_series(&[b], None).unwrap_err();
-    assert!(err.kind.contains("> 0") || err.kind.contains("open"),
-        "zero open must be rejected: {}", err.kind);
+    assert!(
+        err.kind.contains("> 0") || err.kind.contains("open"),
+        "zero open must be rejected: {}",
+        err.kind
+    );
 }
 
 #[test]
@@ -96,22 +109,33 @@ fn negative_close_hard_fails() {
         volume: 1.0,
     };
     let err = validate_bar_series(&[b], None).unwrap_err();
-    assert!(err.kind.contains("> 0") || err.kind.contains("open") || err.kind.contains("finite"),
-        "negative price must be rejected: {}", err.kind);
+    assert!(
+        err.kind.contains("> 0") || err.kind.contains("open") || err.kind.contains("finite"),
+        "negative price must be rejected: {}",
+        err.kind
+    );
 }
 
 #[test]
 fn duplicate_timestamp_hard_fails() {
     let bars = vec![hourly(3_600, 100.0), hourly(3_600, 101.0)];
     let err = validate_bar_series(&bars, None).unwrap_err();
-    assert!(err.kind.contains("duplicate"), "duplicate ts must be named: {}", err.kind);
+    assert!(
+        err.kind.contains("duplicate"),
+        "duplicate ts must be named: {}",
+        err.kind
+    );
 }
 
 #[test]
 fn non_monotonic_timestamp_hard_fails() {
     let bars = vec![hourly(7_200, 100.0), hourly(3_600, 101.0)];
     let err = validate_bar_series(&bars, None).unwrap_err();
-    assert!(err.kind.contains("non-monotonic"), "non-monotonic must be named: {}", err.kind);
+    assert!(
+        err.kind.contains("non-monotonic"),
+        "non-monotonic must be named: {}",
+        err.kind
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -152,10 +176,15 @@ fn multiple_missing_bars_counted_correctly() {
 
 #[test]
 fn clean_hourly_series_passes_with_no_findings() {
-    let bars = (0..10).map(|i| hourly(i * 3_600, 100.0 + i as f64)).collect::<Vec<_>>();
+    let bars = (0..10)
+        .map(|i| hourly(i * 3_600, 100.0 + i as f64))
+        .collect::<Vec<_>>();
     let result = validate_bar_series(&bars, Some(3_600));
     assert!(result.is_ok());
-    assert!(result.unwrap().is_empty(), "clean series must have no gap findings");
+    assert!(
+        result.unwrap().is_empty(),
+        "clean series must have no gap findings"
+    );
 }
 
 #[test]

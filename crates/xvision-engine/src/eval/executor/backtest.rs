@@ -740,8 +740,7 @@ impl Executor {
         // `asset_sym` through the book without changing any numbers.
         let mut book = crate::eval::executor::book::PortfolioBook::new(initial);
         // Tracks bars held while short per asset for borrow-cost accrual.
-        let mut short_bars_held: BTreeMap<xvision_core::trading::AssetSymbol, u32> =
-            BTreeMap::new();
+        let mut short_bars_held: BTreeMap<xvision_core::trading::AssetSymbol, u32> = BTreeMap::new();
         let bar_secs = scenario.granularity.seconds();
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
@@ -1765,10 +1764,9 @@ impl Executor {
                 // cost from realized PnL. Long positions accrue nothing.
                 if pre_fill_position < -f64::EPSILON && fill.fill_price.is_some() {
                     let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
-                    let borrow_bps =
-                        resolve_asset_override(&scenario.venue.overrides, &asset)
-                            .and_then(|o| o.borrow_bps_per_day)
-                            .unwrap_or(scenario.venue.borrow_bps_per_day);
+                    let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
+                        .and_then(|o| o.borrow_bps_per_day)
+                        .unwrap_or(scenario.venue.borrow_bps_per_day);
                     let cost = compute_borrow_cost(
                         pre_fill_position.abs(),
                         pre_fill_entry,

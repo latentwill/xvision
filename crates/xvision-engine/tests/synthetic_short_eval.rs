@@ -40,9 +40,17 @@ async fn short_open_from_flat_creates_negative_position() {
     let mut sink = SimulatedFills::new(EvalOnly::new_for_tests());
     let rec = sink.submit(base_req(0.0, 0.0, "short_open", 50_000.0)).await;
 
-    assert!(rec.new_pos < 0.0, "short_open must create negative position, got {}", rec.new_pos);
+    assert!(
+        rec.new_pos < 0.0,
+        "short_open must create negative position, got {}",
+        rec.new_pos
+    );
     assert!(rec.fill_price.is_some(), "fill price must be set");
-    assert_eq!(rec.realized_pnl + rec.fee.unwrap_or(0.0), 0.0, "pure open: no realized leg");
+    assert_eq!(
+        rec.realized_pnl + rec.fee.unwrap_or(0.0),
+        0.0,
+        "pure open: no realized leg"
+    );
 }
 
 #[tokio::test]
@@ -82,7 +90,9 @@ async fn short_flat_realizes_loss_when_price_rises() {
 
     let open = sink.submit(base_req(0.0, 0.0, "short_open", 50_000.0)).await;
     // Price rose: short is a loss.
-    let close = sink.submit(base_req(open.new_pos, open.new_entry, "flat", 55_000.0)).await;
+    let close = sink
+        .submit(base_req(open.new_pos, open.new_entry, "flat", 55_000.0))
+        .await;
 
     assert!(close.realized_pnl < 0.0, "short on rising price must lose");
 }
@@ -95,7 +105,9 @@ async fn short_open_noop_when_already_short() {
     let pos_after_open = open.new_pos;
 
     // Already short — short_open is a no-op.
-    let noop = sink.submit(base_req(pos_after_open, open.new_entry, "short_open", 49_000.0)).await;
+    let noop = sink
+        .submit(base_req(pos_after_open, open.new_entry, "short_open", 49_000.0))
+        .await;
     assert_eq!(noop.new_pos, pos_after_open);
     assert!(noop.fill_price.is_none(), "no-op must not produce a fill");
 }
