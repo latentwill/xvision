@@ -23,7 +23,8 @@ use xvision_engine::strategies::store::{
     strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore,
 };
 use xvision_engine::strategies::validate::{
-    every_bar_warning, no_filter_warnings, preflight_validate, validate_strategy,
+    every_bar_warning, high_position_size_warning, no_filter_warnings, preflight_validate,
+    validate_strategy,
 };
 use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::{AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind};
@@ -1073,6 +1074,9 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
         }
         for warning in no_filter_warnings(&strategy) {
             println!("warning: {warning}");
+        }
+        if let Some(w) = high_position_size_warning(&strategy) {
+            println!("warning: {w}");
         }
         println!("ok");
         return Ok(());

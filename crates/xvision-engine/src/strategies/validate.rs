@@ -146,6 +146,10 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
         result.warnings.extend(topo_warnings);
     }
 
+    if let Some(w) = high_position_size_warning(strategy) {
+        result.warnings.push(w);
+    }
+
     result.eval_ready = result.errors.is_empty() && result.warnings.is_empty();
     result
 }
@@ -170,6 +174,20 @@ pub fn every_bar_warning(s: &Strategy) -> Option<String> {
              deterministic filter so it only acts on good setups. (Pass \
              --no-filter-warning / set acknowledge_no_filter to silence.)",
             s.manifest.display_name
+        ))
+    } else {
+        None
+    }
+}
+
+/// Returns a warning when `max_position_pct_nav` exceeds the 20% caution threshold.
+pub fn high_position_size_warning(strategy: &Strategy) -> Option<String> {
+    if strategy.risk.max_position_pct_nav > 20.0 {
+        Some(format!(
+            "Strategy '{}' has max_position_pct_nav set to {:.1}% (above the 20% caution threshold). \
+             The risk layer will allow this but log a warning on each oversized trade.",
+            strategy.manifest.display_name,
+            strategy.risk.max_position_pct_nav,
         ))
     } else {
         None
@@ -747,5 +765,99 @@ mod preflight_tests {
         strategy.trader_slot = None;
         let result = preflight_validate(&strategy, None);
         assert!(!result.eval_ready);
+    }
+
+    // ── high_position_size_warning ───────────────────────────────────────
+
+    #[test]
+    fn high_position_size_warning_returns_none_at_exactly_20() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.risk.max_position_pct_nav = 20.0;
+        assert!(
+            high_position_size_warning(&strategy).is_none(),
+            "exactly 20.0 must not trigger the warning"
+        );
+    }
+
+    #[test]
+    fn high_position_size_warning_returns_none_below_20() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.risk.max_position_pct_nav = 10.0;
+        assert!(high_position_size_warning(&strategy).is_none());
+    }
+
+    #[test]
+    fn high_position_size_warning_returns_some_above_20() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.risk.max_position_pct_nav = 50.0;
+        let w = high_position_size_warning(&strategy);
+        assert!(w.is_some(), "50.0 must trigger the warning");
+    }
+
+    #[test]
+    fn high_position_size_warning_includes_pct_and_name() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.manifest.display_name = "MyStrat".into();
+        strategy.risk.max_position_pct_nav = 50.0;
+        let msg = high_position_size_warning(&strategy).unwrap();
+        assert!(msg.contains("MyStrat"), "warning must include strategy name");
+        assert!(msg.contains("50.0%"), "warning must include formatted pct");
+        assert!(msg.contains("20% caution"), "warning must mention the 20% threshold");
+    }
+
+    #[test]
+    fn high_position_size_warning_boundary_just_above_20() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.risk.max_position_pct_nav = 20.0001;
+        assert!(
+            high_position_size_warning(&strategy).is_some(),
+            "any value strictly above 20.0 must trigger the warning"
+        );
+    }
+
+    #[test]
+    fn preflight_includes_high_position_size_warning() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.risk.max_position_pct_nav = 50.0;
+        strategy.acknowledge_no_filter = true; // suppress the filter warning
+        let result = preflight_validate(&strategy, None);
+        assert!(
+            result.warnings.iter().any(|w| w.contains("max_position_pct_nav")),
+            "preflight must propagate high_position_size_warning, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn preflight_both_filter_and_position_warnings_appear() {
+        // EveryBar + no filter + high position → two distinct warnings
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.risk.max_position_pct_nav = 50.0;
+        // leave acknowledge_no_filter = false and activation_mode = EveryBar
+        let result = preflight_validate(&strategy, None);
+        assert!(
+            result.warnings.iter().any(|w| w.contains("burns tokens")),
+            "must include every_bar_warning"
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("max_position_pct_nav")),
+            "must include high_position_size_warning"
+        );
+        assert_eq!(
+            result.warnings.len(),
+            2,
+            "exactly 2 warnings expected, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn preflight_eval_ready_false_when_only_high_position_warning() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 240);
+        strategy.risk.max_position_pct_nav = 50.0;
+        strategy.acknowledge_no_filter = true; // suppress filter warning
+        let result = preflight_validate(&strategy, None);
+        assert!(!result.errors.is_empty() || !result.warnings.is_empty());
+        assert!(!result.eval_ready, "eval_ready must be false when warnings present");
     }
 }

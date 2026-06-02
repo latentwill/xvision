@@ -19,7 +19,7 @@ use crate::strategies::{
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
-    validate::{every_bar_warning, no_filter_warnings, validate_strategy},
+    validate::{every_bar_warning, high_position_size_warning, no_filter_warnings, validate_strategy},
     AgentRef, PipelineDef, PipelineKind, Strategy,
 };
 use xvision_filters::{parse_json, validate as validate_filter_dsl, ActivationMode, Filter};
@@ -293,7 +293,10 @@ pub async fn create_blank_strategy(
         decision_mode: Default::default(),
         mechanistic_config: None,
     };
-    let warnings = every_bar_warning(&draft).map(|w| vec![w]).unwrap_or_default();
+    let mut warnings = every_bar_warning(&draft).map(|w| vec![w]).unwrap_or_default();
+    if let Some(w) = high_position_size_warning(&draft) {
+        warnings.push(w);
+    }
     store.save(&draft).await?;
     Ok(CreateStrategyOut { id, warnings })
 }
@@ -774,7 +777,10 @@ pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Resu
     // L2 of the firing-filter operator-surface spec (2026-05-22) calls
     // for the SPA validate panel to render the no-Filter warning so the
     // operator sees it whether they're using the CLI or the SPA.
-    let warnings = no_filter_warnings(&strategy);
+    let mut warnings = no_filter_warnings(&strategy);
+    if let Some(w) = high_position_size_warning(&strategy) {
+        warnings.push(w);
+    }
     Ok(ValidateDraftOut {
         id: id.to_string(),
         ok,
