@@ -2122,14 +2122,30 @@ pub async fn clear_strategy_filter(ctx: &ApiContext, id: &str) -> ApiResult<()> 
 }
 
 /// Re-load the strategy after a successful mutation and refresh its row in
-/// the search index. Best-effort: a failure here is logged inside
-/// `api::search::upsert_strategy` and never bubbled up — the mutation has
-/// already succeeded and the audit row is already written.
+/// the search index. Best-effort: index failures are logged and never
+/// bubbled up — the mutation has already succeeded.
 async fn index_strategy_after_mutation(ctx: &ApiContext, store: &FilesystemStore, agent_id: &str) {
     match store.load(agent_id).await {
-        Ok(strategy) => api_search::upsert_strategy(ctx, &strategy).await,
+        Ok(strategy) => {
+            if let Err(e) = api_search::upsert_strategy(ctx, &strategy).await {
+                tracing::warn!(error = %e, agent_id, "search index upsert (strategy) failed");
+            }
+        }
         Err(e) => tracing::warn!(error = %e, agent_id, "post-mutation reload for indexer failed"),
     }
+}
+
+/// Save a strategy to disk and refresh the search index.
+/// Used by CLI paths that construct the `Strategy` object themselves
+/// rather than going through a write API (e.g. `xvn strategy new --from-file`).
+pub async fn save_and_index(ctx: &ApiContext, strategy: &Strategy) -> ApiResult<()> {
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    store
+        .save(strategy)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    index_strategy_after_mutation(ctx, &store, &strategy.manifest.id).await;
+    Ok(())
 }
 
 /// Run the strategy through the validator. The result type carries the

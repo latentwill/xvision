@@ -52,14 +52,12 @@ pub async fn search(ctx: &ApiContext, q: &str, opts: &SearchQuery) -> ApiResult<
     result
 }
 
-/// Upsert a strategy into the index. Best-effort — logs and returns
-/// `Ok(())` on failure so the calling create/update path isn't blocked by
-/// a transient index write error.
-pub async fn upsert_strategy(ctx: &ApiContext, strategy: &Strategy) {
+/// Upsert a strategy into the index. Returns an error so callers can
+/// decide whether to propagate or log-and-continue.
+pub async fn upsert_strategy(ctx: &ApiContext, strategy: &Strategy) -> anyhow::Result<()> {
     let entry = strategy_entry(strategy);
-    if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
-        tracing::warn!(error = %e, agent_id = %strategy.manifest.id, "search index upsert (strategy) failed");
-    }
+    SearchIndex::upsert(&ctx.db, &entry).await?;
+    Ok(())
 }
 
 /// Drop a strategy from the index. Called when a strategy is deleted.
@@ -69,27 +67,20 @@ pub async fn delete_strategy(ctx: &ApiContext, agent_id: &str) {
     }
 }
 
-/// Upsert an eval run into the index. Best-effort.
-pub async fn upsert_run(ctx: &ApiContext, run: &Run) {
+/// Upsert an eval run into the index. Returns an error so callers can
+/// decide whether to propagate or log-and-continue.
+pub async fn upsert_run(ctx: &ApiContext, run: &Run) -> anyhow::Result<()> {
     let entry = run_entry(run);
-    if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
-        tracing::warn!(error = %e, run_id = %run.id, "search index upsert (run) failed");
-    }
+    SearchIndex::upsert(&ctx.db, &entry).await?;
+    Ok(())
 }
 
-/// Upsert an eval finding into the index. Best-effort.
-///
-/// No production callsite calls this yet — `RunStore::record_finding`
-/// has no orchestrator wired in v1. The hook is exposed so the future
-/// findings-extraction path (Phase 3.C orchestration) can call it as a
-/// one-liner when finalizing a finding. The cold-start `reindex_all`
-/// walker already picks up any findings persisted directly via tests
-/// or a future orchestrator without further coordination.
-pub async fn upsert_finding(ctx: &ApiContext, finding: &Finding) {
+/// Upsert an eval finding into the index. Returns an error so callers can
+/// decide whether to propagate or log-and-continue.
+pub async fn upsert_finding(ctx: &ApiContext, finding: &Finding) -> anyhow::Result<()> {
     let entry = finding_entry(finding);
-    if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
-        tracing::warn!(error = %e, finding_id = %finding.id, "search index upsert (finding) failed");
-    }
+    SearchIndex::upsert(&ctx.db, &entry).await?;
+    Ok(())
 }
 
 /// Index every canonical scenario. Scenarios are static at build time so
@@ -199,7 +190,11 @@ pub async fn reindex_all(ctx: &ApiContext) {
         Ok(ids) => {
             for id in ids {
                 match store.load(&id).await {
-                    Ok(strategy) => upsert_strategy(ctx, &strategy).await,
+                    Ok(strategy) => {
+                        if let Err(e) = upsert_strategy(ctx, &strategy).await {
+                            tracing::warn!(error = %e, agent_id = %id, "reindex: upsert strategy failed");
+                        }
+                    }
                     Err(e) => tracing::warn!(error = %e, agent_id = %id, "reindex: load strategy failed"),
                 }
             }
@@ -215,11 +210,15 @@ pub async fn reindex_all(ctx: &ApiContext) {
     match run_store.list(ListFilter::default()).await {
         Ok(runs) => {
             for run in runs {
-                upsert_run(ctx, &run).await;
+                if let Err(e) = upsert_run(ctx, &run).await {
+                    tracing::warn!(error = %e, run_id = %run.id, "reindex: upsert run failed");
+                }
                 match run_store.read_findings(&run.id).await {
                     Ok(findings) => {
                         for f in findings {
-                            upsert_finding(ctx, &f).await;
+                            if let Err(e) = upsert_finding(ctx, &f).await {
+                                tracing::warn!(error = %e, finding_id = %f.id, "reindex: upsert finding failed");
+                            }
                         }
                     }
                     Err(e) => tracing::warn!(error = %e, run_id = %run.id, "reindex: read findings failed"),
@@ -417,7 +416,7 @@ mod tests {
             recommendation: None,
             created_at: None,
         };
-        upsert_finding(&ctx, &f).await;
+        upsert_finding(&ctx, &f).await.unwrap();
 
         // By summary token
         let by_summary = search(&ctx, "drawdowns", &SearchQuery::default()).await.unwrap();
@@ -480,8 +479,8 @@ mod tests {
 
         // Two upserts in a row — second must not error and must not
         // create a duplicate row in the index.
-        upsert_run(&ctx, &run).await;
-        upsert_run(&ctx, &run).await;
+        upsert_run(&ctx, &run).await.unwrap();
+        upsert_run(&ctx, &run).await.unwrap();
 
         let hits = search(
             &ctx,
