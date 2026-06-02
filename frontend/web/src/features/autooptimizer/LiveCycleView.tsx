@@ -4,7 +4,12 @@ import { Card, CardHeader } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
 import { apiFetch, ApiError } from "@/api/client";
-import { type CycleProgressEvent, formatEventLabel } from "./api";
+import {
+  type CycleProgressEvent,
+  type LineageNode,
+  formatEventLabel,
+  useLineageNodes,
+} from "./api";
 import {
   getStoredJudgeModel,
   getStoredMutatorModel,
@@ -58,6 +63,143 @@ async function submitEveningCycle(
     return e instanceof Error ? e.message : "Network error";
   }
 }
+
+// ─── Lineage helpers ──────────────────────────────────────────────────────────
+
+type CycleGroup = {
+  cycle_id: string | null;
+  nodes: LineageNode[];
+  activeCount: number;
+  latestNode: LineageNode;
+};
+
+function buildCycleGroups(nodes: LineageNode[]): CycleGroup[] {
+  const map = new Map<string | null, LineageNode[]>();
+  for (let i = 0; i < nodes.length; i++) {
+    const key = nodes[i].cycle_id ?? null;
+    const arr = map.get(key);
+    if (arr) arr.push(nodes[i]);
+    else map.set(key, [nodes[i]]);
+  }
+  const groups: CycleGroup[] = [];
+  for (const [cycle_id, cycleNodes] of map) {
+    const sorted = [...cycleNodes].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+    groups.push({
+      cycle_id,
+      nodes: sorted,
+      activeCount: cycleNodes.filter((n) => n.status === "active").length,
+      latestNode: sorted[0],
+    });
+  }
+  return groups.sort(
+    (a, b) =>
+      new Date(b.latestNode.created_at).getTime() - new Date(a.latestNode.created_at).getTime(),
+  );
+}
+
+function countKeptThisWeek(nodes: LineageNode[]): number {
+  const weekAgo = Date.now() - 7 * 86_400_000;
+  let count = 0;
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].status === "active" && new Date(nodes[i].created_at).getTime() >= weekAgo) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function countActiveLineages(nodes: LineageNode[]): number {
+  const seen = new Set<string>();
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (n.status === "active" && n.cycle_id) seen.add(n.cycle_id);
+  }
+  return seen.size;
+}
+
+function deriveCycleState(
+  events: EventRow[],
+): { isRunning: boolean; activeCycleId: string | null } {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
+    if (et === "cycle_finished") return { isRunning: false, activeCycleId: null };
+    if (et === "cycle_started") return { isRunning: true, activeCycleId: events[i].cycle_id ?? null };
+  }
+  return { isRunning: false, activeCycleId: null };
+}
+
+function formatRelativeDate(ts: string): string {
+  try {
+    const diffDays = Math.floor((Date.now() - new Date(ts).getTime()) / 86_400_000);
+    if (diffDays === 0) return "today";
+    if (diffDays === 1) return "yesterday";
+    return `${diffDays}d ago`;
+  } catch {
+    return ts;
+  }
+}
+
+// ─── Page header ──────────────────────────────────────────────────────────────
+
+function LivePageHeader({
+  nodes,
+  isRunning,
+  activeCycleId,
+}: {
+  nodes: LineageNode[];
+  isRunning: boolean;
+  activeCycleId: string | null;
+}) {
+  const keptThisWeek = countKeptThisWeek(nodes);
+  const totalExperiments = nodes.length;
+  const activeLineages = countActiveLineages(nodes);
+  const headline =
+    isRunning && activeCycleId
+      ? `Evening run in progress · ${activeCycleId}`
+      : "No cycle running";
+  return (
+    <div className="flex items-start justify-between gap-4 pb-6 mb-2 border-b border-border">
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="uppercase tracking-[0.22em] text-[9.5px] text-text-3 font-medium">
+            Optimizer
+          </span>
+          <Pill tone={isRunning ? "gold" : "default"} animated={isRunning}>
+            {isRunning ? "Running" : "Idle"}
+          </Pill>
+        </div>
+        <h1 className="text-2xl font-semibold tracking-[-0.025em] text-text">{headline}</h1>
+        <p className="font-mono text-[11.5px] text-text-3">
+          {keptThisWeek} kept this week · {totalExperiments} experiments total · {activeLineages} active lineages
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+        <button
+          type="button"
+          className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:text-text hover:border-border-strong transition-colors"
+        >
+          Configure loop
+        </button>
+        <button
+          type="button"
+          className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:text-text hover:border-border-strong transition-colors"
+        >
+          What is this?
+        </button>
+        <button
+          type="button"
+          className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90"
+        >
+          Trigger off-cycle run
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Left column ──────────────────────────────────────────────────────────────
 
 function LaunchStrip() {
   const [strategyId, setStrategyId] = useState("");
@@ -170,16 +312,32 @@ function CycleLeftCard() {
   );
 }
 
-function KeptNextCard() {
+// ─── Right column ─────────────────────────────────────────────────────────────
+
+function KeptNextCard({ nodes }: { nodes: LineageNode[] }) {
+  const kept = nodes.filter((n) => n.status === "active");
+  const recent = [...kept]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 3);
   return (
     <div className="rounded-md border border-border p-5 space-y-4">
       <div>
         <span className="uppercase tracking-[0.22em] text-[9.5px] text-text-3 font-medium block">
           Kept
         </span>
-        <span className="font-mono text-3xl font-semibold text-gold">0</span>
+        <span className="font-mono text-3xl font-semibold text-gold">{kept.length}</span>
         <p className="text-[12px] text-text-3 mt-1">experiments kept this week</p>
       </div>
+      {recent.length > 0 && (
+        <div className="space-y-1.5">
+          {recent.map((n) => (
+            <div key={n.bundle_hash} className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] text-text-2">{n.bundle_hash.slice(0, 8)}</span>
+              <span className="text-[11px] text-text-3">{formatRelativeDate(n.created_at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="border-t border-border pt-4">
         <span className="uppercase tracking-[0.22em] text-[9.5px] text-text-3 font-medium block">
           Next
@@ -189,6 +347,8 @@ function KeptNextCard() {
     </div>
   );
 }
+
+// ─── Middle column ────────────────────────────────────────────────────────────
 
 function EventLogCard({ events, bottomRef }: { events: EventRow[]; bottomRef: RefObject<HTMLDivElement> }) {
   return (
@@ -237,7 +397,35 @@ function EventLogCard({ events, bottomRef }: { events: EventRow[]; bottomRef: Re
   );
 }
 
-function ActiveLineagesSection() {
+// ─── Active lineages section ──────────────────────────────────────────────────
+
+function LineageCard({ group }: { group: CycleGroup }) {
+  const isActive = group.activeCount > 0;
+  return (
+    <div className="rounded-md border border-border p-4 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-[12px] text-text truncate">
+          {group.cycle_id ? group.cycle_id.slice(0, 12) : "—"}
+        </span>
+        <Pill tone={isActive ? "gold" : "default"}>{isActive ? "Active" : "Cooled"}</Pill>
+      </div>
+      <div className="flex items-center gap-3 text-[12px] text-text-3">
+        <span>{group.nodes.length} experiments</span>
+        {group.activeCount > 0 && (
+          <span className="text-gold font-mono">{group.activeCount} kept</span>
+        )}
+      </div>
+      {group.latestNode.diversity_score != null && (
+        <p className="font-mono text-[11px] text-text-3">
+          div: {group.latestNode.diversity_score.toFixed(3)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ActiveLineagesSection({ nodes }: { nodes: LineageNode[] }) {
+  const groups = buildCycleGroups(nodes).slice(0, 6);
   return (
     <div className="space-y-3">
       <div>
@@ -246,35 +434,115 @@ function ActiveLineagesSection() {
           Strategy populations currently evolving
         </p>
       </div>
-      <div className="rounded-md border border-border px-5 py-4">
-        <p className="text-[13px] text-text-3">No lineages yet</p>
-      </div>
+      {groups.length === 0 ? (
+        <div className="rounded-md border border-border px-5 py-4">
+          <p className="text-[13px] text-text-3">No experiments yet</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {groups.map((g) => (
+            <LineageCard key={g.cycle_id ?? "null"} group={g} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function RecentCyclesSection() {
+// ─── Recent cycles section ────────────────────────────────────────────────────
+
+function CycleRow({ group }: { group: CycleGroup }) {
+  const firstSeen = group.nodes[group.nodes.length - 1]?.created_at ?? "";
+  const diversityScores = group.nodes
+    .map((n) => n.diversity_score)
+    .filter((s): s is number => s != null);
+  const bestDiversity = diversityScores.length > 0 ? Math.max(...diversityScores) : null;
+  return (
+    <tr className="border-b border-border last:border-0 hover:bg-surface-elev/40">
+      <td className="px-4 py-2 font-mono text-[12px] text-text">
+        {group.cycle_id ? group.cycle_id.slice(0, 12) : "—"}
+      </td>
+      <td className="px-4 py-2 text-right font-mono text-text-2">{group.nodes.length}</td>
+      <td className={`px-4 py-2 text-right font-mono ${group.activeCount > 0 ? "text-gold" : "text-text-3"}`}>
+        {group.activeCount}
+      </td>
+      <td className="px-4 py-2 text-right font-mono text-text-3">
+        {bestDiversity != null ? bestDiversity.toFixed(3) : "—"}
+      </td>
+      <td className="px-4 py-2 text-text-3">{formatRelativeDate(firstSeen)}</td>
+    </tr>
+  );
+}
+
+function CycleTable({ groups }: { groups: CycleGroup[] }) {
+  return (
+    <div className="rounded-md border border-border overflow-hidden">
+      <table className="w-full text-[13px] border-collapse">
+        <thead>
+          <tr className="bg-surface-card border-b border-border">
+            <th className="text-left font-medium text-text-3 px-4 py-2">Cycle ID</th>
+            <th className="text-right font-medium text-text-3 px-4 py-2">Experiments</th>
+            <th className="text-right font-medium text-text-3 px-4 py-2">Kept</th>
+            <th className="text-right font-medium text-text-3 px-4 py-2">Best diversity</th>
+            <th className="text-left font-medium text-text-3 px-4 py-2">First seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <CycleRow key={g.cycle_id ?? "null"} group={g} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RecentCyclesSection({
+  nodes,
+  onTabChange,
+}: {
+  nodes: LineageNode[];
+  onTabChange?: (tab: string) => void;
+}) {
+  const groups = buildCycleGroups(nodes).slice(0, 10);
   return (
     <div className="space-y-3">
-      <div>
-        <h2 className="text-base font-semibold text-text">Recent cycles</h2>
-        <p className="font-mono text-[11.5px] text-text-3 mt-0.5">
-          History of completed optimization cycles
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-text">Recent cycles</h2>
+          <p className="font-mono text-[11.5px] text-text-3 mt-0.5">
+            History of completed optimization cycles
+          </p>
+        </div>
+        {nodes.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onTabChange?.("genealogy")}
+            className="text-[13px] text-gold hover:opacity-80 transition-opacity"
+          >
+            View genealogy →
+          </button>
+        )}
       </div>
-      <div className="rounded-md border border-border px-5 py-4">
-        <p className="text-[13px] text-text-3">
-          No cycles yet — see Ladder and Provenance tabs for experiment history
-        </p>
-      </div>
+      {groups.length === 0 ? (
+        <div className="rounded-md border border-border px-5 py-4">
+          <p className="text-[13px] text-text-3">No cycles yet</p>
+        </div>
+      ) : (
+        <CycleTable groups={groups} />
+      )}
     </div>
   );
 }
 
-export function LiveCycleView() {
+// ─── Root export ──────────────────────────────────────────────────────────────
+
+export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => void } = {}) {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const { data: lineageNodes = [] } = useLineageNodes();
+  const { isRunning, activeCycleId } = deriveCycleState(events);
 
   const appendEvent = (event: CycleProgressEvent) => {
     const normalized = normalizeCycleEvent(event);
@@ -305,6 +573,7 @@ export function LiveCycleView() {
 
   return (
     <div className="space-y-6">
+      <LivePageHeader nodes={lineageNodes} isRunning={isRunning} activeCycleId={activeCycleId} />
       <div className="flex items-center gap-3">
         <span
           className={[
@@ -320,10 +589,10 @@ export function LiveCycleView() {
       <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_260px] gap-6">
         <CycleLeftCard />
         <EventLogCard events={events} bottomRef={bottomRef} />
-        <KeptNextCard />
+        <KeptNextCard nodes={lineageNodes} />
       </div>
-      <ActiveLineagesSection />
-      <RecentCyclesSection />
+      <ActiveLineagesSection nodes={lineageNodes} />
+      <RecentCyclesSection nodes={lineageNodes} onTabChange={onTabChange} />
     </div>
   );
 }

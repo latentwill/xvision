@@ -62,9 +62,15 @@ beforeEach(() => {
   vi.resetAllMocks();
   MockEventSource.instances = [];
   localStorage.clear();
-  vi.mocked(apiFetch).mockResolvedValue({
-    started: true,
-    message: "Evening run started",
+  vi.mocked(apiFetch).mockImplementation((path: string) => {
+    if (path === "/api/autooptimizer/lineage") return Promise.resolve([]);
+    if (path === "/api/autooptimizer/evening-cycle") {
+      return Promise.resolve({
+        started: true,
+        message: "Evening run started",
+      });
+    }
+    return Promise.resolve({});
   });
   vi.mocked(listStrategies).mockResolvedValue([
     {
@@ -165,14 +171,15 @@ describe("LiveCycleView", () => {
     await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
     await user.click(screen.getByRole("button", { name: "Start evening run" }));
 
-    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
-    expect(apiFetch).toHaveBeenCalledWith("/api/autooptimizer/evening-cycle", {
-      method: "POST",
-      body: JSON.stringify({
-        strategy_id: "strategy-1",
-        mutator_model: "claude-haiku-4-5-20251001",
-        judge_model: "claude-sonnet-4-6",
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith("/api/autooptimizer/evening-cycle", {
+        method: "POST",
+        body: JSON.stringify({
+          strategy_id: "strategy-1",
+          mutator_model: "claude-haiku-4-5-20251001",
+          judge_model: "claude-sonnet-4-6",
+        }),
       }),
-    });
+    );
   });
 });
