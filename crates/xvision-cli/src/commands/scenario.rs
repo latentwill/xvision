@@ -554,6 +554,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         data_source: DataSource::AlpacaHistorical {
             feed: None,
@@ -1562,6 +1563,7 @@ pub mod select {
                     volume_constraints: None,
                 },
                 overrides: Vec::new(),
+                borrow_bps_per_day: 5.0,
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),

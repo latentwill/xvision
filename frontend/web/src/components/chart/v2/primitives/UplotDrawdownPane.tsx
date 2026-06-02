@@ -61,7 +61,7 @@ export function UplotDrawdownPane({
         ...yAxisBase,
         size: 56,
         values: (_u: uPlot, vals: (number | null)[]) =>
-          vals.map((v) => (v != null ? (v * 100).toFixed(1) + "%" : "")),
+          vals.map((v) => (v != null ? v.toFixed(1) + "%" : "")),
       },
     ],
     scales: {

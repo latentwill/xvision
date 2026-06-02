@@ -327,8 +327,9 @@ impl ClineSlotInput<'_> {
     fn render_prompt(&self) -> anyhow::Result<String> {
         Ok(format!(
             "Inputs:\n{}\n\nFollow the slot's instructions. You may call tools \
-             to fetch additional data; submit your final decision via the \
-             `submit_decision` tool as JSON matching the required schema.",
+             to fetch additional data for the current decision asset only; submit \
+             your final decision via the `submit_decision` tool as JSON matching \
+             the required schema.",
             serde_json::to_string_pretty(&self.upstream_inputs)?
         ))
     }

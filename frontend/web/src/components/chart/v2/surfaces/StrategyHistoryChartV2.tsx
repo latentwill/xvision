@@ -45,12 +45,12 @@ export function StrategyHistoryChartV2({
         colors={chart.scenarioColors}
       />
       <ChartFrame
-        title="Run equity"
+        title="Return %"
         range={range}
         onRange={setRange}
         layersPanel={
           <div className="text-text-3 text-[12px]">
-            Completed eval equity curves.
+            Completed eval return % curves.
           </div>
         }
       >

@@ -52,6 +52,8 @@ pub fn from_markdown(md: &str, base: &Strategy) -> Result<Strategy> {
         activation_mode: base.activation_mode.clone(),
         filter: base.filter.clone(),
         acknowledge_no_filter: base.acknowledge_no_filter,
+        decision_mode: base.decision_mode.clone(),
+        mechanistic_config: base.mechanistic_config.clone(),
     })
 }
 

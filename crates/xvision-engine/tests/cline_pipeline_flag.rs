@@ -90,6 +90,8 @@ fn trader_strategy() -> Strategy {
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 
@@ -177,6 +179,7 @@ async fn pipeline_cline_runtime_produces_trader_decision() {
             provider_entry: anthropic_entry(),
             api_key: Some("test-key".into()),
             recording_slot_role: None,
+            tool_asset_guard: None,
         }),
     })
     .await

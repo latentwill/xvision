@@ -119,6 +119,7 @@ fn make_btc_override() -> VenueOverride {
             taker_bps: 15,
         }),
         slippage: Some(SlippageModel::Linear { bps: 3 }),
+        borrow_bps_per_day: None,
     }
 }
 
@@ -130,6 +131,7 @@ fn make_star_usd_override() -> VenueOverride {
             taker_bps: 20,
         }),
         slippage: None,
+        borrow_bps_per_day: None,
     }
 }
 
@@ -186,6 +188,7 @@ fn venue_override_serde_round_trip() {
             price_impact: 0.1,
             volume_limit: 0.025,
         }),
+        borrow_bps_per_day: None,
     };
     let json = serde_json::to_string(&ov).unwrap();
     let back: VenueOverride = serde_json::from_str(&json).unwrap();
@@ -207,6 +210,7 @@ fn venue_override_no_fees_falls_through() {
         symbol_pattern: "ETH/USD".into(),
         fees: None,
         slippage: Some(SlippageModel::Linear { bps: 3 }),
+        borrow_bps_per_day: None,
     };
     assert!(ov.fees.is_none(), "no fees on override means fall through");
 }

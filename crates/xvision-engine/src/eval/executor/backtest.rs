@@ -49,7 +49,9 @@ use crate::eval::early_stop::{self, EarlyStopConfig};
 use crate::eval::executor::live_source::MultiLiveStream;
 use crate::eval::executor::real_broker_fills::RealBrokerFills;
 use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
-use crate::eval::executor::traits::{Clock, FillRecord, FillRequest, FillSink, InstantClock, SimulatedFills};
+use crate::eval::executor::traits::{
+    eval_only_token, Clock, FillRecord, FillRequest, FillSink, InstantClock, SimulatedFills,
+};
 use crate::eval::executor::wall_clock::WallClock;
 use crate::eval::executor::RunExecutor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
@@ -69,11 +71,11 @@ use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, Metri
 use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
-use crate::strategies::Strategy;
+use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
 use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
-use xvision_execution::broker_surface::BrokerSurface;
+use xvision_execution::broker_surface::{BrokerErrorClass, BrokerSurface};
 
 pub(crate) struct LiveRuntime {
     /// Multi-asset live bar fanout. A single active asset is a 1-element
@@ -649,7 +651,7 @@ impl Executor {
         // the per-asset T+1 look-ahead can index each asset's own vec; the
         // Clock + FillSink seams are preserved for the future Live impl.
         let mut clock: Box<dyn Clock> = Box::new(InstantClock::new());
-        let mut fill_sink: Box<dyn FillSink> = Box::new(SimulatedFills::new());
+        let mut fill_sink: Box<dyn FillSink> = Box::new(SimulatedFills::new(eval_only_token()));
 
         // Used by RunTick to report timeline progress. One tick per
         // distinct timestamp (the bar clock), independent of how many
@@ -737,6 +739,9 @@ impl Executor {
         // adds the second key; this stage routes the single resolved
         // `asset_sym` through the book without changing any numbers.
         let mut book = crate::eval::executor::book::PortfolioBook::new(initial);
+        // Tracks bars held while short per asset for borrow-cost accrual.
+        let mut short_bars_held: BTreeMap<xvision_core::trading::AssetSymbol, u32> = BTreeMap::new();
+        let bar_secs = scenario.granularity.seconds();
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
         // Lifetime equals the run loop; dropped when the run completes.
@@ -1185,6 +1190,15 @@ impl Executor {
                 // `seed_inputs` by value; cloning here is cheap relative to
                 // the LLM dispatch and keeps the repair turn deterministic
                 // for the A/B-cache pairing acceptance criterion.
+                let parsed: TraderOutput = if strategy.decision_mode == DecisionMode::Mechanistic {
+                    if store.is_terminal(&run.id).await? {
+                        finish_decision_span_error!("eval run stopped");
+                        anyhow::bail!("eval run stopped");
+                    }
+                    let cfg = strategy.mechanistic_config.as_ref()
+                        .expect("validate_strategy ensures mechanistic_config with has_rules");
+                    mechanistic_action(cfg, book.position(asset_sym), book.entry_price(asset_sym), bar.close)
+                } else {
                 let seed_for_repair = seed.clone();
                 let outs = run_pipeline(PipelineInputs {
                     strategy,
@@ -1276,7 +1290,7 @@ impl Executor {
                     }
                 };
                 let trader_model_id = trader_model_id(agent_slots, strategy);
-                let parsed = match TraderOutput::parse_response(trader, &run.id, decision_idx) {
+                match TraderOutput::parse_response(trader, &run.id, decision_idx) {
                     Ok(p) => p,
                     Err(e) => {
                         // F-5 phase 2a (`harness-recovery-malformed-json`):
@@ -1362,7 +1376,8 @@ impl Executor {
                             return Err(err.into());
                         }
                     }
-                };
+                }
+                }; // closes if decision_mode == Mechanistic { ... } else { match ... }
 
                 if store.is_terminal(&run.id).await? {
                     finish_decision_span_error!("eval run stopped");
@@ -1371,6 +1386,11 @@ impl Executor {
 
                 let pre_fill_position = book.position(asset_sym);
                 let pre_fill_entry = book.entry_price(asset_sym);
+
+                // Borrow accrual: count each bar a short is open.
+                if pre_fill_position < -f64::EPSILON {
+                    *short_bars_held.entry(asset_sym).or_insert(0) += 1;
+                }
 
                 // engine-trade-guardrails-pyramid-flip-block (F-7):
                 // Server-side gate at the apply seam. The trader's emitted
@@ -1681,9 +1701,9 @@ impl Executor {
                     // O/H/L for intra-bar ordering. When bars[i+1] doesn't exist,
                     // use current bar's close as a degenerate open and O==H==L.
                     let fill_bar = bars.get(i + 1);
-                    let (fill_bar_open, fill_bar_high, fill_bar_low) = fill_bar
-                        .map(|b| (b.open, b.high, b.low))
-                        .unwrap_or((bar.close, bar.close, bar.close));
+                    let (fill_bar_open, fill_bar_high, fill_bar_low, fill_bar_close) = fill_bar
+                        .map(|b| (b.open, b.high, b.low, b.close))
+                        .unwrap_or((bar.close, bar.close, bar.close, bar.close));
 
                     // executor-trait-extraction: fill production now routes
                     // through the FillSink trait. SimulatedFills::submit
@@ -1713,6 +1733,9 @@ impl Executor {
                             bar_open: fill_bar_open,
                             bar_high: fill_bar_high,
                             bar_low: fill_bar_low,
+                            bar_close: fill_bar_close,
+                            decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
+                            bar_duration_ms: bar_secs * 1_000,
                         })
                         .await;
 
@@ -1736,6 +1759,26 @@ impl Executor {
                 // the old scalar `entry_price = fill.new_entry (== 0.0)`.
                 book.set_position(asset_sym, fill.new_pos, fill.new_entry);
                 book.add_realized(fill.realized_pnl);
+
+                // Borrow cost: when a short is closed, subtract accumulated
+                // cost from realized PnL. Long positions accrue nothing.
+                if pre_fill_position < -f64::EPSILON && fill.fill_price.is_some() {
+                    let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
+                    let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
+                        .and_then(|o| o.borrow_bps_per_day)
+                        .unwrap_or(scenario.venue.borrow_bps_per_day);
+                    let cost = compute_borrow_cost(
+                        pre_fill_position.abs(),
+                        pre_fill_entry,
+                        borrow_bps,
+                        held,
+                        bar_secs,
+                    );
+                    if cost > 0.0 {
+                        book.add_realized(-cost);
+                    }
+                }
+
                 let fill_happened = fill.fill_price.is_some();
                 if fill_happened {
                     n_trades += 1;
@@ -2409,12 +2452,22 @@ impl Executor {
                 asset_hist.drain(0..drop_n);
             }
 
-            // (d) broker error — RealBrokerFills surfaced a rejection. We
-            // record the (no-fill) decision above for the trace, then fail
-            // the run with the classified broker error so the operator sees
-            // it instead of the loop silently continuing on a dead broker.
+            // (d) broker error — RealBrokerFills surfaced a rejection.
+            // Structural limitations (e.g. Alpaca crypto is long-only so
+            // short_open is permanently unsupported) are logged and skipped so
+            // the run continues. All other rejection classes terminate the run
+            // so the operator sees the failure immediately.
             if let Some((class, msg)) = outcome.broker_error {
-                anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
+                if class == BrokerErrorClass::UnsupportedAsset {
+                    tracing::warn!(
+                        target: "xvision_engine::live_executor",
+                        error_class = class.as_tag(),
+                        error_message = %msg,
+                        "live broker: unsupported trade skipped (no-fill, run continues)"
+                    );
+                } else {
+                    anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
+                }
             }
 
             // Mark-to-market on the bar close + record the pooled equity
@@ -2728,6 +2781,9 @@ impl Executor {
                     bar_open: bar.open,
                     bar_high: bar.high,
                     bar_low: bar.low,
+                    bar_close: bar.close,
+                    decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
+                    bar_duration_ms: scenario.granularity.seconds() * 1_000,
                 })
                 .await
         };
@@ -3177,6 +3233,48 @@ pub fn classify_aggressor_side(
     AggressorSide::Taker
 }
 
+/// Apply mechanistic close policies to produce a `TraderOutput` without any LLM
+/// call. Returns `flat` when a StopLoss or TakeProfit threshold is breached;
+/// returns `hold` when flat or no policy triggers.
+fn mechanistic_action(cfg: &MechanisticConfig, position: f64, entry_price: f64, mark_price: f64) -> TraderOutput {
+    if position.abs() < f64::EPSILON || entry_price <= 0.0 {
+        return TraderOutput {
+            action: "hold".into(),
+            conviction: 0.0,
+            justification: "mechanistic: no open position".into(),
+        };
+    }
+    let pnl_pct = if position > 0.0 {
+        (mark_price - entry_price) / entry_price * 100.0
+    } else {
+        (entry_price - mark_price) / entry_price * 100.0
+    };
+    for policy in &cfg.close_policies {
+        match policy {
+            ClosePolicy::StopLoss { pct } if pnl_pct <= -*pct => {
+                return TraderOutput {
+                    action: "flat".into(),
+                    conviction: 1.0,
+                    justification: format!("mechanistic: stop-loss ({pnl_pct:.2}% <= -{pct:.2}%)"),
+                };
+            }
+            ClosePolicy::TakeProfit { pct } if pnl_pct >= *pct => {
+                return TraderOutput {
+                    action: "flat".into(),
+                    conviction: 1.0,
+                    justification: format!("mechanistic: take-profit ({pnl_pct:.2}% >= {pct:.2}%)"),
+                };
+            }
+            _ => {}
+        }
+    }
+    TraderOutput {
+        action: "hold".into(),
+        conviction: 0.0,
+        justification: "mechanistic: no close policy triggered".into(),
+    }
+}
+
 /// Find the trader slot's repair context — system prompt, model id,
 /// max_tokens, temperature — for the F-5 phase-2a MalformedJson repair
 /// path (`harness-recovery-malformed-json`). After `LLMSlot.prompt`
@@ -3507,6 +3605,27 @@ fn make_trade_marker(
     }
 }
 
+/// Compute the borrow cost for a closed short position.
+///
+/// `abs_pos * entry * borrow_bps_per_day / 10000 / bars_per_day * bars_held`
+///
+/// Returns 0.0 for any zero-value input (no bars held, zero entry, etc.).
+/// Deterministic: pure function of its inputs, no side effects.
+fn compute_borrow_cost(
+    abs_pos: f64,
+    entry: f64,
+    borrow_bps_per_day: f64,
+    bars_held: u32,
+    bar_secs: u64,
+) -> f64 {
+    if bars_held == 0 || abs_pos == 0.0 || entry == 0.0 || bar_secs == 0 {
+        return 0.0;
+    }
+    let bars_per_day = 86_400.0 / bar_secs as f64;
+    let daily_cost = abs_pos * entry * borrow_bps_per_day / 10_000.0;
+    daily_cost * bars_held as f64 / bars_per_day
+}
+
 fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
     if action == "long_open" {
         "buy"
@@ -3759,6 +3878,8 @@ mod tests {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         }
     }
 

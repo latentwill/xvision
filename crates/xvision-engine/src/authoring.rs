@@ -290,6 +290,8 @@ pub async fn create_blank_strategy(
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
     let warnings = every_bar_warning(&draft).map(|w| vec![w]).unwrap_or_default();
     store.save(&draft).await?;

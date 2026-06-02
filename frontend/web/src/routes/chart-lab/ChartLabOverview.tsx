@@ -1,12 +1,12 @@
 import { Link } from "react-router-dom";
 
 const SURFACES = [
-  { slug: "run", label: "Run", note: "KlineCandlePane + RSI/MACD/ATR + Equity + Drawdown + Volume + MarkerDock" },
+  { slug: "run", label: "Run", note: "KlineCandlePane + RSI/MACD/ATR + Return % + Drawdown + Volume + MarkerDock" },
   { slug: "compare", label: "Compare", note: "UplotCompareOverlayPane + UplotDrawdownPane (worst-of)" },
-  { slug: "scenario", label: "Scenario", note: "KlineCandlePane + Equity + Volume + MarkerDock" },
+  { slug: "scenario", label: "Scenario", note: "KlineCandlePane + Return % + Volume + MarkerDock" },
   { slug: "strategy", label: "Strategy", note: "KlineCandlePane + Live-vs-paper overlay + Drawdown" },
-  { slug: "live", label: "Live", note: "KlineCandlePane + Equity + ConnectionStatus + CacheStatusBadge" },
-  { slug: "wizard", label: "Wizard preview", note: "KlineCandlePane + Equity" },
+  { slug: "live", label: "Live", note: "KlineCandlePane + Return % + ConnectionStatus + CacheStatusBadge" },
+  { slug: "wizard", label: "Wizard preview", note: "KlineCandlePane + Return %" },
 ];
 
 export function ChartLabOverview() {

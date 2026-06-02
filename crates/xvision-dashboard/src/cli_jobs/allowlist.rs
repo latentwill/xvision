@@ -48,6 +48,7 @@ pub enum AllowlistDecision {
 struct Template {
     head: &'static [&'static str],
     permitted_flags: &'static [&'static str],
+    permitted_switches: &'static [&'static str],
 }
 
 struct DeniedNested {
@@ -69,6 +70,7 @@ const STRICT_TEMPLATES: &[Template] = &[
     Template {
         head: &["bars", "fetch"],
         permitted_flags: &["--asset", "--granularity", "--from", "--to"],
+        permitted_switches: &[],
     },
     // Bounded experiment run — safe when a specific experiment ID is provided
     // and the engine enforces hard caps (PR #428: --max-decisions,
@@ -86,11 +88,11 @@ const STRICT_TEMPLATES: &[Template] = &[
             "--max-input-tokens",
             "--max-output-tokens",
             "--max-wall-clock",
-            "--cancel-on-token-limit",
             "--arm",
             "--cycles",
             "--tag",
         ],
+        permitted_switches: &["--cancel-on-token-limit"],
     },
     // Bounded model bakeoff — safe when scoped to a specific strategy +
     // scenario set. Same cap story as experiment run.
@@ -103,34 +105,43 @@ const STRICT_TEMPLATES: &[Template] = &[
             "--scenario",
             "--provider",
             "--models",
-            "--use-strategy-models",
             // Materialization
             "--mode",
             "--clone-name-template",
             "--name",
             // Execution shape (sequential default; parallel opt-in)
             "--max-runs",
-            "--sequential",
-            "--parallel",
-            "--wait",
             "--run-mode",
             // Hard limits (PR #428)
             "--max-decisions",
             "--max-input-tokens",
             "--max-output-tokens",
             "--max-wall-clock",
-            "--cancel-on-token-limit",
             // Output
-            "--compare",
-            "--markdown",
-            "--json",
-            "--yes",
             // Legacy / forward-compat keys from V2B remote-cli-job-safety
             "--arm",
             "--cycles",
             "--tag",
             "--compare-with",
         ],
+        permitted_switches: &[
+            "--use-strategy-models",
+            "--sequential",
+            "--parallel",
+            "--wait",
+            "--cancel-on-token-limit",
+            "--compare",
+            "--markdown",
+            "--json",
+            "--yes",
+        ],
+    },
+    // UI-launched optimizer cycle. The dashboard job supervisor makes it
+    // cancellable and caps runtime/output; --mock is optional for smoke runs.
+    Template {
+        head: &["optimizer", "evening-cycle"],
+        permitted_flags: &["--session-id", "--config", "--db", "--strategy", "--budget"],
+        permitted_switches: &["--mock"],
     },
 ];
 
@@ -171,6 +182,7 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
+    "optimizer", // bounded via STRICT_TEMPLATES (optimizer evening-cycle only)
     "portfolio",
     "provider",
     "report",
@@ -354,6 +366,10 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
                 template.head.join(" ")
             ));
         }
+    } else if head == "optimizer" {
+        return AllowlistDecision::Reject(
+            "subcommand `optimizer` is only allowed over remote cli as `optimizer evening-cycle`".into(),
+        );
     }
 
     AllowlistDecision::Allow
@@ -444,6 +460,10 @@ fn argv_matches(argv: &[String], tmpl: &Template) -> bool {
         if !flag.starts_with("--") {
             return false;
         }
+        if tmpl.permitted_switches.contains(&flag) {
+            idx += 1;
+            continue;
+        }
         if !tmpl.permitted_flags.contains(&flag) {
             return false;
         }
@@ -515,6 +535,58 @@ mod tests {
     #[test]
     fn bars_fetch_with_dangling_flag_is_rejected() {
         assert_reject(&["bars", "fetch", "--asset"], "supported remote cli template");
+    }
+
+    #[test]
+    fn optimizer_evening_cycle_mock_is_allowed() {
+        assert_allow(&[
+            "optimizer",
+            "evening-cycle",
+            "--session-id",
+            "ui-01",
+            "--mock",
+            "--strategy",
+            "st_1",
+            "--budget",
+            "5.00",
+        ]);
+    }
+
+    #[test]
+    fn optimizer_evening_cycle_non_mock_is_allowed() {
+        assert_allow(&[
+            "optimizer",
+            "evening-cycle",
+            "--session-id",
+            "ui-01",
+            "--strategy",
+            "st_1",
+            "--budget",
+            "5.00",
+        ]);
+    }
+
+    #[test]
+    fn optimizer_other_subcommands_are_rejected() {
+        assert_reject(
+            &["optimizer", "run", "--namespace", "global"],
+            "only allowed over remote cli as `optimizer evening-cycle`",
+        );
+    }
+
+    #[test]
+    fn optimizer_evening_cycle_unknown_flag_is_rejected() {
+        assert_reject(
+            &[
+                "optimizer",
+                "evening-cycle",
+                "--session-id",
+                "ui-01",
+                "--real-broker",
+                "true",
+            ],
+            "supported remote cli template",
+        );
     }
 
     #[test]

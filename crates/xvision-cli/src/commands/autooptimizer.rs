@@ -18,17 +18,20 @@ use ulid::Ulid;
 
 use tokio::io::AsyncWriteExt;
 
-use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
+use xvision_core::config::{self, ConfigError, InternProvider, ProviderEntry, ProviderKind, RuntimeConfig};
+use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
 use xvision_engine::api::autooptimizer::{self, AutoOptimizerGateRequest, AutoOptimizerRunRequest};
 use xvision_engine::api::memory;
+use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::autooptimizer::blob_store::BlobStore;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::{run_evening_cycle, CycleConfig};
-use xvision_engine::autooptimizer::eval_adapter::StubPaperTester;
+use xvision_engine::autooptimizer::eval_adapter::{CachedBacktestPaperTester, StubPaperTester};
 use xvision_engine::autooptimizer::gate::GateVerdict;
 use xvision_engine::autooptimizer::judge::Judge;
 use xvision_engine::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
+use xvision_engine::autooptimizer::local_dispatch::AutoOptimizerLocalDispatch;
 use xvision_engine::autooptimizer::mutator::{MutationDiff, Mutator};
 use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
@@ -36,6 +39,7 @@ use xvision_engine::autooptimizer::scenario_synthesis::synthesize_baseline_untou
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
+use xvision_engine::tools::ToolRegistry;
 use xvision_memory::embedder::Embedder;
 
 use crate::exit::{CliError, CliResult, XvnExit};
@@ -119,6 +123,9 @@ pub struct EveningCycleArgs {
     /// Use deterministic stub paper tester (no API keys). Safe for smoke testing.
     #[arg(long)]
     pub mock: bool,
+    /// Cycle/session id to use for this evening cycle. Generated when omitted.
+    #[arg(long)]
+    pub session_id: Option<String>,
     /// Strategy ID to use as the root parent for this cycle.
     #[arg(long, help = "Strategy ID to use as the root parent for this cycle")]
     pub strategy: Option<String>,
@@ -732,7 +739,8 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let parent_hash = ContentHash::from_hex(&args.parent_bundle_hash)
         .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent_bundle_hash: {e}")))?;
     let parent = load_strategy_blob(&blobs, &parent_hash).await?;
-    let dispatch = build_dispatch(args.mock)?;
+    let binding = build_dispatch(args.mock, None, &cfg.mutator.provider, &cfg.mutator.model)?;
+    let dispatch = Arc::clone(&binding.dispatch);
 
     // AR-3: connect to the dashboard IPC socket if requested.
     let mut ipc_stream: Option<tokio::net::UnixStream> = None;
@@ -925,6 +933,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
                     volume_constraints: None,
                 },
                 overrides: vec![],
+                borrow_bps_per_day: 5.0,
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),
@@ -950,6 +959,26 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
             .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
 
+    // Build dispatch + mutator + judge.
+    let binding = build_dispatch(
+        args.mock,
+        Some(&xvn_home),
+        &cfg.mutator.provider,
+        &cfg.mutator.model,
+    )?;
+    let dispatch = Arc::clone(&binding.dispatch);
+    let mutator = Mutator {
+        provider: binding.provider.clone(),
+        model: binding.model.clone(),
+        dispatch: Arc::clone(&dispatch),
+        max_retries: cfg.mutator.max_retries,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&dispatch),
+        provider: binding.provider.clone(),
+        model: binding.model.clone(),
+    };
+
     // Build paper tester.
     let paper_tester: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
         Box::new(StubPaperTester {
@@ -966,24 +995,17 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
             },
         })
     } else {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "--mock is required; non-mock BacktestPaperTester is not yet wired in the CLI. \
-                 Use --mock for smoke testing."
-        )));
-    };
-
-    // Build dispatch + mutator + judge.
-    let dispatch = build_dispatch(args.mock)?;
-    let mutator = Mutator {
-        provider: cfg.mutator.provider.clone(),
-        model: cfg.mutator.model.clone(),
-        dispatch: Arc::clone(&dispatch),
-        max_retries: cfg.mutator.max_retries,
-    };
-    let judge = Judge {
-        dispatch: Arc::clone(&dispatch),
-        provider: cfg.mutator.provider.clone(),
-        model: cfg.mutator.model.clone(),
+        let user = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "operator".to_string());
+        let ctx = ApiContext::open(&xvn_home, Actor::Cli { user })
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
+        Box::new(CachedBacktestPaperTester::new(
+            ctx,
+            Arc::clone(&dispatch),
+            Arc::new(ToolRegistry::default_with_builtins()),
+        ))
     };
 
     let mut parent_strategies = HashMap::new();
@@ -1003,8 +1025,8 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
         },
         mutations_per_parent: 1,
         sabotage_seed: 42,
-        judge_provider: cfg.mutator.provider.clone(),
-        judge_model: cfg.mutator.model.clone(),
+        judge_provider: binding.provider.clone(),
+        judge_model: binding.model.clone(),
         prompt_version: "v1".into(),
         sustained_no_pass_cycles: 0,
         day_scenario,
@@ -1036,6 +1058,8 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
                 println!("{}", line);
             }
         },
+        None,
+        args.session_id.clone(),
     )
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("run_evening_cycle: {e}")))?;
@@ -1064,6 +1088,7 @@ fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::MutationGated { .. } => "Experiment gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
         CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
+        CycleProgressEvent::CycleSealed { .. } => "Evening summary signed",
     }
 }
 
@@ -1075,6 +1100,7 @@ fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::MutationGated { .. } => "mutation_gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "honesty_check_run",
         CycleProgressEvent::JudgeFinding { .. } => "judge_finding",
+        CycleProgressEvent::CycleSealed { .. } => "cycle_sealed",
     }
 }
 
@@ -1231,14 +1257,181 @@ fn validate_budget_usd(budget: f64) -> CliResult<()> {
     Ok(())
 }
 
-fn build_dispatch(mock: bool) -> CliResult<Arc<dyn LlmDispatch + Send + Sync>> {
+struct DispatchBinding {
+    provider: String,
+    model: String,
+    dispatch: Arc<dyn LlmDispatch + Send + Sync>,
+}
+
+fn build_dispatch(
+    mock: bool,
+    xvn_home: Option<&Path>,
+    requested_provider: &str,
+    requested_model: &str,
+) -> CliResult<DispatchBinding> {
     if mock {
-        let canned = r#"{"kind":"param","prose":[],"params":[{"key":"rsi_period","before":14,"after":21}],"tools":{"added":[],"removed":[]},"rationale":"increase rsi period"}"#;
-        return Ok(Arc::new(MockDispatch::echo(canned)));
+        let canned = r#"{"kind":"param","prose":[],"params":[{"key":"atr_period","before":14,"after":21}],"tools":{"added":[],"removed":[]},"rationale":"increase ATR lookback"}"#;
+        return Ok(DispatchBinding {
+            provider: requested_provider.to_string(),
+            model: requested_model.to_string(),
+            dispatch: Arc::new(MockDispatch::echo(canned)),
+        });
     }
-    let key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| CliError::auth(anyhow::anyhow!("ANTHROPIC_API_KEY not set")))?;
-    Ok(Arc::new(AnthropicDispatch::new(key)))
+
+    let runtime = load_runtime_config_optional(xvn_home)?;
+    if let Some(entry) = runtime
+        .as_ref()
+        .and_then(|cfg| cfg.providers.iter().find(|p| p.name == requested_provider))
+    {
+        return Ok(DispatchBinding {
+            provider: entry.name.clone(),
+            model: normalize_model(requested_model),
+            dispatch: dispatch_from_provider_entry(entry)?,
+        });
+    }
+
+    if let Some(default_llm) = runtime.as_ref().and_then(|cfg| cfg.default_llm.as_ref()) {
+        let default_entry = provider_entry_from_default_llm(default_llm);
+        if requested_provider == default_entry.name {
+            return Ok(DispatchBinding {
+                provider: default_entry.name.clone(),
+                model: default_llm.model.clone(),
+                dispatch: dispatch_from_provider_entry(&default_entry)?,
+            });
+        }
+    }
+
+    if should_use_runtime_default_llm(requested_provider) {
+        if let Some(cfg) = runtime.as_ref() {
+            if let Some(default_llm) = cfg.default_llm.as_ref() {
+                let entry = cfg
+                    .providers
+                    .iter()
+                    .find(|p| {
+                        p.matches_triple(
+                            ProviderKind::from(default_llm.provider),
+                            &default_llm.base_url,
+                            &default_llm.api_key_env,
+                        )
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| provider_entry_from_default_llm(default_llm));
+                return Ok(DispatchBinding {
+                    provider: entry.name.clone(),
+                    model: default_llm.model.clone(),
+                    dispatch: dispatch_from_provider_entry(&entry)?,
+                });
+            }
+        }
+    }
+
+    if should_fallback_to_anthropic(requested_provider) {
+        let key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| CliError::auth(anyhow::anyhow!("ANTHROPIC_API_KEY not set")))?;
+        return Ok(DispatchBinding {
+            provider: "anthropic".into(),
+            model: normalize_model(requested_model),
+            dispatch: Arc::new(AnthropicDispatch::new(key)),
+        });
+    }
+
+    Err(CliError::usage(anyhow::anyhow!(
+        "provider {requested_provider:?} is not configured in default.toml"
+    )))
+}
+
+fn normalize_model(model: &str) -> String {
+    if model.trim().is_empty() || model == "test-model" {
+        "claude-haiku-4-5-20251001".into()
+    } else {
+        model.to_string()
+    }
+}
+
+fn should_use_runtime_default_llm(provider: &str) -> bool {
+    provider.trim().is_empty() || provider == "test"
+}
+
+fn should_fallback_to_anthropic(provider: &str) -> bool {
+    should_use_runtime_default_llm(provider) || provider == "anthropic"
+}
+
+fn load_runtime_config_optional(xvn_home: Option<&Path>) -> CliResult<Option<RuntimeConfig>> {
+    let cfg_path = if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
+        if !p.is_empty() {
+            PathBuf::from(p)
+        } else {
+            default_runtime_config_path(xvn_home)?
+        }
+    } else {
+        default_runtime_config_path(xvn_home)?
+    };
+
+    match config::load_runtime(&cfg_path) {
+        Ok(cfg) => Ok(Some(cfg)),
+        Err(ConfigError::NotFound(_)) => Ok(None),
+        Err(e) => Err(CliError::upstream(anyhow::anyhow!(
+            "load runtime config {}: {e}",
+            cfg_path.display()
+        ))),
+    }
+}
+
+fn default_runtime_config_path(xvn_home: Option<&Path>) -> CliResult<PathBuf> {
+    if let Some(home) = xvn_home {
+        return Ok(home.join("config").join("default.toml"));
+    }
+    let home = crate::commands::home::resolve_xvn_home(None)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
+    Ok(home.join("config").join("default.toml"))
+}
+
+fn provider_entry_from_default_llm(default_llm: &xvision_core::config::Intern) -> ProviderEntry {
+    let name = match default_llm.provider {
+        InternProvider::Anthropic => "anthropic",
+        InternProvider::OpenaiCompat => "openai-compat",
+        InternProvider::LocalCandle => "local-candle",
+    };
+    ProviderEntry {
+        name: name.into(),
+        kind: ProviderKind::from(default_llm.provider),
+        base_url: default_llm.base_url.clone(),
+        api_key_env: default_llm.api_key_env.clone(),
+        enabled_models: vec![default_llm.model.clone()],
+    }
+}
+
+fn dispatch_from_provider_entry(entry: &ProviderEntry) -> CliResult<Arc<dyn LlmDispatch + Send + Sync>> {
+    let api_key = if entry.api_key_env.is_empty() {
+        String::new()
+    } else {
+        std::env::var(&entry.api_key_env).map_err(|_| {
+            CliError::auth(anyhow::anyhow!(
+                "no API key for provider `{}` (env var {} is unset)",
+                entry.name,
+                entry.api_key_env
+            ))
+        })?
+    };
+
+    let dispatch: Arc<dyn LlmDispatch + Send + Sync> = match entry.kind {
+        ProviderKind::Anthropic => {
+            if api_key.is_empty() {
+                return Err(CliError::auth(anyhow::anyhow!(
+                    "provider `{}` has no API key set",
+                    entry.name
+                )));
+            }
+            Arc::new(AnthropicDispatch::new(api_key))
+        }
+        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
+        ProviderKind::Ollama | ProviderKind::LlamaCpp => {
+            Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
+        }
+        ProviderKind::LocalCandle => Arc::new(AutoOptimizerLocalDispatch),
+    };
+
+    Ok(dispatch)
 }
 
 async fn propose(
@@ -1252,7 +1445,7 @@ async fn propose(
         dispatch: Arc::clone(dispatch),
         max_retries: 2,
     };
-    mutator.propose(base, cfg).await
+    mutator.propose(base, cfg, None).await
 }
 
 fn apply_mutation_diff(mut strategy: Strategy, diff: &MutationDiff) -> Strategy {
@@ -1310,6 +1503,10 @@ fn paper_test_sharpes(mock: bool) -> (f64, f64, f64, f64) {
 }
 
 async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage db dir: {e}")))?;
+    }
     let url = format!("sqlite://{}?mode=rwc", db_path.display());
     let pool = SqlitePool::connect(&url)
         .await
@@ -1328,6 +1525,12 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     .execute(&pool)
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage_nodes: {e}")))?;
+    if !sqlite_table_has_column(&pool, "lineage_nodes", "diversity_score").await? {
+        sqlx::query("ALTER TABLE lineage_nodes ADD COLUMN diversity_score REAL")
+            .execute(&pool)
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("add lineage_nodes.diversity_score: {e}")))?;
+    }
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS mutator_attribution (
             bundle_hash TEXT PRIMARY KEY,
@@ -1342,13 +1545,81 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("create mutator_attribution: {e}")))?;
     sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_attr_provider_model
-            ON mutator_attribution(provider, model)",
+        "CREATE TABLE IF NOT EXISTS cycle_seals (
+            seal_id TEXT PRIMARY KEY,
+            cycle_id TEXT NOT NULL,
+            merkle_root TEXT NOT NULL,
+            operator_signature TEXT NOT NULL,
+            sealed_at TEXT NOT NULL
+        )",
     )
     .execute(&pool)
     .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("create mutator_attribution index: {e}")))?;
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create cycle_seals: {e}")))?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS session_commitments (
+            session_id TEXT PRIMARY KEY,
+            config_hash TEXT NOT NULL,
+            parent_strategy_hashes_json TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create session_commitments: {e}")))?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS lineage_embeddings (
+            bundle_hash TEXT PRIMARY KEY REFERENCES lineage_nodes(bundle_hash),
+            embedding_blob_hash TEXT NOT NULL,
+            embedding_dim INTEGER NOT NULL,
+            embedded_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage_embeddings: {e}")))?;
+    for (sql, label) in [
+        (
+            "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",
+            "idx_lineage_parent",
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_lineage_status ON lineage_nodes(status)",
+            "idx_lineage_status",
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_cycle_seals_cycle ON cycle_seals(cycle_id)",
+            "idx_cycle_seals_cycle",
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_lineage_embeddings_bundle ON lineage_embeddings(bundle_hash)",
+            "idx_lineage_embeddings_bundle",
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_attr_provider_model ON mutator_attribution(provider, model)",
+            "idx_attr_provider_model",
+        ),
+    ] {
+        sqlx::query(sql)
+            .execute(&pool)
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("create {label}: {e}")))?;
+    }
     Ok(pool)
+}
+
+async fn sqlite_table_has_column(pool: &SqlitePool, table: &str, column: &str) -> CliResult<bool> {
+    assert!(table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("inspect {table} columns: {e}")))?;
+    Ok(rows.iter().any(|row| {
+        row.try_get::<String, _>("name")
+            .map(|name| name == column)
+            .unwrap_or(false)
+    }))
 }
 
 async fn insert_lineage_node(
