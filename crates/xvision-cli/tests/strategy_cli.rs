@@ -79,8 +79,8 @@ fn trader_slot() -> LLMSlot {
         role: "trader".into(),
         attested_with: "test.model".into(),
         allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
-        provider: None,
-        model: None,
+        provider: Some("openai".into()),
+        model: Some("gpt-4.1-mini".into()),
     }
 }
 
@@ -125,6 +125,8 @@ fn build_test_strategy(id: &str, name: &str) -> Strategy {
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 
@@ -250,7 +252,13 @@ fn from_file_validate_ls_show_roundtrip() {
     let path = write_strategy_file(dir.path(), id, "test1");
 
     let out = xvn(
-        &["strategy", "new", "--from-file", path.to_str().unwrap()],
+        &[
+            "strategy",
+            "new",
+            "--from-file",
+            path.to_str().unwrap(),
+            "--no-filter-warning",
+        ],
         dir.path(),
     );
     assert!(
@@ -261,8 +269,19 @@ fn from_file_validate_ls_show_roundtrip() {
     let stdout_id = String::from_utf8(out.stdout).unwrap().trim().to_string();
     assert_eq!(stdout_id, id);
 
+    let out = xvn(&["strategy", "migrate-agents"], dir.path());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
     let out = xvn(&["strategy", "validate", id], dir.path());
-    assert!(out.status.success());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let out = xvn(&["strategy", "ls"], dir.path());
     assert!(out.status.success());

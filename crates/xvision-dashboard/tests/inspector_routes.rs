@@ -109,22 +109,28 @@ async fn delete_strategy_unknown_returns_404() {
 }
 
 #[tokio::test]
-async fn put_slot_updates_prompt() {
+async fn put_slot_updates_supported_fields() {
     let (server, _tmp, state) = boot().await;
     let id = create_draft(&state).await;
 
     let response = server
         .put(&format!("/api/strategy/{id}/slot/trader"))
-        .json(&serde_json::json!({ "prompt": "Decide carefully." }))
+        .json(&serde_json::json!({
+            "attested_with": "anthropic.claude-sonnet-4.6",
+            "allowed_tools": ["ohlcv"]
+        }))
         .await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["id"], id);
-    assert!(body["updated"].as_array().unwrap().iter().any(|v| v == "prompt"));
+    let updated = body["updated"].as_array().unwrap();
+    assert!(updated.iter().any(|v| v == "attested_with"));
+    assert!(updated.iter().any(|v| v == "allowed_tools"));
 
-    // Round-trip: fetch the strategy and confirm the prompt changed.
+    // Round-trip: fetch the strategy and confirm the slot fields changed.
     let strategy: serde_json::Value = server.get(&format!("/api/strategy/{id}")).await.json();
-    assert_eq!(strategy["trader_slot"]["prompt"], "Decide carefully.");
+    assert_eq!(strategy["trader_slot"]["attested_with"], "anthropic.claude-sonnet-4.6");
+    assert_eq!(strategy["trader_slot"]["allowed_tools"][0], "ohlcv");
 }
 
 #[tokio::test]

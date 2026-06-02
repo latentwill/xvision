@@ -93,11 +93,21 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     .await
     .unwrap();
     sqlx::query(include_str!(
+        "../../xvision-engine/migrations/047_agent_slot_max_wall_ms.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(include_str!("../../xvision-engine/migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"
     ))
@@ -117,6 +127,12 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     .await
     .unwrap();
     sqlx::query(include_str!(
+        "../../xvision-engine/migrations/018_agent_run_observability.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
         "../../xvision-engine/migrations/023_hypothesis_and_experiments.sql"
     ))
     .execute(&pool)
@@ -126,6 +142,30 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     // columns referenced by RunStore::create. Scaffold gap from PR #415.
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/027_run_bars_manifest.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/031_eval_runs_venue_label.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/016_eval_reviews.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/038_eval_runs_live_config.sql"
     ))
     .execute(&pool)
     .await
@@ -211,6 +251,8 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

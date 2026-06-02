@@ -4266,7 +4266,8 @@ mod tests {
                 serde_json::json!({
                     "agent_id": "the strategy we have",
                     "scenario_id": "crypto range bound",
-                    "mode": "backtest"
+                    "mode": "backtest",
+                    "acknowledge_no_filter": true
                 }),
             )
             .await
@@ -4335,7 +4336,8 @@ mod tests {
                 serde_json::json!({
                     "agent_id": created["id"],
                     "scenario_id": "crypto-rangebound-q2-2025",
-                    "mode": "backtest"
+                    "mode": "backtest",
+                    "acknowledge_no_filter": true
                 }),
             )
             .await
@@ -4983,7 +4985,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let prompt = AgentProfile::StrategySetup.prompt_section();
         assert!(prompt.contains("strategy setup"));
         assert!(prompt.contains("existing strategies"));
-        assert!(prompt.contains("existing scenarios"));
+        assert!(prompt.contains("strategies and scenarios"));
     }
 
     // -- Plan #11 Phase B persistence assertions ----------------------------

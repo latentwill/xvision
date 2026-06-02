@@ -124,17 +124,21 @@ pub async fn get(
     // route at 2s while a run is in-flight (and multiple tabs / sibling
     // widgets compound the load — the 2026-05-19 api_audit logged 890
     // `get_run` calls vs 64 `start` calls). A 500ms TTL cache collapses
-    // concurrent fetches into a single DB read without ever surfacing
-    // meaningfully stale data. Terminal runs are never cached — they're
-    // immutable, so the engine's `RunStore::get` is already a cheap read,
-    // and bypassing here keeps invalidation-on-state-change correctness
-    // simple (transition into terminal status always re-fetches fresh).
+    // concurrent detail fetches into a single DB read without ever surfacing
+    // meaningfully stale data. On cache hits, read the current status before
+    // serving a non-terminal cached body so an out-of-band terminal transition
+    // invalidates and re-fetches fresh detail.
     if let Some(cached) = state.eval_run_cache_get(&id) {
         if !is_terminal_status(&cached.summary.status) {
-            return Ok(Json(cached));
+            let store = RunStore::new(state.pool.clone());
+            match store.status(&id).await {
+                Ok(status) if !status.is_terminal() => return Ok(Json(cached)),
+                Ok(_) => state.eval_run_cache_invalidate(&id),
+                Err(_) => {}
+            }
         }
-        // Cached value just transitioned to terminal between writes —
-        // fall through, fetch fresh, and don't reinsert.
+        // Cached value is terminal or the underlying row has become terminal
+        // between reads. Fall through, fetch fresh, and don't reinsert.
     }
 
     let detail = eval::get_run(&state.api_context(), &id).await?;

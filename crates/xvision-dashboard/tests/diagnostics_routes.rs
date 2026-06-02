@@ -12,8 +12,8 @@
 //!     (ready + has a dspy optimizer signature) and `agent_ready = true`;
 //!     a prompt-less slot reports `MissingPrompt` and flips `agent_ready`.
 //!   * strategy diagnostics: a strategy whose manifest grants the trader's
-//!     `ohlcv` tool is `launchable`; one that does NOT grant it surfaces a
-//!     typed `MissingTool` blocker and is not launchable.
+//!     `ohlcv` tool is `launchable`; built-in tools are also launchable when
+//!     omitted from the manifest.
 //!   * unknown strategy / agent ids 404.
 
 use axum::http::StatusCode;
@@ -116,6 +116,8 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         })
         .await
         .unwrap();
@@ -219,11 +221,12 @@ async fn strategy_diagnostics_launchable_when_tool_granted() {
 }
 
 #[tokio::test]
-async fn strategy_diagnostics_blocks_without_required_tool() {
+async fn strategy_diagnostics_builtin_required_tool_is_launchable_without_manifest_grant() {
     let (server, tmp, state) = boot().await;
     let agent_id = seed_agent(&state, "Strat Trader", TRADER_PROMPT).await;
     let strategy_id = "01J0DIAGTEST0000000000002B";
-    // Manifest grants NO tools → trader's `ohlcv` is a MissingTool blocker.
+    // Manifest grants NO tools. `ohlcv` is a built-in runtime tool, so the
+    // dashboard route should still surface the engine's launchable result.
     seed_strategy(&tmp, strategy_id, &agent_id, vec![]).await;
 
     let resp = server
@@ -232,12 +235,9 @@ async fn strategy_diagnostics_blocks_without_required_tool() {
     resp.assert_status_ok();
     let body: Value = resp.json();
 
-    assert_eq!(body["launchable"], false);
+    assert_eq!(body["launchable"], true);
     let unmet = body["required_unmet"].as_array().unwrap();
-    assert_eq!(unmet.len(), 1, "exactly one unmet requirement");
-    assert_eq!(unmet[0]["capability"], "trader");
-    assert_eq!(unmet[0]["status"]["kind"], "missing_tool");
-    assert_eq!(unmet[0]["status"]["tool"], "ohlcv");
+    assert_eq!(unmet.len(), 0, "built-in tool grants should not create unmet requirements");
 }
 
 #[tokio::test]

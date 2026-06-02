@@ -294,10 +294,28 @@ fn render_deferred_stubs() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use sqlx::SqlitePool;
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_DB: AtomicU64 = AtomicU64::new(0);
 
     async fn empty_pool() -> SqlitePool {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let db_path = std::env::temp_dir().join(format!(
+            "xvision-eod-test-{}-{}.db",
+            std::process::id(),
+            NEXT_DB.fetch_add(1, Ordering::Relaxed)
+        ));
+        let url = format!("sqlite://{}", db_path.display());
+        let options = SqliteConnectOptions::from_str(&url)
+            .unwrap()
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
         // Run the full migration set so this test's eval_runs schema
         // matches what the prod EOD command sees. The previous hand-rolled
         // setup that include_str!'d only 001 + 002 silently drifted out of

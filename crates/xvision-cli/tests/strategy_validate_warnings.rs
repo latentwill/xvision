@@ -118,6 +118,8 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         };
         let store = FilesystemStore::new(strategy_store_dir(&home));
         store.save(&strategy).await.unwrap();
@@ -139,12 +141,12 @@ fn validate_emits_no_filter_warning_for_explicit_trader_without_filter() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("warning: strategy 'unfiltered-trader' has a Trader agent with no upstream Filter"),
+        stdout.contains("warning: strategy 'unfiltered-trader' has a Trader agent with no saved JSON filter"),
         "expected no-Filter warning naming the strategy; got: {stdout}"
     );
     assert!(
-        stdout.contains("xvn agent create --capability filter"),
-        "warning must point at the filter-create verb; got: {stdout}"
+        stdout.contains("Attach a strategy filter to reduce LLM cost."),
+        "warning must point operators at strategy filters; got: {stdout}"
     );
     assert!(
         stdout.trim_end().ends_with("ok"),
@@ -166,7 +168,7 @@ fn validate_suppresses_warning_when_acknowledge_no_filter_is_set() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        !stdout.contains("no upstream Filter"),
+        !stdout.contains("no saved JSON filter"),
         "warning must be suppressed when acknowledge_no_filter = true; got: {stdout}"
     );
     assert!(
@@ -188,7 +190,7 @@ fn strategy_edit_no_filter_warning_round_trips() {
 
     // Validate must now be silent.
     let v1 = xvn(&["strategy", "validate", &id], dir.path());
-    assert!(!String::from_utf8_lossy(&v1.stdout).contains("no upstream Filter"));
+    assert!(!String::from_utf8_lossy(&v1.stdout).contains("no saved JSON filter"));
 
     // Clear.
     let clear = xvn(
@@ -203,7 +205,7 @@ fn strategy_edit_no_filter_warning_round_trips() {
     let v2 = xvn(&["strategy", "validate", &id], dir.path());
     let stdout = String::from_utf8_lossy(&v2.stdout);
     assert!(
-        stdout.contains("no upstream Filter"),
+        stdout.contains("no saved JSON filter"),
         "warning must re-emerge after --clear; got: {stdout}"
     );
 }

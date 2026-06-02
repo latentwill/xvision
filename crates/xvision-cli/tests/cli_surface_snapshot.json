@@ -885,6 +885,7 @@
         "--live-broker-creds-ref",
         "--live-capital",
         "--live-decision-limit",
+        "--live-duration",
         "--live-time-limit-secs",
         "--live-warmup-bars",
         "--max-decisions",
@@ -4720,9 +4721,10 @@
         "--db",
         "--help",
         "--mock",
+        "--session-id",
         "--strategy"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "optimizer",
         "evening-cycle"

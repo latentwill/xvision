@@ -53,9 +53,9 @@ async fn search_returns_seeded_actions_on_empty_query() {
         .iter()
         .find(|h| h["artifact_id"] == "new-strategy")
         .expect("new-strategy action is returned");
-    assert_eq!(new_strategy["title"], "New strategy from template…");
-    assert_eq!(new_strategy["summary"], "Open the wizard with a template picker");
-    assert_eq!(new_strategy["href"], "/setup");
+    assert_eq!(new_strategy["title"], "New strategy");
+    assert_eq!(new_strategy["summary"], "Create a blank strategy draft");
+    assert_eq!(new_strategy["href"], "/strategies/new");
     assert_eq!(new_strategy["tags"].as_array().unwrap().len(), 0);
     assert_eq!(new_strategy["bm25_score"], 0.0);
 }
@@ -91,7 +91,7 @@ async fn search_finds_strategy_after_create() {
         .as_str()
         .expect("summary is a string")
         .contains("custom"));
-    assert_eq!(strategy["href"], format!("/authoring/{}", created.id));
+    assert_eq!(strategy["href"], format!("/strategies/{}", created.id));
 }
 
 #[tokio::test]

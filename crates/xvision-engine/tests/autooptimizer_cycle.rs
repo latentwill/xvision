@@ -97,7 +97,7 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         include_str!("../migrations/048_autooptimizer.sql"),
         include_str!("../migrations/049_autooptimizer_diversity.sql"),
         include_str!("../migrations/050_mutator_attribution.sql"),
-        include_str!("../migrations/051_drop_autooptimizer_provenance.sql"),
+        include_str!("../migrations/054_drop_autooptimizer_provenance.sql"),
     ];
 
     for sql in migrations {

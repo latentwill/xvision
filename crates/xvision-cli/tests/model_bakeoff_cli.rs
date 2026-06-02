@@ -228,6 +228,12 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/047_agent_slot_max_wall_ms.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(include_str!("../../xvision-engine/migrations/013_cli_jobs.sql"))
         .execute(&pool)
         .await
@@ -257,12 +263,6 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     .await
     .unwrap();
     sqlx::query(include_str!(
-        "../../xvision-engine/migrations/018_agent_run_observability.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
         "../../xvision-engine/migrations/021_eval_batches.sql"
     ))
     .execute(&pool)
@@ -270,6 +270,12 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     .unwrap();
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/018_agent_run_observability.sql"
     ))
     .execute(&pool)
     .await
@@ -381,6 +387,8 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

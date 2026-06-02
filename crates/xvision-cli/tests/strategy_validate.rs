@@ -131,7 +131,9 @@ fn seed_strategy_with_trader(
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
-            acknowledge_no_filter: false,
+            acknowledge_no_filter: true,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));
@@ -180,6 +182,8 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()

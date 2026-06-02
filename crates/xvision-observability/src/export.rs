@@ -715,8 +715,26 @@ fn parse_optional_json(
         return Ok(None);
     }
     serde_json::from_str(raw)
-        .map(Some)
+        .map(|value| Some(canonical_json(value)))
         .map_err(|source| ExportError::InvalidJson { column, source })
+}
+
+fn canonical_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonical_json).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<_> = map.into_iter().collect();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let mut sorted = serde_json::Map::new();
+            for (key, value) in entries {
+                sorted.insert(key, canonical_json(value));
+            }
+            serde_json::Value::Object(sorted)
+        }
+        value => value,
+    }
 }
 
 fn compute_totals(

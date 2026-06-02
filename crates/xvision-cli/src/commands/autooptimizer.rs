@@ -1545,30 +1545,6 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("create mutator_attribution: {e}")))?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS cycle_seals (
-            seal_id TEXT PRIMARY KEY,
-            cycle_id TEXT NOT NULL,
-            merkle_root TEXT NOT NULL,
-            operator_signature TEXT NOT NULL,
-            sealed_at TEXT NOT NULL
-        )",
-    )
-    .execute(&pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("create cycle_seals: {e}")))?;
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS session_commitments (
-            session_id TEXT PRIMARY KEY,
-            config_hash TEXT NOT NULL,
-            parent_strategy_hashes_json TEXT NOT NULL,
-            signature TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )",
-    )
-    .execute(&pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("create session_commitments: {e}")))?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS lineage_embeddings (
             bundle_hash TEXT PRIMARY KEY REFERENCES lineage_nodes(bundle_hash),
             embedding_blob_hash TEXT NOT NULL,
@@ -1587,10 +1563,6 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
         (
             "CREATE INDEX IF NOT EXISTS idx_lineage_status ON lineage_nodes(status)",
             "idx_lineage_status",
-        ),
-        (
-            "CREATE INDEX IF NOT EXISTS idx_cycle_seals_cycle ON cycle_seals(cycle_id)",
-            "idx_cycle_seals_cycle",
         ),
         (
             "CREATE INDEX IF NOT EXISTS idx_lineage_embeddings_bundle ON lineage_embeddings(bundle_hash)",
