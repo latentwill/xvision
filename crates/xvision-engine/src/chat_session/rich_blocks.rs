@@ -834,7 +834,6 @@ mod tests {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             asset_universe: vec!["BTC/USD".into()],
             execution_mode: "per_asset".into(),
-            activation_mode: xvision_filters::ActivationMode::EveryBar,
         };
 
         let block = inline_strategy_card_from_summary(&summary).expect("strategy card");

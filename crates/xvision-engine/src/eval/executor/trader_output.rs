@@ -10,6 +10,12 @@ pub(crate) struct TraderOutput {
     pub(crate) action: String,
     pub(crate) conviction: f64,
     pub(crate) justification: String,
+    /// Stop-loss percentage from the LLM decision (0.0 = not specified).
+    #[serde(default)]
+    pub(crate) stop_loss_pct: f32,
+    /// Take-profit percentage from the LLM decision (0.0 = not specified).
+    #[serde(default)]
+    pub(crate) take_profit_pct: f32,
 }
 
 /// Stable classification of trader-output failure modes. Persisted as part
