@@ -1,11 +1,7 @@
 //! Integration tests for `xvn experiment run`.
 //!
 //! Tests exercise `run_experiment` (the testable orchestrator) against the
-//! same in-memory ApiContext scaffold used by `eval_batch_run.rs`. The
-//! scaffold applies migrations manually (including 023 for experiments) and
-//! deliberately skips migration 012 (the eval_runs→scenarios FK) so the
-//! canonical "flash-crash-2024-08" fixture id can be used without seeding the
-//! scenarios table. This is the same approach as `eval_batch_run.rs`.
+//! same in-memory ApiContext scaffold used by `eval_batch_run.rs`.
 
 use std::sync::Arc;
 
@@ -17,6 +13,7 @@ use xvision_engine::api::agents::{self as agents_api, CreateAgentRequest};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
+use xvision_engine::eval::scenario_store;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
@@ -27,14 +24,8 @@ use xvision_cli::commands::experiment_run::{run_experiment, ExperimentRunRequest
 
 // ── Test scaffold ─────────────────────────────────────────────────────────────
 
-/// Build an in-memory ApiContext with the migrations required for experiment run:
-/// - 001 (api_audit), 002 (eval), 014 (eval_agent_id), 015 (eval_decisions),
-///   021 (eval_batches), 022 (eval_runs agents_agent_id),
-///   023 (hypothesis_and_experiments).
-///
-/// Migration 012 (runs→scenarios FK) is intentionally skipped — same as in
-/// `eval_batch_run.rs` — so the fixture scenario id "flash-crash-2024-08" can
-/// be used in `eval_runs` without a matching row in the `scenarios` table.
+/// Build an in-memory ApiContext with the full engine schema so the integration
+/// test tracks production migrations.
 async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -42,94 +33,10 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
 
-    // Apply migrations in order (same subset as eval_batch_run.rs + 023).
-    sqlx::query(include_str!("../../xvision-engine/migrations/001_api_audit.sql"))
-        .execute(&pool)
+    sqlx::migrate!("../xvision-engine/migrations")
+        .run(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    // Agent tables (005) + slot column migrations needed by agents_api::create.
-    sqlx::query(include_str!("../../xvision-engine/migrations/005_agents.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/019_agent_slot_prompt_version.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/020_agent_slot_inputs_policy.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/025_agent_slot_cache_and_window.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/029_agent_slot_memory_mode.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/033_agent_slot_capabilities.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/014_eval_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/021_eval_batches.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/023_hypothesis_and_experiments.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    // 027 added bars_content_hash + manifest_canonical + bars_manifest
-    // columns referenced by RunStore::create. Scaffold gap from PR #415.
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/027_run_bars_manifest.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
@@ -140,7 +47,19 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
         },
         dir.path().to_path_buf(),
     );
+    seed_experiment_scenario(&ctx).await;
     (ctx, dir)
+}
+
+#[allow(deprecated)]
+async fn seed_experiment_scenario(ctx: &ApiContext) {
+    let scenario = xvision_engine::eval::canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("legacy flash-crash fixture scenario exists");
+    scenario_store::insert_scenario(ctx, &scenario)
+        .await
+        .expect("seed experiment test scenario");
 }
 
 async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
