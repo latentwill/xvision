@@ -44,6 +44,7 @@ import {
   safeStorageRemove,
   safeStorageSet,
 } from "@/lib/storage";
+import { useUi } from "@/stores/ui";
 import {
   type ChatMessage,
   type ChatSessionMode,
@@ -151,6 +152,7 @@ export function ChatRail({
   const [modelId, setModelId] = useState<string>(
     () => safeStorageGet(RAIL_MODEL_LS) ?? "",
   );
+  const setChatRailOpen = useUi((s) => s.setChatRailOpen);
   const abortRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lastScopeKeyRef = useRef<string | null>(null);
@@ -245,11 +247,13 @@ export function ChatRail({
   }, [providerName, modelId, providers.data]);
 
   // Persist open/close so the rail stays in the user's chosen state across
-  // route changes (and reloads).
+  // route changes (and reloads). Also sync to the shared UI store so the
+  // shell can adjust its grid layout without the rail needing a prop channel.
   useEffect(() => {
     if (variant !== "desktop") return;
     safeStorageSet(RAIL_OPEN_LS, open ? "1" : "0");
-  }, [open, variant]);
+    setChatRailOpen(open);
+  }, [open, variant, setChatRailOpen]);
 
   // Persist mode so a new chat inherits the user's last choice (Think/Act)
   // instead of always defaulting back to "research".
