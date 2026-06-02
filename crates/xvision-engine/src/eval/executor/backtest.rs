@@ -741,6 +741,9 @@ impl Executor {
         let mut book = crate::eval::executor::book::PortfolioBook::new(initial);
         // Tracks bars held while short per asset for borrow-cost accrual.
         let mut short_bars_held: BTreeMap<xvision_core::trading::AssetSymbol, u32> = BTreeMap::new();
+        // Advanced SL/TP per-position state (trailing, break-even, fading, time, ATR, partial TP).
+        let mut sltp_state: BTreeMap<xvision_core::trading::AssetSymbol, crate::eval::executor::sltp::PositionRiskState> =
+            BTreeMap::new();
         let bar_secs = scenario.granularity.seconds();
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
@@ -769,11 +772,6 @@ impl Executor {
         // not bump the direction state. Keyed per asset so a flip on BTC
         // doesn't leak into ETH's flip detection.
         let mut last_open_direction: BTreeMap<xvision_core::trading::AssetSymbol, GuardAction> =
-            BTreeMap::new();
-        // Per-position (stop_loss_pct, take_profit_pct) from the TraderDecision that
-        // opened the position. Checked on every subsequent bar for auto-close.
-        // Values are 0.0 when the model didn't specify a threshold.
-        let mut open_position_sltp: BTreeMap<xvision_core::trading::AssetSymbol, (f32, f32)> =
             BTreeMap::new();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
@@ -948,99 +946,6 @@ impl Executor {
                     continue 'asset;
                 }
 
-                // SL/TP auto-close: check before the LLM dispatch so we don't
-                // spend tokens when a position closes mechanically this bar.
-                // Fires for both Agentic and Mechanistic strategies that have
-                // close_policies configured. Uses bar.high/bar.low for intra-bar
-                // detection; fills at the threshold price (not next-bar open).
-                {
-                    let cur_pos = book.position(asset_sym);
-                    let cur_entry = book.entry_price(asset_sym);
-                    // Mechanistic strategies: check close_policies from config.
-                    let mut sltp = strategy
-                        .mechanistic_config
-                        .as_ref()
-                        .and_then(|cfg| {
-                            check_sltp_trigger(cur_pos, cur_entry, bar.high, bar.low, &cfg.close_policies)
-                        });
-                    // Agentic strategies: check SL/TP stored from the opening TraderDecision.
-                    if sltp.is_none() {
-                        if let Some(&(sl_pct, tp_pct)) = open_position_sltp.get(&asset_sym) {
-                            if cur_pos.abs() > f64::EPSILON && cur_entry > 0.0 {
-                                let is_long = cur_pos > 0.0;
-                                if tp_pct > 0.0 {
-                                    let tp = if is_long {
-                                        cur_entry * (1.0 + tp_pct as f64 / 100.0)
-                                    } else {
-                                        cur_entry * (1.0 - tp_pct as f64 / 100.0)
-                                    };
-                                    if (is_long && bar.high >= tp) || (!is_long && bar.low <= tp) {
-                                        sltp = Some(("take_profit", tp));
-                                    }
-                                }
-                                if sltp.is_none() && sl_pct > 0.0 {
-                                    let sl = if is_long {
-                                        cur_entry * (1.0 - sl_pct as f64 / 100.0)
-                                    } else {
-                                        cur_entry * (1.0 + sl_pct as f64 / 100.0)
-                                    };
-                                    if (is_long && bar.low <= sl) || (!is_long && bar.high >= sl) {
-                                        sltp = Some(("stop_loss", sl));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if let Some((trigger_label, sltp_price)) = sltp {
-                        if cur_pos < -f64::EPSILON {
-                            *short_bars_held.entry(asset_sym).or_insert(0) += 1;
-                        }
-                        let traded_units = cur_pos.abs();
-                        let fee = traded_units * sltp_price * (default_taker_bps / 10_000.0);
-                        let realized_pnl = cur_pos * (sltp_price - cur_entry) - fee;
-                        let borrow_deduct = if cur_pos < -f64::EPSILON {
-                            let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
-                            let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
-                                .and_then(|o| o.borrow_bps_per_day)
-                                .unwrap_or(scenario.venue.borrow_bps_per_day);
-                            compute_borrow_cost(cur_pos.abs(), cur_entry, borrow_bps, held, bar_secs)
-                        } else {
-                            0.0
-                        };
-                        let net_pnl = realized_pnl - borrow_deduct;
-                        book.set_position(asset_sym, 0.0, 0.0);
-                        book.add_realized(net_pnl);
-                        last_open_direction.remove(&asset_sym);
-                        open_position_sltp.remove(&asset_sym);
-                        n_trades += 1;
-                        let justification =
-                            format!("auto-close: {trigger_label} at {sltp_price:.6}");
-                        let decision_row = DecisionRow {
-                            run_id: run.id.clone(),
-                            decision_index: decision_idx,
-                            timestamp: bar.timestamp,
-                            asset: asset.clone(),
-                            action: "flat".into(),
-                            conviction: Some(1.0),
-                            justification: Some(justification.clone()),
-                            reasoning: Some(justification),
-                            order_size: Some(traded_units),
-                            fill_price: Some(sltp_price),
-                            fill_size: Some(traded_units),
-                            fee: Some(fee),
-                            pnl_realized: if net_pnl != 0.0 { Some(net_pnl) } else { None },
-                        };
-                        store.record_decision(&decision_row).await?;
-                        let es = early_stop_state.get_mut(&asset_sym)
-                            .expect("early_stop_state seeded for every active asset");
-                        es.recent_actions.clear();
-                        es.recent_convictions.clear();
-                        es.prev_position = 0.0;
-                        decision_idx += 1;
-                        continue 'asset;
-                    }
-                }
-
                 // History slice: last `history_window` bars strictly before
                 // the current bar. `combined_idx` points at `bar` inside the
                 // combined `[warmup..., bars...]` series. When the run starts
@@ -1111,12 +1016,123 @@ impl Executor {
                     }),
                 };
                 // When the DSL filter fired this bar, inject its trigger context
-                // (indicator snapshot from fire.context) so the trader's prompt
-                // includes the values that caused the filter to trip.
+                // (indicator snapshot + fire.reason/priority/tags) into the seed
+                // so the trader's briefing includes the values that caused the
+                // filter to trip.
                 let mut seed = seed;
                 if let Some(ctx) = &filter_trigger_context {
                     if let Some(obj) = seed.as_object_mut() {
                         obj.insert("filter_context".to_string(), ctx.clone());
+                    }
+                }
+
+                // Advanced SL/TP check — fires before the LLM pipeline.
+                // If a trigger fires, we execute the exit, record the
+                // decision row, and `continue 'asset` so the LLM is not
+                // consulted for this bar. This fires even during early-stop
+                // skip windows (capital protection trumps efficiency).
+                if book.position(asset_sym).abs() > f64::EPSILON {
+                    if let Some(sltp) = sltp_state.get_mut(&asset_sym) {
+                        use crate::eval::executor::sltp::SltpTrigger;
+                        let sltp_position = book.position(asset_sym);
+                        let sltp_entry = book.entry_price(asset_sym);
+                        match crate::eval::executor::sltp::check_and_update(sltp, bar) {
+                            Some(SltpTrigger::FullExit { reason }) => {
+                                let (sltp_pnl, sltp_fee) = apply_sltp_full_exit(
+                                    sltp_position,
+                                    sltp_entry,
+                                    next_bar_open,
+                                    default_slip_bps,
+                                    default_taker_bps,
+                                );
+                                // Apply borrow cost for short exits.
+                                let borrow_cost = if sltp_position < -f64::EPSILON {
+                                    let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
+                                    let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
+                                        .and_then(|o| o.borrow_bps_per_day)
+                                        .unwrap_or(scenario.venue.borrow_bps_per_day);
+                                    compute_borrow_cost(sltp_position.abs(), sltp_entry, borrow_bps, held, bar_secs)
+                                } else {
+                                    0.0
+                                };
+                                let net_sltp_pnl = sltp_pnl - borrow_cost;
+                                book.add_realized(net_sltp_pnl);
+                                if net_sltp_pnl > 0.0 { wins += 1; }
+                                realized_count += 1;
+                                book.set_position(asset_sym, 0.0, 0.0);
+                                sltp_state.remove(&asset_sym);
+                                last_open_direction.remove(&asset_sym);
+                                n_trades += 1;
+                                let fill_price = next_bar_open * (1.0 - default_slip_bps / 10_000.0
+                                    * if sltp_position > 0.0 { 1.0 } else { -1.0 });
+                                let sltp_row = crate::eval::store::DecisionRow {
+                                    run_id: run.id.clone(),
+                                    decision_index: decision_idx,
+                                    timestamp: bar.timestamp,
+                                    asset: asset.clone(),
+                                    action: reason.to_string(),
+                                    conviction: Some(1.0),
+                                    justification: Some(format!("sltp: {reason}")),
+                                    reasoning: None,
+                                    order_size: Some(sltp_position.abs()),
+                                    fill_price: Some(fill_price),
+                                    fill_size: Some(sltp_position.abs()),
+                                    fee: Some(sltp_fee),
+                                    pnl_realized: Some(sltp_pnl - borrow_cost),
+                                };
+                                store.record_decision(&sltp_row).await?;
+                                self.emit_chart(
+                                    &run.id,
+                                    RunChartEvent::Decision(LiveDecisionRow::from(&sltp_row)),
+                                )
+                                .await;
+                                self.emit(ProgressEvent::FillRecorded {
+                                    run_id: run.id.clone(),
+                                    side: fill_side_for_action(reason, sltp_position).into(),
+                                    price: fill_price,
+                                    qty: sltp_position.abs(),
+                                    fee: sltp_fee,
+                                });
+                                decision_idx += 1;
+                                continue 'asset;
+                            }
+                            Some(SltpTrigger::PartialTp1 { fraction }) => {
+                                let close_units = sltp_position.abs() * fraction;
+                                let fill_price = next_bar_open;
+                                let fee_rate = default_taker_bps / 10_000.0;
+                                let fee = close_units * fill_price * fee_rate;
+                                let pnl = sltp_position * fraction * (fill_price - sltp_entry) - fee;
+                                let remaining = sltp_position * (1.0 - fraction);
+                                book.add_realized(pnl);
+                                book.set_position(asset_sym, remaining, sltp_entry);
+                                sltp.tp1_taken = true;
+                                n_trades += 1;
+                                let pt1_row = crate::eval::store::DecisionRow {
+                                    run_id: run.id.clone(),
+                                    decision_index: decision_idx,
+                                    timestamp: bar.timestamp,
+                                    asset: asset.clone(),
+                                    action: "partial_tp1".to_string(),
+                                    conviction: Some(1.0),
+                                    justification: Some(format!("sltp: partial TP1 ({:.0}%)", fraction * 100.0)),
+                                    reasoning: None,
+                                    order_size: Some(close_units),
+                                    fill_price: Some(fill_price),
+                                    fill_size: Some(close_units),
+                                    fee: Some(fee),
+                                    pnl_realized: Some(pnl),
+                                };
+                                store.record_decision(&pt1_row).await?;
+                                self.emit_chart(
+                                    &run.id,
+                                    RunChartEvent::Decision(LiveDecisionRow::from(&pt1_row)),
+                                )
+                                .await;
+                                decision_idx += 1;
+                                continue 'asset;
+                            }
+                            None => {}
+                        }
                     }
                 }
 
@@ -1876,7 +1892,56 @@ impl Executor {
                 // leaves `position`/`entry_price` reading 0.0 — identical to
                 // the old scalar `entry_price = fill.new_entry (== 0.0)`.
                 book.set_position(asset_sym, fill.new_pos, fill.new_entry);
+
+                if fill.fill_price.is_some() {
+                    if fill.new_pos.abs() > f64::EPSILON
+                        && (applied_action == "long_open" || applied_action == "short_open")
+                    {
+                        let direction = if fill.new_pos > 0.0 {
+                            xvision_core::trading::Direction::Long
+                        } else {
+                            xvision_core::trading::Direction::Short
+                        };
+                        let sl_pct = parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0);
+                        let tp_pct = parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0);
+                        let entry_atr = if parsed.sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some() {
+                            crate::eval::executor::sltp::compute_atr14(history_slice)
+                        } else {
+                            None
+                        };
+                        sltp_state.insert(
+                            asset_sym,
+                            crate::eval::executor::sltp::PositionRiskState::new(
+                                direction,
+                                fill.new_entry,
+                                sl_pct,
+                                tp_pct,
+                                entry_atr,
+                                parsed.trailing_stop_pct,
+                                parsed.breakeven_trigger_pct,
+                                parsed.breakeven_offset_pct,
+                                parsed.fade_sl_bars,
+                                parsed.fade_sl_start_pct,
+                                parsed.fade_sl_end_pct,
+                                parsed.max_bars_held,
+                                parsed.sl_atr_mult,
+                                parsed.tp_atr_mult,
+                                parsed.tp1_pct,
+                                parsed.tp1_close_fraction,
+                                parsed.tp2_pct,
+                            ),
+                        );
+                    } else if fill.new_pos.abs() <= f64::EPSILON {
+                        sltp_state.remove(&asset_sym);
+                    }
+                }
+
                 book.add_realized(fill.realized_pnl);
+                if pre_fill_position != 0.0 && fill.new_pos.abs() <= f64::EPSILON {
+                    // Closing a position — count for win_rate
+                    realized_count += 1;
+                    if fill.realized_pnl > 0.0 { wins += 1; }
+                }
 
                 // Borrow cost: when a short is closed, subtract accumulated
                 // cost from realized PnL. Long positions accrue nothing.
@@ -1960,15 +2025,12 @@ impl Executor {
                 match GuardAction::parse(&applied_action) {
                     GuardAction::LongOpen => {
                         last_open_direction.insert(asset_sym, GuardAction::LongOpen);
-                        open_position_sltp.insert(asset_sym, (parsed.stop_loss_pct, parsed.take_profit_pct));
                     }
                     GuardAction::ShortOpen => {
                         last_open_direction.insert(asset_sym, GuardAction::ShortOpen);
-                        open_position_sltp.insert(asset_sym, (parsed.stop_loss_pct, parsed.take_profit_pct));
                     }
                     GuardAction::Flat => {
                         last_open_direction.remove(&asset_sym);
-                        open_position_sltp.remove(&asset_sym);
                     }
                     GuardAction::Hold | GuardAction::Other => {}
                 }
@@ -1993,12 +2055,6 @@ impl Executor {
                     },
                 };
                 store.record_decision(&decision_row).await?;
-                if pre_fill_position != 0.0 && fill.fill_price.is_some() {
-                    realized_count += 1;
-                    if fill.realized_pnl > 0.0 {
-                        wins += 1;
-                    }
-                }
                 self.emit_chart(
                     &run.id,
                     RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
@@ -2206,11 +2262,7 @@ impl Executor {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: if realized_count > 0 {
-                wins as f64 / realized_count as f64
-            } else {
-                0.0
-            },
+            win_rate: if realized_count > 0 { wins as f64 / realized_count as f64 } else { 0.0 },
             n_trades,
             n_decisions: decision_idx,
             baselines: Some(baselines),
@@ -2528,7 +2580,6 @@ impl Executor {
             let asset_signal_cache = signal_cache
                 .entry(asset_sym)
                 .or_insert_with(crate::agent::signal_cache::SignalCache::new);
-            let pre_fill_position = book.position(asset_sym);
             let outcome = self
                 .decide_one_live(
                     DecideOneLiveCtx {
@@ -2570,12 +2621,6 @@ impl Executor {
 
             if outcome.fill_happened {
                 n_trades += 1;
-            }
-            if pre_fill_position != 0.0 && outcome.fill_happened {
-                realized_count += 1;
-                if outcome.realized_pnl > 0.0 {
-                    wins += 1;
-                }
             }
             // Per-asset open-direction memory: write back THIS asset's
             // updated direction only.
@@ -2680,11 +2725,7 @@ impl Executor {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: if realized_count > 0 {
-                wins as f64 / realized_count as f64
-            } else {
-                0.0
-            },
+            win_rate: if realized_count > 0 { wins as f64 / realized_count as f64 } else { 0.0 },
             n_trades,
             n_decisions: decision_idx,
             // Live runs do not compute the four backtest baselines (they
@@ -3033,7 +3074,6 @@ impl Executor {
             input_tokens,
             output_tokens,
             fill_happened,
-            realized_pnl: fill.realized_pnl,
             last_open_direction,
             broker_error,
         })
@@ -3101,7 +3141,6 @@ struct LiveDecisionOutcome {
     input_tokens: u64,
     output_tokens: u64,
     fill_happened: bool,
-    realized_pnl: f64,
     last_open_direction: Option<GuardAction>,
     broker_error: Option<(xvision_execution::broker_surface::BrokerErrorClass, String)>,
 }
@@ -3393,8 +3432,7 @@ fn mechanistic_action(
             action: "hold".into(),
             conviction: 0.0,
             justification: "mechanistic: no open position".into(),
-            stop_loss_pct: 0.0,
-            take_profit_pct: 0.0,
+            ..Default::default()
         };
     }
     let pnl_pct = if position > 0.0 {
@@ -3409,8 +3447,7 @@ fn mechanistic_action(
                     action: "flat".into(),
                     conviction: 1.0,
                     justification: format!("mechanistic: stop-loss ({pnl_pct:.2}% <= -{pct:.2}%)"),
-                    stop_loss_pct: 0.0,
-                    take_profit_pct: 0.0,
+                    ..Default::default()
                 };
             }
             ClosePolicy::TakeProfit { pct } if pnl_pct >= *pct => {
@@ -3418,8 +3455,7 @@ fn mechanistic_action(
                     action: "flat".into(),
                     conviction: 1.0,
                     justification: format!("mechanistic: take-profit ({pnl_pct:.2}% >= {pct:.2}%)"),
-                    stop_loss_pct: 0.0,
-                    take_profit_pct: 0.0,
+                    ..Default::default()
                 };
             }
             _ => {}
@@ -3429,54 +3465,8 @@ fn mechanistic_action(
         action: "hold".into(),
         conviction: 0.0,
         justification: "mechanistic: no close policy triggered".into(),
-        stop_loss_pct: 0.0,
-        take_profit_pct: 0.0,
+        ..Default::default()
     }
-}
-
-/// Check if the current bar's high/low triggers a stop-loss or take-profit
-/// for an open position. Returns `(trigger_label, fill_price)` when triggered.
-/// Take-profit is checked before stop-loss; fill price is the threshold price.
-/// Only `ClosePolicy::StopLoss` and `ClosePolicy::TakeProfit` are matched.
-fn check_sltp_trigger(
-    position: f64,
-    entry_price: f64,
-    bar_high: f64,
-    bar_low: f64,
-    close_policies: &[ClosePolicy],
-) -> Option<(&'static str, f64)> {
-    if position.abs() < f64::EPSILON || entry_price <= 0.0 {
-        return None;
-    }
-    let is_long = position > 0.0;
-    for policy in close_policies {
-        match policy {
-            ClosePolicy::TakeProfit { pct } => {
-                let tp = if is_long {
-                    entry_price * (1.0 + pct / 100.0)
-                } else {
-                    entry_price * (1.0 - pct / 100.0)
-                };
-                let hit = if is_long { bar_high >= tp } else { bar_low <= tp };
-                if hit {
-                    return Some(("take_profit", tp));
-                }
-            }
-            ClosePolicy::StopLoss { pct } => {
-                let sl = if is_long {
-                    entry_price * (1.0 - pct / 100.0)
-                } else {
-                    entry_price * (1.0 + pct / 100.0)
-                };
-                let hit = if is_long { bar_low <= sl } else { bar_high >= sl };
-                if hit {
-                    return Some(("stop_loss", sl));
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Find the trader slot's repair context — system prompt, model id,
@@ -3830,6 +3820,25 @@ fn compute_borrow_cost(
     daily_cost * bars_held as f64 / bars_per_day
 }
 
+/// Compute fill price, fee, and realized PnL for a full SLTP exit.
+///
+/// Returns `(pnl, fee)`. Slippage is adverse to the exiting side:
+/// long exits fill slightly below `next_open`, short exits slightly above.
+fn apply_sltp_full_exit(
+    position: f64,
+    entry_price: f64,
+    next_open: f64,
+    slip_bps: f64,
+    taker_bps: f64,
+) -> (f64, f64) {
+    debug_assert!(position.abs() > 0.0, "apply_sltp_full_exit called with zero position");
+    let direction_sign = if position > 0.0 { 1.0_f64 } else { -1.0 };
+    let fill_price = next_open * (1.0 - slip_bps / 10_000.0 * direction_sign);
+    let fee = position.abs() * fill_price * taker_bps / 10_000.0;
+    let pnl = position * (fill_price - entry_price) - fee;
+    (pnl, fee)
+}
+
 fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
     if action == "long_open" {
         "buy"
@@ -4131,83 +4140,6 @@ mod tests {
         let strategy = empty_strategy();
         let slots = vec![resolved("regime", "claude-opus-4-7")];
         assert!(trader_model_id(&slots, &strategy).is_none());
-    }
-
-    // ── SL/TP auto-close unit tests ──────────────────────────────────────────
-
-    use crate::strategies::mechanistic::ClosePolicy;
-
-    #[test]
-    fn sltp_trigger_long_tp_fires_when_high_reaches_threshold() {
-        let policies = vec![ClosePolicy::TakeProfit { pct: 2.0 }];
-        // entry=100, TP at 102.0; bar_high=102.0 triggers
-        let r = check_sltp_trigger(1.0, 100.0, 102.0, 99.0, &policies);
-        let (label, price) = r.expect("TP must trigger");
-        assert_eq!(label, "take_profit");
-        assert!((price - 102.0).abs() < 1e-9, "fill at TP threshold");
-    }
-
-    #[test]
-    fn sltp_trigger_long_tp_does_not_fire_below_threshold() {
-        let policies = vec![ClosePolicy::TakeProfit { pct: 2.0 }];
-        // bar_high=101.99 < 102.0 → no trigger
-        let r = check_sltp_trigger(1.0, 100.0, 101.99, 99.0, &policies);
-        assert!(r.is_none());
-    }
-
-    #[test]
-    fn sltp_trigger_long_sl_fires_when_low_at_threshold() {
-        let policies = vec![ClosePolicy::StopLoss { pct: 1.0 }];
-        // entry=100, SL at 99.0; bar_low=99.0 triggers
-        let r = check_sltp_trigger(1.0, 100.0, 100.5, 99.0, &policies);
-        let (label, price) = r.expect("SL must trigger");
-        assert_eq!(label, "stop_loss");
-        assert!((price - 99.0).abs() < 1e-9, "fill at SL threshold");
-    }
-
-    #[test]
-    fn sltp_trigger_short_tp_fires_when_low_drops_to_threshold() {
-        let policies = vec![ClosePolicy::TakeProfit { pct: 2.0 }];
-        // short entry=100, TP at 98.0 (profit on short = price drop)
-        // bar_low=98.0 triggers
-        let r = check_sltp_trigger(-1.0, 100.0, 100.5, 98.0, &policies);
-        let (label, price) = r.expect("short TP must trigger");
-        assert_eq!(label, "take_profit");
-        assert!((price - 98.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn sltp_trigger_short_sl_fires_when_high_reaches_threshold() {
-        let policies = vec![ClosePolicy::StopLoss { pct: 2.0 }];
-        // short entry=100, SL at 102.0 (loss on short = price rise)
-        // bar_high=102.0 triggers
-        let r = check_sltp_trigger(-1.0, 100.0, 102.0, 99.0, &policies);
-        let (label, price) = r.expect("short SL must trigger");
-        assert_eq!(label, "stop_loss");
-        assert!((price - 102.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn sltp_trigger_flat_position_never_fires() {
-        let policies = vec![ClosePolicy::StopLoss { pct: 1.0 }];
-        assert!(check_sltp_trigger(0.0, 100.0, 50.0, 50.0, &policies).is_none());
-    }
-
-    #[test]
-    fn sltp_trigger_tp_takes_priority_over_sl_when_both_hit() {
-        let policies = vec![
-            ClosePolicy::TakeProfit { pct: 2.0 },
-            ClosePolicy::StopLoss { pct: 1.0 },
-        ];
-        // bar that hits both TP (high=102) and SL (low=98.9, below entry*(1-0.01)=99)
-        let r = check_sltp_trigger(1.0, 100.0, 102.0, 98.9, &policies);
-        let (label, _) = r.expect("must trigger");
-        assert_eq!(label, "take_profit", "TP listed first wins");
-    }
-
-    #[test]
-    fn sltp_trigger_no_policies_returns_none() {
-        assert!(check_sltp_trigger(1.0, 100.0, 200.0, 50.0, &[]).is_none());
     }
 }
 
