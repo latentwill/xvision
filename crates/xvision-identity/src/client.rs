@@ -127,12 +127,17 @@ impl RegistryAddresses {
         None
     }
 
-    /// Returns `None` — no registry is deployed on Mantle Sepolia testnet
-    /// (5003) yet.
+    /// Returns `Some` when `MANTLE_TESTNET_IDENTITY_REGISTRY` and
+    /// `MANTLE_TESTNET_REPUTATION_REGISTRY` env vars are set to valid hex
+    /// addresses; returns `None` otherwise (no testnet deployment yet).
     ///
-    /// Update after testnet deployment (see `decisions/0008-erc8004-deployment.md`).
+    /// Set the env vars to inject real Sepolia addresses without a code change.
     pub fn mantle_testnet() -> Option<Self> {
-        None
+        let id_str  = std::env::var("MANTLE_TESTNET_IDENTITY_REGISTRY").ok()?;
+        let rep_str = std::env::var("MANTLE_TESTNET_REPUTATION_REGISTRY").ok()?;
+        let id_addr:  Address = id_str.parse().ok()?;
+        let rep_addr: Address = rep_str.parse().ok()?;
+        Some(Self::custom(id_addr, rep_addr))
     }
 
     /// Construct addresses for a local `anvil` instance or custom deployment.
@@ -447,6 +452,11 @@ mod tests {
     use super::*;
     use alloy::primitives::Address;
 
+    // Serializes the two tests that read/write MANTLE_TESTNET_* env vars to
+    // prevent races under parallel test execution (cargo test runs tests on
+    // multiple threads by default).
+    static MANTLE_TESTNET_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // -----------------------------------------------------------------------
     // Unit tests — no network required
     // -----------------------------------------------------------------------
@@ -458,7 +468,38 @@ mod tests {
 
     #[test]
     fn registry_addresses_testnet_returns_none() {
+        let _guard = MANTLE_TESTNET_ENV_MUTEX.lock().unwrap();
+        // Remove any stale vars set by a prior test run or the caller's shell.
+        // SAFETY: test binary is single-process; mutex ensures no concurrent set.
+        unsafe {
+            std::env::remove_var("MANTLE_TESTNET_IDENTITY_REGISTRY");
+            std::env::remove_var("MANTLE_TESTNET_REPUTATION_REGISTRY");
+        }
         assert!(RegistryAddresses::mantle_testnet().is_none());
+    }
+
+    #[test]
+    fn mantle_testnet_reads_env_vars() {
+        let _guard = MANTLE_TESTNET_ENV_MUTEX.lock().unwrap();
+        let id_hex  = "0x3EF48069B23f4717c0510cAa29a7bbB17a29D7a0";
+        let rep_hex = "0xf64230e90748602AE3392952b3E249d81dd83ef1";
+        // SAFETY: test binary is single-process; mutex ensures exclusive access;
+        // removal happens before the mutex is released.
+        unsafe {
+            std::env::set_var("MANTLE_TESTNET_IDENTITY_REGISTRY", id_hex);
+            std::env::set_var("MANTLE_TESTNET_REPUTATION_REGISTRY", rep_hex);
+        }
+        let result = RegistryAddresses::mantle_testnet();
+        unsafe {
+            std::env::remove_var("MANTLE_TESTNET_IDENTITY_REGISTRY");
+            std::env::remove_var("MANTLE_TESTNET_REPUTATION_REGISTRY");
+        }
+        drop(_guard);
+        let addrs = result.expect("Some when both env vars set to valid addresses");
+        let expected_id:  Address = id_hex.parse().unwrap();
+        let expected_rep: Address = rep_hex.parse().unwrap();
+        assert_eq!(addrs.identity_registry, expected_id);
+        assert_eq!(addrs.reputation_registry, expected_rep);
     }
 
     #[test]
@@ -536,16 +577,21 @@ mod tests {
 
     /// End-to-end mint + reputation round-trip against a local anvil instance.
     ///
-    /// Requires stub contracts deployed at the addresses below.
-    /// See `decisions/0008-erc8004-deployment.md` for the Forge deployment script.
+    /// Before running, start anvil and deploy contracts with the deterministic
+    /// addresses used below:
     ///
-    /// To run:
     /// ```sh
-    /// # Deploy contracts first (see decisions/0008-erc8004-deployment.md)
     /// anvil &
+    /// OPERATOR_EOA=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
+    /// USDC_ADDRESS=0x0000000000000000000000000000000000000001 \
+    /// LICENSE_URI="ipfs://test/{id}" \
+    /// forge script contracts/script/DeployTestnet.s.sol \
+    ///   --rpc-url http://127.0.0.1:8545 \
+    ///   --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    ///   --broadcast
     /// cargo test -p xvision-identity anvil_mint_and_reputation -- --ignored --nocapture
     /// ```
-    #[ignore = "requires anvil + stub contracts deployed; see decisions/0008-erc8004-deployment.md"]
+    #[ignore = "requires anvil + DeployTestnet.s.sol deployed; see comment above for exact commands"]
     #[tokio::test]
     async fn anvil_mint_and_reputation() {
         use chrono::Utc;
@@ -555,7 +601,11 @@ mod tests {
             .parse()
             .expect("valid anvil key");
 
-        let addrs = RegistryAddresses::custom(Address::from([0x11u8; 20]), Address::from([0x22u8; 20]));
+        // Deterministic addresses produced by DeployTestnet.s.sol via CREATE2 factory
+        // when deployed from anvil account 0 on chain 31337.
+        let identity:   Address = "0x3EF48069B23f4717c0510cAa29a7bbB17a29D7a0".parse().unwrap();
+        let reputation: Address = "0xf64230e90748602AE3392952b3E249d81dd83ef1".parse().unwrap();
+        let addrs = RegistryAddresses::custom(identity, reputation);
 
         let client = IdentityClient::connect("http://127.0.0.1:8545", addrs, 31337)
             .await
