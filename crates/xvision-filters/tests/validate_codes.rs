@@ -175,17 +175,37 @@ fn unknown_operator_rejected_at_parse() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn operand_type_crosses_with_numeric_rhs() {
+fn operand_type_crosses_with_range_rhs() {
+    // Range is still disallowed on rhs for crosses_*; only Indicator or Numeric are valid.
     let filter = base_filter(one_cond(
         ind(IndicatorName::Ema, 20),
         Operator::CrossesAbove,
-        Operand::Numeric(100.0),
+        Operand::Range(90.0, 110.0),
     ));
     assert_err(
         validate(&filter),
         "E_FILTER_OPERAND_TYPE",
         "/conditions/all/0/rhs",
     );
+}
+
+#[test]
+fn crosses_with_numeric_rhs_passes_validation() {
+    // `rsi_14 crosses_above 50` — numeric constant rhs must be accepted.
+    let filter = base_filter(one_cond(
+        ind(IndicatorName::Rsi, 14),
+        Operator::CrossesAbove,
+        Operand::Numeric(50.0),
+    ));
+    validate(&filter).expect("rsi_14 crosses_above 50 must pass validation");
+
+    // `rsi_14 crosses_below 70` — same rule applies to crosses_below.
+    let filter = base_filter(one_cond(
+        ind(IndicatorName::Rsi, 14),
+        Operator::CrossesBelow,
+        Operand::Numeric(70.0),
+    ));
+    validate(&filter).expect("rsi_14 crosses_below 70 must pass validation");
 }
 
 #[test]

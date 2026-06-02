@@ -863,6 +863,66 @@ mod tests {
     }
 
     #[test]
+    fn crosses_above_numeric_threshold_fires_on_cross() {
+        // `close crosses_above 50` — rhs is a constant. Passes validation
+        // and the runtime evaluates prev_close <= 50 && close > 50.
+        let f = mk_filter(
+            ConditionTree::All(vec![Condition {
+                lhs: Operand::Indicator(IndicatorRef::close()),
+                op: Operator::CrossesAbove,
+                rhs: Operand::Numeric(50.0),
+            }]),
+            0,
+            None,
+        );
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        // Bar 1: close=40, no prev_pair yet → Inactive.
+        assert_eq!(rt.evaluate(&mut state, &bar(40.0), ctx).decision, ActivationDecision::Inactive);
+        // Bar 2: prev=40 (<= 50), current=60 (> 50) → Trip.
+        let o = rt.evaluate(&mut state, &bar(60.0), ctx);
+        assert!(o.decision.is_trip(), "expected Trip on cross, got {:?}", o.decision);
+        // Bar 3: prev=60 (> 50), current=70 (> 50) → no cross → Hold is false → Inactive.
+        let o = rt.evaluate(&mut state, &bar(70.0), ctx);
+        assert_eq!(o.decision, ActivationDecision::Inactive);
+        // Bar 4: close=30, crosses below (not above) → Inactive.
+        let o = rt.evaluate(&mut state, &bar(30.0), ctx);
+        assert_eq!(o.decision, ActivationDecision::Inactive);
+        // Bar 5: prev=30 (<= 50), current=55 (> 50) → Trip again.
+        let o = rt.evaluate(&mut state, &bar(55.0), ctx);
+        assert!(o.decision.is_trip(), "expected second Trip, got {:?}", o.decision);
+    }
+
+    #[test]
+    fn crosses_below_numeric_threshold_fires_on_cross() {
+        let f = mk_filter(
+            ConditionTree::All(vec![Condition {
+                lhs: Operand::Indicator(IndicatorRef::close()),
+                op: Operator::CrossesBelow,
+                rhs: Operand::Numeric(70.0),
+            }]),
+            0,
+            None,
+        );
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        assert_eq!(rt.evaluate(&mut state, &bar(80.0), ctx).decision, ActivationDecision::Inactive);
+        // prev=80 (>= 70), current=60 (< 70) → Trip.
+        let o = rt.evaluate(&mut state, &bar(60.0), ctx);
+        assert!(o.decision.is_trip(), "expected Trip on cross below, got {:?}", o.decision);
+    }
+
+    #[test]
     fn capped_for_day_blocks_extra_trips() {
         let f = mk_filter(
             ConditionTree::All(vec![Condition {
