@@ -73,7 +73,7 @@ use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
 use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
-use xvision_execution::broker_surface::BrokerSurface;
+use xvision_execution::broker_surface::{BrokerErrorClass, BrokerSurface};
 
 pub(crate) struct LiveRuntime {
     /// Multi-asset live bar fanout. A single active asset is a 1-element
@@ -2419,12 +2419,22 @@ impl Executor {
                 asset_hist.drain(0..drop_n);
             }
 
-            // (d) broker error — RealBrokerFills surfaced a rejection. We
-            // record the (no-fill) decision above for the trace, then fail
-            // the run with the classified broker error so the operator sees
-            // it instead of the loop silently continuing on a dead broker.
+            // (d) broker error — RealBrokerFills surfaced a rejection.
+            // Structural limitations (e.g. Alpaca crypto is long-only so
+            // short_open is permanently unsupported) are logged and skipped so
+            // the run continues. All other rejection classes terminate the run
+            // so the operator sees the failure immediately.
             if let Some((class, msg)) = outcome.broker_error {
-                anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
+                if class == BrokerErrorClass::UnsupportedAsset {
+                    tracing::warn!(
+                        target: "xvision_engine::live_executor",
+                        error_class = class.as_tag(),
+                        error_message = %msg,
+                        "live broker: unsupported trade skipped (no-fill, run continues)"
+                    );
+                } else {
+                    anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
+                }
             }
 
             // Mark-to-market on the bar close + record the pooled equity
