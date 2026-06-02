@@ -132,6 +132,10 @@ pub enum ScenarioOp {
     ///   xvn scenario set-regime sc_01JR3PPWB1WE5XKYGEP7NYWRT9 --regime crash
     #[command(name = "set-regime")]
     SetRegime(SetRegimeArgs),
+    /// Apply a scenario file (JSON/TOML) — create if not found; diff-only if already exists (scenarios are immutable post-insert).
+    Apply(ScenarioApplyArgs),
+    /// Show the diff between a scenario file and the saved workspace version. Read-only.
+    Diff(ScenarioDiffArgs),
 }
 
 #[derive(Args, Debug)]
@@ -377,6 +381,27 @@ pub struct SetRegimeArgs {
     pub dry_run: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct ScenarioApplyArgs {
+    /// Path to a Scenario JSON or TOML file.
+    pub file: std::path::PathBuf,
+    /// Preview without creating (dry-run).
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Emit result as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ScenarioDiffArgs {
+    /// Path to a Scenario JSON or TOML file.
+    pub file: std::path::PathBuf,
+    /// Emit diff as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
     let ctx = open_ctx(cmd.xvn_home.clone()).await.map_err(CliError::upstream)?;
     match cmd.op {
@@ -392,6 +417,8 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
         ScenarioOp::Select(a) => run_select(&ctx, a).await,
         ScenarioOp::Classify(a) => run_classify(&ctx, a).await,
         ScenarioOp::SetRegime(a) => run_set_regime(&ctx, a).await,
+        ScenarioOp::Apply(a) => run_scenario_apply(&ctx, a).await,
+        ScenarioOp::Diff(a) => run_scenario_diff(&ctx, a).await,
     }
 }
 
@@ -1419,6 +1446,144 @@ async fn run_set_regime(ctx: &ApiContext, a: SetRegimeArgs) -> CliResult<()> {
     Ok(())
 }
 
+// ---- scenario apply / diff --------------------------------------------------
+
+fn load_scenario_file(path: &std::path::Path) -> CliResult<Scenario> {
+    let body = std::fs::read_to_string(path)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("toml") => {
+            toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))
+        }
+        _ => serde_json::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}"))),
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ScenarioFieldChange {
+    field: String,
+    old: String,
+    new: String,
+}
+
+fn scenario_diff(old: &Scenario, new_s: &Scenario) -> Vec<ScenarioFieldChange> {
+    let old_v = serde_json::to_value(old).unwrap_or_default();
+    let new_v = serde_json::to_value(new_s).unwrap_or_default();
+    let mut changes = Vec::new();
+    if let (serde_json::Value::Object(om), serde_json::Value::Object(nm)) = (&old_v, &new_v) {
+        let keys: std::collections::BTreeSet<_> = om.keys().chain(nm.keys()).collect();
+        for key in keys {
+            let ov = om.get(key).unwrap_or(&serde_json::Value::Null);
+            let nv = nm.get(key).unwrap_or(&serde_json::Value::Null);
+            if ov != nv {
+                let compact = |v: &serde_json::Value| -> String {
+                    let s = serde_json::to_string(v).unwrap_or_default();
+                    if s.len() > 120 {
+                        format!("{}…", &s[..117])
+                    } else {
+                        s
+                    }
+                };
+                changes.push(ScenarioFieldChange {
+                    field: key.clone(),
+                    old: compact(ov),
+                    new: compact(nv),
+                });
+            }
+        }
+    }
+    changes
+}
+
+async fn run_scenario_apply(ctx: &ApiContext, a: ScenarioApplyArgs) -> CliResult<()> {
+    let new_s = load_scenario_file(&a.file)?;
+    let id = new_s.id.clone();
+
+    match api_scenario::get(ctx, &id).await {
+        Ok(existing) => {
+            let changes = scenario_diff(&existing, &new_s);
+            if a.json {
+                crate::io::print_json(&serde_json::json!({
+                    "action": "exists",
+                    "scenario_id": id,
+                    "note": "scenarios are immutable post-insert",
+                    "drift": changes,
+                }))?;
+            } else {
+                println!("scenario {id} already exists (immutable — no update applied)");
+                if changes.is_empty() {
+                    println!("  (file matches stored version)");
+                } else {
+                    println!("  drift detected ({} field(s)):", changes.len());
+                    for c in &changes {
+                        println!("  {}: {} → {}", c.field, c.old, c.new);
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            if a.dry_run {
+                if a.json {
+                    crate::io::print_json(
+                        &serde_json::json!({ "dry_run": true, "action": "create", "scenario_id": id, "display_name": new_s.display_name }),
+                    )?;
+                } else {
+                    eprintln!(
+                        "DRY RUN — would create scenario '{}' ({})",
+                        new_s.display_name, id
+                    );
+                }
+                return Ok(());
+            }
+            new_s
+                .validate_v1()
+                .map_err(|e| CliError::usage(anyhow::anyhow!("scenario apply: {e}")))?;
+            xvision_engine::eval::scenario_store::insert_scenario(ctx, &new_s)
+                .await
+                .map_err(|e| api_to_cli("scenario apply (create)", e))?;
+            if a.json {
+                crate::io::print_json(&serde_json::json!({ "action": "created", "scenario_id": id }))?;
+            } else {
+                println!("created {} ({})", id, new_s.display_name);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_scenario_diff(ctx: &ApiContext, a: ScenarioDiffArgs) -> CliResult<()> {
+    let new_s = load_scenario_file(&a.file)?;
+    let id = new_s.id.clone();
+
+    match api_scenario::get(ctx, &id).await {
+        Ok(existing) => {
+            let changes = scenario_diff(&existing, &new_s);
+            if a.json {
+                crate::io::print_json(&serde_json::json!({ "scenario_id": id, "changes": changes }))?;
+            } else {
+                println!("diff for scenario {id}");
+                if changes.is_empty() {
+                    println!("  (no changes)");
+                } else {
+                    for c in &changes {
+                        println!("  {}: {} → {}", c.field, c.old, c.new);
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            if a.json {
+                crate::io::print_json(
+                    &serde_json::json!({ "scenario_id": id, "changes": [], "note": "not found — would create" }),
+                )?;
+            } else {
+                println!("scenario {id} not found — would create");
+            }
+        }
+    }
+    Ok(())
+}
+
 // NOTE: `xvn scenario set create` (persisted scenario sets) is deliberately
 // deferred — it requires a new DB table (`scenario_sets`, `scenario_set_members`)
 // and a migration reservation.  See track #12 / a dedicated follow-up track.
@@ -1873,5 +2038,226 @@ pub mod select {
         for dir in &["up", "down", "sideways"] {
             assert!(super::validate_trend_direction(dir).is_ok());
         }
+    }
+}
+
+#[cfg(test)]
+pub mod apply_diff {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use std::str::FromStr;
+    use xvision_core::Capital;
+    use xvision_engine::eval::scenario::{
+        AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees, FillModel,
+        LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
+        ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    };
+
+    fn make_test_scenario(id: &str) -> Scenario {
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let end = start + chrono::Duration::hours(100);
+        Scenario {
+            id: id.to_string(),
+            parent_scenario_id: None,
+            source: ScenarioSource::User,
+            display_name: format!("test-{id}"),
+            description: String::new(),
+            tags: vec![],
+            notes: None,
+            asset_class: AssetClass::Crypto,
+            quote_currency: QuoteCurrency::Usd,
+            time_window: TimeWindow { start, end },
+            granularity: BarGranularity::from_str("1h").unwrap(),
+            timezone: "UTC".to_string(),
+            calendar: CalendarRef::Continuous24x7,
+            data_source: DataSource::AlpacaHistorical {
+                feed: None,
+                adjustment: AdjustmentMode::Raw,
+            },
+            venue: VenueSettings {
+                venue: Venue::Alpaca,
+                fees: Fees {
+                    maker_bps: 10,
+                    taker_bps: 25,
+                },
+                slippage: SlippageModel::None,
+                latency: LatencyModel {
+                    decision_to_fill_ms: 0,
+                },
+                fill_model: FillModel {
+                    market_order_fill: MarketOrderFill::FullAtClose,
+                    limit_order_fill: LimitOrderFill::NeverFills,
+                    partial_fills: false,
+                    volume_constraints: None,
+                },
+                overrides: Vec::new(),
+                borrow_bps_per_day: 5.0,
+            },
+            replay_mode: ReplayMode::Continuous,
+            capital: Capital::default(),
+            bar_cache_policy: BarCachePolicy {
+                cache_key: id.to_string(),
+                refresh_policy: RefreshPolicy::NeverRefresh,
+                data_fetched_at: None,
+            },
+            warmup_bars: 0,
+            regime_label: None,
+            volatility_label: None,
+            trend_direction: None,
+            regime_derived: false,
+            created_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            created_by: "test".to_string(),
+            archived_at: None,
+            venue_label: xvision_engine::safety::VenueLabel::Paper,
+            safety_limits: None,
+        }
+    }
+
+    // ── scenario_diff pure-fn tests ──────────────────────────────────────────
+
+    #[test]
+    fn scenario_diff_identical_returns_empty() {
+        let s = make_test_scenario("sc1");
+        let changes = scenario_diff(&s, &s);
+        assert!(changes.is_empty(), "identical scenarios must produce no diff");
+    }
+
+    #[test]
+    fn scenario_diff_detects_display_name_change() {
+        let old = make_test_scenario("sc1");
+        let mut new_s = make_test_scenario("sc1");
+        new_s.display_name = "renamed".to_string();
+        let changes = scenario_diff(&old, &new_s);
+        let c = changes
+            .iter()
+            .find(|c| c.field == "display_name")
+            .expect("display_name change must appear in diff");
+        assert!(c.old.contains("test-sc1"), "old must reflect original name");
+        assert!(c.new.contains("renamed"), "new must reflect updated name");
+    }
+
+    #[test]
+    fn scenario_diff_long_value_truncated_with_ellipsis() {
+        let mut old = make_test_scenario("sc1");
+        let mut new_s = make_test_scenario("sc1");
+        old.description = "short".to_string();
+        new_s.description = "x".repeat(200);
+        let changes = scenario_diff(&old, &new_s);
+        let c = changes
+            .iter()
+            .find(|c| c.field == "description")
+            .expect("description change must appear in diff");
+        assert!(
+            c.new.ends_with('…'),
+            "value longer than 120 chars must be truncated with ellipsis"
+        );
+    }
+
+    #[test]
+    fn scenario_diff_only_changed_fields_reported() {
+        let old = make_test_scenario("sc1");
+        let mut new_s = make_test_scenario("sc1");
+        new_s.warmup_bars = 42;
+        let changes = scenario_diff(&old, &new_s);
+        assert_eq!(changes.len(), 1, "only the mutated field should appear");
+        assert_eq!(changes[0].field, "warmup_bars");
+    }
+
+    // ── load_scenario_file tests ─────────────────────────────────────────────
+
+    #[test]
+    fn load_scenario_file_missing_returns_error() {
+        let result = load_scenario_file(std::path::Path::new("/nonexistent/path/sc.json"));
+        assert!(result.is_err(), "missing file must return an error");
+    }
+
+    #[test]
+    fn load_scenario_file_invalid_json_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, b"not-valid-json{{").unwrap();
+        let result = load_scenario_file(&path);
+        assert!(result.is_err(), "invalid JSON must return a parse error");
+    }
+
+    #[test]
+    fn load_scenario_file_toml_extension_routes_to_toml_parser() {
+        // Valid JSON is not valid TOML for this struct — the TOML parser rejects it.
+        // The assertion is that the `.toml` extension triggers the TOML code path (returns Err).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sc.toml");
+        std::fs::write(&path, b"{ \"id\": 1 }").unwrap();
+        let result = load_scenario_file(&path);
+        assert!(result.is_err(), ".toml extension must use the TOML parser");
+    }
+
+    #[test]
+    fn load_scenario_file_json_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sc.json");
+        let original = make_test_scenario("roundtrip-id");
+        let json = serde_json::to_string(&original).unwrap();
+        std::fs::write(&path, json.as_bytes()).unwrap();
+        let loaded = load_scenario_file(&path).expect("valid JSON must load successfully");
+        assert_eq!(loaded.id, "roundtrip-id");
+        assert_eq!(loaded.display_name, original.display_name);
+        assert_eq!(loaded.warmup_bars, original.warmup_bars);
+    }
+
+    #[test]
+    fn load_scenario_file_unknown_extension_falls_back_to_json() {
+        // No extension → falls through to the JSON branch.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sc");
+        let original = make_test_scenario("noext-id");
+        let json = serde_json::to_string(&original).unwrap();
+        std::fs::write(&path, json.as_bytes()).unwrap();
+        let loaded = load_scenario_file(&path).expect("no-extension file must try JSON");
+        assert_eq!(loaded.id, "noext-id");
+    }
+
+    // ── CLI subcommand registration ──────────────────────────────────────────
+
+    #[test]
+    fn scenario_apply_subcommand_registered() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let scenario = cmd.find_subcommand("scenario").expect("scenario subcommand");
+        assert!(
+            scenario.find_subcommand("apply").is_some(),
+            "`xvn scenario apply` must be registered"
+        );
+    }
+
+    #[test]
+    fn scenario_diff_subcommand_registered() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let scenario = cmd.find_subcommand("scenario").expect("scenario subcommand");
+        assert!(
+            scenario.find_subcommand("diff").is_some(),
+            "`xvn scenario diff` must be registered"
+        );
+    }
+
+    #[test]
+    fn scenario_apply_has_dry_run_and_json_flags() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let scenario = cmd.find_subcommand("scenario").expect("scenario subcommand");
+        let apply = scenario.find_subcommand("apply").expect("apply subcommand");
+        let longs: Vec<_> = apply.get_arguments().filter_map(|a| a.get_long()).collect();
+        assert!(longs.contains(&"dry-run"), "`apply` must have --dry-run flag");
+        assert!(longs.contains(&"json"), "`apply` must have --json flag");
+    }
+
+    #[test]
+    fn scenario_diff_has_json_flag() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let scenario = cmd.find_subcommand("scenario").expect("scenario subcommand");
+        let diff = scenario.find_subcommand("diff").expect("diff subcommand");
+        let has_json = diff.get_arguments().any(|a| a.get_long() == Some("json"));
+        assert!(has_json, "`diff` must have --json flag");
     }
 }

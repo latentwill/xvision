@@ -171,6 +171,9 @@ enum StrategyAction {
         /// Mutually exclusive with `--no-filter-warning`.
         #[arg(long = "clear-no-filter-warning", conflicts_with = "no_filter_warning")]
         clear_no_filter_warning: bool,
+        /// Set a manifest field: KEY=VALUE. Repeatable. Supported: display_name, plain_summary, risk_preset_or_config, color.
+        #[arg(long = "field", value_name = "KEY=VALUE")]
+        fields: Vec<String>,
     },
     /// Validate a saved strategy by id.
     ///
@@ -420,6 +423,27 @@ enum StrategyAction {
         #[arg(long)]
         json: bool,
     },
+
+    /// Apply a strategy file (JSON/TOML) to the workspace — create or overwrite.
+    Apply {
+        /// Path to a Strategy JSON or TOML file.
+        file: std::path::PathBuf,
+        /// Show what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the diff between a strategy file and the saved workspace version.
+    /// Read-only — never writes.
+    Diff {
+        /// Path to a Strategy JSON or TOML file.
+        file: std::path::PathBuf,
+        /// Emit diff as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -491,7 +515,8 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             id,
             no_filter_warning,
             clear_no_filter_warning,
-        } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning).await,
+            fields,
+        } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning, fields).await,
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
         StrategyAction::Diagnostics { id, json } => diagnostics(&id, json).await,
         StrategyAction::Ls { format, json } => ls(format, json).await,
@@ -552,6 +577,8 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             since_days,
             json,
         } => leaderboard(&sort, top, since_days, json).await,
+        StrategyAction::Apply { file, dry_run, json } => apply_strategy(&file, dry_run, json).await,
+        StrategyAction::Diff { file, json } => diff_strategy(&file, json).await,
     }
 }
 
@@ -2007,10 +2034,11 @@ async fn edit_strategy(
     strategy_id: &str,
     no_filter_warning: bool,
     clear_no_filter_warning: bool,
+    fields: Vec<String>,
 ) -> CliResult<()> {
-    if !no_filter_warning && !clear_no_filter_warning {
+    if !no_filter_warning && !clear_no_filter_warning && fields.is_empty() {
         return Err(CliError::usage(anyhow::anyhow!(
-            "`xvn strategy edit` requires one of `--no-filter-warning` or `--clear-no-filter-warning`"
+            "`xvn strategy edit` requires one of `--no-filter-warning`, `--clear-no-filter-warning`, or `--field KEY=VALUE`"
         )));
     }
 
@@ -2020,20 +2048,62 @@ async fn edit_strategy(
         source: anyhow::anyhow!("strategy `{strategy_id}` not found: {e}"),
     })?;
 
-    if no_filter_warning {
+    let mut changed: Vec<String> = Vec::new();
+
+    if no_filter_warning && !strategy.acknowledge_no_filter {
         strategy.acknowledge_no_filter = true;
-    } else if clear_no_filter_warning {
+        changed.push("acknowledge_no_filter: false → true".into());
+    } else if no_filter_warning {
+        changed.push("acknowledge_no_filter: (already true)".into());
+    }
+    if clear_no_filter_warning && strategy.acknowledge_no_filter {
         strategy.acknowledge_no_filter = false;
+        changed.push("acknowledge_no_filter: true → false".into());
+    } else if clear_no_filter_warning {
+        changed.push("acknowledge_no_filter: (already false)".into());
+    }
+
+    for kv in &fields {
+        let Some((k, v)) = kv.split_once('=') else {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--field must be KEY=VALUE, got: {kv}"
+            )));
+        };
+        match k {
+            "display_name" => {
+                changed.push(format!("display_name → {:?}", v));
+                strategy.manifest.display_name = v.to_string();
+            }
+            "plain_summary" => {
+                changed.push("plain_summary updated".into());
+                strategy.manifest.plain_summary = v.to_string();
+            }
+            "risk_preset_or_config" => {
+                changed.push(format!("risk_preset_or_config → {:?}", v));
+                strategy.manifest.risk_preset_or_config = v.to_string();
+            }
+            "color" => {
+                changed.push(format!("color → {:?}", v));
+                strategy.manifest.color = Some(v.to_string());
+            }
+            other => return Err(CliError::usage(anyhow::anyhow!(
+                "unknown --field '{other}'; supported: display_name, plain_summary, risk_preset_or_config, color"
+            ))),
+        }
+    }
+
+    if changed.is_empty() {
+        println!("no changes for {strategy_id}");
+        return Ok(());
     }
 
     validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
     store.save(&strategy).await.exit_with(XvnExit::Upstream)?;
 
-    let out = serde_json::json!({
-        "strategy_id": strategy_id,
-        "acknowledge_no_filter": strategy.acknowledge_no_filter,
-    });
-    crate::io::print_json(&out)?;
+    println!("updated {strategy_id}");
+    for c in &changed {
+        println!("  {c}");
+    }
     Ok(())
 }
 
@@ -2686,6 +2756,134 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
         );
     }
 
+    Ok(())
+}
+
+#[derive(Debug, serde::Serialize)]
+struct FieldChange {
+    field: String,
+    old: String,
+    new: String,
+}
+
+fn strategy_diff(
+    old: &xvision_engine::strategies::Strategy,
+    new_s: &xvision_engine::strategies::Strategy,
+) -> Vec<FieldChange> {
+    let old_val = serde_json::to_value(old).unwrap_or_default();
+    let new_val = serde_json::to_value(new_s).unwrap_or_default();
+    let mut changes = Vec::new();
+    if let (serde_json::Value::Object(old_map), serde_json::Value::Object(new_map)) = (&old_val, &new_val) {
+        let all_keys: std::collections::BTreeSet<_> = old_map.keys().chain(new_map.keys()).collect();
+        for key in all_keys {
+            let ov = old_map.get(key).unwrap_or(&serde_json::Value::Null);
+            let nv = new_map.get(key).unwrap_or(&serde_json::Value::Null);
+            if ov != nv {
+                changes.push(FieldChange {
+                    field: key.clone(),
+                    old: compact_json(ov),
+                    new: compact_json(nv),
+                });
+            }
+        }
+    }
+    changes
+}
+
+fn compact_json(v: &serde_json::Value) -> String {
+    match serde_json::to_string(v) {
+        Ok(s) if s.len() > 120 => format!("{}…", &s[..117]),
+        Ok(s) => s,
+        Err(_) => "?".into(),
+    }
+}
+
+async fn apply_strategy(file: &std::path::Path, dry_run: bool, json: bool) -> CliResult<()> {
+    let new_s = load_strategy_file(file)?;
+    let id = new_s.manifest.id.clone();
+    validate_strategy(&new_s).exit_with(XvnExit::Usage)?;
+
+    let existing = store().load(&id).await.ok();
+    let changes = existing
+        .as_ref()
+        .map(|old| strategy_diff(old, &new_s))
+        .unwrap_or_default();
+    let action = if existing.is_some() { "update" } else { "create" };
+
+    if dry_run {
+        let out = serde_json::json!({
+            "dry_run": dry_run,
+            "action": action,
+            "strategy_id": id,
+            "changes": changes,
+        });
+        if json {
+            crate::io::print_json(&out)?;
+        } else {
+            eprintln!("DRY RUN — would {} strategy '{}'", action, id);
+            for c in &changes {
+                eprintln!("  {} : {} → {}", c.field, c.old, c.new);
+            }
+            if changes.is_empty() && existing.is_some() {
+                eprintln!("  (no changes)");
+            }
+        }
+        return Ok(());
+    }
+
+    store().save(&new_s).await.exit_with(XvnExit::Upstream)?;
+    if json {
+        crate::io::print_json(&serde_json::json!({
+            "action": action,
+            "strategy_id": id,
+            "changes": changes,
+        }))?;
+    } else {
+        println!("{} {}", action, id);
+        for c in &changes {
+            println!("  {} : {} → {}", c.field, c.old, c.new);
+        }
+        if changes.is_empty() && existing.is_some() {
+            println!("  (no changes)");
+        }
+    }
+    Ok(())
+}
+
+async fn diff_strategy(file: &std::path::Path, json: bool) -> CliResult<()> {
+    let new_s = load_strategy_file(file)?;
+    let id = new_s.manifest.id.clone();
+    match store().load(&id).await {
+        Ok(existing) => {
+            let changes = strategy_diff(&existing, &new_s);
+            if json {
+                crate::io::print_json(&serde_json::json!({
+                    "strategy_id": id,
+                    "changes": changes,
+                }))?;
+            } else {
+                println!("diff for strategy {id}");
+                if changes.is_empty() {
+                    println!("  (no changes)");
+                } else {
+                    for c in &changes {
+                        println!("  {} : {} → {}", c.field, c.old, c.new);
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            if json {
+                crate::io::print_json(&serde_json::json!({
+                    "strategy_id": id,
+                    "changes": [],
+                    "note": "not found — would create",
+                }))?;
+            } else {
+                println!("strategy {id} not found — would create");
+            }
+        }
+    }
     Ok(())
 }
 
