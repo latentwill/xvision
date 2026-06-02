@@ -91,6 +91,25 @@ then pass `--batch <batch_id>` to `eval compare` to resolve run ids automaticall
 
 ---
 
+### `xvn marketplace …`
+
+Testnet marketplace listing, purchase, and attestation commands. The CLI uses
+the mock marketplace driver by default for local automation; setting
+`MARKETPLACE_DRIVER=onchain` returns a usage error because on-chain writes go
+through the dashboard or MCP server.
+
+| Verb | Effect |
+|---|---|
+| `list` | Read `XVN_MARKETPLACE_FIXTURE` or `$XVN_HOME/marketplace/listings.json` and print listing rows as `agent_id`, `version`, `price_usdc`, `seller`, and `status`. Prints `(no listings)` when the fixture is absent or empty. |
+| `publish --agent-id <id> --price <usdc> --manifest-path <path>` | Validate the manifest JSON, hash its content, and publish a mock listing. Prints `listing_id=<id> agent_id=<id>`. |
+| `buy --listing-id <id> --buyer <0xaddress>` | Buy a mock listing for the supplied wallet address. Prints `tx_hash=<hash> license_token_id=<id>`. |
+| `attest --listing-id <id> --cycles <n> --sharpe <f>` | Hash and post an eval attestation payload for a listing. Prints `tx_hash=<hash>`. |
+
+`--price` must be a non-negative finite USDC value. `--buyer` must parse as an
+EVM address.
+
+---
+
 ### `xvn last`
 
 Compact health card for recent eval runs.

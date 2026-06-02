@@ -37,6 +37,8 @@ xvision-memory        = { path = "../xvision-memory" }
 # stays free of dspy-rs. Used by `xvn optimize` for signature/capability
 # validation (--dry-run) and deterministic test-model corpus runs.
 xvision-dspy          = { path = "../xvision-dspy" }
+xvision-marketplace   = { path = "../xvision-marketplace" }
+alloy             = { workspace = true }
 ulid              = "1"
 dirs              = "5"
 blake3            = "1.5"
