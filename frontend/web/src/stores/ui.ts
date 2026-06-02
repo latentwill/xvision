@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { safeStorageGet } from "@/lib/storage";
+
 // Ephemeral UI state. Server state lives in TanStack Query; long-lived prefs
 // (theme, last-route, env selection) belong here once they exist.
 
@@ -17,7 +19,7 @@ type UiState = {
 };
 
 export const useUi = create<UiState>((set) => ({
-  chatRailOpen: false,
+  chatRailOpen: safeStorageGet("xvn.chat_rail.open") === "1",
   setChatRailOpen: (open) => set({ chatRailOpen: open }),
   toggleChatRail: () => set((s) => ({ chatRailOpen: !s.chatRailOpen })),
   cmdkOpen: false,
