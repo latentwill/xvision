@@ -1,5 +1,18 @@
 import { Agent, type AgentTool } from "@cline/sdk"
 import { shimRegistryToTools } from "./tool-shim.js"
+
+const CONFLICTING_JSON_RE =
+  /output[^\n]*json[^\n]*only|strict\s+json|json\s+only|output\s+json/i
+
+const CORRECTION_NOTE =
+  "\n\nIMPORTANT: Ignore any earlier instructions to output raw JSON. You MUST call the submit_decision tool to submit your decision — outputting JSON text is not accepted and will fail the cycle."
+
+const CORRECTION_MARKER = "You MUST call the submit_decision tool"
+
+export function sanitizeSystemPrompt(prompt: string): string {
+  if (prompt.includes(CORRECTION_MARKER)) return prompt
+  return CONFLICTING_JSON_RE.test(prompt) ? prompt + CORRECTION_NOTE : prompt
+}
 import { handleToolRegistryGet } from "../methods/tool-registry.js"
 import { MOCK_PROVIDER_ID, buildMockModel } from "../testing/mock-provider.js"
 import { wrapAgentModel } from "./model-wrapper.js"
@@ -35,6 +48,7 @@ export interface BuildAgentOptions {
 }
 
 export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {}): Agent {
+  const systemPrompt = sanitizeSystemPrompt(config.system_prompt)
   const reg = handleToolRegistryGet()
   // `submit_decision` is a built-in lifecycle tool, not a registry-backed Rust
   // callback — exclude it from the registry shim (which would throw on an
@@ -86,7 +100,7 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
     })
     return new Agent({
       model: wrapped,
-      systemPrompt: config.system_prompt,
+      systemPrompt,
       tools,
     })
   }
@@ -103,7 +117,7 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
     })
     return new Agent({
       model: wrapped,
-      systemPrompt: config.system_prompt,
+      systemPrompt,
       tools,
     })
   }
