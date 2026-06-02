@@ -78,6 +78,11 @@ pub struct ClineDispatchCtx {
     /// `None` ⇒ no recording (live/backtest default): `record = false`,
     /// `slot_role = None` — byte-identical to the pre-§2-B path.
     pub recording_slot_role: Option<String>,
+    /// Multi-asset (B4) tool-asset guard. When `Some`, the sidecar callback
+    /// dispatcher reads this value to validate that tool calls reference the
+    /// current decision asset. Updated by the executor per decision cycle.
+    /// `None` for single-asset and non-sidecar runs.
+    pub tool_asset_guard: Option<std::sync::Arc<tokio::sync::RwLock<Option<String>>>>,
 }
 
 /// Scope at which a `FilterSignal` is meaningful. First-class so cross-asset

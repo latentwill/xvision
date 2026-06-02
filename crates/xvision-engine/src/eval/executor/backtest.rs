@@ -770,6 +770,11 @@ impl Executor {
         // doesn't leak into ETH's flip detection.
         let mut last_open_direction: BTreeMap<xvision_core::trading::AssetSymbol, GuardAction> =
             BTreeMap::new();
+        // Per-position (stop_loss_pct, take_profit_pct) from the TraderDecision that
+        // opened the position. Checked on every subsequent bar for auto-close.
+        // Values are 0.0 when the model didn't specify a threshold.
+        let mut open_position_sltp: BTreeMap<xvision_core::trading::AssetSymbol, (f32, f32)> =
+            BTreeMap::new();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
         let mut peak_equity = initial.max(0.0);
@@ -941,6 +946,99 @@ impl Executor {
                     // recorded only the filter evaluation + dense equity).
                     // Equity is recorded once per timestamp below.
                     continue 'asset;
+                }
+
+                // SL/TP auto-close: check before the LLM dispatch so we don't
+                // spend tokens when a position closes mechanically this bar.
+                // Fires for both Agentic and Mechanistic strategies that have
+                // close_policies configured. Uses bar.high/bar.low for intra-bar
+                // detection; fills at the threshold price (not next-bar open).
+                {
+                    let cur_pos = book.position(asset_sym);
+                    let cur_entry = book.entry_price(asset_sym);
+                    // Mechanistic strategies: check close_policies from config.
+                    let mut sltp = strategy
+                        .mechanistic_config
+                        .as_ref()
+                        .and_then(|cfg| {
+                            check_sltp_trigger(cur_pos, cur_entry, bar.high, bar.low, &cfg.close_policies)
+                        });
+                    // Agentic strategies: check SL/TP stored from the opening TraderDecision.
+                    if sltp.is_none() {
+                        if let Some(&(sl_pct, tp_pct)) = open_position_sltp.get(&asset_sym) {
+                            if cur_pos.abs() > f64::EPSILON && cur_entry > 0.0 {
+                                let is_long = cur_pos > 0.0;
+                                if tp_pct > 0.0 {
+                                    let tp = if is_long {
+                                        cur_entry * (1.0 + tp_pct as f64 / 100.0)
+                                    } else {
+                                        cur_entry * (1.0 - tp_pct as f64 / 100.0)
+                                    };
+                                    if (is_long && bar.high >= tp) || (!is_long && bar.low <= tp) {
+                                        sltp = Some(("take_profit", tp));
+                                    }
+                                }
+                                if sltp.is_none() && sl_pct > 0.0 {
+                                    let sl = if is_long {
+                                        cur_entry * (1.0 - sl_pct as f64 / 100.0)
+                                    } else {
+                                        cur_entry * (1.0 + sl_pct as f64 / 100.0)
+                                    };
+                                    if (is_long && bar.low <= sl) || (!is_long && bar.high >= sl) {
+                                        sltp = Some(("stop_loss", sl));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some((trigger_label, sltp_price)) = sltp {
+                        if cur_pos < -f64::EPSILON {
+                            *short_bars_held.entry(asset_sym).or_insert(0) += 1;
+                        }
+                        let traded_units = cur_pos.abs();
+                        let fee = traded_units * sltp_price * (default_taker_bps / 10_000.0);
+                        let realized_pnl = cur_pos * (sltp_price - cur_entry) - fee;
+                        let borrow_deduct = if cur_pos < -f64::EPSILON {
+                            let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
+                            let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
+                                .and_then(|o| o.borrow_bps_per_day)
+                                .unwrap_or(scenario.venue.borrow_bps_per_day);
+                            compute_borrow_cost(cur_pos.abs(), cur_entry, borrow_bps, held, bar_secs)
+                        } else {
+                            0.0
+                        };
+                        let net_pnl = realized_pnl - borrow_deduct;
+                        book.set_position(asset_sym, 0.0, 0.0);
+                        book.add_realized(net_pnl);
+                        last_open_direction.remove(&asset_sym);
+                        open_position_sltp.remove(&asset_sym);
+                        n_trades += 1;
+                        let justification =
+                            format!("auto-close: {trigger_label} at {sltp_price:.6}");
+                        let decision_row = DecisionRow {
+                            run_id: run.id.clone(),
+                            decision_index: decision_idx,
+                            timestamp: bar.timestamp,
+                            asset: asset.clone(),
+                            action: "flat".into(),
+                            conviction: Some(1.0),
+                            justification: Some(justification.clone()),
+                            reasoning: Some(justification),
+                            order_size: Some(traded_units),
+                            fill_price: Some(sltp_price),
+                            fill_size: Some(traded_units),
+                            fee: Some(fee),
+                            pnl_realized: if net_pnl != 0.0 { Some(net_pnl) } else { None },
+                        };
+                        store.record_decision(&decision_row).await?;
+                        let es = early_stop_state.get_mut(&asset_sym)
+                            .expect("early_stop_state seeded for every active asset");
+                        es.recent_actions.clear();
+                        es.recent_convictions.clear();
+                        es.prev_position = 0.0;
+                        decision_idx += 1;
+                        continue 'asset;
+                    }
                 }
 
                 // History slice: last `history_window` bars strictly before
@@ -1862,12 +1960,15 @@ impl Executor {
                 match GuardAction::parse(&applied_action) {
                     GuardAction::LongOpen => {
                         last_open_direction.insert(asset_sym, GuardAction::LongOpen);
+                        open_position_sltp.insert(asset_sym, (parsed.stop_loss_pct, parsed.take_profit_pct));
                     }
                     GuardAction::ShortOpen => {
                         last_open_direction.insert(asset_sym, GuardAction::ShortOpen);
+                        open_position_sltp.insert(asset_sym, (parsed.stop_loss_pct, parsed.take_profit_pct));
                     }
                     GuardAction::Flat => {
                         last_open_direction.remove(&asset_sym);
+                        open_position_sltp.remove(&asset_sym);
                     }
                     GuardAction::Hold | GuardAction::Other => {}
                 }
@@ -3292,6 +3393,8 @@ fn mechanistic_action(
             action: "hold".into(),
             conviction: 0.0,
             justification: "mechanistic: no open position".into(),
+            stop_loss_pct: 0.0,
+            take_profit_pct: 0.0,
         };
     }
     let pnl_pct = if position > 0.0 {
@@ -3306,6 +3409,8 @@ fn mechanistic_action(
                     action: "flat".into(),
                     conviction: 1.0,
                     justification: format!("mechanistic: stop-loss ({pnl_pct:.2}% <= -{pct:.2}%)"),
+                    stop_loss_pct: 0.0,
+                    take_profit_pct: 0.0,
                 };
             }
             ClosePolicy::TakeProfit { pct } if pnl_pct >= *pct => {
@@ -3313,6 +3418,8 @@ fn mechanistic_action(
                     action: "flat".into(),
                     conviction: 1.0,
                     justification: format!("mechanistic: take-profit ({pnl_pct:.2}% >= {pct:.2}%)"),
+                    stop_loss_pct: 0.0,
+                    take_profit_pct: 0.0,
                 };
             }
             _ => {}
@@ -3322,7 +3429,54 @@ fn mechanistic_action(
         action: "hold".into(),
         conviction: 0.0,
         justification: "mechanistic: no close policy triggered".into(),
+        stop_loss_pct: 0.0,
+        take_profit_pct: 0.0,
     }
+}
+
+/// Check if the current bar's high/low triggers a stop-loss or take-profit
+/// for an open position. Returns `(trigger_label, fill_price)` when triggered.
+/// Take-profit is checked before stop-loss; fill price is the threshold price.
+/// Only `ClosePolicy::StopLoss` and `ClosePolicy::TakeProfit` are matched.
+fn check_sltp_trigger(
+    position: f64,
+    entry_price: f64,
+    bar_high: f64,
+    bar_low: f64,
+    close_policies: &[ClosePolicy],
+) -> Option<(&'static str, f64)> {
+    if position.abs() < f64::EPSILON || entry_price <= 0.0 {
+        return None;
+    }
+    let is_long = position > 0.0;
+    for policy in close_policies {
+        match policy {
+            ClosePolicy::TakeProfit { pct } => {
+                let tp = if is_long {
+                    entry_price * (1.0 + pct / 100.0)
+                } else {
+                    entry_price * (1.0 - pct / 100.0)
+                };
+                let hit = if is_long { bar_high >= tp } else { bar_low <= tp };
+                if hit {
+                    return Some(("take_profit", tp));
+                }
+            }
+            ClosePolicy::StopLoss { pct } => {
+                let sl = if is_long {
+                    entry_price * (1.0 - pct / 100.0)
+                } else {
+                    entry_price * (1.0 + pct / 100.0)
+                };
+                let hit = if is_long { bar_low <= sl } else { bar_high >= sl };
+                if hit {
+                    return Some(("stop_loss", sl));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Find the trader slot's repair context — system prompt, model id,
@@ -3977,6 +4131,83 @@ mod tests {
         let strategy = empty_strategy();
         let slots = vec![resolved("regime", "claude-opus-4-7")];
         assert!(trader_model_id(&slots, &strategy).is_none());
+    }
+
+    // ── SL/TP auto-close unit tests ──────────────────────────────────────────
+
+    use crate::strategies::mechanistic::ClosePolicy;
+
+    #[test]
+    fn sltp_trigger_long_tp_fires_when_high_reaches_threshold() {
+        let policies = vec![ClosePolicy::TakeProfit { pct: 2.0 }];
+        // entry=100, TP at 102.0; bar_high=102.0 triggers
+        let r = check_sltp_trigger(1.0, 100.0, 102.0, 99.0, &policies);
+        let (label, price) = r.expect("TP must trigger");
+        assert_eq!(label, "take_profit");
+        assert!((price - 102.0).abs() < 1e-9, "fill at TP threshold");
+    }
+
+    #[test]
+    fn sltp_trigger_long_tp_does_not_fire_below_threshold() {
+        let policies = vec![ClosePolicy::TakeProfit { pct: 2.0 }];
+        // bar_high=101.99 < 102.0 → no trigger
+        let r = check_sltp_trigger(1.0, 100.0, 101.99, 99.0, &policies);
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn sltp_trigger_long_sl_fires_when_low_at_threshold() {
+        let policies = vec![ClosePolicy::StopLoss { pct: 1.0 }];
+        // entry=100, SL at 99.0; bar_low=99.0 triggers
+        let r = check_sltp_trigger(1.0, 100.0, 100.5, 99.0, &policies);
+        let (label, price) = r.expect("SL must trigger");
+        assert_eq!(label, "stop_loss");
+        assert!((price - 99.0).abs() < 1e-9, "fill at SL threshold");
+    }
+
+    #[test]
+    fn sltp_trigger_short_tp_fires_when_low_drops_to_threshold() {
+        let policies = vec![ClosePolicy::TakeProfit { pct: 2.0 }];
+        // short entry=100, TP at 98.0 (profit on short = price drop)
+        // bar_low=98.0 triggers
+        let r = check_sltp_trigger(-1.0, 100.0, 100.5, 98.0, &policies);
+        let (label, price) = r.expect("short TP must trigger");
+        assert_eq!(label, "take_profit");
+        assert!((price - 98.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sltp_trigger_short_sl_fires_when_high_reaches_threshold() {
+        let policies = vec![ClosePolicy::StopLoss { pct: 2.0 }];
+        // short entry=100, SL at 102.0 (loss on short = price rise)
+        // bar_high=102.0 triggers
+        let r = check_sltp_trigger(-1.0, 100.0, 102.0, 99.0, &policies);
+        let (label, price) = r.expect("short SL must trigger");
+        assert_eq!(label, "stop_loss");
+        assert!((price - 102.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sltp_trigger_flat_position_never_fires() {
+        let policies = vec![ClosePolicy::StopLoss { pct: 1.0 }];
+        assert!(check_sltp_trigger(0.0, 100.0, 50.0, 50.0, &policies).is_none());
+    }
+
+    #[test]
+    fn sltp_trigger_tp_takes_priority_over_sl_when_both_hit() {
+        let policies = vec![
+            ClosePolicy::TakeProfit { pct: 2.0 },
+            ClosePolicy::StopLoss { pct: 1.0 },
+        ];
+        // bar that hits both TP (high=102) and SL (low=98.9, below entry*(1-0.01)=99)
+        let r = check_sltp_trigger(1.0, 100.0, 102.0, 98.9, &policies);
+        let (label, _) = r.expect("must trigger");
+        assert_eq!(label, "take_profit", "TP listed first wins");
+    }
+
+    #[test]
+    fn sltp_trigger_no_policies_returns_none() {
+        assert!(check_sltp_trigger(1.0, 100.0, 200.0, 50.0, &[]).is_none());
     }
 }
 
