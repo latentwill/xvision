@@ -1615,8 +1615,6 @@ function ForgetPanel(props: ForgetPanelProps) {
     props.mode === "agent"
       ? "Forget all memory for this agent?"
       : "Forget all global memory?";
-  const aria =
-    props.mode === "agent" ? "Forget all memory" : "Forget all global memory";
   const namespaceCode =
     props.mode === "agent" ? agentNamespace(props.agentId) : "global";
 
