@@ -36,8 +36,10 @@
 
 pub mod client;
 pub mod contracts;
+pub mod genart;
 pub mod manifest;
 
 pub use client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
 pub use contracts::MarketplaceAddresses;
+pub use genart::{generate_svg, generate_token_uri};
 pub use manifest::{AgentManifest, ReputationEntry, StrategyConfigSummary, TradeOutcome};
