@@ -305,8 +305,6 @@ pub enum Command {
     /// optimization pass over a corpus, compile memory demos, inspect/export/import
     /// results, and accept a snapshot as a child agent. See `xvn optimize --help`.
     Optimize(commands::optimize::OptimizeCmd),
-    /// Marketplace listing, sales, and attestation verbs.
-    Marketplace(commands::marketplace::MarketplaceCmd),
     /// Show the most recent eval run(s) as a compact health card.
     Last {
         /// Override the xvn home directory.
@@ -451,7 +449,6 @@ impl Cli {
             Command::Model(cmd) => commands::model::run(cmd).await,
             Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
             Command::Optimize(cmd) => commands::optimize::run(cmd).await,
-            Command::Marketplace(cmd) => commands::marketplace::run(cmd).await,
             Command::Last {
                 xvn_home,
                 strategy,

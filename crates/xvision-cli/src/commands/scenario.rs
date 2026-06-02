@@ -580,6 +580,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
                 partial_fills: false,
                 volume_constraints: None,
             },
+            borrow_bps_per_day: 5.0,
             overrides: Vec::new(),
         },
         data_source: DataSource::AlpacaHistorical {
