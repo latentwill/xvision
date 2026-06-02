@@ -654,6 +654,7 @@ mod tests {
                 trader_summary: "test fixture decision for unit test".into(),
                 asset: AssetSymbol::Btc,
             },
+            warnings: vec![],
         }
     }
 

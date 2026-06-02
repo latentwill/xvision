@@ -393,11 +393,15 @@ pub enum VetoReason {
 pub enum RiskDecision {
     Approved {
         decision: TraderDecision,
+        #[serde(default)]
+        warnings: Vec<String>,
     },
     Modified {
         original: TraderDecision,
         modified: TraderDecision,
         reason: VetoReason,
+        #[serde(default)]
+        warnings: Vec<String>,
     },
     Vetoed {
         original: TraderDecision,
@@ -409,7 +413,7 @@ impl RiskDecision {
     /// The decision the executor should act on (None for veto).
     pub fn effective(&self) -> Option<&TraderDecision> {
         match self {
-            Self::Approved { decision }
+            Self::Approved { decision, .. }
             | Self::Modified {
                 modified: decision, ..
             } => Some(decision),
@@ -545,7 +549,7 @@ mod tests {
     fn risk_decision_round_trips_json_for_each_variant() {
         let d = fixture_decision();
         let cases = vec![
-            RiskDecision::Approved { decision: d.clone() },
+            RiskDecision::Approved { decision: d.clone(), warnings: vec![] },
             RiskDecision::Modified {
                 original: d.clone(),
                 modified: TraderDecision {
@@ -553,6 +557,7 @@ mod tests {
                     ..d.clone()
                 },
                 reason: VetoReason::PositionTooLarge,
+                warnings: vec![],
             },
             RiskDecision::Vetoed {
                 original: d.clone(),
@@ -569,7 +574,7 @@ mod tests {
     #[test]
     fn risk_decision_effective_skips_veto() {
         let d = fixture_decision();
-        assert!(RiskDecision::Approved { decision: d.clone() }
+        assert!(RiskDecision::Approved { decision: d.clone(), warnings: vec![] }
             .effective()
             .is_some());
         assert!(RiskDecision::Vetoed {
@@ -651,6 +656,7 @@ mod tests {
     fn risk_decision_rejects_unknown_field() {
         let approved = RiskDecision::Approved {
             decision: fixture_decision(),
+            warnings: vec![],
         };
         let valid = serde_json::to_value(&approved).unwrap();
         let mut object = valid.as_object().unwrap().clone();

@@ -437,7 +437,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
             RiskDecision::Vetoed { .. } => {
                 return Err(ExecutorError::NotActionable("decision was vetoed".to_string()));
             }
-            RiskDecision::Approved { decision: td } => td,
+            RiskDecision::Approved { decision: td, .. } => td,
             RiskDecision::Modified { modified: td, .. } => td,
         };
 
@@ -749,6 +749,7 @@ mod tests {
                 trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
                 asset: AssetSymbol::Btc,
             },
+            warnings: vec![],
         }
     }
 
@@ -847,6 +848,7 @@ mod tests {
                 trader_summary: "Long ETH on confirmed range break with 2:1 R:R.".into(),
                 asset: AssetSymbol::Eth,
             },
+            warnings: vec![],
         };
         executor.submit(&decision).await.expect("submit should succeed");
 
