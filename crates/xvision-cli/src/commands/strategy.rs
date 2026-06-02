@@ -960,6 +960,8 @@ async fn new_atomic(
         activation_mode: xvision_engine::strategies::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: no_filter_warning,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
 
     // 3. Validate shape.

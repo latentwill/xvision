@@ -22,7 +22,6 @@ use xvision_engine::autooptimizer::{
     mutator::Mutator,
     parent_policy::ParentPolicy,
     scenario_synthesis::synthesize_baseline_untouched_scenario,
-
 };
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::eval::scenario::{

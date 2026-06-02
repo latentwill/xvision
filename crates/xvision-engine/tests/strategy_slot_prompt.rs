@@ -96,6 +96,8 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
     validate_strategy(&strategy).expect("strategy with AgentRef and no slot prompt validates");
 }

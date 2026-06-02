@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crate::agents::Capability;
 use crate::eval::scenario::Scenario;
 use crate::strategies::agent_ref::{canonical_role, EdgePredicate};
-use crate::strategies::{PipelineKind, Strategy};
+use crate::strategies::{DecisionMode, PipelineKind, Strategy};
 use xvision_filters::ActivationMode;
 
 #[derive(Debug, Error)]
@@ -32,9 +32,21 @@ pub enum ValidationError {
     InvalidRisk(String),
     #[error("required tool '{0}' not in any slot's allowed_tools")]
     UndeclaredTool(String),
+    #[error("mechanistic strategy requires mechanistic_config to be set")]
+    MechanisticConfigMissing,
+    #[error("mechanistic strategy's mechanistic_config must have at least one entry rule or close policy")]
+    MechanisticConfigEmpty,
 }
 
 pub fn validate_strategy(b: &Strategy) -> Result<(), ValidationError> {
+    if b.decision_mode == DecisionMode::Mechanistic {
+        match b.mechanistic_config.as_ref() {
+            None => return Err(ValidationError::MechanisticConfigMissing),
+            Some(cfg) if !cfg.has_rules() => return Err(ValidationError::MechanisticConfigEmpty),
+            _ => {}
+        }
+        return validate_common(b);
+    }
     if !b.agents.is_empty() {
         validate_agent_pipeline(b)?;
         validate_common(b)?;
@@ -145,6 +157,9 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
 /// Callers that already emit a topology-based warning (see `no_filter_warnings`)
 /// should suppress this one to avoid near-duplicate lines for the same concern.
 pub fn every_bar_warning(s: &Strategy) -> Option<String> {
+    if !s.decision_mode.is_agentic() {
+        return None;
+    }
     if s.acknowledge_no_filter {
         return None;
     }
@@ -486,6 +501,8 @@ mod preflight_tests {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         }
     }
 
@@ -655,6 +672,46 @@ mod preflight_tests {
             result.warnings.iter().any(|w| w.contains("burns tokens")),
             "expected every_bar_warning in preflight output, got: {:?}",
             result.warnings,
+        );
+    }
+
+    // ── mechanistic validation ───────────────────────────────────────────────
+
+    #[test]
+    fn mechanistic_strategy_with_rules_passes_validate() {
+        use crate::strategies::mechanistic::{ClosePolicy, MechanisticConfig};
+        let mut s = make_strategy_with_agent("BTC/USD", 60);
+        s.decision_mode = DecisionMode::Mechanistic;
+        s.mechanistic_config = Some(MechanisticConfig {
+            entry_rules: vec![],
+            close_policies: vec![ClosePolicy::StopLoss { pct: 2.0 }],
+        });
+        s.agents.clear();
+        s.trader_slot = None;
+        validate_strategy(&s).expect("mechanistic with close policy must pass validate_strategy");
+    }
+
+    #[test]
+    fn mechanistic_strategy_with_empty_config_fails_validate() {
+        use crate::strategies::mechanistic::MechanisticConfig;
+        let mut s = make_strategy_with_agent("BTC/USD", 60);
+        s.decision_mode = DecisionMode::Mechanistic;
+        s.mechanistic_config = Some(MechanisticConfig::default());
+        s.agents.clear();
+        let err = validate_strategy(&s).expect_err("empty mechanistic_config must fail");
+        assert!(
+            matches!(err, ValidationError::MechanisticConfigEmpty),
+            "expected MechanisticConfigEmpty, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn every_bar_warning_returns_none_for_mechanistic_strategy() {
+        let mut s = make_strategy_with_agent("BTC/USD", 60);
+        s.decision_mode = DecisionMode::Mechanistic;
+        assert!(
+            every_bar_warning(&s).is_none(),
+            "mechanistic strategy must not produce every_bar_warning (no LLM cost)"
         );
     }
 

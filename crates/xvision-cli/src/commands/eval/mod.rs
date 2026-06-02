@@ -1885,6 +1885,9 @@ mod tests {
             "--live-time-limit-secs",
             "3600",
         ]);
-        assert!(result.is_err(), "--live-duration and --live-time-limit-secs must conflict");
+        assert!(
+            result.is_err(),
+            "--live-duration and --live-time-limit-secs must conflict"
+        );
     }
 }
