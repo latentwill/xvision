@@ -19,6 +19,18 @@ async fn main() -> ExitCode {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+
+    // Mirror the daemon startup: export provider secrets from
+    // $XVN_HOME/secrets/providers.toml into the current process env so
+    // commands like `eval run` work identically whether called via
+    // `docker exec`, a plain CLI binary, or the HTTP API path inside the
+    // daemon. Best-effort — a missing file (new install) or unresolvable
+    // home is silently ignored; individual commands surface missing-key
+    // errors when they actually need the key.
+    if let Ok(home) = xvision_cli::commands::home::resolve_xvn_home_env() {
+        let _ = xvision_engine::api::settings::providers::load_providers_secrets_into_env(&home).await;
+    }
+
     let cli = Cli::parse();
     match cli.run().await {
         Ok(()) => XvnExit::Success.into(),
