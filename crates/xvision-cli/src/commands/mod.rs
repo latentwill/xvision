@@ -16,6 +16,7 @@ pub mod home;
 pub mod indicator;
 pub mod intern;
 pub mod last;
+pub mod marketplace;
 pub mod memory;
 pub mod metrics;
 pub mod migrate;
