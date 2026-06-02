@@ -22,7 +22,6 @@ use xvision_engine::autooptimizer::{
     mutator::Mutator,
     parent_policy::ParentPolicy,
     scenario_synthesis::synthesize_baseline_untouched_scenario,
-    session::{default_key_path, load_or_generate_key},
 };
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::eval::scenario::{
@@ -74,13 +73,8 @@ pub async fn start_evening_cycle(
             field: "strategy_id".into(),
             msg: "strategy_id is required for dashboard evening-cycle launches".into(),
         })?;
-    let (bundle_hash, strategy) = load_strategy_parent(
-        strategy_id,
-        &state.xvn_home,
-        &lineage_store,
-        &strategy_blob_store,
-    )
-    .await?;
+    let (bundle_hash, strategy) =
+        load_strategy_parent(strategy_id, &state.xvn_home, &lineage_store, &strategy_blob_store).await?;
     let mut parent_strategies = HashMap::new();
     parent_strategies.insert(bundle_hash.to_hex(), strategy);
     let explicit_parent_hashes = vec![bundle_hash];

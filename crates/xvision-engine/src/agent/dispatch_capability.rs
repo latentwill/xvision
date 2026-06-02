@@ -373,12 +373,17 @@ async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
     let span_id = crate::agent::observability::fresh_span_id();
     let obs_clone = input.obs.clone();
     if let Some(obs) = obs_clone.as_ref() {
-        obs.emit_filter_eval_started(&span_id, None, &input.scenario_id).await;
+        obs.emit_filter_eval_started(&span_id, None, &input.scenario_id)
+            .await;
     }
     let result = crate::agent::filter_dispatch::run_llm_filter(input).await;
     match result {
         Ok(result) => {
-            let verdict = if result.signal.payload.is_null() { "reject" } else { "pass" };
+            let verdict = if result.signal.payload.is_null() {
+                "reject"
+            } else {
+                "pass"
+            };
             if let Some(obs) = obs_clone.as_ref() {
                 obs.emit_filter_eval_finished(&span_id, verdict, None).await;
             }

@@ -439,6 +439,8 @@ mod tests {
             }),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({"ema_fast": 12}),
+            decision_mode: Default::default(),
+            mechanistic_config: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,

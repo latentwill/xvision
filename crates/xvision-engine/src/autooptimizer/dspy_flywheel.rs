@@ -50,10 +50,7 @@ pub async fn write_cycle_findings(
     Ok(())
 }
 
-pub async fn query_dsr_prefix(
-    store: &MemoryStore,
-    namespace: &str,
-) -> anyhow::Result<Option<String>> {
+pub async fn query_dsr_prefix(store: &MemoryStore, namespace: &str) -> anyhow::Result<Option<String>> {
     let matches = store.query(namespace, &static_embedding(), 1, None).await?;
     Ok(matches.into_iter().next().map(|m| m.text))
 }
@@ -125,7 +122,13 @@ pub async fn handle_cycle_dspy(
         return Ok(());
     };
     write_cycle_findings(&ctx.store, &ctx.namespace, findings, cycle_id).await?;
-    maybe_trigger_compile(&ctx.store, ctx.bridge.as_ref(), &ctx.namespace, config.dspy_pattern_cohort_threshold).await
+    maybe_trigger_compile(
+        &ctx.store,
+        ctx.bridge.as_ref(),
+        &ctx.namespace,
+        config.dspy_pattern_cohort_threshold,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -170,7 +173,9 @@ mod tests {
     async fn dspy_disabled_skips_compilation() {
         let store = Arc::new(MemoryStore::open_in_memory().await.unwrap());
         let called = Arc::new(Mutex::new(false));
-        let bridge = Arc::new(RecordingBridge { called: Arc::clone(&called) });
+        let bridge = Arc::new(RecordingBridge {
+            called: Arc::clone(&called),
+        });
         let ctx = DspyContext {
             store: Arc::clone(&store),
             bridge,
@@ -183,7 +188,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!*called.lock().unwrap(), "bridge must not be called when dspy_enabled=false");
+        assert!(
+            !*called.lock().unwrap(),
+            "bridge must not be called when dspy_enabled=false"
+        );
         let count = store.count_live_observations("test:disabled").await.unwrap();
         assert_eq!(count, 0, "no observations must be written when disabled");
     }
@@ -192,7 +200,9 @@ mod tests {
     async fn dspy_enabled_triggers_compile_on_threshold() {
         let store = Arc::new(MemoryStore::open_in_memory().await.unwrap());
         let called = Arc::new(Mutex::new(false));
-        let bridge = Arc::new(RecordingBridge { called: Arc::clone(&called) });
+        let bridge = Arc::new(RecordingBridge {
+            called: Arc::clone(&called),
+        });
         let ctx = DspyContext {
             store: Arc::clone(&store),
             bridge,
@@ -202,7 +212,9 @@ mod tests {
         let config = make_config(true, threshold);
 
         // write threshold-1 findings first: bridge must not fire yet
-        let initial_findings: Vec<_> = (0..threshold - 1).map(|i| make_finding(&format!("pre-{i}"))).collect();
+        let initial_findings: Vec<_> = (0..threshold - 1)
+            .map(|i| make_finding(&format!("pre-{i}")))
+            .collect();
         handle_cycle_dspy(&config, Some(&ctx), &initial_findings, "cycle-1")
             .await
             .unwrap();

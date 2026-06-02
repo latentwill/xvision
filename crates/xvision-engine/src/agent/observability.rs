@@ -1393,9 +1393,15 @@ impl ObsEmitter {
             SpanStatus::Ok
         };
         let mut payload = serde_json::Map::new();
-        payload.insert("verdict".to_string(), serde_json::Value::String(verdict.to_string()));
+        payload.insert(
+            "verdict".to_string(),
+            serde_json::Value::String(verdict.to_string()),
+        );
         if let Some(r) = veto_reason {
-            payload.insert("veto_reason".to_string(), serde_json::Value::String(r.to_string()));
+            payload.insert(
+                "veto_reason".to_string(),
+                serde_json::Value::String(r.to_string()),
+            );
         }
         if let Some(qty) = modified_qty {
             if let Some(n) = serde_json::Number::from_f64(qty) {
@@ -1476,12 +1482,7 @@ impl ObsEmitter {
 
     /// Open a `filter.eval` span around one LLM filter-capability dispatch.
     /// Pair with `emit_filter_eval_finished` using the same `span_id`.
-    pub async fn emit_filter_eval_started(
-        &self,
-        span_id: &str,
-        parent_span_id: Option<String>,
-        asset: &str,
-    ) {
+    pub async fn emit_filter_eval_started(&self, span_id: &str, parent_span_id: Option<String>, asset: &str) {
         self.bus
             .publish(RunEvent::SpanStarted(SpanStartedEvent {
                 span_id: span_id.to_string(),
@@ -1498,12 +1499,7 @@ impl ObsEmitter {
     }
 
     /// Close a `filter.eval` span. `verdict` is `"pass"` or `"reject"`.
-    pub async fn emit_filter_eval_finished(
-        &self,
-        span_id: &str,
-        verdict: &str,
-        reason: Option<&str>,
-    ) {
+    pub async fn emit_filter_eval_finished(&self, span_id: &str, verdict: &str, reason: Option<&str>) {
         let error_json = if verdict != "pass" {
             Some(serde_json::json!({ "verdict": verdict, "reason": reason }).to_string())
         } else {
@@ -1522,7 +1518,6 @@ impl ObsEmitter {
             }))
             .await;
     }
-
 }
 
 /// Emit a `tracing::debug!` line for an unpriced `(provider, model)`

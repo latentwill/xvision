@@ -329,6 +329,7 @@ export function EvalRunsRoute() {
   const desktopColumns = [
     { key: "select", label: "", width: 32 },
     { key: "run", label: "Run" },
+    { key: "strategy", label: "Strategy" },
     { key: "scenario", label: "Scenario" },
     { key: "mode", label: "Mode" },
     { key: "status", label: "Status" },
@@ -587,10 +588,7 @@ function DesktopRow({
         />
       </td>
       <td className="px-3 py-3">
-        <div className="text-[13px] text-text font-medium">
-          {displayStrategyName(row.agent_id, strategies)}
-        </div>
-        <div className="mt-0.5 text-[11px] text-text-2">
+        <div className="text-[11px] text-text-2">
           {evalRunDisambiguator(row, allRows)}
         </div>
         <div
@@ -599,6 +597,15 @@ function DesktopRow({
         >
           {row.id}
         </div>
+      </td>
+      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+        <Link
+          to={`/strategies/${row.agent_id}`}
+          className="text-[13px] text-text-2 hover:text-text hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {displayStrategyName(row.agent_id, strategies)}
+        </Link>
       </td>
       <td className="px-3 py-3 text-text-2">
         {displayScenarioName(row.scenario_id, scenarios)}
