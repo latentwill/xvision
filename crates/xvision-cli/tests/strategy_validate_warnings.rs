@@ -118,6 +118,8 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         };
         let store = FilesystemStore::new(strategy_store_dir(&home));
         store.save(&strategy).await.unwrap();

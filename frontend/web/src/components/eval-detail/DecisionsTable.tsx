@@ -121,6 +121,30 @@ function aggregateFilterActivity(
   return { barsScanned, wakeups, suppressed: barsScanned - wakeups };
 }
 
+const EXIT_REASON_TONE: Record<string, string> = {
+  stop_loss: "text-danger border-danger/30 bg-danger/10",
+  take_profit: "text-gold border-gold/30 bg-gold/10",
+  trailing_stop: "text-warn border-warn/30 bg-warn/10",
+  time_expiry: "text-text-2 border-border bg-surface-elev",
+  signal: "text-info border-info/30 bg-info/10",
+  manual: "text-text-2 border-border bg-surface-elev",
+};
+
+function exitReasonLabel(reason: string): string {
+  return reason.replace(/_/g, " ");
+}
+
+function ExitReasonTag({ reason }: { reason: string }) {
+  const tone = EXIT_REASON_TONE[reason] ?? "text-text-2 border-border bg-surface-elev";
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded-sm border ${tone}`}
+    >
+      {exitReasonLabel(reason)}
+    </span>
+  );
+}
+
 function fmtPnl(pnl: number | null | undefined): string {
   if (pnl == null || pnl === 0) return "—";
   const abs = Math.abs(pnl).toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -432,7 +456,15 @@ export function DecisionsTable({
                       )}
                     </td>
                     <td className="px-4 py-2 text-text-2 truncate max-w-[1px]">
-                      {isFiltered || !d.just ? <span className="text-text-4">—</span> : d.just}
+                      {isFiltered ? (
+                        <span className="text-text-4">—</span>
+                      ) : d.exit_reason ? (
+                        <ExitReasonTag reason={d.exit_reason} />
+                      ) : d.just ? (
+                        d.just
+                      ) : (
+                        <span className="text-text-4">—</span>
+                      )}
                     </td>
                     <td
                       className="px-4 py-2 tabular-nums text-right"

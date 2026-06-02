@@ -109,22 +109,29 @@ async fn delete_strategy_unknown_returns_404() {
 }
 
 #[tokio::test]
-async fn put_slot_updates_prompt() {
+async fn put_slot_updates_attestation() {
     let (server, _tmp, state) = boot().await;
     let id = create_draft(&state).await;
 
     let response = server
         .put(&format!("/api/strategy/{id}/slot/trader"))
-        .json(&serde_json::json!({ "prompt": "Decide carefully." }))
+        .json(&serde_json::json!({ "attested_with": "anthropic.claude-sonnet-4.6" }))
         .await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["id"], id);
-    assert!(body["updated"].as_array().unwrap().iter().any(|v| v == "prompt"));
+    assert!(body["updated"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "attested_with"));
 
-    // Round-trip: fetch the strategy and confirm the prompt changed.
+    // Round-trip: fetch the strategy and confirm the attestation changed.
     let strategy: serde_json::Value = server.get(&format!("/api/strategy/{id}")).await.json();
-    assert_eq!(strategy["trader_slot"]["prompt"], "Decide carefully.");
+    assert_eq!(
+        strategy["trader_slot"]["attested_with"],
+        "anthropic.claude-sonnet-4.6"
+    );
 }
 
 #[tokio::test]

@@ -51,7 +51,7 @@ export function EquityPanel({ curve }: Props) {
       {/* Card header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div>
-          <span className="text-[13px] font-medium text-foreground">Equity curve</span>
+          <span className="text-[13px] font-medium text-foreground">Return %</span>
           <span className="ml-2 font-mono text-[11px] text-text-3">
             base ${curve.base.toLocaleString()} · backtest (faded) + live (solid)
           </span>

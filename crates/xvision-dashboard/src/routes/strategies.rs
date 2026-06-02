@@ -12,9 +12,10 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_inspector,
-    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest,
-    RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    self, add_agent, remove_agent, rename_agent_role, set_mechanical_param, set_pipeline, set_risk_config,
+    update_inspector, update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq,
+    ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut,
+    StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -193,6 +194,31 @@ pub async fn put_risk(
         explicit: body.explicit,
     };
     let out = set_risk_config(&state.api_context(), req).await?;
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+pub struct PutMechanicalParamBody {
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+/// `PUT /api/strategy/:id/mechanical_params` — set one key inside the
+/// strategy's untyped mechanical-params object.
+pub async fn put_mechanical_params(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<PutMechanicalParamBody>,
+) -> Result<Json<serde_json::Value>, DashboardError> {
+    let out = set_mechanical_param(
+        &state.api_context(),
+        authoring::SetMechanicalParamReq {
+            id,
+            key: body.key,
+            value: body.value,
+        },
+    )
+    .await?;
     Ok(Json(out))
 }
 

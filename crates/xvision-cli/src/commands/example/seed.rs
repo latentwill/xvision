@@ -7,9 +7,7 @@ use serde::Serialize;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::scenario_store;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-use xvision_engine::strategies::templates::{
-    example_scenarios, example_strategies, is_example_scenario, is_example_strategy,
-};
+use xvision_engine::strategies::templates::{example_scenarios, is_example_scenario, is_example_strategy};
 
 use crate::commands::example::{api_to_cli, CliResultUnit, SeedArgs};
 use crate::exit::CliError;
@@ -65,55 +63,23 @@ pub async fn run(xvn_home_override: Option<PathBuf>, args: SeedArgs) -> CliResul
     Ok(())
 }
 
-async fn seed_strategies(store: &FilesystemStore, reset: bool, summary: &mut SeedSummary) -> CliResultUnit {
-    if reset {
-        let existing_ids = store
-            .list()
-            .await
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("list strategies: {e}")))?;
-        for id in existing_ids {
-            let strategy = match store.load(&id).await {
-                Ok(s) => s,
-                // A corrupt file blocking the reset path would be
-                // surprising and unhelpful — skip and keep going.
-                Err(_) => continue,
-            };
-            if is_example_strategy(&strategy) {
-                store
-                    .delete(&id)
-                    .await
-                    .map_err(|e| CliError::upstream(anyhow::anyhow!("delete {id}: {e}")))?;
-                summary.strategies_removed.push(id);
-            }
+async fn seed_strategies(store: &FilesystemStore, _reset: bool, summary: &mut SeedSummary) -> CliResultUnit {
+    let existing_ids = store
+        .list()
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("list strategies: {e}")))?;
+    for id in existing_ids {
+        let strategy = match store.load(&id).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if is_example_strategy(&strategy) {
+            store
+                .delete(&id)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("delete {id}: {e}")))?;
+            summary.strategies_removed.push(id);
         }
-    }
-
-    for strategy in example_strategies() {
-        let id = strategy.manifest.id.clone();
-        let existing = store.load(&id).await.ok();
-        match existing {
-            Some(prior) if !reset && is_example_strategy(&prior) => {
-                // Already labelled as ours and reset wasn't requested.
-                summary.strategies_skipped.push(id);
-                continue;
-            }
-            Some(prior) if !is_example_strategy(&prior) => {
-                // Operator owns a strategy with the same id (extremely
-                // unlikely given the `example-` prefix, but if so, never
-                // overwrite — surface a clear error and stop).
-                return Err(CliError::conflict(anyhow::anyhow!(
-                    "strategy '{id}' exists and is not labelled as an example \
-                     (creator='{}'). Refusing to overwrite operator data.",
-                    prior.manifest.creator
-                )));
-            }
-            _ => {}
-        }
-        store
-            .save(&strategy)
-            .await
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("save {id}: {e}")))?;
-        summary.strategies_created.push(id);
     }
     Ok(())
 }
@@ -270,10 +236,55 @@ fn print_human_summary(s: &SeedSummary) {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+    use xvision_engine::strategies::risk::RiskPreset;
+    use xvision_engine::strategies::slot::LLMSlot;
     use xvision_engine::strategies::templates::{
-        EXAMPLE_SCENARIO_QUICKSTART_BULL, EXAMPLE_SCENARIO_QUICKSTART_FLASH, EXAMPLE_STRATEGY_BREAKOUT,
-        EXAMPLE_STRATEGY_MEAN_REVERSION, EXAMPLE_STRATEGY_TREND_FOLLOWER,
+        EXAMPLE_SCENARIO_QUICKSTART_BULL, EXAMPLE_SCENARIO_QUICKSTART_FLASH, EXAMPLE_STRATEGY_CREATOR,
     };
+    use xvision_engine::strategies::{ActivationMode, PipelineDef, Strategy};
+
+    fn strategy_fixture(id: &str, creator: &str) -> Strategy {
+        Strategy {
+            manifest: PublicManifest {
+                id: id.into(),
+                display_name: "Strategy fixture".into(),
+                plain_summary: "Test strategy fixture".into(),
+                creator: creator.into(),
+                template: "trend_follower".into(),
+                regime_fit: vec![RegimeFit::TrendingBull],
+                asset_universe: vec!["BTC/USD".into()],
+                decision_cadence_minutes: 60,
+                attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
+                required_tools: vec!["ohlcv".into()],
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+                min_warmup_bars: None,
+                color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
+            },
+            hypothesis: None,
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: Some(LLMSlot {
+                role: "trader".into(),
+                attested_with: "anthropic.claude-sonnet-4.6".into(),
+                allowed_tools: vec!["ohlcv".into()],
+                provider: None,
+                model: None,
+            }),
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({"ema_fast": 12}),
+            decision_mode: Default::default(),
+            mechanistic_config: None,
+            activation_mode: ActivationMode::EveryBar,
+            filter: None,
+            acknowledge_no_filter: false,
+        }
+    }
 
     async fn seed_fresh(xvn_home: &Path, reset: bool) -> SeedSummary {
         let user = "test-user".to_string();
@@ -292,23 +303,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn first_seed_creates_strategies_scenarios_and_tutorial() {
+    async fn first_seed_creates_scenarios_and_tutorial() {
         let dir = tempdir().unwrap();
         let summary = seed_fresh(dir.path(), false).await;
 
-        assert_eq!(summary.strategies_created.len(), 3);
-        assert!(summary
-            .strategies_created
-            .iter()
-            .any(|id| id == EXAMPLE_STRATEGY_TREND_FOLLOWER));
-        assert!(summary
-            .strategies_created
-            .iter()
-            .any(|id| id == EXAMPLE_STRATEGY_MEAN_REVERSION));
-        assert!(summary
-            .strategies_created
-            .iter()
-            .any(|id| id == EXAMPLE_STRATEGY_BREAKOUT));
+        assert!(summary.strategies_created.is_empty());
         assert!(summary.strategies_skipped.is_empty());
         assert!(summary.strategies_removed.is_empty());
 
@@ -333,24 +332,39 @@ mod tests {
         seed_fresh(dir.path(), false).await;
         let second = seed_fresh(dir.path(), false).await;
         assert!(second.strategies_created.is_empty());
-        assert_eq!(second.strategies_skipped.len(), 3);
+        assert!(second.strategies_skipped.is_empty());
         assert!(second.scenarios_created.is_empty());
         assert_eq!(second.scenarios_skipped.len(), 2);
     }
 
     #[tokio::test]
-    async fn reset_removes_and_recreates_strategies_and_unreferenced_scenarios() {
+    async fn reset_recreates_unreferenced_scenarios_without_strategies() {
         let dir = tempdir().unwrap();
         seed_fresh(dir.path(), false).await;
         let second = seed_fresh(dir.path(), true).await;
-        assert_eq!(second.strategies_removed.len(), 3);
-        assert_eq!(second.strategies_created.len(), 3);
+        assert!(second.strategies_removed.is_empty());
+        assert!(second.strategies_created.is_empty());
         // No eval_runs exist yet, so example scenarios delete cleanly and
         // get re-inserted from the curated set.
         assert_eq!(second.scenarios_removed.len(), 2);
         assert_eq!(second.scenarios_created.len(), 2);
         assert!(second.scenarios_skipped.is_empty());
         assert!(second.scenarios_preserved_referenced.is_empty());
+    }
+
+    #[tokio::test]
+    async fn seed_prunes_legacy_example_strategies() {
+        let dir = tempdir().unwrap();
+        let store = FilesystemStore::new(strategy_store_dir(dir.path()));
+        let legacy = strategy_fixture("example-trend-follower", EXAMPLE_STRATEGY_CREATOR);
+        store.save(&legacy).await.unwrap();
+
+        let summary = seed_fresh(dir.path(), false).await;
+
+        assert_eq!(summary.strategies_removed, vec!["example-trend-follower"]);
+        assert!(store.load("example-trend-follower").await.is_err());
+        assert!(summary.strategies_created.is_empty());
+        assert!(summary.strategies_skipped.is_empty());
     }
 
     #[tokio::test]
@@ -398,51 +412,9 @@ mod tests {
 
     #[tokio::test]
     async fn seed_does_not_touch_operator_owned_strategies() {
-        use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
-        use xvision_engine::strategies::risk::RiskPreset;
-        use xvision_engine::strategies::slot::LLMSlot;
-        use xvision_engine::strategies::{ActivationMode, PipelineDef, Strategy};
-
         let dir = tempdir().unwrap();
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
-        // Pre-seed an operator strategy with a non-example id and creator.
-        let operator = Strategy {
-            manifest: PublicManifest {
-                id: "operator-trend".into(),
-                display_name: "Operator's trend".into(),
-                plain_summary: "Mine, not the examples".into(),
-                creator: "@operator".into(),
-                template: "trend_follower".into(),
-                regime_fit: vec![RegimeFit::TrendingBull],
-                asset_universe: vec!["BTC/USD".into()],
-                decision_cadence_minutes: 60,
-                attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
-                required_tools: vec!["ohlcv".into()],
-                risk_preset_or_config: "balanced".into(),
-                published_at: None,
-                min_warmup_bars: None,
-                color: None,
-                execution_mode: Default::default(),
-                capital_mode: Default::default(),
-            },
-            hypothesis: None,
-            agents: Vec::new(),
-            pipeline: PipelineDef::default(),
-            regime_slot: None,
-            intern_slot: None,
-            trader_slot: Some(LLMSlot {
-                role: "trader".into(),
-                attested_with: "anthropic.claude-sonnet-4.6".into(),
-                allowed_tools: vec!["ohlcv".into()],
-                provider: None,
-                model: None,
-            }),
-            risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({"ema_fast": 12}),
-            activation_mode: ActivationMode::EveryBar,
-            filter: None,
-            acknowledge_no_filter: false,
-        };
+        let operator = strategy_fixture("operator-trend", "@operator");
         store.save(&operator).await.unwrap();
 
         // Seed, then reset, then confirm operator row still alive.

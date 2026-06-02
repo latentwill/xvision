@@ -273,7 +273,6 @@ describe("KlineCandlePane", () => {
     )!;
     expect(buy).toBeDefined();
     expect((buy.extendData as { kind: string }).kind).toBe("buy");
-    expect((buy.extendData as { text: string }).text).toBe("Buy 1");
     expect(buy.points).toEqual([{ timestamp: 1000, value: 10 }]);
 
     const veto = markerOverlays.find(
@@ -281,6 +280,38 @@ describe("KlineCandlePane", () => {
     )!;
     expect(veto).toBeDefined();
     expect((veto.extendData as { text: string }).text).toBe("Veto: risk");
+  });
+
+  it("draws buy and sell markers as textless chevrons", async () => {
+    render(<KlineCandlePane candles={candles} />);
+
+    await waitFor(() => {
+      expect(klineMocks.state.loadedBars).toHaveLength(1);
+    });
+
+    const template = klineMocks.state.registeredTemplates.find(
+      (t) => (t as { name?: string }).name === "xvnMarker",
+    ) as {
+      createPointFigures: (args: {
+        coordinates: Array<{ x: number; y: number }>;
+        overlay: { extendData: Record<string, unknown> };
+      }) => unknown[];
+    };
+
+    const figures = template.createPointFigures({
+      coordinates: [{ x: 40, y: 80 }],
+      overlay: {
+        extendData: { kind: "buy", text: "Buy 1", color: "#00E676" },
+      },
+    });
+
+    expect(figures).toHaveLength(2);
+    expect(figures.every((fig) => (fig as { type: string }).type === "line")).toBe(
+      true,
+    );
+    expect(figures.some((fig) => (fig as { type: string }).type === "text")).toBe(
+      false,
+    );
   });
 
   it("registers the xvnMarker overlay template exactly once at module scope", async () => {

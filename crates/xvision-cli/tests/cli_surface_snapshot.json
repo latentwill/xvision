@@ -4806,9 +4806,10 @@
         "--db",
         "--help",
         "--mock",
+        "--session-id",
         "--strategy"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "optimizer",
         "evening-cycle"

@@ -1,6 +1,6 @@
-//! `xvn example` — seed curated example strategies, scenarios, and
-//! tutorial artifacts into the active `XVN_HOME` so first-run users have
-//! something concrete to point at.
+//! `xvn example` — seed curated example scenarios and tutorial artifacts
+//! into the active `XVN_HOME` so first-run users have concrete market
+//! windows to point at.
 //!
 //! Identification of seed-owned rows is delegated to
 //! `xvision_engine::strategies::templates::{is_example_strategy,
@@ -25,16 +25,16 @@ pub struct ExampleCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum ExampleOp {
-    /// Populate (or refresh) the example strategies, scenarios, and
-    /// tutorial artifacts in the active XVN home.
+    /// Populate (or refresh) the example scenarios and tutorial artifacts
+    /// in the active XVN home.
     Seed(SeedArgs),
 }
 
 #[derive(Args, Debug)]
 pub struct SeedArgs {
-    /// Delete every seed-owned row, then re-create the example set from
-    /// scratch. Without `--reset` the seed is idempotent: rows that
-    /// already exist are skipped, never overwritten.
+    /// Delete seed-owned legacy strategies, refresh seed-owned scenarios,
+    /// then rewrite the tutorial. Without `--reset` the seed is
+    /// idempotent: existing scenarios are skipped, never overwritten.
     #[arg(long, default_value_t = false)]
     pub reset: bool,
     /// Emit a structured JSON summary of what changed.

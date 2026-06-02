@@ -180,6 +180,7 @@ fn make_scenario(id: &str, year_start: i32, year_end: i32) -> Scenario {
                 volume_constraints: None,
             },
             overrides: vec![],
+            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Continuous,
         capital: xvision_core::Capital::default(),
@@ -362,6 +363,7 @@ async fn run_evening_cycle_smoke() {
         move |evt| {
             events_clone.lock().unwrap().push(evt);
         },
+        None,
         None,
     )
     .await;

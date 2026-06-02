@@ -175,6 +175,8 @@ fn seed(home: &std::path::Path) -> (String, String) {
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         };
         let store = FilesystemStore::new(strategy_store_dir(home));
         store.save(&strategy).await.unwrap();

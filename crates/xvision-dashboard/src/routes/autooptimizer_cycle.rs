@@ -73,13 +73,8 @@ pub async fn start_evening_cycle(
             field: "strategy_id".into(),
             msg: "strategy_id is required for dashboard evening-cycle launches".into(),
         })?;
-    let (bundle_hash, strategy) = load_strategy_parent(
-        strategy_id,
-        &state.xvn_home,
-        &lineage_store,
-        &strategy_blob_store,
-    )
-    .await?;
+    let (bundle_hash, strategy) =
+        load_strategy_parent(strategy_id, &state.xvn_home, &lineage_store, &strategy_blob_store).await?;
     let mut parent_strategies = HashMap::new();
     parent_strategies.insert(bundle_hash.to_hex(), strategy);
     let explicit_parent_hashes = vec![bundle_hash];
@@ -108,6 +103,7 @@ pub async fn start_evening_cycle(
             move |ev| {
                 let _ = tx.send(ev);
             },
+            None,
             None,
         )
         .await;
@@ -333,6 +329,7 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
                 volume_constraints: None,
             },
             overrides: vec![],
+            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Continuous,
         capital: Capital::default(),

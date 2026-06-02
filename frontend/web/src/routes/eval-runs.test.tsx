@@ -819,6 +819,93 @@ describe("EvalRunsRoute", () => {
     expect(within(listTable).queryByText("01TEST")).not.toBeInTheDocument();
   });
 
+  it("renders strategy name as a link to /strategies/:agent_id in the strategy column", async () => {
+    mockReady();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000000",
+        agent_id: "01TEST",
+        scenario_id: "user-scenario-4h",
+        strategy: null,
+        scenario: null,
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: "2026-05-13T08:15:00Z",
+        sharpe: 1.2,
+        max_drawdown_pct: 4.5,
+        total_return_pct: 8.1,
+        error: null,
+        actual_input_tokens: 1000,
+        actual_output_tokens: 250,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
+        auto_fire_review: false,
+        review_model: null,
+        max_annotations_per_review: 8,
+      },
+    ]);
+
+    renderRoute();
+
+    const strategyLink = await screen.findByRole("link", { name: "Trend 4H" });
+    expect(strategyLink).toHaveAttribute("href", "/strategies/01TEST");
+  });
+
+  it("shows the Strategy column header in the desktop table", async () => {
+    renderRoute();
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("columnheader", { name: "Strategy" }).length).toBeGreaterThan(0),
+    );
+  });
+
+  it("run column shows only disambiguator and run id, not the strategy display name", async () => {
+    mockReady();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000000",
+        agent_id: "01TEST",
+        scenario_id: "user-scenario-4h",
+        strategy: null,
+        scenario: null,
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: "2026-05-13T08:15:00Z",
+        sharpe: 1.2,
+        max_drawdown_pct: 4.5,
+        total_return_pct: 8.1,
+        error: null,
+        actual_input_tokens: 1000,
+        actual_output_tokens: 250,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
+        auto_fire_review: false,
+        review_model: null,
+        max_annotations_per_review: 8,
+      },
+    ]);
+
+    renderRoute();
+
+    await screen.findByText("1 run");
+    const tables = screen.getAllByRole("table");
+    const listTable = tables[0]!;
+
+    // The run ID must appear in the run column (aria-label checks this)
+    const runCell = within(listTable).getByLabelText(
+      "Run id 01RUN000000000000000000000",
+    );
+    expect(runCell).toBeInTheDocument();
+
+    // The strategy display name link lives in its own column, not nested inside the run cell
+    const strategyLink = within(listTable).getByRole("link", { name: "Trend 4H" });
+    expect(runCell).not.toContainElement(strategyLink);
+  });
+
   it("falls back to the full id when the strategy/scenario lookup misses", async () => {
     mockReady();
     vi.mocked(evalApi.listRuns).mockResolvedValue([

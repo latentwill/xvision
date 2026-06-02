@@ -161,6 +161,7 @@ fn crypto_scenario(asset_class: AssetClass, symbol: &str, _venue_symbol: &str) -
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Continuous,
         capital: Capital {
@@ -225,6 +226,8 @@ fn strategy_with_risk_pct(agent_id: &str, risk_pct: f64) -> Strategy {
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 

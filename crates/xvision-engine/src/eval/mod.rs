@@ -11,6 +11,7 @@ pub mod bars;
 pub mod batch_store;
 pub mod behavior;
 pub mod broker_rules;
+pub mod candle_integrity;
 pub mod compare;
 pub mod concurrency;
 pub mod cost;

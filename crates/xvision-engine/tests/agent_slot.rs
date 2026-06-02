@@ -1,8 +1,71 @@
-use std::sync::Arc;
+use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
-use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
+use xvision_engine::agent::llm::{
+    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
+};
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::tools::ToolRegistry;
+use xvision_engine::tools::{Tool, ToolName, ToolRegistry};
+
+struct EchoOhlcvTool;
+
+#[async_trait]
+impl Tool for EchoOhlcvTool {
+    fn name(&self) -> ToolName {
+        ToolName::new("ohlcv")
+    }
+
+    fn description(&self) -> &'static str {
+        "test OHLCV echo"
+    }
+
+    async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "asset": input.get("asset").cloned().unwrap_or(serde_json::Value::Null),
+            "bars": [{"close": 50_000.0}]
+        }))
+    }
+}
+
+struct MismatchedAssetToolDispatch {
+    calls: Mutex<u32>,
+}
+
+#[async_trait]
+impl LlmDispatch for MismatchedAssetToolDispatch {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        if *calls == 1 {
+            return Ok(MockDispatch::tool_use(
+                "tu_wrong_asset",
+                "ohlcv",
+                serde_json::json!({"asset": "BTC/USD", "fixture": "any"}),
+            ));
+        }
+
+        let body = req
+            .messages
+            .iter()
+            .map(|m| serde_json::to_string(m).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("|");
+        if !body.contains("asset mismatch") || !body.contains("ETH/USD") || !body.contains("BTC/USD") {
+            anyhow::bail!(
+                "expected wrong-asset ohlcv call to be returned as an asset mismatch tool error; got {body}"
+            );
+        }
+
+        Ok(LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: r#"{"action":"hold","conviction":0.0,"justification":"wrong asset market-data tool call was blocked"}"#.into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            input_tokens: 50,
+            output_tokens: 30,
+        })
+    }
+}
 
 #[tokio::test]
 async fn execute_slot_returns_parsed_output() {
@@ -110,6 +173,59 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
     assert!(out.text().contains("long_open"));
     // Two LLM calls: tool_use then final text. Tokens accumulate.
     assert!(out.input_tokens >= 50);
+}
+
+#[tokio::test]
+async fn execute_slot_blocks_market_data_tool_calls_for_the_wrong_decision_asset() {
+    let slot = LLMSlot {
+        role: "trader".into(),
+        attested_with: "anthropic.claude-sonnet-4.6".into(),
+        allowed_tools: vec!["ohlcv".into()],
+        provider: None,
+        model: None,
+    };
+    let dispatch = Arc::new(MismatchedAssetToolDispatch { calls: Mutex::new(0) });
+    let mut registry = ToolRegistry::empty();
+    registry.register(Arc::new(EchoOhlcvTool));
+
+    let out = execute_slot(SlotInput {
+        slot: &slot,
+        system_prompt: String::new(),
+        upstream_inputs: serde_json::json!({
+            "asset": "ETH/USD",
+            "market_data": {
+                "asset": "ETH/USD",
+                "reference_price_usd": 3_000.0,
+                "current_bar": {"close": 3_000.0}
+            }
+        }),
+        dispatch,
+        tools: Arc::new(registry),
+        response_schema: None,
+        max_tokens: Some(4096),
+        temperature: None,
+        obs: None,
+        memory: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: String::new(),
+        scenario_start: None,
+        source_window_start: None,
+        source_window_end: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
+        catalog: None,
+        delta_briefing: false,
+        prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
+    })
+    .await
+    .expect("wrong-asset tool call should be recoverable as a tool error");
+
+    assert!(out
+        .text()
+        .contains("wrong asset market-data tool call was blocked"));
 }
 
 #[tokio::test]

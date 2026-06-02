@@ -1,0 +1,128 @@
+[
+  {
+    "id": "autoresearch-run-pattern",
+    "prompt": "Distill a new Pattern from last week's Observations for agent abc123",
+    "expected_skill": "xvision-autoresearch-ops",
+    "should_not_trigger": ["xvision-memory-ops", "xvision-flywheel-ops"],
+    "notes": "Core autoresearch operation — Pattern distillation from Observations"
+  },
+  {
+    "id": "autoresearch-gate-run",
+    "prompt": "Run the autoresearch gate on run_id xyz with a Sharpe baseline of 0.8",
+    "expected_skill": "xvision-autoresearch-ops",
+    "should_not_trigger": ["xvision-memory-ops", "xvision-flywheel-ops"],
+    "notes": "Explicit gate invocation belongs to autoresearch-ops"
+  },
+  {
+    "id": "autoresearch-activate",
+    "prompt": "Activate run xyz after the gate passed",
+    "expected_skill": "xvision-autoresearch-ops",
+    "should_not_trigger": ["xvision-memory-ops"],
+    "notes": "Activating a run (not a Pattern directly) is autoresearch-ops territory"
+  },
+  {
+    "id": "autoresearch-blind-finding",
+    "prompt": "Write a blind finding for this autoresearch run before I see the scores",
+    "expected_skill": "xvision-autoresearch-ops",
+    "should_not_trigger": ["xvision-memory-ops", "xvision-flywheel-ops"],
+    "notes": "Blind finding capture is part of the autoresearch gate flow"
+  },
+  {
+    "id": "autoresearch-inspect",
+    "prompt": "Inspect autoresearch run xyz and show me the gate output JSON",
+    "expected_skill": "xvision-autoresearch-ops",
+    "should_not_trigger": ["xvision-memory-ops"],
+    "notes": "xvn autoresearch inspect is autoresearch-ops, not memory-ops inventory"
+  },
+  {
+    "id": "memory-list-patterns",
+    "prompt": "List all active Patterns for agent abc123",
+    "expected_skill": "xvision-memory-ops",
+    "should_not_trigger": ["xvision-autoresearch-ops", "xvision-flywheel-ops"],
+    "notes": "Inventory listing of Patterns is memory-ops"
+  },
+  {
+    "id": "memory-list-observations",
+    "prompt": "Show me the Observations for agent abc123 from last week",
+    "expected_skill": "xvision-memory-ops",
+    "should_not_trigger": ["xvision-autoresearch-ops", "xvision-flywheel-ops"],
+    "notes": "Observation inspection is memory-ops"
+  },
+  {
+    "id": "memory-activate-pattern",
+    "prompt": "Activate Pattern p_005 for agent abc123",
+    "expected_skill": "xvision-memory-ops",
+    "should_not_trigger": ["xvision-autoresearch-ops"],
+    "notes": "Direct Pattern activate via xvn memory activate is memory-ops (vs activating a run, which is autoresearch-ops)"
+  },
+  {
+    "id": "memory-leakage-probe",
+    "prompt": "Run the leakage regression script",
+    "expected_skill": "xvision-memory-ops",
+    "should_not_trigger": ["xvision-autoresearch-ops"],
+    "notes": "Leakage probe is a memory safety check, not a flywheel release step alone"
+  },
+  {
+    "id": "memory-undo-forget",
+    "prompt": "Undo the last forget on agent abc123",
+    "expected_skill": "xvision-memory-ops",
+    "should_not_trigger": ["xvision-autoresearch-ops", "xvision-flywheel-ops"],
+    "notes": "undo-forget is a lifecycle command in the memory substrate"
+  },
+  {
+    "id": "flywheel-status",
+    "prompt": "Show me the flywheel status for agent abc123",
+    "expected_skill": "xvision-flywheel-ops",
+    "should_not_trigger": ["xvision-autoresearch-ops", "xvision-memory-ops"],
+    "notes": "Top-level flywheel health check"
+  },
+  {
+    "id": "flywheel-velocity",
+    "prompt": "What is the 7-day velocity for agent abc123?",
+    "expected_skill": "xvision-flywheel-ops",
+    "should_not_trigger": ["xvision-memory-ops", "xvision-autoresearch-ops"],
+    "notes": "Velocity is a flywheel-ops rate metric, not a memory listing"
+  },
+  {
+    "id": "flywheel-lineage",
+    "prompt": "List the 20 most recent lineage entries for agent abc123",
+    "expected_skill": "xvision-flywheel-ops",
+    "should_not_trigger": ["xvision-memory-ops"],
+    "notes": "Lineage is the flywheel audit trail, not memory inventory"
+  },
+  {
+    "id": "flywheel-release-evidence",
+    "prompt": "What evidence do I need to collect for the flywheel release checklist?",
+    "expected_skill": "xvision-flywheel-ops",
+    "should_not_trigger": ["xvision-autoresearch-ops", "xvision-memory-ops"],
+    "notes": "Release evidence checklist is flywheel-ops scope"
+  },
+  {
+    "id": "flywheel-memory-demos-audit",
+    "prompt": "Run the memory-demos audit for agent abc123",
+    "expected_skill": "xvision-flywheel-ops",
+    "should_not_trigger": ["xvision-memory-ops"],
+    "notes": "Training-run example pool audit is flywheel-ops, not memory-ops"
+  },
+  {
+    "id": "ambiguity-activate-run-vs-pattern",
+    "prompt": "Activate abc123 — it passed the gate",
+    "expected_skill": "xvision-autoresearch-ops",
+    "should_not_trigger": ["xvision-memory-ops"],
+    "notes": "Ambiguous 'activate' — 'passed the gate' disambiguates to autoresearch-ops (gate is autoresearch), not direct Pattern activate in memory-ops"
+  },
+  {
+    "id": "ambiguity-retire-soft-delete",
+    "prompt": "Retire Pattern p_003",
+    "expected_skill": "xvision-memory-ops",
+    "should_not_trigger": ["xvision-autoresearch-ops"],
+    "notes": "Retiring a named Pattern (not a run) is memory-ops lifecycle, not autoresearch-ops"
+  },
+  {
+    "id": "ambiguity-leakage-vs-release",
+    "prompt": "Run leakage regression and the MCP tests before shipping",
+    "expected_skill": "xvision-flywheel-ops",
+    "should_not_trigger": ["xvision-memory-ops"],
+    "notes": "Combined leakage+MCP test bundle with a release framing maps to flywheel-ops release checklist"
+  }
+]

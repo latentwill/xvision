@@ -89,4 +89,22 @@ describe("RunChartV2", () => {
     expect(screen.getAllByText("101").length).toBeGreaterThan(0);
     expect(screen.getByText("102")).toBeInTheDocument();
   });
+
+  it("passes only buy and sell chevrons to the candle pane", () => {
+    const payload = makePayload();
+    payload.markers = [
+      { kind: "buy", time: time[0], price: 101, text: "Buy detail" },
+      { kind: "sell", time: time[1], price: 102, text: "Sell detail" },
+      { kind: "hold", time: time[0], price: 101, text: "Hold detail" },
+      { kind: "veto", time: time[1], price: 102, text: "Veto detail" },
+    ];
+
+    render(<RunChartV2 payload={payload} />);
+
+    const props = candlePropsSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(props.markers).toEqual([
+      { kind: "buy", time: time[0], price: 101, decision_index: undefined },
+      { kind: "sell", time: time[1], price: 102, decision_index: undefined },
+    ]);
+  });
 });

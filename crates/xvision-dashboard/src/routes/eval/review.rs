@@ -362,7 +362,10 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
             ))
         })?
     };
-    let no_auth_review = matches!(entry.kind, ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp);
+    let no_auth_review = matches!(
+        entry.kind,
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+    );
     if api_key.is_empty() && !no_auth_review {
         return Err(ApiError::Validation(format!(
             "provider `{}` has no API key set",

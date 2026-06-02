@@ -76,17 +76,16 @@ pub async fn run_evening_cycle(
     paper_tester: &dyn PaperTestRunner,
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
     dspy_ctx: Option<&DspyContext>,
+    cycle_id_override: Option<String>,
 ) -> Result<CycleResult> {
-    let cycle_id = Ulid::new().to_string();
+    let cycle_id = cycle_id_override.unwrap_or_else(|| Ulid::new().to_string());
     let min_improvement =
         effective_min_improvement_for_cycle(pool, config, 0, cycle_config.sustained_no_pass_cycles)
             .await?
             .effective_min_improvement;
 
     let dsr_prefix: Option<String> = match dspy_ctx {
-        Some(ctx) if config.dspy_enabled => {
-            query_dsr_prefix(&ctx.store, &ctx.namespace).await?
-        }
+        Some(ctx) if config.dspy_enabled => query_dsr_prefix(&ctx.store, &ctx.namespace).await?,
         _ => None,
     };
 
@@ -258,9 +257,21 @@ where
         .await?;
 
     for _ in 0..cycle_config.mutations_per_parent {
-        let diff = match mutator.propose(parent_strategy, config, dsr_prefix).await {
-            Ok(d) => d,
-            Err(_) => continue,
+        // When tournament_enabled, run the 3-candidate Borda-count tournament
+        // instead of a direct propose call. Incumbent win skips this iteration.
+        let diff = if config.tournament_enabled {
+            use crate::autooptimizer::tournament::TournamentRunner;
+            let runner = TournamentRunner::from_mutator(mutator);
+            match runner.run_tournament(parent_strategy, config).await {
+                Ok(r) if r.incumbent_wins => continue,
+                Ok(r) => r.winner_diff,
+                Err(_) => continue,
+            }
+        } else {
+            match mutator.propose(parent_strategy, config, dsr_prefix).await {
+                Ok(d) => d,
+                Err(_) => continue,
+            }
         };
         progress(CycleProgressEvent::MutationProposed {
             cycle_id: cycle_id.to_string(),

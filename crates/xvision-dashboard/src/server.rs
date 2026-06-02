@@ -25,7 +25,8 @@
 // 15. PATCH  /api/strategy/:id/agents/:role           strategies::patch_agent_role
 // 16. PUT    /api/strategy/:id/pipeline               strategies::put_pipeline
 // 17. PUT    /api/strategy/:id/risk                   strategies::put_risk
-// 17b. PUT/DELETE /api/strategy/:id/filter            strategies::put_filter / delete_filter
+// 17b. PUT   /api/strategy/:id/mechanical_params      strategies::put_mechanical_params
+// 17c. PUT/DELETE /api/strategy/:id/filter            strategies::put_filter / delete_filter
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
@@ -156,10 +157,9 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, autooptimizer as autooptimizer_route, autooptimizer_cycle, bars,
-    charts_annotated,
-    charts_dashboards, charts_market_context, chat_rail,
-    checkpoints as checkpoints_route, cli, diagnostics as diagnostics_route, docs,
+    agent_runs, agents, autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated,
+    charts_dashboards, charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
+    diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
@@ -384,6 +384,10 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/swap-agent", post(strategies::swap_agent))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
+        .route(
+            "/api/strategy/:id/mechanical_params",
+            put(strategies::put_mechanical_params),
+        )
         .route("/api/strategy/:id/filter", put(strategies::put_filter))
         .route("/api/strategy/:id/validate", post(strategies::post_validate))
         // ── Strategies folder ─────────────────────────────────────────────
