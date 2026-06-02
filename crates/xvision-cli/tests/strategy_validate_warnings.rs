@@ -139,12 +139,12 @@ fn validate_emits_no_filter_warning_for_explicit_trader_without_filter() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("warning: strategy 'unfiltered-trader' has a Trader agent with no upstream Filter"),
+        stdout.contains("warning: strategy 'unfiltered-trader' has a Trader agent with no saved JSON filter"),
         "expected no-Filter warning naming the strategy; got: {stdout}"
     );
     assert!(
-        stdout.contains("xvn agent create --capability filter"),
-        "warning must point at the filter-create verb; got: {stdout}"
+        stdout.contains("Attach a strategy filter to reduce LLM cost"),
+        "warning must point at the filter mitigation; got: {stdout}"
     );
     assert!(
         stdout.trim_end().ends_with("ok"),
@@ -203,7 +203,7 @@ fn strategy_edit_no_filter_warning_round_trips() {
     let v2 = xvn(&["strategy", "validate", &id], dir.path());
     let stdout = String::from_utf8_lossy(&v2.stdout);
     assert!(
-        stdout.contains("no upstream Filter"),
+        stdout.contains("no saved JSON filter"),
         "warning must re-emerge after --clear; got: {stdout}"
     );
 }
