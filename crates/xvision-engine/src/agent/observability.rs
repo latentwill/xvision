@@ -1423,6 +1423,7 @@ impl ObsEmitter {
             .await;
     }
 
+
     /// Close a `broker.call` span with the broker's terminal state.
     /// Always emits BOTH `BrokerCallFinished` AND a span-level
     /// `SpanFinished` so the recorder can stamp the close timestamp
