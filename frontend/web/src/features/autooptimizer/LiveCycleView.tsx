@@ -439,6 +439,40 @@ function EventLogCard({ events, bottomRef }: { events: EventRow[]; bottomRef: Re
   );
 }
 
+function ActiveLineagesSection() {
+  return (
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-base font-semibold text-text">Active lineages</h2>
+        <p className="font-mono text-[11.5px] text-text-3 mt-0.5">
+          Strategy populations currently evolving
+        </p>
+      </div>
+      <div className="rounded-md border border-border px-5 py-4">
+        <p className="text-[13px] text-text-3">No lineages yet</p>
+      </div>
+    </div>
+  );
+}
+
+function RecentCyclesSection() {
+  return (
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-base font-semibold text-text">Recent cycles</h2>
+        <p className="font-mono text-[11.5px] text-text-3 mt-0.5">
+          History of completed optimization cycles
+        </p>
+      </div>
+      <div className="rounded-md border border-border px-5 py-4">
+        <p className="text-[13px] text-text-3">
+          No cycles yet — see Ladder and Provenance tabs for experiment history
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Active lineages section ──────────────────────────────────────────────────
 
 function LineageCard({ group }: { group: CycleGroup }) {
@@ -466,7 +500,7 @@ function LineageCard({ group }: { group: CycleGroup }) {
   );
 }
 
-function ActiveLineagesSection({ nodes }: { nodes: LineageNode[] }) {
+function ActiveLineagesSectionFull({ nodes }: { nodes: LineageNode[] }) {
   const groups = buildCycleGroups(nodes).slice(0, 6);
   return (
     <div className="space-y-3">
@@ -539,7 +573,7 @@ function CycleTable({ groups }: { groups: CycleGroup[] }) {
   );
 }
 
-function RecentCyclesSection({
+function RecentCyclesSectionFull({
   nodes,
   onTabChange,
 }: {
@@ -587,10 +621,8 @@ export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => 
   const { isRunning, activeCycleId } = deriveCycleState(events);
 
   const appendEvent = (event: CycleProgressEvent) => {
-    const normalized = normalizeCycleEvent(event);
-    if (!normalized) return;
     setEvents((prev) => {
-      const row: EventRow = { ...normalized, _row_id: nextRowId++ };
+      const row: EventRow = { ...event, _row_id: nextRowId++ };
       const next = prev.length >= 200 ? prev.slice(1) : prev;
       return [...next, row];
     });
@@ -647,8 +679,8 @@ export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => 
         <EventLogCard events={events} bottomRef={bottomRef} />
         <KeptNextCard nodes={lineageNodes} />
       </div>
-      <ActiveLineagesSection nodes={lineageNodes} />
-      <RecentCyclesSection nodes={lineageNodes} onTabChange={onTabChange} />
+      <ActiveLineagesSectionFull nodes={lineageNodes} />
+      <RecentCyclesSectionFull nodes={lineageNodes} onTabChange={onTabChange} />
     </div>
   );
 }
