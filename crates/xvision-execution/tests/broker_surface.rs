@@ -147,7 +147,7 @@ fn fixture_filled_order(client_id: &str) -> AlpacaOrder {
 #[test]
 fn broker_kind_covers_all_variants() {
     use BrokerKind::*;
-    let _ = [AlpacaPaper, AlpacaLive, OrderlyLive];
+    let _ = [AlpacaPaper, AlpacaLive, OrderlyLive, BybitPaper];
 }
 
 #[test]
